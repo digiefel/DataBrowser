@@ -294,7 +294,10 @@ takes three steps:
 Steps 2 and 3 use Makie internals, so they stay inside one DBPlots function, with a test that renders
 the composed figure, checks that the moved axis is drawn, and checks that it zooms.
 
-<!-- TODO: how a view leaves a composed figure again. -->
+When a view leaves a composed figure, because the user drags it out or deletes it, DBPlots removes
+its axis from the shared figure's layout, scene, and input forwarding, and closes the gap in the
+layout. The view then draws again into a figure of its own with `setup` and `draw`, from its cached
+value. Nothing is moved back.
 
 ## Interaction between views
 
