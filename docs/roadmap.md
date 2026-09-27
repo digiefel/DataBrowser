@@ -170,7 +170,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
 ### 0.2.3 One index, one status
 
 - [ ] Evaluate the work graph against cancellation, invalidation, priority, streaming, and
-  collection edge cases; finish with a bounded tuning pass or an explicit redesign.
+  collection edge cases; finish with a bounded tuning pass or an explicit redesign. The redesign
+  is chosen: [plans/workspace-graph](plans/workspace-graph/workspace-graph.md).
 - [x] Keep one live workspace index. Derive source-check status from scan completion and rebuild
   availability from workspace lifecycle. `SourceScan` remains the Cache load result only.
 - [ ] Add `WorkspaceIndex(source_id)`; replace the two hand-built empty-index constructions.
@@ -189,6 +190,12 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 ### 0.2.4 Public API tiers
 
+- [ ] Collection `analyze` receives `analyze(project, collection, items, subcollections)`: all
+  items below the collection, with data loaded on access, and the child collections carrying their
+  own analysis results.
+- [ ] `analyze` returns an updated value instead of a `Dict`, for items and collections. The engine
+  stores `metadata` of the returned value, and reconstruction restores it. Recipes keeps its
+  `Dict`-returning callbacks and adapts them.
 - [ ] Extend the common reconstruction contract to collection analysis metadata. Collection
   reconstruction currently receives only `own_metadata`, without analysis results. User types
   decide which results to retain and how to represent them. Remove the registration adapter's
