@@ -143,8 +143,10 @@ end
                 settled(ws)
                 @test metadata(only(W.materialize_items(ws, ["1"])))[:total] == 4
                 @test project.reads == (cache ? 1 : 2)
+                seen = W.generation(ws)
                 W.modify_workspace!(ws; source=EngineSource("source", 1, false))
                 settled(ws)
+                @test W.generation(ws) != seen
                 @test W.query_items(ws) == ["1"]
                 @test item_data(only(W.materialize_items(ws, ["1"]))).x == [2]
                 W.modify_workspace!(ws; source=EngineSource("source", 0, false))

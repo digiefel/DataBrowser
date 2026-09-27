@@ -1,5 +1,20 @@
-"""Fold a workspace's job and cache state into the watcher-facing [`WorkspaceStatus`](@ref)."""
+"""
+    workspace_status(workspace) -> WorkspaceStatus
+
+The current [`WorkspaceStatus`](@ref) of a workspace. The status is recomputed only when the
+workspace has changed since the last call, so watchers can call this every frame.
+"""
 function workspace_status(workspace::Workspace)::WorkspaceStatus
+    # Read the generation first: a change during the computation then triggers the next one.
+    current = generation(workspace)
+    current == workspace.status_generation && return workspace.status
+    workspace.status = build_status(workspace)
+    workspace.status_generation = current
+    return workspace.status
+end
+
+"""Fold a workspace's job and cache state into a status, using the previous one where noted."""
+function build_status(workspace::Workspace)::WorkspaceStatus
     # Never wait on publish_lock here: a source-item publish or cache flush can hold it for 100ms+,
     # and this runs every GUI frame. If a publish is mid-flight, reuse the last snapshot's errors —
     # they change rarely, so a one-frame delay is invisible and keeps the frame from stalling.

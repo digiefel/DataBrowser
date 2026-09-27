@@ -261,8 +261,10 @@ mutable struct Workspace{P<:AbstractProject}
     # half-rebuilt runtime. The GUI trylocks this at the start of a frame.
     lifecycle_lock::ReentrantLock
     idle_condition::Base.Threads.Condition
+    # Increased on every published change; `status` reflects `status_generation`.
+    generation::Base.Threads.Atomic{Int}
     status::WorkspaceStatus
-    status_dirty::Base.Threads.Atomic{Bool}
+    status_generation::Int
     cancel_source::CancellationTokenSource
     closed::Bool
 end
@@ -337,8 +339,9 @@ function Workspace(
         publish_lock,
         ReentrantLock(),
         Base.Threads.Condition(publish_lock),
+        Base.Threads.Atomic{Int}(0),
         WorkspaceStatus(),
-        Base.Threads.Atomic{Bool}(true),
+        -1,
         CancellationTokenSource(),
         false,
     )

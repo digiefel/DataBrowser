@@ -62,7 +62,7 @@ end
                 fixture_dir;
             )
             Workspace.wait_workspace_idle!(workspace; timeout=45)
-            Workspace.refresh_status!(workspace)
+            Workspace.workspace_status(workspace)
             records = collect(Workspace.items(workspace))
             if !isempty(records)
                 select_items!(workspace, records)

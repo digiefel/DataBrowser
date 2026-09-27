@@ -131,7 +131,7 @@ function _install_runtime!(
     workspace.disk_cache = cache
     workspace.metrics = metrics
     workspace.status = WorkspaceStatus()
-    workspace.status_dirty[] = true
+    changed!(workspace)
     workspace.cancel_source = CancellationTokenSource()
     start_work_workers!(workspace)
     return nothing
@@ -261,7 +261,7 @@ function cancel_scan!(workspace::Workspace)::Nothing
         token_source = scan.cancel_token
         token_source !== nothing && cancel(token_source)
         scan.state = :canceling
-        workspace.status_dirty[] = true
+        changed!(workspace)
     end
     return nothing
 end
@@ -645,7 +645,7 @@ function scan_source!(
         empty!(workspace.index.analysis_errors)
         cancel_source = CancellationTokenSource(get_token(workspace.cancel_source))
         scan.cancel_token = cancel_source
-        workspace.status_dirty[] = true
+        changed!(workspace)
         (scan.epoch, cancel_source)
     end
     task = Base.Threads.@spawn begin
@@ -719,7 +719,7 @@ function scan_source!(
                     cancel_token=scan_token,
                     on_progress=count -> begin
                         scan.discovered[] = count
-                        workspace.status_dirty[] = true
+                        changed!(workspace)
                     end,
                     on_item=item -> begin
                         streamed[] = true
@@ -1225,7 +1225,7 @@ end
 
 """Advance idle-gated work and wake blocked waiters after one publication (publish lock held)."""
 function finish_publish!(workspace::Workspace)::Nothing
-    workspace.status_dirty[] = true
+    changed!(workspace)
     notify(workspace.idle_condition; all=true)
     return nothing
 end
@@ -1370,9 +1370,16 @@ function publish_scan_end!(
     return nothing
 end
 
-"""Rebuild the GUI-facing status snapshot after engine publications or discovery progress."""
-function refresh_status!(workspace::Workspace)::Nothing
-    dirty = Base.Threads.atomic_xchg!(workspace.status_dirty, false)
-    dirty && (workspace.status = workspace_status(workspace))
+"""
+    generation(workspace) -> Int
+
+A number that increases whenever the workspace publishes a change: new items, stage results,
+errors, or scan progress. Compare it with a value read earlier to tell whether anything changed.
+"""
+generation(workspace::Workspace)::Int = workspace.generation[]
+
+"""Record that the workspace changed, for `generation` and `workspace_status`."""
+function changed!(workspace::Workspace)::Nothing
+    Base.Threads.atomic_add!(workspace.generation, 1)
     return nothing
 end

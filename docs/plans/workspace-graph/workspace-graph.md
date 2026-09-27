@@ -348,8 +348,8 @@ callers of `materialize_items`.
 1. GUI onto accessors. The GUI files that read `workspace.index` move onto
    the workspace accessors (`items`, `item`, `collections`, `collection`,
    `children`, `ancestors`, `metadata`, `metadata_keys`, with `RootCollection()`
-   for the top of the tree), still backed by `WorkspaceIndex`. `on_change`
-   replaces the `status_dirty` poll in a separate commit. The
+   for the top of the tree), still backed by `WorkspaceIndex`. A generation
+   counter, `generation(ws)`, replaces the `status_dirty` flag in a separate commit. The
    accessors are the target API, not an adapter. The rest of 0.2.4 is not
    part of this step.
 2. Unwired catalog. Rows, keys, the id lookup, membership, status words,

@@ -17,7 +17,6 @@ import DataBrowserCore.Workspace
 using DataBrowserCore.Workspace:
     WorkspaceStatus,
     can_rebuild_cache,
-    refresh_status!,
     rebuild_cache!
 
 """Brighten or darken an ImGui button color by `delta` per RGB channel, clamped to [0, 1]."""
@@ -37,7 +36,7 @@ end
 
 """The workspace status snapshot, or a neutral placeholder when no source is open."""
 current_status(state::BrowserState)::WorkspaceStatus =
-    state.workspace isa Workspace.Workspace ? state.workspace.status :
+    state.workspace isa Workspace.Workspace ? Workspace.workspace_status(state.workspace) :
     WorkspaceStatus(:none, "No Project", "No workspace is open.",
         false, nothing, Workspace.WorkspaceStageCounts(), Pair{String,String}[])
 
@@ -509,9 +508,6 @@ function _run_browser(
                 return nothing
             end
             if workspace isa Workspace.Workspace
-                @timed "refresh_status" begin
-                    refresh_status!(workspace)
-                end
                 _check_source_identity!(state, workspace)
                 _check_cache_error!(state, workspace)
             end

@@ -228,8 +228,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] Read the item tree through workspace accessors instead of `workspace.index`: `items`, `item`,
   `collections`, `collection`, `children`, `ancestors`, `metadata` and `metadata_keys`, with
   `RootCollection()` for the top of the tree.
-- [ ] Add the remaining workspace accessors: `selection(ws)`, `errors(ws)`, and an
-  `on_change(ws, f)` subscription replacing the `status_dirty` poll.
+- [x] Replace the single-reader `status_dirty` flag with `generation(ws)`, a counter every watcher
+  can compare, and let `workspace_status(ws)` recompute only when it moved.
+- [ ] Add the remaining workspace accessors: `selection(ws)` and `errors(ws)`.
 - [ ] Recipes: rename `register_collection_analysis!` to `register_collection!` (it registers
   `process` too); look the recipe up once per stage chain instead of three linear scans.
 - [ ] Strengthen internal module boundaries and import hygiene across the package family.
