@@ -43,12 +43,20 @@ materialize the output in the form it needs.
 
 ## Storage
 
-Validity, activity, the failure flag, output availability and revision are
-packed into one 64-bit word per row and stage, stored in `AtomicMemory`. A
-reader loads the word once and gets a consistent snapshot without a lock. A
-writer updates it with compare-and-swap, which fails if the word changed since
-the writer read it. Failure messages are text and rare; they live in a separate
-table under an ordinary lock.
+Every row has exactly two stages, so one 64-bit word per row holds both, 32
+bits each. A stage's half holds validity (2 bits), activity (2 bits), the
+failure flag, output availability, applicability and a 24-bit revision. The
+revision wraps after 16.7 million changes to one stage; a wrap is harmful only
+if a single job runs across exactly that many changes.
+
+The words live in `AtomicMemory`, one array per table. A reader loads a word
+once and gets a consistent snapshot of both stages without a lock. Writers,
+including the growth of the array when rows are added, hold the catalog's
+write lock, so changes to status and to collection counters happen one at a
+time. `AtomicMemory` has a fixed length: growth allocates an array of twice the
+length, copies the words and replaces the array. A reader that still holds the
+old array sees the words as they were a moment earlier. Failure messages are
+text and rare; they live in a separate table under the same lock.
 
 ## Output location
 

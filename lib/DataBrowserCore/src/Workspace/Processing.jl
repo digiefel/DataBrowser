@@ -89,6 +89,7 @@ function cancel_waiting_work!(workspace::Workspace)::Nothing
             push!(canceled, node)
         end
         empty!(graph.queue)
+        isempty(canceled) || changed!(workspace)
         notify(graph.condition; all=true)
     end
     result = _dropped_work_result()
@@ -168,10 +169,12 @@ function enqueue_work!(
             graph.nodes[key] = node
             seed_node_dependencies!(graph, node, dependencies)
             dependencies_ready(node) && queue_ready_node!(graph, node)
+            changed!(workspace)
         elseif node.state === :waiting
             node.priority = max(node.priority, priority)
             seed_node_dependencies!(graph, node, dependencies)
             dependencies_ready(node) && queue_ready_node!(graph, node)
+            node.state === :queued && changed!(workspace)
         end
         waiter === nothing || push!(node.waiters, waiter)
         node
@@ -409,16 +412,16 @@ function run_item_analysis(
     processed === nothing && error(
         "Cannot analyze item '$(record.id)': processed data is missing",
     )
-    analysis = @timed_dbg "analyze" begin
-        metadata_dict(analyze(
-            workspace.project,
-            materialized_item(
-                workspace, collections, delivered_record, something(processed))))
-    end
+    input = materialized_item(workspace, collections, delivered_record, something(processed))
+    analysis = @timed_dbg "analyze" metadata_dict(analyze(workspace.project, input))
     analyzed_record = ItemRecord(
         delivered_record; metadata=merge(delivered_record.metadata, analysis))
-    analyzed = materialized_item(
-        workspace, collections, analyzed_record, something(processed))
+    analyzed = reconstruct(record.type, record.id, something(processed), analyzed_record.metadata)
+    # Reconstruction is optional. Replaying process again cannot add analysis metadata to a type
+    # that declines it, so keep the item already used by analyze.
+    analyzed === nothing && (analyzed = input)
+    analyzed = attach_record(
+        analyzed, analyzed_record, indexed_collection_path(workspace, collections, analyzed_record))
     return (metadata=analysis, label=label(workspace.project, analyzed))
 end
 

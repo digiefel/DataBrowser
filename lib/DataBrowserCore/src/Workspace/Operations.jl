@@ -1374,7 +1374,8 @@ end
     generation(workspace) -> Int
 
 A number that increases whenever the workspace publishes a change: new items, stage results,
-errors, or scan progress. Compare it with a value read earlier to tell whether anything changed.
+errors, scan progress, or queued work. Compare it with a value read earlier to tell whether anything
+changed.
 """
 generation(workspace::Workspace)::Int = workspace.generation[]
 

@@ -104,13 +104,15 @@ collections, so they never depend on collection metadata.
 | Graph          | Core  | Identity, parent pointers, per-stage status, resident metadata, fingerprints    | Payloads, jobs, DuckDB handles   |
 | Job pool       | Core  | Priority queues and workers. A job is “compute this stage of this node”         | Topology, values                 |
 | Persistence    | Cache | Column tables and payloads, with the existing in-memory write buffer            | Graph semantics, freshness walks |
-| GUI projection | GUI   | Replica of tree structure and per-stage status, driven by a generation counter  | Live graph, jobs, cache          |
+| GUI            | GUI   | Display order of collection children, recomputed when the generation changes   | Copies of the catalog, jobs, cache |
 
 
-The GUI reads public ids and labels directly from the catalog's text buffers,
-which only grow, instead of copying them. A label computed again after process
-or analyze is appended, and its old bytes stay until the buffer is compacted. REPL and inspection use `request`,
-not the GUI replica.
+The GUI keeps no copy of the catalog. It reads through the workspace accessors,
+which read the catalog under its lock; status words need no lock. A copy is
+added only if measurements show the GUI's reads delaying workers. Text columns
+only grow: a label computed again after process or analyze is appended, and
+its old bytes stay until the buffer is compacted. REPL and inspection use
+`request`.
 
 ## Graph
 
@@ -207,11 +209,10 @@ revision while new ones are computed is out of scope. Pipeline inspection
 
 The catalog is a struct-of-arrays in Core, keyed by integers. A deleted item
 is a tombstone, not a hole in the middle of the arrays. Keys are never
-renumbered; opening a workspace skips tombstones. TODO: compaction. Stage status is one atomic 64-bit word per row and stage
-([Node states](01-node-states.md#storage)). Appending rows and writing
-tombstones take a write lock. The GUI replica is not a copy of the
-live arrays every frame: it follows a generation counter and applies
-deltas.
+renumbered; opening a workspace skips tombstones. TODO: compaction. Stage
+status is one atomic 64-bit word per row, holding both stages of the row
+([Node states](01-node-states.md#storage)). Appending rows, writing
+tombstones and changing status take a write lock; reading status does not.
 
 Labels and public ids will dominate memory. Measure those before inventing
 further compression.
@@ -226,8 +227,10 @@ fills the catalog's column vectors directly from the DuckDB columns, without
 building a Julia struct per row and without conversion beyond the read itself.
 This keeps opening fast and scaling with size.
 
-Text columns (public ids, labels) are stored as one byte buffer plus start
-offsets per column, not as one Julia `String` per value. DuckDB.jl's table
+Text columns (public ids, labels) are stored as one byte buffer per column,
+not as one Julia `String` per value. Ids never change, so each row stores only
+the 32-bit offset where its id ends, as DuckDB and Arrow do. Labels change, so
+each row stores a 32-bit start and length. DuckDB.jl's table
 interface creates a `String` per value, so restore reads DuckDB's data chunks
 directly into the buffer. This depends on DuckDB.jl internals (`nextDataChunk`
 and DuckDB's string layout) and needs a test that fails when an upgrade
@@ -353,7 +356,10 @@ callers of `materialize_items`.
    accessors are the target API, not an adapter. The rest of 0.2.4 is not
    part of this step.
 2. Unwired catalog. Rows, keys, the id lookup, membership, status words,
-   counters, push, pull and coalescing exist in Core with synthetic tests only.
+   counters, push, pull, coalescing and metadata columns exist in Core with
+   synthetic tests only. Metadata columns reuse the value types and type
+   conflict rules of Cache's `WideRowStore`. The catalog starts no threads:
+   `take!` and `finish!` are what workers will call in step 3.
 3. Engine cutover. Everything that publishes, enqueues, or asks "is this
    ready?" moves in one step: `WorkGraph.jl`, `Workspace.jl`, `Operations.jl`,
    `Processing.jl`, `DataAccess.jl`, `Status.jl`. Splitting those leaves two
