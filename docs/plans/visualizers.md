@@ -401,16 +401,19 @@ renders its texture at the node's size on screen.
 
 ### Planes
 
-The canvas has a second axis next to the flow of the pipeline: **planes**, stacked above each
-other. Alt and the scroll wheel move between planes, and neighbouring planes show scaled and faded
-around the current one. Connections may run between planes.
+A project can have several **planes**: independent graphs, each a full canvas of its own, for
+example one plane per analysis. Alt and the scroll wheel move from one plane to the next. Every
+plane has the item tree's selection as a source, and all planes share the workspace, including its
+tags. Views on different planes are not connected.
 
-Planes serve mostly to show a pipeline at several levels of abstraction. Seen from the plane above,
-a whole plane below can appear as one node, whose pins are the connections that cross between the
-two planes. The overview then follows from how the user arranged the planes, with no extra work.
+<!-- TODO: whether connections between planes are ever allowed; left out for simplicity. -->
 
-<!-- TODO: an overview without planes, for example by folding each chain of nodes that has a single
-input and a single output into one node. -->
+### Groups
+
+A **group** is a set of nodes the user chose. Its pins are the connections that cross its edge.
+When the user zooms out, the group collapses into one node that shows the view of one node inside
+it, its face: by default the node whose output leaves the group, or the one the user picks when
+several do. When the user zooms in, the group opens and shows all its nodes.
 
 <!-- TODO: how code appears next to a view: a code mode switched with a double press of Alt, a
 level of zoom, or a button on the view. -->
