@@ -108,7 +108,8 @@ collections, so they never depend on collection metadata.
 
 
 The GUI reads public ids and labels directly from the catalog's text buffers,
-which only grow, instead of copying them. REPL and inspection use `request`,
+which only grow, instead of copying them. A label computed again after process
+or analyze is appended, and its old bytes stay until the buffer is compacted. REPL and inspection use `request`,
 not the GUI replica.
 
 ## Graph

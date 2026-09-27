@@ -115,7 +115,7 @@ function expand_source_item(
     source_metadata = metadata_dict(metadata(source_item))
     for (index, handle) in pairs(handles)
         record_metadata = merge(copy(source_metadata), metadata_dict(metadata(handle)))
-        item_label_value = label(handle)
+        item_label_value = label(project, handle)
         record = ItemRecord(;
             source_item_key,
             source_item_path=source_item_path_value,

@@ -70,6 +70,7 @@ using DataBrowserCache:
     store_source_items!,
     store_item_payloads!,
     store_item_metadata!,
+    store_item_label!,
     store_item_metadata_layer!,
     store_processed!,
     store_result_failure!,

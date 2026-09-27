@@ -17,9 +17,6 @@ project_description(::AbstractProject)::String = ""
 """Return the human-readable label for a project item kind."""
 kind_label(::AbstractProject, kind::Symbol)::String = string(kind)
 
-"""Return the human-readable label for one logical item record."""
-function display_label end
-
 """Return the project-specific display label for one collection path."""
 function collection_path_label end
 

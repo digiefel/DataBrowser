@@ -1,7 +1,6 @@
 import CImGui as ig
 
 using DataBrowserAPI:
-    display_label,
     kind_label,
     label
 using DataBrowserAPI.ItemIndex:
@@ -45,11 +44,6 @@ function _item_matches_filter(
         return true
     end
     text = string(
-        # Label callbacks are project callbacks: they receive the effective parameters, not the
-        # item-local subset the record stores.
-        display_label(workspace.project,
-            Workspace.effective_record(workspace.index.collections, item)),
-        "\n",
         item.label,
         "\n",
         kind_label(workspace.project, label(item.type)),
@@ -582,8 +576,7 @@ function _render_items_panel(
                             end
                         end
                         if ig.Selectable(
-                            display_label(workspace.project,
-                                Workspace.effective_record(workspace.index.collections, item)),
+                            item.label,
                             is_selected,
                             ig.ImGuiSelectableFlags_SpanAllColumns,
                         )

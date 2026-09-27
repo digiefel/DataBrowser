@@ -1024,13 +1024,15 @@ function publish_work_success!(
         # runnable the moment this node finishes and late joiners reading the cache find the data.
         record = get(workspace.index.items, key.entity, nothing)
         if record !== nothing
+            publish_item_label!(workspace, record, result.record.label)
             publish_processed_metadata_layer!(workspace, record, result.record)
             clear_work_result_state!(workspace, WorkKey(ITEM_ANALYZE, record.id))
             enqueue_item_analysis!(workspace, record)
         end
     elseif key.kind === ITEM_ANALYZE
         record = workspace.index.items[key.entity]
-        publish_item_metadata_layer!(workspace, record, metadata_dict(result))
+        publish_item_label!(workspace, record, result.label)
+        publish_item_metadata_layer!(workspace, record, result.metadata)
         enqueue_collection_work!(
             workspace,
             affected_collection_keys(workspace.index.collections, [record]);
@@ -1051,6 +1053,15 @@ function publish_work_success!(
         )
         publish_metadata_conflicts!(workspace, collection_key, key.kind, dropped)
     end
+    return nothing
+end
+
+"""Replace one item's label with the label computed by its latest stage."""
+function publish_item_label!(workspace::Workspace, record::ItemRecord, new_label::String)::Nothing
+    record.label == new_label && return nothing
+    updated = ItemRecord(record; label=new_label)
+    workspace.index.items[record.id] = updated
+    store_item_label!(workspace.cache.db, updated)
     return nothing
 end
 

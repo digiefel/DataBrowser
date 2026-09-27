@@ -790,6 +790,15 @@ function store_collection_index!(
     return nothing
 end
 
+"""Persist the label of one existing item, which later stages may recompute."""
+function store_item_label!(cache::CacheDB, record::ItemRecord)::Nothing
+    key = item_key!(cache, record.id)
+    edit!(cache.items, record.id,
+        ItemRow(record.id, key, record.source_item_key, record.label,
+            _serialize_type(record.type), record.collection_key))
+    return nothing
+end
+
 """Store one source item's unprocessed payloads in the memory-only buffer."""
 function store_item_payloads!(
     cache::CacheDB,

@@ -60,6 +60,9 @@ struct TypedProject <: AbstractProject end
 DataBrowserAPI.project_name(::TypedProject) = "typed"
 DataBrowserAPI.read(::TypedProject, ::EngineSource, s::EngineSourceItem) =
     EngineItem("only", (x=[s.version],), Dict(:input => s.version))
+DataBrowserAPI.analyze(::TypedProject, i::EngineItem) = Dict(:total => sum(i.data.x))
+DataBrowserAPI.label(::TypedProject, i::EngineItem) =
+    "$(id(i)) · total $(get(metadata(i), :total, "?"))"
 
 function settled(ws)
     W.wait_workspace_idle!(ws; timeout=20)
@@ -98,6 +101,27 @@ end
         @test item_data(only(W.materialize_items(ws, W.query_items(ws)))).x == [1]
     finally
         W.close_workspace!(ws)
+    end
+end
+
+@testset "labels include metadata from later stages, also after reopening" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            for _ in 1:2
+                ws = W.open_workspace(
+                    TypedProject(), EngineSource("source", 3, false); background_processing=true)
+                try
+                    settled(ws)
+                    # TODO: read through the item accessor once the workspace has one.
+                    @test ws.index.items["only"].label == "only · total 3"
+                finally
+                    W.close_workspace!(ws)
+                end
+            end
+        finally
+            popfirst!(DEPOT_PATH)
+        end
     end
 end
 

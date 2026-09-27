@@ -354,7 +354,12 @@ function run_processing(
     )
     processed_metadata = merge(
         copy(materialized_record.metadata), metadata_dict(metadata(processed)))
-    return (item=processed, record=ItemRecord(materialized_record; metadata=processed_metadata))
+    processed_record = ItemRecord(
+        materialized_record;
+        label=label(workspace.project, processed),
+        metadata=processed_metadata,
+    )
+    return (item=processed, record=processed_record)
 end
 
 """
@@ -386,12 +391,17 @@ function delivered_records(
     ]
 end
 
-"""Run item analysis from the already-published processed result; merge output over the item's layer."""
+"""
+Run item analysis from the already-published processed result.
+
+Returns the analyze output, to merge over the item's metadata layer, and the item's label computed
+with that output included.
+"""
 function run_item_analysis(
     workspace::Workspace,
     collections::CollectionIndex,
     record::ItemRecord,
-)::MetadataDict
+)::NamedTuple
     delivered_record = ItemRecord(
         record; metadata=delivered_metadata(workspace, record, collections))
     processed = only(read_payload(
@@ -399,12 +409,17 @@ function run_item_analysis(
     processed === nothing && error(
         "Cannot analyze item '$(record.id)': processed data is missing",
     )
-    return @timed_dbg "analyze" begin
+    analysis = @timed_dbg "analyze" begin
         metadata_dict(analyze(
             workspace.project,
             materialized_item(
                 workspace, collections, delivered_record, something(processed))))
     end
+    analyzed_record = ItemRecord(
+        delivered_record; metadata=merge(delivered_record.metadata, analysis))
+    analyzed = materialized_item(
+        workspace, collections, analyzed_record, something(processed))
+    return (metadata=analysis, label=label(workspace.project, analyzed))
 end
 
 """

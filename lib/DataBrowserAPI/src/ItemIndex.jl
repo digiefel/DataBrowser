@@ -15,7 +15,6 @@ import ..DataBrowserAPI:
     collection,
     collection_record_id,
     collection_path_label,
-    display_label,
     id,
     item_data,
     label,
@@ -547,9 +546,6 @@ end
 
 id(record::ItemRecord)::String = record.id
 label(record::ItemRecord)::String = record.label
-
-"""Item labels are resolved once, when items are published, so the UI never reruns project code."""
-display_label(::AbstractProject, record::ItemRecord)::String = record.label
 
 """Return one item record's inherited collection metadata plus the item's own metadata."""
 function effective_metadata(index::CollectionIndex, record::ItemRecord)::MetadataDict

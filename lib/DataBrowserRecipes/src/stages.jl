@@ -82,10 +82,9 @@ function _registered_item(
     key = supplied_key === nothing || supplied_key == "" ?
         string(position) : string(supplied_key)
     item_id = "$(source_item_id)#$(recipe.kind):$(key)"
-    label = recipe.label === nothing ? item_id : String(recipe.label(data, local_metadata))
     return RegisteredDataItem{recipe.kind}(
         item_id,
-        label,
+        item_id,
         collection_path,
         data,
         local_metadata,
@@ -109,6 +108,14 @@ function process(project::Project, item::RegisteredDataItem{K})::AbstractDataIte
     recipe = _recipe(project, K)
     recipe === nothing && error("Missing registration $K")
     return _processed_item(recipe, item)
+end
+
+"""Label one registered item through its `label` callback, or with its id when there is none."""
+function label(project::Project, item::RegisteredDataItem{K})::String where {K}
+    recipe = _recipe(project, K)
+    recipe === nothing && error("Missing registration $K")
+    recipe.label === nothing && return item.id
+    return String(recipe.label(item.data, item.metadata))
 end
 
 """

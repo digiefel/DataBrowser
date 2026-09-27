@@ -38,11 +38,21 @@ id(item::AbstractDataItem)::String = error(
     "Item type $(typeof(item)) must implement id(::$(typeof(item)))::String")
 
 """
+    label(project, item) -> String
+    label(item) -> String
+
 Human-readable label for an item.
 
-The default is its stable id, so an item always has a visible label without storing presentation
-state or consulting its source. Override this when a more descriptive label is available.
+The workspace calls `label` when the item is created, and again after `process` and after
+`analyze`, each time on the item with its metadata so far. A label can therefore use metadata that
+only a later stage adds; until then, `get(metadata(item), key, nothing)` returns `nothing`. From
+`process` on, the metadata includes the metadata inherited from the item's collections.
+
+The default is the item's id. Define `label(item)` for a more descriptive label, or the project form
+when the label depends on the project.
 """
+label(project::AbstractProject, item::AbstractDataItem)::String = label(item)
+
 label(item::AbstractDataItem)::String = id(item)
 
 """Display name for one item type."""

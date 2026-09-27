@@ -134,6 +134,9 @@ Decisions taken during the audit:
 - [x] Replace `entries` with an optional `expand`. `read` returns the data item when a source item
   holds exactly one. `read` and `expand` run in one source job that records two results:
   `SOURCE_READ` and `SOURCE_EXPAND`, which replaces `SOURCE_INTERPRET`.
+- [x] Compute item labels again after `process` and `analyze`, so a label can show metadata those
+  stages add, and persist the latest label. `label(project, item)` replaces the `display_label`
+  hook.
 - [x] Finish removing Core's reads of Cache fields. Stage, fingerprint, metadata, and payload
   access uses Cache's exported interface. Core owns its workspace idle deadline; Cache keeps its
   flush-deadline helper private. Remove unused imports, including the concrete cache backend.
@@ -208,9 +211,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
   delivery belongs to 0.2.2.
 - [ ] Preserve member metadata changes returned by collection `process`, including changes with
   unchanged payloads. `run_collection_process` currently selects outputs only when `item_data`
-  changes by identity, and collection completion publishes no member metadata. Cover cumulative
-  device history: successive measurements need different wakeup/fatigue counts even when their
-  waveform payloads are unchanged.
+  changes by identity, and collection completion publishes no member metadata or labels. Cover
+  cumulative device history: successive measurements need different wakeup/fatigue counts even
+  when their waveform payloads are unchanged.
 - [ ] Sort every exported name into the project-author or extension-author tier and stop exporting
   the rest: `items_for_file`, `SourceFile`, the concrete `Project`, `gui_timings`,
   `reset_timings!`, `plot_kinds`, `CollectionRecipe`, `ItemRecipe`, `NoMatch`,

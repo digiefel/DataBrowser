@@ -49,6 +49,10 @@ Register or replace one item pipeline. `read` is the only required callback. Reg
 callbacks receive ordinary project data and metadata dictionaries; DataBrowser owns item identity
 and storage records internally.
 
+`label(data, metadata)` runs when the item is created, and again after `process` and after
+`analyze` with the metadata those stages added, so a label can show analysis results once they
+exist.
+
 Calling the unnamed form again replaces the project's unnamed registration. Calling the named form
 again with the same name replaces that registration in place.
 """
