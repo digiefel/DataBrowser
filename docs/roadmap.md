@@ -490,14 +490,15 @@ opens the workspace. Reopening means rerunning the same entry code.
 - [x] Persist tree, item, filter, and plot-view state in the current `databrowser.toml`.
   ([#2](https://github.com/digiefel/MeasurementBrowser/pull/2),
   [#7](https://github.com/digiefel/MeasurementBrowser/pull/7))
-- [ ] Define the TOML schema for sources, cache settings, extension state, and the last workflow.
-  Views are saved in workflows ([plans/visualizers.md](plans/visualizers.md)), not in the TOML.
+- [ ] Define the TOML schema for sources, cache settings, extension state, and the last workspace
+  file. Views are saved in workspace files ([plans/visualizers.md](plans/visualizers.md)), not in
+  the TOML.
 - [ ] Only the browser and commands write `dbproject.toml`; entry code reads it. A setting is set in
   code or in the file, never in both, so rerunning entry code never undoes browser changes.
 - [ ] Load or create the config from Julia and Python entry code.
 - [ ] Edit project settings through the API and GUI and write them back predictably.
 - [ ] Place `tags.txt` and the notes file beside `dbproject.toml`.
-- [ ] Reopen the last workflow when the same entry code reopens the project.
+- [ ] Reopen the last workspace file when the same entry code reopens the project.
 - [ ] Keep cache reuse and source changes correct across repeated openings.
 
 ## 0.16.0 — Command-line interface
@@ -564,8 +565,8 @@ environment through Pkg when opened.
 
 ### GUI-authored workflows
 
-Save everything built in the browser as a workflow: an ordinary Julia file holding the graph of
-views, from finding data to creating views, editing figures, and exporting results. See
+Save everything built in the browser as a workspace file: an ordinary Julia file holding the graph
+of views, from finding data to creating views, editing figures, and exporting results. See
 [plans/visualizers.md](plans/visualizers.md).
 
 ### First-party analysis add-ons

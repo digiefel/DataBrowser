@@ -157,7 +157,8 @@ Registered plot APIs like `register_plot!` create one visualizer for each projec
 are a convenience, not the contract every visualizer follows. A **figure** is
 a composed visual artifact: visualizer outputs, layout, styling, annotations, and optional embedded
 data. A **workflow** is the persisted graph of views: selections, transforms, visualizers, fits,
-annotations, exports — intent, not pixels, saved as an ordinary Julia file. An **annotation** is user-authored metadata on an item
+annotations, exports — intent, not pixels, saved as an ordinary Julia file, the workspace file.
+An **annotation** is user-authored metadata on an item
 (tags, notes, coordinates, spatial position); a **figure annotation** is a visual mark on a figure
 (arrow, region, fit label, text). A tag describes an item; an arrow describes a figure. These are
 detailed in §8.
@@ -188,7 +189,7 @@ plot!(fig, items, X(:voltage_V), Y(:polarization_uCcm2); visualizer=LinePlot)
 fit = linear_fit!(fig, items, X(:voltage_V), Y(:current_A))
 annotate!(fig, Arrow(fit; label="linear region"))
 
-save_workflow("pund_review.jl", fig)
+save_workspace("pund_review.jl")
 ```
 
 The GUI issues the same kinds of actions when the user clicks, drags, or edits plot options. The saved
@@ -409,7 +410,7 @@ thing the GUI observes and mutates through the same operations available to Juli
 | Data cache | Cache layer | DuckDB (+ side files) outside the source root; keyed by project. |
 | GUI state | Browser window | Mostly transient; per-dataset state in `databrowser.toml`. App-wide prefs TBD with project-file persistence. |
 | Item annotations | Source root | Hand-editable tags, notes, coordinates, spatial positions. |
-| Workflow state | Workflow model | Saved workflow file, replayable from GUI or API. |
+| Workflow state | Workflow model | Saved workspace file, replayable from GUI or API. |
 | Figure state | Figure / workflow model | Produced from workflows or exported separately. |
 
 Normal project persistence is a small text project file plus generated cache. Export/archive
