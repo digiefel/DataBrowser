@@ -359,7 +359,7 @@ marking them as bad, is a tag that the item tree and its filters read. Excluded 
 from every view downstream.
 
 A change that flows back upstream, such as excluding a point seen in a plot, goes through the
-workspace and never through a connection, so connected views never form a cycle.
+workspace, not through a connection.
 
 <!-- TODO: tags on elements inside an item, such as rows, need a row identity that survives
 reprocessing. -->
@@ -370,13 +370,23 @@ A visualizer with identity level 2 reports the hovered or clicked item through i
 browser then offers the same context menu in every visualizer: select the item in the item tree,
 show its metadata, open its source file, and show the code of the transform that produced the value.
 
-### To explore on the real thing
+### Cycles
 
-These choices are made by trying them in the browser:
+Connections may form cycles. A change travels only while an output differs from its previous value,
+the same comparison that decides whether an output passes on at all, so a cycle stops by itself as
+soon as its values stop changing. A limit on the number of rounds, for example five, stops a cycle
+that never settles, and the view where it stopped shows that it is not current.
 
-- **Crossfilter.** In Mosaic, each of several views filters the others by its brush and ignores its
-  own. With connections this would form a cycle, so it needs its own form, for example a transform
-  the browser provides.
+Crossfiltering relies on this. In crossfiltering, each of several views filters the others by its
+brush and ignores its own, as in Mosaic:
+
+```
+ Temperature.brush_x ──▶ Voltage (input)
+ Voltage.brush_x ─────▶ Temperature (input)
+```
+
+Dragging the brush on Temperature updates Voltage. Voltage's brush is unchanged, so the change stops
+there after one round.
 
 ## The canvas
 
@@ -541,8 +551,7 @@ GUI · REPL · CLI · API
   tracing into SQL.
 - **Canvas**: presents the graph and turns user actions into commands. Visualizers, found by
   dispatch, draw inside it.
-- Tagging and exclusion go to the workspace directly, which is why connected views never form a
-  cycle.
+- Tagging and exclusion go to the workspace directly, not through connections.
 
 While the browser runs, the graph in memory is the truth, because the evaluator works on it. After
 each finished action, such as dropping a node or making a connection, the browser writes the change
