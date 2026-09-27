@@ -18,6 +18,15 @@ and compose into figures. The aim is the directness of a patching environment su
 connecting things shows a result immediately, with the power of a language such as Matlab, where any
 code can be a step.
 
+Three properties of Julia and DataBrowser set this design apart:
+
+- **The choice of visualizers follows from dispatch.** A value is offered exactly the visualizers
+  whose methods accept it, with no separate declaration.
+- **Every step is a Julia function.** A transform is plain Julia code, and a set of connected views
+  can be written down as Julia code.
+- **Identity runs from file to screen.** Items have stable ids, and every value is kept with the
+  items it was computed from, so an element on screen can name the item it came from.
+
 Today the browser has three fixed views: the Table Inspector, the Table Plot, and the plot windows
 that draw a project's registered plots. Each has its own code for following the selection, loading
 data, reporting errors, and saving its state. This plan replaces them with one mechanism that all
@@ -46,13 +55,15 @@ flowchart LR
 ### Selection
 
 A selection is either **live** or **fixed**. A live selection follows the browser's current
-selection. A fixed selection is a list of item ids that stays the same until the user changes it.
-The browser handles both kinds. A visualizer does not know which kind its view has.
+selection, or the output of another view the user connected it to (see
+[Interaction between views](#interaction-between-views)). A fixed selection stays the same until the
+user changes it. The browser handles both kinds. A visualizer does not know which kind its view has.
 
 ### Transform
 
-A transform is a plain Julia function of the selected items. It returns any value. The default is
-`identity`: the visualizer receives the selected items themselves.
+A transform is a plain Julia function of the view's input: the selected items, or the output of a
+connected view. It returns any value. The default is `identity`: the visualizer receives the
+selected items themselves.
 
 A transform uses the same functions as any other code that reads items: `item_data(item)`,
 `metadata(item)`, `label(item)`, and any function the project defines. Viewing metadata needs no
@@ -70,8 +81,9 @@ vectors is a table to the table visualizer and a set of labelled traces to a lin
 intended. The user chooses the reading by choosing the visualizer, or by changing the transform.
 
 Every value must be viewable, for example by an inspector that accepts any value and shows its
-structure. Most visualizers accept only what they are written for. When a visualizer receives a value it
-cannot draw, it fails, and the view shows the error.
+structure. Most visualizers accept only what they are written for, and only those that accept a
+value are offered for it. When a visualizer cannot draw a value it accepted, it fails, and the view
+shows the error.
 
 ## Who writes what
 
@@ -120,19 +132,28 @@ load_view!(v::AbstractVisualizer, view::Dict{String,Any})
 Methods of `prepare!` dispatch on the value's type, and the most specific method wins:
 
 ```julia
+# item_data of each item, shown with an item column
+prepare!(v::TableView, items::AbstractVector{<:AbstractDataItem}) = ...
 prepare!(v::TableView, x) = (v.columns = Tables.columns(x))     # throws for a non-table
 prepare!(v::LinePlot, y::AbstractVector{<:Real}) = ...           # one trace
 prepare!(v::LinePlot, traces::AbstractDict) = ...                # one labelled trace per entry
 ```
 
-A visualizer does not check its input in advance. If a value does not fit, the method it calls
-throws, and the browser shows that error in the view. Handling a new kind of value means adding a
-method.
+The `prepare!` methods are also the visualizer's declaration of what it accepts. The browser offers
+a visualizer for a value when `hasmethod(prepare!, Tuple{V, typeof(value)})` is true. `TableView`
+above accepts any value, so it is always offered. `LinePlot` is offered only for real vectors and
+dictionaries. For this reason no catch-all `prepare!(::AbstractVisualizer, value)` exists, neither
+for all visualizers nor for a family.
 
-The browser finds visualizers through the type hierarchy. Every loaded concrete subtype of
-`AbstractVisualizer` can be chosen when the user opens a view. The list is read at that moment, so
-a visualizer defined after the browser opened, for example a plot registered from the REPL, is
-available at once. Defining the type is the whole registration.
+A visualizer does not check its input beyond its signatures. If a value does not fit, the method it
+calls throws, and the browser shows that error in the view. Handling a new kind of value means
+adding a method.
+
+The browser finds visualizers through the type hierarchy: every loaded concrete subtype of
+`AbstractVisualizer` whose `prepare!` accepts the value. The list is read when the user chooses a
+visualizer, so a visualizer or method defined after the browser opened, for example a plot
+registered from the REPL, is available at once. Defining the type and its methods is the whole
+registration.
 
 ### Drawing libraries
 
@@ -202,7 +223,7 @@ The record in step 3 is a `Payload`, internal to the browser:
 
 ```julia
 struct Payload{T}
-    key       # the selected item ids, each item's revision, and the transform
+    key       # the input's item ids and revisions, the connected view's key, and the transform
     value::T  # the transform's result
 end
 ```
@@ -229,15 +250,88 @@ that need no knowledge of visualizers:
   vectors and matrices, plot with no code. A type that a user has taught Makie through Makie's own
   extension methods plots here too, with no DataBrowser knowledge.
 
+## Interaction between views
+
+Views affect each other in two ways: one view feeds another, and hovering an element highlights the
+same item in every view.
+
+### Connected views
+
+By default, a live view follows the browser's selection. The user can connect it to another view
+instead, and it then follows that view's output. A view is connected only when the user connects it.
+Turning off live freezes the view on its current input, whatever its source.
+
+A view's **output** is its value, or the part of the value the user brushed or clicked. The brushed
+part is a value of the same kind, so the connected view's transform and visualizer treat it like any
+other value:
+
+| Value | Brushed part | Obtained with |
+| --- | --- | --- |
+| Vector of items | Vector of items | `getindex` |
+| Table | Table with fewer rows | `Tables.subset` |
+| `Dict` | `Dict` with fewer keys | `filter` |
+| Anything else | The whole value | – |
+
+The item tree acts as the first view: its value is the selected items. A view with the default
+transform also has its items as value, so connected views pass items along until a transform
+reshapes them.
+
+```mermaid
+flowchart LR
+    tree["Item tree<br/>value: selected items"] --> A["Scatter<br/>value: items"]
+    A -->|brushed items| B["Histogram<br/>transform: temperatures"]
+    A -->|brushed items| C["Table"]
+    C -->|brushed rows| D["Line plot"]
+```
+
+### Identity
+
+The browser always knows which items a value was computed from, through the key of its `Payload`.
+Finer identity depends on the value, and a view uses the finest level available:
+
+1. **The items the view shows.** Always available.
+2. **The item of each element**, for example the item behind a point. Available when the visualizer
+   receives items: it calls `item_data` itself and knows where each row comes from. A transform
+   keeps this level only if its result carries the item ids, for example
+   `Dict(id(i) => ... for i in items)`.
+3. **Elements inside an item**, for example rows of a table. Available for value types that support
+   it, starting with Tables.
+
+An aggregate, such as the mean of several items, has only level 1. It belongs to all the items it
+was computed from.
+
+### Hover
+
+Hovering an element highlights the same item in every view that shows it. This needs no connection
+between the views, and it works in every view that has level 2.
+
+### Brushes, clicks, and queries
+
+- A **brush** is a range on the fields the visualizer plots. When the value changes, the visualizer
+  applies the same range to the new value.
+- A **click** selects a list of elements.
+- A **query** is a transform that filters, for example `t -> filter(r -> r.temperature > 300, t)`.
+  The browser never infers a rule from a list of elements.
+
+### To explore on the real thing
+
+These choices are made by trying them in the browser:
+
+- **Where connections are drawn.** CImGui includes imnodes, a node canvas with pins, wires, and any
+  ImGui content inside a node, such as a preview of the view. Wires can also be drawn between view
+  windows, but only within the main OS window: an undocked window is a separate OS window, and
+  nothing can be drawn between OS windows. Drag and drop works between OS windows, so a connection
+  can still be made there and shown as a badge on each end. The options are a canvas, connections
+  between windows, or both.
+- **One output or two.** One output keeps every connection alike. Two outputs, the value and its
+  brushed part, let a histogram show all data with the brushed part on top.
+- **Several inputs.** Brushes from several views can combine as in Mosaic: union, intersection, or
+  crossfilter, where each view ignores its own brush. Alternatively, a view has several inputs and
+  its transform takes several arguments, `(a, b) -> ...`, which allows joins and comparisons. Each
+  is simple exactly where the other needs code.
+
 ## Open design work
 
-- **Interaction between views.** Views should be able to affect each other: a rectangle drawn on a
-  scatter plot defines a subset that a histogram shows; hovering a point highlights its row in a
-  table; other links between visualizers that go beyond selecting items. A transform that combines
-  items makes this hard, because an element of its result may no longer correspond to one item. This
-  needs its own design exploration. Ideas to study: automatic differentiation (mapping forward and
-  back through a recorded chain of operations), linked brushing in GGobi and Vega-Lite (selections as
-  shared parameters), Makie Observables, spreadsheet dependency graphs, and Max patch cords.
 - **Transform user experience.** How users write, choose, and combine transforms in the browser, and
   how they reach transforms their project defines. This is decided once views and transforms work.
 - **Composed figures.** Figures that combine several views are designed with the figure composer.

@@ -132,8 +132,9 @@ value fully, but it should identify it, track it in the index, summarize it, and
 A **Core-supported data shape** is a type the toolkit understands out of the box: caching, summaries,
 and default visualizers work with no user code (tables today; vectors, arrays, and image-like values
 later). The shape *is* the payload's Julia type — there is no separate detection or declaration step,
-and shapes are not exclusive: every visualizer whose accepted types match the payload is offered, so
-the same matrix opens as a grid, an image, or a heatmap depending on which visualizer the user opens.
+and shapes are not exclusive: every visualizer whose `prepare!` methods accept the payload is
+offered, so the same matrix opens as a grid, an image, or a heatmap depending on which visualizer the
+user opens.
 The app is type-agnostic in the failure direction too: a payload nothing matches simply is not cached
 and gets only the basic inspector, and a visualizer applied to data it cannot handle fails cleanly on
 that view — the user can then register their own support. Shapes whose support needs heavy
@@ -152,8 +153,8 @@ predictable effects, and is inspectable so an agent can discover what is possibl
 data (generic built-ins or package-supplied), optionally exposing declarative state. At runtime a
 visualizer presents as zero-or-more windows the user can spawn, toggle, minimize, and close; the
 current plot window is the first such visualizer (today 1-to-many, since it is the only one).
-Registered plot APIs like `register_plot!` are how *one* visualizer accepts project callbacks, not
-the contract every visualizer follows. A **figure** is
+Registered plot APIs like `register_plot!` create one visualizer for each project callback; they
+are a convenience, not the contract every visualizer follows. A **figure** is
 a composed visual artifact: visualizer outputs, layout, styling, annotations, and optional embedded
 data. A **workflow** is the persisted sequence/graph of actions (open, select, transform, visualize,
 fit, annotate, export) — intent, not pixels. An **annotation** is user-authored metadata on an item

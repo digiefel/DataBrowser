@@ -431,11 +431,13 @@ Make common inspection fast without requiring Makie or project-specific plot cod
 GUI with lightweight visualizers, using ImPlot where it provides the right interaction and keeping
 the table inspector as a first-class view.
 
+- [ ] Build the view host described in [plans/visualizers.md](plans/visualizers.md): views over a
+  live or fixed selection, a transform, and an `AbstractVisualizer`. Rebuild the Table Inspector,
+  Table Plot, and plot windows as visualizers.
 - [ ] Add a lightweight line/scatter visualizer for simple numeric tables and vectors.
 - [ ] Add concise scalar, metadata, and nested-value inspectors.
 - [ ] Let users open several independent visualizer windows over different live selections.
-- [ ] Register every built-in visualizer through the same GUI extension and window surfaces used by
-  other first-party features.
+- [ ] Register every built-in visualizer by defining its type, as any package does.
 
 ## 0.12.0 — Array and image visualizers
 
