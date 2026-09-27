@@ -599,8 +599,11 @@ change compute again, or find their earlier values still cached by key.
 This keeps undo correct for every command, including those added later, without writing an inverse
 for each. An edit to the file outside the browser becomes one step in the same history.
 
-<!-- TODO: what else is undoable. For example tags and exclusions, which live in the workspace, not
-in the graph, or a brush position, which is an output of a view. -->
+Each copy also holds the item tree's selection and the workspace's tags, including exclusions, so
+undo restores them too. Brushes are selections inside views: a visualizer includes its brush in the
+settings it returns from `save_view`, and `load_view!` restores it. A brush dragged or a selection
+made becomes one step when the mouse is released. The camera, meaning position and zoom on the
+canvas, is not part of the history.
 
 ## Open design work
 
