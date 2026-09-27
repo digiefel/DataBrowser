@@ -75,8 +75,8 @@ The user edits the inputs graphically and the body as text (see
 `items`: the visualizer receives the selected items themselves. An input that is not connected
 takes its default. A required input that is not connected gives Julia's own error in the view.
 
-A transform's body always lives in the graph, which is saved as a Julia file (see
-[Saving views and workflows](#saving-views-and-workflows)). Opening a view and changing its
+A transform's body always lives in the graph, which is saved as a Julia file, the workflow (see
+[Saving workflows](#saving-workflows)). Opening a view and changing its
 transform needs no other file, and the body can still be edited in any editor. Reuse is calling a
 function: a body that grows becomes a call such as `fit_in_window(; cycles, window)` to a function
 in the project's own code. A transform never moves between places.
@@ -236,7 +236,7 @@ For each view, the browser:
 3. runs the transform and keeps the result together with what it was computed from;
 4. calls `prepare!` when the result changes, and `draw!` every frame;
 5. shows any error from steps 2–4 inside the view;
-6. saves the view with the project (see [Saving views and workflows](#saving-views-and-workflows)).
+6. saves the view in the workflow (see [Saving workflows](#saving-workflows)).
 
 The record in step 3 is a `Payload`, internal to the browser:
 
@@ -427,7 +427,7 @@ A function is a value, so its code is shown by a visualizer like any other value
 Expanding a transform on the canvas opens a code view on it. The code view shows only the body; the
 inputs are the pins, edited graphically.
 
-- The body is edited in the code view. Saving it writes the graph file.
+- The body is edited in the code view. Saving it writes the workflow.
 - The code view can step into a function the body calls and show its definition, found with
   CodeTracking. Saving writes those lines back, and Revise redefines the function. Editing the file
   in another editor works too: Revise picks up the change, and the code view reloads.
@@ -480,11 +480,12 @@ DataBrowser reaches this in three tiers. Each tier falls back to the one before 
 3. **Pre-aggregation as in Mosaic**, where both ends are known queries: a visualizer with a known
    mapping, such as a histogram of one column, behind the default transform or a traced one.
 
-## Saving views and workflows
+## Saving workflows
 
-Everything a user builds is saved into the project, and can be saved as a workflow: views, their
-inputs and connections, transforms, and visualizer settings. The saved form is Julia, in the spirit
-of a Vega specification, except that every part is real Julia code or values. For example:
+A **workflow** is the saved graph: every plane, view, input, connection, transform, visualizer
+setting, and node position. It records intent, not pixels: opening it rebuilds every view and
+computes its value again. The saved form is Julia, in the spirit of a Vega specification, except
+that every part is real Julia code or values. For example:
 
 ```julia
 scatter = view(Scatter(x = :time, y = :voltage); items = selection(), at = (120, 40))
@@ -493,7 +494,26 @@ fits = view(TableView(); cycles = selection(), window = output(scatter, :brush_x
 end
 ```
 
-The graph file is an ordinary `.jl` file that the user may edit freely. The browser edits it in
+```
+ open project, no saved workflow      "Save" (name it)                reopen project
+ ┌────────────────────────────┐      ┌───────────────────────────┐   ┌──────────────────────────┐
+ │ untitled workflow          │─────▶│ <project root>/review.jl  │──▶│ dbproject.toml:          │
+ │ autosaved in the depot,    │      │ dbproject.toml records it │   │  last workflow review.jl │
+ │ beside the cache           │      │ as the last workflow      │   │ → loads it; work resumes │
+ └────────────────────────────┘      └───────────────────────────┘   └──────────────────────────┘
+```
+
+A new workflow is untitled and autosaved in the depot, beside the cache, so it is never lost and
+works like a saved one: the code view and Revise treat it the same. Saving gives it a name and a
+place in the project root, and `dbproject.toml` records it as the last workflow, which opens again
+with the project.
+
+Only the browser and commands write `dbproject.toml`. Entry code reads it, and the browser creates
+it when it is missing, so running the entry code again never undoes what the user did in the
+browser. A setting is set either in code or in the file, never in both: a setting fixed by code
+shows in the browser as fixed.
+
+A workflow is an ordinary `.jl` file that the user may edit freely. The browser edits it in
 place and keeps everything the user wrote, including comments and formatting outside the bodies.
 This needs edits on the syntax tree that preserve formatting, which JuliaSyntax makes possible.
 
@@ -506,7 +526,7 @@ representation, and the graph follows from it. This is the shared command layer 
 GUI · REPL · CLI · API
         │
         ▼
-    Commands ──▶ Graph (Julia file) ──▶ Evaluator ──▶ Canvas
+    Commands ──▶ Graph (workflow) ────▶ Evaluator ──▶ Canvas
         ▲                                  ▲ │           │
         │                    items,        │ │ requests  │
         │                    revisions     │ ▼           │ tags, exclusion

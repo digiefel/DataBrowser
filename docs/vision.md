@@ -156,8 +156,8 @@ current plot window is the first such visualizer (today 1-to-many, since it is t
 Registered plot APIs like `register_plot!` create one visualizer for each project callback; they
 are a convenience, not the contract every visualizer follows. A **figure** is
 a composed visual artifact: visualizer outputs, layout, styling, annotations, and optional embedded
-data. A **workflow** is the persisted sequence/graph of actions (open, select, transform, visualize,
-fit, annotate, export) — intent, not pixels. An **annotation** is user-authored metadata on an item
+data. A **workflow** is the persisted graph of views: selections, transforms, visualizers, fits,
+annotations, exports — intent, not pixels, saved as an ordinary Julia file. An **annotation** is user-authored metadata on an item
 (tags, notes, coordinates, spatial position); a **figure annotation** is a visual mark on a figure
 (arrow, region, fit label, text). A tag describes an item; an arrow describes a figure. These are
 detailed in §8.
@@ -188,7 +188,7 @@ plot!(fig, items, X(:voltage_V), Y(:polarization_uCcm2); visualizer=LinePlot)
 fit = linear_fit!(fig, items, X(:voltage_V), Y(:current_A))
 annotate!(fig, Arrow(fit; label="linear region"))
 
-save_workflow("pund_review.dbflow", fig)
+save_workflow("pund_review.jl", fig)
 ```
 
 The GUI issues the same kinds of actions when the user clicks, drags, or edits plot options. The saved
