@@ -274,6 +274,23 @@ that need no knowledge of visualizers:
   vectors and matrices, plot with no code. A type that a user has taught Makie through Makie's own
   extension methods plots here too, with no DataBrowser knowledge.
 
+### Composed figures
+
+A composed figure is a container on the canvas, like a group. The user moves views into it, and
+each view then draws in a cell of one shared Makie figure. Every view appears once, and the axes of
+all members live in one figure, so linked axes and shared styles work with plain Makie. Zoomed out,
+the container shows the finished figure; zoomed in, the user edits the cells and the layout.
+
+Plot authors change nothing: `setup` and `draw` still create and fill their own `Figure`. When a
+view joins a composed figure, DBPlots moves its axes into the view's cell. In Makie, placing an axis
+in another figure's layout (`g[1, 2] = ax`) moves only its slot: the axis is not drawn in the new
+figure until its scene is also moved under the new figure's scene. That second step uses Makie
+internals, so it stays inside one DBPlots function, with a test that renders the composed figure
+and checks that the moved axis is drawn.
+
+<!-- TODO: verify that zooming and panning work on a moved axis, and how a view leaves a composed
+figure again. -->
+
 ## Interaction between views
 
 Views affect each other in two ways: one view feeds another, and hovering an element highlights the
@@ -567,9 +584,8 @@ everything the user built.
 - **Settings as inputs.** Linking what views show, such as axis limits, needs inputs on the
   visualizer as well as on the transform, for example an `xlims` input on a line plot. This is
   explored last.
-- **Composed figures.** Figures that combine several views are designed with the figure composer.
-  Combining Makie outputs is DBPlots' concern. Combining views drawn with different libraries is not
-  planned.
+- **Composed figures across drawing libraries.** A composed figure combines Makie views. Combining
+  views drawn with different libraries is not planned.
 
 ## Changes to existing code
 
