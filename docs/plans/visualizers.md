@@ -402,11 +402,14 @@ renders its texture at the node's size on screen.
 ### Planes
 
 A project can have several **planes**: independent graphs, each a full canvas of its own, for
-example one plane per analysis. Alt and the scroll wheel move from one plane to the next. Every
-plane has the item tree's selection as a source, and all planes share the workspace, including its
-tags. Views on different planes are not connected.
+example one plane per analysis. Alt and the scroll wheel move from one plane to the next with an
+animation, and the camera keeps its position and zoom, so two planes arranged alike can be compared
+spot by spot. Every plane has the item tree's selection as a source, and all planes share the
+workspace, including its tags. Views on different planes are not connected. All planes are saved in
+the same file.
 
 <!-- TODO: whether connections between planes are ever allowed; left out for simplicity. -->
+<!-- TODO: how planes are ordered. -->
 
 ### Groups
 
