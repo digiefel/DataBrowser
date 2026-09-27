@@ -113,8 +113,7 @@ end
                     TypedProject(), EngineSource("source", 3, false); background_processing=true)
                 try
                     settled(ws)
-                    # TODO: read through the item accessor once the workspace has one.
-                    @test ws.index.items["only"].label == "only · total 3"
+                    @test W.item(ws, "only").label == "only · total 3"
                 finally
                     W.close_workspace!(ws)
                 end

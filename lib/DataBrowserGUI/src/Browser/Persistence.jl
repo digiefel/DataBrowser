@@ -111,8 +111,8 @@ function _items_for_ids(
 )::Vector{ItemRecord}
     workspace = state.workspace
     workspace isa Workspace.Workspace || return ItemRecord[]
-    index = workspace.index.items
-    return [index[id] for id in ids if haskey(index, id)]
+    return ItemRecord[
+        item for item in (Workspace.item(workspace, id) for id in ids) if item !== nothing]
 end
 
 """Capture the browser controls that belong in the source-root state file."""

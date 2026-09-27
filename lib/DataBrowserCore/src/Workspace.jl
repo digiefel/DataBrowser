@@ -82,14 +82,18 @@ using DataBrowserCache:
 import DataBrowserCache
 import DataBrowserCache: query_items, set_cache_memory_limit!
 using DataBrowserAPI.ItemIndex:
+    AbstractCollectionRecord,
     CollectionIndex,
     CollectionInput,
+    CollectionRecord,
     ItemRecord,
     MetadataDict,
+    RootCollection,
     append_item!,
     clear_collection_analysis!,
     collection_inputs,
     collection_item_ids,
+    collection_metadata,
     collection_path_keys,
     effective_metadata,
     effective_record,
@@ -98,7 +102,8 @@ using DataBrowserAPI.ItemIndex:
     remove_item!,
     resolve_collection_path!,
     resolve_collection_paths!,
-    set_collection_analysis!
+    set_collection_analysis!,
+    sorted_child_keys
 using ..DataBrowserCore:
     SourceItemExpansion,
     expand_source_item
@@ -366,6 +371,7 @@ include("Workspace/Operations.jl")
 include("Workspace/Status.jl")
 include("Workspace/DataAccess.jl")
 include("Workspace/Processing.jl")
+include("Workspace/Accessors.jl")
 include("Workspace/MemoryDiagnostics.jl")
 
 function open_workspace(

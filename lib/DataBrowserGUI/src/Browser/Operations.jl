@@ -1,7 +1,6 @@
 using DataBrowserAPI:
     project_name,
     source_id
-using DataBrowserAPI.ItemIndex: collection_path_keys
 using DataBrowserCache: ProjectCacheSchemaError
 import DataBrowserCore.Workspace
 using DataBrowserCore.Workspace:
@@ -56,11 +55,7 @@ function select_source_item!(
     workspace isa Workspace.Workspace || return false
     key = Workspace.source_item_key(workspace, String(source_item_id))
     key === nothing && return false
-    items = [
-        item
-        for item in values(workspace.index.items)
-        if item.source_item_key == key
-    ]
+    items = [item for item in Workspace.items(workspace) if item.source_item_key == key]
     isempty(items) && return false
     Workspace.select_items!(workspace, items)
     _reveal_selected_items!(state)
@@ -70,22 +65,14 @@ end
 """Reveal the current workspace selection in the tree and item panel."""
 function _reveal_selected_items!(state::BrowserState)::Nothing
     workspace = state.workspace::Workspace.Workspace
-    items = [workspace.index.items[id] for id in workspace.selection.item_ids]
+    items = _items_for_ids(state, workspace.selection.item_ids)
     isempty(items) && return nothing
-    collections = workspace.index.collections
-    collection_ids = unique(String[
-        item.collection_key === nothing ?
-            ROOT_COLLECTION_SELECTION_ID :
-            collections.records[item.collection_key].id
-        for item in items
-    ])
+    item_collections = [Workspace.collection(workspace, item) for item in items]
+    collection_ids = unique(String[id(c) for c in item_collections])
     expanded_ids = copy(state.expanded_collection_ids)
-    for item in items
-        item.collection_key === nothing && continue
-        path = collection_path_keys(collections, item.collection_key)
-        for key in path[1:end-1]
-            parent_id = collections.records[key].id
-            parent_id in expanded_ids || push!(expanded_ids, parent_id)
+    for item_collection in item_collections
+        for ancestor in Workspace.ancestors(workspace, item_collection)
+            ancestor.id in expanded_ids || push!(expanded_ids, ancestor.id)
         end
     end
 

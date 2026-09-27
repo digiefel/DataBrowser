@@ -180,9 +180,9 @@ function _render_workspace_tab!(workspace::Workspace.Workspace)::Nothing
     ig.Text(@sprintf("Cache write buffer: %d items / %d rows pending", staged.items, staged.rows))
     ig.Spacing()
 
-    index = workspace.index
-    ig.Text("Index: $(length(index.items)) items, $(length(index.collections.records)) collections")
-    ig.Text("Metadata held: $(length(index.item_metadata))")
+    memory = Workspace.workspace_memory_snapshot(workspace)
+    ig.Text("Index: $(memory.index_items) items, $(memory.index_collections) collections")
+    ig.Text("Metadata held: $(memory.item_metadata)")
     return nothing
 end
 

@@ -225,9 +225,11 @@ workloads, completed disk writes, cache reads and process memory measurements.
   `select_items!(::AbstractVector)` fallback. The Cache-side `read_payload` name is handled by
   the payload contract work in 0.2.2.
   `query_items(ws)` becomes `item_ids(ws)`; `query_items(ws, sql)` becomes internal.
-- [ ] Add the workspace accessors the GUI currently reaches for by field: `items(ws)`,
-  `item(ws, id)`, `collections(ws)`, `selection(ws)`, `errors(ws)`, and an `on_change(ws, f)`
-  subscription replacing the `status_dirty` poll.
+- [x] Read the item tree through workspace accessors instead of `workspace.index`: `items`, `item`,
+  `collections`, `collection`, `children`, `ancestors`, `metadata` and `metadata_keys`, with
+  `RootCollection()` for the top of the tree.
+- [ ] Add the remaining workspace accessors: `selection(ws)`, `errors(ws)`, and an
+  `on_change(ws, f)` subscription replacing the `status_dirty` poll.
 - [ ] Recipes: rename `register_collection_analysis!` to `register_collection!` (it registers
   `process` too); look the recipe up once per stage chain instead of three linear scans.
 - [ ] Strengthen internal module boundaries and import hygiene across the package family.

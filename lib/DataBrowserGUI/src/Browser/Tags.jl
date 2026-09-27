@@ -1,19 +1,18 @@
 using DataBrowserAnnotations
 
 import DataBrowserCore.Workspace
+using DataBrowserAPI: id, label
 using DataBrowserAPI.ItemIndex:
+    AbstractCollectionRecord,
     CollectionRecord,
     ItemRecord,
-    collection_item_ids,
-    collection_location,
-    collection_path_keys,
-    has_collection_children,
+    RootCollection,
     item_timestamp_key
 
 const BAD_TAG_NAME = "bad"
 const BAD_TAG_COLOR = (UInt8(0xff), UInt8(0x30), UInt8(0x30))
 const BAD_TAG_PRIORITY = 100
-const ROOT_COLLECTION_SELECTION_ID = ""
+const ROOT_COLLECTION = RootCollection()
 
 """
 Load tags for one source root.
@@ -71,26 +70,28 @@ end
 
 """Return the persisted annotation key for one collection record."""
 function _collection_annotation_key(
-    collections,
+    workspace::Workspace.Workspace,
     collection_record::CollectionRecord,
 )::String
-    path = CollectionRecord[
-        collections.records[key]
-        for key in collection_path_keys(collections, collection_record.key)
-    ]
-    return join((segment.label for segment in path), '/')
+    path = [Workspace.ancestors(workspace, collection_record); collection_record]
+    return join(label.(path), '/')
 end
 
 """Return every parent annotation key used when resolving inherited tags."""
 function _ancestor_annotation_keys(
-    collections,
-    collection_record::CollectionRecord,
+    workspace::Workspace.Workspace,
+    collection_record::AbstractCollectionRecord,
 )::Vector{String}
-    path = collection_path_keys(collections, collection_record.key)
     return String[
-        _collection_annotation_key(collections, collections.records[key])
-        for key in path[1:end-1]
+        _collection_annotation_key(workspace, ancestor)
+        for ancestor in Workspace.ancestors(workspace, collection_record)
     ]
+end
+
+"""Return the annotation keys of the collections that hold an item, from the top level down."""
+function _item_ancestor_annotation_keys(workspace::Workspace.Workspace, item::ItemRecord)::Vector{String}
+    path = Workspace.ancestors(workspace, item)
+    return String[join(label.(path[1:depth]), '/') for depth in eachindex(path)]
 end
 
 """Return whether an item or one of its supplied parents has the bad tag."""
@@ -109,12 +110,12 @@ function _collection_is_visible(
 )::Bool
     _show_bad_effective(state) && return true
     tag_state = _tag_state_or_error(state)
-    collections = (state.workspace::Workspace.Workspace).index.collections
-    collection_key = _collection_annotation_key(collections, collection_record)
+    workspace = state.workspace::Workspace.Workspace
+    collection_key = _collection_annotation_key(workspace, collection_record)
     return !_has_bad_tag(
         tag_state,
         collection_key,
-        _ancestor_annotation_keys(collections, collection_record),
+        _ancestor_annotation_keys(workspace, collection_record),
     )
 end
 
@@ -125,15 +126,8 @@ function _item_is_visible(
 )::Bool
     _show_bad_effective(state) && return true
     tag_state = _tag_state_or_error(state)
-    collections = (state.workspace::Workspace.Workspace).index.collections
-    item.collection_key === nothing &&
-        return !_has_bad_tag(tag_state, item.id, String[])
-    collection_record = collections.records[item.collection_key]
-    collection_key = _collection_annotation_key(collections, collection_record)
-    ancestors = [
-        collection_key;
-        _ancestor_annotation_keys(collections, collection_record)
-    ]
+    workspace = state.workspace::Workspace.Workspace
+    ancestors = _item_ancestor_annotation_keys(workspace, item)
     return !_has_bad_tag(tag_state, item.id, ancestors)
 end
 
@@ -148,36 +142,32 @@ function _project_visible_selection(
     if !(workspace isa Workspace.Workspace)
         return CollectionRecord[], ItemRecord[], String[]
     end
-    collections = workspace.index.collections
-
     selected_collections = CollectionRecord[]
     for collection_id in workspace.selection.collection_ids
-        key = get(collections.key_by_id, collection_id, nothing)
-        key === nothing && continue
-        collection_record = collections.records[key]
-        !has_collection_children(collections, key) ||
+        collection_record = Workspace.collection(workspace, collection_id)
+        collection_record === nothing && continue
+        isempty(Workspace.children(workspace, collection_record)) ||
             error("Selected collection ID '$collection_id' does not point to a leaf collection")
         !_collection_is_visible(state, collection_record) && continue
         push!(selected_collections, collection_record)
     end
 
-    visible_collection_ids = Set(collection_record.id for collection_record in selected_collections)
-    root_selected = ROOT_COLLECTION_SELECTION_ID in workspace.selection.collection_ids
-    item_index = workspace.index.items
+    visible_collection_ids = Set(id.(selected_collections))
+    id(ROOT_COLLECTION) in workspace.selection.collection_ids &&
+        push!(visible_collection_ids, id(ROOT_COLLECTION))
     selected_items = ItemRecord[]
-    for id in workspace.selection.item_ids
-        item = get(item_index, id, nothing)
+    for item_id in workspace.selection.item_ids
+        item = Workspace.item(workspace, item_id)
         item === nothing && continue
-        if item.collection_key === nothing
-            root_selected || continue
-        else
-            collections.records[item.collection_key].id in visible_collection_ids || continue
-        end
+        id(Workspace.collection(workspace, item)) in visible_collection_ids || continue
         !_item_is_visible(state, item) && continue
         push!(selected_items, item)
     end
-    selected_path = length(selected_collections) == 1 ?
-        collection_location(collections, selected_collections[1].key) : String[]
+    selected_path = String[]
+    if length(selected_collections) == 1
+        selected = only(selected_collections)
+        selected_path = [c.label for c in [Workspace.ancestors(workspace, selected); selected]]
+    end
     return selected_collections, selected_items, selected_path
 end
 
@@ -188,25 +178,13 @@ function _items_of_selected_collections(
     state::BrowserState,
 )::Vector{ItemRecord}
     selected_collections, _, _ = _project_visible_selection(state)
+    workspace = state.workspace::Workspace.Workspace
     all_items = ItemRecord[]
-    collections = (state.workspace::Workspace.Workspace).index.collections
-    items = (state.workspace::Workspace.Workspace).index.items
-    sizehint!(all_items, sum(
-        length(collection_item_ids(collections, collection_record.key))
-        for collection_record in selected_collections; init=0) +
-        (ROOT_COLLECTION_SELECTION_ID in
-         (state.workspace::Workspace.Workspace).selection.collection_ids ?
-            length(collection_item_ids(collections, nothing)) : 0))
-    if ROOT_COLLECTION_SELECTION_ID in
-       (state.workspace::Workspace.Workspace).selection.collection_ids
-        for id in collection_item_ids(collections, nothing)
-            haskey(items, id) && push!(all_items, items[id])
-        end
+    if id(ROOT_COLLECTION) in workspace.selection.collection_ids
+        append!(all_items, Workspace.items(workspace, ROOT_COLLECTION))
     end
     for collection_record in selected_collections
-        for id in collection_item_ids(collections, collection_record.key)
-            haskey(items, id) && push!(all_items, items[id])
-        end
+        append!(all_items, Workspace.items(workspace, collection_record))
     end
     sort!(all_items, by=item_timestamp_key)
     return all_items

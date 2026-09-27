@@ -1,14 +1,12 @@
 import CImGui as ig
 
 using DataBrowserAPI:
+    id,
     kind_label,
     label
 using DataBrowserAPI.ItemIndex:
     CollectionRecord,
-    ItemRecord,
-    collection_item_ids,
-    collection_metadata,
-    sorted_child_keys
+    ItemRecord
 import DataBrowserCore.Workspace
 
 """Destroy text-filter widgets before their saved text is replaced."""
@@ -82,9 +80,8 @@ function _render_hierarchy_tree_panel(
     _render_tag_state_error!(state)
 
     workspace = state.workspace
-    collections = workspace isa Workspace.Workspace ? workspace.index.collections : nothing
     parameter_keys = workspace isa Workspace.Workspace ?
-        workspace.index.collection_metadata_keys :
+        Workspace.metadata_keys(workspace) :
         Symbol[]
     selected_collections, _, _ = _project_visible_selection(state)
 
@@ -97,22 +94,22 @@ function _render_hierarchy_tree_panel(
     all_collection_count = Ref(0)
     filter_active = ig.ImGuiTextFilter_IsActive(filter_tree)
 
-    root_item_ids = collections === nothing ? String[] :
-        collection_item_ids(collections, nothing)
-    has_root_items = !isempty(root_item_ids)
-    if collections !== nothing && (!isempty(collections.records) || has_root_items)
-        has_visible_leaf_cache = Dict{Int64,Bool}()
-        subtree_matches_cache = Dict{Int64,Bool}()
+    has_root_items = workspace isa Workspace.Workspace &&
+        !isempty(Workspace.items(workspace, ROOT_COLLECTION))
+    if workspace isa Workspace.Workspace &&
+       (!isempty(Workspace.collections(workspace)) || has_root_items)
+        has_visible_leaf_cache = Dict{String,Bool}()
+        subtree_matches_cache = Dict{String,Bool}()
 
-        child_keys(key::Int64) = sorted_child_keys(collections, key)
-        collection_id(key::Int64) = collections.records[key].id
+        child_records(collection_record::CollectionRecord) =
+            Workspace.children(workspace, collection_record)
 
         """Return whether this subtree contains a visible collection."""
-        function has_visible_leaf(key::Int64)::Bool
-            return get!(has_visible_leaf_cache, key) do
-                children = child_keys(key)
+        function has_visible_leaf(collection_record::CollectionRecord)::Bool
+            return get!(has_visible_leaf_cache, collection_record.id) do
+                children = child_records(collection_record)
                 if isempty(children)
-                    return _collection_is_visible(state, collections.records[key])
+                    return _collection_is_visible(state, collection_record)
                 end
                 for child in children
                     has_visible_leaf(child) && return true
@@ -122,12 +119,11 @@ function _render_hierarchy_tree_panel(
         end
 
         """Return whether this collection record or one of its descendants matches the filter."""
-        function subtree_matches(key::Int64)::Bool
-            return get!(subtree_matches_cache, key) do
-                collection_record = collections.records[key]
+        function subtree_matches(collection_record::CollectionRecord)::Bool
+            return get!(subtree_matches_cache, collection_record.id) do
                 ig.ImGuiTextFilter_PassFilter(
                     filter_tree, collection_record.label, C_NULL) && return true
-                for child in child_keys(key)
+                for child in child_records(collection_record)
                     subtree_matches(child) && return true
                 end
                 return false
@@ -136,16 +132,15 @@ function _render_hierarchy_tree_panel(
 
         """Collect visible leaf collections while respecting inherited filter matches."""
         function collect_visible_collections!(
-            key::Int64,
+            collection_record::CollectionRecord,
             force_show::Bool=false,
         )::Nothing
-            has_visible_leaf(key) || return
-            force_show || subtree_matches(key) || return
+            has_visible_leaf(collection_record) || return
+            force_show || subtree_matches(collection_record) || return
 
-            collection_record = collections.records[key]
             direct_match = force_show ||
                 ig.ImGuiTextFilter_PassFilter(filter_tree, collection_record.label, C_NULL)
-            children = child_keys(key)
+            children = child_records(collection_record)
             if isempty(children)
                 push!(visible_collections, collection_record)
                 return nothing
@@ -157,8 +152,8 @@ function _render_hierarchy_tree_panel(
         end
 
         """Count leaf collections below one collection record."""
-        function count_leaf_collections(key::Int64)::Int
-            children = child_keys(key)
+        function count_leaf_collections(collection_record::CollectionRecord)::Int
+            children = child_records(collection_record)
             if isempty(children)
                 return 1
             end
@@ -169,9 +164,9 @@ function _render_hierarchy_tree_panel(
             return total
         end
 
-        roots = sorted_child_keys(collections, nothing)
+        roots = Workspace.children(workspace, ROOT_COLLECTION)
         root_visible = has_root_items &&
-            ig.ImGuiTextFilter_PassFilter(filter_tree, "Root", C_NULL)
+            ig.ImGuiTextFilter_PassFilter(filter_tree, label(ROOT_COLLECTION), C_NULL)
         @timed "hierarchy_prep" begin
             all_collection_count[] = sum(count_leaf_collections, roots; init=0) +
                 (has_root_items ? 1 : 0)
@@ -184,7 +179,7 @@ function _render_hierarchy_tree_panel(
             ids = visible_collection_ids_ref[]
             if ids === nothing
                 ids = [collection_record.id for collection_record in visible_collections]
-                root_visible && pushfirst!(ids, ROOT_COLLECTION_SELECTION_ID)
+                root_visible && pushfirst!(ids, id(ROOT_COLLECTION))
                 visible_collection_ids_ref[] = ids
             end
             return ids
@@ -192,7 +187,7 @@ function _render_hierarchy_tree_panel(
 
         _render_selection_toolbar!(
             length(selected_collections) +
-                (ROOT_COLLECTION_SELECTION_ID in workspace.selection.collection_ids ? 1 : 0),
+                (id(ROOT_COLLECTION) in workspace.selection.collection_ids ? 1 : 0),
             length(visible_collections) + (root_visible ? 1 : 0),
             all_collection_count[],
             filter_tree,
@@ -203,8 +198,8 @@ function _render_hierarchy_tree_panel(
         )
 
         row_seed = UInt64(0x9e3779b97f4a7c15)
-        next_row_id(parent_id::UInt64, key::Int64) =
-            hash(collections.records[key].id, parent_id)
+        next_row_id(parent_id::UInt64, collection_record::CollectionRecord) =
+            hash(collection_record.id, parent_id)
         to_imgui_id(row_id::UInt64) = Int32(row_id % UInt64(typemax(Int32)))
 
         """Render the GUI-only selector for items attached directly to the source root."""
@@ -214,7 +209,7 @@ function _render_hierarchy_tree_panel(
             ig.TableNextRow()
             ig.TableSetColumnIndex(0)
             ig.PushID("##root_items")
-            selected = ROOT_COLLECTION_SELECTION_ID in selected_collection_id_set
+            selected = id(ROOT_COLLECTION) in selected_collection_id_set
             flags = (
                 ig.ImGuiTreeNodeFlags_Leaf |
                 ig.ImGuiTreeNodeFlags_Bullet |
@@ -223,8 +218,8 @@ function _render_hierarchy_tree_panel(
                 ig.ImGuiTreeNodeFlags_SpanAllColumns
             )
             selected && (flags |= ig.ImGuiTreeNodeFlags_Selected)
-            ig.TreeNodeEx("", flags, "Root")
-            if state.scroll_to_collection_id == ROOT_COLLECTION_SELECTION_ID
+            ig.TreeNodeEx("", flags, label(ROOT_COLLECTION))
+            if state.scroll_to_collection_id == id(ROOT_COLLECTION)
                 ig.SetScrollHereY(0.5)
                 state.scroll_to_collection_id = nothing
             end
@@ -233,7 +228,7 @@ function _render_hierarchy_tree_panel(
                 selected_ids = copy(workspace.selection.collection_ids)
                 _update_multi_selection!(
                     selected_ids,
-                    ROOT_COLLECTION_SELECTION_ID,
+                    id(ROOT_COLLECTION),
                     visible_collection_ids(),
                     unsafe_load(io.KeyShift),
                     unsafe_load(io.KeyCtrl),
@@ -250,25 +245,24 @@ function _render_hierarchy_tree_panel(
 
         """Render one hierarchy row and recursively render its open descendants."""
         function render_collection(
-            key::Int64,
+            collection_record::CollectionRecord,
             row_id::UInt64,
             force_show::Bool=false,
         )::Nothing
-            has_visible_leaf(key) || return
-            force_show || subtree_matches(key) || return
+            has_visible_leaf(collection_record) || return
+            force_show || subtree_matches(collection_record) || return
 
             state.performance.node_count += 1
             ig.TableNextRow()
 
-            collection_record = collections.records[key]
             direct_match = force_show ||
                 ig.ImGuiTextFilter_PassFilter(filter_tree, collection_record.label, C_NULL)
             ig.PushID(to_imgui_id(row_id))
 
-            children = child_keys(key)
+            children = child_records(collection_record)
             is_leaf = isempty(children)
             collection_id_value = collection_record.id
-            leaf_collection_id = is_leaf ? collection_id(key) : nothing
+            leaf_collection_id = is_leaf ? collection_id_value : nothing
             selected = is_leaf && (leaf_collection_id in selected_collection_id_set)
 
             flags = (
@@ -297,8 +291,8 @@ function _render_hierarchy_tree_panel(
             bad_text_pushed = false
             if is_leaf && leaf_collection_id !== nothing && _tag_state_ready(state)
                 tag_state = _tag_state_or_error(state)
-                annotation_key = _collection_annotation_key(collections, collection_record)
-                ancestor_keys = _ancestor_annotation_keys(collections, collection_record)
+                annotation_key = _collection_annotation_key(workspace, collection_record)
+                ancestor_keys = _ancestor_annotation_keys(workspace, collection_record)
                 bad_text_pushed = _push_tag_text_style!(tag_state, annotation_key, ancestor_keys)
             end
             if !is_leaf && !filter_active
@@ -341,7 +335,7 @@ function _render_hierarchy_tree_panel(
             if is_leaf && ig.BeginPopupContextItem()
                 target_collections = _selection_targets(selected_collections, collection_record)
                 target_keys = [
-                    _collection_annotation_key(collections, target)
+                    _collection_annotation_key(workspace, target)
                     for target in target_collections
                 ]
                 selected_count = length(target_keys)
@@ -364,8 +358,7 @@ function _render_hierarchy_tree_panel(
                 ig.EndPopup()
             end
 
-            effective_collection_metadata = collection_metadata(collections, key)
-            merge!(effective_collection_metadata, collection_record.analysis)
+            effective_collection_metadata = Workspace.metadata(workspace, collection_record)
             for (i, k) in enumerate(parameter_keys)
                 ig.TableSetColumnIndex(i)
                 if haskey(effective_collection_metadata, k)
@@ -490,7 +483,7 @@ function _render_items_panel(
 
     selected_collections, selected_items, selected_path =
         _project_visible_selection(state)
-    root_selected = ROOT_COLLECTION_SELECTION_ID in workspace.selection.collection_ids
+    root_selected = id(ROOT_COLLECTION) in workspace.selection.collection_ids
     all_items = @timed "items_panel" _items_of_selected_collections(state)
     visible_items = @timed "visible_items" _visible_items(state, workspace, all_items, filter_item)
     selected_id_set = Set(workspace.selection.item_ids)
@@ -518,7 +511,7 @@ function _render_items_panel(
             ig.Separator()
         else
             names = String[]
-            root_selected && push!(names, "Root")
+            root_selected && push!(names, label(ROOT_COLLECTION))
             append!(names, collection.label for collection in selected_collections)
             shown = min(3, length(names))
             first_names = join(names[1:shown], ", ")
@@ -551,29 +544,18 @@ function _render_items_panel(
                     end_idx = Int(unsafe_load(clipper.DisplayEnd))
                     for idx in start_idx:end_idx
                         item = visible_items[idx]
-                        id = item.id
-                        ig.PushID(id)
+                        item_id = item.id
+                        ig.PushID(item_id)
                         ig.TableNextRow()
                         ig.TableSetColumnIndex(0)
                         rows_rendered += 1
 
-                        is_selected = id in selected_id_set
+                        is_selected = item_id in selected_id_set
                         bad_text_pushed = false
                         if registry_ready
                             tag_state = _tag_state_or_error(state)
-                            if item.collection_key !== nothing
-                                collection_record = workspace.index.collections.records[
-                                    item.collection_key]
-                                dev_key = _collection_annotation_key(
-                                    workspace.index.collections, collection_record)
-                                ancestor_keys = _ancestor_annotation_keys(
-                                    workspace.index.collections, collection_record)
-                                bad_text_pushed = _push_tag_text_style!(
-                                    tag_state, id, [dev_key; ancestor_keys])
-                            else
-                                bad_text_pushed = _push_tag_text_style!(
-                                    tag_state, id, String[])
-                            end
+                            bad_text_pushed = _push_tag_text_style!(
+                                tag_state, item_id, _item_ancestor_annotation_keys(workspace, item))
                         end
                         if ig.Selectable(
                             item.label,
@@ -587,14 +569,14 @@ function _render_items_panel(
                             visible_ids = [visible.id for visible in visible_items]
                             _update_multi_selection!(
                                 selected_ids,
-                                id,
+                                item_id,
                                 visible_ids,
                                 shift_held,
                                 ctrl_held,
                             )
                             workspace.selection.item_ids = selected_ids
                         end
-                        if state.scroll_to_item_id == id
+                        if state.scroll_to_item_id == item_id
                             ig.SetScrollHereY(0.5)
                             state.scroll_to_item_id = nothing
                         end
@@ -610,7 +592,7 @@ function _render_items_panel(
                                 item_context_menu!(
                                     ext,
                                     state;
-                                    item_ids=[id],
+                                    item_ids=[item_id],
                                     label=item.label,
                                     kind=label(item.type),
                                 )

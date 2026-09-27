@@ -106,13 +106,35 @@ function collection_inputs(path::AbstractVector{<:AbstractCollection})::Vector{C
 end
 
 """
+A collection as a workspace records it: a node of the workspace's collection tree.
+
+Projects define `AbstractCollection` values to place items; the workspace stores what it needs
+from them as records, which the tree functions accept and return.
+"""
+abstract type AbstractCollectionRecord end
+
+"""
+    RootCollection()
+
+The top of a workspace's collection tree. It holds the top-level collections and the items that
+belong to no collection, and answers the same functions as the collection records below it:
+`children(workspace, RootCollection())` returns the top-level collections, and
+`items(workspace, RootCollection())` returns the items outside any collection. It has no ancestors
+and no metadata.
+"""
+struct RootCollection <: AbstractCollectionRecord end
+
+id(::RootCollection)::String = "root"
+label(::RootCollection)::String = "Root"
+
+"""
 One package-owned indexed collection occurrence.
 
 `id` is the final deterministic occurrence ID derived from the parent occurrence ID, the concrete
 collection type, and the value returned by `id(::AbstractCollection)`. `key` is a compact
 workspace/cache-local integer. `label` is display text. These are distinct contracts.
 """
-struct CollectionRecord
+struct CollectionRecord <: AbstractCollectionRecord
     key::Int64
     id::String
     identity::String
@@ -123,6 +145,7 @@ struct CollectionRecord
     analysis::MetadataDict
 end
 
+id(collection_record::CollectionRecord)::String = collection_record.id
 label(collection_record::CollectionRecord)::String = collection_record.label
 
 """
@@ -347,10 +370,6 @@ collection_id_path(index::CollectionIndex, key::Int64)::Vector{String} =
     String[index.records[path_key].id for path_key in collection_path_keys(index, key)]
 collection_id_path(::CollectionIndex, ::Nothing)::Vector{String} = String[]
 
-"""Return display labels for one collection path."""
-collection_location(index::CollectionIndex, key::Int64)::Vector{String} =
-    String[index.records[path_key].label for path_key in collection_path_keys(index, key)]
-
 """
 Rebuild the collection values on one indexed path, ancestor to self.
 
@@ -426,10 +445,6 @@ end
 """Return direct member ids for one collection key."""
 collection_item_ids(index::CollectionIndex, key)::Vector{String} =
     get(index.item_ids_by_collection, key, String[])
-
-"""Return whether one record has child collection records."""
-has_collection_children(index::CollectionIndex, key::Int64)::Bool =
-    !isempty(get(index.children_by_parent, key, Int64[]))
 
 """Return metadata inherited from collection parents through the direct collection."""
 function collection_metadata(index::CollectionIndex, key)::MetadataDict

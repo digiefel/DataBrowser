@@ -32,9 +32,7 @@ function render_info_window(state::BrowserState)::Nothing
             sel_name = join(selected_path, "/")
             ig.Text("Location: $sel_name")
             ig.Separator()
-            collection_metadata_values = collection_metadata(
-                workspace.index.collections, collection_node.key)
-            merge!(collection_metadata_values, collection_node.analysis)
+            collection_metadata_values = Workspace.metadata(workspace, collection_node)
             if !isempty(collection_metadata_values)
                 ig.Text("Collection metadata")
                 for k in sort!(collect(keys(collection_metadata_values)); by=String)
@@ -54,8 +52,7 @@ function render_info_window(state::BrowserState)::Nothing
             m = selected_items[1]
             # The delivered metadata dict (inherited ⊕ item ⊕ computed layers), exactly what
             # project callbacks and views receive.
-            delivered = Workspace.delivered_metadata(
-                workspace, m, workspace.index.collections)
+            delivered = Workspace.metadata(workspace, m)
             ig.Text("Title: $(m.label)")
             ig.Separator()
             kind_text = kind_label(workspace.project, label(m.type))
@@ -110,7 +107,7 @@ function render_collection_metadata_modal(state::BrowserState)::Nothing
 
     if state.collection_metadata_modal &&
        all(record -> isempty(record.own_metadata) && isempty(record.analysis),
-           values(workspace.index.collections.records))
+           Workspace.collections(workspace))
         ig.OpenPopup("Collection Parameters Missing")
     end
 

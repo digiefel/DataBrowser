@@ -63,7 +63,7 @@ end
             )
             Workspace.wait_workspace_idle!(workspace; timeout=45)
             Workspace.refresh_status!(workspace)
-            records = collect(values(workspace.index.items))
+            records = collect(Workspace.items(workspace))
             if !isempty(records)
                 select_items!(workspace, records)
                 items = Workspace.materialize_items(workspace, records)

@@ -345,11 +345,11 @@ callers of `materialize_items`.
 
 ## Order of work
 
-1. GUI onto accessors. The GUI and Plots files that read `workspace.index`
-   (`TreePanel.jl`, `Tags.jl`, `Layout.jl`, `InfoModal.jl`, `Persistence.jl`,
-   `Browser/Operations.jl`, `PerformanceWindow.jl`, `PlotPanel.jl`,
-   `TablePlotPanel.jl`) move onto the workspace accessors (`items`, `item`,
-   `collections`, `on_change`), still backed by `WorkspaceIndex`. The
+1. GUI onto accessors. The GUI files that read `workspace.index` move onto
+   the workspace accessors (`items`, `item`, `collections`, `collection`,
+   `children`, `ancestors`, `metadata`, `metadata_keys`, with `RootCollection()`
+   for the top of the tree), still backed by `WorkspaceIndex`. `on_change`
+   replaces the `status_dirty` poll in a separate commit. The
    accessors are the target API, not an adapter. The rest of 0.2.4 is not
    part of this step.
 2. Unwired catalog. Rows, keys, the id lookup, membership, status words,
