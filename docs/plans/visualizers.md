@@ -250,17 +250,25 @@ end
 The transform runs again only when the key changes. Visualizers receive `payload.value`, never the
 `Payload`, so their methods dispatch on the user's own types.
 
-The transform runs as a background job, like the workspace's processing work. Until the new value
-is ready, the view keeps showing the previous one, marked as not current. `prepare!` and `draw!` run
-on the GUI thread, because they may create graphics resources such as Makie figures.
+Views are computed by the workspace, not by a separate engine. Every view is a node in the
+workspace's dependency graph, downstream of the items it reads, like a new kind of pipeline stage.
+Its transform runs as a job in the workspace's pool, with the priority of a visible view. A result
+that equals the previous one does not propagate further, which also stops cycles. Until the new
+value is ready, the view keeps showing the previous one, marked as not current. `prepare!` and
+`draw!` run on the GUI thread, because they may create graphics resources such as Makie figures.
 
-This depends on the workspace providing a revision for each item's data and accepting requests with
-a priority, so that a view knows when its items changed and visible views are served first.
+The pipeline therefore becomes more flexible, and the workspace's job graph changes. Today a job is
+identified by a fixed pipeline stage and one item or collection, and a job leaves the graph when it
+finishes. To hold views, the job graph must:
 
-A transform's result also becomes outdated when code it calls changes. The browser uses Revise to
-redefine changed functions and to learn which project files changed. Until finer tracking exists, a
-change to any project file makes every transform recompute. The workspace's own processing needs
-the same invalidation, and both use one mechanism.
+1. accept jobs that are not pipeline stages: a function over a set of items and other views' outputs;
+2. remember what each result was computed from after its job finishes;
+3. run a job again when one of those inputs changes, including a revision of an item's data.
+
+A transform's result also becomes outdated when code it calls changes. The workspace uses Revise
+to redefine changed functions and to learn which project files changed. Until finer tracking
+exists, a change to any project file makes every transform recompute. The workspace's own processing
+needs the same invalidation, and both use one mechanism.
 
 ## DBPlots
 
@@ -562,23 +570,21 @@ representation, and the graph follows from it. This is the shared command layer 
 GUI · REPL · CLI · API
         │
         ▼
-    Commands ──▶ Graph (saved file) ──▶ Evaluator ──▶ Canvas
-        ▲                                  ▲ │           │
-        │                    items,        │ │ requests  │
-        │                    revisions     │ ▼           │ tags, exclusion
-        │                               Workspace ◀──────┤
-        └─────────────────── user actions ───────────────┘
+    Commands ──▶ Graph (saved file) ──▶ Workspace ──▶ Canvas
+        ▲                               (dependency       │
+        │                                graph, jobs) ◀───┤ tags, exclusion
+        └─────────────────── user actions ────────────────┘
 ```
 
 - **Graph**: source nodes, view nodes (inputs, body, visualizer type and settings, exposed outputs),
   and connections. Plain data, with no GUI in it.
-- **Evaluator**: `Payload`s by key, background jobs, pause and cancel, Revise invalidation, and
-  tracing into SQL.
+- **Workspace**: computes every view as a node of its dependency graph: `Payload`s by key, jobs with
+  priority, Revise invalidation, and later tracing into SQL.
 - **Canvas**: presents the graph and turns user actions into commands. Visualizers, found by
-  dispatch, draw inside it.
+  dispatch, draw inside it. The canvas decides when a dragged brush counts as changed.
 - Tagging and exclusion go to the workspace directly, not through connections.
 
-While the browser runs, the graph in memory is the truth, because the evaluator works on it. After
+While the browser runs, the graph in memory is the truth, because the workspace computes from it. After
 each finished action, such as dropping a node or making a connection, the browser writes the change
 into the file. A drag in progress is never written. When the file changes outside the browser, the
 browser parses it, compares it with the graph in memory, and applies only the differences as
@@ -632,8 +638,10 @@ canvas, is not part of the history.
 
 ### Internal
 
-- **DataBrowserGUI** gains the view host described above and depends on Revise. The Table Inspector
-  is rebuilt as a visualizer. `ItemTable`, `merge_item_tables`, and `materialize_item_table` are
+- **DataBrowserCore**: the pipeline gains view nodes, and the job graph changes as described in
+  [How the browser runs a view](#how-the-browser-runs-a-view). Revise invalidation lives here.
+- **DataBrowserGUI** gains the canvas described above. The Table Inspector is rebuilt as a
+  visualizer. `ItemTable`, `merge_item_tables`, and `materialize_item_table` are
   removed.
 - **DBPlots** keeps its user API and changes underneath:
   - `PlotKind` is DBPlots' own visualizer type today. It is replaced by `AbstractVisualizer`, and
