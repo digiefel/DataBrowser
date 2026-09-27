@@ -587,6 +587,21 @@ commands. Views whose part of the file did not change keep their state and their
 Node positions and planes are saved in the same file, with each view, because the file holds
 everything the user built.
 
+### Undo and redo
+
+Undo does not reverse commands one by one. After each finished action, the browser keeps a copy of
+the graph. The graph is small: nodes, connections, settings, and the text of bodies, never values.
+Undo sets the graph back to the previous copy through the same path as an edit made to the file
+outside the browser: the browser compares the two graphs and applies only the differences as
+commands. Views whose part did not change keep their state and values, and views whose part did
+change compute again, or find their earlier values still cached by key.
+
+This keeps undo correct for every command, including those added later, without writing an inverse
+for each. An edit to the file outside the browser becomes one step in the same history.
+
+<!-- TODO: what else is undoable. For example tags and exclusions, which live in the workspace, not
+in the graph, or a brush position, which is an output of a view. -->
+
 ## Open design work
 
 - **Settings as inputs.** Linking what views show, such as axis limits, needs inputs on the
