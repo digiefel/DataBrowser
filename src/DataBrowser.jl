@@ -17,7 +17,7 @@ using DataBrowserAPI:
     AbstractProject,
     analyze,
     collection,
-    entries,
+    expand,
     display_label,
     fingerprint,
     id,
@@ -120,7 +120,7 @@ export open_browser,
     source_item_path,
     source_item_timestamp,
     watch_source,
-    entries,
+    expand,
     reconstruct,
     AbstractProject
 

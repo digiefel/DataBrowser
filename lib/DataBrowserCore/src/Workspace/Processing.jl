@@ -35,7 +35,7 @@ function cache_work_status(workspace::Workspace, key::WorkKey)::Symbol
     kind = key.kind
     entity = key.entity
     state = cached_result_state(cachedb, kind, entity)
-    if kind in (SOURCE_READ, ITEM_PROCESS)
+    if kind === ITEM_PROCESS
         state !== nothing && CacheResultStatus(state.status) === RESULT_FAILED && return :failed
         state === nothing && return :absent
         return has_payload(cachedb, entity; stage=kind) ? :ready : :absent
@@ -49,35 +49,6 @@ function clear_work_result_state!(workspace::Workspace, key::WorkKey)::Nothing
     cachedb = workspace.cache.db
     clear_cached_result_state!(cachedb, key.kind, key.entity)
     return nothing
-end
-
-"""
-Pull a source interpretation's read dependency, reusing a resident read result when available.
-
-Interpretation has higher priority than reading so completed reads are consumed promptly instead
-of accumulating inputs behind the remaining source reads. The dependent pins its input until it
-finishes; the cache independently retains the value for later replay.
-"""
-function enqueue_source_interpretation!(workspace::Workspace, source_key::Int64;
-        priority::Int=3, waiter::Union{Nothing,Channel{Any}}=nothing, supersede::Bool=false)
-    return lock(workspace.work.lock) do
-        revision(key) = supersede ? bump_revision!(workspace.work, key) :
-            current_revision(workspace.work, key)
-        read_key = WorkKey(SOURCE_READ, source_key)
-        interpret_key = WorkKey(SOURCE_INTERPRET, source_key)
-        cached = cache_work_status(workspace, read_key) === :ready ?
-            read_payload(workspace.cache.db, source_key) : nothing
-        dependencies = WorkKey[]
-        if haskey(workspace.work.nodes, read_key) || cached === nothing
-            enqueue_work!(workspace, read_key, revision(read_key); priority)
-            push!(dependencies, read_key)
-        end
-        node = enqueue_work!(workspace, interpret_key,
-            revision(interpret_key);
-            priority=priority + 1, dependencies, waiter)
-        node === nothing || isempty(dependencies) && (node.input = cached)
-        return node
-    end
 end
 
 """Start one work-conserving worker pool shared by every work kind."""
@@ -193,7 +164,6 @@ function enqueue_work!(
                 Set{WorkKey}(),
                 UInt64(0),
                 previous_waiters,
-                nothing,
             )
             graph.nodes[key] = node
             seed_node_dependencies!(graph, node, dependencies)
@@ -244,7 +214,7 @@ function read_source_input!(workspace::Workspace, source_item::AbstractDataSourc
     return loaded
 end
 
-"""Interpret one source item and return the requested logical item."""
+"""Expand one source item again and return the requested data item."""
 function source_fallback(workspace::Workspace, record::ItemRecord)::AbstractDataItem
     fallback_lock = source_fallback_lock(workspace.work, record.source_item_key)
     return lock(fallback_lock) do
@@ -268,28 +238,28 @@ function source_fallback(workspace::Workspace, record::ItemRecord)::AbstractData
             source_item = discovered[position]
         end
         loaded = read_source_input!(workspace, source_item, record.source_item_key)
-        interpretation = interpret_source_item(
+        expansion = expand_source_item(
             workspace.project, workspace.source, source_item, loaded;
             source_item_key=record.source_item_key)
-        store_interpreted_data!(
-            workspace.cache.db, interpretation.records,
-            item_data.(interpretation.interpreted_items))
-        requested = findfirst(item -> item.id == record.id, interpretation.records)
+        store_item_payloads!(
+            workspace.cache.db, expansion.records,
+            item_data.(expansion.items))
+        requested = findfirst(item -> item.id == record.id, expansion.records)
         requested === nothing && error(
             "Source item '$source_ref' no longer produces item '$(record.id)'",
         )
-        return interpretation.interpreted_items[requested]
+        return expansion.items[requested]
     end
 end
 
 """
-Prepare one interpreted item for `process`.
+Prepare one unprocessed item for `process`.
 
-A cached payload is reconstructed with interpretation-time metadata. When reconstruction declines
-or the resident payload is missing, source fallback reruns `entries` with the cached read input.
+A cached payload is reconstructed with the metadata it was published with. When reconstruction declines
+or the resident payload is missing, source fallback reruns `expand` with the cached read input.
 It calls `read` only if that input is missing. The caller still runs `process` exactly once.
 """
-function interpreted_item(
+function unprocessed_item(
     workspace::Workspace,
     collections::CollectionIndex,
     record::ItemRecord,
@@ -328,7 +298,7 @@ function collection_value(
     return last(path)
 end
 
-"""Rebuild an item through `entries` and `process`, obtaining the read input from cache or source."""
+"""Rebuild an item through `expand` and `process`, obtaining the read input from cache or source."""
 function reprocess_item(
     workspace::Workspace,
     collections::CollectionIndex,
@@ -336,8 +306,8 @@ function reprocess_item(
 )::AbstractDataItem
     upstream_record = get(workspace.index.items, record.id, record)
     cached = only(read_payload(
-        workspace.cache.db, [upstream_record]; stage=SOURCE_INTERPRET))
-    input = interpreted_item(workspace, collections, upstream_record, cached)
+        workspace.cache.db, [upstream_record]; stage=SOURCE_EXPAND))
+    input = unprocessed_item(workspace, collections, upstream_record, cached)
     processed = process(workspace.project, input)
     processed isa AbstractDataItem || error(
         "process(::$(typeof(workspace.project)), ::$(typeof(input))) must return an " *
@@ -351,7 +321,7 @@ Turn one cached payload into an item ready for the next project stage.
 
 Every payload is rebuilt through `reconstruct` on the record's own concrete type, including a
 payload that is itself an `AbstractDataItem`. When that method declines, the engine reruns
-`entries` and `process`, reading the source only if the read input is no longer cached. A rebuilt item then adopts its record and the index's collection path, so
+`expand` and `process`, reading the source only if the read input is no longer cached. A rebuilt item then adopts its record and the index's collection path, so
 identity comes from the engine and never from stale cached state.
 """
 function materialized_item(
@@ -374,9 +344,9 @@ function run_processing(
     record::ItemRecord,
 )::NamedTuple
     cached = only(read_payload(
-        workspace.cache.db, [record]; stage=SOURCE_INTERPRET))
+        workspace.cache.db, [record]; stage=SOURCE_EXPAND))
     materialized_record = effective_record(collections, record)
-    input = interpreted_item(workspace, collections, record, cached)
+    input = unprocessed_item(workspace, collections, record, cached)
     processed = @timed_dbg process(workspace.project, input)
     processed isa AbstractDataItem || error(
         "process(::$(typeof(workspace.project)), ::$(typeof(input))) must return an " *
@@ -388,7 +358,7 @@ function run_processing(
 end
 
 """
-Return an owned snapshot of inherited, entries and computed metadata under the publication lock.
+Return an owned snapshot of inherited, item and computed metadata under the publication lock.
 Callers can reconstruct user values after releasing the lock while other items publish analysis.
 """
 function delivered_metadata(
@@ -518,25 +488,49 @@ function run_collection_analysis(workspace::Workspace, collection_key::Int64)::M
         workspace.project, collection_value(workspace, collections, collection_key), items))
 end
 
+"""
+Read one source item, or reuse its cached read result, and turn it into data items.
+
+The job records the outcome of `read` as soon as `read` returns or throws. A later failure is then
+recorded against item publication, and the read result stays available for the retry.
+"""
+function run_source_job(workspace::Workspace, node::WorkNode)::NamedTuple
+    source_key = node.key.entity::Int64
+    source_item = lock(workspace.work.lock) do
+        get(workspace.work.source_items, source_key, nothing)
+    end
+    source_item === nothing && error("Cannot load removed source item '$source_key'")
+    cached = read_payload(workspace.cache.db, source_key)
+    loaded = if cached === nothing
+        value = try
+            read(workspace.project, workspace.source, source_item)
+        catch error
+            error isa OperationCanceledException || lock(workspace.publish_lock) do
+                work_node_current(workspace, node) && store_result_failure!(
+                    workspace.cache.db, SOURCE_READ, source_key, source_key,
+                    sprint(showerror, error))
+            end
+            rethrow()
+        end
+        lock(workspace.publish_lock) do
+            work_node_current(workspace, node) &&
+                store_source_read!(workspace.cache.db, source_key, value)
+        end
+        value
+    else
+        something(cached)
+    end
+    expansion = expand_source_item(
+        workspace.project, workspace.source, source_item, loaded; source_item_key=source_key)
+    return (source_item=source_item, expansion=expansion)
+end
+
 """Execute one work node and publish its completion immediately."""
 function execute_work!(workspace::Workspace, node::WorkNode)::Nothing
     key = node.key
     result = try
-        if key.kind in (SOURCE_READ, SOURCE_INTERPRET)
-            source_item = lock(workspace.work.lock) do
-                get(workspace.work.source_items, key.entity, nothing)
-            end
-            source_item === nothing && error("Cannot load removed source item '$(key.entity)'")
-            if key.kind === SOURCE_READ
-                (loaded=read(workspace.project, workspace.source, source_item),)
-            else
-                loaded = something(node.input)
-                node.input = nothing
-                interpretation = interpret_source_item(
-                    workspace.project, workspace.source, source_item, loaded;
-                    source_item_key=key.entity::Int64)
-                (source_item=source_item, interpretation=interpretation)
-            end
+        if key.kind === SOURCE_EXPAND
+            run_source_job(workspace, node)
         elseif key.kind === ITEM_PROCESS
             index = workspace.index
             record = get(index.items, key.entity, nothing)
@@ -660,17 +654,15 @@ function ensure_uptodate!(
             Any[],
         ),
     )
-    if key.kind === SOURCE_INTERPRET
+    if key.kind === SOURCE_EXPAND
         upstream = cached_result_state(workspace.cache.db, SOURCE_READ, key.entity)
         if upstream !== nothing && CacheResultStatus(upstream.status) === RESULT_FAILED
             return ProcessingResult(nothing, CapturedException(
                 ErrorException(something(upstream.message, "Source read failed")), Any[]))
         end
-        enqueue_source_interpretation!(workspace, key.entity; priority, waiter)
-    else
-        enqueue_work!(workspace, key, current_revision(workspace.work, key);
-            priority, dependencies, waiter)
     end
+    enqueue_work!(workspace, key, current_revision(workspace.work, key);
+        priority, dependencies, waiter)
     return take!(waiter)::ProcessingResult
 end
 

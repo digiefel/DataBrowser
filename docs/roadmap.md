@@ -131,6 +131,9 @@ Decisions taken during the audit:
   results in a bounded memory cache, reuse them during interpretation replay, and distinguish source
   failures, invalidation, and progress by stage. Persist source fingerprints for failed and empty
   interpretations as well as successful ones.
+- [x] Replace `entries` with an optional `expand`. `read` returns the data item when a source item
+  holds exactly one. `read` and `expand` run in one source job that records two results:
+  `SOURCE_READ` and `SOURCE_EXPAND`, which replaces `SOURCE_INTERPRET`.
 - [x] Finish removing Core's reads of Cache fields. Stage, fingerprint, metadata, and payload
   access uses Cache's exported interface. Core owns its workspace idle deadline; Cache keeps its
   flush-deadline helper private. Remove unused imports, including the concrete cache backend.
@@ -176,7 +179,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
   availability from workspace lifecycle. `SourceScan` remains the Cache load result only.
 - [ ] Add `WorkspaceIndex(source_id)`; replace the two hand-built empty-index constructions.
 - [ ] Name item metadata layers after the pipeline stages on `ItemRecord` and remove the parallel
-  `WorkspaceIndex.item_metadata` dict, so each item's interpret and analyze layers live in one place.
+  `WorkspaceIndex.item_metadata` dict, so each item's own, process and analyze layers live in one
+  place.
 - [ ] One status model. `scan.state` (7 symbols), `cache_state` (8), `cache.operation` (4), and the
   `status.label in ("Fresh", "Loaded", "Errors")` check in `workspace_status` collapse into one
   enum and one `busy` derivation; `source_scan_running`, `cache_work_running`,
@@ -263,11 +267,11 @@ workloads, completed disk writes, cache reads and process memory measurements.
   Changed code must invalidate success and failure automatically. Investigate Revise integration
   and a stable persisted code/environment fingerprint; begin conservatively at project scope.
   Mismatch follows eager/requested recomputation policy, not a warning-only path.
-- [ ] Define and test persistence at every expensive pipeline boundary (discovery, read, entries,
+- [ ] Define and test persistence at every expensive pipeline boundary (discovery, read, expand,
   item and collection process/analyze). A valid persisted stage satisfies downstream work without
   rerunning earlier user code.
 - [ ] Support expensive or non-repeatable sources (simulations, compressed inputs, streams) through
-  source-owned durable handles or persisted interpreted outputs; add `replayable(::AbstractDataSource)`
+  source-owned durable handles or persisted unprocessed outputs; add `replayable(::AbstractDataSource)`
   when the first such source arrives.
 - [ ] Profile the DuckDB flush path at millions of rows and remove the dominant avoidable cost.
 - [ ] Document cache contracts in source docstrings and the generated public documentation.
@@ -280,7 +284,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
   `annotate_collection_path` with `source_collection_metadata(source, paths)`: a batch of public
   collection-identity paths in, owned metadata dictionaries per path level out. DirectorySource
   owns sidecar parsing and matching; Core owns composition and invalidation. Store declared and
-  source metadata separately and replace the source contribution on interpretation, refresh and
+  source metadata separately and replace the source contribution on item publication, refresh and
   reopen, so removed keys reveal the declared values beneath them. Snapshot source metadata under
   its lock without calling user reconstruction there. Test both DirectorySource and another source.
 - [ ] Split `DirectorySource` into scan, `metadata.txt`, and watcher files. The watcher rescans
@@ -452,7 +456,7 @@ presentation.
 
 - [ ] Add two-dimensional array and image visualizers.
 - [ ] Persist supported dense N-dimensional array payloads and verify warm delivery without rereading
-  or reinterpreting their source items.
+  or expanding their source items again.
 - [ ] Add heatmaps for gridded arrays and suitable tables.
 - [ ] Add dimension and slice controls for higher-dimensional arrays.
 - [ ] Add editable colour limits, scales, colormaps, and image display settings.
@@ -476,7 +480,7 @@ Let users inspect the values produced throughout a project pipeline. The workspa
 chosen value through its normal data-access path; inspectors and visualizers continue to consume the
 payload they are given rather than learning special pipeline logic.
 
-- [ ] Expose the results of `read`, `entries`, `process`, `analyze`, collection `process`, and
+- [ ] Expose the results of `read`, `expand`, `process`, `analyze`, collection `process`, and
   collection `analyze` through the shared application API.
 - [ ] Use the public API vocabulary for the GUI control and skip operations absent from a project.
 - [ ] Coalesce sibling items when moving to a source-level result and group items when moving to a

@@ -55,7 +55,7 @@ table under an ordinary lock.
 | Stage | Output | Location |
 | --- | --- | --- |
 | `read` | Loaded content | Memory, evictable (256 MiB budget) |
-| `entries` | Items | Memory, evictable |
+| `expand` (or `read`, for one item) | Items | Memory, evictable |
 | `process`, collection `process` | Payload tables | DuckDB payload store |
 | `analyze`, collection `analyze` | Metadata | Catalog columns |
 

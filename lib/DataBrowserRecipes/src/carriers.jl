@@ -8,7 +8,7 @@ items behave like any other typed item rather than like a tagged bag.
 """
 
 """
-Private carrier handing one registration's `read` output to its `entries` stage.
+Private carrier handing one registration's `read` output to its `expand` stage.
 
 `detect` runs inside the dialect's `read`, which is why the `{K}` tag first appears here.
 """
@@ -20,7 +20,7 @@ end
 RegisteredReadResult{K}(data::D, metadata::MetadataDict) where {K,D} =
     RegisteredReadResult{K,D}(data, metadata)
 
-"""Result of a `read` whose source item matched no registration; `entries` yields no items."""
+"""Result of a `read` whose source item matched no registration; `expand` yields no items."""
 struct NoMatch end
 
 """
@@ -28,8 +28,8 @@ Private carrier for ordinary data produced by `register_item!`.
 
 Adaptation converts the registration callback's collection strings into normalized
 `AbstractCollection` segments, so the carrier answers the generic item contract directly. Before
-interpretation normalizes the item, `id` holds only the callback-supplied sibling key (or `""`);
-the carrier delivered by interpretation is rebuilt on its record and carries the final minted id.
+the engine publishes the item, `id` holds only the callback-supplied sibling key (or `""`);
+the published carrier is rebuilt on its record and carries the final minted id.
 """
 struct RegisteredDataItem{K,D} <: AbstractDataItem
     id::String
@@ -61,7 +61,7 @@ item_data(item::RegisteredDataItem) = item.data
 
 """
 A registered carrier adopts its normalized record wholesale, and the index's collection path when
-one is supplied. Its own segments survive interpretation, where the index has nothing yet.
+one is supplied. Its own segments survive publication, where the index has nothing yet.
 
 The record's registration is validated against the carrier's tag: a mismatch means a cached record
 was paired with the wrong payload, which must fail loudly rather than silently produce an item of

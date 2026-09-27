@@ -1,4 +1,4 @@
-using DataBrowserAPI: AbstractDataSource, AbstractDataSourceItem, entries, process, analyze, reconstruct, id, label, item_data, metadata
+using DataBrowserAPI: AbstractDataSource, AbstractDataSourceItem, expand, process, analyze, reconstruct, id, label, item_data, metadata
 using Test, DataBrowserRecipes, DataBrowserAPI
 
 struct RecipeSource <: AbstractDataSource end
@@ -13,12 +13,12 @@ DataBrowserAPI.source_item_path(f::RecipeFile) = f.path
     project = define_project("recipe")
     register_item!(project, :trace;
         read=_ -> (data=[1, 2], metadata=Dict(:scale => 3)),
-        entries=(data, _) -> [(data=(x=data,), metadata=Dict(:channel => n)) for n in 1:2],
+        expand=(data, _) -> [(data=(x=data,), metadata=Dict(:channel => n)) for n in 1:2],
         id=(_, meta) -> meta[:channel],
         process=(data, meta) -> (x=data.x .* meta[:scale],),
         analyze=(data, _) -> Dict(:total => sum(data.x)))
     file = RecipeFile("trace.dat")
-    items = entries(project, file, read(project, RecipeSource(), file))
+    items = expand(project, file, read(project, RecipeSource(), file))
     @test length(unique(id.(items))) == 2
     for item in items
         processed = process(project, item)
@@ -35,7 +35,7 @@ end
         file = RecipeFile(joinpath(dir, "sample.csv"))
         write(file.path, "x,y\n1,2\n3,4\n")
         project = register_csv!(define_project("csv"))
-        item = only(entries(project, file, read(project, RecipeSource(), file)))
+        item = only(expand(project, file, read(project, RecipeSource(), file)))
         @test item_data(item).x == [1, 3]
         @test item_data(item).y == [2, 4]
     end

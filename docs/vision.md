@@ -226,7 +226,7 @@ DataBrowserRecipes → API : the callback dialect (define_project, register_*) i
 DataBrowserCache   → API : persistence (DuckDB where it fits); keyed by PROJECT, not workspace
 DataBrowserCore    → API, Sources, Cache : the workspace, the index, background work,
                    command execution, project save/load, provenance, REPL, and the runtime that
-                   drives a project's callbacks through interpret → process → analyze; base support
+                   drives a project's callbacks through read → process → analyze; base support
                    for common data shapes such as tables, vectors, arrays, and image-like data; shapes
                    needing heavy dependencies (audio, say) live in extension packages
 DataBrowserGUI     → API, Core (+ CImGui/GLFW) : the host shell, panels, browser, shared widgets,
@@ -257,8 +257,9 @@ phasing.
 
 The registration API defines named or default pipelines over ordinary Julia data. It ships as
 `DataBrowserRecipes`, an ordinary package implemented purely as a client of the typed stage
-contract; the engine never learns it exists. `read` performs the per-source-item source read once
-and `entries` expands the result into one or several data items. Item construction supplies cheap
+contract; the engine never learns it exists. `read` performs the per-source-item source read once.
+Its result is one data item unless the registration supplies `expand`, which splits the result into
+zero or several data items. Item construction supplies cheap
 sibling identity, labels, collection placement, and metadata at the same time data is split.
 Deferred `process` and `analyze` callbacks receive data and effective metadata. A registration
 name provides stable replacement and associates extension or collection operations. It is not a

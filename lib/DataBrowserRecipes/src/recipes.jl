@@ -10,11 +10,11 @@ specializes the whole stage.
 Re-registering a name replaces the recipe *value* in its project. It never defines methods, so
 registrations cannot accumulate and there is no world-age problem.
 """
-struct ItemRecipe{Detect,Read,Entries,Process,Analyze,Label,Collection,Id}
+struct ItemRecipe{Detect,Read,Expand,Process,Analyze,Label,Collection,Id}
     kind::Symbol
     detect::Detect
     read::Read
-    entries::Entries
+    expand::Expand
     process::Process
     analyze::Analyze
     label::Label
@@ -37,7 +37,7 @@ end
 """
 A callback project assembled from registered recipes.
 
-The dialect's implementation of `AbstractProject`, and nothing more: source interpretation and data
+The dialect's implementation of `AbstractProject`, and nothing more: source expansion and data
 processing are defined by the registered callbacks, plot registration lives in `DataBrowserPlots`,
 and package-owned cache, job, and browser state does not belong here.
 

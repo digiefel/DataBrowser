@@ -117,7 +117,7 @@ struct ProjectCacheIndex
     source::SourceScan
     analysis_errors::Dict{String,String}
     # The computed layers (item process + item analysis) per item, restored for
-    # items whose governing result is valid: delivered effective minus the entries layer.
+    # items whose governing result is valid: delivered effective minus the item layer.
     item_metadata::Dict{String,MetadataDict}
     result_states::Dict{CacheResultKey,AnyCachedResultState}
 end
@@ -137,13 +137,13 @@ end
 struct CacheStageSummary
     cached_sources::Int
     read_sources::Int
-    interpreted_items::Int
+    created_items::Int
     processed::Int
     analyzed::Int
     collection_processed::Int
     collection_analyzed::Int
     failed_read::Int
-    failed_interpret::Int
+    failed_expand::Int
     failed_process::Int
     failed_analyze::Int
     failed_collection::Int
@@ -190,13 +190,13 @@ function _stage_summary_delta(
     summary::CacheStageSummary;
     cached_sources::Int=0,
     read_sources::Int=0,
-    interpreted_items::Int=0,
+    created_items::Int=0,
     processed::Int=0,
     analyzed::Int=0,
     collection_processed::Int=0,
     collection_analyzed::Int=0,
     failed_read::Int=0,
-    failed_interpret::Int=0,
+    failed_expand::Int=0,
     failed_process::Int=0,
     failed_analyze::Int=0,
     failed_collection::Int=0,
@@ -204,13 +204,13 @@ function _stage_summary_delta(
     return CacheStageSummary(
         summary.cached_sources + cached_sources,
         summary.read_sources + read_sources,
-        summary.interpreted_items + interpreted_items,
+        summary.created_items + created_items,
         summary.processed + processed,
         summary.analyzed + analyzed,
         summary.collection_processed + collection_processed,
         summary.collection_analyzed + collection_analyzed,
         summary.failed_read + failed_read,
-        summary.failed_interpret + failed_interpret,
+        summary.failed_expand + failed_expand,
         summary.failed_process + failed_process,
         summary.failed_analyze + failed_analyze,
         summary.failed_collection + failed_collection,
@@ -226,7 +226,7 @@ function _stage_result_delta(
     status = CacheResultStatus(state.status)
     if status === RESULT_READY
         kind === SOURCE_READ && return _stage_summary_delta(summary; read_sources=sign)
-        kind === SOURCE_INTERPRET && return _stage_summary_delta(summary; cached_sources=sign)
+        kind === SOURCE_EXPAND && return _stage_summary_delta(summary; cached_sources=sign)
         kind === ITEM_PROCESS &&
             return _stage_summary_delta(summary; processed=sign)
         kind === ITEM_ANALYZE &&
@@ -237,7 +237,7 @@ function _stage_result_delta(
             return _stage_summary_delta(summary; collection_analyzed=sign)
     elseif status === RESULT_FAILED
         kind === SOURCE_READ && return _stage_summary_delta(summary; failed_read=sign)
-        kind === SOURCE_INTERPRET && return _stage_summary_delta(summary; failed_interpret=sign)
+        kind === SOURCE_EXPAND && return _stage_summary_delta(summary; failed_expand=sign)
         kind === ITEM_PROCESS &&
             return _stage_summary_delta(summary; failed_process=sign)
         kind === ITEM_ANALYZE &&
@@ -267,10 +267,10 @@ function _stage_ledger_item!(ledger::CacheStageLedger, id::AbstractString, prese
         exists = item_id in ledger.items
         if present && !exists
             push!(ledger.items, item_id)
-            ledger.summary = _stage_summary_delta(ledger.summary; interpreted_items=1)
+            ledger.summary = _stage_summary_delta(ledger.summary; created_items=1)
         elseif !present && exists
             delete!(ledger.items, item_id)
-            ledger.summary = _stage_summary_delta(ledger.summary; interpreted_items=-1)
+            ledger.summary = _stage_summary_delta(ledger.summary; created_items=-1)
         end
     end
     return nothing
@@ -283,16 +283,16 @@ function _stage_ledger_failure!(
 )::Nothing
     lock(ledger.lock) do
         exists = key in ledger.failures
-        # Source-level interpretation failures carry an empty item id.
+        # Source-level failures carry an empty item id.
         delta = isempty(first(key)) ? 1 : 0
         if present && !exists
             push!(ledger.failures, key)
             delta == 1 &&
-                (ledger.summary = _stage_summary_delta(ledger.summary; failed_interpret=1))
+                (ledger.summary = _stage_summary_delta(ledger.summary; failed_expand=1))
         elseif !present && exists
             delete!(ledger.failures, key)
             delta == 1 &&
-                (ledger.summary = _stage_summary_delta(ledger.summary; failed_interpret=-1))
+                (ledger.summary = _stage_summary_delta(ledger.summary; failed_expand=-1))
         end
     end
     return nothing
@@ -358,7 +358,7 @@ SourceItemRow(row)::SourceItemRow = SourceItemRow(
     _null_to_nothing(row.timestamp),
 )
 
-"""Display label of one cached source item, resolved once at interpretation."""
+"""Display label of one cached source item, resolved once when its items are published."""
 label(row::SourceItemRow)::String = row.label
 
 """One persisted package-owned collection record; no live user collection value is serialized."""
@@ -400,7 +400,7 @@ ItemRow(row)::ItemRow = ItemRow(
     _null_to_nothing(row.collection_key),
 )
 
-"""One persisted failure row. Source-level interpretation failures carry an empty item id."""
+"""One persisted failure row. Source-level failures carry an empty item id."""
 struct FailureRow
     item_id::String
     source_item_key::Int64
@@ -437,7 +437,7 @@ end
 
 """
 One open DuckDB cache, backed by a file or held in memory: typed row stores, one processed-payload
-store, and one resident interpreted-payload buffer. Only schema, meta-header, and checkpoint work open short-lived
+store, and one resident unprocessed-payload buffer. Only schema, meta-header, and checkpoint work open short-lived
 connections.
 """
 mutable struct CacheDB
@@ -455,8 +455,8 @@ mutable struct CacheDB
     keyed_result_states::RowStore{Tuple{Int8,Int64},CachedKeyedResultState}
     payload::TabularFamilyStore
     source_reads::MemoryStore{Int64,Any}
-    interpreted::MemoryStore{String,Any}
-    # One integer surrogate per item id, shared with the payload store; minted at interpretation.
+    unprocessed::MemoryStore{String,Any}
+    # One integer surrogate per item id, shared with the payload store; minted when items are published.
     item_keys::Dict{String,Int64}
     next_item_key::Int64
     # One integer surrogate per source-item id; the mapping is persisted once in `source_items`.
@@ -586,7 +586,7 @@ function _load_item_keys(db::DuckDB.DB)::Tuple{Dict{String,Int64},Int64}
     end
 end
 
-"""Mint or resolve the integer surrogate for one item id. Minting happens only at interpretation."""
+"""Mint or resolve the integer surrogate for one item id. Minting happens only when items are published."""
 function item_key!(cache::CacheDB, id::AbstractString; mint::Bool=false)::Int64
     key = String(id)
     return lock(cache.key_lock) do
@@ -713,13 +713,13 @@ end
 # RowStore rows and TabularFamilyStore batches. The stores know none of this; they buffer typed rows.
 
 """
-Store one source item's interpretation index rows: its identity row plus each record's rows.
+Store one source item's index rows: its identity row plus each record's rows.
 
-Source identity is retained even when interpretation produces zero records. This function writes
-records only; `store_interpreted!` completes the stage after storing its payloads. Returns
+Source identity is retained even when the source item produces zero records. This function writes
+records only; `store_source_items!` completes the stage after storing its payloads. Returns
 type-conflict messages for keys dropped from the metadata rows.
 """
-function store_interpreted_records!(
+function store_item_records!(
     cache::CacheDB,
     source_item::AbstractDataSourceItem,
     source_item_label::AbstractString,
@@ -737,8 +737,8 @@ function store_interpreted_records!(
         append!(dropped, edit!(cache.source_item_metadata, key, record.metadata))
     end
     record_cache_phase!(
-        cache.metrics.interpreted_write_ns,
-        cache.metrics.interpreted_writes,
+        cache.metrics.item_write_ns,
+        cache.metrics.item_writes,
         started,
     )
     return _conflict_messages(unique(dropped))
@@ -790,36 +790,36 @@ function store_collection_index!(
     return nothing
 end
 
-"""Store one source item's interpreted data in the memory-only interpreted buffer."""
-function store_interpreted_data!(
+"""Store one source item's unprocessed payloads in the memory-only buffer."""
+function store_item_payloads!(
     cache::CacheDB,
     records::Vector{ItemRecord},
     payloads::AbstractVector,
 )::Nothing
     length(records) == length(payloads) || throw(ArgumentError(
-        "Cannot store interpreted data: received $(length(records)) records and " *
+        "Cannot store unprocessed payloads: received $(length(records)) records and " *
         "$(length(payloads)) payloads; the vectors must align one-to-one",
     ))
     for (record, payload) in zip(records, payloads)
-        append!(cache.interpreted, record.id, payload)
+        append!(cache.unprocessed, record.id, payload)
     end
     return nothing
 end
 
 """
-Store one source item's interpreted result: records to database buffers, payloads to memory.
+Store one source item's published items: records to database buffers, payloads to memory.
 
-`payloads` carries each record's interpreted payload; entries land in `source_item_metadata`. Returns the
-interpretation-time type-conflict messages.
+`payloads` carries each record's unprocessed payload; item-layer metadata lands in `source_item_metadata`. Returns the
+type-conflict messages from publication.
 """
-function store_interpreted!(cache::CacheDB, source_item::AbstractDataSourceItem,
+function store_source_items!(cache::CacheDB, source_item::AbstractDataSourceItem,
         source_item_label::AbstractString, records::Vector{ItemRecord},
         payloads::AbstractVector)::Vector{String}
-    conflicts = store_interpreted_records!(
+    conflicts = store_item_records!(
         cache, source_item, source_item_label, records)
-    store_interpreted_data!(cache, records, payloads)
+    store_item_payloads!(cache, records, payloads)
     source_key = source_item_key!(cache, id(source_item))
-    store_source_result!(cache, SOURCE_INTERPRET, source_key)
+    store_source_result!(cache, SOURCE_EXPAND, source_key)
     return conflicts
 end
 
@@ -949,20 +949,20 @@ function store_collection_process_result!(
     return nothing
 end
 
-"""Write one source item-metadata (entries) row."""
+"""Write one source item-metadata (item layer) row."""
 function edit_source_item_metadata!(cache::CacheDB, key::Int64, metadata::AbstractDict)::Nothing
     edit!(cache.source_item_metadata, key, metadata_dict(metadata))
     return nothing
 end
 
-"""Delete interpreted items and downstream results, preserving source identity and the read result."""
+"""Delete published items and downstream results, preserving source identity and the read result."""
 function delete_source_output!(
     cache::CacheDB,
     source_item_key_value::Integer,
     old_records::Vector{ItemRecord},
 )::Nothing
     source_key = Int64(source_item_key_value)
-    clear_cached_result_state!(cache, SOURCE_INTERPRET, source_key)
+    clear_cached_result_state!(cache, SOURCE_EXPAND, source_key)
     for record in old_records
         key = item_key!(cache, record.id)
         delete!(cache.items, record.id)
@@ -971,7 +971,7 @@ function delete_source_output!(
         delete!(cache.analyzed_item_metadata, key)
         delete!(cache.payload, (key, ITEM_PROCESS))
         delete!(cache.payload, (key, COLLECTION_PROCESS))
-        delete!(cache.interpreted, record.id)
+        delete!(cache.unprocessed, record.id)
         delete!(cache.failures, (record.id, source_key))
         _stage_ledger_failure!(cache.stage_ledger, (record.id, source_key), false)
         delete!(cache.result_states, (Int8(ITEM_PROCESS), record.id))
@@ -1076,7 +1076,7 @@ function _cache_stage_summary(source_items, items, failures, state_stores...)::C
         Iterators.flatten(values(store) for store in state_stores),
     )
     return CacheStageSummary(
-        ready(SOURCE_INTERPRET),
+        ready(SOURCE_EXPAND),
         ready(SOURCE_READ),
         length(items),
         ready(ITEM_PROCESS),
@@ -1084,7 +1084,7 @@ function _cache_stage_summary(source_items, items, failures, state_stores...)::C
         ready(COLLECTION_PROCESS),
         ready(COLLECTION_ANALYZE),
         failed(SOURCE_READ),
-        failed(SOURCE_INTERPRET),
+        failed(SOURCE_EXPAND),
         failed(ITEM_PROCESS),
         failed(ITEM_ANALYZE),
         failed(COLLECTION_PROCESS) + failed(COLLECTION_ANALYZE),
@@ -1113,12 +1113,12 @@ end
 """
 Return whether an item has a cached payload at `stage` without loading the payload.
 
-Interpreted payloads are resident and processed payloads use the database payload store.
+Unprocessed payloads are resident and processed payloads use the database payload store.
 The payload-store check covers queued and committed writes.
 """
 function has_payload(cache::CacheDB, item_id::AbstractString; stage::PipelineStage)::Bool
     id_value = String(item_id)
-    stage === SOURCE_INTERPRET && return haskey(cache.interpreted, id_value)
+    stage === SOURCE_EXPAND && return haskey(cache.unprocessed, id_value)
     key = lock(cache.key_lock) do
         get(cache.item_keys, id_value, nothing)
     end
@@ -1130,7 +1130,7 @@ end
 Read cached item payloads for a `PipelineStage`.
 
 The returned vector aligns with `records`. Each entry is `Some(payload)` on a hit and `nothing` on
-a miss, so `nothing` remains a valid payload value. Interpreted payloads are resident only;
+a miss, so `nothing` remains a valid payload value. Unprocessed payloads are resident only;
 processed payloads come from the DuckDB-backed payload store.
 """
 function read_payload(
@@ -1140,8 +1140,8 @@ function read_payload(
 )::Vector{Any}
     isempty(records) && return Any[]
 
-    if stage === SOURCE_INTERPRET
-        return Any[read_hit(cache.interpreted, record.id) for record in records]
+    if stage === SOURCE_EXPAND
+        return Any[read_hit(cache.unprocessed, record.id) for record in records]
     end
 
     keys = PayloadKey[(item_key!(cache, record.id), stage) for record in records]
@@ -1162,7 +1162,7 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
          cachedb.analyzed_item_metadata,
          cachedb.analyzed_collection_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.payload,
-         cachedb.interpreted, cachedb.source_reads)
+         cachedb.unprocessed, cachedb.source_reads)
         try
             close!(buffer)
         catch error
@@ -1235,7 +1235,7 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
          cachedb.analyzed_item_metadata,
          cachedb.analyzed_collection_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.payload,
-         cachedb.interpreted, cachedb.source_reads)
+         cachedb.unprocessed, cachedb.source_reads)
         clear!(buffer)
     end
     lock(cachedb.key_lock) do
@@ -1351,7 +1351,7 @@ function _load_collection_index(
     return collections
 end
 
-"""Reconstruct the full `SourceScan` stored in one DuckDB cache (entries-layer metadata only)."""
+"""Reconstruct the full `SourceScan` stored in one DuckDB cache (item-layer metadata only)."""
 function _load_source_scan(
     cache::CacheDB,
     item_metadata_by_key::Dict{Int64,MetadataDict},
@@ -1384,7 +1384,7 @@ function _load_source_scan(
     end
 
     for state in values(read(cache.keyed_result_states))
-        PipelineStage(state.kind) in (SOURCE_READ, SOURCE_INTERPRET) || continue
+        PipelineStage(state.kind) in (SOURCE_READ, SOURCE_EXPAND) || continue
         CacheResultStatus(state.status) === RESULT_FAILED || continue
         push!(failures, ItemFailure(
             get(source_ids_by_key, state.entity, ""), "",
@@ -1442,22 +1442,22 @@ end
 
 function load_cache_index_body(cachedb::CacheDB)::ProjectCacheIndex
     identity = cachedb.identity
-    entries_by_key = read(cachedb.source_item_metadata)
+    item_layer_by_key = read(cachedb.source_item_metadata)
     analyzed_by_key = read(cachedb.analyzed_item_metadata)
     collection_analysis = read(cachedb.analyzed_collection_metadata)
     key_to_id = Dict{Int64,String}(
         row.item_key => row.id for row in values(read(cachedb.items))
     )
-    # The computed layer is the delivered effective minus the entries layer: what item process and
+    # The computed layer is the delivered effective minus the item layer: what item process and
     # item analysis added, restored per item id.
     item_metadata = Dict{String,MetadataDict}()
     for (key, analyzed) in analyzed_by_key
         item_id = get(key_to_id, key, nothing)
         item_id === nothing && continue
-        entries = get(entries_by_key, key, MetadataDict())
+        item_layer = get(item_layer_by_key, key, MetadataDict())
         computed = MetadataDict()
         for (name, value) in analyzed
-            if !haskey(entries, name) || !isequal(entries[name], value)
+            if !haskey(item_layer, name) || !isequal(item_layer[name], value)
                 computed[name] = value
             end
         end
@@ -1465,7 +1465,7 @@ function load_cache_index_body(cachedb::CacheDB)::ProjectCacheIndex
     end
     base = ProjectCacheIndex(
         identity,
-        _load_source_scan(cachedb, entries_by_key, collection_analysis),
+        _load_source_scan(cachedb, item_layer_by_key, collection_analysis),
     )
     result_states = Dict{CacheResultKey,AnyCachedResultState}()
     for state in values(read(cachedb.result_states))

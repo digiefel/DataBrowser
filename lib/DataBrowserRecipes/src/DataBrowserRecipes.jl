@@ -26,7 +26,7 @@ using DataBrowserAPI:
 import DataBrowserAPI:
     analyze,
     attach_record,
-    entries,
+    expand,
     collection,
     id,
     item_data,

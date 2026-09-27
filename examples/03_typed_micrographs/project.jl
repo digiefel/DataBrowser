@@ -2,7 +2,6 @@ using DataBrowser
 using DelimitedFiles: readdlm
 import DataBrowser:
     collection,
-    entries,
     fingerprint,
     id,
     item_data,
@@ -89,12 +88,10 @@ function process(image::Micrograph)::Micrograph
     return Micrograph(image.path, image.name, normalized, image.exposure_ms)
 end
 
-# `read` is the only stage that touches the source; `entries` is a pure function of its result.
-read(::MicrographDirectory, file::MicrographFile)::Matrix{Float32} =
-    Float32.(readdlm(file.path, ','))
-
-entries(file::MicrographFile, pixels::Matrix{Float32})::Vector{Micrograph} =
-    [Micrograph(file.path, splitext(basename(file.path))[1], pixels, 10.0)]
+# `read` is the only stage that touches the source. One file holds one micrograph, so `read` returns
+# the item itself and the project needs no `expand` method.
+read(::MicrographDirectory, file::MicrographFile)::Micrograph = Micrograph(
+    file.path, splitext(basename(file.path))[1], Float32.(readdlm(file.path, ',')), 10.0)
 
 struct MicrographProject <: DataBrowser.AbstractProject end
 

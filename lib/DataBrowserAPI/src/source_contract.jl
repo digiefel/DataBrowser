@@ -22,7 +22,7 @@ One source-owned change batch.
 
 Sources report physical source-item replacements/removals and source-provided metadata changes
 through the same update contract. An empty item batch with `metadata_changed=true` updates
-existing logical items without reinterpreting their source items.
+existing logical items without reading their source items again.
 """
 struct SourceChanges{S<:AbstractDataSourceItem}
     upserts::Vector{S}
@@ -114,9 +114,10 @@ source_item_timestamp(::AbstractDataSourceItem) = nothing
 """
 Where a source places an item that declares no collection path of its own.
 
-Applied by the engine after `entries`, where the source is legitimately in hand — the pipeline
-stages themselves stay pure functions of values. The default leaves such items at the root; a
-directory source places them under their directory relative to its root.
+Applied by the engine when it publishes a source item's data items, where the source is
+legitimately in hand — the pipeline stages themselves stay pure functions of values. The default
+leaves such items at the root; a directory source places them under their directory relative to its
+root.
 """
 default_collection_path(::AbstractDataSource, ::AbstractDataSourceItem) = AbstractCollection[]
 

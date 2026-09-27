@@ -52,7 +52,7 @@ function render_info_window(state::BrowserState)::Nothing
         ig.TableNextColumn()
         if length(selected_items) == 1
             m = selected_items[1]
-            # The delivered metadata dict (inherited ⊕ entries ⊕ computed layers), exactly what
+            # The delivered metadata dict (inherited ⊕ item ⊕ computed layers), exactly what
             # project callbacks and views receive.
             delivered = Workspace.delivered_metadata(
                 workspace, m, workspace.index.collections)

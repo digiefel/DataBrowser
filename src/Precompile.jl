@@ -6,7 +6,7 @@ using GLMakie: Axis, Figure, contents, lines!
 Minimal fixture project used only to exercise engine pipelines during precompilation.
 
 User project callbacks are not precompilable for other projects; this registry exists solely to
-drive scan, interpret, process, analyze, collection analysis, cache writes, and plotting through the
+drive scan, read, process, analyze, collection analysis, cache writes, and plotting through the
 package machinery using bundled test fixtures.
 """
 function _precompile_project()
@@ -70,7 +70,7 @@ end
                 plot_kind = only(registered_plot_kinds(project, :iv))
                 figure = setup_plot(workspace, plot_kind, items)
                 plot_data!(workspace, plot_kind, items, figure)
-                Cache.read_payload(workspace.cache.db, records; stage=DataBrowserAPI.SOURCE_INTERPRET)
+                Cache.read_payload(workspace.cache.db, records; stage=DataBrowserAPI.SOURCE_EXPAND)
                 Cache.read_payload(workspace.cache.db, records; stage=DataBrowserAPI.ITEM_PROCESS)
             end
             Workspace.workspace_memory_snapshot(workspace)

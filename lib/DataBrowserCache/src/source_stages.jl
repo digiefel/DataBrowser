@@ -46,10 +46,10 @@ function has_payload(cache::CacheDB, source_key::Integer; stage::PipelineStage=S
     return haskey(cache.source_reads, Int64(source_key))
 end
 
-"""Whether a source has finished interpretation or failed at either source stage."""
+"""Whether a source has published its items or failed at either source stage."""
 function source_complete(cache::CacheDB, source_key::Integer)::Bool
-    interpreted = cached_result_state(cache, SOURCE_INTERPRET, source_key)
-    interpreted === nothing || return true
+    items = cached_result_state(cache, SOURCE_EXPAND, source_key)
+    items === nothing || return true
     loaded = cached_result_state(cache, SOURCE_READ, source_key)
     return loaded !== nothing && CacheResultStatus(loaded.status) === RESULT_FAILED
 end

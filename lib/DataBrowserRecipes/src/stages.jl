@@ -2,7 +2,7 @@
 The dialect's implementation of the typed stage contract.
 
 Every registration callback runs through these adapter methods over the same stage runners and work
-keys as a typed project's methods. Nothing here is privileged: the engine calls `read`, `entries`,
+keys as a typed project's methods. Nothing here is privileged: the engine calls `read`, `expand`,
 `process`, and `analyze`, and this file answers them.
 """
 
@@ -116,7 +116,7 @@ Run the matching registration's `read` callback, tagging its result with the reg
 
 Detection happens here rather than in a pipeline stage of its own: `read` runs for every changed
 source item anyway, and `detect` costs filename-predicate time. A source item matching no
-registration yields `NoMatch`, whose `entries` produces no items.
+registration yields `NoMatch`, whose `expand` produces no items.
 """
 function read(project::Project, ::AbstractDataSource, item::AbstractDataSourceItem)
     recipe = @timed_dbg _detect_recipe(project, item)
@@ -130,7 +130,7 @@ function _invoke_read(recipe::ItemRecipe, item::AbstractDataSourceItem)
     return RegisteredReadResult{recipe.kind}(data, read_metadata)
 end
 
-entries(::Project, ::AbstractDataSourceItem, ::NoMatch)::Vector{AbstractDataItem} =
+expand(::Project, ::AbstractDataSourceItem, ::NoMatch)::Vector{AbstractDataItem} =
     AbstractDataItem[]
 
 """
@@ -139,7 +139,7 @@ Expand one registration's read result into its data items.
 The source item is still in hand because identity is not payload: collection defaults and inherited
 metadata derive from it, while the loaded value stays purely the expensive data.
 """
-function entries(
+function expand(
     project::Project,
     source_item::AbstractDataSourceItem,
     loaded::RegisteredReadResult{K},
@@ -147,11 +147,11 @@ function entries(
     recipe = _recipe(project, K)
     recipe === nothing && error("Missing registration $K")
     inherited_metadata = merge(metadata_dict(metadata(source_item)), loaded.metadata)
-    return @timed_dbg "entries" begin
-        values = recipe.entries === nothing ? Any[loaded.data] :
-            recipe.entries(loaded.data, inherited_metadata)
+    return @timed_dbg "expand" begin
+        values = recipe.expand === nothing ? Any[loaded.data] :
+            recipe.expand(loaded.data, inherited_metadata)
         values isa AbstractVector || error(
-            "entries callback for registration $K must return a vector; got $(typeof(values))",
+            "expand callback for registration $K must return a vector; got $(typeof(values))",
         )
         AbstractDataItem[
             _registered_item(recipe, value, inherited_metadata, id(source_item), position)

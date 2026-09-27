@@ -1,5 +1,5 @@
 """
-Source-item interpretation: expand an already-read value through `entries` and normalize its items.
+Source-item publication: turn an already-read value into data items through `expand` and normalize them.
 
 This is the only place the source and the item pipeline meet. Identity minting and collection
 placement happen here, once, for every project alike — the stages themselves never see the source
@@ -12,7 +12,7 @@ using DataBrowserSources: DirectorySource, index_source_file
 import DataBrowserAPI:
     attach_record,
     collection,
-    entries,
+    expand,
     id,
     label,
     metadata,
@@ -29,7 +29,7 @@ import DataBrowserAPI.ItemIndex:
     metadata_dict
 
 """
-Resolve where one interpreted item is placed, with the source in hand.
+Resolve where one data item is placed, with the source in hand.
 
 An item declaring no path of its own takes the source's default placement; every path is then
 offered to the source, which may attach its own metadata to each level. This is the one point at
@@ -62,13 +62,13 @@ end
 """
 One completed source-item pass.
 
-`records` are retained by the index. `interpreted_items` carry transient user values; workspace
+`records` are retained by the index. `items` carry transient user values; workspace
 publication extracts their payloads into the memory cache. These values do not become index records.
 """
-struct SourceItemInterpretation
+struct SourceItemExpansion
     records::Vector{ItemRecord}
     collection_paths::Vector{Vector{CollectionInput}}
-    interpreted_items::Vector{AbstractDataItem}
+    items::Vector{AbstractDataItem}
     failures::Vector{ItemFailure}
     # The source item's display label, resolved once here so the UI and cache never rerun
     # project label code.
@@ -76,35 +76,42 @@ struct SourceItemInterpretation
 end
 
 """
-Interpret every logical data item produced by one source item.
+Expand one source item's read result into data items and their records.
 
-The source is touched only by `read`; `entries` expands its result into items without going back to
+The source is touched only by `read`; `expand` turns its result into items without going back to
 the origin. Collection placement is applied here, where the source is legitimately in hand: an item
 declaring no path of its own takes the source's default, and every path is offered to the source to
 annotate. Items are otherwise passed through untouched, whatever their type. Processing and
 analysis belong to the workspace work graph. `source_item_key` is the workspace-minted surrogate
-stamped on every record; transient interpretations outside a workspace (such as `items_for_file`)
+stamped on every record; transient expansions outside a workspace (such as `items_for_file`)
 leave it at 0.
 """
-function interpret_source_item(
+function expand_source_item(
     project::AbstractProject,
     source::AbstractDataSource,
     source_item::AbstractDataSourceItem,
     loaded;
     source_item_key::Int64=Int64(0),
-)::SourceItemInterpretation
+)::SourceItemExpansion
     source_item_id_value = id(source_item)
     source_item_path_value = source_item_path(source_item)
     source_item_label_value = label(source_item)
-    handles = entries(project, source_item, loaded)
+    handles = expand(project, source_item, loaded)
     handles isa AbstractVector || error(
-        "entries(::$(typeof(project)), ::$(typeof(source_item)), ::$(typeof(loaded))) must " *
+        "expand(::$(typeof(project)), ::$(typeof(source_item)), ::$(typeof(loaded))) must " *
         "return a vector of items; got $(typeof(handles))",
     )
+    for handle in handles
+        handle isa AbstractDataItem || error(
+            "read returned a $(typeof(loaded)) for $(typeof(source_item)), and expand produced a " *
+            "$(typeof(handle)) from it, which is not an AbstractDataItem. Return a data item from " *
+            "read, or define expand(::$(typeof(source_item)), ::$(typeof(loaded))).",
+        )
+    end
     item_count = length(handles)
     records = Vector{ItemRecord}(undef, item_count)
     collection_paths = Vector{Vector{CollectionInput}}(undef, item_count)
-    interpreted_items = Vector{AbstractDataItem}(undef, item_count)
+    items = Vector{AbstractDataItem}(undef, item_count)
     source_metadata = metadata_dict(metadata(source_item))
     for (index, handle) in pairs(handles)
         record_metadata = merge(copy(source_metadata), metadata_dict(metadata(handle)))
@@ -122,15 +129,15 @@ function interpret_source_item(
         records[index] = record
         collection_paths[index] = collection_inputs(
             _placed_collection_path(source, source_item, handle))
-        interpreted_items[index] = attach_record(handle, record)
+        items[index] = attach_record(handle, record)
     end
-    return SourceItemInterpretation(
-        records, collection_paths, interpreted_items, ItemFailure[],
+    return SourceItemExpansion(
+        records, collection_paths, items, ItemFailure[],
         String(source_item_label_value))
 end
 
 """
-Interpret one physical file into the data items produced by project code.
+Read one physical file into the data items produced by project code.
 
 Every item answers `collection(item)` with its concrete collection segments; registered items
 carry the normalized segments adapted from their registration callback's string path.
@@ -147,17 +154,17 @@ function items_for_file(
     end
     source_item = index_source_file(filepath, dirname(filepath))
     loaded = read(project, source, source_item)
-    interpretation = interpret_source_item(project, source, source_item, loaded)
+    expansion = expand_source_item(project, source, source_item, loaded)
     collections = CollectionIndex(source_id(source))
     records = ItemRecord[
         ItemRecord(record; collection_key=resolve_collection_path!(collections, path))
         for (record, path) in zip(
-            interpretation.records,
-            interpretation.collection_paths,
+            expansion.records,
+            expansion.collection_paths,
         )
     ]
     return AbstractDataItem[
         attach_record(item, effective_record(collections, record))
-        for (record, item) in zip(records, interpretation.interpreted_items)
+        for (record, item) in zip(records, expansion.items)
     ]
 end

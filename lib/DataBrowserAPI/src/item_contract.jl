@@ -68,7 +68,7 @@ analyze(::AbstractDataItem)::Dict = Dict()
 # ---------------------------------------------------------------------------
 
 """
-Let an item adopt the normalized record interpretation produced for it, and the collection path the
+Let an item adopt the normalized record produced for it, and the collection path the
 index holds for it. Internal workspace hook; the default keeps the item unchanged, because a typed
 item derives its own path from its own state. Package-owned carriers adopt both.
 """

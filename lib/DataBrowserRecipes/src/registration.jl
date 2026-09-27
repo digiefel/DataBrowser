@@ -13,7 +13,7 @@ function Base.show(io::IO, ::MIME"text/plain", project::Project)
     pad = isempty(project.recipes) ? 0 : maximum(length(string(r.kind)) for r in project.recipes)
     for recipe in project.recipes
         optional = [name for (name, f) in
-            (("entries", recipe.entries), ("process", recipe.process),
+            (("expand", recipe.expand), ("process", recipe.process),
              ("analyze", recipe.analyze), ("label", recipe.label),
              ("collection", recipe.collection), ("id", recipe.id))
             if f !== nothing]
@@ -57,7 +57,7 @@ function register_item!(
     kind::Symbol;
     read,
     detect=Returns(true),
-    entries=nothing,
+    expand=nothing,
     process=nothing,
     analyze=nothing,
     label=nothing,
@@ -65,7 +65,7 @@ function register_item!(
     id=nothing,
 )::Project
     recipe = ItemRecipe(
-        kind, detect, read, entries, process, analyze, label, collection, id)
+        kind, detect, read, expand, process, analyze, label, collection, id)
     index = findfirst(r -> r.kind === kind, project.recipes)
     index === nothing ? push!(project.recipes, recipe) : (project.recipes[index] = recipe)
     return project

@@ -56,7 +56,7 @@ function define_ferroelectric_project()::Project
                 metadata=Dict(:chip => parts.chip, :device => parts.device),
             )
         end,
-        entries = (table::DataFrame, metadata::Dict) -> [
+        expand = (table::DataFrame, metadata::Dict) -> [
             (
                 data=view(table, findall(==(pulse), table.pulse), :),
                 metadata=Dict(:pulse => String(pulse)),

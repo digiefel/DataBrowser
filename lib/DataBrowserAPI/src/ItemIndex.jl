@@ -26,7 +26,7 @@ import ..DataBrowserAPI:
     source_item_timestamp,
     source_label
 
-"""Failure produced while interpreting or analyzing one source item."""
+"""Failure produced while reading, expanding or analyzing one source item."""
 struct ItemFailure
     source_item_id::String
     id::String
@@ -70,7 +70,7 @@ function metadata_dict(dict::AbstractDict)::MetadataDict
 end
 
 """
-One transient normalized collection level produced during interpretation.
+One transient normalized collection level produced while a source item's items are published.
 
 This contains only package-owned projections of a live `AbstractCollection`; it never retains the
 user value itself.
@@ -255,7 +255,7 @@ function validate_collection_paths(
     return nothing
 end
 
-"""Resolve one interpreted path into collection records and return its leaf key."""
+"""Resolve one collection path into collection records and return its leaf key."""
 function resolve_collection_path!(
     index::CollectionIndex,
     inputs::Vector{CollectionInput},
@@ -312,7 +312,7 @@ end
 """
     resolve_collection_paths!(index, paths) -> Vector{Union{Nothing,Int64}}
 
-Validate and resolve a batch of interpreted collection paths. Validation completes before the first
+Validate and resolve a batch of collection paths. Validation completes before the first
 record is inserted, so a conflicting projection cannot leave a partially published path behind.
 """
 function resolve_collection_paths!(
@@ -548,10 +548,10 @@ end
 id(record::ItemRecord)::String = record.id
 label(record::ItemRecord)::String = record.label
 
-"""Item labels are resolved once at interpretation, so the UI never reruns project code."""
+"""Item labels are resolved once, when items are published, so the UI never reruns project code."""
 display_label(::AbstractProject, record::ItemRecord)::String = record.label
 
-"""Return one item record's inherited collection metadata plus its own entries layer."""
+"""Return one item record's inherited collection metadata plus the item's own metadata."""
 function effective_metadata(index::CollectionIndex, record::ItemRecord)::MetadataDict
     effective = collection_metadata(index, record.collection_key)
     merge!(effective, record.metadata)

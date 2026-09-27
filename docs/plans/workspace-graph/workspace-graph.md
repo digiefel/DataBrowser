@@ -93,8 +93,8 @@ A collection row is therefore upstream of its items through its metadata, and
 downstream of them through collection process and analyze. A change to
 collection metadata marks `process` stale for every item below the collection.
 Readers (tree, info panel, queries) combine collection and item metadata with
-the same precedence. `interpret` runs before an item is placed in collections,
-so it never depends on collection metadata.
+the same precedence. `read` and `expand` run before an item is placed in
+collections, so they never depend on collection metadata.
 
 ## Modules
 
@@ -114,18 +114,18 @@ not the GUI replica.
 ## Graph
 
 The pipeline stages are fixed, so most edges do not need to be stored. A
-source-item row carries separate read and entries stages. Entries publishes
-the item rows and their identities. An item row carries process and analyze,
-with parent pointers to its source item and its collection. A collection row
+source-item row carries two results, read and expand, produced by one source
+job. Expand creates the item rows and their identities. An item row carries
+process and analyze, with parent pointers to its source item and its collection. A collection row
 carries collection process and collection analyze, with a parent pointer to
 the parent collection.
 
 An item keeps its key for as long as its public id exists in its source item's
-output. When entries runs again, surviving ids keep their keys and their rows
+output. When the source job runs again, surviving ids keep their keys and their rows
 are marked stale, new ids get new keys, and keys of ids that disappeared become
 tombstones. Each source-item row stores the list of its item keys; they are
 usually, but not always, one contiguous range. A lookup from public id to key
-serves requests by id and the comparison of old and new entries output.
+serves requests by id and the comparison of old and new source job output.
 
 Collection membership is a list of child keys: items and subcollections.
 Each collection counts its direct children that are not fresh at the stage it
@@ -179,7 +179,7 @@ depends on it.
 
 Defaults:
 
-- Read and entries: eager, scan priority (entries gives the tree its identity).
+- Source job: eager, scan priority (its items give the tree its identity).
 - Item process and analyze: lazy unless requested. A request for analyze also
   requests its process prerequisite.
 - Collection process / analyze: lazy unless requested.
@@ -307,7 +307,7 @@ directly. That is why pull cannot walk a catalog: completed nodes are gone,
 and "is this fresh?" is a ledger lookup.
 
 Jobs are those nodes. Workers (`max(2, nthreads())`) pop FIFO from integer
-priority buckets: 4 for `materialize_items`, 3 for interpret, 2 for
+priority buckets: 4 for `materialize_items`, 3 for source jobs, 2 for
 background item work, 1 for collections. Callers pass an explicit dependency
 list; `seed_node_dependencies!` skips keys that have no live node. Collection
 enqueue (`enqueue_collection_work!`) therefore does not wait for members that
@@ -315,9 +315,9 @@ were never processed. It always queues collection process and then collection
 analyze, even when there is no collection process. Analyze failure still
 enqueues collection work. Those behaviours must not be carried over.
 
-`background_processing` is one boolean. When it is on, interpret success
+`background_processing` is one boolean. When it is on, a source job's success
 enqueues item process and analyze and then collections. When it is off,
-scan still interprets, and `materialize_items` promotes process at
+scan still runs source jobs, and `materialize_items` promotes process at
 priority 4. Process success still always enqueues analyze. Plots and the
 table inspector wait only on `ITEM_PROCESS` (`delivery_gate` in
 `DataAccess.jl`). Analyze is merged if it happens to be published. That is
@@ -326,9 +326,9 @@ the opposite of requesting analyze.
 Restore (`load_cache_index` → `apply_cache_index!`) does bulk `SELECT`s and
 then builds `ItemRecord`, `CollectionRecord`, `MetadataDict`, and
 `CachedResultState` per row. Fingerprints are compared in a separate walk
-that only decides whether to enqueue interpret. `MemoryCacheDB` never
-restores (`cache_built` is false), so `cache=false` re-interprets
-everything.
+that only decides whether to enqueue a source job. `MemoryCacheDB` never
+restores (`cache_built` is false), so `cache=false` reruns every source
+job.
 
 ## What we break
 
@@ -365,8 +365,8 @@ owns status. Measure reopen against a committed bench baseline. Then
 ## Constraints already decided
 
 - Hundreds of thousands of items routinely; design for millions.
-- Tree does not show a source item before entries; pending work is a status
-count.
+- Tree does not show a source item before its source job publishes items;
+  pending work is a status count.
 - Until pipeline inspection is in, plots request the newest stage of their
   item and show fresh earlier output marked as not final
   ([What plots show](#what-plots-show-until-pipeline-inspection)).
@@ -374,7 +374,7 @@ count.
 - Inspecting an upstream node is a request for that stage.
 - Collection views: priorities and staleness, not “wait for the last member”.
 - No in-memory payload cache in the graph. The requester owns delivered data.
-- After entries replaces a source item's output, preserve selection for surviving
+- After a source job replaces a source item's output, preserve selection for surviving
   public item IDs and remove selections for IDs that disappeared.
 - An id that moves to another source item during one scan may fail publication
   until the old source item is removed. The error is accepted; a source that

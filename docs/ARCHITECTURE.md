@@ -16,7 +16,7 @@ The intended experience is live and composable. A project can stay open while so
 or changed, and the browser should update without forcing the user back through startup or manual
 reload steps. Views should be able to follow selections, collections, or matching rules, so a plot or
 inspection tool can continue to show the relevant data as the source tree changes. Built-in
-visualizers should handle common inspection tasks, while project code adds only the interpretation
+visualizers should handle common inspection tasks, while project code adds only the expansion
 and presentation details that are specific to the experiment.
 
 ## Package map
@@ -69,7 +69,7 @@ flowchart TB
     userpkg --> api
     prof --> api
 
-    core -.->|"read<br/>entries<br/>process<br/>analyze"| projects
+    core -.->|"read<br/>expand<br/>process<br/>analyze"| projects
     gui -.->|"draw!<br/>menu!<br/>init!"| plots
     cache -.->|"@timed_dbg"| prof
     core -.->|"@timed_dbg"| prof
@@ -109,9 +109,9 @@ flowchart LR
     source["source item"]
     read["read"]
     read_cache[("read input<br/>memory cache")]
-    entries["entries"]
+    expand["expand<br/>(optional)"]
     index[("item and collection<br/>index")]
-    interpreted[("interpreted payload<br/>memory cache")]
+    unprocessed[("unprocessed payload<br/>memory cache")]
     item_process["item process"]
     processed[("processed payload<br/>cache store")]
     item_analyze["item analyze"]
@@ -123,12 +123,13 @@ flowchart LR
     views["views and inspectors"]
 
     source --> read
-    read -->|"loaded value"| entries
+    read -->|"one item"| index
+    read -->|"loaded value"| expand
     read --> read_cache
-    read_cache -.->|"reused input"| entries
-    entries -->|"items and identities"| index
-    entries --> interpreted
-    interpreted --> item_process
+    read_cache -.->|"reused input"| expand
+    expand -->|"items and identities"| index
+    index --> unprocessed
+    unprocessed --> item_process
     item_process --> processed
     processed --> item_analyze
     item_analyze --> item_metadata
@@ -143,20 +144,22 @@ flowchart LR
     classDef stage fill:#bcd4f0,stroke:#3f6fb0,color:#111
     classDef state fill:#f5d6a8,stroke:#c08a3f,color:#111
     classDef output fill:#c9e4c5,stroke:#5a9a52,color:#111
-    class source,read,entries,item_process,item_analyze,collection_process,collection_analyze,views stage
-    class read_cache,interpreted,processed,item_metadata,collection_payload,collection_metadata state
+    class source,read,expand,item_process,item_analyze,collection_process,collection_analyze,views stage
+    class read_cache,unprocessed,processed,item_metadata,collection_payload,collection_metadata state
     class index output
 ```
 
 A project/source implementation defines the callbacks behind the stages. `read` is the only stage
-that receives the source; `entries` expands its loaded value into logical data items and may run
-again with the cached read input.
+that receives the source. When a source item holds one data item, `read` returns that item. When it
+holds zero or several, `read` returns the loaded value and `expand` turns it into data items; `expand`
+may run again with the cached read input. Both run in one source job, which records whether reading
+succeeded (`SOURCE_READ`) and whether the items were created (`SOURCE_EXPAND`).
 
 It defines:
 
 - reading each source item
-- expanding the loaded value into logical data items
-- processing one interpreted item
+- expanding the loaded value into logical data items, when a source item holds several
+- processing one data item
 - computing per-item and per-collection metadata (item/collection `analyze`, collection `process`)
 - defining project-specific visualizers when generic ones are not enough
 
@@ -183,7 +186,7 @@ private buffer helpers.
 
 Both persistent and in-memory workspaces use the same DuckDB stores and cache operations.
 `cache=false` opens a private `:memory:` database with temporary-file spilling disabled; closing
-the workspace discards it without changing the project's cache file. Source-read and interpreted
+the workspace discards it without changing the project's cache file. Source-read and unprocessed
 payloads use resident `MemoryStore` buffers in both modes.
 
 ```mermaid
@@ -206,8 +209,8 @@ flowchart LR
     core -->|"cached_result_state"| cache
     cache -->|"payloads and stage state"| payloads
     payloads --> core
-    core -->|"store_source_read!<br/>store_interpreted!<br/>store_processed!"| cache
-    source -->|"read / entries / process / analyze"| core
+    core -->|"store_source_read!<br/>store_source_items!<br/>store_processed!"| cache
+    source -->|"read / expand / process / analyze"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111
     classDef cacheC fill:#f5d6a8,stroke:#c08a3f,color:#111

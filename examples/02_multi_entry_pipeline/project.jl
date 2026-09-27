@@ -26,7 +26,7 @@ register_item!(project, :cycles;
     # through the contract — `label`, `source_item_path` — rather than any one source's fields.
     detect = source_item -> endswith(label(source_item), "_fatigue.csv"),
     read = source_item -> CSV.read(source_item_path(source_item), DataFrame),
-    entries = (table::DataFrame, metadata::Dict) -> [
+    expand = (table::DataFrame, metadata::Dict) -> [
         (
             data=view(table, findall(==(cycle), table.cycle), :),
             metadata=Dict(:cycle => Int(cycle)),

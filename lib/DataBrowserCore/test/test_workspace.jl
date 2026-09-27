@@ -37,7 +37,7 @@ function DataBrowserAPI.read(p::EngineProject, ::EngineSource, s::EngineSourceIt
     s.fail && error("fixture read failed")
     return s.version
 end
-DataBrowserAPI.entries(::EngineProject, ::EngineSourceItem, version) =
+DataBrowserAPI.expand(::EngineProject, ::EngineSourceItem, version) =
     [EngineItem(string(n), (x=[version],), Dict(:input => version, :total => -1)) for n in 1:version]
 DataBrowserAPI.process(::EngineProject, i::EngineItem) = EngineItem(i.key, (x=i.data.x .* 2,), merge(i.meta, Dict(:total => -2)))
 DataBrowserAPI.analyze(::EngineProject, i::EngineItem) = Dict(:total => sum(i.data.x))
@@ -55,6 +55,11 @@ DataBrowserAPI.source_items(
     take!(source.release)
     ControlledSourceItem[]
 end
+
+struct TypedProject <: AbstractProject end
+DataBrowserAPI.project_name(::TypedProject) = "typed"
+DataBrowserAPI.read(::TypedProject, ::EngineSource, s::EngineSourceItem) =
+    EngineItem("only", (x=[s.version],), Dict(:input => s.version))
 
 function settled(ws)
     W.wait_workspace_idle!(ws; timeout=20)
@@ -84,6 +89,16 @@ end
     end
     @test !W.can_rebuild_cache(ws)
     @test_throws ErrorException W.rebuild_cache!(ws)
+end
+
+@testset "a read may return the item itself" begin
+    ws = W.open_workspace(TypedProject(), EngineSource("source", 1, false); cache=false)
+    try
+        settled(ws)
+        @test item_data(only(W.materialize_items(ws, W.query_items(ws)))).x == [1]
+    finally
+        W.close_workspace!(ws)
+    end
 end
 
 @testset "reconstruction, reuse and source replacement (cache=$cache)" for cache in (true, false)

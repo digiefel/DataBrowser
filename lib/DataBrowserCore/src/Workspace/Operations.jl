@@ -380,10 +380,10 @@ end
 Invalidate one record's process/analyze steps and every affected collection step, scheduling their
 recomputation only when background processing is enabled.
 
-Pass only surviving records; source removal and interpret failure pass their affected collection
+Pass only surviving records; source removal and source failure pass their affected collection
 keys with no item records. The stale cache result-state is cleared so the next read recomputes; fresh work
 is only enqueued when `background_processing` is on. Without it, processing stays selection-driven and
-a live scan interprets the tree without eagerly processing or analyzing every item.
+a live scan builds the tree without eagerly processing or analyzing every item.
 """
 function enqueue_dependent_subtree!(
     workspace::Workspace,
@@ -559,8 +559,8 @@ end
 
 """
 Submit one source-change batch to the work graph and remove deleted published output. Cache
-deletes are buffered mutations, so ordering against re-interpretation is kept by the buffers:
-a delete enqueued here always precedes the rows a later interpretation appends.
+deletes are buffered mutations, so ordering against a later source job is kept by the buffers:
+a delete enqueued here always precedes the rows a later source job appends.
 """
 function ingest_source_changes!(
     workspace::Workspace,
@@ -594,7 +594,9 @@ function ingest_source_changes!(
             end
             workspace.work.source_items[source_item_key_value] = source_item
             store_source_identity!(workspace.cache.db, source_item, id(source_item))
-            enqueue_source_interpretation!(workspace, source_item_key_value; supersede=true)
+            source_job = WorkKey(SOURCE_EXPAND, source_item_key_value)
+            enqueue_work!(workspace, source_job, bump_revision!(workspace.work, source_job);
+                priority=3)
             changed = true
         end
     end
@@ -612,13 +614,13 @@ Start one source scan that progressively populates the workspace index and cache
 
 The scan first surfaces any already-cached index for an instant first view, then walks the source
 while only fingerprinting new or stale items into a queue — so `sources_found` advances at walk
-speed. After the walk, a publisher task drains that queue in small batches so `SOURCE_READ`
-starts immediately and overlaps the remaining enqueue (without serializing the walk behind
-`publish_lock` / ingest or contending with interpreters on the filesystem). Removals and
-source-metadata reconcile run in a final batch after the publisher drains. Interpreted results
+speed. After the walk, a publisher task drains that queue in small batches so source jobs
+start immediately and overlap the remaining enqueue (without serializing the walk behind
+`publish_lock` / ingest or contending with source jobs on the filesystem). Removals and
+source-metadata reconcile run in a final batch after the publisher drains. Published items
 stream into the workspace and a bounded cache-write batch that flushes by source-item count, cached
-row count, or age. `rebuild=true` first wipes the cache and ignores the prior scan, forcing a full
-re-interpretation.
+row count, or age. `rebuild=true` first wipes the cache and ignores the prior scan, forcing every
+source job to run again.
 """
 function scan_source!(
     workspace::Workspace;
@@ -679,9 +681,9 @@ function scan_source!(
                 any_upserts = Ref(false)
                 streamed = Ref(false)
                 # Walk only fingerprints into an unbounded channel — do not publish yet. Starting
-                # SOURCE_READ during the walk contends on the same filesystem (and publish_lock)
+                # source jobs during the walk contends on the same filesystem (and publish_lock)
                 # and made discovery unusably slow on large trees. After the walk, a publisher task
-                # drains batches so interpretation overlaps the remaining enqueue, not the walk.
+                # drains batches so source jobs overlap the remaining enqueue, not the walk.
                 upsert_batch = 32
                 upsert_channel = Channel{Vector{AbstractDataSourceItem}}(Inf)
                 flush_pending_upserts! = () -> begin
@@ -860,6 +862,14 @@ function cache_index_ready(
     state !== nothing && CacheResultStatus(state.status) === RESULT_READY
 end
 
+"""
+The words shown before a failure message. Source failures use plain words, because the source job
+also fails for projects that never define `expand`.
+"""
+failure_prefix(stage::PipelineStage)::String =
+    stage === SOURCE_READ ? "read failed" :
+    stage === SOURCE_EXPAND ? "could not create items" : string(stage)
+
 """Surface the cached index as an instant, independent first view, before the fresh scan refines it."""
 function apply_cache_index!(
     workspace::Workspace,
@@ -878,10 +888,10 @@ function apply_cache_index!(
     workspace.index.analysis_errors = Dict{Union{String,Int64},String}(index.analysis_errors)
     for state in values(index.result_states)
         CacheResultStatus(state.status) === RESULT_FAILED || continue
-        entity = PipelineStage(state.kind) in (SOURCE_READ, SOURCE_INTERPRET) ?
+        entity = PipelineStage(state.kind) in (SOURCE_READ, SOURCE_EXPAND) ?
             source_item_id(workspace, state.entity) : state.entity
-        workspace.index.analysis_errors[entity] =
-            "$(PipelineStage(state.kind)): $(something(state.message, "cached work failed"))"
+        workspace.index.analysis_errors[entity] = failure_prefix(PipelineStage(state.kind)) *
+            ": " * something(state.message, "cached work failed")
     end
     if workspace.background_processing
         for record in values(workspace.index.items)
@@ -989,26 +999,20 @@ function publish_work_success!(
     result,
 )::Nothing
     key = node.key
-    if key.kind === SOURCE_READ
-        store_source_read!(workspace.cache.db, key.entity::Int64, result.loaded)
-        lock(workspace.work.lock) do
-            dependent = get(workspace.work.nodes, WorkKey(SOURCE_INTERPRET, key.entity), nothing)
-            dependent === nothing || (dependent.input = Some(result.loaded))
-        end
-    elseif key.kind === SOURCE_INTERPRET
-        interpretation = result.interpretation::SourceItemInterpretation
-        records = interpretation.records
+    if key.kind === SOURCE_EXPAND
+        expansion = result.expansion::SourceItemExpansion
+        records = expansion.records
         source_ref = source_item_id(workspace, key.entity::Int64)
         old_records = source_item_records(workspace.index, key.entity::Int64)
         resolved, invalidated = @timed_dbg publish_source_item_records!(
-                workspace, key.entity::Int64, records, interpretation.collection_paths)
+                workspace, key.entity::Int64, records, expansion.collection_paths)
         isempty(old_records) || delete_source_output!(workspace.cache.db, key.entity, old_records)
-        conflicts = store_interpreted!(
+        conflicts = store_source_items!(
             workspace.cache.db,
             result.source_item,
-            interpretation.source_item_label,
+            expansion.source_item_label,
             resolved,
-            item_data.(interpretation.interpreted_items),
+            item_data.(expansion.items),
         )
         store_collection_index!(workspace.cache.db, workspace.index.collections, resolved)
         delete_collection_metadata!(workspace.cache.db, invalidated)
@@ -1123,14 +1127,6 @@ function publish_work_failure!(
     failure::CapturedException,
 )::Bool
     key = node.key
-    if key.kind === SOURCE_READ
-        dependent = get(workspace.work.nodes, WorkKey(SOURCE_INTERPRET, key.entity), nothing)
-        if dependent !== nothing
-            for waiter in finish_work_node!(workspace, dependent)
-                put!(waiter, ProcessingResult(nothing, failure))
-            end
-        end
-    end
     if failure.ex isa OperationCanceledException
         # Cancellation is not an analysis error: finish the node and answer waiters with the
         # cancellation, but record nothing in the index or the cache failure results.
@@ -1143,17 +1139,22 @@ function publish_work_failure!(
     message = sprint(showerror, failure.ex)
     record = key.kind in (ITEM_PROCESS, ITEM_ANALYZE) ?
         get(workspace.index.items, key.entity, nothing) : nothing
-    if key.kind in (SOURCE_READ, SOURCE_INTERPRET)
+    if key.kind === SOURCE_EXPAND
         source_key = key.entity::Int64
+        # The source job has already recorded a failed `read`; any other failure is its items'.
+        read_state = cached_result_state(workspace.cache.db, SOURCE_READ, source_key)
+        stage = read_state !== nothing && CacheResultStatus(read_state.status) === RESULT_FAILED ?
+            SOURCE_READ : SOURCE_EXPAND
         source_ref = source_item_id(workspace, source_key)
         old_records, invalidated = remove_source_item_output!(workspace, source_key)
         delete_source_output!(workspace.cache.db, source_key, old_records)
         delete_collection_metadata!(workspace.cache.db, invalidated)
         delete_pruned_collection_records!(workspace, invalidated)
         enqueue_dependent_subtree!(workspace, ItemRecord[]; collection_keys=invalidated)
-        workspace.index.analysis_errors[source_ref] = "$(key.kind): " * message
-        store_result_failure!(workspace.cache.db, key.kind, source_key, source_key, message)
-        @error("Source stage failed", source_item=source_ref, stage=key.kind,
+        workspace.index.analysis_errors[source_ref] = failure_prefix(stage) * ": " * message
+        stage === SOURCE_EXPAND &&
+            store_result_failure!(workspace.cache.db, SOURCE_EXPAND, source_key, source_key, message)
+        @error("Source stage failed", source_item=source_ref, stage,
             exception=(failure.ex, failure.processed_bt))
     else
         source_item_key_value = record === nothing ? Int64(0) : record.source_item_key
@@ -1273,7 +1274,7 @@ function publish_cache_state!(
     return nothing
 end
 
-"""Publish one scan's discovered source changes and queue their interpretation."""
+"""Publish one scan's discovered source changes and queue their source jobs."""
 function publish_source_changes!(
     workspace::Workspace,
     scan_epoch::Int,

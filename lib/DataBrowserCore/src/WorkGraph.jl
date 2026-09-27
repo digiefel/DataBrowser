@@ -18,7 +18,6 @@ mutable struct WorkNode
     dependents::Set{WorkKey}
     pending::UInt64
     waiters::Vector{Channel{Any}}
-    input::Union{Nothing,Some}
 end
 
 """Workspace-owned live job graph and scheduling queue (FIFO buckets keyed by priority)."""

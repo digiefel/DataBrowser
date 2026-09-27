@@ -31,7 +31,7 @@ using DataBrowserAPI:
     ITEM_ANALYZE,
     ITEM_PROCESS,
     SOURCE_READ,
-    SOURCE_INTERPRET
+    SOURCE_EXPAND
 
 using DataBrowserCache:
     CacheDB,
@@ -67,8 +67,8 @@ using DataBrowserCache:
     store_collection_metadata!,
     store_collection_index!,
     store_collection_process_result!,
-    store_interpreted!,
-    store_interpreted_data!,
+    store_source_items!,
+    store_item_payloads!,
     store_item_metadata!,
     store_item_metadata_layer!,
     store_processed!,
@@ -99,8 +99,8 @@ using DataBrowserAPI.ItemIndex:
     resolve_collection_paths!,
     set_collection_analysis!
 using ..DataBrowserCore:
-    SourceItemInterpretation,
-    interpret_source_item
+    SourceItemExpansion,
+    expand_source_item
 import DataBrowserAPI
 import DataBrowserAPI:
     AbstractCollection,
@@ -155,7 +155,7 @@ mutable struct WorkspaceIndex
     collections::CollectionIndex
     items::Dict{String,ItemRecord}
     # The computed metadata layers per item (analyze output merged with any collection-process
-    # overwrite); the entries layer stays on the record.
+    # overwrite); the item's own metadata stays on the record.
     item_metadata::Dict{String,Dict{Symbol,Any}}
     collection_metadata_keys::Vector{Symbol}
     analysis_errors::Dict{Union{String,Int64},String}
