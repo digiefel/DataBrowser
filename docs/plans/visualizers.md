@@ -42,13 +42,12 @@ A **view** is a window that shows a selection of items. It has three parts:
 
 For example, a user selects three measurement cycles. They open a view with the table visualizer
 and see the cycles' data. They open a second view on the same selection with a line plot. They open
-a third with a histogram and the transform
-`items -> [metadata(i)[:temperature] for i in items]`, and see the distribution of temperatures
-across the three cycles.
+a third with a histogram and the transform `[metadata(i)[:temperature] for i in items]`, and see
+the distribution of temperatures across the three cycles.
 
 ```mermaid
 flowchart LR
-    sel["Selection<br/>live or fixed"] -->|items| tr["Transform<br/>default: identity"]
+    sel["Selection<br/>live or fixed"] -->|items| tr["Transform<br/>default: the input unchanged"]
     tr -->|any value| vis["Visualizer<br/>draws the value"]
 ```
 
@@ -61,9 +60,29 @@ user changes it. The browser handles both kinds. A visualizer does not know whic
 
 ### Transform
 
-A transform is a plain Julia function of the view's input: the selected items, or the output of a
-connected view. It returns any value. The default is `identity`: the visualizer receives the
-selected items themselves.
+A transform is plain Julia code that runs over the view's inputs and returns any value. Each input
+has a name, shown on its pin in the graph, and each name is a keyword argument of the transform:
+
+```julia
+# A view with the inputs `cycles` and `window`, as the browser runs its transform
+function (; cycles, window = (-Inf, Inf))
+    [fit_line(item_data(c), window) for c in cycles]
+end
+```
+
+The user edits the inputs graphically and the body as text (see
+[Code next to views](#code-next-to-views)). A new view has one input, `items`, and the body
+`items`: the visualizer receives the selected items themselves. An input that is not connected
+takes its default. A required input that is not connected gives Julia's own error in the view.
+
+A transform lives in one of two places. Only one is active for a transform at any moment:
+
+- **In the project**, saved with the view. Opening a view and changing its transform needs no file.
+- **In a Julia file**, as a named function whose keyword arguments are the inputs, for example
+  `function fit_in_window(; cycles, window = (-Inf, Inf))`. The browser reads the names with
+  `Base.kwarg_decl`. The function can be edited in the browser or in any editor.
+
+<!-- TODO: how a transform moves between the project and a file, and which file it goes to. -->
 
 A transform uses the same functions as any other code that reads items: `item_data(item)`,
 `metadata(item)`, `label(item)`, and any function the project defines. Viewing metadata needs no
@@ -119,7 +138,10 @@ abstract type AbstractVisualizer end
 prepare!(v::AbstractVisualizer, value)
 
 # Called every frame inside the view's window. May throw.
-draw!(v::AbstractVisualizer)
+draw!(ctx, v::AbstractVisualizer)
+
+# Optional: the values the visualizer can offer to other views. The default offers nothing.
+outputs(v::AbstractVisualizer)::NamedTuple
 
 # Optional: the view's settings, saved with the browser layout. The defaults save and load nothing.
 save_view(v::AbstractVisualizer)::Dict{String,Any}
@@ -127,7 +149,8 @@ load_view!(v::AbstractVisualizer, view::Dict{String,Any})
 ```
 
 `prepare!` does the expensive work once per value. `draw!` runs every frame and only reads what
-`prepare!` stored.
+`prepare!` stored. `ctx` carries what the browser knows beyond the value, such as the hovered item
+and the colours of tagged items. A visualizer that does not use them ignores `ctx`.
 
 Methods of `prepare!` dispatch on the value's type, and the most specific method wins:
 
@@ -174,7 +197,7 @@ A family of visualizers that shares a library shares its code through an interme
 ```julia
 abstract type MakieVisualizer <: AbstractVisualizer end
 
-draw!(v::MakieVisualizer) = MakieFigure(v.id, v.figure)     # the shared embedding
+draw!(ctx, v::MakieVisualizer) = MakieFigure(v.id, v.figure)    # the shared embedding
 
 struct Histogram <: MakieVisualizer ... end
 prepare!(v::Histogram, x::AbstractVector{<:Real}) = ...      # builds v.figure; nothing else to write
@@ -216,14 +239,13 @@ For each view, the browser:
 3. runs the transform and keeps the result together with what it was computed from;
 4. calls `prepare!` when the result changes, and `draw!` every frame;
 5. shows any error from steps 2–4 inside the view;
-6. saves the list of views, each view's selection, transform, and visualizer type, and each
-   visualizer's `save_view`.
+6. saves the view with the project (see [Saving views and workflows](#saving-views-and-workflows)).
 
 The record in step 3 is a `Payload`, internal to the browser:
 
 ```julia
 struct Payload{T}
-    key       # the input's item ids and revisions, the connected view's key, and the transform
+    key       # the inputs' item ids and revisions, connected views' keys, and the transform's code
     value::T  # the transform's result
 end
 ```
@@ -237,6 +259,11 @@ on the GUI thread, because they may create graphics resources such as Makie figu
 
 This depends on the workspace providing a revision for each item's data and accepting requests with
 a priority, so that a view knows when its items changed and visible views are served first.
+
+A transform's result also becomes outdated when code it calls changes. The browser uses Revise to
+redefine changed functions and to learn which project files changed. Until finer tracking exists, a
+change to any project file makes every transform recompute. The workspace's own processing needs
+the same invalidation, and both use one mechanism.
 
 ## DBPlots
 
@@ -257,13 +284,24 @@ same item in every view.
 
 ### Connected views
 
-By default, a live view follows the browser's selection. The user can connect it to another view
-instead, and it then follows that view's output. A view is connected only when the user connects it.
-Turning off live freezes the view on its current input, whatever its source.
+By default, a live view's `items` input follows the browser's selection. The user can instead
+connect any input to an output of another view. An input is connected only when the user connects
+it. Turning off live freezes the view on its current inputs, whatever their source.
 
-A view's **output** is its value, or the part of the value the user brushed or clicked. The brushed
-part is a value of the same kind, so the connected view's transform and visualizer treat it like any
-other value:
+Every view has the output `value`. A visualizer offers more through `outputs`:
+
+```julia
+outputs(v::TimeTrace) = (; brushed = v.brushed_part, brush_x = v.brush_x,
+                           hovered = v.hovered_item, xlims = v.xlims)
+```
+
+The user chooses which outputs appear as pins, and can rename them. Output names and input names are
+independent: the name on the input decides the keyword the transform receives. The browser compares
+each exposed output with its previous value every frame, and passes a change on after a short pause,
+so dragging a brush does not recompute every connected view on every frame.
+
+The brushed part of a value is a value of the same kind, so the connected view's transform and
+visualizer treat it like any other value:
 
 | Value | Brushed part | Obtained with |
 | --- | --- | --- |
@@ -278,11 +316,14 @@ reshapes them.
 
 ```mermaid
 flowchart LR
-    tree["Item tree<br/>value: selected items"] --> A["Scatter<br/>value: items"]
-    A -->|brushed items| B["Histogram<br/>transform: temperatures"]
-    A -->|brushed items| C["Table"]
-    C -->|brushed rows| D["Line plot"]
+    tree["Item tree<br/>value: selected items"] -->|value → items| A["Scatter<br/>value: items"]
+    A -->|brushed → items| B["Histogram<br/>transform: temperatures"]
+    tree -->|value → cycles| F["Fits<br/>transform: fit_in_window"]
+    A -->|brush_x → window| F
 ```
+
+Several inputs cover combinations with ordinary Julia. Two brushes combine with the body
+`union(a, b)` or `intersect(a, b)`, and a join or a comparison is any code over the inputs.
 
 ### Identity
 
@@ -313,6 +354,25 @@ between the views, and it works in every view that has level 2.
 - A **query** is a transform that filters, for example `t -> filter(r -> r.temperature > 300, t)`.
   The browser never infers a rule from a list of elements.
 
+### Tags and excluded items
+
+Tags are the persistent form of a selection. A user can tag the items they brushed, and a visualizer
+can colour each element by its item's tags, which it reads from `ctx`. Excluding items, for example
+marking them as bad, is a tag that the item tree and its filters read. Excluded items then disappear
+from every view downstream.
+
+A change that flows back upstream, such as excluding a point seen in a plot, goes through the
+workspace and never through a connection, so connected views never form a cycle.
+
+<!-- TODO: tags on elements inside an item, such as rows, need a row identity that survives
+reprocessing. -->
+
+### From an element to its source
+
+A visualizer with identity level 2 reports the hovered or clicked item through its outputs. The
+browser then offers the same context menu in every visualizer: select the item in the item tree,
+show its metadata, open its source file, and show the code of the transform that produced the value.
+
 ### To explore on the real thing
 
 These choices are made by trying them in the browser:
@@ -323,17 +383,97 @@ These choices are made by trying them in the browser:
   nothing can be drawn between OS windows. Drag and drop works between OS windows, so a connection
   can still be made there and shown as a badge on each end. The options are a canvas, connections
   between windows, or both.
-- **One output or two.** One output keeps every connection alike. Two outputs, the value and its
-  brushed part, let a histogram show all data with the brushed part on top.
-- **Several inputs.** Brushes from several views can combine as in Mosaic: union, intersection, or
-  crossfilter, where each view ignores its own brush. Alternatively, a view has several inputs and
-  its transform takes several arguments, `(a, b) -> ...`, which allows joins and comparisons. Each
-  is simple exactly where the other needs code.
+- **Crossfilter.** In Mosaic, each of several views filters the others by its brush and ignores its
+  own. With connections this would form a cycle, so it needs its own form, for example a transform
+  the browser provides.
+
+## Code next to views
+
+A function is a value, so its code is shown by a visualizer like any other value: a code view.
+Expanding a transform in the graph opens a code view on it. The code view shows only the body; the
+inputs are the pins.
+
+- A transform **in the project** is edited in the code view and saved with the view.
+- A transform **in a file** is shown as the lines of its body in that file. Saving writes those
+  lines back, and Revise redefines the function. Editing the file in another editor works too:
+  Revise picks up the change, and the code view reloads.
+
+```julia
+function prepare!(v::CodeView, f::Function)
+    m = only(methods(f))                               # a transform has one method
+    src, line = CodeTracking.definition(String, m)     # source text and first line
+    v.file, v.lines = String(m.file), body_lines(src, line)   # found by parsing the definition
+    v.text, v.file_hash = read_lines(v.file, v.lines), hash(read(v.file))
+end
+
+function draw!(ctx, v::CodeView)
+    edited = InputTextMultiline(v.text)
+    if Button("Save")
+        hash(read(v.file)) == v.file_hash || return show_conflict(v)   # the file changed elsewhere
+        Meta.parse(edited; raise = true)       # a syntax error stays in the view; nothing is saved
+        replace_lines!(v.file, v.lines, edited)
+    end
+end
+```
+
+CImGui has a plain multi-line text box and no code editor with syntax colouring. Code can be
+coloured while it is not being edited, with the tokens of JuliaSyntax.
+
+The same visualizer shows other code, for example the function behind a registered plot. From any
+element on screen, the context menu leads to the code that produced it.
+
+## Speed
+
+Brushing must follow the mouse, also on large data. Mosaic achieves this with DuckDB. When the user
+starts brushing view A, Mosaic prepares for each other view B a small table of B's aggregate, such
+as a histogram count, grouped by A's pixel bins. Each mouse movement then only sums the bins inside
+the brush. This works because Mosaic knows both A's brushed field and B's aggregate as queries.
+
+DataBrowser reaches this in three tiers. Each tier falls back to the one before it:
+
+1. **Plain Julia.** Outputs pass on after a short pause, and a new brush position cancels a
+   transform still running for the previous one.
+2. **Transforms traced into SQL.** The browser calls a transform once with a lazy table, which
+   records operations such as `filter`, `select`, and `groupby` instead of running them. The record
+   becomes SQL for DuckDB, where tabular item data is already stored. Code that the lazy table does
+   not support throws, and the browser runs the transform as plain Julia instead. The fast subset
+   needs no separate language and no annotations:
+   ```julia
+   filter(r -> r.temperature > 300, t)                  # recorded as WHERE temperature > 300
+   filter(r -> r.temperature > 300 ? true : false, t)   # `?` needs a real Bool: plain Julia
+   ```
+   TidierDB.jl and FunSQL.jl already translate Julia table code into SQL.
+3. **Pre-aggregation as in Mosaic**, where both ends are known queries: a visualizer with a known
+   mapping, such as a histogram of one column, behind the default transform or a traced one.
+
+## Saving views and workflows
+
+Everything a user builds is saved into the project, and can be saved as a workflow: views, their
+inputs and connections, transforms, and visualizer settings. The saved form is Julia, in the spirit
+of a Vega specification, except that every part is real Julia code or values. For example:
+
+```julia
+scatter = view(Scatter(x = :time, y = :voltage); items = selection())
+fits = view(TableView(); cycles = selection(), window = output(scatter, :brush_x)) do
+    [fit_line(item_data(c), window) for c in cycles]
+end
+```
+
+Every change the browser makes is also possible from the API, the command line, and the REPL, with
+the same effect. A REPL command that connects two views changes the open browser as a drag in the
+graph does.
+
+<!-- TODO: whether this is saved in ordinary .jl files, in files the browser owns, or both. Ordinary
+files are readable and editable anywhere; files the browser owns can be rewritten freely without
+touching user code. -->
 
 ## Open design work
 
-- **Transform user experience.** How users write, choose, and combine transforms in the browser, and
-  how they reach transforms their project defines. This is decided once views and transforms work.
+- **Transforms in files.** How a transform moves between the project and a file, and which file it
+  goes to when the user chooses one.
+- **Settings as inputs.** Linking what views show, such as axis limits, needs inputs on the
+  visualizer as well as on the transform, for example an `xlims` input on a line plot. This is
+  explored last.
 - **Composed figures.** Figures that combine several views are designed with the figure composer.
   Combining Makie outputs is DBPlots' concern. Combining views drawn with different libraries is not
   planned.
@@ -350,14 +490,16 @@ These choices are made by trying them in the browser:
 
 ### For extension authors
 
-- New: `AbstractVisualizer` and its contract (`prepare!`, `draw!`, `save_view`, `load_view!`).
+- New: `AbstractVisualizer` and its contract (`prepare!`, `draw!`, `outputs`, `save_view`,
+  `load_view!`).
 - `GuiExtension` keeps all its hooks. Its saved-state hooks are renamed to `save_state` and
   `load_state!`.
 
 ### Internal
 
-- **DataBrowserGUI** gains the view host described above. The Table Inspector is rebuilt as a
-  visualizer. `ItemTable`, `merge_item_tables`, and `materialize_item_table` are removed.
+- **DataBrowserGUI** gains the view host described above and depends on Revise. The Table Inspector
+  is rebuilt as a visualizer. `ItemTable`, `merge_item_tables`, and `materialize_item_table` are
+  removed.
 - **DBPlots** keeps its user API and changes underneath:
   - `PlotKind` is DBPlots' own visualizer type today. It is replaced by `AbstractVisualizer`, and
     `RegisteredPlot`, `setup_plot`, `plot_data!`, and `plot_kinds()` go with it. DataBrowser
