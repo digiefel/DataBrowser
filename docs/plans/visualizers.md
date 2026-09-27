@@ -75,14 +75,11 @@ The user edits the inputs graphically and the body as text (see
 `items`: the visualizer receives the selected items themselves. An input that is not connected
 takes its default. A required input that is not connected gives Julia's own error in the view.
 
-A transform lives in one of two places. Only one is active for a transform at any moment:
-
-- **In the project**, saved with the view. Opening a view and changing its transform needs no file.
-- **In a Julia file**, as a named function whose keyword arguments are the inputs, for example
-  `function fit_in_window(; cycles, window = (-Inf, Inf))`. The browser reads the names with
-  `Base.kwarg_decl`. The function can be edited in the browser or in any editor.
-
-<!-- TODO: how a transform moves between the project and a file, and which file it goes to. -->
+A transform's body always lives in the graph, which is saved as a Julia file (see
+[Saving views and workflows](#saving-views-and-workflows)). Opening a view and changing its
+transform needs no other file, and the body can still be edited in any editor. Reuse is calling a
+function: a body that grows becomes a call such as `fit_in_window(; cycles, window)` to a function
+in the project's own code. A transform never moves between places.
 
 A transform uses the same functions as any other code that reads items: `item_data(item)`,
 `metadata(item)`, `label(item)`, and any function the project defines. Viewing metadata needs no
@@ -377,26 +374,44 @@ show its metadata, open its source file, and show the code of the transform that
 
 These choices are made by trying them in the browser:
 
-- **Where connections are drawn.** CImGui includes imnodes, a node canvas with pins, wires, and any
-  ImGui content inside a node, such as a preview of the view. Wires can also be drawn between view
-  windows, but only within the main OS window: an undocked window is a separate OS window, and
-  nothing can be drawn between OS windows. Drag and drop works between OS windows, so a connection
-  can still be made there and shown as a badge on each end. The options are a canvas, connections
-  between windows, or both.
 - **Crossfilter.** In Mosaic, each of several views filters the others by its brush and ignores its
   own. With connections this would form a cycle, so it needs its own form, for example a transform
   the browser provides.
 
+## The canvas
+
+Views live on a canvas. Every node on the canvas is a view, with its visualizer drawn inside it, and
+connections go directly from a view's output pins to another view's input pins. There is no second
+picture of the views: the canvas is where they are. Enso, natto.dev, ComfyUI, and TouchDesigner work
+this way.
+
+- **Zooming out** shows the flow. **Zooming in**, or focusing one node so that it fills the canvas,
+  gives room to work in a view.
+- **A node's content depends on its size on screen.** From far away a node can show its title and
+  the last image of its view; close up it shows the live view. A node too small or off screen does
+  not call `draw!`, which also saves time. `ctx` tells the visualizer its size and zoom.
+- **A view pops out into its own OS window** only when the user asks. Its node stays on the canvas,
+  marked as shown in a window, with its connections attached.
+- **The item tree stays a panel.** Its selection enters the canvas as a source node.
+
+The canvas is drawn with ImGui's draw lists, not with imnodes: imnodes has panning and a minimap but
+no zoom. ImGui draws lines and curves anywhere within one OS window, across all windows in it, and
+since version 1.92 it renders text sharply at any size. ImPlot draws at any size, and a Makie view
+renders its texture at the node's size on screen.
+
+<!-- TODO: layers, a second axis next to the flow of the pipeline, moved through with a slider, for
+example to change verbosity or switch between visualizations quickly. What a layer is is open. -->
+
 ## Code next to views
 
 A function is a value, so its code is shown by a visualizer like any other value: a code view.
-Expanding a transform in the graph opens a code view on it. The code view shows only the body; the
-inputs are the pins.
+Expanding a transform on the canvas opens a code view on it. The code view shows only the body; the
+inputs are the pins, edited graphically.
 
-- A transform **in the project** is edited in the code view and saved with the view.
-- A transform **in a file** is shown as the lines of its body in that file. Saving writes those
-  lines back, and Revise redefines the function. Editing the file in another editor works too:
-  Revise picks up the change, and the code view reloads.
+- The body is edited in the code view. Saving it writes the graph file.
+- The code view can step into a function the body calls and show its definition, found with
+  CodeTracking. Saving writes those lines back, and Revise redefines the function. Editing the file
+  in another editor works too: Revise picks up the change, and the code view reloads.
 
 ```julia
 function prepare!(v::CodeView, f::Function)
@@ -459,18 +474,41 @@ fits = view(TableView(); cycles = selection(), window = output(scatter, :brush_x
 end
 ```
 
-Every change the browser makes is also possible from the API, the command line, and the REPL, with
-the same effect. A REPL command that connects two views changes the open browser as a drag in the
-graph does.
+The graph file is an ordinary `.jl` file that the user may edit freely. The browser edits it in
+place and keeps everything the user wrote, including comments and formatting outside the bodies.
+This needs edits on the syntax tree that preserve formatting, which JuliaSyntax makes possible.
 
-<!-- TODO: whether this is saved in ordinary .jl files, in files the browser owns, or both. Ordinary
-files are readable and editable anywhere; files the browser owns can be rewritten freely without
-touching user code. -->
+Every change goes through **commands**, such as `add_view!`, `connect!`, or `set_body!`. The GUI,
+the REPL, the command line, and the API call the same commands, so a REPL command that connects two
+views changes the open browser as a drag on the canvas does. A command changes the graph's Julia
+representation, and the graph follows from it. This is the shared command layer of roadmap 0.6.
+
+```
+GUI · REPL · CLI · API
+        │
+        ▼
+    Commands ──▶ Graph (Julia file) ──▶ Evaluator ──▶ Canvas
+        ▲                                  ▲ │           │
+        │                    items,        │ │ requests  │
+        │                    revisions     │ ▼           │ tags, exclusion
+        │                               Workspace ◀──────┤
+        └─────────────────── user actions ───────────────┘
+```
+
+- **Graph**: source nodes, view nodes (inputs, body, visualizer type and settings, exposed outputs),
+  and connections. Plain data, with no GUI in it.
+- **Evaluator**: `Payload`s by key, background jobs, pause and cancel, Revise invalidation, and
+  tracing into SQL.
+- **Canvas**: presents the graph and turns user actions into commands. Visualizers, found by
+  dispatch, draw inside it.
+- Tagging and exclusion go to the workspace directly, which is why connected views never form a
+  cycle.
+
+<!-- TODO: what is the truth while the browser runs, the file or the graph in memory, and whether
+frequent edits such as moving a node are written to the file at once. -->
 
 ## Open design work
 
-- **Transforms in files.** How a transform moves between the project and a file, and which file it
-  goes to when the user chooses one.
 - **Settings as inputs.** Linking what views show, such as axis limits, needs inputs on the
   visualizer as well as on the transform, for example an `xlims` input on a line plot. This is
   explored last.
