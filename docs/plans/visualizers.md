@@ -399,8 +399,21 @@ no zoom. ImGui draws lines and curves anywhere within one OS window, across all 
 since version 1.92 it renders text sharply at any size. ImPlot draws at any size, and a Makie view
 renders its texture at the node's size on screen.
 
-<!-- TODO: layers, a second axis next to the flow of the pipeline, moved through with a slider, for
-example to change verbosity or switch between visualizations quickly. What a layer is is open. -->
+### Planes
+
+The canvas has a second axis next to the flow of the pipeline: **planes**, stacked above each
+other. Alt and the scroll wheel move between planes, and neighbouring planes show scaled and faded
+around the current one. Connections may run between planes.
+
+Planes serve mostly to show a pipeline at several levels of abstraction. Seen from the plane above,
+a whole plane below can appear as one node, whose pins are the connections that cross between the
+two planes. The overview then follows from how the user arranged the planes, with no extra work.
+
+<!-- TODO: an overview without planes, for example by folding each chain of nodes that has a single
+input and a single output into one node. -->
+
+<!-- TODO: how code appears next to a view: a code mode switched with a double press of Alt, a
+level of zoom, or a button on the view. -->
 
 ## Code next to views
 
@@ -468,7 +481,7 @@ inputs and connections, transforms, and visualizer settings. The saved form is J
 of a Vega specification, except that every part is real Julia code or values. For example:
 
 ```julia
-scatter = view(Scatter(x = :time, y = :voltage); items = selection())
+scatter = view(Scatter(x = :time, y = :voltage); items = selection(), at = (120, 40))
 fits = view(TableView(); cycles = selection(), window = output(scatter, :brush_x)) do
     [fit_line(item_data(c), window) for c in cycles]
 end
@@ -504,8 +517,14 @@ GUI · REPL · CLI · API
 - Tagging and exclusion go to the workspace directly, which is why connected views never form a
   cycle.
 
-<!-- TODO: what is the truth while the browser runs, the file or the graph in memory, and whether
-frequent edits such as moving a node are written to the file at once. -->
+While the browser runs, the graph in memory is the truth, because the evaluator works on it. After
+each finished action, such as dropping a node or making a connection, the browser writes the change
+into the file. A drag in progress is never written. When the file changes outside the browser, the
+browser parses it, compares it with the graph in memory, and applies only the differences as
+commands. Views whose part of the file did not change keep their state and their values.
+
+Node positions and planes are saved in the same file, with each view, because the file holds
+everything the user built.
 
 ## Open design work
 
