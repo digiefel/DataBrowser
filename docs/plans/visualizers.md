@@ -282,14 +282,19 @@ all members live in one figure, so linked axes and shared styles work with plain
 the container shows the finished figure; zoomed in, the user edits the cells and the layout.
 
 Plot authors change nothing: `setup` and `draw` still create and fill their own `Figure`. When a
-view joins a composed figure, DBPlots moves its axes into the view's cell. In Makie, placing an axis
-in another figure's layout (`g[1, 2] = ax`) moves only its slot: the axis is not drawn in the new
-figure until its scene is also moved under the new figure's scene. That second step uses Makie
-internals, so it stays inside one DBPlots function, with a test that renders the composed figure
-and checks that the moved axis is drawn.
+view joins a composed figure, DBPlots moves its axes into the view's cell. Moving an axis in Makie
+takes three steps:
 
-<!-- TODO: verify that zooming and panning work on a moved axis, and how a view leaves a composed
-figure again. -->
+1. **Its slot**: `g[1, 2] = ax` places it in the shared figure's layout. On its own, this draws
+   nothing in the new figure.
+2. **Its scene**: the axis's scene moves under the shared figure's scene, so the axis is drawn there.
+3. **Its input**: the shared figure's input events are forwarded to the axis's original figure, to
+   which the axis stays subscribed, so zooming, panning, and resetting work on the moved axis.
+
+Steps 2 and 3 use Makie internals, so they stay inside one DBPlots function, with a test that renders
+the composed figure, checks that the moved axis is drawn, and checks that it zooms.
+
+<!-- TODO: how a view leaves a composed figure again. -->
 
 ## Interaction between views
 
