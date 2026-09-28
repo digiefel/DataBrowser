@@ -130,7 +130,7 @@ function _install_runtime!(
     workspace.background_processing = background_processing
     workspace.disk_cache = cache
     workspace.metrics = metrics
-    workspace.status = WorkspaceStatus()
+    @atomic workspace.status = -1 => WorkspaceStatus()
     changed!(workspace)
     workspace.cancel_source = CancellationTokenSource()
     start_work_workers!(workspace)

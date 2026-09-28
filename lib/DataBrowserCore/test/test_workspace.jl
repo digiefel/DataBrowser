@@ -64,9 +64,39 @@ DataBrowserAPI.analyze(::TypedProject, i::EngineItem) = Dict(:total => sum(i.dat
 DataBrowserAPI.label(::TypedProject, i::EngineItem) =
     "$(id(i)) · total $(get(metadata(i), :total, "?"))"
 
+struct ObservedProject <: AbstractProject
+    on_process::Function
+end
+DataBrowserAPI.project_name(::ObservedProject) = "observed"
+DataBrowserAPI.read(::ObservedProject, source::EngineSource, item::EngineSourceItem) =
+    DataBrowserAPI.read(TypedProject(), source, item)
+function DataBrowserAPI.process(project::ObservedProject, item::EngineItem)
+    project.on_process()
+    return item
+end
+
 function settled(ws)
     W.wait_workspace_idle!(ws; timeout=20)
     @test !W.workspace_status(ws).busy
+end
+
+@testset "status follows on-demand processing" begin
+    observed = Ref((busy=false, generation=-1))
+    # `process` runs only after `ws` below is assigned.
+    project = ObservedProject(() -> (observed[] = (
+        busy=W.workspace_status(ws).busy, generation=W.generation(ws))))
+    ws = W.open_workspace(project, EngineSource("source", 1, false);
+        cache=false, background_processing=false)
+    try
+        settled(ws)
+        seen = W.generation(ws)
+        W.materialize_items(ws, ["only"])
+        @test observed[].busy
+        @test observed[].generation > seen
+        settled(ws)
+    finally
+        W.close_workspace!(ws)
+    end
 end
 
 @testset "rebuild availability follows scan state and outcome" begin

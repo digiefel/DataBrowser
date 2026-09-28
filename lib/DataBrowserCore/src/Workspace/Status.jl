@@ -7,14 +7,16 @@ workspace has changed since the last call, so watchers can call this every frame
 function workspace_status(workspace::Workspace)::WorkspaceStatus
     # Read the generation first: a change during the computation then triggers the next one.
     current = generation(workspace)
-    current == workspace.status_generation && return workspace.status
-    workspace.status = build_status(workspace)
-    workspace.status_generation = current
-    return workspace.status
+    seen, previous = @atomic workspace.status
+    current == seen && return previous
+    status = build_status(workspace, previous)
+    # If another caller stored an older pair meanwhile, the next call sees the mismatch and recomputes.
+    @atomic workspace.status = current => status
+    return status
 end
 
 """Fold a workspace's job and cache state into a status, using the previous one where noted."""
-function build_status(workspace::Workspace)::WorkspaceStatus
+function build_status(workspace::Workspace, previous::WorkspaceStatus)::WorkspaceStatus
     # Never wait on publish_lock here: a source-item publish or cache flush can hold it for 100ms+,
     # and this runs every GUI frame. If a publish is mid-flight, reuse the last snapshot's errors —
     # they change rarely, so a one-frame delay is invisible and keeps the frame from stalling.
@@ -30,7 +32,7 @@ function build_status(workspace::Workspace)::WorkspaceStatus
             unlock(workspace.publish_lock)
         end
     else
-        workspace.status.errors
+        previous.errors
     end
     scan = workspace.scan
     counts = workspace_stage_counts(workspace)
@@ -38,9 +40,9 @@ function build_status(workspace::Workspace)::WorkspaceStatus
     # colors. A rebuild or first build voids any verdict — the cache was just discarded or has
     # never existed — and without one nothing is known fresh yet, so the chip says Building.
     settled = workspace.cache.operation === :update &&
-        workspace.status.label in ("Fresh", "Loaded", "Errors")
-    calm_level = settled ? workspace.status.level : :busy
-    calm_label = settled ? workspace.status.label : "Building"
+        previous.label in ("Fresh", "Loaded", "Errors")
+    calm_level = settled ? previous.level : :busy
+    calm_label = settled ? previous.label : "Building"
 
     # Active work: one live line, determinate bar when totals are known.
     if scan.state == :discovering
