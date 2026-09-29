@@ -44,43 +44,43 @@ stages(::Type{CollectionKey}) = (COLLECTION_PROCESS, COLLECTION_ANALYZE)
 # Status
 
 @enum Validity::UInt8 MISSING STALE FRESH REMOVED
-@enum Activity::UInt8 IDLE QUEUED RUNNING
 
 """
 The status of one stage on one row.
 
-`validity` says whether the output matches the current input revision, `activity` whether a job
-for it is queued or running, `failed` whether the last job for this revision failed, `output`
-whether the output is present, and `absent` whether the project defines no such stage for the row.
+`validity` says whether the output matches the current input revision, `running` whether a job for
+it runs, `failed` whether the last job for this revision failed, `output` whether the output is
+present, and `absent` whether the project defines no such stage for the row. Whether a job waits in
+the queue is not part of the status: the queue holds it.
 """
 struct StageStatus
     validity::Validity
-    activity::Activity
+    running::Bool
     failed::Bool
     output::Bool
     absent::Bool
     revision::UInt32
 end
 
-StageStatus(; validity=MISSING, activity=IDLE, failed=false, output=false, absent=false, revision=0) =
-    StageStatus(validity, activity, failed, output, absent, revision)
+StageStatus(; validity=MISSING, running=false, failed=false, output=false, absent=false, revision=0) =
+    StageStatus(validity, running, failed, output, absent, revision)
 
-# One stage in 32 bits: validity 0–1, activity 2–3, failed 4, output 5, absent 6, revision 8–31.
+# One stage in 32 bits: validity 0–1, running 2, failed 3, output 4, absent 5, revision 8–31.
 StageStatus(bits::UInt32) = StageStatus(
     Validity(bits & 0x3),
-    Activity((bits >> 2) & 0x3),
+    isodd(bits >> 2),
+    isodd(bits >> 3),
     isodd(bits >> 4),
     isodd(bits >> 5),
-    isodd(bits >> 6),
     bits >> 8,
 )
 
 Base.UInt32(status::StageStatus) =
     UInt32(status.validity) |
-    UInt32(status.activity) << 2 |
-    UInt32(status.failed) << 4 |
-    UInt32(status.output) << 5 |
-    UInt32(status.absent) << 6 |
+    UInt32(status.running) << 2 |
+    UInt32(status.failed) << 3 |
+    UInt32(status.output) << 4 |
+    UInt32(status.absent) << 5 |
     (status.revision & 0x00ff_ffff) << 8
 
 """The status word of a row whose two stages have the given status."""
@@ -333,16 +333,35 @@ end
 The rows of one workspace, with their membership and the status of their stages.
 
 Adding, changing and removing rows hold `lock`; reading status does not.
+
+    Catalog(; eager=Dict{PipelineStage,Int}())
+
+`eager` maps each eager stage to the priority of its jobs: every row whose stage is not fresh gets a
+job, without a request. Other stages are lazy. Priorities are positive, and a higher one runs first.
+A source item's job is named by `SOURCE_EXPAND`.
 """
 struct Catalog
     lock::ReentrantLock
     sources::SourceTable
     items::ItemTable
     collections::CollectionTable
+    eager::Dict{PipelineStage,Int}
+    # Stages ready to run, first in, first out within each priority. An entry whose priority differs
+    # from the stage's entry in `queued` is out of date and is skipped.
+    queue::Dict{Int,Vector{Tuple{RowKey,PipelineStage}}}
+    queued::Dict{Tuple{RowKey,PipelineStage},Int}
 end
 
-function Catalog()
-    catalog = Catalog(ReentrantLock(), SourceTable(), ItemTable(), CollectionTable())
+function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int}())
+    catalog = Catalog(
+        ReentrantLock(),
+        SourceTable(),
+        ItemTable(),
+        CollectionTable(),
+        Dict(eager),
+        Dict{Int,Vector{Tuple{RowKey,PipelineStage}}}(),
+        Dict{Tuple{RowKey,PipelineStage},Int}(),
+    )
     collections = catalog.collections
     # No collection work runs for the root.
     push!(collections, "root"; absent=true)
@@ -383,6 +402,7 @@ function Base.get!(catalog::Catalog, ::Type{SourceKey}, id::AbstractString)::Sou
         push!(sources.item_starts, 1)
         push!(sources.item_counts, 0)
         sources.lookup[id] = key
+        queue!(catalog, key, SOURCE_EXPAND)
         return key
     end
 end
@@ -651,8 +671,12 @@ function dependents(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector
     return Tuple{RowKey,PipelineStage}[(parent(catalog, key), COLLECTION_PROCESS)]
 end
 
-"""Whether every input of `stage` on `key` is fresh, so that a job for it can start."""
-function ready(catalog::Catalog, key::Union{ItemKey,CollectionKey}, stage::PipelineStage)::Bool
+"""
+Whether the inputs of `stage` on `key` allow a job for it to start: every input is fresh, and for a
+source item, read has not failed.
+"""
+function ready(catalog::Catalog, key::RowKey, stage::PipelineStage)::Bool
+    stage == SOURCE_EXPAND && return !status(catalog, key, SOURCE_READ).failed
     stage == ITEM_PROCESS &&
         return status(catalog, source(catalog, key), SOURCE_EXPAND).validity == FRESH
     stage == ITEM_ANALYZE && return status(catalog, key, ITEM_PROCESS).validity == FRESH
@@ -667,8 +691,10 @@ end
 Mark `stage` on `key`, or each `(key, stage)` in `targets`, and every stage downstream as stale: the
 second stage of the row, the items of a source item, the collection that holds an item, and each
 collection up to the root. Every stage reached gets one new revision, so a job running for it
-cannot publish, and loses its failure. A stage that was never computed stays missing. Invalidation
-starts no job.
+cannot publish, and loses its failure. A stage that was never computed stays missing.
+
+The stages named in the call are queued if they are wanted and their inputs allow it (see
+[`take!`](@ref)). The stages downstream wait for them.
 """
 invalidate!(catalog::Catalog, key::RowKey, stage::PipelineStage)::Catalog =
     invalidate!(catalog, [(key, stage)])
@@ -686,11 +712,80 @@ function invalidate!(catalog::Catalog, targets::AbstractVector{<:Tuple{RowKey,Pi
             old = status(catalog, row, row_stage)
             validity = old.validity == FRESH ? STALE : old.validity
             catalog[row, row_stage] =
-                StageStatus(validity, old.activity, false, old.output, old.absent, old.revision + 1)
+                StageStatus(validity, old.running, false, old.output, old.absent, old.revision + 1)
             append!(pending, dependents(catalog, row, row_stage))
+        end
+        for (row, row_stage) in targets
+            queue!(catalog, row, row_stage)
         end
     end
     return catalog
+end
+
+"""
+The priority of a job for `stage` on `key`, or 0 when nothing wants it. A stage is wanted by the
+eager policy of its own stage, unless it is absent, or by any stage that reads its output and is
+wanted.
+"""
+function priority(catalog::Catalog, key::RowKey, stage::PipelineStage)::Int
+    rank = status(catalog, key, stage).absent ? 0 : get(catalog.eager, stage, 0)
+    for (next_key, next_stage) in dependents(catalog, key, stage)
+        rank = max(rank, priority(catalog, next_key, next_stage))
+    end
+    return rank
+end
+
+"""
+Queue the job for `stage` on `key` if it is wanted, its inputs allow it to start, and the stage is
+not fresh, failed, queued or running. The caller holds the lock.
+"""
+function queue!(catalog::Catalog, key::RowKey, stage::PipelineStage)::Nothing
+    # A source item's job is named by its last stage.
+    key isa SourceKey && (stage = SOURCE_EXPAND)
+    key in table(catalog, key) || return nothing
+    old = status(catalog, key, stage)
+    (old.absent || old.failed || old.validity == FRESH || old.running) && return nothing
+    haskey(catalog.queued, (key, stage)) && return nothing
+    rank = priority(catalog, key, stage)
+    (rank > 0 && ready(catalog, key, stage)) || return nothing
+    push!(get!(Vector{Tuple{RowKey,PipelineStage}}, catalog.queue, rank), (key, stage))
+    catalog.queued[(key, stage)] = rank
+    return nothing
+end
+
+"""
+    take!(catalog) -> Union{Job,Nothing}
+
+Start the queued job with the highest priority and return it, or `nothing` when no job is queued.
+Jobs of equal priority start in the order they were queued.
+
+A stage is queued when something wants it and its inputs are fresh. A stage that is wanted but
+waits for its inputs is queued when they become fresh. When a stage is invalidated while its job
+runs, the job's result is discarded and the stage is queued once more, so a collection whose
+members change many times during one run runs again once.
+"""
+function Base.take!(catalog::Catalog)::Union{Job,Nothing}
+    @lock catalog.lock begin
+        while !isempty(catalog.queue)
+            rank = maximum(keys(catalog.queue))
+            bucket = catalog.queue[rank]
+            target = popfirst!(bucket)
+            isempty(bucket) && delete!(catalog.queue, rank)
+            get(catalog.queued, target, 0) == rank || continue
+            delete!(catalog.queued, target)
+            key, stage = target
+            key in table(catalog, key) || continue
+            # While the stage waited, its inputs or what wants it may have changed. `start!` refuses
+            # a stage that became fresh, failed or running meanwhile.
+            if priority(catalog, key, stage) != rank || !ready(catalog, key, stage)
+                queue!(catalog, key, stage)
+                continue
+            end
+            job = key isa SourceKey ? start!(catalog, key) : start!(catalog, key, stage)
+            job === nothing || return job
+        end
+        return nothing
+    end
 end
 
 """
@@ -726,12 +821,12 @@ function start!(
     @lock catalog.lock begin
         key in table(catalog, key) || return nothing
         old = status(catalog, key, stage)
-        if old.absent || old.failed || old.validity == FRESH || old.activity == RUNNING ||
+        if old.absent || old.failed || old.validity == FRESH || old.running ||
            !ready(catalog, key, stage)
             return nothing
         end
         catalog[key, stage] =
-            StageStatus(old.validity, RUNNING, false, old.output, old.absent, old.revision)
+            StageStatus(old.validity, true, false, old.output, old.absent, old.revision)
         return Job(key, stage, old.revision)
     end
 end
@@ -741,21 +836,21 @@ function start!(catalog::Catalog, source::SourceKey)::Union{Job{SourceKey},Nothi
         source in catalog.sources || return nothing
         read = status(catalog, source, SOURCE_READ)
         expand = status(catalog, source, SOURCE_EXPAND)
-        if read.failed || expand.failed || expand.validity == FRESH || expand.activity == RUNNING
+        if read.failed || expand.failed || expand.validity == FRESH || expand.running
             return nothing
         end
         read.validity == FRESH || (catalog[source, SOURCE_READ] =
-            StageStatus(read.validity, RUNNING, false, read.output, read.absent, read.revision))
+            StageStatus(read.validity, true, false, read.output, read.absent, read.revision))
         catalog[source, SOURCE_EXPAND] =
-            StageStatus(expand.validity, RUNNING, false, expand.output, expand.absent, expand.revision)
+            StageStatus(expand.validity, true, false, expand.output, expand.absent, expand.revision)
         return Job(source, SOURCE_EXPAND, expand.revision)
     end
 end
 
 """
 Mark `job` as finished and return whether its result is kept: its row exists and its stage was not
-invalidated while it ran. When the result is discarded, the job's stages stop running. The caller
-holds the lock.
+invalidated while it ran. When the result is discarded, the job's stages stop running and the job
+is queued again. The caller holds the lock.
 """
 function claim!(catalog::Catalog, job::Job)::Bool
     job.finished && throw(ArgumentError("the job has already finished"))
@@ -764,9 +859,10 @@ function claim!(catalog::Catalog, job::Job)::Bool
     status(catalog, job.key, job.stage).revision == job.revision && return true
     for stage in (job.key isa SourceKey ? stages(SourceKey) : (job.stage,))
         old = status(catalog, job.key, stage)
-        old.activity == RUNNING && (catalog[job.key, stage] =
-            StageStatus(old.validity, IDLE, false, old.output, old.absent, old.revision))
+        old.running && (catalog[job.key, stage] =
+            StageStatus(old.validity, false, false, old.output, old.absent, old.revision))
     end
+    queue!(catalog, job.key, job.stage)
     return false
 end
 
@@ -778,11 +874,11 @@ function settle!(catalog::Catalog, job::Job{SourceKey}, failed::Union{PipelineSt
     read = status(catalog, job.key, SOURCE_READ)
     expand = status(catalog, job.key, SOURCE_EXPAND)
     catalog[job.key, SOURCE_READ] = failed == SOURCE_READ ?
-        StageStatus(read.validity, IDLE, true, read.output, read.absent, read.revision) :
-        StageStatus(FRESH, IDLE, false, true, read.absent, read.revision)
+        StageStatus(read.validity, false, true, read.output, read.absent, read.revision) :
+        StageStatus(FRESH, false, false, true, read.absent, read.revision)
     catalog[job.key, SOURCE_EXPAND] = failed === nothing ?
-        StageStatus(FRESH, IDLE, false, true, expand.absent, expand.revision) :
-        StageStatus(expand.validity, IDLE, true, expand.output, expand.absent, expand.revision)
+        StageStatus(FRESH, false, false, true, expand.absent, expand.revision) :
+        StageStatus(expand.validity, false, true, expand.output, expand.absent, expand.revision)
     return nothing
 end
 
@@ -806,8 +902,13 @@ function finish!(catalog::Catalog, job::Job{<:Union{ItemKey,CollectionKey}}; fai
         claim!(catalog, job) || return false
         old = status(catalog, job.key, job.stage)
         catalog[job.key, job.stage] = failed ?
-            StageStatus(old.validity, IDLE, true, old.output, old.absent, old.revision) :
-            StageStatus(FRESH, IDLE, false, true, old.absent, old.revision)
+            StageStatus(old.validity, false, true, old.output, old.absent, old.revision) :
+            StageStatus(FRESH, false, false, true, old.absent, old.revision)
+        if !failed
+            for (key, stage) in dependents(catalog, job.key, job.stage)
+                queue!(catalog, key, stage)
+            end
+        end
         return true
     end
 end
@@ -822,6 +923,9 @@ function finish!(catalog::Catalog, job::Job{SourceKey}, entries::AbstractVector{
             rethrow()
         end
         settle!(catalog, job, nothing)
+        for (key, stage) in dependents(catalog, job.key, SOURCE_EXPAND)
+            queue!(catalog, key, stage)
+        end
         return true
     end
 end

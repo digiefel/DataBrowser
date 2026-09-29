@@ -1,7 +1,8 @@
 using Test
-using DataBrowserAPI: id, label, SOURCE_READ, ITEM_PROCESS, ITEM_ANALYZE, COLLECTION_PROCESS
+using DataBrowserAPI:
+    id, label, SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE, COLLECTION_PROCESS
 using DataBrowserCore.Catalogs:
-    Catalog, SourceKey, ItemKey, CollectionKey, ItemEntry, ROOT, REMOVED, STALE,
+    Catalog, SourceKey, ItemKey, CollectionKey, ItemEntry, Job, ROOT, REMOVED, STALE, FRESH,
     publish!, lookup, items, children, status, invalidate!, start!, finish!
 
 # Run the source job of `file` with `entries`, then process and analyze the items named in `done`.
@@ -110,6 +111,54 @@ end
     @test_throws ArgumentError publish!(catalog, file, [ItemEntry("a", "A", run)])
     @test_throws ArgumentError publish!(catalog, file, [ItemEntry("a", "A", CollectionKey(99))])
     @test lookup(catalog, ItemKey, "a") === nothing
+end
+
+# Finish a job successfully. A source job publishes `entries[id]` for its source item `id`.
+complete!(catalog, job, entries) = job isa Job{SourceKey} ?
+    finish!(catalog, job, entries[id(catalog, job.key)]) : finish!(catalog, job)
+
+# Run queued jobs until none is left, and return them in the order they ran.
+function drain!(catalog, entries)
+    ran = Job[]
+    while (job = take!(catalog)) !== nothing
+        push!(ran, job)
+        complete!(catalog, job, entries)
+    end
+    return ran
+end
+
+@testset "catalog: eager stages run by priority and pull their inputs" begin
+    catalog = Catalog(; eager=Dict(SOURCE_EXPAND => 2, ITEM_ANALYZE => 1))
+    entries = Dict(
+        "first.csv" => [ItemEntry("a", "A", ROOT)],
+        "second.csv" => [ItemEntry("b", "B", ROOT)])
+    first_file = get!(catalog, SourceKey, "first.csv")
+    second_file = get!(catalog, SourceKey, "second.csv")
+
+    ran = drain!(catalog, entries)
+    @test [job.key for job in ran[1:2]] == [first_file, second_file]
+    @test all(item -> status(catalog, lookup(catalog, ItemKey, item), ITEM_ANALYZE).validity == FRESH,
+        ["a", "b"])
+    @test take!(catalog) === nothing
+end
+
+@testset "catalog: a collection changed during its job runs again once" begin
+    catalog = Catalog(; eager=Dict(SOURCE_EXPAND => 1, ITEM_ANALYZE => 1, COLLECTION_PROCESS => 1))
+    run = get!(catalog, ROOT, "run", "Run")
+    entries = Dict("data.csv" => [ItemEntry("a", "A", run), ItemEntry("b", "B", run)])
+    file = get!(catalog, SourceKey, "data.csv")
+    job = take!(catalog)
+    while job.key != run
+        complete!(catalog, job, entries)
+        job = take!(catalog)
+    end
+
+    invalidate!(catalog, lookup(catalog, ItemKey, "a"), ITEM_PROCESS)
+    invalidate!(catalog, lookup(catalog, ItemKey, "b"), ITEM_PROCESS)
+    @test !finish!(catalog, job)
+    ran = drain!(catalog, entries)
+    @test count(job -> job.key == run && job.stage == COLLECTION_PROCESS, ran) == 1
+    @test status(catalog, run, COLLECTION_PROCESS).validity == FRESH
 end
 
 @testset "catalog: many rows" begin

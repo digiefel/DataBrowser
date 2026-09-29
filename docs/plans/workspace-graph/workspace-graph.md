@@ -9,7 +9,7 @@ Check items when the work actually does them.
 
 Detailed plans:
 
-- [Node states](01-node-states.md): stage validity, job activity, failures, revisions, and output
+- [Node states](01-node-states.md): stage validity, running jobs, failures, revisions, and output
   availability.
 
 ## Goal
@@ -136,7 +136,7 @@ consumes (analyze for an item, collection analyze for a subcollection).
 Deeper descendants are covered by the chain of counters: a change only updates
 the direct parent's counter.
 
-Stage validity, job activity, failures, revisions, and output availability are
+Stage validity, running jobs, failures, revisions, and output availability are
 separate state. [Node states](01-node-states.md) defines them. Analyze metadata
 lives on the row as typed columns and stays in memory. Payloads never live on
 the graph. After delivery, the requester (plot, inspector, REPL caller) owns
@@ -168,8 +168,9 @@ returns a handle. Requests for the same `(key, stage)` coalesce and keep the
 highest requester priority. `wait=true` is the synchronous form.
 
 When a requester goes away, its queued jobs fall back to the priority of the
-remaining requesters and the stage policy. Queued jobs that nothing wants any
-more are removed; running jobs finish.
+remaining requesters and the stage policy. A queued job that no requester and
+no eager stage needs any more is skipped when a worker takes it from the queue;
+running jobs finish.
 
 A failed child blocks its collection and every ancestor collection until retry
 or invalidation. Tags and filtering will let users exclude failed items later.

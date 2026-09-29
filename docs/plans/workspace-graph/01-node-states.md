@@ -11,7 +11,8 @@ One enum cannot describe every relevant fact. Keep these parts separate:
   absent when dispatch reaches the package's default method; Recipes answers
   from a registration whose callback is `nothing`.
 - **Validity:** missing, stale, or fresh for one input revision.
-- **Activity:** idle, queued, or running.
+- **Running:** whether a job for this stage is running now. The status does
+  not record jobs that are waiting to start; only the job queue records those.
 - **Failure:** the latest failure for the current revision, if any.
 - **Output availability:** whether the output is present. Where it lives is
   fixed by the stage (below), so one bit is enough.
@@ -44,7 +45,7 @@ materialize the output in the form it needs.
 ## Storage
 
 Every row has exactly two stages, so one 64-bit word per row holds both, 32
-bits each. A stage's half holds validity (2 bits), activity (2 bits), the
+bits each. A stage's half holds validity (2 bits), the running flag, the
 failure flag, output availability, applicability and a 24-bit revision. The
 revision wraps after 16.7 million changes to one stage; a wrap is harmful only
 if a single job runs across exactly that many changes.
