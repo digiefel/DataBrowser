@@ -1,10 +1,11 @@
 using Test
 using DataBrowserAPI:
-    id, label, SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE, COLLECTION_PROCESS,
+    id, label, metadata, MetadataDict, SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE, COLLECTION_PROCESS,
     COLLECTION_ANALYZE
 using DataBrowserCore.Catalogs:
     Catalog, SourceKey, ItemKey, CollectionKey, ItemEntry, Job, ROOT, REMOVED, STALE, FRESH,
-    publish!, lookup, items, children, status, progress, invalidate!, start!, finish!, request
+    publish!, lookup, items, children, status, progress, invalidate!, start!, finish!, request,
+    conflicts
 
 # Run the source job of `file` with `entries`, then process and analyze the items named in `done`.
 function compute!(catalog, file, entries; done=[entry.id for entry in entries])
@@ -251,6 +252,25 @@ end
     invalidate!(catalog, file, SOURCE_READ)
     finish!(catalog, start!(catalog, file); failed=SOURCE_READ)
     @test wait(request(catalog, lookup(catalog, ItemKey, "a"), ITEM_ANALYZE)).blocked
+end
+
+@testset "catalog: each stage keeps the metadata it produced" begin
+    catalog = Catalog()
+    file = get!(catalog, SourceKey, "data.csv")
+    entries = [
+        ItemEntry("a", "A", ROOT, MetadataDict(:temp => 20)),
+        ItemEntry("b", "B", ROOT, MetadataDict(:temp => "cold"))]
+    finish!(catalog, start!(catalog, file), entries)
+    a = lookup(catalog, ItemKey, "a")
+    b = lookup(catalog, ItemKey, "b")
+    finish!(catalog, start!(catalog, a, ITEM_PROCESS); metadata=MetadataDict(:temp => 20, :mean => 3.1))
+    finish!(catalog, start!(catalog, a, ITEM_ANALYZE); metadata=MetadataDict(:temp => "warm"))
+
+    @test metadata(catalog, a, SOURCE_EXPAND) == MetadataDict(:temp => 20)
+    @test metadata(catalog, a, ITEM_PROCESS) == MetadataDict(:temp => 20, :mean => 3.1)
+    @test metadata(catalog, a, ITEM_ANALYZE) == MetadataDict(:temp => "warm")
+    @test isempty(metadata(catalog, b, SOURCE_EXPAND))
+    @test [conflict.name for conflict in conflicts(catalog, b, SOURCE_EXPAND)] == [:temp]
 end
 
 @testset "catalog: many rows" begin

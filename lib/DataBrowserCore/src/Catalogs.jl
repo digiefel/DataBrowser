@@ -4,8 +4,9 @@ membership and the status of each stage.
 """
 module Catalogs
 
-import DataBrowserAPI: id, label
+import DataBrowserAPI: id, label, metadata
 using DataBrowserAPI:
+    MetadataDict,
     PipelineStage,
     SOURCE_READ,
     SOURCE_EXPAND,
@@ -249,6 +250,65 @@ function Base.delete!(lookup::IdLookup, id::AbstractString)
     return lookup
 end
 
+# Metadata
+
+"""
+A metadata value that was not stored: its name already holds values of type `expected` in the same
+stage's metadata, and the value has type `found`.
+"""
+struct MetadataConflict
+    name::Symbol
+    expected::Type
+    found::Type
+end
+
+"""
+The metadata that one stage produced for the rows of one table: one column per name, holding
+`missing` for rows without a value. The first value stored under a name fixes the type of its
+column.
+"""
+struct MetadataColumns
+    columns::Dict{Symbol,Vector}
+end
+
+MetadataColumns() = MetadataColumns(Dict{Symbol,Vector}())
+
+"""The metadata of row `row`, without the names it has no value for."""
+function Base.getindex(layer::MetadataColumns, row::Integer)::MetadataDict
+    return MetadataDict(
+        name => column[row] for (name, column) in layer.columns
+        if row <= length(column) && column[row] !== missing)
+end
+
+"""Clear the metadata of row `row`."""
+function Base.delete!(layer::MetadataColumns, row::Integer)::MetadataColumns
+    for column in values(layer.columns)
+        row <= length(column) && (column[row] = missing)
+    end
+    return layer
+end
+
+"""
+Replace the metadata of row `row` with `values`. Returns the values that were not stored because
+their name holds values of another type.
+"""
+function store!(layer::MetadataColumns, row::Integer, values::AbstractDict{Symbol})::Vector{MetadataConflict}
+    delete!(layer, row)
+    dropped = MetadataConflict[]
+    for (name, value) in values
+        value === missing && continue
+        column = get!(() -> Vector{Union{Missing,typeof(value)}}(), layer.columns, name)
+        expected = nonmissingtype(eltype(column))
+        if typeof(value) != expected
+            push!(dropped, MetadataConflict(name, expected, typeof(value)))
+            continue
+        end
+        length(column) < row && append!(column, Iterators.repeated(missing, row - length(column)))
+        column[row] = value
+    end
+    return dropped
+end
+
 # Tables
 
 """Rows of one kind: columns of equal length, one entry per row, with a lookup by public id."""
@@ -284,12 +344,21 @@ struct ItemTable <: Table
     status::StatusColumn
     source::Vector{SourceKey}
     collection::Vector{CollectionKey}
+    # The metadata that each stage produced: the source item's expand gives each item its first.
+    metadata::Dict{PipelineStage,MetadataColumns}
 end
 
 function ItemTable()
     ids = IdColumn()
     return ItemTable(
-        ids, LabelColumn(), IdLookup{ItemKey}(ids), StatusColumn(), SourceKey[], CollectionKey[])
+        ids,
+        LabelColumn(),
+        IdLookup{ItemKey}(ids),
+        StatusColumn(),
+        SourceKey[],
+        CollectionKey[],
+        Dict(stage => MetadataColumns() for stage in (SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE)),
+    )
 end
 
 struct CollectionTable <: Table
@@ -309,6 +378,10 @@ struct CollectionTable <: Table
     # Items at any depth below the collection, and those of them whose analyze is fresh.
     nested_items::Vector{Int}
     nested_done::Vector{Int}
+    # The metadata that each stage produced.
+    # TODO: the metadata a source gives a collection, such as `metadata.txt`. A change to it must
+    # invalidate process for every item below the collection.
+    metadata::Dict{PipelineStage,MetadataColumns}
 end
 
 function CollectionTable()
@@ -325,6 +398,7 @@ function CollectionTable()
         Int[],
         Int[],
         Int[],
+        Dict(stage => MetadataColumns() for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)),
     )
 end
 
@@ -351,6 +425,7 @@ function Base.delete!(table::Table, key::RowKey)::Table
     # A job that started before the removal finds a newer revision and discards its result.
     removed(bits) = StageStatus(; validity=REMOVED, revision=StageStatus(bits).revision + 1)
     table.status[key.index] = word(removed(old % UInt32), removed((old >> 32) % UInt32))
+    table isa SourceTable || foreach(layer -> delete!(layer, key.index), values(table.metadata))
     return table
 end
 
@@ -381,6 +456,8 @@ struct Catalog
     requests::Dict{Tuple{RowKey,PipelineStage},Vector{Int}}
     # Notified whenever a status changes; `wait(request)` waits on it.
     changed::Threads.Condition
+    # Metadata values that the last result of a stage produced but that were not stored.
+    conflicts::Dict{Tuple{RowKey,PipelineStage},Vector{MetadataConflict}}
 end
 
 function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int}())
@@ -395,6 +472,7 @@ function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int
         Dict{Tuple{RowKey,PipelineStage},Int}(),
         Dict{Tuple{RowKey,PipelineStage},Vector{Int}}(),
         Threads.Condition(lock),
+        Dict{Tuple{RowKey,PipelineStage},Vector{MetadataConflict}}(),
     )
     collections = catalog.collections
     # No collection work runs for the root.
@@ -443,12 +521,28 @@ function add_stuck!(catalog::Catalog, collection::CollectionKey, count::Int)::No
     return nothing
 end
 
-"""One item of a source job's result: its public id, its label and the collection that holds it."""
+"""
+Replace the metadata that `stage` produced for `key`, and keep the values that were not stored for
+[`conflicts`](@ref). The caller holds the lock.
+"""
+function store!(catalog::Catalog, key::Union{ItemKey,CollectionKey}, stage::PipelineStage, values::AbstractDict{Symbol})
+    dropped = store!(table(catalog, key).metadata[stage], key.index, values)
+    isempty(dropped) ? delete!(catalog.conflicts, (key, stage)) : (catalog.conflicts[(key, stage)] = dropped)
+    return nothing
+end
+
+"""
+One item of a source job's result: its public id, its label, the collection that holds it, and the
+metadata the source gives it.
+"""
 struct ItemEntry
     id::String
     label::String
     collection::CollectionKey
+    metadata::MetadataDict
 end
+
+ItemEntry(id, label, collection) = ItemEntry(id, label, collection, MetadataDict())
 
 """
     get!(catalog, SourceKey, id) -> SourceKey
@@ -510,8 +604,8 @@ end
 
 Replace the items of `source` with `entries`, the result of its source job.
 
-An id that `source` already had keeps its key, and takes the label and collection of its entry; its
-stages become stale. A new id gets a new key. An id that is not in `entries` any more is removed,
+An id that `source` already had keeps its key, and takes the label, collection and metadata of its
+entry; its stages become stale. A new id gets a new key. An id that is not in `entries` any more is removed,
 and so is every collection this leaves empty. Every collection whose members change becomes stale. An id that appears twice or belongs to another source item, a collection that
 does not exist, or a removed `source` throws an `ArgumentError` and leaves the catalog unchanged.
 """
@@ -571,6 +665,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
                 end
                 push!(surviving, key)
             end
+            store!(catalog, key, SOURCE_EXPAND, entry.metadata)
             push!(new_keys, key)
         end
 
@@ -722,6 +817,27 @@ function status(catalog::Catalog, key::K, stage::PipelineStage)::StageStatus whe
     bits = table(catalog, key).status[key.index]
     return StageStatus((stage == first ? bits : bits >> 32) % UInt32)
 end
+
+"""
+    metadata(catalog, key, stage) -> MetadataDict
+
+The metadata that `stage` last produced for an item or a collection. For an item, `SOURCE_EXPAND`
+gives the metadata of its entry in the source job, and `ITEM_PROCESS` and `ITEM_ANALYZE` give the
+metadata of those stages. For a collection, `stage` is `COLLECTION_PROCESS` or
+`COLLECTION_ANALYZE`. The metadata stays when the stage becomes stale, until the stage produces new
+metadata.
+"""
+metadata(catalog::Catalog, key::Union{ItemKey,CollectionKey}, stage::PipelineStage)::MetadataDict =
+    @lock catalog.lock table(catalog, key).metadata[stage][key.index]
+
+"""
+    conflicts(catalog, key, stage) -> Vector{MetadataConflict}
+
+The metadata values that `stage` last produced for `key` but that were not stored, because their
+name already holds values of another type.
+"""
+conflicts(catalog::Catalog, key::Union{ItemKey,CollectionKey}, stage::PipelineStage)::Vector{MetadataConflict} =
+    @lock catalog.lock copy(get(catalog.conflicts, (key, stage), MetadataConflict[]))
 
 # Stages and jobs
 
@@ -1008,13 +1124,14 @@ function settle!(catalog::Catalog, job::Job{SourceKey}, failed::Union{PipelineSt
 end
 
 """
-    finish!(catalog, job; failed=false) -> Bool
+    finish!(catalog, job; failed=false, metadata=MetadataDict()) -> Bool
     finish!(catalog, source_job, entries) -> Bool
     finish!(catalog, source_job; failed=stage) -> Bool
 
 End a job. A job finishes once; a second `finish!` throws an `ArgumentError`. If the job's stage was
 not invalidated while it ran, the stage becomes fresh with its output present, or failed when
-`failed` is true, and `finish!` returns `true`. Otherwise the result is discarded, the stage stays
+`failed` is true, and `finish!` returns `true`. A successful item or collection job stores the
+`metadata` it produced, in place of that stage's previous metadata. Otherwise the result is discarded, the stage stays
 stale, and `finish!` returns `false`.
 
 A source item's job passes the `entries` it produced. They are published as by
@@ -1022,9 +1139,15 @@ A source item's job passes the `entries` it produced. They are published as by
 throw the error. A failed source job names the stage that failed: `SOURCE_READ` fails both stages,
 and `SOURCE_EXPAND` keeps read fresh.
 """
-function finish!(catalog::Catalog, job::Job{<:Union{ItemKey,CollectionKey}}; failed::Bool=false)::Bool
+function finish!(
+    catalog::Catalog,
+    job::Job{<:Union{ItemKey,CollectionKey}};
+    failed::Bool=false,
+    metadata::AbstractDict{Symbol}=MetadataDict(),
+)::Bool
     @lock catalog.lock begin
         claim!(catalog, job) || return false
+        failed || store!(catalog, job.key, job.stage, metadata)
         old = status(catalog, job.key, job.stage)
         catalog[job.key, job.stage] = failed ?
             StageStatus(old; running=false, failed=true) :

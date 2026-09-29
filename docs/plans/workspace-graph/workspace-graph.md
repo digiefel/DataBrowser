@@ -71,6 +71,13 @@ they choose to retain. Roadmap 0.2.4 changes `analyze` to return an updated
 value instead of a `Dict`, for items and collections alike; Recipes keeps its
 `Dict`-returning callbacks and adapts them.
 
+The catalog keeps the metadata of each stage separately: for an item, the
+metadata its source gives it, then the output of process, then the output of
+analyze; for a collection, the output of collection process and of collection
+analyze. A stage that runs again therefore reads its input intact. Within one
+stage's metadata, the first value stored under a name fixes the type of its
+column; a later value of another type is dropped and reported.
+
 Collection metadata is what the source provides for a collection level (for
 example `metadata.txt` in `DirectorySource`) plus `metadata(collection)`. It is
 stored once, on the collection row. It never includes collection analysis
@@ -367,8 +374,8 @@ callers of `materialize_items`.
    part of this step.
 2. Unwired catalog. Rows, keys, the id lookup, membership, status words,
    counters, push, pull, coalescing and metadata columns exist in Core with
-   synthetic tests only. Metadata columns reuse the value types and type
-   conflict rules of Cache's `WideRowStore`. The catalog starts no threads:
+   synthetic tests only. Metadata columns keep the type rule of Cache's
+   `WideRowStore`, in plain Julia types. The catalog starts no threads:
    `take!` and `finish!` are what workers will call in step 3.
 3. Engine cutover. Everything that publishes, enqueues, or asks "is this
    ready?" moves in one step: `WorkGraph.jl`, `Workspace.jl`, `Operations.jl`,

@@ -68,7 +68,7 @@ text and rare; they live in a separate table under the same lock.
 | --- | --- | --- |
 | `read` | Loaded content | Memory, evictable (256 MiB budget) |
 | `expand` (or `read`, for one item) | Items | Memory, evictable |
-| `process`, collection `process` | Payload tables | DuckDB payload store |
+| `process`, collection `process` | Payload tables, and metadata | DuckDB payload store; catalog columns |
 | `analyze`, collection `analyze` | Metadata | Catalog columns |
 
 A second availability bit is needed only if one stage's output can live in
