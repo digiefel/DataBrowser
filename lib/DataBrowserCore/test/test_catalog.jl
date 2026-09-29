@@ -3,7 +3,7 @@ using DataBrowserAPI:
     id, label, SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE, COLLECTION_PROCESS
 using DataBrowserCore.Catalogs:
     Catalog, SourceKey, ItemKey, CollectionKey, ItemEntry, Job, ROOT, REMOVED, STALE, FRESH,
-    publish!, lookup, items, children, status, invalidate!, start!, finish!
+    publish!, lookup, items, children, status, progress, invalidate!, start!, finish!
 
 # Run the source job of `file` with `entries`, then process and analyze the items named in `done`.
 function compute!(catalog, file, entries; done=[entry.id for entry in entries])
@@ -60,6 +60,26 @@ end
     invalidate!(catalog, file, SOURCE_READ)
     compute!(catalog, file, [ItemEntry("a", "A", run)])
     @test start!(catalog, run, COLLECTION_PROCESS) !== nothing
+end
+
+@testset "catalog: progress counts items at any depth" begin
+    catalog = Catalog()
+    day = get!(catalog, ROOT, "day", "Day")
+    run = get!(catalog, day, "run", "Run")
+    file = get!(catalog, SourceKey, "data.csv")
+    compute!(catalog, file, [ItemEntry("a", "A", run), ItemEntry("b", "B", run), ItemEntry("c", "C", day)];
+        done=["a", "c"])
+    @test progress(catalog, run) == (1, 2)
+    @test progress(catalog, day) == (2, 3)
+    @test progress(catalog, ROOT) == (2, 3)
+
+    invalidate!(catalog, lookup(catalog, ItemKey, "c"), ITEM_PROCESS)
+    @test progress(catalog, day) == (1, 3)
+
+    invalidate!(catalog, file, SOURCE_READ)
+    compute!(catalog, file, [ItemEntry("a", "A", day)])
+    @test progress(catalog, day) == (1, 1)
+    @test progress(catalog, ROOT) == (1, 1)
 end
 
 @testset "catalog: a source job published again" begin

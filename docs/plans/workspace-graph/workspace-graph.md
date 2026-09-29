@@ -136,6 +136,10 @@ consumes (analyze for an item, collection analyze for a subcollection).
 Deeper descendants are covered by the chain of counters: a change only updates
 the direct parent's counter.
 
+For progress, each collection also counts the items at any depth below it, and
+how many of them have a fresh analyze. A change to one item updates these two
+counts on the collection that holds it and on every ancestor.
+
 Stage validity, running jobs, failures, revisions, and output availability are
 separate state. [Node states](01-node-states.md) defines them. Analyze metadata
 lives on the row as typed columns and stays in memory. Payloads never live on

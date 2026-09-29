@@ -285,6 +285,9 @@ struct CollectionTable <: Table
     # Direct members whose consumed stage is not fresh: analyze for an item, collection analyze for
     # a subcollection. Collection process can run only when this is zero.
     not_fresh::Vector{Int}
+    # Items at any depth below the collection, and those of them whose analyze is fresh.
+    nested_items::Vector{Int}
+    nested_done::Vector{Int}
 end
 
 function CollectionTable()
@@ -297,6 +300,8 @@ function CollectionTable()
         CollectionKey[],
         Vector{ItemKey}[],
         Vector{CollectionKey}[],
+        Int[],
+        Int[],
         Int[],
     )
 end
@@ -370,6 +375,8 @@ function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int
     push!(collections.items, ItemKey[])
     push!(collections.children, CollectionKey[])
     push!(collections.not_fresh, 0)
+    push!(collections.nested_items, 0)
+    push!(collections.nested_done, 0)
     collections.lookup["root"] = ROOT
     return catalog
 end
@@ -380,6 +387,16 @@ table(catalog::Catalog, ::CollectionKey) = catalog.collections
 table(catalog::Catalog, ::Type{SourceKey}) = catalog.sources
 table(catalog::Catalog, ::Type{ItemKey}) = catalog.items
 table(catalog::Catalog, ::Type{CollectionKey}) = catalog.collections
+
+"""Add `items` and `done` to the nested counts of `collection` and of each of its ancestors."""
+function add_nested!(collections::CollectionTable, collection::CollectionKey, items::Int, done::Int)
+    while true
+        collections.nested_items[collection.index] += items
+        collections.nested_done[collection.index] += done
+        collection == ROOT && return nothing
+        collection = collections.parent[collection.index]
+    end
+end
 
 """One item of a source job's result: its public id, its label and the collection that holds it."""
 struct ItemEntry
@@ -430,6 +447,8 @@ function Base.get!(
         push!(collections.items, ItemKey[])
         push!(collections.children, CollectionKey[])
         push!(collections.not_fresh, 0)
+        push!(collections.nested_items, 0)
+        push!(collections.nested_done, 0)
         push!(collections.children[parent.index], key)
         collections.not_fresh[parent.index] += 1
         collections.lookup[id] = key
@@ -482,6 +501,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
                 push!(items.collection, entry.collection)
                 push!(collections.items[entry.collection.index], key)
                 not_fresh[entry.collection.index] += 1
+                add_nested!(collections, entry.collection, 1, 0)
                 push!(changed, entry.collection)
                 items.lookup[entry.id] = key
             else
@@ -494,6 +514,8 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
                     items.collection[key.index] = entry.collection
                     not_fresh[previous.index] -= counted(key)
                     not_fresh[entry.collection.index] += counted(key)
+                    add_nested!(collections, previous, -1, counted(key) - 1)
+                    add_nested!(collections, entry.collection, 1, 1 - counted(key))
                     push!(changed, previous, entry.collection)
                 end
                 push!(surviving, key)
@@ -507,6 +529,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
             previous = items.collection[key.index]
             push!(get!(Set{ItemKey}, leaving, previous), key)
             not_fresh[previous.index] -= counted(key)
+            add_nested!(collections, previous, -1, counted(key) - 1)
             push!(changed, previous)
             delete!(items, key)
         end
@@ -615,6 +638,17 @@ end
 items(catalog::Catalog, collection::CollectionKey)::Vector{ItemKey} =
     @lock catalog.lock copy(catalog.collections.items[collection.index])
 
+"""
+    progress(catalog, collection) -> (done, total)
+
+The items at any depth below `collection`: `total` counts them, and `done` counts those whose analyze
+is fresh.
+"""
+progress(catalog::Catalog, collection::CollectionKey)::Tuple{Int,Int} = @lock catalog.lock begin
+    collections = catalog.collections
+    (collections.nested_done[collection.index], collections.nested_items[collection.index])
+end
+
 """The collections directly below a collection."""
 children(catalog::Catalog, collection::CollectionKey)::Vector{CollectionKey} =
     @lock catalog.lock copy(catalog.collections.children[collection.index])
@@ -642,8 +676,8 @@ end
 
 """
 Write the status of one stage of a row that is not removed. The caller holds the lock. When an
-item's analyze or a collection's collection analyze turns fresh or stops being fresh, the counter
-of the collection that holds it follows.
+item's analyze or a collection's collection analyze turns fresh or stops being fresh, the counters
+of the collections that hold it follow.
 """
 function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::PipelineStage) where {K<:RowKey}
     first, second = stages(K)
@@ -654,6 +688,8 @@ function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::Pipel
         holder = key isa ItemKey ?
             catalog.items.collection[key.index] : catalog.collections.parent[key.index]
         catalog.collections.not_fresh[holder.index] += (old.validity == FRESH) - (new.validity == FRESH)
+        stage == ITEM_ANALYZE &&
+            add_nested!(catalog.collections, holder, 0, (new.validity == FRESH) - (old.validity == FRESH))
     end
     return catalog
 end
