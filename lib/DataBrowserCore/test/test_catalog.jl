@@ -1,9 +1,10 @@
 using Test
 using DataBrowserAPI:
-    id, label, SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE, COLLECTION_PROCESS
+    id, label, SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE, COLLECTION_PROCESS,
+    COLLECTION_ANALYZE
 using DataBrowserCore.Catalogs:
     Catalog, SourceKey, ItemKey, CollectionKey, ItemEntry, Job, ROOT, REMOVED, STALE, FRESH,
-    publish!, lookup, items, children, status, progress, invalidate!, start!, finish!
+    publish!, lookup, items, children, status, progress, invalidate!, start!, finish!, request
 
 # Run the source job of `file` with `entries`, then process and analyze the items named in `done`.
 function compute!(catalog, file, entries; done=[entry.id for entry in entries])
@@ -179,6 +180,52 @@ end
     ran = drain!(catalog, entries)
     @test count(job -> job.key == run && job.stage == COLLECTION_PROCESS, ran) == 1
     @test status(catalog, run, COLLECTION_PROCESS).validity == FRESH
+end
+
+@testset "catalog: a request runs its stage and the stages it reads" begin
+    catalog = Catalog()
+    file = get!(catalog, SourceKey, "data.csv")
+    compute!(catalog, file, [ItemEntry("a", "A", ROOT), ItemEntry("b", "B", ROOT)]; done=[])
+    a = lookup(catalog, ItemKey, "a")
+    b = lookup(catalog, ItemKey, "b")
+
+    waiting = request(catalog, a, ITEM_ANALYZE)
+    waiter = Threads.@spawn wait(waiting)
+    drain!(catalog, Dict())
+    @test fetch(waiter).validity == FRESH
+    @test status(catalog, b, ITEM_PROCESS).validity != FRESH
+end
+
+@testset "catalog: a request raises the priority of its jobs until it is closed" begin
+    catalog = Catalog(; eager=Dict(ITEM_PROCESS => 1))
+    file = get!(catalog, SourceKey, "data.csv")
+    compute!(catalog, file, [ItemEntry("a", "A", ROOT), ItemEntry("b", "B", ROOT)]; done=[])
+    a = lookup(catalog, ItemKey, "a")
+    b = lookup(catalog, ItemKey, "b")
+
+    urgent = request(catalog, b, ITEM_ANALYZE; priority=2)
+    job = take!(catalog)
+    @test job.key == b
+    close(urgent)
+    finish!(catalog, job)
+    @test [(job.key, job.stage) for job in drain!(catalog, Dict())] == [(a, ITEM_PROCESS)]
+end
+
+@testset "catalog: a failed input settles a request until it is retried" begin
+    catalog = Catalog()
+    run = get!(catalog, ROOT, "run", "Run")
+    file = get!(catalog, SourceKey, "data.csv")
+    compute!(catalog, file, [ItemEntry("a", "A", run), ItemEntry("b", "B", run)]; done=["b"])
+    a = lookup(catalog, ItemKey, "a")
+
+    waiting = request(catalog, run, COLLECTION_ANALYZE)
+    finish!(catalog, take!(catalog); failed=true)
+    @test wait(waiting).blocked
+
+    invalidate!(catalog, a, ITEM_PROCESS)
+    @test !status(catalog, run, COLLECTION_ANALYZE).blocked
+    drain!(catalog, Dict())
+    @test wait(waiting).validity == FRESH
 end
 
 @testset "catalog: many rows" begin

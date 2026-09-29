@@ -14,6 +14,8 @@ One enum cannot describe every relevant fact. Keep these parts separate:
 - **Running:** whether a job for this stage is running now. The status does
   not record jobs that are waiting to start; only the job queue records those.
 - **Failure:** the latest failure for the current revision, if any.
+- **Blocked:** whether an input the stage needs failed or is blocked. No job
+  can make the stage fresh until that input is retried or invalidated.
 - **Output availability:** whether the output is present. Where it lives is
   fixed by the stage (below), so one bit is enough.
 - **Revision:** the input revision a job read and an output represents.
@@ -46,9 +48,9 @@ materialize the output in the form it needs.
 
 Every row has exactly two stages, so one 64-bit word per row holds both, 32
 bits each. A stage's half holds validity (2 bits), the running flag, the
-failure flag, output availability, applicability and a 24-bit revision. The
-revision wraps after 16.7 million changes to one stage; a wrap is harmful only
-if a single job runs across exactly that many changes.
+failure flag, the blocked flag, output availability, applicability and a 24-bit
+revision. The revision wraps after 16.7 million changes to one stage; a wrap is
+harmful only if a single job runs across exactly that many changes.
 
 The words live in `AtomicMemory`, one array per table. A reader loads a word
 once and gets a consistent snapshot of both stages without a lock. Writers,

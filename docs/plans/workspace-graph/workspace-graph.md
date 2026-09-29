@@ -167,17 +167,22 @@ coalesces; it reruns once after the current run finishes. Because the
 collection waits for its counter, a burst of arrivals collapses into one
 collection run. There is no need to know when "the last member" has arrived.
 
-`request(workspace, node, stage; wait::Bool)` is the only entry point. It
-returns a handle. Requests for the same `(key, stage)` coalesce and keep the
-highest requester priority. `wait=true` is the synchronous form.
+`request(catalog, key, stage; priority)` is the only entry point. It returns a
+handle. Requests for the same `(key, stage)` coalesce and keep the highest
+requester priority. `wait(handle)` blocks until the stage settles: it is fresh,
+failed, blocked by an input that failed, or removed. `close(handle)` withdraws
+the request.
 
-When a requester goes away, its queued jobs fall back to the priority of the
-remaining requesters and the stage policy. A queued job that no requester and
+When a request is closed, its queued jobs fall back to the priority of the
+remaining requests and the stage policy. A queued job that no requester and
 no eager stage needs any more is skipped when a worker takes it from the queue;
 running jobs finish.
 
-A failed child blocks its collection and every ancestor collection until retry
-or invalidation. Tags and filtering will let users exclude failed items later.
+A failed stage blocks the stages that read it, and a failed or blocked member
+blocks its collection and every ancestor collection, until retry or
+invalidation. Each collection counts its members that failed or are blocked, so
+blocking needs no walk over the members. A request whose stage is blocked
+settles. Tags and filtering will let users exclude failed items later.
 
 Eager versus lazy is a per-stage policy (later it can depend on source or
 item kind). Stale always propagates. A job is queued only if the policy for
