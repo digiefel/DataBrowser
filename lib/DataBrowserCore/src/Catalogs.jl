@@ -282,6 +282,9 @@ struct CollectionTable <: Table
     parent::Vector{CollectionKey}
     items::Vector{Vector{ItemKey}}
     children::Vector{Vector{CollectionKey}}
+    # Direct members whose consumed stage is not fresh: analyze for an item, collection analyze for
+    # a subcollection. Collection process can run only when this is zero.
+    not_fresh::Vector{Int}
 end
 
 function CollectionTable()
@@ -294,6 +297,7 @@ function CollectionTable()
         CollectionKey[],
         Vector{ItemKey}[],
         Vector{CollectionKey}[],
+        Int[],
     )
 end
 
@@ -346,6 +350,7 @@ function Catalog()
     push!(collections.parent, ROOT)
     push!(collections.items, ItemKey[])
     push!(collections.children, CollectionKey[])
+    push!(collections.not_fresh, 0)
     collections.lookup["root"] = ROOT
     return catalog
 end
@@ -404,8 +409,11 @@ function Base.get!(
         push!(collections.parent, parent)
         push!(collections.items, ItemKey[])
         push!(collections.children, CollectionKey[])
+        push!(collections.not_fresh, 0)
         push!(collections.children[parent.index], key)
+        collections.not_fresh[parent.index] += 1
         collections.lookup[id] = key
+        invalidate!(catalog, parent, COLLECTION_PROCESS)
         return key
     end
 end
@@ -415,9 +423,9 @@ end
 
 Replace the items of `source` with `entries`, the result of its source job.
 
-An id that `source` already had keeps its key, and takes the label and collection of its entry. A
-new id gets a new key. An id that is not in `entries` any more is removed, and so is every
-collection this leaves empty. An id that appears twice or belongs to another source item, a collection that
+An id that `source` already had keeps its key, and takes the label and collection of its entry; its
+stages become stale. A new id gets a new key. An id that is not in `entries` any more is removed,
+and so is every collection this leaves empty. Every collection whose members change becomes stale. An id that appears twice or belongs to another source item, a collection that
 does not exist, or a removed `source` throws an `ArgumentError` and leaves the catalog unchanged.
 """
 function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{ItemEntry})::Nothing
@@ -439,6 +447,11 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
 
         # Items leaving each collection, removed from its list in one pass at the end.
         leaving = Dict{CollectionKey,Set{ItemKey}}()
+        # Collections whose members change become stale, and so do the items that survive.
+        changed = Set{CollectionKey}()
+        surviving = ItemKey[]
+        not_fresh = collections.not_fresh
+        counted(key) = status(catalog, key, ITEM_ANALYZE).validity != FRESH
         new_keys = ItemKey[]
         for entry in entries
             key = get(items.lookup, entry.id, nothing)
@@ -448,6 +461,8 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
                 push!(items.source, source)
                 push!(items.collection, entry.collection)
                 push!(collections.items[entry.collection.index], key)
+                not_fresh[entry.collection.index] += 1
+                push!(changed, entry.collection)
                 items.lookup[entry.id] = key
             else
                 view(items.labels, key.index) == codeunits(entry.label) ||
@@ -457,7 +472,11 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
                     push!(get!(Set{ItemKey}, leaving, previous), key)
                     push!(collections.items[entry.collection.index], key)
                     items.collection[key.index] = entry.collection
+                    not_fresh[previous.index] -= counted(key)
+                    not_fresh[entry.collection.index] += counted(key)
+                    push!(changed, previous, entry.collection)
                 end
+                push!(surviving, key)
             end
             push!(new_keys, key)
         end
@@ -465,18 +484,27 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
         kept = Set(new_keys)
         for key in catalog.sources.item_keys[item_range(catalog.sources, source)]
             key in kept && continue
-            push!(get!(Set{ItemKey}, leaving, items.collection[key.index]), key)
+            previous = items.collection[key.index]
+            push!(get!(Set{ItemKey}, leaving, previous), key)
+            not_fresh[previous.index] -= counted(key)
+            push!(changed, previous)
             delete!(items, key)
         end
         for (collection, gone) in leaving
             filter!(key -> !(key in gone), collections.items[collection.index])
-            delete!(catalog, collection)
         end
 
         sources = catalog.sources
         sources.item_starts[source.index] = length(sources.item_keys) + 1
         sources.item_counts[source.index] = length(new_keys)
         append!(sources.item_keys, new_keys)
+
+        invalidate!(catalog, Tuple{RowKey,PipelineStage}[
+            [(key, ITEM_PROCESS) for key in surviving];
+            [(collection, COLLECTION_PROCESS) for collection in changed]])
+        for collection in changed
+            delete!(catalog, collection)
+        end
     end
     return nothing
 end
@@ -499,17 +527,21 @@ end
     delete!(catalog, collection::CollectionKey)
 
 Remove `collection` if it holds no items and no collections, then each ancestor this leaves empty.
-The root is never removed.
+The collection that keeps losing a member becomes stale. The root is never removed.
 """
 function Base.delete!(catalog::Catalog, collection::CollectionKey)::Catalog
     @lock catalog.lock begin
         collections = catalog.collections
-        while collection != ROOT &&
+        while collection in collections &&
+              collection != ROOT &&
               isempty(collections.items[collection.index]) &&
               isempty(collections.children[collection.index])
             parent = collections.parent[collection.index]
             filter!(!=(collection), collections.children[parent.index])
+            collections.not_fresh[parent.index] -=
+                status(catalog, collection, COLLECTION_ANALYZE).validity != FRESH
             delete!(collections, collection)
+            invalidate!(catalog, parent, COLLECTION_PROCESS)
             collection = parent
         end
     end
@@ -580,6 +612,227 @@ function status(catalog::Catalog, key::K, stage::PipelineStage)::StageStatus whe
         throw(ArgumentError("a $(nameof(K)) row has no $stage stage"))
     bits = table(catalog, key).status[key.index]
     return StageStatus((stage == first ? bits : bits >> 32) % UInt32)
+end
+
+# Stages and jobs
+
+# TODO: absent stages. Only the root has them so far, and it has no parent that waits for it. An
+# absent stage should become fresh as soon as its inputs are fresh, once the project decides which
+# stages exist.
+
+"""
+Write the status of one stage of a row that is not removed. The caller holds the lock. When an
+item's analyze or a collection's collection analyze turns fresh or stops being fresh, the counter
+of the collection that holds it follows.
+"""
+function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::PipelineStage) where {K<:RowKey}
+    first, second = stages(K)
+    old = status(catalog, key, stage)
+    table(catalog, key).status[key.index] = stage == first ?
+        word(new, status(catalog, key, second)) : word(status(catalog, key, first), new)
+    if stage == ITEM_ANALYZE || stage == COLLECTION_ANALYZE && key != ROOT
+        holder = key isa ItemKey ?
+            catalog.items.collection[key.index] : catalog.collections.parent[key.index]
+        catalog.collections.not_fresh[holder.index] += (old.validity == FRESH) - (new.validity == FRESH)
+    end
+    return catalog
+end
+
+"""The stages that read the output of `stage` on `key`."""
+function dependents(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Tuple{RowKey,PipelineStage}}
+    stage == SOURCE_READ && return Tuple{RowKey,PipelineStage}[(key, SOURCE_EXPAND)]
+    stage == SOURCE_EXPAND &&
+        return Tuple{RowKey,PipelineStage}[(item, ITEM_PROCESS) for item in items(catalog, key)]
+    stage == ITEM_PROCESS && return Tuple{RowKey,PipelineStage}[(key, ITEM_ANALYZE)]
+    stage == ITEM_ANALYZE &&
+        return Tuple{RowKey,PipelineStage}[(collection(catalog, key), COLLECTION_PROCESS)]
+    stage == COLLECTION_PROCESS && return Tuple{RowKey,PipelineStage}[(key, COLLECTION_ANALYZE)]
+    key == ROOT && return Tuple{RowKey,PipelineStage}[]
+    return Tuple{RowKey,PipelineStage}[(parent(catalog, key), COLLECTION_PROCESS)]
+end
+
+"""Whether every input of `stage` on `key` is fresh, so that a job for it can start."""
+function ready(catalog::Catalog, key::Union{ItemKey,CollectionKey}, stage::PipelineStage)::Bool
+    stage == ITEM_PROCESS &&
+        return status(catalog, source(catalog, key), SOURCE_EXPAND).validity == FRESH
+    stage == ITEM_ANALYZE && return status(catalog, key, ITEM_PROCESS).validity == FRESH
+    stage == COLLECTION_PROCESS && return catalog.collections.not_fresh[key.index] == 0
+    return status(catalog, key, COLLECTION_PROCESS).validity == FRESH
+end
+
+"""
+    invalidate!(catalog, key, stage)
+    invalidate!(catalog, targets)
+
+Mark `stage` on `key`, or each `(key, stage)` in `targets`, and every stage downstream as stale: the
+second stage of the row, the items of a source item, the collection that holds an item, and each
+collection up to the root. Every stage reached gets one new revision, so a job running for it
+cannot publish, and loses its failure. A stage that was never computed stays missing. Invalidation
+starts no job.
+"""
+invalidate!(catalog::Catalog, key::RowKey, stage::PipelineStage)::Catalog =
+    invalidate!(catalog, [(key, stage)])
+
+function invalidate!(catalog::Catalog, targets::AbstractVector{<:Tuple{RowKey,PipelineStage}})::Catalog
+    @lock catalog.lock begin
+        reached = Set{Tuple{RowKey,PipelineStage}}()
+        pending = collect(Tuple{RowKey,PipelineStage}, targets)
+        while !isempty(pending)
+            next = pop!(pending)
+            next in reached && continue
+            push!(reached, next)
+            row, row_stage = next
+            row in table(catalog, row) || continue
+            old = status(catalog, row, row_stage)
+            validity = old.validity == FRESH ? STALE : old.validity
+            catalog[row, row_stage] =
+                StageStatus(validity, old.activity, false, old.output, old.absent, old.revision + 1)
+            append!(pending, dependents(catalog, row, row_stage))
+        end
+    end
+    return catalog
+end
+
+"""
+A running job: one stage of one row, and the revision of the inputs it started from. A source
+item's job runs both of its stages and holds the revision of expand, which every change to read
+also increases.
+"""
+mutable struct Job{K<:RowKey}
+    const key::K
+    const stage::PipelineStage
+    const revision::UInt32
+    finished::Bool
+end
+
+Job(key::RowKey, stage::PipelineStage, revision::UInt32) = Job(key, stage, revision, false)
+
+"""
+    start!(catalog, key, stage) -> Union{Job,Nothing}
+    start!(catalog, source::SourceKey) -> Union{Job,Nothing}
+
+Mark `stage` on `key` as running and return its job. Returns `nothing` when the stage cannot run
+now: the row was removed, or the stage is absent, fresh, failed or already running, or one of its
+inputs is not fresh.
+
+A source item has one job for its two stages: it runs read, unless read is fresh, and then expand.
+It returns `nothing` when expand is fresh, either stage failed, or the job is already running.
+"""
+function start!(
+    catalog::Catalog,
+    key::K,
+    stage::PipelineStage,
+)::Union{Job{K},Nothing} where {K<:Union{ItemKey,CollectionKey}}
+    @lock catalog.lock begin
+        key in table(catalog, key) || return nothing
+        old = status(catalog, key, stage)
+        if old.absent || old.failed || old.validity == FRESH || old.activity == RUNNING ||
+           !ready(catalog, key, stage)
+            return nothing
+        end
+        catalog[key, stage] =
+            StageStatus(old.validity, RUNNING, false, old.output, old.absent, old.revision)
+        return Job(key, stage, old.revision)
+    end
+end
+
+function start!(catalog::Catalog, source::SourceKey)::Union{Job{SourceKey},Nothing}
+    @lock catalog.lock begin
+        source in catalog.sources || return nothing
+        read = status(catalog, source, SOURCE_READ)
+        expand = status(catalog, source, SOURCE_EXPAND)
+        if read.failed || expand.failed || expand.validity == FRESH || expand.activity == RUNNING
+            return nothing
+        end
+        read.validity == FRESH || (catalog[source, SOURCE_READ] =
+            StageStatus(read.validity, RUNNING, false, read.output, read.absent, read.revision))
+        catalog[source, SOURCE_EXPAND] =
+            StageStatus(expand.validity, RUNNING, false, expand.output, expand.absent, expand.revision)
+        return Job(source, SOURCE_EXPAND, expand.revision)
+    end
+end
+
+"""
+Mark `job` as finished and return whether its result is kept: its row exists and its stage was not
+invalidated while it ran. When the result is discarded, the job's stages stop running. The caller
+holds the lock.
+"""
+function claim!(catalog::Catalog, job::Job)::Bool
+    job.finished && throw(ArgumentError("the job has already finished"))
+    job.finished = true
+    job.key in table(catalog, job.key) || return false
+    status(catalog, job.key, job.stage).revision == job.revision && return true
+    for stage in (job.key isa SourceKey ? stages(SourceKey) : (job.stage,))
+        old = status(catalog, job.key, stage)
+        old.activity == RUNNING && (catalog[job.key, stage] =
+            StageStatus(old.validity, IDLE, false, old.output, old.absent, old.revision))
+    end
+    return false
+end
+
+"""
+The status of a source item's two stages after a job whose result is kept. `failed` names the stage
+that failed, or is `nothing`. When read fails, expand fails with it. The caller holds the lock.
+"""
+function settle!(catalog::Catalog, job::Job{SourceKey}, failed::Union{PipelineStage,Nothing})
+    read = status(catalog, job.key, SOURCE_READ)
+    expand = status(catalog, job.key, SOURCE_EXPAND)
+    catalog[job.key, SOURCE_READ] = failed == SOURCE_READ ?
+        StageStatus(read.validity, IDLE, true, read.output, read.absent, read.revision) :
+        StageStatus(FRESH, IDLE, false, true, read.absent, read.revision)
+    catalog[job.key, SOURCE_EXPAND] = failed === nothing ?
+        StageStatus(FRESH, IDLE, false, true, expand.absent, expand.revision) :
+        StageStatus(expand.validity, IDLE, true, expand.output, expand.absent, expand.revision)
+    return nothing
+end
+
+"""
+    finish!(catalog, job; failed=false) -> Bool
+    finish!(catalog, source_job, entries) -> Bool
+    finish!(catalog, source_job; failed=stage) -> Bool
+
+End a job. A job finishes once; a second `finish!` throws an `ArgumentError`. If the job's stage was
+not invalidated while it ran, the stage becomes fresh with its output present, or failed when
+`failed` is true, and `finish!` returns `true`. Otherwise the result is discarded, the stage stays
+stale, and `finish!` returns `false`.
+
+A source item's job passes the `entries` it produced. They are published as by
+[`publish!`](@ref) only when the result is kept. Entries that `publish!` refuses fail expand and
+throw the error. A failed source job names the stage that failed: `SOURCE_READ` fails both stages,
+and `SOURCE_EXPAND` keeps read fresh.
+"""
+function finish!(catalog::Catalog, job::Job{<:Union{ItemKey,CollectionKey}}; failed::Bool=false)::Bool
+    @lock catalog.lock begin
+        claim!(catalog, job) || return false
+        old = status(catalog, job.key, job.stage)
+        catalog[job.key, job.stage] = failed ?
+            StageStatus(old.validity, IDLE, true, old.output, old.absent, old.revision) :
+            StageStatus(FRESH, IDLE, false, true, old.absent, old.revision)
+        return true
+    end
+end
+
+function finish!(catalog::Catalog, job::Job{SourceKey}, entries::AbstractVector{ItemEntry})::Bool
+    @lock catalog.lock begin
+        claim!(catalog, job) || return false
+        try
+            publish!(catalog, job.key, entries)
+        catch
+            settle!(catalog, job, SOURCE_EXPAND)
+            rethrow()
+        end
+        settle!(catalog, job, nothing)
+        return true
+    end
+end
+
+function finish!(catalog::Catalog, job::Job{SourceKey}; failed::PipelineStage)::Bool
+    failed in stages(SourceKey) || throw(ArgumentError("a source item has no $failed stage"))
+    @lock catalog.lock begin
+        claim!(catalog, job) || return false
+        settle!(catalog, job, failed)
+        return true
+    end
 end
 
 end
