@@ -381,6 +381,9 @@ callers of `materialize_items`.
    ready?" moves in one step: `WorkGraph.jl`, `Workspace.jl`, `Operations.jl`,
    `Processing.jl`, `DataAccess.jl`, `Status.jl`. Splitting those leaves two
    catalogs. The accessors switch to the catalog in the same step.
+   `ItemRecord` and `CollectionRecord` are deleted in the same step: source
+   jobs report `ItemEntry`s, and code that passes items and collections around
+   (the GUI, Plots, Recipes and the accessors) passes their catalog keys.
 
 Cache ledger and key-map deletion, and column restore, follow once the graph
 owns status. Measure reopen against a committed bench baseline. Then

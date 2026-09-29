@@ -6,6 +6,8 @@ module Catalogs
 
 import DataBrowserAPI: id, label, metadata
 using DataBrowserAPI:
+    AbstractCollection,
+    AbstractDataItem,
     MetadataDict,
     PipelineStage,
     SOURCE_READ,
@@ -344,6 +346,7 @@ struct ItemTable <: Table
     status::StatusColumn
     source::Vector{SourceKey}
     collection::Vector{CollectionKey}
+    type::Vector{Type{<:AbstractDataItem}}
     # The metadata that each stage produced: the source item's expand gives each item its first.
     metadata::Dict{PipelineStage,MetadataColumns}
 end
@@ -357,6 +360,7 @@ function ItemTable()
         StatusColumn(),
         SourceKey[],
         CollectionKey[],
+        Type{<:AbstractDataItem}[],
         Dict(stage => MetadataColumns() for stage in (SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE)),
     )
 end
@@ -378,6 +382,7 @@ struct CollectionTable <: Table
     # Items at any depth below the collection, and those of them whose analyze is fresh.
     nested_items::Vector{Int}
     nested_done::Vector{Int}
+    type::Vector{Type{<:AbstractCollection}}
     # The metadata that each stage produced.
     # TODO: the metadata a source gives a collection, such as `metadata.txt`. A change to it must
     # invalidate process for every item below the collection.
@@ -398,6 +403,7 @@ function CollectionTable()
         Int[],
         Int[],
         Int[],
+        Type{<:AbstractCollection}[],
         Dict(stage => MetadataColumns() for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)),
     )
 end
@@ -485,6 +491,8 @@ function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int
     push!(collections.stuck, 0)
     push!(collections.nested_items, 0)
     push!(collections.nested_done, 0)
+    # The root is never rebuilt, so it has no concrete type.
+    push!(collections.type, AbstractCollection)
     collections.lookup["root"] = ROOT
     return catalog
 end
@@ -532,17 +540,18 @@ function store!(catalog::Catalog, key::Union{ItemKey,CollectionKey}, stage::Pipe
 end
 
 """
-One item of a source job's result: its public id, its label, the collection that holds it, and the
-metadata the source gives it.
+One item of a source job's result: its public id, its label, the collection that holds it, its item
+type, and the metadata the source gives it.
 """
 struct ItemEntry
     id::String
     label::String
     collection::CollectionKey
+    type::Type{<:AbstractDataItem}
     metadata::MetadataDict
 end
 
-ItemEntry(id, label, collection) = ItemEntry(id, label, collection, MetadataDict())
+ItemEntry(id, label, collection, type) = ItemEntry(id, label, collection, type, MetadataDict())
 
 """
     get!(catalog, SourceKey, id) -> SourceKey
@@ -564,9 +573,10 @@ function Base.get!(catalog::Catalog, ::Type{SourceKey}, id::AbstractString)::Sou
 end
 
 """
-    get!(catalog, parent::CollectionKey, id, label) -> CollectionKey
+    get!(catalog, parent::CollectionKey, id, label, type) -> CollectionKey
 
-The key of the collection with public id `id`, added below `parent` when the catalog has none.
+The key of the collection with public id `id`, added below `parent` with collection type `type`
+when the catalog has none.
 Throws an `ArgumentError` when `parent` does not exist.
 """
 function Base.get!(
@@ -574,6 +584,7 @@ function Base.get!(
     parent::CollectionKey,
     id::AbstractString,
     label::AbstractString,
+    type::Type{<:AbstractCollection},
 )::CollectionKey
     @lock catalog.lock begin
         collections = catalog.collections
@@ -589,6 +600,7 @@ function Base.get!(
         push!(collections.stuck, 0)
         push!(collections.nested_items, 0)
         push!(collections.nested_done, 0)
+        push!(collections.type, type)
         push!(collections.children[parent.index], key)
         collections.not_fresh[parent.index] += 1
         collections.lookup[id] = key
@@ -604,8 +616,8 @@ end
 
 Replace the items of `source` with `entries`, the result of its source job.
 
-An id that `source` already had keeps its key, and takes the label, collection and metadata of its
-entry; its stages become stale. A new id gets a new key. An id that is not in `entries` any more is removed,
+An id that `source` already had keeps its key, and takes the label, collection, item type and
+metadata of its entry; its stages become stale. A new id gets a new key. An id that is not in `entries` any more is removed,
 and so is every collection this leaves empty. Every collection whose members change becomes stale. An id that appears twice or belongs to another source item, a collection that
 does not exist, or a removed `source` throws an `ArgumentError` and leaves the catalog unchanged.
 """
@@ -642,6 +654,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
                 push!(items.labels, entry.label)
                 push!(items.source, source)
                 push!(items.collection, entry.collection)
+                push!(items.type, entry.type)
                 push!(collections.items[entry.collection.index], key)
                 not_fresh[entry.collection.index] += 1
                 add_nested!(collections, entry.collection, 1, 0)
@@ -650,6 +663,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
             else
                 view(items.labels, key.index) == codeunits(entry.label) ||
                     (items.labels[key.index] = entry.label)
+                items.type[key.index] = entry.type
                 previous = items.collection[key.index]
                 if previous != entry.collection
                     push!(get!(Set{ItemKey}, leaving, previous), key)
@@ -759,6 +773,12 @@ id(catalog::Catalog, key::RowKey)::String = @lock catalog.lock table(catalog, ke
 """The label of an item or a collection."""
 label(catalog::Catalog, key::Union{ItemKey,CollectionKey})::String =
     @lock catalog.lock table(catalog, key).labels[key.index]
+
+"""The item type of an item or the collection type of a collection: the type its value is rebuilt as."""
+valuetype(catalog::Catalog, key::ItemKey)::Type{<:AbstractDataItem} =
+    @lock catalog.lock catalog.items.type[key.index]
+valuetype(catalog::Catalog, key::CollectionKey)::Type{<:AbstractCollection} =
+    @lock catalog.lock catalog.collections.type[key.index]
 
 """The source item that produced an item."""
 source(catalog::Catalog, item::ItemKey)::SourceKey = @lock catalog.lock catalog.items.source[item.index]
