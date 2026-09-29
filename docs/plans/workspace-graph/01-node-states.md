@@ -27,7 +27,8 @@ materialize the output in the form it needs.
 ## Required rules
 
 - Invalidation increments the revision, marks the stage stale, and propagates
-  downstream. It does not queue work by itself.
+  downstream. It queues work only for stages that a request or the eager policy
+  needs.
 - A job captures its input revision. Completion publishes only if that revision
   is still current; otherwise the result is discarded.
 - A failure belongs to one revision. It settles current request handles and

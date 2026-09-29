@@ -499,6 +499,8 @@ function Base.get!(
         collections.not_fresh[parent.index] += 1
         collections.lookup[id] = key
         invalidate!(catalog, parent, COLLECTION_PROCESS)
+        # The parent now waits for this collection, even while it stays empty.
+        queue!(catalog, key, COLLECTION_PROCESS)
         return key
     end
 end
@@ -816,7 +818,7 @@ The stages named in the call are queued if they are wanted and their inputs allo
 invalidate!(catalog::Catalog, key::RowKey, stage::PipelineStage)::Catalog =
     invalidate!(catalog, [(key, stage)])
 
-function invalidate!(catalog::Catalog, targets::AbstractVector{<:Tuple{RowKey,PipelineStage}})::Catalog
+function invalidate!(catalog::Catalog, targets::AbstractVector{<:Tuple{Any,PipelineStage}})::Catalog
     @lock catalog.lock begin
         reached = Set{Tuple{RowKey,PipelineStage}}()
         pending = collect(Tuple{RowKey,PipelineStage}, targets)

@@ -165,9 +165,9 @@ end
 
 @testset "catalog: a collection changed during its job runs again once" begin
     catalog = Catalog(; eager=Dict(SOURCE_EXPAND => 1, ITEM_ANALYZE => 1, COLLECTION_PROCESS => 1))
+    file = get!(catalog, SourceKey, "data.csv")
     run = get!(catalog, ROOT, "run", "Run")
     entries = Dict("data.csv" => [ItemEntry("a", "A", run), ItemEntry("b", "B", run)])
-    file = get!(catalog, SourceKey, "data.csv")
     job = take!(catalog)
     while job.key != run
         complete!(catalog, job, entries)
@@ -226,6 +226,22 @@ end
     @test !status(catalog, run, COLLECTION_ANALYZE).blocked
     drain!(catalog, Dict())
     @test wait(waiting).validity == FRESH
+end
+
+@testset "catalog: a request settles when an empty collection is added" begin
+    catalog = Catalog()
+    day = get!(catalog, ROOT, "day", "Day")
+    request(catalog, day, COLLECTION_PROCESS)
+    get!(catalog, day, "run", "Run")
+    drain!(catalog, Dict())
+    @test status(catalog, day, COLLECTION_PROCESS).validity == FRESH
+end
+
+@testset "catalog: invalidation takes targets of different kinds" begin
+    catalog = Catalog()
+    file = get!(catalog, SourceKey, "data.csv")
+    run = get!(catalog, ROOT, "run", "Run")
+    @test invalidate!(catalog, [(file, SOURCE_READ), (run, COLLECTION_PROCESS)]) === catalog
 end
 
 @testset "catalog: many rows" begin
