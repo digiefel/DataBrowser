@@ -286,12 +286,12 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 - [ ] Audit source fingerprinting and document exactly what each change token invalidates across
   live updates and workspace reopen.
-- [ ] Keep `default_collection_path(source, source_item)` source-owned. Replace
-  `annotate_collection_path` with `source_collection_metadata(source, paths)`: a batch of public
-  collection-identity paths in, owned metadata dictionaries per path level out. DirectorySource
-  owns sidecar parsing and matching; Core owns composition and invalidation. Store declared and
-  source metadata separately and replace the source contribution on item publication, refresh and
-  reopen, so removed keys reveal the declared values beneath them. Snapshot source metadata under
+- [ ] Replace `default_collection_path(source, source_item)` with `collection(source_item)`, and
+  `annotate_collection_path` with `metadata(source, collections)`, where `collections` are one
+  collection's values from the top down. DirectorySource owns `metadata.txt` parsing and matching;
+  Core owns composition and invalidation. Store a collection's own metadata and the source's
+  separately and replace the source's part on item publication, refresh and reopen, so removed keys
+  reveal the collection's own values beneath them. Snapshot source metadata under
   its lock without calling user reconstruction there. Test both DirectorySource and another source.
 - [ ] Split `DirectorySource` into scan, `metadata.txt`, and watcher files. The watcher rescans
   the whole tree and fingerprints every file three times on each event; `.git` is skipped by the
@@ -372,6 +372,9 @@ selection model.
 - [ ] Add a visual filter builder to the GUI.
 - [ ] Add a flat item table with selectable metadata columns alongside the hierarchy view.
 - [ ] Support flattening, grouping, sorting, and filtering without copying item state into the GUI.
+- [ ] Group across a collection level, for example "group across wafer": collections whose values
+  are equal once that level is left out form one group, and collection analysis runs on each group.
+  The Recipes `collection` callback names the levels, `(wafer = …, device = …)`.
 - [ ] Show when computed statistics used by a filter are still being populated.
 - [ ] Persist useful item-view and filter state with the project.
 

@@ -384,8 +384,8 @@ struct CollectionTable <: Table
     nested_done::Vector{Int}
     type::Vector{Type{<:AbstractCollection}}
     # The metadata that each stage produced.
-    # TODO: the metadata a source gives a collection, such as `metadata.txt`. A change to it must
-    # invalidate process for every item below the collection.
+    # TODO: two more layers, the collection's own metadata and the metadata its source gives it.
+    # A change to either invalidates process for every item below the collection.
     metadata::Dict{PipelineStage,MetadataColumns}
 end
 
@@ -588,6 +588,8 @@ function Base.get!(
 )::CollectionKey
     @lock catalog.lock begin
         collections = catalog.collections
+        # TODO: find the collection by parent, type and id; collection ids are unique only among
+        # siblings.
         key = get(collections.lookup, id, nothing)
         key === nothing || return key
         parent in collections || throw(ArgumentError("the parent collection does not exist"))

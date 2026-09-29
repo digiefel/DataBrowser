@@ -47,14 +47,44 @@ The collection supplies the user's type and collection information; the engine
 supplies membership. Do not assume that an arbitrary collection value contains
 its members or results.
 
+### Collections
+
+A collection is one node of the collection tree. It is identified by its parent
+and its value; two values are equal when they have the same type and the same
+`id`. The catalog stores the parent, type, `id` and label of each collection,
+and finds a collection by parent, type and `id`. No path and no digest are
+stored: a collection's position is read by following its parents.
+
+An item is placed by `collection(item)`, its values from the top down. When
+that list is empty, the item goes where its source item is:
+`collection(source_item)`. `DirectorySource` answers with the file's
+directories.
+
+Each value belongs to a level: its type in the type API, and the name the
+Recipes `collection` callback gives it:
+
+```julia
+collection = (data, metadata) -> (wafer = metadata[:wafer], device = metadata[:device]),
+```
+
+Levels let a view group across a level. "Group across wafer" puts together the
+collections whose values are equal once the wafer level is left out, so
+Wafer1/DeviceA and Wafer2/DeviceA form one group. A group is not stored in the
+catalog; collection analysis runs on it as on any other set of items. Grouping
+is roadmap 0.5.0 work and not part of this plan.
+
 ### Collection inputs
 
-Computation is hierarchical. A parent collection waits for all of its children,
-items and subcollections alike, so everything below a collection is finished
-when the collection runs. Collection `process` transforms the collection's own
-members, returning one replacement per input with preserved identity; it does
-not return a replacement collection. Member payload changes follow the
-hierarchical execution order, inner collections first.
+A collection contains every item below it, at any depth, and waits until all of
+them are finished. Collection `process` and `analyze` receive all of those
+items, in the same way at every level.
+
+Collection `process` returns the collection's own version of its items: one
+output per input, with the same identity. The engine stores that version with
+the collection. It never replaces the items' own data, so collections at
+different levels do not overwrite each other and no result depends on the order
+in which work runs. Collection `analyze` receives the collection's version when
+the project defines collection `process`, and the items' own data otherwise.
 
 The callback shape is roadmap 0.2.4 work: `analyze(project, collection, items,
 subcollections)`, where `items` are all items below the collection, with data
@@ -78,10 +108,13 @@ analyze. A stage that runs again therefore reads its input intact. Within one
 stage's metadata, the first value stored under a name fixes the type of its
 column; a later value of another type is dropped and reported.
 
-Collection metadata is what the source provides for a collection level (for
-example `metadata.txt` in `DirectorySource`) plus `metadata(collection)`. It is
-stored once, on the collection row. It never includes collection analysis
-results, which are computed from the items.
+Collection metadata has two parts, stored separately on the collection row:
+`metadata(collection)`, the value's own metadata, and
+`metadata(source, collections)`, what the source provides for the collection
+identified by `collections`, its values from the top down. `DirectorySource`
+answers from `metadata.txt`. A change to the source's answer replaces only that
+part. Collection metadata never includes collection analysis results, which are
+computed from the items.
 
 Item processing sees collection metadata. Before `process`, the engine merges
 the metadata of the enclosing collections, outer to inner, under the item's own
@@ -206,10 +239,9 @@ Defaults:
 
 ### What plots show until pipeline inspection
 
-A plot requests the last stage that changes its item's data: the collection
-process of its collections, in hierarchical execution order, when the project
-defines one; otherwise item analyze. It waits at least for its own item's
-analyze, because plot code may use analysis metadata.
+A plot of an item requests item analyze, because plot code may use analysis
+metadata. A plot of a collection requests collection process, when the project
+defines one, and shows the collection's version of its items.
 
 Until the requested stage is fresh, the plot shows the deepest fresh output and
 marks it clearly as not final, for example with dimmed traces and a label. A
@@ -384,6 +416,12 @@ callers of `materialize_items`.
    `ItemRecord` and `CollectionRecord` are deleted in the same step: source
    jobs report `ItemEntry`s, and code that passes items and collections around
    (the GUI, Plots, Recipes and the accessors) passes their catalog keys.
+   Collections follow [Collections](#collections) in the same step:
+   `collection(source_item)` replaces `default_collection_path`, and
+   `metadata(source, collections)` replaces `annotate_collection_path`. Also
+   deleted: `collection_record_id` and the digest, stored collection paths and
+   their resolution in `ItemIndex.jl`, and the metadata carried inside
+   `DirectoryCollection` and `NamedCollection` values.
 
 Cache ledger and key-map deletion, and column restore, follow once the graph
 owns status. Measure reopen against a committed bench baseline. Then
