@@ -244,6 +244,15 @@ end
     @test invalidate!(catalog, [(file, SOURCE_READ), (run, COLLECTION_PROCESS)]) === catalog
 end
 
+@testset "catalog: a request for an item whose source item failed settles" begin
+    catalog = Catalog()
+    file = get!(catalog, SourceKey, "data.csv")
+    compute!(catalog, file, [ItemEntry("a", "A", ROOT)]; done=[])
+    invalidate!(catalog, file, SOURCE_READ)
+    finish!(catalog, start!(catalog, file); failed=SOURCE_READ)
+    @test wait(request(catalog, lookup(catalog, ItemKey, "a"), ITEM_ANALYZE)).blocked
+end
+
 @testset "catalog: many rows" begin
     catalog = Catalog()
     file = get!(catalog, SourceKey, "table.csv")

@@ -795,6 +795,7 @@ Whether the inputs of `stage` on `key` allow a job for it to start: every input 
 source item, read has not failed.
 """
 function ready(catalog::Catalog, key::RowKey, stage::PipelineStage)::Bool
+    stage == SOURCE_READ && return true
     stage == SOURCE_EXPAND && return !status(catalog, key, SOURCE_READ).failed
     stage == ITEM_PROCESS &&
         return status(catalog, source(catalog, key), SOURCE_EXPAND).validity == FRESH
@@ -855,6 +856,9 @@ function priority(catalog::Catalog, key::RowKey, stage::PipelineStage)::Int
     return rank
 end
 
+# TODO: creation, publication, invalidation, completion and requests each call `queue!` at their
+# own points. If another path misses one, collect the touched stages in each operation and schedule
+# them in one place when it ends.
 """
 Queue the job for `stage` on `key` if it is wanted, its inputs allow it to start, and the stage is
 not fresh, failed or running. A job already queued at another priority moves to this one. The
@@ -866,8 +870,10 @@ function queue!(catalog::Catalog, key::RowKey, stage::PipelineStage)::Nothing
     key in table(catalog, key) || return nothing
     old = status(catalog, key, stage)
     (old.absent || old.failed || old.validity == FRESH || old.running) && return nothing
+    # Readiness reads one status or one counter; priority walks every stage downstream.
+    ready(catalog, key, stage) || return nothing
     rank = priority(catalog, key, stage)
-    (rank > 0 && ready(catalog, key, stage)) || return nothing
+    rank > 0 || return nothing
     # A job queued at another priority moves; `take!` skips its old entry.
     get(catalog.queued, (key, stage), 0) == rank && return nothing
     push!(get!(Vector{Tuple{RowKey,PipelineStage}}, catalog.queue, rank), (key, stage))
@@ -899,7 +905,7 @@ function Base.take!(catalog::Catalog)::Union{Job,Nothing}
             key in table(catalog, key) || continue
             # While the stage waited, its inputs or what wants it may have changed. `start!` refuses
             # a stage that became fresh, failed or running meanwhile.
-            if priority(catalog, key, stage) != rank || !ready(catalog, key, stage)
+            if !ready(catalog, key, stage) || priority(catalog, key, stage) != rank
                 queue!(catalog, key, stage)
                 continue
             end
@@ -1100,7 +1106,8 @@ function request(catalog::Catalog, key::RowKey, stage::PipelineStage; priority::
             push!(reached, next)
             status(catalog, next...).validity == FRESH && continue
             queue!(catalog, next...)
-            append!(pending, inputs(catalog, next...))
+            # A stage that is ready has only fresh inputs.
+            ready(catalog, next...) || append!(pending, inputs(catalog, next...))
         end
         return Request(catalog, key, stage, priority, true)
     end
