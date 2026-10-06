@@ -1,13 +1,21 @@
 using DataBrowserAPI: AbstractDataSourceItem, AbstractDataItem
 using Test, DataBrowserCache, DataBrowserAPI, Tables
 using DataBrowserAPI: SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE
-using DataBrowserAPI.ItemIndex: ItemRecord
 
 struct CacheSourceItem <: AbstractDataSourceItem end
 DataBrowserAPI.id(::CacheSourceItem) = "source"
 DataBrowserAPI.label(::CacheSourceItem) = "source"
 DataBrowserAPI.fingerprint(::CacheSourceItem) = 1
 struct CacheItem <: AbstractDataItem end
+
+"""Store the item "item" of the source item "source" with its unprocessed payload."""
+function store_fixture_item!(cache, source_key, payload)
+    store_source_identity!(cache, CacheSourceItem(), "source")
+    store_item!(cache, "item", source_key, "item", CacheItem, nothing, DataBrowserAPI.MetadataDict())
+    store_item_payload!(cache, "item", payload)
+    store_source_result!(cache, SOURCE_EXPAND, source_key)
+end
+delivered(cache) = only(load_cache_index(cache).items).delivered
 
 @testset "in-memory storage supports payloads and queries without touching the cache file" begin
     mktempdir() do dir
@@ -17,13 +25,12 @@ struct CacheItem <: AbstractDataItem end
         identity = ProjectCacheIdentity("memory", "source", "source", path)
         cache = open_cache_db(identity; persistent=false, rebuild=true)
         try
-            record = ItemRecord(id="item", label="item", type=CacheItem,
-                source_item_key=source_item_key!(cache, "source"; mint=true))
-            store_source_items!(cache, CacheSourceItem(), "source", [record], [(x=[1],)])
-            store_processed!(cache, record, (x=[2],))
-            store_item_metadata!(cache, record, Dict(:total => 2))
-            @test Tables.columntable(something(only(read_payload(cache, [record]; stage=ITEM_PROCESS)))).x == [2]
-            @test load_cache_index(cache).item_metadata["item"][:total] == 2
+            source_key = source_item_key!(cache, "source"; mint=true)
+            store_fixture_item!(cache, source_key, (x=[1],))
+            store_processed!(cache, "item", source_key, (x=[2],))
+            store_item_metadata!(cache, "item", source_key, Dict(:total => 2))
+            @test Tables.columntable(something(only(read_payload(cache, ["item"]; stage=ITEM_PROCESS)))).x == [2]
+            @test delivered(cache)[:total] == 2
             @test timedwait(() -> !cache_has_pending_writes(cache), 20) === :ok
             @test query_items(cache, "total = 2") == ["item"]
         finally
@@ -32,7 +39,7 @@ struct CacheItem <: AbstractDataItem end
         @test read(path, String) == existing
         cache = open_cache_db(identity; persistent=false)
         try
-            @test isempty(load_cache_index(cache).source.items)
+            @test isempty(load_cache_index(cache).items)
         finally
             close_cache_db!(cache)
         end
@@ -43,14 +50,13 @@ end
     mktempdir() do dir
         identity = ProjectCacheIdentity("test", "source", "source", joinpath(dir, "cache.duckdb"))
         cache = open_cache_db(identity)
-        record = ItemRecord(id="item", label="item", type=CacheItem,
-            source_item_key=source_item_key!(cache, "source"; mint=true))
+        source_key = source_item_key!(cache, "source"; mint=true)
         try
-            @test isempty(load_cache_index(cache).source.items)
-            store_source_items!(cache, CacheSourceItem(), "source", [record], [(x=[1, 2],)])
-            store_processed!(cache, record, (x=[3, 4],))
-            store_processed!(cache, record, (x=[5],))
-            store_item_metadata!(cache, record, Dict(:total => 5))
+            @test isempty(load_cache_index(cache).items)
+            store_fixture_item!(cache, source_key, (x=[1, 2],))
+            store_processed!(cache, "item", source_key, (x=[3, 4],))
+            store_processed!(cache, "item", source_key, (x=[5],))
+            store_item_metadata!(cache, "item", source_key, Dict(:total => 5))
         finally
             close_cache_db!(cache)
         end
@@ -60,32 +66,32 @@ end
         @test_throws ProjectCacheError open_cache_db(other_project)
         cache = open_cache_db(identity)
         try
-            @test Tables.columntable(something(only(read_payload(cache, [record]; stage=ITEM_PROCESS)))).x == [5]
-            @test load_cache_index(cache).item_metadata["item"][:total] == 5
-            delete_source_output!(cache, record.source_item_key, [record])
+            @test Tables.columntable(something(only(read_payload(cache, ["item"]; stage=ITEM_PROCESS)))).x == [5]
+            @test delivered(cache)[:total] == 5
+            delete_source_output!(cache, source_key, ["item"])
         finally
             close_cache_db!(cache)
         end
         cache = open_cache_db(identity)
         try
             @test !has_payload(cache, "item"; stage=ITEM_PROCESS)
-            @test isempty(load_cache_index(cache).source.items)
-            store_source_items!(cache, CacheSourceItem(), "source", [record], [(x=[1],)])
+            @test isempty(load_cache_index(cache).items)
+            store_fixture_item!(cache, source_key, (x=[1],))
             clear_cache_index!(cache)
-            @test isempty(load_cache_index(cache).source.items)
+            @test isempty(load_cache_index(cache).items)
         finally
             close_cache_db!(cache)
         end
         @test_throws ProjectCacheError open_cache_db(other_source)
         cache = open_cache_db(identity)
         try
-            @test isempty(load_cache_index(cache).source.items)
+            @test isempty(load_cache_index(cache).items)
         finally
             close_cache_db!(cache)
         end
         cache = open_cache_db(other_source; rebuild=true)
         try
-            @test isempty(load_cache_index(cache).source.items)
+            @test isempty(load_cache_index(cache).items)
         finally
             close_cache_db!(cache)
         end
@@ -101,7 +107,7 @@ end
             key = source_item_key!(cache, "source"; mint=true)
             store_source_read!(cache, key, nothing)
             @test read_payload(cache, key) === Some(nothing)
-            delete_source_item!(cache, key, ItemRecord[])
+            delete_source_item!(cache, key, String[])
             @test read_payload(cache, key) === nothing
         finally
             close_cache_db!(cache)

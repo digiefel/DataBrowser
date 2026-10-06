@@ -63,8 +63,8 @@ end
 
 """Delete a source identity and all its stage results, including its memory-only read result."""
 function delete_source_item!(cache::CacheDB, source_key::Integer,
-        old_records::Vector{ItemRecord})::Nothing
-    delete_source_output!(cache, source_key, old_records)
+        item_ids::Vector{String})::Nothing
+    delete_source_output!(cache, source_key, item_ids)
     delete!(cache.source_reads, Int64(source_key))
     clear_cached_result_state!(cache, SOURCE_READ, source_key)
     _delete_source_identity!(cache, Int64(source_key))

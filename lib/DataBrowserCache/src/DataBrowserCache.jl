@@ -7,6 +7,8 @@ using DataBrowserAPI:
     AbstractCollection,
     AbstractDataSourceItem,
     MetadataDict,
+    MetadataValue,
+    metadata_dict,
     PipelineStage,
     SOURCE_READ,
     SOURCE_EXPAND,
@@ -28,19 +30,6 @@ using DBInterface
 import Tables
 using Serialization
 using Dates
-
-import DataBrowserAPI.ItemIndex:
-    CollectionIndex,
-    CollectionRecord,
-    ItemFailure,
-    ItemRecord,
-    MetadataValue,
-    SourceScan,
-    append_item!,
-    collection_path_keys,
-    emit_progress,
-    metadata_dict,
-    register_collection!
 
 include("build_metrics.jl")
 include("cache_buffer.jl")
@@ -82,10 +71,10 @@ export BuildMetrics,
     reset_build_metrics!,
     set_cache_memory_limit!,
     store_collection_metadata!,
-    store_collection_index!,
+    store_collection!,
     store_collection_process_result!,
-    store_source_items!,
-    store_item_payloads!,
+    store_item!,
+    store_item_payload!,
     store_item_label!,
     store_item_metadata!,
     store_item_metadata_layer!,
