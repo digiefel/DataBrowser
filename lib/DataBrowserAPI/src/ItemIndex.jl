@@ -13,7 +13,6 @@ import ..DataBrowserAPI:
     MetadataValue,
     metadata_dict,
     metadata_value,
-    attach_record,
     collection,
     collection_record_id,
     collection_path_label,

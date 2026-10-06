@@ -97,8 +97,11 @@ analyze(::AbstractDataItem)::Dict = Dict()
 # ---------------------------------------------------------------------------
 
 """
-Let an item adopt the normalized record produced for it, and the collection path the
-index holds for it. Internal workspace hook; the default keeps the item unchanged, because a typed
-item derives its own path from its own state. Package-owned carriers adopt both.
+    adopt(item, label, metadata, collections) -> AbstractDataItem
+
+Let an item take the label, the metadata and the collection values the workspace holds for it.
+Internal workspace hook; the default keeps the item unchanged, because a typed item derives all
+three from its own state. Package-owned carriers adopt them.
 """
-attach_record(item::AbstractDataItem, record, path::AbstractVector=AbstractCollection[]) = item
+adopt(item::AbstractDataItem, label::AbstractString, metadata::AbstractDict, collections::AbstractVector) =
+    item

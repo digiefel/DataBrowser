@@ -60,36 +60,27 @@ metadata(item::RegisteredDataItem)::MetadataDict = item.metadata
 item_data(item::RegisteredDataItem) = item.data
 
 """
-A registered carrier adopts its normalized record wholesale, and the index's collection path when
-one is supplied. Its own segments survive publication, where the index has nothing yet.
-
-The record's registration is validated against the carrier's tag: a mismatch means a cached record
-was paired with the wrong payload, which must fail loudly rather than silently produce an item of
-the wrong registration.
+A registered carrier takes the label and the metadata the workspace holds for it, and the
+collection values when the workspace has placed it. Its own collection values stay otherwise.
 """
-function attach_record(
+adopt(
     item::RegisteredDataItem{K},
-    record::ItemRecord,
-    path::AbstractVector=AbstractCollection[],
-) where {K}
-    label(record.type) === K || error(
-        "Cached record '$(record.id)' is registered as :$(label(record.type)) but its payload was " *
-        "rebuilt as :$K",
-    )
-    return RegisteredDataItem{K}(
-        record.id,
-        record.label,
-        isempty(path) ? item.collection : AbstractCollection[s for s in path],
-        item.data,
-        record.metadata,
-    )
-end
+    label::AbstractString,
+    metadata::AbstractDict,
+    collections::AbstractVector,
+) where {K} = RegisteredDataItem{K}(
+    item.id,
+    label,
+    isempty(collections) ? item.collection : AbstractCollection[value for value in collections],
+    item.data,
+    metadata_dict(metadata),
+)
 
 """
 Rebuild a registered carrier from a cached payload.
 
-The stored id is handed back verbatim, and `attach_record` restores the label and collection path
-from the record and index straight afterwards. The registration comes from the type, so it survives
+The stored id is handed back verbatim, and `adopt` restores the label and the collection values
+straight afterwards. The registration comes from the type, so it survives
 the round trip without ever entering the payload.
 """
 # `Type{<:RegisteredDataItem{K}}` accepts both the seeded UnionAll `RegisteredDataItem{kind}` and

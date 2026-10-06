@@ -25,7 +25,7 @@ using DataBrowserAPI:
     @timed_dbg
 import DataBrowserAPI:
     analyze,
-    attach_record,
+    adopt,
     expand,
     collection,
     id,
@@ -37,7 +37,7 @@ import DataBrowserAPI:
     project_name,
     read,
     reconstruct
-using DataBrowserAPI.ItemIndex: ItemRecord, MetadataDict, metadata_dict
+using DataBrowserAPI: MetadataDict, metadata_dict
 
 include("carriers.jl")
 include("recipes.jl")
