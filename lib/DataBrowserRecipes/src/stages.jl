@@ -43,14 +43,14 @@ _detects(recipe::ItemRecipe, source_item::AbstractDataSourceItem)::Bool =
     recipe.detect(source_item)::Bool
 
 
-function _registration_collection_path(value)::Vector{String}
-    value isa AbstractVector || throw(ArgumentError(
-        "a register_item! collection callback must return a vector of strings; got $(typeof(value))",
+"""The collections that the result of a `collection` callback names, from the top level down."""
+function _registration_collections(value)::Vector{AbstractCollection}
+    value isa NamedTuple || throw(ArgumentError(
+        "a register_item! collection callback must return a named tuple that names each level, " *
+        "such as (wafer = \"W1\", device = \"A\"); got $(repr(value))",
     ))
-    all(segment -> segment isa AbstractString, value) || throw(ArgumentError(
-        "a register_item! collection callback must return only strings; got $(repr(value))",
-    ))
-    return String[segment for segment in value]
+    return AbstractCollection[
+        NamedCollection{level}(string(name)) for (level, name) in pairs(value)]
 end
 
 
@@ -58,7 +58,7 @@ end
 Adapt one registration callback result into a `RegisteredDataItem`.
 
 This translates the registration dialect (entry tuples, callback-supplied keys, labels, and
-collection strings) into the item contract. A recipe without a `collection` callback leaves the path
+named collection levels) into the item contract. A recipe without a `collection` callback leaves the path
 empty, and the engine applies the source's default placement afterwards — the same rule typed items
 get.
 
@@ -76,8 +76,7 @@ function _registered_item(
     data, entry_metadata = _data_and_metadata(value)
     local_metadata = merge(copy(inherited_metadata), entry_metadata)
     collection_path = recipe.collection === nothing ? AbstractCollection[] :
-        named_collection_path(
-            _registration_collection_path(recipe.collection(data, local_metadata)))
+        _registration_collections(recipe.collection(data, local_metadata))
     supplied_key = recipe.id === nothing ? nothing : recipe.id(data, local_metadata)
     key = supplied_key === nothing || supplied_key == "" ?
         string(position) : string(supplied_key)

@@ -15,7 +15,7 @@ function _precompile_project()
         detect=file -> endswith(file.filename, ".csv"),
         read=file -> DataFrame(CSV.File(file.filepath; ntasks=1)),
         label=(data, metadata) -> metadata[:filename],
-        collection=(data, metadata) -> [splitext(metadata[:filename])[1]],
+        collection=(data, metadata) -> (file = splitext(metadata[:filename])[1],),
         process=function (input, metadata)
             data = copy(input)
             data.engine_warm = data.Current_A ./ max.(abs.(data.VoltageHigh_V), 1e-12)

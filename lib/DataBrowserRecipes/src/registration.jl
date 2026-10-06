@@ -49,6 +49,10 @@ Register or replace one item pipeline. `read` is the only required callback. Reg
 callbacks receive ordinary project data and metadata dictionaries; DataBrowser owns item identity
 and storage records internally.
 
+`collection(data, metadata)` places the item in the collection tree. It returns a named tuple that
+names each level from the top down, such as `(wafer = metadata[:wafer], device = metadata[:device])`.
+Without it, the item goes where its source item is: for a directory source, the file's directories.
+
 `label(data, metadata)` runs when the item is created, and again after `process` and after
 `analyze` with the metadata those stages added, so a label can show analysis results once they
 exist.

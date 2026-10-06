@@ -35,7 +35,7 @@ register_item!(project, :cycles;
     ],
     id = (table, metadata::Dict) -> metadata[:cycle],
     label = (table, metadata::Dict) -> "Cycle $(metadata[:cycle])",
-    collection = (table, metadata::Dict) -> ["Fatigue"],
+    collection = (table, metadata::Dict) -> (measurement = "Fatigue",),
     process = clean_cycle,
     analyze = analyze_cycle,
 )

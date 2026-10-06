@@ -41,7 +41,7 @@ function define_ferroelectric_project()::Project
             )
         end,
         label = (table, metadata::Dict) -> "$(metadata[:device]) I-V",
-        collection = (table, metadata::Dict) -> [metadata[:chip], metadata[:device]],
+        collection = (table, metadata::Dict) -> (chip = metadata[:chip], device = metadata[:device]),
         process = clean_iv,
         analyze = analyze_iv,
     )
@@ -66,7 +66,7 @@ function define_ferroelectric_project()::Project
         id = (table, metadata::Dict) -> metadata[:pulse],
         label = (table, metadata::Dict) ->
             "$(metadata[:device]) $(metadata[:pulse])",
-        collection = (table, metadata::Dict) -> [metadata[:chip], metadata[:device]],
+        collection = (table, metadata::Dict) -> (chip = metadata[:chip], device = metadata[:device]),
         process = (table, metadata) -> DataFrame(table),
         analyze = (table, metadata) -> Dict{Symbol,Any}(:points => size(table, 1)),
     )

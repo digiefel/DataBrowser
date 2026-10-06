@@ -41,7 +41,7 @@ forwarded untouched, so a premade recipe is a starting point rather than a diffe
 register_csv!(project, :sweep;
     extensions=[".csv", ".txt"],
     read_options=(; delim='\\t', comment="#"),
-    collection=(data, metadata) -> ["sweeps", metadata[:device]],
+    collection=(data, metadata) -> (measurement = "sweeps", device = metadata[:device]),
     analyze=(data, _metadata) -> Dict(:rows => nrow(data)),
 )
 ```

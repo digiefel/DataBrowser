@@ -88,20 +88,15 @@ the round trip without ever entering the payload.
 reconstruct(::Type{<:RegisteredDataItem{K}}, id::AbstractString, data, metadata::Dict) where {K} =
     RegisteredDataItem{K}(String(id), String(id), AbstractCollection[], data, metadata_dict(metadata))
 
-"""One collection level of a registered path, identified by its name."""
-struct NamedCollection <: AbstractCollection
+"""
+One collection that a `collection` callback names. `Level` is the name the callback gives the
+level, such as `:wafer`, and `name` is the value at that level, such as `"W1"`.
+"""
+struct NamedCollection{Level} <: AbstractCollection
     name::String
 end
 
-id(level::NamedCollection)::String = level.name
-label(level::NamedCollection)::String = level.name
-reconstruct(::Type{NamedCollection}, identity::AbstractString, ::Dict) =
-    NamedCollection(String(identity))
-Base.:(==)(left::NamedCollection, right::NamedCollection)::Bool = left.name == right.name
-Base.isequal(left::NamedCollection, right::NamedCollection)::Bool =
-    isequal(left.name, right.name)
-Base.hash(level::NamedCollection, seed::UInt)::UInt = hash(level.name, seed)
-
-"""Wrap a registered path's names in collection levels."""
-named_collection_path(names::AbstractVector{<:AbstractString})::Vector{AbstractCollection} =
-    AbstractCollection[NamedCollection(name) for name in names]
+id(collection::NamedCollection)::String = collection.name
+label(collection::NamedCollection)::String = collection.name
+reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, ::Dict) where {Level} =
+    NamedCollection{Level}(String(identity))

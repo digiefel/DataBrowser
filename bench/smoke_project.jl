@@ -41,7 +41,7 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
         end,
         id=(_data, metadata) -> metadata[:channel],
         label=(_data, metadata) -> "$(metadata[:filename])/$(metadata[:channel])",
-        collection=(_data, metadata) -> ["runs", metadata[:device]],
+        collection=(_data, metadata) -> (set = "runs", device = metadata[:device]),
         process=function (data, metadata)
             Threads.atomic_add!(counters.processes, 1)
             return (x=data.x, y=data.y .* metadata[:scale])
