@@ -586,15 +586,11 @@ function Base.get!(catalog::Catalog, ::Type{SourceKey}, id::AbstractString)::Sou
 end
 
 """
-    get!(catalog, parent::CollectionKey, id, label, type; metadata, source_metadata) -> CollectionKey
+    get!(catalog, parent::CollectionKey, id, label, type) -> CollectionKey
 
 The key of the collection below `parent` with collection type `type` and public id `id`, added when
 `parent` has none. Two collections with the same type and id below different parents are different
 collections.
-
-`metadata` is the metadata of the collection's value, and `source_metadata` the metadata its source
-gives it. Both replace what the catalog holds for the collection. When either changes, process
-becomes stale for every item below the collection, at any depth.
 Throws an `ArgumentError` when `parent` does not exist.
 """
 function Base.get!(
@@ -602,50 +598,57 @@ function Base.get!(
     parent::CollectionKey,
     id::AbstractString,
     label::AbstractString,
-    type::Type{<:AbstractCollection};
-    metadata::AbstractDict{Symbol}=MetadataDict(),
-    source_metadata::AbstractDict{Symbol}=MetadataDict(),
+    type::Type{<:AbstractCollection},
 )::CollectionKey
     @lock catalog.lock begin
         collections = catalog.collections
         parent in collections || throw(ArgumentError("the parent collection does not exist"))
         key = get(collections.lookup, (parent, type, id), nothing)
-        if key === nothing
-            key = CollectionKey(length(push!(collections, id)))
-            push!(collections.labels, label)
-            push!(collections.parent, parent)
-            push!(collections.items, ItemKey[])
-            push!(collections.children, CollectionKey[])
-            push!(collections.not_fresh, 0)
-            push!(collections.stuck, 0)
-            push!(collections.nested_items, 0)
-            push!(collections.nested_done, 0)
-            push!(collections.type, type)
-            push!(collections.children[parent.index], key)
-            collections.not_fresh[parent.index] += 1
-            collections.lookup[(parent, type, String(id))] = key
-            invalidate!(catalog, parent, COLLECTION_PROCESS)
-            # The parent now waits for this collection, even while it stays empty.
-            queue!(catalog, key, COLLECTION_PROCESS)
-        end
-
-        # Compared after storing, so that a value that cannot be stored does not count as a change.
-        layers = (collections.metadata[:collection], collections.metadata[:source])
-        before = map(layer -> layer[key.index], layers)
-        store!(catalog, key, :collection, metadata)
-        store!(catalog, key, :source, source_metadata)
-        if before != map(layer -> layer[key.index], layers)
-            below = Tuple{RowKey,PipelineStage}[]
-            pending = [key]
-            while !isempty(pending)
-                collection = pop!(pending)
-                append!(below, (item, ITEM_PROCESS) for item in collections.items[collection.index])
-                append!(pending, collections.children[collection.index])
-            end
-            invalidate!(catalog, below)
-        end
+        key === nothing || return key
+        key = CollectionKey(length(push!(collections, id)))
+        push!(collections.labels, label)
+        push!(collections.parent, parent)
+        push!(collections.items, ItemKey[])
+        push!(collections.children, CollectionKey[])
+        push!(collections.not_fresh, 0)
+        push!(collections.stuck, 0)
+        push!(collections.nested_items, 0)
+        push!(collections.nested_done, 0)
+        push!(collections.type, type)
+        push!(collections.children[parent.index], key)
+        collections.not_fresh[parent.index] += 1
+        collections.lookup[(parent, type, String(id))] = key
+        invalidate!(catalog, parent, COLLECTION_PROCESS)
+        # The parent now waits for this collection, even while it stays empty.
+        queue!(catalog, key, COLLECTION_PROCESS)
         return key
     end
+end
+
+"""
+    metadata!(catalog, collection, layer, values)
+
+Replace one layer of the metadata of `collection`: `:collection` for the metadata of its value, or
+`:source` for the metadata its source gives it. When the layer changes, process becomes stale for
+every item below the collection, at any depth.
+"""
+function metadata!(catalog::Catalog, collection::CollectionKey, layer::Symbol, values::AbstractDict{Symbol})::Nothing
+    @lock catalog.lock begin
+        collections = catalog.collections
+        # Compared after storing, so that a value that cannot be stored does not count as a change.
+        before = collections.metadata[layer][collection.index]
+        store!(catalog, collection, layer, values)
+        before == collections.metadata[layer][collection.index] && return nothing
+        below = Tuple{RowKey,PipelineStage}[]
+        pending = [collection]
+        while !isempty(pending)
+            next = pop!(pending)
+            append!(below, (item, ITEM_PROCESS) for item in collections.items[next.index])
+            append!(pending, collections.children[next.index])
+        end
+        invalidate!(catalog, below)
+    end
+    return nothing
 end
 
 """
@@ -893,7 +896,7 @@ stages are `COLLECTION_PROCESS` and `COLLECTION_ANALYZE`. That metadata stays wh
 becomes stale, until the stage produces new metadata.
 
 A collection has two more layers: `:collection` gives the metadata of its value, and `:source` the
-metadata its source gives it.
+metadata its source gives it. [`metadata!`](@ref) sets them.
 """
 metadata(catalog::Catalog, key::Union{ItemKey,CollectionKey}, layer::MetadataLayer)::MetadataDict =
     @lock catalog.lock table(catalog, key).metadata[layer][key.index]

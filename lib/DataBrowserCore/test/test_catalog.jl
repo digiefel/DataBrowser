@@ -5,7 +5,7 @@ using DataBrowserAPI:
 using DataBrowserCore.Catalogs:
     Catalog, SourceKey, ItemKey, CollectionKey, ItemEntry, Job, ROOT, REMOVED, STALE, FRESH,
     publish!, lookup, items, children, status, progress, invalidate!, start!, finish!, request,
-    conflicts, valuetype
+    conflicts, valuetype, metadata!
 
 struct TestItem <: AbstractDataItem end
 struct TestCollection <: AbstractCollection end
@@ -300,8 +300,9 @@ end
 
 @testset "catalog: collection metadata reaches every item below" begin
     catalog = Catalog()
-    wafer = get!(catalog, ROOT, "wafer", "Wafer", TestCollection;
-        metadata=MetadataDict(:lot => 7), source_metadata=MetadataDict(:oxide => "RuO2"))
+    wafer = get!(catalog, ROOT, "wafer", "Wafer", TestCollection)
+    metadata!(catalog, wafer, :collection, MetadataDict(:lot => 7))
+    metadata!(catalog, wafer, :source, MetadataDict(:oxide => "RuO2"))
     device = get!(catalog, wafer, "A", "Device A", TestCollection)
     other = get!(catalog, ROOT, "other", "Other", TestCollection)
     file = get!(catalog, SourceKey, "data.csv")
@@ -311,13 +312,10 @@ end
     @test metadata(catalog, wafer, :collection) == MetadataDict(:lot => 7)
     @test metadata(catalog, wafer, :source) == MetadataDict(:oxide => "RuO2")
 
-    get!(catalog, wafer, "wafer", "Wafer", TestCollection)  # not the wafer below the root
-    get!(catalog, ROOT, "wafer", "Wafer", TestCollection;
-        metadata=MetadataDict(:lot => 7), source_metadata=MetadataDict(:oxide => "RuO2"))
+    metadata!(catalog, wafer, :source, MetadataDict(:oxide => "RuO2"))
     @test status(catalog, a, ITEM_PROCESS).validity == FRESH
 
-    get!(catalog, ROOT, "wafer", "Wafer", TestCollection;
-        metadata=MetadataDict(:lot => 7), source_metadata=MetadataDict(:oxide => "HfO2"))
+    metadata!(catalog, wafer, :source, MetadataDict(:oxide => "HfO2"))
     @test metadata(catalog, wafer, :source) == MetadataDict(:oxide => "HfO2")
     @test status(catalog, a, ITEM_PROCESS).validity == STALE
     @test status(catalog, b, ITEM_PROCESS).validity == FRESH
