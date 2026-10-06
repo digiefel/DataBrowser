@@ -32,7 +32,7 @@ function materialize_items(workspace::Workspace, items::Vector{ItemKey})::Vector
             end)
         end
     end
-    return versions(workspace, items; latest=true)
+    return versions(workspace, items)
 end
 
 function materialize_items(

@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 25
+const PROJECT_CACHE_SCHEMA_VERSION = 26
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -720,11 +720,11 @@ function ensure_schema!(connection)::Nothing
     DBInterface.execute(connection, """
         CREATE TABLE IF NOT EXISTS item_data(
             item_key BIGINT,
-            stage TINYINT,
+            collection_key BIGINT,
             storage_id USMALLINT,
             seq UINTEGER,
             container TEXT,
-            PRIMARY KEY (item_key, stage),
+            PRIMARY KEY (item_key, collection_key),
             UNIQUE (storage_id, seq))
     """)
     DBInterface.execute(connection, """
@@ -813,33 +813,43 @@ function store_item_payload!(cache::CacheDB, id::AbstractString, payload)::Nothi
 end
 
 """
-Store one processed payload for an item at `ITEM_PROCESS` or `COLLECTION_PROCESS`.
+    store_processed!(cache, id, source_key, payload; collection=0)
+
+Store processed data of an item: its own, the result of item `process`, or with `collection` the
+version that the collection with that key made of it. Each collection has its own version of an
+item, and none replaces the item's own data.
 
 The cache passes every payload to its payload store. That store defines the accepted Tables.jl
-shape and column types and reports unsupported values through its normal write errors. Item
-processing also records its completion after the payload append succeeds.
+shape and column types and reports unsupported values through its normal write errors. Storing
+the item's own data also records that item `process` finished.
 """
 function store_processed!(
     cache::CacheDB,
     id::AbstractString,
     source_key::Int64,
     payload;
-    stage::PipelineStage=ITEM_PROCESS,
+    collection::Integer=0,
 )::Nothing
     key = item_key!(cache, id)
     started = time_ns()
-    append!(cache.payload, (key, stage), payload)
+    append!(cache.payload, (key, Int64(collection)), payload)
     record_cache_phase!(
         cache.metrics.processed_write_ns,
         cache.metrics.processed_writes,
         started,
     )
-    if stage === ITEM_PROCESS
+    if collection == 0
         state = CachedResultState(
             Int8(ITEM_PROCESS), String(id), Int8(RESULT_READY), source_key, nothing)
         edit!(cache.result_states, (Int8(ITEM_PROCESS), String(id)), state)
         _stage_ledger_result!(cache.stage_ledger, (Int8(ITEM_PROCESS), String(id)), state)
     end
+    return nothing
+end
+
+"""Delete the version that the collection with key `collection` made of an item."""
+function delete_processed!(cache::CacheDB, id::AbstractString; collection::Integer)::Nothing
+    delete!(cache.payload, (item_key!(cache, id), Int64(collection)))
     return nothing
 end
 
@@ -945,14 +955,17 @@ function delete_source_output!(
 )::Nothing
     source_key = Int64(source_item_key_value)
     clear_cached_result_state!(cache, SOURCE_EXPAND, source_key)
+    collections = lock(() -> collect(cache.persisted_collection_keys), cache.key_lock)
     for id in item_ids
         key = item_key!(cache, id)
         delete!(cache.items, id)
         _stage_ledger_item!(cache.stage_ledger, id, false)
         delete!(cache.source_item_metadata, key)
         delete!(cache.analyzed_item_metadata, key)
-        delete!(cache.payload, (key, ITEM_PROCESS))
-        delete!(cache.payload, (key, COLLECTION_PROCESS))
+        delete!(cache.payload, (key, 0))
+        for collection in collections
+            delete!(cache.payload, (key, collection))
+        end
         delete!(cache.unprocessed, id)
         delete!(cache.failures, (id, source_key))
         _stage_ledger_failure!(cache.stage_ledger, (id, source_key), false)
@@ -1091,23 +1104,29 @@ function cached_result_state(
 end
 
 """
-Return whether an item has a cached payload at `stage` without loading the payload.
+Return whether an item has a cached payload without loading the payload: its unprocessed data for
+`SOURCE_EXPAND`, its own processed data for `ITEM_PROCESS`, or with `collection` the version that
+the collection with that key made of it.
 
 Unprocessed payloads are resident and processed payloads use the database payload store.
 The payload-store check covers queued and committed writes.
 """
-function has_payload(cache::CacheDB, item_id::AbstractString; stage::PipelineStage)::Bool
+function has_payload(
+    cache::CacheDB, item_id::AbstractString; stage::PipelineStage=ITEM_PROCESS, collection::Integer=0,
+)::Bool
     id_value = String(item_id)
     stage === SOURCE_EXPAND && return haskey(cache.unprocessed, id_value)
     key = lock(cache.key_lock) do
         get(cache.item_keys, id_value, nothing)
     end
     key === nothing && return false
-    return haskey(cache.payload, (key, stage))
+    return haskey(cache.payload, (key, Int64(collection)))
 end
 
 """
-Read cached item payloads for a `PipelineStage`.
+Read cached item payloads: unprocessed data for `SOURCE_EXPAND`, processed data for `ITEM_PROCESS`.
+`collections` gives, for each id, the key of the collection whose version of the item to read, or 0
+for the item's own processed data.
 
 The returned vector aligns with `ids`. Each entry is `Some(payload)` on a hit and `nothing` on
 a miss, so `nothing` remains a valid payload value. Unprocessed payloads are resident only;
@@ -1116,11 +1135,12 @@ processed payloads come from the DuckDB-backed payload store.
 function read_payload(
     cache::CacheDB,
     ids::Vector{String};
-    stage::PipelineStage,
+    stage::PipelineStage=ITEM_PROCESS,
+    collections::Vector{Int64}=zeros(Int64, length(ids)),
 )::Vector{Any}
     isempty(ids) && return Any[]
     stage === SOURCE_EXPAND && return Any[read_hit(cache.unprocessed, id) for id in ids]
-    keys = PayloadKey[(item_key!(cache, id), stage) for id in ids]
+    keys = PayloadKey[(item_key!(cache, id), collection) for (id, collection) in zip(ids, collections)]
     stored_data = read(cache.payload, unique(keys))
     return Any[
         (data = get(stored_data, key, nothing); data === nothing ? nothing : Some(data))

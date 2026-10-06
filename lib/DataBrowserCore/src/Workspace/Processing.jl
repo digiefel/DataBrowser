@@ -344,16 +344,30 @@ function members(workspace::Workspace, collection::CollectionKey)::Vector{ItemKe
 end
 
 """
-The processed versions of `items` as the saved payloads give them. With `latest`, an item that a
-collection `process` rewrote comes in that version; otherwise every item comes in its own.
+    versions(workspace, items; below=nothing) -> Vector{AbstractDataItem}
+
+The processed versions of `items`, built from saved data. Each collection whose `process` changed
+an item keeps its own version of it. An item comes in its latest version: the one of the outermost
+collection that has one, or its own processed data when no collection changed it. `below` leaves
+out that collection and the collections above it, which gives what its `process` receives.
 """
-function versions(workspace::Workspace, items::Vector{ItemKey}; latest::Bool)::Vector{AbstractDataItem}
+function versions(
+    workspace::Workspace, items::Vector{ItemKey}; below::Union{CollectionKey,Nothing}=nothing,
+)::Vector{AbstractDataItem}
     cache = workspace.cache.db
     item_ids = String[id(workspace, item) for item in items]
-    payloads = read_payload(cache, item_ids; stage=ITEM_PROCESS)
-    if latest
-        rewritten = read_payload(cache, item_ids; stage=COLLECTION_PROCESS)
-        payloads = Any[new === nothing ? own : new for (new, own) in zip(rewritten, payloads)]
+    # For each item, the saved key of the collection whose version to read; 0 is the item's own.
+    chosen = @lock workspace.catalog.lock map(items, item_ids) do item, item_id
+        holders = ancestors(workspace, item)
+        below === nothing || (holders = holders[findfirst(==(below), holders)+1:end])
+        saved = Int64[get(workspace.collection_keys, holder, 0) for holder in holders]
+        position = findfirst(key -> key != 0 && has_payload(cache, item_id; collection=key), saved)
+        position === nothing ? Int64(0) : saved[position]
+    end
+    payloads = read_payload(cache, item_ids; collections=chosen)
+    # A collection job that runs at the same time may have removed the version just chosen.
+    for index in findall(isnothing, payloads)
+        chosen[index] == 0 || (payloads[index] = only(read_payload(cache, item_ids[index:index])))
     end
     missing = findfirst(isnothing, payloads)
     missing === nothing || error("The processed data of item '$(item_ids[missing])' is missing")
@@ -363,17 +377,16 @@ function versions(workspace::Workspace, items::Vector{ItemKey}; latest::Bool)::V
 end
 
 """
-Run collection `process` over every item below one collection, and save the collection's version
-of each item it changed. An item counts as changed when its data is not the same object as before.
+Run collection `process` over every item below one collection, each in the version the collections
+below this one gave it. The collection keeps its own version of each item it changed: an item
+counts as changed when its data is not the same object as before.
 """
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PROCESS})::Nothing
     catalog = workspace.catalog
     cache = workspace.cache.db
+    saved = workspace.collection_keys[job.key]
     items = members(workspace, job.key)
-    # FIXME: the cache keeps one collection version for each item. Each item therefore comes in its
-    # own version, and a collection that holds another loses the version the inner one made. Save
-    # a version for each collection, and give each collection the versions of the one below it.
-    inputs = versions(workspace, items; latest=false)
+    inputs = versions(workspace, items; below=job.key)
     outputs = process(workspace.project, last(values(workspace, job.key)), inputs)
     length(outputs) == length(inputs) || error(
         "Collection process for '$(label(catalog, job.key))' returned $(length(outputs)) items " *
@@ -382,14 +395,17 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
     # Outputs match inputs by position, because an item type need not hold its id.
     if iscurrent(catalog, job)
         for (item, input, output) in zip(items, inputs, outputs)
-            item_data(output) === item_data(input) || store_processed!(
-                cache, id(catalog, item), cache_key(workspace, item), item_data(output);
-                stage=COLLECTION_PROCESS)
+            if item_data(output) === item_data(input)
+                delete_processed!(cache, id(catalog, item); collection=saved)
+            else
+                store_processed!(
+                    cache, id(catalog, item), cache_key(workspace, item), item_data(output);
+                    collection=saved)
+            end
         end
     end
     @lock catalog.lock begin
-        finish!(catalog, job) &&
-            store_collection_process_result!(cache, workspace.collection_keys[job.key])
+        finish!(catalog, job) && store_collection_process_result!(cache, saved)
     end
     return nothing
 end
@@ -397,7 +413,7 @@ end
 """Run collection `analyze` over the latest version of every item below one collection."""
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_ANALYZE})::Nothing
     catalog = workspace.catalog
-    inputs = versions(workspace, members(workspace, job.key); latest=true)
+    inputs = versions(workspace, members(workspace, job.key))
     analysis = metadata_dict(analyze(workspace.project, last(values(workspace, job.key)), inputs))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=analysis) || return nothing

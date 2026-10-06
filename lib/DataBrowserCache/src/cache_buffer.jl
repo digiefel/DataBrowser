@@ -588,8 +588,11 @@ end
 
 # Database-backed tabular table family
 
-"""One item's payload key: its integer surrogate and the payload stage it belongs to."""
-const PayloadKey = Tuple{Int64,PipelineStage}
+"""
+One processed payload's key: the integer surrogate of its item, and the key of the collection whose
+version of the item it is. Collection key 0 marks the item's own processed data.
+"""
+const PayloadKey = Tuple{Int64,Int64}
 
 # `body` is the caller's original Tables.jl container; pending reads hand it back untouched, and
 # the flush loop reads it only through the interface. `container` is the hex-serialized container
@@ -597,7 +600,7 @@ const PayloadKey = Tuple{Int64,PipelineStage}
 # while its append is still being flushed.
 struct TabularBodyBatch
     item_key::Int64
-    stage::PipelineStage
+    collection_key::Int64
     body::Any
     container::String
 end
@@ -637,9 +640,9 @@ function TabularFamilyStore(
     locations = Dict{PayloadKey,Tuple{UInt16,UInt32}}()
     containers = Dict{Tuple{UInt16,UInt32},String}()
     for row in DBInterface.execute(
-        read_connection, "SELECT item_key, stage, storage_id, seq, container FROM item_data")
+        read_connection, "SELECT item_key, collection_key, storage_id, seq, container FROM item_data")
         location = (UInt16(row.storage_id), UInt32(row.seq))
-        locations[(Int64(row.item_key), PipelineStage(row.stage))] = location
+        locations[(Int64(row.item_key), Int64(row.collection_key))] = location
         containers[location] = String(row.container)
     end
     schemas = Dict{PayloadShape,UInt16}()
@@ -1352,7 +1355,7 @@ function _flush_to_db!(
             _append_table!(store.write_connection, "item_data") do appender
                 for (location, entry) in appends
                     DuckDB.append(appender, entry.item_key)
-                    DuckDB.append(appender, Int8(entry.stage))
+                    DuckDB.append(appender, entry.collection_key)
                     DuckDB.append(appender, location[1])
                     DuckDB.append(appender, location[2])
                     DuckDB.append(appender, entry.container)

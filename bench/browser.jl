@@ -46,7 +46,8 @@ function browser_workload(root, opening, started_ns)
         opening_s = (time_ns() - started_ns) / 1e9
         finish_work(workspace)
         items = check_items(workspace, session, [4.0, 6.0, 9.0])
-        sort([first(item_data(item).members) for item in items]) == [1, 2, 2] ||
+        # "runs" holds every item and is the outermost collection, so its version is the latest.
+        [first(item_data(item).members) for item in items] == [3, 3, 3] ||
             error("Collection processing did not reach the selected items")
         # The normal plot panel must invoke the registered drawing callback.
         wait_for(() -> counters.draws[] > 0, session)

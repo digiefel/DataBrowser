@@ -65,6 +65,7 @@ using DataBrowserCache:
     clear_cached_result_state!,
     close_cache_db!,
     delete_collection_records!,
+    delete_processed!,
     delete_collection_metadata!,
     delete_source_item!,
     delete_source_output!,
