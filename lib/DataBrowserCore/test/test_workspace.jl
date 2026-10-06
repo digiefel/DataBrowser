@@ -143,7 +143,7 @@ end
                     TypedProject(), EngineSource("source", 3, false); background_processing=true)
                 try
                     settled(ws)
-                    @test W.item(ws, "only").label == "only · total 3"
+                    @test W.label(ws, W.item(ws, "only")) == "only · total 3"
                 finally
                     W.close_workspace!(ws)
                 end

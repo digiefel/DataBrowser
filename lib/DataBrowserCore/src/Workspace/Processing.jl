@@ -1,710 +1,419 @@
-"""Result delivered to one caller waiting for processed item data."""
-struct ProcessingResult
-    item::Union{Nothing,AbstractDataItem}
-    failure::Union{Nothing,CapturedException}
-end
+# Workers: they take jobs from the catalog, run project code, save the result to the cache and
+# report it to the catalog.
 
-"""Answer one waiter with workspace-shutdown cancellation."""
-function _workspace_cancelled_result(workspace::Workspace)::ProcessingResult
-    return ProcessingResult(
-        nothing,
-        CapturedException(
-            OperationCanceledException(get_token(workspace.cancel_source)),
-            Any[],
-        ),
-    )
-end
-
-"""Answer one waiter dropped from the queue without shutting the workspace down."""
-function _dropped_work_result()::ProcessingResult
-    source = CancellationTokenSource()
-    cancel(source)
-    return ProcessingResult(
-        nothing,
-        CapturedException(OperationCanceledException(get_token(source)), Any[]),
-    )
-end
-
-"""
-Return `:ready`, `:failed`, or `:absent` for one finished work key.
-
-Finished work lives in the cache ledger; live jobs are detected via `haskey(work.nodes, key)`.
-"""
-function cache_work_status(workspace::Workspace, key::WorkKey)::Symbol
-    cachedb = workspace.cache.db
-    kind = key.kind
-    entity = key.entity
-    state = cached_result_state(cachedb, kind, entity)
-    if kind === ITEM_PROCESS
-        state !== nothing && CacheResultStatus(state.status) === RESULT_FAILED && return :failed
-        state === nothing && return :absent
-        return has_payload(cachedb, entity; stage=kind) ? :ready : :absent
-    end
-    state === nothing && return :absent
-    return CacheResultStatus(state.status) === RESULT_READY ? :ready : :failed
-end
-
-"""Drop one work key's finished-state ledger row so invalidation must rerun it."""
-function clear_work_result_state!(workspace::Workspace, key::WorkKey)::Nothing
-    cachedb = workspace.cache.db
-    clear_cached_result_state!(cachedb, key.kind, key.entity)
-    return nothing
-end
-
-"""Start one work-conserving worker pool shared by every work kind."""
-function start_work_workers!(workspace::Workspace)::Nothing
+"""Start the workers that run the jobs of every stage."""
+function start_workers!(workspace::Workspace)::Nothing
     for _ in 1:max(2, Base.Threads.nthreads())
-        push!(workspace.work.workers, Base.Threads.@spawn work_worker!(workspace))
+        push!(workspace.workers, Base.Threads.@spawn work!(workspace))
     end
     return nothing
 end
 
-"""Stop accepting work, wait for all running callbacks, and fail any still-attached waiters."""
-function stop_work_workers!(workspace::Workspace)::Nothing
-    graph = workspace.work
-    lock(graph.lock) do
-        graph.closed = true
-        notify(graph.condition; all=true)
+"""Stop taking jobs, wait for the jobs that run, and wake every task that waits for a result."""
+function stop_workers!(workspace::Workspace)::Nothing
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        workspace.stopping = true
+        notify(catalog.changed)
     end
-    foreach(wait, graph.workers)
-    result = _workspace_cancelled_result(workspace)
-    lock(graph.lock) do
-        for node in values(graph.nodes), waiter in node.waiters
-            put!(waiter, result)
-        end
-        foreach(node -> empty!(node.waiters), values(graph.nodes))
-    end
+    foreach(wait, workspace.workers)
+    empty!(workspace.workers)
     return nothing
 end
 
-"""Cancel queued work while allowing callbacks already running to finish."""
-function cancel_waiting_work!(workspace::Workspace)::Nothing
-    graph = workspace.work
-    canceled = WorkNode[]
-    lock(graph.lock) do
-        for node in collect(values(graph.nodes))
-            node.state in (:queued, :waiting) || continue
-            node.state === :queued && (graph.active -= 1)
-            delete!(graph.nodes, node.key)
-            push!(canceled, node)
-        end
-        empty!(graph.queue)
-        isempty(canceled) || changed!(workspace)
-        notify(graph.condition; all=true)
-    end
-    result = _dropped_work_result()
-    for node in canceled, waiter in node.waiters
-        put!(waiter, result)
-    end
-    lock(workspace.publish_lock) do
-        notify(workspace.idle_condition; all=true)
-    end
-    return nothing
-end
-
-"""Start one work-conserving worker pool shared by every work kind."""
-function finish_work_node!(workspace::Workspace, node::WorkNode)::Vector{Channel{Any}}
-    return lock(workspace.work.lock) do
-        current = get(workspace.work.nodes, node.key, nothing)
-        current === node || return Channel{Any}[]
-        node.state in (:queued, :running) && (workspace.work.active -= 1)
-        wake_ready_dependents!(workspace.work, node)
-        delete!(workspace.work.nodes, node.key)
-        workspace.work.completed += 1
-        waiters = copy(node.waiters)
-        empty!(node.waiters)
-        waiters
-    end
-end
-
-"""
-Queue one work revision once, promoting it when its requested priority increases.
-
-Re-enqueue replaces the node with a fresh revision and re-seeds `pending`/`dependents` from
-`dependencies`; it never patches an existing node in place.
-"""
-function enqueue_work!(
-    workspace::Workspace,
-    key::WorkKey,
-    revision::UInt16;
-    priority::Int,
-    dependencies::Vector{WorkKey}=WorkKey[],
-    waiter::Union{Nothing,Channel{Any}}=nothing,
-)::Union{Nothing,WorkNode}
-    graph = workspace.work
-    return lock(graph.lock) do
-        if graph.closed
-            waiter === nothing ||
-                put!(waiter, _workspace_cancelled_result(workspace))
-            return nothing
-        end
-        node = get(graph.nodes, key, nothing)
-        if node !== nothing && node.revision == revision && node.state === :queued &&
-                priority > node.priority
-            node.priority = priority
-            push_queue_entry!(graph, priority, (key, revision))
-            waiter === nothing || push!(node.waiters, waiter)
-            return node
-        end
-        if node === nothing || node.revision != revision
-            if node !== nothing
-                # Superseding a still-live revision reuses its work slot: the old revision never
-                # completes, so counting the replacement as new work would leave total > completed
-                # forever and make the progress denominator drift up as invalidations pile in.
-                node.state in (:queued, :running) && (graph.active -= 1)
-                previous_waiters = node.waiters
-            else
-                previous_waiters = Channel{Any}[]
-                graph.total += 1
+"""Take and run jobs until the workspace stops."""
+function work!(workspace::Workspace)::Nothing
+    catalog = workspace.catalog
+    while true
+        job = @lock catalog.lock begin
+            job = nothing
+            while !workspace.stopping && (job = take!(catalog)) === nothing
+                wait(catalog.changed)
             end
-            node = WorkNode(
-                key,
-                revision,
-                :waiting,
-                priority,
-                Set{WorkKey}(),
-                UInt64(0),
-                previous_waiters,
-            )
-            graph.nodes[key] = node
-            seed_node_dependencies!(graph, node, dependencies)
-            dependencies_ready(node) && queue_ready_node!(graph, node)
-            changed!(workspace)
-        elseif node.state === :waiting
-            node.priority = max(node.priority, priority)
-            seed_node_dependencies!(graph, node, dependencies)
-            dependencies_ready(node) && queue_ready_node!(graph, node)
-            node.state === :queued && changed!(workspace)
+            workspace.stopping && return nothing
+            workspace.running += 1
+            job
         end
-        waiter === nothing || push!(node.waiters, waiter)
-        node
-    end
-end
-
-"""Remove one finished live node and wake its dependents."""
-function work_node_current(workspace::Workspace, node::WorkNode)::Bool
-    return lock(workspace.work.lock) do
-        get(workspace.work.nodes, node.key, nothing) === node && node.state === :running
-    end
-end
-
-"""Return the source fallback lock shared by items from one source item."""
-function source_fallback_lock(
-    graph::WorkDependencyGraph,
-    source_item_key_value::Int64,
-)::ReentrantLock
-    return lock(graph.lock) do
-        get!(() -> ReentrantLock(), graph.source_locks, source_item_key_value)
-    end
-end
-
-"""
-Obtain the read input during source replay, with the caller holding the source fallback lock.
-
-Replay runs inline because an item worker must not block waiting for another job in the same pool.
-It uses the same cache boundary as scheduled source work and never reruns a saved read failure.
-"""
-function read_source_input!(workspace::Workspace, source_item::AbstractDataSourceItem,
-        source_key::Int64)
-    state = cached_result_state(workspace.cache.db, SOURCE_READ, source_key)
-    if state !== nothing && CacheResultStatus(state.status) === RESULT_FAILED
-        error(something(state.message, "Source read failed"))
-    end
-    cached = state === nothing ? nothing : read_payload(workspace.cache.db, source_key)
-    cached === nothing || return something(cached)
-    loaded = read(workspace.project, workspace.source, source_item)
-    store_source_read!(workspace.cache.db, source_key, loaded)
-    return loaded
-end
-
-"""Expand one source item again and return the requested data item."""
-function source_fallback(workspace::Workspace, record::ItemRecord)::AbstractDataItem
-    fallback_lock = source_fallback_lock(workspace.work, record.source_item_key)
-    return lock(fallback_lock) do
-        source_ref = source_item_id(workspace, record.source_item_key)
-        source_item = lock(workspace.work.lock) do
-            get(workspace.work.source_items, record.source_item_key, nothing)
+        changed!(workspace)
+        try
+            run!(workspace, job)
+        catch error
+            # A job that already finished failed while it saved its result.
+            job.finished ?
+                @error("Could not save the result of a job", stage=job.stage, exception=(error, catch_backtrace())) :
+                fail!(workspace, job, error, catch_backtrace())
         end
-        if source_item === nothing
-            discovered = source_items(
-                workspace.source;
-                cancel_token=get_token(workspace.cancel_source),
-            )
-            position = findfirst(
-                item -> id(item) == source_ref,
-                discovered,
-            )
-            position === nothing && error(
-                "Cannot load item '$(record.id)': source item '$source_ref' " *
-                "is no longer present in source '$(source_id(workspace.source))'",
-            )
-            source_item = discovered[position]
+        @lock catalog.lock begin
+            workspace.running -= 1
+            workspace.completed += 1
+            finish_publish!(workspace)
         end
-        loaded = read_source_input!(workspace, source_item, record.source_item_key)
-        expansion = expand_source_item(
-            workspace.project, workspace.source, source_item, loaded;
-            source_item_key=record.source_item_key)
-        store_item_payloads!(
-            workspace.cache.db, expansion.records,
-            item_data.(expansion.items))
-        requested = findfirst(item -> item.id == record.id, expansion.records)
-        requested === nothing && error(
-            "Source item '$source_ref' no longer produces item '$(record.id)'",
-        )
-        return expansion.items[requested]
     end
 end
 
 """
-Prepare one unprocessed item for `process`.
-
-A cached payload is reconstructed with the metadata it was published with. When reconstruction declines
-or the resident payload is missing, source fallback reruns `expand` with the cached read input.
-It calls `read` only if that input is missing. The caller still runs `process` exactly once.
+End a job whose project code threw. If the result is kept, the stage is failed and the message is
+shown and saved. A source item that failed loses its items.
 """
-function unprocessed_item(
-    workspace::Workspace,
-    collections::CollectionIndex,
-    record::ItemRecord,
-    cached::Union{Nothing,Some},
-)::AbstractDataItem
-    path = indexed_collection_path(workspace, collections, record)
-    effective = effective_record(collections, record)
-    if cached !== nothing
-        rebuilt = reconstruct(
-            record.type, record.id, something(cached), effective.metadata)
-        rebuilt === nothing || return attach_record(rebuilt, effective, path)
+function fail!(
+    workspace::Workspace, job::Job, error, backtrace; stage::PipelineStage=job.stage,
+)::Nothing
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        kept = job isa Job{SourceKey} ?
+            finish!(catalog, job; failed=stage) : finish!(catalog, job; failed=true)
+        kept || return nothing
+        job isa Job{SourceKey} && remove_items!(workspace, job.key)
+        failed!(workspace, job.key, stage, sprint(showerror, error))
     end
-    return attach_record(source_fallback(workspace, record), effective, path)
+    @error("A stage failed", id=id(catalog, job.key), stage, exception=(error, backtrace))
+    return nothing
 end
 
-"""
-The collection path the index holds for one record, ancestor to self.
-
-Each level is rebuilt from its stored type, identity, and own metadata. Unlike items, a collection
-has no rerun-from-source fallback, so `reconstruct` is required rather than optional.
-"""
-indexed_collection_path(
-    ::Workspace,
-    collections::CollectionIndex,
-    record::ItemRecord,
-)::Vector{AbstractCollection} = collection_value_path(collections, record.collection_key)
-
-"""The concrete collection value for one indexed collection key."""
-function collection_value(
-    ::Workspace,
-    collections::CollectionIndex,
-    collection_key::Int64,
-)::AbstractCollection
-    path = collection_value_path(collections, collection_key)
-    isempty(path) && error("Collection '$collection_key' has no indexed path")
-    return last(path)
-end
-
-"""Rebuild an item through `expand` and `process`, obtaining the read input from cache or source."""
-function reprocess_item(
-    workspace::Workspace,
-    collections::CollectionIndex,
-    record::ItemRecord,
-)::AbstractDataItem
-    upstream_record = get(workspace.index.items, record.id, record)
-    cached = only(read_payload(
-        workspace.cache.db, [upstream_record]; stage=SOURCE_EXPAND))
-    input = unprocessed_item(workspace, collections, upstream_record, cached)
-    processed = process(workspace.project, input)
-    processed isa AbstractDataItem || error(
-        "process(::$(typeof(workspace.project)), ::$(typeof(input))) must return an " *
-        "AbstractDataItem; got $(typeof(processed))",
-    )
-    return processed
-end
-
-"""
-Turn one cached payload into an item ready for the next project stage.
-
-Every payload is rebuilt through `reconstruct` on the record's own concrete type, including a
-payload that is itself an `AbstractDataItem`. When that method declines, the engine reruns
-`expand` and `process`, reading the source only if the read input is no longer cached. A rebuilt item then adopts its record and the index's collection path, so
-identity comes from the engine and never from stale cached state.
-"""
-function materialized_item(
-    workspace::Workspace,
-    collections::CollectionIndex,
-    record::ItemRecord,
-    payload,
-)::AbstractDataItem
-    path = indexed_collection_path(workspace, collections, record)
-    rebuilt = reconstruct(
-        record.type, record.id, payload, effective_metadata(collections, record))
-    rebuilt === nothing && return reprocess_item(workspace, collections, record)
-    return attach_record(rebuilt, effective_record(collections, record), path)
-end
-
-"""Run processing without computing or publishing statistics."""
-function run_processing(
-    workspace::Workspace,
-    collections::CollectionIndex,
-    record::ItemRecord,
-)::NamedTuple
-    cached = only(read_payload(
-        workspace.cache.db, [record]; stage=SOURCE_EXPAND))
-    materialized_record = effective_record(collections, record)
-    input = unprocessed_item(workspace, collections, record, cached)
-    processed = @timed_dbg process(workspace.project, input)
-    processed isa AbstractDataItem || error(
-        "process(::$(typeof(workspace.project)), ::$(typeof(input))) must return an " *
-        "AbstractDataItem; got $(typeof(processed))",
-    )
-    processed_metadata = merge(
-        copy(materialized_record.metadata), metadata_dict(metadata(processed)))
-    processed_record = ItemRecord(
-        materialized_record;
-        label=label(workspace.project, processed),
-        metadata=processed_metadata,
-    )
-    return (item=processed, record=processed_record)
-end
-
-"""
-Return an owned snapshot of inherited, item and computed metadata under the publication lock.
-Callers can reconstruct user values after releasing the lock while other items publish analysis.
-"""
-function delivered_metadata(
-    workspace::Workspace,
-    record::ItemRecord,
-    collections::CollectionIndex,
-)::MetadataDict
-    return lock(workspace.publish_lock) do
-        effective = effective_metadata(collections, record)
-        computed = get(workspace.index.item_metadata, record.id, nothing)
-        computed === nothing || merge!(effective, metadata_dict(computed))
-        effective
+"""Show and save the message of a stage that failed. The caller holds the catalog lock."""
+function failed!(workspace::Workspace, key::RowKey, stage::PipelineStage, message::String)::Nothing
+    cache = workspace.cache.db
+    workspace.errors[(key, stage)] = failure_prefix(stage) * message
+    if key isa SourceKey
+        saved = cache_key(workspace, key)
+        store_result_failure!(cache, stage, saved, saved, message)
+    elseif key isa ItemKey
+        store_result_failure!(cache, stage, id(workspace.catalog, key), cache_key(workspace, key), message)
+    else
+        store_result_failure!(cache, stage, workspace.collection_keys[key], 0, message)
     end
-end
-
-"""Return records carrying their delivered metadata, for materializing a collection's members."""
-function delivered_records(
-    workspace::Workspace,
-    collections::CollectionIndex,
-    records::Vector{ItemRecord},
-)::Vector{ItemRecord}
-    return ItemRecord[
-        ItemRecord(record; metadata=delivered_metadata(workspace, record, collections))
-        for record in records
-    ]
+    return nothing
 end
 
 """
-Run item analysis from the already-published processed result.
-
-Returns the analyze output, to merge over the item's metadata layer, and the item's label computed
-with that output included.
+Show the metadata values of a finished stage that the cache did not store, or clear what was shown
+for it. The caller holds the catalog lock.
 """
-function run_item_analysis(
-    workspace::Workspace,
-    collections::CollectionIndex,
-    record::ItemRecord,
-)::NamedTuple
-    delivered_record = ItemRecord(
-        record; metadata=delivered_metadata(workspace, record, collections))
-    processed = only(read_payload(
-        workspace.cache.db, [delivered_record]; stage=ITEM_PROCESS))
-    processed === nothing && error(
-        "Cannot analyze item '$(record.id)': processed data is missing",
-    )
-    input = materialized_item(workspace, collections, delivered_record, something(processed))
-    analysis = @timed_dbg "analyze" metadata_dict(analyze(workspace.project, input))
-    analyzed_record = ItemRecord(
-        delivered_record; metadata=merge(delivered_record.metadata, analysis))
-    analyzed = reconstruct(record.type, record.id, something(processed), analyzed_record.metadata)
-    # Reconstruction is optional. Replaying process again cannot add analysis metadata to a type
-    # that declines it, so keep the item already used by analyze.
-    analyzed === nothing && (analyzed = input)
-    analyzed = attach_record(
-        analyzed, analyzed_record, indexed_collection_path(workspace, collections, analyzed_record))
-    return (metadata=analysis, label=label(workspace.project, analyzed))
-end
-
-"""
-Materialize and rewrite one collection's members through registered collection `process`.
-
-Members are materialized from their processed payloads, folded, and each rewritten member (whose
-`data` is not `===` the input) is re-cached at the `:collection_processed` stage. Returns the
-rewritten members and the ids whose payload was rewritten, persisted worker-side before publish.
-"""
-function run_collection_process(workspace::Workspace, collection_key::Int64)::NamedTuple
-    index = workspace.index
-    collections = index.collections
-    records = lock(workspace.work.lock) do
-        haskey(collections.records, collection_key) ||
-            error("Cannot process missing collection '$collection_key'")
-        ItemRecord[
-            index.items[id]
-            for id in collection_item_ids(collections, collection_key)
-            if haskey(index.items, id)
-        ]
+function conflicts!(workspace::Workspace, key::RowKey, stage::PipelineStage, conflicts::Vector{String})::Nothing
+    if isempty(conflicts)
+        delete!(workspace.errors, (key, stage))
+    else
+        workspace.errors[(key, stage)] = join(conflicts, "; ")
+        @warn("Metadata values were not saved", id=id(workspace.catalog, key), stage, conflicts)
     end
-    delivered = delivered_records(workspace, collections, records)
-    payloads = read_payload(workspace.cache.db, delivered; stage=ITEM_PROCESS)
-    any(isnothing, payloads) && error(
-        "Cannot process collection '$collection_key': one or more processed members are missing",
-    )
-    inputs = AbstractDataItem[
-        materialized_item(workspace, collections, delivered[index], something(payload))
-        for (index, payload) in pairs(payloads)
-    ]
-    outputs = process(
-        workspace.project, collection_value(workspace, collections, collection_key), inputs)
-    length(outputs) == length(inputs) || error(
-        "Collection process for '$collection_key' returned $(length(outputs)) items for " *
-        "$(length(inputs)) members; it must return one output per input, in order",
-    )
-    # Paired by position, not by id: a typed item carries no id of its own, and the contract
-    # already requires one output per input.
-    rewritten = [
-        position for position in eachindex(inputs)
-        if item_data(outputs[position]) !== item_data(inputs[position])
-    ]
-    return (
-        records=records,
-        outputs=outputs,
-        rewritten=rewritten,
-    )
+    return nothing
 end
 
-"""Run one collection's analyze folds over the post-process members."""
-function run_collection_analysis(workspace::Workspace, collection_key::Int64)::MetadataDict
-    index = workspace.index
-    collections = index.collections
-    records = lock(workspace.work.lock) do
-        haskey(collections.records, collection_key) ||
-            error("Cannot summarize missing collection '$collection_key'")
-        ItemRecord[
-            index.items[id]
-            for id in collection_item_ids(collections, collection_key)
-            if haskey(index.items, id)
-        ]
-    end
-    delivered = delivered_records(workspace, collections, records)
-    # A member has a collection-processed payload only when a fold rewrote it; everyone else
-    # analyzes from their own processed payload.
-    payloads = read_payload(
-        workspace.cache.db, delivered; stage=COLLECTION_PROCESS)
-    remaining = [index for index in eachindex(records) if payloads[index] === nothing]
-    base = read_payload(workspace.cache.db, delivered[remaining]; stage=ITEM_PROCESS)
-    for (position, index) in pairs(remaining)
-        payloads[index] = base[position]
-    end
-    any(isnothing, payloads) && error(
-        "Cannot analyze collection '$collection_key': one or more processed members are missing",
-    )
-    items = AbstractDataItem[
-        materialized_item(workspace, collections, delivered[index], something(payload))
-        for (index, payload) in pairs(payloads)
-    ]
-    return metadata_dict(analyze(
-        workspace.project, collection_value(workspace, collections, collection_key), items))
-end
+# Source items
 
 """
-Read one source item, or reuse its cached read result, and turn it into data items.
+Read one source item, or reuse its saved read result, turn it into items and publish them.
 
-The job records the outcome of `read` as soon as `read` returns or throws. A later failure is then
-recorded against item publication, and the read result stays available for the retry.
+The outcome of `read` is saved as soon as `read` returns or throws. A later failure is then a
+failure to create items, and the read result stays available when the job runs again.
 """
-function run_source_job(workspace::Workspace, node::WorkNode)::NamedTuple
-    source_key = node.key.entity::Int64
-    source_item = lock(workspace.work.lock) do
-        get(workspace.work.source_items, source_key, nothing)
-    end
-    source_item === nothing && error("Cannot load removed source item '$source_key'")
-    cached = read_payload(workspace.cache.db, source_key)
+function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
+    catalog = workspace.catalog
+    cache = workspace.cache.db
+    source_item = @lock catalog.lock get(workspace.source_items, job.key, nothing)
+    source_item === nothing &&
+        error("The source has not reported source item '$(id(catalog, job.key))' in this session")
+    saved = cache_key(workspace, job.key)
+    cached = read_payload(cache, saved)
     loaded = if cached === nothing
         value = try
             read(workspace.project, workspace.source, source_item)
         catch error
-            error isa OperationCanceledException || lock(workspace.publish_lock) do
-                work_node_current(workspace, node) && store_result_failure!(
-                    workspace.cache.db, SOURCE_READ, source_key, source_key,
-                    sprint(showerror, error))
-            end
-            rethrow()
+            fail!(workspace, job, error, catch_backtrace(); stage=SOURCE_READ)
+            return nothing
         end
-        lock(workspace.publish_lock) do
-            work_node_current(workspace, node) &&
-                store_source_read!(workspace.cache.db, source_key, value)
-        end
+        @lock catalog.lock iscurrent(catalog, job) && store_source_read!(cache, saved, value)
         value
     else
         something(cached)
     end
-    expansion = expand_source_item(
-        workspace.project, workspace.source, source_item, loaded; source_item_key=source_key)
-    return (source_item=source_item, expansion=expansion)
-end
-
-"""Execute one work node and publish its completion immediately."""
-function execute_work!(workspace::Workspace, node::WorkNode)::Nothing
-    key = node.key
-    result = try
-        if key.kind === SOURCE_EXPAND
-            run_source_job(workspace, node)
-        elseif key.kind === ITEM_PROCESS
-            index = workspace.index
-            record = get(index.items, key.entity, nothing)
-            record === nothing && error("Cannot process removed item '$(key.entity)'")
-            processing = run_processing(workspace, index.collections, record)
-            if work_node_current(workspace, node)
-                store_processed!(
-                    workspace.cache.db, processing.record, item_data(processing.item))
+    expanded = expand(workspace.project, workspace.source, source_item, loaded)
+    @lock catalog.lock begin
+        # A job whose result is discarded adds no collections.
+        iscurrent(catalog, job) || (finish!(catalog, job, ItemEntry[]); return nothing)
+        previous = String[id(catalog, item) for item in Catalogs.items(catalog, job.key)]
+        placed = CollectionKey[]
+        entries = map(expanded) do item
+            holder = ROOT
+            for (value, provided) in zip(item.collections, item.source_metadata)
+                holder = get!(catalog, holder, value)
+                metadata!(catalog, holder, :source, provided)
+                holder in placed || (save!(workspace, holder); push!(placed, holder))
             end
-            processing
-        elseif key.kind === ITEM_ANALYZE
-            index = workspace.index
-            record = get(index.items, key.entity, nothing)
-            record === nothing && error("Cannot analyze removed item '$(key.entity)'")
-            run_item_analysis(workspace, index.collections, record)
-        elseif key.kind === COLLECTION_PROCESS
-            processing = run_collection_process(workspace, key.entity)
-            if work_node_current(workspace, node)
-                for position in processing.rewritten
-                    store_processed!(
-                        workspace.cache.db,
-                        processing.records[position],
-                        item_data(processing.outputs[position]);
-                        stage=COLLECTION_PROCESS)
-                end
-                store_collection_process_result!(
-                    workspace.cache.db,
-                    key.entity::Int64,
-                )
-            end
-            processing
-        else
-            run_collection_analysis(workspace, key.entity)
+            ItemEntry(item.id, item.label, holder, typeof(item.item), item.metadata)
         end
-    catch error
-        CapturedException(error, catch_backtrace())
+        try
+            finish!(catalog, job, entries)
+        catch error
+            # The catalog refused the items and failed the stage. Collections added for them go.
+            foreach(collection -> delete!(catalog, collection), reverse(placed))
+            remove_items!(workspace, job.key)
+            failed!(workspace, job.key, SOURCE_EXPAND, sprint(showerror, error))
+            @error("A stage failed", id=id(catalog, job.key), stage=SOURCE_EXPAND, exception=(error, catch_backtrace()))
+            return nothing
+        end
+        isempty(previous) || delete_source_output!(cache, saved, previous)
+        conflicts = String[]
+        for (item, entry) in zip(expanded, entries)
+            append!(conflicts, store_item!(
+                cache, entry.id, saved, entry.label, entry.type,
+                entry.collection == ROOT ? nothing : workspace.collection_keys[entry.collection],
+                entry.metadata))
+            store_item_payload!(cache, entry.id, item_data(item.item))
+        end
+        store_source_result!(cache, SOURCE_EXPAND, saved)
+        kept = Set(entry.id for entry in entries)
+        filter!(id -> !(id in previous) || id in kept, workspace.selection.item_ids)
+        conflicts!(workspace, job.key, SOURCE_EXPAND, unique!(conflicts))
+        forget_stale!(workspace)
     end
-    publish_work_completion!(workspace, node, result)
-    return nothing
-end
-
-"""Run pooled work of any kind until workspace shutdown."""
-function work_worker!(workspace::Workspace)::Nothing
-    graph = workspace.work
-    while true
-        node = take_work!(graph)
-        node === nothing && return nothing
-        execute_work!(workspace, node)
-    end
-end
-
-"""Return completed, total, and active work counters for status/profiling."""
-function work_counts(workspace::Workspace)::Tuple{Int,Int,Int}
-    return lock(workspace.work.lock) do
-        (workspace.work.completed, workspace.work.total, workspace.work.active)
-    end
-end
-
-"""Queue one item's background processing at its current revision."""
-function enqueue_processing!(workspace::Workspace, record::ItemRecord)::Nothing
-    key = WorkKey(ITEM_PROCESS, record.id)
-    enqueue_work!(workspace, key, current_revision(workspace.work, key); priority=2)
     return nothing
 end
 
 """
-The delivery gate for one record: the work key whose readiness makes the delivered payload current.
-
-Always ITEM_PROCESS. A collection `process` that rewrites this member supersedes the delivered
-payload when its fold lands, through the normal publish path — delivery does not wait for it, so a
-project with collection stages still shows item-processed data while the fold runs.
+The read result of a source item outside its job: the saved one, or a new `read`. A saved read
+failure is thrown again without calling `read`.
 """
-delivery_gate(::Workspace, record::ItemRecord)::WorkKey = WorkKey(ITEM_PROCESS, record.id)
-
-"""
-Read one record's delivered payload from the cache: the deepest stage present.
-
-A collection `process` that rewrote this member left a `:collection_processed` payload, and that
-supersedes the member's own. Absent one, the member's `:processed` payload is what it delivers —
-including while a fold is still running.
-"""
-function _delivered_payload(
-    workspace::Workspace,
-    collections::CollectionIndex,
-    record::ItemRecord,
-)::Any
-    delivered = ItemRecord(
-        record; metadata=delivered_metadata(workspace, record, collections))
-    folded = only(read_payload(
-        workspace.cache.db, [delivered]; stage=COLLECTION_PROCESS))
-    folded === nothing || return folded
-    return only(read_payload(workspace.cache.db, [delivered]; stage=ITEM_PROCESS))
-end
-
-"""
-Block until one work key is current: wait on a live node, read a ready cache row, or enqueue work.
-"""
-function ensure_uptodate!(
-    workspace::Workspace,
-    key::WorkKey;
-    dependencies::Vector{WorkKey}=WorkKey[],
-    priority::Int=2,
-)::ProcessingResult
-    waiter = Channel{Any}(1)
-    should_wait = lock(workspace.work.lock) do
-        node = get(workspace.work.nodes, key, nothing)
-        node === nothing && return false
-        push!(node.waiters, waiter)
-        return true
-    end
-    if should_wait
-        result = take!(waiter)::ProcessingResult
-        return result
-    end
-    status = cache_work_status(workspace, key)
-    status === :ready && return ProcessingResult(nothing, nothing)
-    status === :failed && return ProcessingResult(
-        nothing,
-        CapturedException(
-            ErrorException(get(workspace.index.analysis_errors, key.entity, "work failed")),
-            Any[],
-        ),
-    )
-    if key.kind === SOURCE_EXPAND
-        upstream = cached_result_state(workspace.cache.db, SOURCE_READ, key.entity)
-        if upstream !== nothing && CacheResultStatus(upstream.status) === RESULT_FAILED
-            return ProcessingResult(nothing, CapturedException(
-                ErrorException(something(upstream.message, "Source read failed")), Any[]))
-        end
-    end
-    enqueue_work!(workspace, key, current_revision(workspace.work, key);
-        priority, dependencies, waiter)
-    return take!(waiter)::ProcessingResult
-end
-
-"""Return processed items, joining and promoting shared work when required."""
-function request_processed_items(
-    workspace::Workspace,
-    records::Vector{ItemRecord},
-)::Vector{AbstractDataItem}
-    index = workspace.index
-    collections = index.collections
-    loaded_item(record, item) = materialized_item(
-        workspace,
-        collections,
-        ItemRecord(record; metadata=delivered_metadata(workspace, record, collections)),
-        item,
-    )
-    loaded = Vector{AbstractDataItem}(undef, length(records))
-    for (position, record) in pairs(records)
-        result = ensure_uptodate!(workspace, delivery_gate(workspace, record); priority=4)
-        result.failure === nothing || throw(result.failure)
-        cached = _delivered_payload(workspace, collections, record)
-        cached === nothing && error(
-            "Delivered data for item '$(record.id)' is missing from the cache")
-        loaded[position] = loaded_item(record, something(cached))
-    end
+function read_again(workspace::Workspace, source::SourceKey, source_item::AbstractDataSourceItem)
+    cache = workspace.cache.db
+    saved = cache_key(workspace, source)
+    state = cached_result_state(cache, SOURCE_READ, saved)
+    state !== nothing && CacheResultStatus(state.status) === RESULT_FAILED &&
+        error(something(state.message, "Source read failed"))
+    cached = read_payload(cache, saved)
+    cached === nothing || return something(cached)
+    loaded = read(workspace.project, workspace.source, source_item)
+    store_source_read!(cache, saved, loaded)
     return loaded
+end
+
+"""
+Run `expand` for the source item of `item` again and return the item it produces now.
+
+This runs inside the job that needs the item, because a worker must not wait for another job. One
+task at a time does it for each source item, and it saves the payload of every item it produces.
+"""
+function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
+    catalog = workspace.catalog
+    source = Catalogs.source(catalog, item)
+    source_lock = @lock catalog.lock get!(ReentrantLock, workspace.source_locks, source)
+    @lock source_lock begin
+        source_id_value = id(catalog, source)
+        source_item = @lock catalog.lock get(workspace.source_items, source, nothing)
+        if source_item === nothing
+            reported = source_items(workspace.source; cancel_token=get_token(workspace.cancel_source))
+            position = findfirst(reported_item -> id(reported_item) == source_id_value, reported)
+            position === nothing && error(
+                "Cannot load item '$(id(catalog, item))': source item '$source_id_value' " *
+                "is no longer present in source '$(source_id(workspace.source))'",
+            )
+            source_item = reported[position]
+        end
+        expanded = expand(
+            workspace.project, workspace.source, source_item,
+            read_again(workspace, source, source_item))
+        for produced in expanded
+            store_item_payload!(workspace.cache.db, produced.id, item_data(produced.item))
+        end
+        position = findfirst(produced -> produced.id == id(catalog, item), expanded)
+        position === nothing && error(
+            "Source item '$source_id_value' no longer produces item '$(id(catalog, item))'")
+        return expanded[position].item
+    end
+end
+
+# Items
+
+"""Let `value` take what the workspace holds for `item`: its label, `metadata` and its collections."""
+adopted(workspace::Workspace, item::ItemKey, value::AbstractDataItem, metadata::MetadataDict) = adopt(
+    value, label(workspace, item), metadata, values(workspace, collection(workspace, item)))
+
+"""
+The item that `process` receives: rebuilt from the payload `expand` gave it, with the metadata of
+its collections and its source item. When the payload is gone, or the item type does not rebuild
+from a payload, `expand` runs again.
+"""
+function unprocessed(workspace::Workspace, item::ItemKey)::AbstractDataItem
+    catalog = workspace.catalog
+    given = metadata(workspace, item; through=SOURCE_EXPAND)
+    cached = only(read_payload(workspace.cache.db, [id(catalog, item)]; stage=SOURCE_EXPAND))
+    value = cached === nothing ? nothing :
+        reconstruct(valuetype(catalog, item), id(catalog, item), something(cached), given)
+    value === nothing && (value = expand_again(workspace, item))
+    return adopted(workspace, item, value, given)
+end
+
+"""Run `process` of the project on `input` and check what it returns."""
+function processed(workspace::Workspace, input::AbstractDataItem)::AbstractDataItem
+    output = @timed_dbg process(workspace.project, input)
+    output isa AbstractDataItem || error(
+        "process(::$(typeof(workspace.project)), ::$(typeof(input))) must return an " *
+        "AbstractDataItem; got $(typeof(output))",
+    )
+    return output
+end
+
+"""
+The item for one saved payload of a processed version of `item`, with `metadata`. When the item
+type does not rebuild from a payload, `expand` and `process` run again.
+"""
+function rebuilt(workspace::Workspace, item::ItemKey, payload, metadata::MetadataDict)::AbstractDataItem
+    catalog = workspace.catalog
+    value = reconstruct(valuetype(catalog, item), id(catalog, item), payload, metadata)
+    value === nothing && (value = processed(workspace, unprocessed(workspace, item)))
+    return adopted(workspace, item, value, metadata)
+end
+
+"""Replace the label of an item in the catalog and the cache. The caller holds the catalog lock."""
+function relabel!(workspace::Workspace, item::ItemKey, new::String)::Nothing
+    catalog = workspace.catalog
+    label(catalog, item) == new && return nothing
+    label!(catalog, item, new)
+    holder = Catalogs.collection(catalog, item)
+    store_item_label!(
+        workspace.cache.db, id(catalog, item), cache_key(workspace, item), new,
+        valuetype(catalog, item), holder == ROOT ? nothing : workspace.collection_keys[holder])
+    return nothing
+end
+
+"""Run `process` for one item and save its payload, its label and the metadata it changed."""
+function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Nothing
+    catalog = workspace.catalog
+    cache = workspace.cache.db
+    item = job.key
+    input = unprocessed(workspace, item)
+    output = processed(workspace, input)
+    given = metadata(workspace, item; through=SOURCE_EXPAND)
+    delivered = merge(given, metadata_dict(metadata(output)))
+    computed = MetadataDict(
+        name => value for (name, value) in delivered
+        if !haskey(given, name) || !isequal(given[name], value))
+    # The payload is saved outside the lock, because the cache makes a writer wait when it is full.
+    iscurrent(catalog, job) &&
+        store_processed!(cache, id(catalog, item), cache_key(workspace, item), item_data(output))
+    @lock catalog.lock begin
+        if finish!(catalog, job; metadata=computed)
+            relabel!(workspace, item, label(workspace.project, output))
+            conflicts!(workspace, item, ITEM_PROCESS,
+                store_item_metadata_layer!(cache, id(catalog, item), delivered))
+        else
+            clear_cached_result_state!(cache, ITEM_PROCESS, id(catalog, item))
+        end
+    end
+    return nothing
+end
+
+"""Run `analyze` for one item on its processed version, and save its metadata and its label."""
+function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_ANALYZE})::Nothing
+    catalog = workspace.catalog
+    cache = workspace.cache.db
+    item = job.key
+    payload = only(read_payload(cache, [id(catalog, item)]; stage=ITEM_PROCESS))
+    payload === nothing &&
+        error("Cannot analyze item '$(id(catalog, item))': processed data is missing")
+    given = metadata(workspace, item; through=ITEM_PROCESS)
+    input = rebuilt(workspace, item, something(payload), given)
+    analysis = @timed_dbg "analyze" metadata_dict(analyze(workspace.project, input))
+    delivered = merge(given, analysis)
+    # An item type that does not rebuild from a payload keeps the item that analyze received.
+    analyzed = something(
+        reconstruct(valuetype(catalog, item), id(catalog, item), something(payload), delivered),
+        input)
+    new_label = label(workspace.project, adopted(workspace, item, analyzed, delivered))
+    @lock catalog.lock begin
+        finish!(catalog, job; metadata=analysis) || return nothing
+        relabel!(workspace, item, new_label)
+        conflicts!(workspace, item, ITEM_ANALYZE,
+            store_item_metadata!(cache, id(catalog, item), cache_key(workspace, item), delivered))
+    end
+    return nothing
+end
+
+# Collections
+
+"""Every item below a collection, at any depth: its own items, then those of each collection below it."""
+function members(workspace::Workspace, collection::CollectionKey)::Vector{ItemKey}
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        found = Catalogs.items(catalog, collection)
+        for child in Catalogs.children(catalog, collection)
+            append!(found, members(workspace, child))
+        end
+        return found
+    end
+end
+
+"""
+The processed versions of `items` as the saved payloads give them. With `latest`, an item that a
+collection `process` rewrote comes in that version; otherwise every item comes in its own.
+"""
+function versions(workspace::Workspace, items::Vector{ItemKey}; latest::Bool)::Vector{AbstractDataItem}
+    cache = workspace.cache.db
+    item_ids = String[id(workspace, item) for item in items]
+    payloads = read_payload(cache, item_ids; stage=ITEM_PROCESS)
+    if latest
+        rewritten = read_payload(cache, item_ids; stage=COLLECTION_PROCESS)
+        payloads = Any[new === nothing ? own : new for (new, own) in zip(rewritten, payloads)]
+    end
+    missing = findfirst(isnothing, payloads)
+    missing === nothing || error("The processed data of item '$(item_ids[missing])' is missing")
+    return AbstractDataItem[
+        rebuilt(workspace, item, something(payload), metadata(workspace, item))
+        for (item, payload) in zip(items, payloads)]
+end
+
+"""
+Run collection `process` over every item below one collection, and save the collection's version
+of each item it changed. An item counts as changed when its data is not the same object as before.
+"""
+function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PROCESS})::Nothing
+    catalog = workspace.catalog
+    cache = workspace.cache.db
+    items = members(workspace, job.key)
+    # FIXME: the cache keeps one collection version for each item. Each item therefore comes in its
+    # own version, and a collection that holds another loses the version the inner one made. Save
+    # a version for each collection, and give each collection the versions of the one below it.
+    inputs = versions(workspace, items; latest=false)
+    outputs = process(workspace.project, last(values(workspace, job.key)), inputs)
+    length(outputs) == length(inputs) || error(
+        "Collection process for '$(label(catalog, job.key))' returned $(length(outputs)) items " *
+        "for $(length(inputs)); it must return one output for each input, in order",
+    )
+    # Outputs match inputs by position, because an item type need not hold its id.
+    if iscurrent(catalog, job)
+        for (item, input, output) in zip(items, inputs, outputs)
+            item_data(output) === item_data(input) || store_processed!(
+                cache, id(catalog, item), cache_key(workspace, item), item_data(output);
+                stage=COLLECTION_PROCESS)
+        end
+    end
+    @lock catalog.lock begin
+        finish!(catalog, job) &&
+            store_collection_process_result!(cache, workspace.collection_keys[job.key])
+    end
+    return nothing
+end
+
+"""Run collection `analyze` over the latest version of every item below one collection."""
+function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_ANALYZE})::Nothing
+    catalog = workspace.catalog
+    inputs = versions(workspace, members(workspace, job.key); latest=true)
+    analysis = metadata_dict(analyze(workspace.project, last(values(workspace, job.key)), inputs))
+    @lock catalog.lock begin
+        finish!(catalog, job; metadata=analysis) || return nothing
+        conflicts!(workspace, job.key, COLLECTION_ANALYZE, store_collection_metadata!(
+            workspace.cache.db, workspace.collection_keys[job.key], analysis))
+    end
+    return nothing
+end
+
+run!(workspace::Workspace, job::Job)::Nothing = run!(workspace, job, Val(job.stage))
+
+"""Completed jobs, the total of completed, running and queued jobs, and the running and queued ones."""
+function work_counts(workspace::Workspace)::Tuple{Int,Int,Int}
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        active = workspace.running + queued(catalog)
+        return (workspace.completed, workspace.completed + active, active)
+    end
 end

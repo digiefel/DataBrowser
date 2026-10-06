@@ -11,27 +11,38 @@ using CancellationTokens:
     get_token,
     is_cancellation_requested
 
-using ..WorkGraph:
-    WorkDependencyGraph,
-    WorkKey,
-    WorkNode,
-    bump_revision!,
-    current_revision,
-    dependencies_ready,
-    pop_queued_node!,
-    push_queue_entry!,
-    queue_ready_node!,
-    seed_node_dependencies!,
-    take_work!,
-    wake_ready_dependents!
+using ..Catalogs
+import ..Catalogs: Catalog, restore!, valuetype
+using ..Catalogs:
+    CollectionKey,
+    ItemEntry,
+    ItemKey,
+    Job,
+    ROOT,
+    RowKey,
+    SourceKey,
+    Target,
+    finish!,
+    iscurrent,
+    label!,
+    lookup,
+    metadata!,
+    progress,
+    publish!,
+    queued,
+    request,
+    settled,
+    stale!
 using DataBrowserAPI:
+    MetadataDict,
     PipelineStage,
     COLLECTION_ANALYZE,
     COLLECTION_PROCESS,
     ITEM_ANALYZE,
     ITEM_PROCESS,
     SOURCE_READ,
-    SOURCE_EXPAND
+    SOURCE_EXPAND,
+    metadata_dict
 
 using DataBrowserCache:
     CacheDB,
@@ -65,10 +76,10 @@ using DataBrowserCache:
     read_payload,
     reset_build_metrics!,
     store_collection_metadata!,
-    store_collection_index!,
+    store_collection!,
     store_collection_process_result!,
-    store_source_items!,
-    store_item_payloads!,
+    store_item!,
+    store_item_payload!,
     store_item_metadata!,
     store_item_label!,
     store_item_metadata_layer!,
@@ -76,37 +87,13 @@ using DataBrowserCache:
     store_result_failure!,
     store_source_identity!,
     store_source_read!,
+    store_source_result!,
     source_complete,
     cache_knows_source,
     source_item_key!
 import DataBrowserCache
 import DataBrowserCache: query_items, set_cache_memory_limit!
-using DataBrowserAPI.ItemIndex:
-    AbstractCollectionRecord,
-    CollectionIndex,
-    CollectionInput,
-    CollectionRecord,
-    ItemRecord,
-    MetadataDict,
-    RootCollection,
-    append_item!,
-    clear_collection_analysis!,
-    collection_inputs,
-    collection_item_ids,
-    collection_metadata,
-    collection_path_keys,
-    effective_metadata,
-    effective_record,
-    metadata_dict,
-    collection_value_path,
-    remove_item!,
-    resolve_collection_path!,
-    resolve_collection_paths!,
-    set_collection_analysis!,
-    sorted_child_keys
-using ..DataBrowserCore:
-    SourceItemExpansion,
-    expand_source_item
+using ..DataBrowserCore: ExpandedItem
 import DataBrowserAPI
 import DataBrowserAPI:
     AbstractCollection,
@@ -116,11 +103,11 @@ import DataBrowserAPI:
     AbstractProject,
     SourceChanges,
     SourceError,
+    adopt,
     analyze,
-    annotate_collection_path,
-    attach_record,
     close_source!,
     collection,
+    expand,
     fingerprint,
     id,
     item_data,
@@ -144,7 +131,7 @@ State of the workspace's source scan: running or idle, cancel token, and how man
 `epoch` increments each time a scan starts. A background scan task captures that value and ignores
 its own publishes if a newer scan has begun.
 """
-mutable struct WorkspaceJob
+mutable struct WorkspaceScan
     epoch::Int
     state::Symbol
     error::String
@@ -152,28 +139,14 @@ mutable struct WorkspaceJob
     discovered::Base.Threads.Atomic{Int}
 end
 
-WorkspaceJob()::WorkspaceJob = WorkspaceJob(0, :idle, "", nothing, Base.Threads.Atomic{Int}(0))
+WorkspaceScan()::WorkspaceScan = WorkspaceScan(0, :idle, "", nothing, Base.Threads.Atomic{Int}(0))
 
 """
-The progressively populated item index for one open source.
-"""
-mutable struct WorkspaceIndex
-    collections::CollectionIndex
-    items::Dict{String,ItemRecord}
-    # The computed metadata layers per item (analyze output merged with any collection-process
-    # overwrite); the item's own metadata stays on the record.
-    item_metadata::Dict{String,Dict{Symbol,Any}}
-    collection_metadata_keys::Vector{Symbol}
-    analysis_errors::Dict{Union{String,Int64},String}
-    # Published item ids per source-item key, so per-publish lookups avoid scanning every item.
-    items_by_source::Dict{Int64,Vector{String}}
-end
-
-"""
-Stable selection identities owned by a workspace.
+What is selected in a workspace: collections by key, and items by public id, which stays the same
+when a source item is read again.
 """
 Base.@kwdef mutable struct WorkspaceSelection
-    collection_ids::Vector{String} = String[]
+    collections::Vector{CollectionKey} = CollectionKey[]
     item_ids::Vector{String} = String[]
 end
 
@@ -235,32 +208,49 @@ WorkspaceStatus() =
 
 """
 One open project/source pair and all package-managed state belonging to it.
+
+The rows live in `catalog`. The fields below it, down to `stopping`, belong to the catalog and its
+jobs: they are read and written under `catalog.lock`, and they start empty again when the workspace
+is modified.
 """
 mutable struct Workspace{P<:AbstractProject}
     project::P
     source::AbstractDataSource
-    index::WorkspaceIndex
+    catalog::Catalog
+    # The value of each source item that the scan or the source watcher reported, for its job.
+    source_items::Dict{SourceKey,AbstractDataSourceItem}
+    # One lock per source item whose items are read again outside its job.
+    source_locks::Dict{SourceKey,ReentrantLock}
+    # The key the cache uses for each collection. The cache keeps its keys from session to session.
+    collection_keys::Dict{CollectionKey,Int64}
+    next_collection_key::Int64
+    # The message of each failed stage, and of each stage whose metadata the cache stored in part.
+    errors::Dict{Target,String}
+    # Items that were delivered. Their analyze is requested, so their metadata becomes complete.
+    wanted::Set{ItemKey}
+    workers::Vector{Task}
+    # Jobs that run now, and jobs that ended since the catalog was created.
+    running::Int
+    completed::Int
+    stopping::Bool
     selection::WorkspaceSelection
     cache::WorkspaceCache
-    scan::WorkspaceJob
+    scan::WorkspaceScan
     # The cache is the persistence side of the scan, not a separately cancellable job, so it needs
-    # only a visible state and last error rather than a full WorkspaceJob.
+    # only a visible state and last error.
     cache_state::Symbol
     cache_error::String
     # Last recoverable failure reported by the source watcher; cleared by the next good update.
     source_error::String
-    work::WorkDependencyGraph
     background_processing::Bool
     # Requested disk cache. Kept even when a schema error falls back to a memory cache, so a
     # rebuild can open a real disk cache again.
     disk_cache::Bool
     background_tasks::Vector{Task}
     metrics::BuildMetrics
-    publish_lock::ReentrantLock
     # Held for the whole of `modify_workspace!` / `close_workspace!` so a frame cannot read a
     # half-rebuilt runtime. The GUI trylocks this at the start of a frame.
     lifecycle_lock::ReentrantLock
-    idle_condition::Base.Threads.Condition
     # Increased on every published change.
     generation::Base.Threads.Atomic{Int}
     # The last computed status with the generation it reflects, replaced as one value so that
@@ -268,6 +258,18 @@ mutable struct Workspace{P<:AbstractProject}
     @atomic status::Pair{Int,WorkspaceStatus}
     cancel_source::CancellationTokenSource
     closed::Bool
+end
+
+"""
+An empty catalog for a workspace. A source item's job always runs without a request. With
+`background_processing`, so does every stage of every item and collection; without it, those run
+when something requests them.
+"""
+function Catalog(background_processing::Bool)::Catalog
+    eager = Dict{PipelineStage,Int}(SOURCE_EXPAND => 3)
+    background_processing && merge!(eager, Dict(
+        ITEM_PROCESS => 2, ITEM_ANALYZE => 2, COLLECTION_PROCESS => 1, COLLECTION_ANALYZE => 1))
+    return Catalog(; eager)
 end
 
 """
@@ -310,42 +312,40 @@ function Workspace(
     cache::Bool=true,
     background_processing::Bool=false,
 )::Workspace{P} where {P<:AbstractProject}
-    collections = CollectionIndex(source_id(source))
     metrics = BuildMetrics()
     cache_db, disk_error, identity =
         _open_workspace_cache(project, source, metrics; rebuild, cache)
-    publish_lock = ReentrantLock()
     workspace = Workspace(
         project,
         source,
-        WorkspaceIndex(
-            collections,
-            Dict{String,ItemRecord}(),
-            Dict{String,Dict{Symbol,Any}}(),
-            Symbol[],
-            Dict{Union{String,Int64},String}(),
-            Dict{Int64,Vector{String}}(),
-        ),
+        Catalog(background_processing),
+        Dict{SourceKey,AbstractDataSourceItem}(),
+        Dict{SourceKey,ReentrantLock}(),
+        Dict{CollectionKey,Int64}(),
+        Int64(1),
+        Dict{Target,String}(),
+        Set{ItemKey}(),
+        Task[],
+        0,
+        0,
+        false,
         WorkspaceSelection(),
         WorkspaceCache(identity, cache_db, disk_error, nothing, :load),
-        WorkspaceJob(),
+        WorkspaceScan(),
         :idle,
         "",
         "",
-        WorkDependencyGraph(),
         background_processing,
         cache,
         Task[],
         metrics,
-        publish_lock,
         ReentrantLock(),
-        Base.Threads.Condition(publish_lock),
         Base.Threads.Atomic{Int}(0),
         -1 => WorkspaceStatus(),
         CancellationTokenSource(),
         false,
     )
-    start_work_workers!(workspace)
+    start_workers!(workspace)
     return workspace
 end
 
@@ -356,7 +356,7 @@ end
 Base.show(io::IO, workspace::Workspace) = print(
     io,
     "Workspace(", project_name(workspace.project), ", ", source_label(workspace.source),
-    ", ", length(workspace.index.items), " items)",
+    ", ", progress(workspace.catalog, ROOT)[2], " items)",
 )
 
 function Base.show(io::IO, ::MIME"text/plain", workspace::Workspace)
@@ -365,16 +365,16 @@ function Base.show(io::IO, ::MIME"text/plain", workspace::Workspace)
     println(io, "  source:       ", source_id(workspace.source))
     println(io, "  scan:         ", workspace.scan.state)
     println(io, "  cache:        ", workspace.cache_state)
-    println(io, "  items:        ", length(workspace.index.items))
-    print(io,   "  failures:     ", length(workspace.index.analysis_errors))
+    println(io, "  items:        ", progress(workspace.catalog, ROOT)[2])
+    print(io,   "  failures:     ", length(workspace.errors))
     workspace.closed && print(io, "\n  (closed)")
 end
 
+include("Workspace/Accessors.jl")
 include("Workspace/Operations.jl")
 include("Workspace/Status.jl")
 include("Workspace/DataAccess.jl")
 include("Workspace/Processing.jl")
-include("Workspace/Accessors.jl")
 include("Workspace/MemoryDiagnostics.jl")
 
 function open_workspace(

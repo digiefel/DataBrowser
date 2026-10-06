@@ -181,6 +181,9 @@ struct Catalog
     changed::Threads.Condition
     # Metadata values that the last result of a stage produced but that were not stored.
     conflicts::Dict{Tuple{RowKey,MetadataLayer},Vector{MetadataConflict}}
+    # Stages that lost a fresh or failed result, and collections that were removed, since `stale!`
+    # last emptied this list.
+    stale::Vector{Target}
 end
 
 function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int}())
@@ -196,6 +199,7 @@ function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int
         Dict{Target,Vector{Int}}(),
         Threads.Condition(lock),
         Dict{Tuple{RowKey,MetadataLayer},Vector{MetadataConflict}}(),
+        Target[],
     )
     # No collection work runs for the root. It is never rebuilt, so it has no concrete type.
     push!(catalog.collections, "root", "Root", ROOT, AbstractCollection; absent=true)
@@ -469,6 +473,7 @@ function Base.delete!(catalog::Catalog, collection::CollectionKey)::Catalog
             collections.not_fresh[parent.index] -= analyze.validity != FRESH
             add_stuck!(catalog, parent, -(analyze.failed || analyze.blocked))
             delete!(collections, collection)
+            push!(catalog.stale, (collection, COLLECTION_PROCESS))
             invalidate!(catalog, parent, COLLECTION_PROCESS)
             collection = parent
         end
@@ -497,12 +502,41 @@ function lookup(
     return @lock catalog.lock get(catalog.collections.lookup, (parent, type, id), nothing)
 end
 
+"""Whether a row exists and has not been removed."""
+Base.in(key::RowKey, catalog::Catalog)::Bool = @lock catalog.lock key in table(catalog, key)
+
+"""
+    keys(catalog, K) -> Vector{K}
+
+Every row of kind `K` (`SourceKey`, `ItemKey` or `CollectionKey`), in the order the rows were added.
+The root collection is not included.
+"""
+Base.keys(catalog::Catalog, ::Type{K}) where {K<:RowKey} = @lock catalog.lock K[
+    K(index) for index in 1:length(table(catalog, K)) if K(index) in table(catalog, K) && K(index) != ROOT]
+
 """The public id of a row."""
 id(catalog::Catalog, key::RowKey)::String = @lock catalog.lock table(catalog, key).ids[key.index]
 
 """The label of an item or a collection."""
 label(catalog::Catalog, key::Union{ItemKey,CollectionKey})::String =
     @lock catalog.lock table(catalog, key).labels[key.index]
+
+"""
+    label!(catalog, key, label)
+
+Replace the label of an item or a collection. A stage that computes a new label calls this.
+"""
+function label!(catalog::Catalog, key::Union{ItemKey,CollectionKey}, label::AbstractString)::Nothing
+    @lock catalog.lock begin
+        labels = table(catalog, key).labels
+        view(labels, key.index) == codeunits(label) || (labels[key.index] = label)
+    end
+    return nothing
+end
+
+"""The names used in any layer of the metadata of any collection, sorted."""
+metadata_keys(catalog::Catalog)::Vector{Symbol} = @lock catalog.lock sort!(unique!(Symbol[
+    name for layer in values(catalog.collections.metadata) for name in keys(layer.columns)]); by=String)
 
 """The item type of an item or the collection type of a collection: the type its value is rebuilt as."""
 valuetype(catalog::Catalog, key::ItemKey)::Type{<:AbstractDataItem} =

@@ -17,19 +17,18 @@ end
 
 """Fold a workspace's job and cache state into a status, using the previous one where noted."""
 function build_status(workspace::Workspace, previous::WorkspaceStatus)::WorkspaceStatus
-    # Never wait on publish_lock here: a source-item publish or cache flush can hold it for 100ms+,
-    # and this runs every GUI frame. If a publish is mid-flight, reuse the last snapshot's errors —
-    # they change rarely, so a one-frame delay is invisible and keeps the frame from stalling.
-    errors = if trylock(workspace.publish_lock)
+    # Never wait for the catalog lock here: a publication can hold it for a while, and this runs
+    # every GUI frame. If one is in flight, reuse the errors of the last status: they change
+    # rarely, so a delay of one frame is invisible and keeps the frame from stalling.
+    catalog = workspace.catalog
+    errors = if trylock(catalog.lock)
         try
-            lock(workspace.work.lock) do
-                sort!(
-                    Pair{String,String}[string(k) => v for (k, v) in workspace.index.analysis_errors];
-                    by=first,
-                )
-            end
+            sort!(
+                Pair{String,String}[id(catalog, key) => message for ((key, _), message) in workspace.errors];
+                by=first,
+            )
         finally
-            unlock(workspace.publish_lock)
+            unlock(catalog.lock)
         end
     else
         previous.errors

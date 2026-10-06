@@ -93,7 +93,7 @@ function _stop_runtime!(workspace::Workspace)::Nothing
         istaskdone(task) || wait(task)
     end
     empty!(workspace.background_tasks)
-    stop_work_workers!(workspace)
+    stop_workers!(workspace)
     try
         close_cache_db!(workspace.cache.db)
     finally
@@ -102,7 +102,7 @@ function _stop_runtime!(workspace::Workspace)::Nothing
     return nothing
 end
 
-"""Replace runtime fields after `_stop_runtime!` and start cache workers."""
+"""Replace runtime fields after `_stop_runtime!` and start the workers."""
 function _install_runtime!(
     workspace::Workspace,
     source::AbstractDataSource;
@@ -114,26 +114,25 @@ function _install_runtime!(
     cache_db, disk_error, identity =
         _open_workspace_cache(workspace.project, source, metrics; rebuild, cache)
     workspace.source = source
-    workspace.index = WorkspaceIndex(
-        CollectionIndex(source_id(source)),
-        Dict{String,ItemRecord}(),
-        Dict{String,Dict{Symbol,Any}}(),
-        Symbol[],
-        Dict{Union{String,Int64},String}(),
-        Dict{Int64,Vector{String}}(),
-    )
+    workspace.catalog = Catalog(background_processing)
+    foreach(empty!, (
+        workspace.source_items, workspace.source_locks, workspace.collection_keys,
+        workspace.errors, workspace.wanted, workspace.selection.collections))
+    workspace.next_collection_key = 1
+    workspace.running = 0
+    workspace.completed = 0
+    workspace.stopping = false
     workspace.cache = WorkspaceCache(identity, cache_db, disk_error, nothing, :load)
     workspace.cache_state = :idle
     workspace.cache_error = ""
     workspace.source_error = ""
-    workspace.work = WorkDependencyGraph()
     workspace.background_processing = background_processing
     workspace.disk_cache = cache
     workspace.metrics = metrics
     @atomic workspace.status = -1 => WorkspaceStatus()
     changed!(workspace)
     workspace.cancel_source = CancellationTokenSource()
-    start_work_workers!(workspace)
+    start_workers!(workspace)
     return nothing
 end
 
@@ -149,62 +148,26 @@ function close_workspace!(workspace::Workspace)::Nothing
     end
 end
 
-"""Replace the selection with the supplied indexed item records."""
-function select_items!(
-    workspace::Workspace,
-    items::AbstractVector{ItemRecord},
-)::Nothing
-    workspace.selection.item_ids = [item.id for item in items]
-    return nothing
-end
+"""
+    select_items!(workspace, items)
 
-"""Replace the selection with exact item ids in this workspace."""
-function select_items!(
-    workspace::Workspace,
-    ids::AbstractVector{<:AbstractString},
-)::Nothing
-    selected = String[id for id in ids]
-    missing = lock(workspace.publish_lock) do
-        String[id for id in selected if !haskey(workspace.index.items, id)]
-    end
+Replace the selection with `items`: item keys, public item ids, or data items whose ids are in the
+workspace. An empty list clears the selection.
+"""
+function select_items!(workspace::Workspace, items::AbstractVector)::Nothing
+    selected = String[
+        item isa ItemKey ? id(workspace, item) :
+        item isa AbstractString ? item :
+        item isa AbstractDataItem ? id(item) :
+        error("Cannot select a $(typeof(item)); pass item keys, item ids, or data items")
+        for item in items]
+    missing = filter(id -> item(workspace, id) === nothing, selected)
     isempty(missing) || error(
         "Cannot select $(length(missing)) item id(s) that are not in this workspace: " *
         join(missing, ", "),
     )
     workspace.selection.item_ids = selected
     return nothing
-end
-
-"""Replace the selection with data items whose ids are present in the workspace."""
-function select_items!(
-    workspace::Workspace,
-    items::AbstractVector{<:AbstractDataItem},
-)::Nothing
-    return select_items!(workspace, String[id(item) for item in items])
-end
-
-"""Clear the selection, or fail clearly for unsupported item selectors."""
-function select_items!(
-    workspace::Workspace,
-    items::AbstractVector,
-)::Nothing
-    if isempty(items)
-        empty!(workspace.selection.item_ids)
-        return nothing
-    end
-    if all(item -> item isa ItemRecord, items)
-        return select_items!(workspace, ItemRecord[item for item in items])
-    end
-    if all(item -> item isa AbstractString, items)
-        return select_items!(workspace, String[item for item in items])
-    end
-    if all(item -> item isa AbstractDataItem, items)
-        return select_items!(workspace, AbstractDataItem[item for item in items])
-    end
-    error(
-        "Cannot select values of type $(eltype(items)); pass ItemRecord values, " *
-        "exact item ids, or AbstractDataItem values",
-    )
 end
 
 source_scan_running(workspace::Workspace)::Bool =
@@ -223,12 +186,11 @@ can_rebuild_cache(workspace::Workspace)::Bool =
 cache_work_running(workspace::Workspace)::Bool =
     workspace.cache_state in (:loading, :writing, :canceling)
 
-"""Whether the scan or any queued or running work-graph node is still in flight."""
+"""Whether the scan runs, or any job is queued or runs."""
 function engine_work_running(workspace::Workspace)::Bool
+    catalog = workspace.catalog
     return source_scan_running(workspace) || cache_work_running(workspace) ||
-        lock(workspace.work.lock) do
-            workspace.work.active > 0
-        end
+        @lock catalog.lock (workspace.running > 0 || queued(catalog) > 0)
 end
 
 """
@@ -251,13 +213,13 @@ end
 Request cancellation of a running source scan.
 
 Only a scan that is actually running moves into `:canceling`; the check and the transition share
-the publish lock with the scan task's own settlement, so a settled job can never re-enter
+the catalog lock with the scan task's own settlement, so a settled scan can never re-enter
 `:canceling`.
 """
 function cancel_scan!(workspace::Workspace)::Nothing
-    lock(workspace.publish_lock) do
+    @lock workspace.catalog.lock begin
         scan = workspace.scan
-        scan.state === :discovering || return
+        scan.state === :discovering || return nothing
         token_source = scan.cancel_token
         token_source !== nothing && cancel(token_source)
         scan.state = :canceling
@@ -266,357 +228,160 @@ function cancel_scan!(workspace::Workspace)::Nothing
     return nothing
 end
 
-"""Return records currently published for one source item."""
-function source_item_records(index::WorkspaceIndex, source_item_key_value::Int64)::Vector{ItemRecord}
-    ids = get(index.items_by_source, source_item_key_value, nothing)
-    ids === nothing && return ItemRecord[]
-    return ItemRecord[index.items[id] for id in ids if haskey(index.items, id)]
-end
+"""The key the cache uses for a source item, or for the source item of an item."""
+cache_key(workspace::Workspace, source::SourceKey)::Int64 =
+    source_item_key!(workspace.cache.db, id(workspace.catalog, source))
+cache_key(workspace::Workspace, item::ItemKey)::Int64 =
+    cache_key(workspace, Catalogs.source(workspace.catalog, item))
 
-"""Resolve one source-item surrogate to the stable public source-item id."""
-source_item_id(workspace::Workspace, key::Integer)::String =
-    DataBrowserCache.source_item_id(workspace.cache.db, key)
-
-"""Resolve one public source-item id to its surrogate, or `nothing` when unknown."""
-source_item_key(workspace::Workspace, id_value::AbstractString)::Union{Nothing,Int64} =
-    DataBrowserCache.source_item_key(workspace.cache.db, id_value)
-
-"""Return collection keys touched by records and their ancestors."""
-function affected_collection_keys(
-    collections::CollectionIndex,
-    records::Vector{ItemRecord},
-)::Vector{Int64}
-    keys = Int64[]
-    for record in records
-        for key in collection_path_keys(collections, record.collection_key)
-            push!(keys, key)
-        end
+"""
+Save the row of a collection to the cache, under a new cache key when it has none. The caller holds
+the catalog lock.
+"""
+function save!(workspace::Workspace, collection::CollectionKey)::Nothing
+    catalog = workspace.catalog
+    key = get!(workspace.collection_keys, collection) do
+        workspace.next_collection_key += 1
+        workspace.next_collection_key - 1
     end
-    return unique(keys)
-end
-
-"""Refresh the collection-metadata key list from the current records."""
-function refresh_collection_metadata_keys!(index::WorkspaceIndex)::Nothing
-    metadata_keys = Set{Symbol}()
-    for collection_record in values(index.collections.records)
-        union!(metadata_keys, keys(collection_record.own_metadata))
-        union!(metadata_keys, keys(collection_record.analysis))
-    end
-    index.collection_metadata_keys = sort!(collect(metadata_keys); by=String)
+    above = parent(catalog, collection)
+    store_collection!(
+        workspace.cache.db,
+        key,
+        above == ROOT ? nothing : workspace.collection_keys[above],
+        id(catalog, collection),
+        label(catalog, collection),
+        valuetype(catalog, collection),
+        metadata(catalog, collection, :collection),
+        metadata(catalog, collection, :source),
+    )
     return nothing
 end
 
 """
-    include_collection_metadata_keys!(index, collection_keys) -> Nothing
-
-Add metadata keys from newly registered collection records without rescanning the complete
-collection index.
+Remove from the cache and from the error list what the catalog no longer holds as current: the
+result of each stage that became stale, and each collection that was removed. The caller holds the
+catalog lock, and calls this in the same critical section as the change, so that a result saved
+later is not removed.
 """
-function include_collection_metadata_keys!(index::WorkspaceIndex, collection_keys)::Nothing
+function forget_stale!(workspace::Workspace)::Nothing
+    catalog = workspace.catalog
+    cache = workspace.cache.db
+    for (key, stage) in stale!(catalog)
+        delete!(workspace.errors, (key, stage))
+        # A source item's results are removed where its source reports the change.
+        key isa SourceKey && continue
+        if key isa ItemKey
+            clear_cached_result_state!(cache, stage, id(catalog, key))
+        elseif key in catalog
+            saved = get(workspace.collection_keys, key, nothing)
+            saved === nothing || clear_cached_result_state!(cache, stage, saved)
+        else
+            filter!(target -> first(target) != key, workspace.errors)
+            filter!(!=(key), workspace.selection.collections)
+            saved = pop!(workspace.collection_keys, key, nothing)
+            saved === nothing && continue
+            delete_collection_metadata!(cache, [saved])
+            delete_collection_records!(cache, [saved])
+        end
+    end
+    return nothing
+end
+
+"""
+Remove the items of a source item from the catalog and their saved output from the cache. The
+caller holds the catalog lock.
+"""
+function remove_items!(workspace::Workspace, source::SourceKey)::Nothing
+    catalog = workspace.catalog
+    removed = Catalogs.items(catalog, source)
+    removed_ids = String[id(catalog, item) for item in removed]
+    publish!(catalog, source, ItemEntry[])
+    delete_source_output!(workspace.cache.db, cache_key(workspace, source), removed_ids)
+    filter!(target -> !(first(target) in removed), workspace.errors)
+    setdiff!(workspace.wanted, removed)
+    filter!(id -> !(id in removed_ids), workspace.selection.item_ids)
+    forget_stale!(workspace)
+    return nothing
+end
+
+"""
+Give every collection the metadata its source provides for it now. A collection whose metadata
+changed becomes stale with everything below it. Returns whether any changed. The caller holds the
+catalog lock.
+"""
+function refresh_source_metadata!(workspace::Workspace)::Bool
+    catalog = workspace.catalog
     changed = false
-    for collection_key in collection_keys
-        collection_record = get(index.collections.records, collection_key, nothing)
-        collection_record === nothing && continue
-        for metadata_key in keys(collection_record.own_metadata)
-            metadata_key in index.collection_metadata_keys && continue
-            push!(index.collection_metadata_keys, metadata_key)
-            changed = true
-        end
-        for metadata_key in keys(collection_record.analysis)
-            metadata_key in index.collection_metadata_keys && continue
-            push!(index.collection_metadata_keys, metadata_key)
-            changed = true
-        end
+    for collection in collections(workspace)
+        provided = metadata_dict(metadata(workspace.source, values(workspace, collection)))
+        isequal(provided, metadata(catalog, collection, :source)) && continue
+        metadata!(catalog, collection, :source, provided)
+        save!(workspace, collection)
+        changed = true
     end
-    changed && sort!(index.collection_metadata_keys; by=String)
-    return nothing
-end
-
-"""Rebuild effective collection metadata from the collection values currently in the index."""
-function reconcile_source_metadata_cache!(
-    workspace::Workspace,
-)::Vector{ItemRecord}
-    old_collections = @timed_dbg "recon_copy" copy(workspace.index.collections)
-    current_keys = collect(keys(workspace.index.collections.records))
-    @timed_dbg "recon_resolve" for key in current_keys
-        haskey(workspace.index.collections.records, key) || continue
-        path = collection_value_path(workspace.index.collections, key)
-        isempty(path) && continue
-        inputs = collection_inputs(annotate_collection_path(workspace.source, path))
-        resolve_collection_path!(
-            workspace.index.collections,
-            inputs;
-            update_existing=true,
-        )
-    end
-    @timed_dbg "recon_keys" refresh_collection_metadata_keys!(workspace.index)
-    records = collect(values(workspace.index.items))
-    changed = @timed_dbg "recon_diff" ItemRecord[
-        record for record in records
-        if effective_metadata(old_collections, record) !=
-           effective_metadata(workspace.index.collections, record)
-    ]
-    isempty(records) || @timed_dbg "recon_store" store_collection_index!(
-        workspace.cache.db, workspace.index.collections, records)
+    forget_stale!(workspace)
     return changed
 end
 
 """
-Bump and re-enqueue the work of a set of records and their collections after their inputs changed.
-
-Shared by the in-session metadata event and the reopen source-metadata diff: the full dependent
-subtree is enqueued immediately so live nodes gate delivery while fresh work runs.
-"""
-function invalidate_records_work!(workspace::Workspace, changed::Vector{ItemRecord})::Nothing
-    for record in changed
-        delete!(workspace.index.item_metadata, record.id)
-        delete!(workspace.index.analysis_errors, record.id)
-    end
-    enqueue_dependent_subtree!(workspace, changed)
-    return nothing
-end
-
-"""
-Invalidate one record's process/analyze steps and every affected collection step, scheduling their
-recomputation only when background processing is enabled.
-
-Pass only surviving records; source removal and source failure pass their affected collection
-keys with no item records. The stale cache result-state is cleared so the next read recomputes; fresh work
-is only enqueued when `background_processing` is on. Without it, processing stays selection-driven and
-a live scan builds the tree without eagerly processing or analyzing every item.
-"""
-function enqueue_dependent_subtree!(
-    workspace::Workspace,
-    records::Vector{ItemRecord};
-    collection_keys::Vector{Int64}=
-        affected_collection_keys(workspace.index.collections, records),
-    priority::Int=2,
-)::Nothing
-    background = workspace.background_processing
-    for collection_key in unique(collection_keys)
-        haskey(workspace.index.collections.records, collection_key) || continue
-        clear_collection_analysis!(workspace.index.collections, collection_key)
-    end
-    lock(workspace.work.lock) do
-        for record in records
-            process_key = WorkKey(ITEM_PROCESS, record.id)
-            analyze_key = WorkKey(ITEM_ANALYZE, record.id)
-            clear_work_result_state!(workspace, process_key)
-            clear_work_result_state!(workspace, analyze_key)
-            background || continue
-            enqueue_work!(
-                workspace, process_key, bump_revision!(workspace.work, process_key);
-                priority,
-            )
-            enqueue_work!(
-                workspace, analyze_key, bump_revision!(workspace.work, analyze_key);
-                priority,
-                dependencies=WorkKey[process_key],
-            )
-        end
-        if background
-            enqueue_collection_work!(workspace, collection_keys; supersede=true)
-        else
-            for collection_key in unique(collection_keys)
-                clear_work_result_state!(workspace, WorkKey(COLLECTION_PROCESS, collection_key))
-                clear_work_result_state!(workspace, WorkKey(COLLECTION_ANALYZE, collection_key))
-            end
-        end
-    end
-    return nothing
-end
-
-"""Remove all published output owned by one source item and invalidate affected collections."""
-function remove_source_item_output!(
-    workspace::Workspace,
-    source_item_key_value::Int64,
-)::Tuple{Vector{ItemRecord},Vector{Int64}}
-    old_records = source_item_records(workspace.index, source_item_key_value)
-    invalidated = affected_collection_keys(workspace.index.collections, old_records)
-    items = workspace.index.items
-    collections = workspace.index.collections
-    for record in old_records
-        remove_item!(collections, record.id, record.collection_key)
-        delete!(items, record.id)
-        delete!(workspace.index.item_metadata, record.id)
-        delete!(workspace.index.analysis_errors, record.id)
-    end
-    # Source-level analysis errors stay keyed by the public source-item id.
-    delete!(workspace.index.analysis_errors, source_item_id(workspace, source_item_key_value))
-    delete!(workspace.index.items_by_source, source_item_key_value)
-    analysis_cleared = false
-    for collection_key in invalidated
-        haskey(collections.records, collection_key) || continue
-        analysis_cleared |= !isempty(collections.records[collection_key].analysis)
-        clear_collection_analysis!(collections, collection_key)
-    end
-    (analysis_cleared || any(key -> !haskey(collections.records, key), invalidated)) &&
-        refresh_collection_metadata_keys!(workspace.index)
-    filter!(id -> haskey(items, id), workspace.selection.item_ids)
-    return old_records, invalidated
-end
-
-"""Delete persisted collection rows no longer present in the published collection index."""
-function delete_pruned_collection_records!(
-    workspace::Workspace,
-    collection_keys::Vector{Int64},
-)::Nothing
-    pruned = Int64[
-        key for key in unique(collection_keys)
-        if !haskey(workspace.index.collections.records, key)
-    ]
-    delete_collection_records!(workspace.cache.db, pruned)
-    return nothing
-end
-
-"""Publish one source item's current records after validating duplicate IDs."""
-function publish_source_item_records!(
-    workspace::Workspace,
-    source_item_key_value::Int64,
-    records::Vector{ItemRecord},
-    collection_paths::Vector{Vector{CollectionInput}},
-)::Tuple{Vector{ItemRecord},Vector{Int64}}
-    source_ref = source_item_id(workspace, source_item_key_value)
-    length(records) == length(collection_paths) || error(
-        "Cannot publish source item '$source_ref': records and collection paths differ in length",
-    )
-    old_records = source_item_records(workspace.index, source_item_key_value)
-    old_ids = Set(record.id for record in old_records)
-    replacement_ids = Set{String}()
-    for record in records
-        record.source_item_key == source_item_key_value || error(
-            "Cannot publish source item '$source_ref': replacement contains " *
-            "record '$(record.id)' from source item key $(record.source_item_key)",
-        )
-        record.id in replacement_ids && error(
-            "Cannot publish source item '$source_ref': duplicate item id '$(record.id)'",
-        )
-        push!(replacement_ids, record.id)
-        haskey(workspace.index.items, record.id) && !(record.id in old_ids) && error(
-            "Cannot publish source item '$source_ref': replacement item id " *
-            "'$(record.id)' already belongs to another source item",
-        )
-    end
-
-    collections = workspace.index.collections
-    next_collection_key = collections.next_key
-    collection_keys = resolve_collection_paths!(collections, collection_paths)
-    resolved = ItemRecord[
-        ItemRecord(record; collection_key)
-        for (record, collection_key) in zip(records, collection_keys)
-    ]
-    old_keys = affected_collection_keys(workspace.index.collections, old_records)
-    items = workspace.index.items
-    if isempty(old_records)
-        for record in resolved
-            append_item!(collections, record.id, record.collection_key)
-        end
-    else
-        old_memberships = Set((record.id, record.collection_key) for record in old_records)
-        retained = Set((record.id, record.collection_key) for record in resolved)
-        for record in resolved
-            (record.id, record.collection_key) in old_memberships ||
-                append_item!(collections, record.id, record.collection_key)
-        end
-        for record in old_records
-            (record.id, record.collection_key) in retained ||
-                remove_item!(collections, record.id, record.collection_key)
-            delete!(items, record.id)
-            delete!(workspace.index.item_metadata, record.id)
-            delete!(workspace.index.analysis_errors, record.id)
-        end
-    end
-    delete!(workspace.index.analysis_errors, source_ref)
-    for record in resolved
-        items[record.id] = record
-        delete!(workspace.index.item_metadata, record.id)
-    end
-    if isempty(resolved)
-        delete!(workspace.index.items_by_source, source_item_key_value)
-    else
-        workspace.index.items_by_source[source_item_key_value] =
-            String[record.id for record in resolved]
-    end
-    filter!(id -> haskey(items, id), workspace.selection.item_ids)
-    new_keys = affected_collection_keys(collections, resolved)
-    invalidated = unique([old_keys; new_keys])
-    analysis_cleared = false
-    for collection_key in invalidated
-        haskey(collections.records, collection_key) || continue
-        analysis_cleared |= !isempty(collections.records[collection_key].analysis)
-        clear_collection_analysis!(collections, collection_key)
-    end
-    if analysis_cleared || any(key -> !haskey(collections.records, key), old_keys)
-        refresh_collection_metadata_keys!(workspace.index)
-    elseif next_collection_key < collections.next_key
-        include_collection_metadata_keys!(
-            workspace.index,
-            next_collection_key:(collections.next_key - 1),
-        )
-    end
-    return resolved, invalidated
-end
-
-"""
-Submit one source-change batch to the work graph and remove deleted published output. Cache
-deletes are buffered mutations, so ordering against a later source job is kept by the buffers:
-a delete enqueued here always precedes the rows a later source job appends.
+Apply one batch of source changes to the catalog and the cache. A new or changed source item gets a
+job; a removed one loses its items. The caller holds the catalog lock. Cache deletes are buffered
+mutations, so a delete made here always precedes the rows a later source job appends.
 """
 function ingest_source_changes!(
     workspace::Workspace,
     changes::SourceChanges,
     status::Union{Nothing,ProjectCacheStatus},
 )::Bool
+    catalog = workspace.catalog
+    cache = workspace.cache.db
     changed = false
     for removed in changes.removals
-        removed_key = source_item_key(workspace, removed)
-        removed_key === nothing && continue
-        old_records, invalidated = remove_source_item_output!(workspace, removed_key)
-        delete_source_item!(workspace.cache.db, removed_key, old_records)
-        delete_collection_metadata!(workspace.cache.db, invalidated)
-        delete_pruned_collection_records!(workspace, invalidated)
-        enqueue_dependent_subtree!(workspace, ItemRecord[]; collection_keys=invalidated)
-        lock(workspace.work.lock) do
-            delete!(workspace.work.source_items, removed_key)
+        saved = DataBrowserCache.source_item_key(cache, removed)
+        saved === nothing && continue
+        source = lookup(catalog, SourceKey, removed)
+        if source !== nothing
+            remove_items!(workspace, source)
+            delete!(catalog, source)
+            delete!(workspace.source_items, source)
+            delete!(workspace.source_locks, source)
+            filter!(target -> first(target) != source, workspace.errors)
         end
+        delete_source_item!(cache, saved, String[])
         changed = true
     end
-    isempty(changes.upserts) || lock(workspace.work.lock) do
-        for source_item in changes.upserts
-            source_item_key_value =
-                source_item_key!(workspace.cache.db, id(source_item); mint=true)
-            old_records = source_item_records(workspace.index, source_item_key_value)
-            # Fresh upserts have no published output and no cache row — skip the no-op delete so
-            # discovery does not flood the write buffer with BUFFER_DELETE for every new file.
-            if !isempty(old_records) ||
-               cache_knows_source(workspace.cache.db, source_item_key_value)
-                delete_source_item!(workspace.cache.db, source_item_key_value, old_records)
-            end
-            workspace.work.source_items[source_item_key_value] = source_item
-            store_source_identity!(workspace.cache.db, source_item, id(source_item))
-            source_job = WorkKey(SOURCE_EXPAND, source_item_key_value)
-            enqueue_work!(workspace, source_job, bump_revision!(workspace.work, source_job);
-                priority=3)
-            changed = true
+    for source_item in changes.upserts
+        saved = source_item_key!(cache, id(source_item); mint=true)
+        source = get!(catalog, SourceKey, id(source_item))
+        # A new source item has no saved rows; skipping the delete keeps discovery from filling the
+        # write buffer with one delete for every new file.
+        if !isempty(Catalogs.items(catalog, source)) || cache_knows_source(cache, saved)
+            remove_items!(workspace, source)
+            delete_source_item!(cache, saved, String[])
         end
+        workspace.source_items[source] = source_item
+        store_source_identity!(cache, source_item)
+        # The job of a source item that was just added is already queued; this queues it again for
+        # one that had a result, and discards the result of one that runs.
+        Catalogs.invalidate!(catalog, source, SOURCE_READ)
+        changed = true
     end
-    if changes.metadata_changed
-        stale = @timed_dbg "reconcile_metadata" reconcile_source_metadata_cache!(workspace)
-        isempty(stale) || @timed_dbg "invalidate_work" invalidate_records_work!(workspace, stale)
-        changed = changed || !isempty(stale)
-    end
+    changes.metadata_changed &&
+        (changed |= @timed_dbg "refresh_source_metadata" refresh_source_metadata!(workspace))
+    forget_stale!(workspace)
     status === nothing || (workspace.cache.status = status)
     return changed
 end
 
 """
-Start one source scan that progressively populates the workspace index and cache.
+Start one source scan that progressively fills the catalog and the cache.
 
 The scan first surfaces any already-cached index for an instant first view, then walks the source
 while only fingerprinting new or stale items into a queue — so `sources_found` advances at walk
 speed. After the walk, a publisher task drains that queue in small batches so source jobs
 start immediately and overlap the remaining enqueue (without serializing the walk behind
-`publish_lock` / ingest or contending with source jobs on the filesystem). Removals and
+the catalog lock or contending with source jobs on the filesystem). Removals and
 source-metadata reconcile run in a final batch after the publisher drains. Published items
 stream into the workspace and a bounded cache-write batch that flushes by source-item count, cached
 row count, or age. `rebuild=true` first wipes the cache and ignores the prior scan, forcing every
@@ -628,9 +393,9 @@ function scan_source!(
 )::Nothing
     cachedb = workspace.cache.db
     scan = workspace.scan
-    # Scan setup runs under the publish lock so cancel_scan!'s running check can never interleave
+    # Scan setup runs under the catalog lock so cancel_scan!'s running check can never interleave
     # with the transition into :discovering.
-    scan_epoch, cancel_source = lock(workspace.publish_lock) do
+    scan_epoch, cancel_source = @lock workspace.catalog.lock begin
         source_scan_running(workspace) && error("A source scan is already running")
         workspace.closed && error("The workspace is closed")
         scan.epoch += 1
@@ -641,8 +406,6 @@ function scan_source!(
         workspace.cache_error = ""
         workspace.cache.operation = rebuild ? :rebuild : :update
         reset_build_metrics!(workspace.metrics)
-        # Errors reset so stale ones from the previous scan never linger.
-        empty!(workspace.index.analysis_errors)
         cancel_source = CancellationTokenSource(get_token(workspace.cancel_source))
         scan.cancel_token = cancel_source
         changed!(workspace)
@@ -681,7 +444,7 @@ function scan_source!(
                 any_upserts = Ref(false)
                 streamed = Ref(false)
                 # Walk only fingerprints into an unbounded channel — do not publish yet. Starting
-                # source jobs during the walk contends on the same filesystem (and publish_lock)
+                # source jobs during the walk contends on the same filesystem (and the catalog lock)
                 # and made discovery unusably slow on large trees. After the walk, a publisher task
                 # drains batches so source jobs overlap the remaining enqueue, not the walk.
                 upsert_batch = 32
@@ -699,11 +462,9 @@ function scan_source!(
                     push!(seen, id_value)
                     current_fingerprint = fingerprint(item)
                     current[id_value] = current_fingerprint
-                    existing_key = DataBrowserCache.source_item_key(cachedb, id_value)
-                    if existing_key !== nothing
-                        lock(workspace.work.lock) do
-                            get!(workspace.work.source_items, existing_key, item)
-                        end
+                    @lock workspace.catalog.lock begin
+                        known = lookup(workspace.catalog, SourceKey, id_value)
+                        known === nothing || get!(workspace.source_items, known, item)
                     end
                     # A `nothing` fingerprint means the source cannot prove the item is unchanged,
                     # so it is always re-read.
@@ -759,11 +520,11 @@ function scan_source!(
                 status = ProjectCacheStatus(
                     length(current),
                     length(previous),
-                    length(current) - length(workspace.index.analysis_errors),
+                    length(current) - length(workspace.errors),
                     stale,
                     new_items,
                     length(removals),
-                    length(workspace.index.analysis_errors),
+                    length(workspace.errors),
                 )
                 is_cancellation_requested(scan_token) &&
                     throw(OperationCanceledException(scan_token))
@@ -805,451 +566,128 @@ query_items(workspace::Workspace, predicate::AbstractString)::Vector{String} =
     query_items(workspace.cache.db, predicate)
 
 """Return the stable IDs of all items currently published in a workspace."""
-function query_items(workspace::Workspace)::Vector{String}
-    ids = lock(workspace.publish_lock) do
-        collect(keys(workspace.index.items))
-    end
-    return sort!(ids)
-end
+query_items(workspace::Workspace)::Vector{String} =
+    sort!(String[id(workspace, item) for item in items(workspace)])
 
 """Resize this workspace's DuckDB cache buffer-pool limit (MiB) live; suits a GUI control."""
 set_cache_memory_limit!(workspace::Workspace, mib::Integer)::Int =
     set_cache_memory_limit!(workspace.cache.db, mib)
 
-"""Replace the workspace item index with one complete collection record index."""
-function replace_item_index!(
-    workspace::Workspace,
-    collections::CollectionIndex,
-    records::Vector{ItemRecord},
-)::Nothing
-    items = Dict{String,ItemRecord}()
-    sizehint!(items, length(records))
-    items_by_source = Dict{Int64,Vector{String}}()
-    metadata_keys = Set{Symbol}()
-    for item in records
-        haskey(items, item.id) && error("Duplicate item id generated during scan: $(item.id)")
-        items[item.id] = item
-        push!(get!(() -> String[], items_by_source, item.source_item_key), item.id)
-    end
-    for collection_record in values(collections.records)
-        union!(metadata_keys, keys(collection_record.own_metadata))
-        union!(metadata_keys, keys(collection_record.analysis))
-    end
-    item_metadata = Dict{String,Dict{Symbol,Any}}()
-    for item in records
-        previous = get(workspace.index.item_metadata, item.id, nothing)
-        previous === nothing || (item_metadata[item.id] = previous)
-    end
-    workspace.index = WorkspaceIndex(
-        collections,
-        items,
-        item_metadata,
-        sort!(collect(metadata_keys); by=String),
-        workspace.index.analysis_errors,
-        items_by_source,
-    )
-    return nothing
-end
-
-"""Whether one loaded cache row is `RESULT_READY`."""
-function cache_index_ready(
-    index::ProjectCacheIndex,
-    kind::PipelineStage,
-    entity::Union{String,Int64},
-)::Bool
-    key_entity = entity
-    state = get(index.result_states, CacheResultKey(kind, key_entity), nothing)
-    state !== nothing && CacheResultStatus(state.status) === RESULT_READY
-end
-
 """
-The words shown before a failure message. Source failures use plain words, because the source job
-also fails for projects that never define `expand`.
+The words shown before the message of a failed source stage. They are plain words, because the
+source job also fails for projects that never define `expand`.
 """
 failure_prefix(stage::PipelineStage)::String =
-    stage === SOURCE_READ ? "read failed" :
-    stage === SOURCE_EXPAND ? "could not create items" : string(stage)
+    stage === SOURCE_READ ? "read failed: " :
+    stage === SOURCE_EXPAND ? "could not create items: " : ""
 
-"""Surface the cached index as an instant, independent first view, before the fresh scan refines it."""
-function apply_cache_index!(
-    workspace::Workspace,
-    index::ProjectCacheIndex,
-)::Nothing
+"""
+Fill the empty catalog with the rows the cache saved, as the first view before the scan checks
+the source. A stage takes its saved result only while its inputs have theirs, so every other stage
+runs again. The caller holds the catalog lock.
+"""
+function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     index.identity.source_id == source_id(workspace.source) ||
         error("Loaded cache belongs to $(index.identity.source_id), not $(source_id(workspace.source))")
     workspace.cache.identity = index.identity
-
-    collections = copy(index.source.collections)
-    replace_item_index!(workspace, collections, copy(index.source.items))
-    # The cache restores the computed metadata layer; source-table diff before seed skips stale work.
-    workspace.index.item_metadata = Dict{String,Dict{Symbol,Any}}(
-        id => copy(dict) for (id, dict) in index.item_metadata)
-
-    workspace.index.analysis_errors = Dict{Union{String,Int64},String}(index.analysis_errors)
-    for state in values(index.result_states)
-        CacheResultStatus(state.status) === RESULT_FAILED || continue
-        entity = PipelineStage(state.kind) in (SOURCE_READ, SOURCE_EXPAND) ?
-            source_item_id(workspace, state.entity) : state.entity
-        workspace.index.analysis_errors[entity] = failure_prefix(PipelineStage(state.kind)) *
-            ": " * something(state.message, "cached work failed")
+    catalog = workspace.catalog
+    cache = workspace.cache.db
+    state(stage, entity) = get(index.result_states, CacheResultKey(stage, entity), nothing)
+    failed(saved) = saved !== nothing && CacheResultStatus(saved.status) === RESULT_FAILED
+    # Give one stage its saved result, and return whether it is fresh now.
+    function restore(key, stage, entity; metadata=nothing)::Bool
+        saved = state(stage, entity)
+        saved === nothing && return false
+        restore!(catalog, key, stage; failed=failed(saved), metadata) || return false
+        failed(saved) && (workspace.errors[(key, stage)] =
+            failure_prefix(stage) * something(saved.message, "saved work failed"))
+        return !failed(saved)
     end
-    if workspace.background_processing
-        for record in values(workspace.index.items)
-            cache_index_ready(index, ITEM_PROCESS, record.id) ||
-                enqueue_processing!(workspace, record)
-            cache_index_ready(index, ITEM_ANALYZE, record.id) ||
-                enqueue_item_analysis!(workspace, record)
+
+    restored = Dict{Int64,CollectionKey}()
+    for saved in index.collections
+        above = saved.parent_key === nothing ? ROOT : restored[saved.parent_key]
+        collection = get!(catalog, above, reconstruct(saved.type, saved.id, saved.metadata))
+        metadata!(catalog, collection, :source, saved.source_metadata)
+        restored[saved.key] = collection
+        workspace.collection_keys[collection] = saved.key
+        workspace.next_collection_key = max(workspace.next_collection_key, saved.key + 1)
+    end
+
+    saved_items = Dict{Int64,Vector{eltype(index.items)}}()
+    foreach(item -> push!(get!(valtype(saved_items), saved_items, item.source_key), item), index.items)
+    for (saved, source_id_value) in index.sources
+        produced = get(saved_items, saved, valtype(saved_items)())
+        # A source item whose job did not finish is left to the scan, which has its value.
+        if !source_complete(cache, saved)
+            isempty(produced) ||
+                delete_source_output!(cache, saved, String[item.id for item in produced])
+            continue
         end
-        for collection_key_value in keys(workspace.index.collections.records)
-            member_ids = collection_item_ids(workspace.index.collections, collection_key_value)
-            isempty(member_ids) && continue
-            members = ItemRecord[
-                workspace.index.items[id] for id in member_ids
-                if haskey(workspace.index.items, id)
-            ]
-            collection_key = collection_key_value
-            if !cache_index_ready(index, COLLECTION_PROCESS, collection_key) ||
-                    !cache_index_ready(index, COLLECTION_ANALYZE, collection_key)
-                enqueue_collection_work!(workspace, [collection_key]; supersede=false)
-            end
-        end
-    end
-    return nothing
-end
-
-"""Queue item analysis after processing succeeds."""
-function enqueue_item_analysis!(workspace::Workspace, record::ItemRecord)::Nothing
-    key = WorkKey(ITEM_ANALYZE, record.id)
-    enqueue_work!(
-        workspace,
-        key,
-        current_revision(workspace.work, key);
-        priority=2,
-        dependencies=WorkKey[WorkKey(ITEM_PROCESS, record.id)],
-    )
-    return nothing
-end
-
-"""
-Enqueue process/analyze work for a set of collections, gated on their members' item-analyze nodes.
-
-A collection with a registered `process` recipe queues COLLECTION_PROCESS; its COLLECTION_ANALYZE
-then depends on that node, else directly on the member ITEM_ANALYZE nodes. Cached result rows are
-cleared so a fresh fold recomputes. `supersede` picks the revision policy — the one axis that
-separates the two callers: `false` joins existing work at its current revision (a member finished, or
-reopen gap-fill); `true` bumps to a fresh revision to replace work running on stale inputs
-(invalidation).
-"""
-function enqueue_collection_work!(
-    workspace::Workspace,
-    collection_keys;
-    supersede::Bool,
-)::Nothing
-    revision(key) = supersede ?
-        bump_revision!(workspace.work, key) : current_revision(workspace.work, key)
-    for collection_key in unique(collection_keys)
-        haskey(workspace.index.collections.records, collection_key) || continue
-        members = ItemRecord[
-            workspace.index.items[id]
-            for id in collection_item_ids(workspace.index.collections, collection_key)
-            if haskey(workspace.index.items, id)
-        ]
-        isempty(members) && continue
-        # Collection process reads processed payloads. Do not queue until every current member
-        # has one; this function runs again when the next member finishes.
-        all(record -> cache_work_status(
-                workspace, WorkKey(ITEM_PROCESS, record.id)) === :ready, members) || continue
-        member_analyze = WorkKey[
-            WorkKey(ITEM_ANALYZE, record.id) for record in members]
-        process_key = WorkKey(COLLECTION_PROCESS, collection_key)
-        analyze_key = WorkKey(COLLECTION_ANALYZE, collection_key)
-        if !supersede
-            process_done = cache_work_status(workspace, process_key) === :ready
-            analyze_done = cache_work_status(workspace, analyze_key) === :ready
-            already_live = lock(workspace.work.lock) do
-                get(workspace.work.nodes, process_key, nothing) !== nothing ||
-                get(workspace.work.nodes, analyze_key, nothing) !== nothing
-            end
-            process_done && analyze_done && !already_live && continue
-        end
-        supersede && clear_work_result_state!(workspace, process_key)
-        enqueue_work!(
-            workspace, process_key, revision(process_key);
-            priority=1, dependencies=member_analyze,
-        )
-        supersede && clear_work_result_state!(workspace, analyze_key)
-        enqueue_work!(
-            workspace, analyze_key, revision(analyze_key);
-            priority=1,
-            dependencies=WorkKey[WorkKey(COLLECTION_PROCESS, collection_key)],
-        )
-    end
-    return nothing
-end
-
-"""
-Apply one successful work completion to the WorkspaceIndex.
-
-Runs under the publish lock and stays cheap: the worker already persisted its own payload before
-completing, and every cache mutation reachable from here is a non-blocking buffered enqueue.
-"""
-function publish_work_success!(
-    workspace::Workspace,
-    node::WorkNode,
-    result,
-)::Nothing
-    key = node.key
-    if key.kind === SOURCE_EXPAND
-        expansion = result.expansion::SourceItemExpansion
-        records = expansion.records
-        source_ref = source_item_id(workspace, key.entity::Int64)
-        old_records = source_item_records(workspace.index, key.entity::Int64)
-        resolved, invalidated = @timed_dbg publish_source_item_records!(
-                workspace, key.entity::Int64, records, expansion.collection_paths)
-        isempty(old_records) || delete_source_output!(workspace.cache.db, key.entity, old_records)
-        conflicts = store_source_items!(
-            workspace.cache.db,
-            result.source_item,
-            expansion.source_item_label,
-            resolved,
-            item_data.(expansion.items),
-        )
-        store_collection_index!(workspace.cache.db, workspace.index.collections, resolved)
-        delete_collection_metadata!(workspace.cache.db, invalidated)
-        delete_pruned_collection_records!(workspace, invalidated)
-        enqueue_dependent_subtree!(workspace, resolved; collection_keys=invalidated)
-        publish_metadata_conflicts!(workspace, source_ref, key.kind, conflicts)
-    elseif key.kind === ITEM_PROCESS
-        # The worker stored the processed payload before completing, so item analysis becomes
-        # runnable the moment this node finishes and late joiners reading the cache find the data.
-        record = get(workspace.index.items, key.entity, nothing)
-        if record !== nothing
-            publish_item_label!(workspace, record, result.record.label)
-            publish_processed_metadata_layer!(workspace, record, result.record)
-            clear_work_result_state!(workspace, WorkKey(ITEM_ANALYZE, record.id))
-            enqueue_item_analysis!(workspace, record)
-        end
-    elseif key.kind === ITEM_ANALYZE
-        record = workspace.index.items[key.entity]
-        publish_item_label!(workspace, record, result.label)
-        publish_item_metadata_layer!(workspace, record, result.metadata)
-        enqueue_collection_work!(
-            workspace,
-            affected_collection_keys(workspace.index.collections, [record]);
-            supersede=false,
-        )
-    elseif key.kind === COLLECTION_PROCESS
-        # Rewritten member payloads were persisted worker-side before publication.
-        nothing
-    else
-        collection_key = key.entity::Int64
-        haskey(workspace.index.collections.records, collection_key) || return nothing
-        analysis = metadata_dict(result)
-        set_collection_analysis!(workspace.index.collections, collection_key, analysis)
-        dropped = store_collection_metadata!(
-            workspace.cache.db,
-            collection_key,
-            analysis,
-        )
-        publish_metadata_conflicts!(workspace, collection_key, key.kind, dropped)
-    end
-    return nothing
-end
-
-"""Replace one item's label with the label computed by its latest stage."""
-function publish_item_label!(workspace::Workspace, record::ItemRecord, new_label::String)::Nothing
-    record.label == new_label && return nothing
-    updated = ItemRecord(record; label=new_label)
-    workspace.index.items[record.id] = updated
-    store_item_label!(workspace.cache.db, updated)
-    return nothing
-end
-
-"""
-Replace one item's computed metadata with the layer produced by its latest `process` call.
-
-Replacement removes obsolete analysis values when processing is retried. The cache row stores the
-complete delivered metadata but does not mark item analysis complete.
-"""
-function publish_processed_metadata_layer!(
-    workspace::Workspace,
-    record::ItemRecord,
-    processed_record::ItemRecord,
-)::Nothing
-    base = effective_metadata(workspace.index.collections, record)
-    computed = MetadataDict(
-        name => value
-        for (name, value) in processed_record.metadata
-        if !haskey(base, name) || !isequal(base[name], value)
-    )
-    if isempty(computed)
-        delete!(workspace.index.item_metadata, record.id)
-    else
-        workspace.index.item_metadata[record.id] = computed
-    end
-    dropped = store_item_metadata_layer!(
-        workspace.cache.db, record, processed_record.metadata)
-    publish_metadata_conflicts!(workspace, record.id, ITEM_PROCESS, dropped)
-    return nothing
-end
-
-"""
-Publish one item's computed metadata layer to the index and cache, surfacing any wide-cache type
-conflict through the analysis-error channel.
-"""
-function publish_item_metadata_layer!(
-    workspace::Workspace,
-    record::ItemRecord,
-    computed,
-)::Nothing
-    layer = get!(() -> MetadataDict(), workspace.index.item_metadata, record.id)
-    merge!(layer, metadata_dict(computed))
-    dropped = store_item_metadata!(
-        workspace.cache.db,
-        record,
-        delivered_metadata(workspace, record, workspace.index.collections),
-    )
-    publish_metadata_conflicts!(workspace, record.id, ITEM_ANALYZE, dropped)
-    return nothing
-end
-
-function publish_metadata_conflicts!(
-    workspace::Workspace,
-    entity::Union{String,Int64},
-    stage,
-    conflicts::Vector{String},
-)::Nothing
-    isempty(conflicts) && return nothing
-    message = join(conflicts, "; ")
-    workspace.index.analysis_errors[entity] = message
-    @warn(
-        "Workspace metadata conflict",
-        entity,
-        stage=stage,
-        message=message,
-    )
-    return nothing
-end
-
-"""Apply one failed work completion to WorkspaceIndex and ProjectCache."""
-function publish_work_failure!(
-    workspace::Workspace,
-    node::WorkNode,
-    failure::CapturedException,
-)::Bool
-    key = node.key
-    if failure.ex isa OperationCanceledException
-        # Cancellation is not an analysis error: finish the node and answer waiters with the
-        # cancellation, but record nothing in the index or the cache failure results.
-        waiters = finish_work_node!(workspace, node)
-        for waiter in waiters
-            put!(waiter, ProcessingResult(nothing, failure))
-        end
-        return false
-    end
-    message = sprint(showerror, failure.ex)
-    record = key.kind in (ITEM_PROCESS, ITEM_ANALYZE) ?
-        get(workspace.index.items, key.entity, nothing) : nothing
-    if key.kind === SOURCE_EXPAND
-        source_key = key.entity::Int64
-        # The source job has already recorded a failed `read`; any other failure is its items'.
-        read_state = cached_result_state(workspace.cache.db, SOURCE_READ, source_key)
-        stage = read_state !== nothing && CacheResultStatus(read_state.status) === RESULT_FAILED ?
-            SOURCE_READ : SOURCE_EXPAND
-        source_ref = source_item_id(workspace, source_key)
-        old_records, invalidated = remove_source_item_output!(workspace, source_key)
-        delete_source_output!(workspace.cache.db, source_key, old_records)
-        delete_collection_metadata!(workspace.cache.db, invalidated)
-        delete_pruned_collection_records!(workspace, invalidated)
-        enqueue_dependent_subtree!(workspace, ItemRecord[]; collection_keys=invalidated)
-        workspace.index.analysis_errors[source_ref] = failure_prefix(stage) * ": " * message
-        stage === SOURCE_EXPAND &&
-            store_result_failure!(workspace.cache.db, SOURCE_EXPAND, source_key, source_key, message)
-        @error("Source stage failed", source_item=source_ref, stage,
-            exception=(failure.ex, failure.processed_bt))
-    else
-        source_item_key_value = record === nothing ? Int64(0) : record.source_item_key
-        cache_entity = key.kind in (COLLECTION_PROCESS, COLLECTION_ANALYZE) ?
-            key.entity::Int64 : key.entity::String
-        store_result_failure!(
-            workspace.cache.db,
-            key.kind,
-            cache_entity,
-            source_item_key_value,
-            message,
-        )
-        workspace.index.analysis_errors[key.entity] = message
-        @warn(
-            "Workspace work failed",
-            entity=key.entity,
-            stage=key.kind,
-            exception=(failure.ex, failure.processed_bt),
-        )
-        key.kind === ITEM_ANALYZE && record !== nothing &&
-            enqueue_collection_work!(
-                workspace,
-                affected_collection_keys(workspace.index.collections, [record]);
-                supersede=false,
-            )
-    end
-    waiters = finish_work_node!(workspace, node)
-    for waiter in waiters
-        put!(waiter, ProcessingResult(nothing, failure))
-    end
-    return true
-end
-
-"""Commit one finished work revision the moment its worker completes; stale revisions are ignored."""
-function publish_work_completion!(
-    workspace::Workspace,
-    node::WorkNode,
-    result,
-)::Nothing
-    key = node.key
-    lock(workspace.publish_lock) do
-        work_node_current(workspace, node) || return
-        if result isa CapturedException
-            publish_work_failure!(workspace, node, result)
+        source = get!(catalog, SourceKey, source_id_value)
+        publish!(catalog, source, ItemEntry[
+            ItemEntry(
+                item.id, item.label,
+                item.collection_key === nothing ? ROOT : restored[item.collection_key],
+                item.type, item.metadata)
+            for item in produced])
+        # The cache keeps a read result in memory only, so a read that did not fail counts as
+        # fresh: the job reads again when it has to.
+        if failed(state(SOURCE_READ, saved))
+            restore(source, SOURCE_READ, saved)
         else
-            publish_work_success!(workspace, node, result)
-            waiters = finish_work_node!(workspace, node)
-            item = key.kind === ITEM_PROCESS ? result.item : nothing
-            for waiter in waiters
-                put!(waiter, ProcessingResult(item, nothing))
-            end
+            restore!(catalog, source, SOURCE_READ)
+            restore(source, SOURCE_EXPAND, saved)
         end
-        finish_publish!(workspace)
     end
+    for saved in index.items
+        item = lookup(catalog, ItemKey, saved.id)
+        item === nothing && continue
+        # The cache saves the metadata an item is delivered with. What its stages produced is the
+        # part that its collections and its source item do not give it.
+        base = metadata(workspace, item; through=SOURCE_EXPAND)
+        computed = MetadataDict(
+            name => value for (name, value) in saved.delivered
+            if !haskey(base, name) || !isequal(base[name], value))
+        # The saved metadata is not split by stage, so the last stage that finished takes it.
+        analyzed = state(ITEM_ANALYZE, saved.id) !== nothing
+        restore(item, ITEM_PROCESS, saved.id; metadata=analyzed ? MetadataDict() : computed) &&
+            restore(item, ITEM_ANALYZE, saved.id; metadata=computed)
+    end
+    # A collection comes after its parent, so the reverse order restores members first.
+    for saved in reverse(index.collections)
+        collection = restored[saved.key]
+        restore(collection, COLLECTION_PROCESS, saved.key) &&
+            restore(collection, COLLECTION_ANALYZE, saved.key; metadata=saved.analysis)
+        # A collection whose items were all left to the scan is empty.
+        delete!(catalog, collection)
+    end
+    forget_stale!(workspace)
     return nothing
 end
 
-"""Advance idle-gated work and wake blocked waiters after one publication (publish lock held)."""
+"""Record that the workspace changed and wake the tasks that wait for it. The caller holds the catalog lock."""
 function finish_publish!(workspace::Workspace)::Nothing
     changed!(workspace)
-    notify(workspace.idle_condition; all=true)
+    notify(workspace.catalog.changed)
     return nothing
 end
 
 """
 Block until the workspace has no running scan and no queued or running work, or until `timeout`
-seconds pass. Purely event-driven: every publication notifies the workspace idle condition. Cache
+seconds pass. Purely event-driven: every change to the catalog and to the scan wakes it. Cache
 writes still flushing do not delay idleness — reads overlay the write buffer, and closing the
 workspace drains it.
 """
 function wait_workspace_idle!(workspace::Workspace; timeout::Real=60)::Workspace
     # TODO: Surface timeout through the public API instead of returning an unfinished workspace.
     deadline = time() + Float64(timeout)
-    lock(workspace.publish_lock) do
-        remaining = deadline - time()
-        (!engine_work_running(workspace) || remaining <= 0) && return
-        timer = Timer(remaining) do _
-            lock(workspace.publish_lock) do
-                notify(workspace.idle_condition; all=true)
-            end
-        end
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        timer = Timer(_ -> @lock(catalog.lock, notify(catalog.changed)), max(deadline - time(), 0))
         try
             while engine_work_running(workspace) && time() < deadline
-                wait(workspace.idle_condition)
+                wait(catalog.changed)
             end
         finally
             close(timer)
@@ -1265,17 +703,17 @@ function publish_cache_state!(
     state::Symbol,
     index::Union{Nothing,ProjectCacheIndex},
 )::Nothing
-    lock(workspace.publish_lock) do
-        scan_epoch == workspace.scan.epoch || return
+    @lock workspace.catalog.lock begin
+        scan_epoch == workspace.scan.epoch || return nothing
         if index === nothing
-            replace_item_index!(
-                workspace,
-                CollectionIndex(source_id(workspace.source)),
-                ItemRecord[],
-            )
-            empty!(workspace.index.analysis_errors)
+            # A rebuild starts from an empty cache, so the catalog loses its rows too.
+            catalog = workspace.catalog
+            foreach(source -> delete!(catalog, source), keys(catalog, SourceKey))
+            foreach(empty!, (workspace.source_items, workspace.errors, workspace.wanted))
+            empty!(workspace.selection.item_ids)
+            forget_stale!(workspace)
         else
-            apply_cache_index!(workspace, index)
+            restore!(workspace, index)
         end
         workspace.cache_state = state
         state == :missing && workspace.cache.operation != :rebuild &&
@@ -1292,8 +730,8 @@ function publish_source_changes!(
     changes::SourceChanges,
     status::Union{Nothing,ProjectCacheStatus}=nothing,
 )::Nothing
-    lock(workspace.publish_lock) do
-        scan_epoch == workspace.scan.epoch || return
+    @lock workspace.catalog.lock begin
+        scan_epoch == workspace.scan.epoch || return nothing
         ingest_source_changes!(workspace, changes, status)
         workspace.cache_state = :ready
         finish_publish!(workspace)
@@ -1306,8 +744,8 @@ function publish_source_event!(
     workspace::Workspace,
     changes::SourceChanges,
 )::Nothing
-    lock(workspace.publish_lock) do
-        is_cancellation_requested(get_token(workspace.cancel_source)) && return
+    @lock workspace.catalog.lock begin
+        is_cancellation_requested(get_token(workspace.cancel_source)) && return nothing
         workspace.source_error = ""
         ingest_source_changes!(workspace, changes, nothing)
         finish_publish!(workspace)
@@ -1320,8 +758,8 @@ function publish_source_event!(
     workspace::Workspace,
     error::SourceError,
 )::Nothing
-    lock(workspace.publish_lock) do
-        is_cancellation_requested(get_token(workspace.cancel_source)) && return
+    @lock workspace.catalog.lock begin
+        is_cancellation_requested(get_token(workspace.cancel_source)) && return nothing
         workspace.source_error = error.message
         finish_publish!(workspace)
     end
@@ -1329,11 +767,11 @@ function publish_source_event!(
 end
 
 """
-Publish the end of one scan job: finished normally, canceled, or failed.
+Publish the end of one scan: finished normally, canceled, or failed.
 
 This is the single settlement point for `scan.state`: the scan task reaches it on every exit path,
 and it assigns a terminal state unconditionally, so a cancel request that lands between the last
-progress publication and this one can never leave the job stuck in `:canceling`.
+progress publication and this one can never leave the scan stuck in `:canceling`.
 """
 function publish_scan_end!(
     workspace::Workspace,
@@ -1343,8 +781,8 @@ function publish_scan_end!(
     error=nothing,
     backtrace=nothing,
 )::Nothing
-    lock(workspace.publish_lock) do
-        scan_epoch == workspace.scan.epoch || return
+    @lock workspace.catalog.lock begin
+        scan_epoch == workspace.scan.epoch || return nothing
         # A scan that ends without reaching :ready must settle cache_state, or busy spins forever.
         if canceled
             workspace.scan.state = :canceled
@@ -1357,7 +795,7 @@ function publish_scan_end!(
             workspace.cache_state in (:loading, :writing, :canceling) &&
                 (workspace.cache_state = :error)
             @error(
-                "Source scan job failed",
+                "Source scan failed",
                 source=source_id(workspace.source),
                 exception=(error, backtrace),
             )
@@ -1374,7 +812,7 @@ end
     generation(workspace) -> Int
 
 A number that increases whenever the workspace publishes a change: new items, stage results,
-errors, scan progress, or queued work. Compare it with a value read earlier to tell whether anything
+errors, scan progress, or jobs that start and end. Compare it with a value read earlier to tell whether anything
 changed.
 """
 generation(workspace::Workspace)::Int = workspace.generation[]

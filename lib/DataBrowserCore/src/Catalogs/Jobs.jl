@@ -136,11 +136,50 @@ function invalidate!(catalog::Catalog, targets::AbstractVector{<:Tuple{Any,Pipel
             row in table(catalog, row) || continue
             old = status(catalog, row, row_stage)
             validity = old.validity == FRESH ? STALE : old.validity
+            (old.validity == FRESH || old.failed) && push!(catalog.stale, next)
             catalog[row, row_stage] = StageStatus(old; validity, failed=false, revision=old.revision + 1)
             append!(pending, dependents(catalog, row, row_stage))
         end
     end
     return catalog
+end
+
+"""
+    stale!(catalog) -> Vector{Target}
+
+The stages that lost a fresh or failed result since the last call, each time it happened, and
+`COLLECTION_PROCESS` of each collection that was removed. The caller removes what it saved for
+them, so that a saved result is never taken for a current one.
+"""
+function stale!(catalog::Catalog)::Vector{Target}
+    @lock catalog.lock begin
+        stale = copy(catalog.stale)
+        empty!(catalog.stale)
+        return stale
+    end
+end
+
+"""
+    restore!(catalog, key, stage; failed=false, metadata=nothing) -> Bool
+
+Give `stage` on `key` the result that a previous session saved for it: fresh with its output
+present, or failed. `metadata` is the metadata an item or collection stage produced. Returns
+`false`, and changes nothing, when an input of the stage is not fresh: the saved result was
+computed from other inputs.
+"""
+function restore!(
+    catalog::Catalog,
+    key::RowKey,
+    stage::PipelineStage;
+    failed::Bool=false,
+    metadata::Union{Nothing,AbstractDict{Symbol}}=nothing,
+)::Bool
+    @lock catalog.lock begin
+        ready(catalog, key, stage) || return false
+        metadata === nothing || store!(catalog, key, stage, metadata)
+        catalog[key, stage] = finished(status(catalog, key, stage), failed)
+        return true
+    end
 end
 
 """
@@ -175,6 +214,7 @@ function queue!(catalog::Catalog, key::RowKey, stage::PipelineStage)::Nothing
     get(catalog.queued, (key, stage), 0) == rank && return nothing
     push!(get!(Vector{Target}, catalog.queue, rank), (key, stage))
     catalog.queued[(key, stage)] = rank
+    notify(catalog.changed)
     return nothing
 end
 
@@ -252,6 +292,19 @@ function start!(catalog::Catalog, key::K, stage::PipelineStage)::Union{Job{K},No
 end
 
 start!(catalog::Catalog, source::SourceKey) = start!(catalog, source, SOURCE_EXPAND)
+
+"""
+    iscurrent(catalog, job) -> Bool
+
+Whether the result of `job` would be kept now: its row exists and its stage was not invalidated
+since the job started. A job checks this before it saves a large result.
+"""
+iscurrent(catalog::Catalog, job::Job)::Bool = @lock catalog.lock (
+    !job.finished && job.key in table(catalog, job.key) &&
+    status(catalog, job.key, job.stage).revision == job.revision)
+
+"""The number of jobs that wait in the queue."""
+queued(catalog::Catalog)::Int = @lock catalog.lock length(catalog.queued)
 
 """
 Mark `job` as finished and return whether its result is kept: its row exists and its stage was not
@@ -383,6 +436,10 @@ function request(catalog::Catalog, key::RowKey, stage::PipelineStage; priority::
     end
 end
 
+"""Whether a stage has stopped changing until something invalidates it: fresh, failed, blocked or removed."""
+settled(status::StageStatus)::Bool =
+    status.validity in (FRESH, REMOVED) || status.failed || status.blocked
+
 """
     wait(request) -> StageStatus
 
@@ -393,8 +450,7 @@ function Base.wait(request::Request)::StageStatus
     catalog = request.catalog
     @lock catalog.lock while true
         current = status(catalog, request.key, request.stage)
-        settled = current.validity in (FRESH, REMOVED) || current.failed || current.blocked
-        (settled || !request.open) && return current
+        (settled(current) || !request.open) && return current
         wait(catalog.changed)
     end
 end

@@ -1,6 +1,6 @@
 """
-Headless workspace engine: work graph and workspace lifecycle over the `DataBrowserAPI` item index
-and the `DataBrowserCache` store.
+Headless workspace engine: the catalog of rows and jobs, and the workspace lifecycle over it and
+the `DataBrowserCache` store.
 """
 module DataBrowserCore
 
@@ -11,7 +11,6 @@ using DataBrowserAPI: @timed_dbg
 
 include("project_engine.jl")
 include("Catalogs.jl")
-include("WorkGraph.jl")
 include("Workspace.jl")
 
 end
