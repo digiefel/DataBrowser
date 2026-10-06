@@ -16,6 +16,7 @@ using DataBrowserAPI:
     ITEM_ANALYZE,
     COLLECTION_PROCESS,
     COLLECTION_ANALYZE
+# TODO: step 3 deletes `ItemIndex`; give `metadata_dict` a home outside it.
 using DataBrowserAPI.ItemIndex: metadata_dict
 
 # Keys
@@ -282,10 +283,11 @@ end
 
 MetadataColumns() = MetadataColumns(Dict{Symbol,Vector}())
 
-"""The metadata of row `row`, without the names it has no value for."""
+"""The metadata of row `row`, without the names it has no value for. A vector value is a copy."""
 function Base.getindex(layer::MetadataColumns, row::Integer)::MetadataDict
     return MetadataDict(
-        name => column[row] for (name, column) in layer.columns
+        name => (column[row] isa Vector ? copy(column[row]) : column[row])
+        for (name, column) in layer.columns
         if row <= length(column) && column[row] !== missing)
 end
 
@@ -298,12 +300,23 @@ function Base.delete!(layer::MetadataColumns, row::Integer)::MetadataColumns
 end
 
 """
-Replace the metadata of row `row` with `values`. Returns the values that were not stored because
-their name holds values of another type.
+Replace the metadata of row `row` with `values`. The layer keeps its own copy of a vector value.
+
+Returns whether the stored metadata of the row changed, and the values that were not stored because
+their name holds values of another type. Values are compared with `isequal`, so `NaN` equals `NaN`.
 """
-function store!(layer::MetadataColumns, row::Integer, values::AbstractDict{Symbol})::Vector{MetadataConflict}
-    delete!(layer, row)
+function store!(
+    layer::MetadataColumns, row::Integer, values::AbstractDict{Symbol},
+)::Tuple{Bool,Vector{MetadataConflict}}
+    changed = false
     dropped = MetadataConflict[]
+    # A name clears when `values` has no value of the column's type for it.
+    for (name, column) in layer.columns
+        (row > length(column) || column[row] === missing) && continue
+        get(values, name, missing) isa nonmissingtype(eltype(column)) && continue
+        column[row] = missing
+        changed = true
+    end
     for (name, value) in values
         value === missing && continue
         column = get!(() -> Vector{Union{Missing,typeof(value)}}(), layer.columns, name)
@@ -313,9 +326,11 @@ function store!(layer::MetadataColumns, row::Integer, values::AbstractDict{Symbo
             continue
         end
         length(column) < row && append!(column, Iterators.repeated(missing, row - length(column)))
-        column[row] = value
+        isequal(column[row], value) && continue
+        column[row] = value isa Vector ? copy(value) : value
+        changed = true
     end
-    return dropped
+    return changed, dropped
 end
 
 # Tables
@@ -545,12 +560,14 @@ end
 
 """
 Replace the metadata of `key` in `layer`, and keep the values that were not stored for
-[`conflicts`](@ref). The caller holds the lock.
+[`conflicts`](@ref). Returns whether the stored metadata changed. The caller holds the lock.
 """
-function store!(catalog::Catalog, key::Union{ItemKey,CollectionKey}, layer::MetadataLayer, values::AbstractDict{Symbol})
-    dropped = store!(table(catalog, key).metadata[layer], key.index, values)
+function store!(
+    catalog::Catalog, key::Union{ItemKey,CollectionKey}, layer::MetadataLayer, values::AbstractDict{Symbol},
+)::Bool
+    changed, dropped = store!(table(catalog, key).metadata[layer], key.index, values)
     isempty(dropped) ? delete!(catalog.conflicts, (key, layer)) : (catalog.conflicts[(key, layer)] = dropped)
-    return nothing
+    return changed
 end
 
 """
@@ -599,11 +616,15 @@ function Base.get!(catalog::Catalog, parent::CollectionKey, value::AbstractColle
     @lock catalog.lock begin
         collections = catalog.collections
         parent in collections || throw(ArgumentError("the parent collection does not exist"))
+        # Everything project code provides is read before a row is added, so that an error in it
+        # leaves the catalog unchanged.
         entry = (parent, typeof(value), id(value))
+        value_label = label(value)
+        value_metadata = metadata_dict(metadata(value))
         key = get(collections.lookup, entry, nothing)
         if key === nothing
-            key = CollectionKey(length(push!(collections, id(value))))
-            push!(collections.labels, label(value))
+            key = CollectionKey(length(push!(collections, entry[3])))
+            push!(collections.labels, value_label)
             push!(collections.parent, parent)
             push!(collections.items, ItemKey[])
             push!(collections.children, CollectionKey[])
@@ -619,7 +640,7 @@ function Base.get!(catalog::Catalog, parent::CollectionKey, value::AbstractColle
             # The parent now waits for this collection, even while it stays empty.
             queue!(catalog, key, COLLECTION_PROCESS)
         end
-        metadata!(catalog, key, :collection, metadata_dict(metadata(value)))
+        metadata!(catalog, key, :collection, value_metadata)
         return key
     end
 end
@@ -629,16 +650,14 @@ end
 
 Replace one layer of the metadata of `collection`: `:source` for the metadata its source gives it,
 or `:collection` for the metadata of its value, which [`get!`](@ref) sets. When the layer changes,
-process becomes stale for every item below the collection, at any depth.
+process becomes stale for the collection and for every item below it, at any depth.
 """
 function metadata!(catalog::Catalog, collection::CollectionKey, layer::Symbol, values::AbstractDict{Symbol})::Nothing
     @lock catalog.lock begin
         collections = catalog.collections
-        # Compared after storing, so that a value that cannot be stored does not count as a change.
-        before = collections.metadata[layer][collection.index]
-        store!(catalog, collection, layer, values)
-        before == collections.metadata[layer][collection.index] && return nothing
-        below = Tuple{RowKey,PipelineStage}[]
+        store!(catalog, collection, layer, values) || return nothing
+        # The collection itself is named because it may hold no items.
+        below = Tuple{RowKey,PipelineStage}[(collection, COLLECTION_PROCESS)]
         pending = [collection]
         while !isempty(pending)
             next = pop!(pending)

@@ -329,3 +329,37 @@ end
     @test status(catalog, a, ITEM_PROCESS).validity == STALE
     @test status(catalog, b, ITEM_PROCESS).validity == FRESH
 end
+
+@testset "catalog: only a changed value of collection metadata makes work stale" begin
+    catalog = Catalog()
+    readings = [1.0, NaN]
+    wafer = get!(catalog, ROOT, TestCollection("wafer", "Wafer", MetadataDict(:readings => readings, :drift => NaN)))
+    file = get!(catalog, SourceKey, "data.csv")
+    compute!(catalog, file, [ItemEntry("a", "A", wafer, TestItem)])
+    a = lookup(catalog, ItemKey, "a")
+
+    get!(catalog, ROOT, TestCollection("wafer", "Wafer", MetadataDict(:readings => [1.0, NaN], :drift => NaN)))
+    @test status(catalog, a, ITEM_PROCESS).validity == FRESH
+
+    readings[1] = 2.0
+    get!(catalog, ROOT, TestCollection("wafer", "Wafer", MetadataDict(:readings => readings, :drift => NaN)))
+    @test status(catalog, a, ITEM_PROCESS).validity == STALE
+
+    # A collection without items has only its own work to redo.
+    empty = get!(catalog, ROOT, TestCollection("empty", "Empty"))
+    finish!(catalog, start!(catalog, empty, COLLECTION_PROCESS))
+    metadata!(catalog, empty, :source, MetadataDict(:oxide => "RuO2"))
+    @test status(catalog, empty, COLLECTION_PROCESS).validity == STALE
+end
+
+struct UnlabelledCollection <: AbstractCollection end
+DataBrowserAPI.id(::UnlabelledCollection) = "unlabelled"
+DataBrowserAPI.label(::UnlabelledCollection) = error("no label")
+
+@testset "catalog: a collection whose value fails is not added" begin
+    catalog = Catalog()
+    @test_throws ErrorException get!(catalog, ROOT, UnlabelledCollection())
+    run = get!(catalog, ROOT, TestCollection("run", "Run"))
+    @test children(catalog, ROOT) == [run]
+    @test label(catalog, run) == "Run"
+end
