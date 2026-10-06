@@ -48,7 +48,7 @@ flowchart TB
     end
 
     subgraph contracts["Contracts"]
-        api["<b>DataBrowserAPI</b><br/>AbstractProject, stage and source interfaces, ItemIndex"]
+        api["<b>DataBrowserAPI</b><br/>AbstractProject, stage, source and item interfaces"]
     end
 
     db --> recipes
@@ -110,14 +110,14 @@ flowchart LR
     read["read"]
     read_cache[("read input<br/>memory cache")]
     expand["expand<br/>(optional)"]
-    index[("item and collection<br/>index")]
+    index[("catalog<br/>source items, items, collections")]
     unprocessed[("unprocessed payload<br/>memory cache")]
     item_process["item process"]
     processed[("processed payload<br/>cache store")]
     item_analyze["item analyze"]
     item_metadata[("item metadata<br/>cache store")]
     collection_process["collection process"]
-    collection_payload[("collection-processed<br/>payload cache")]
+    collection_payload[("each collection's version<br/>of its items")]
     collection_analyze["collection analyze"]
     collection_metadata[("collection metadata<br/>cache store")]
     views["views and inspectors"]
@@ -136,7 +136,7 @@ flowchart LR
     processed --> collection_process
     collection_process --> collection_payload
     collection_payload --> collection_analyze
-    processed -.->|"when no collection rewrite"| collection_analyze
+    processed -.->|"items no collection changed"| collection_analyze
     collection_analyze --> collection_metadata
     processed --> views
     collection_payload --> views
@@ -155,6 +155,21 @@ holds zero or several, `read` returns the loaded value and `expand` turns it int
 may run again with the cached read input. Both run in one source job, which records whether reading
 succeeded (`SOURCE_READ`) and whether the items were created (`SOURCE_EXPAND`).
 
+The catalog (`DataBrowserCore.Catalogs`) holds one row for each source item, item and collection,
+and the status of each stage of each row. A row is named by a key (`SourceKey`, `ItemKey`,
+`CollectionKey`) that stays the same while the workspace is open. Setting a status queues the jobs
+that depend on it; workers take jobs from the catalog and report their results to it. The workspace
+accessors (`items`, `children`, `label`, `metadata` and others) read the catalog, and the browser
+passes keys.
+
+A collection is one node of the collection tree, identified by its parent and by the type and `id`
+of its value. An item goes where `collection(item)` says, or where `collection(source_item)` says
+when that is empty. A collection contains every item below it, at any depth. Collection `process`
+receives all of them and returns the collection's own version of each; the cache keeps that version
+next to the item's own processed data and never replaces it. A collection receives each item in the
+version the collections below gave it. Views and collection `analyze` use an item's latest version:
+the one of the outermost collection that changed it.
+
 It defines:
 
 - reading each source item
@@ -166,11 +181,11 @@ It defines:
 The workspace owns:
 
 - the open source(s) and their identity
-- the progressively populated item index
+- the catalog of source items, items and collections, filled as source jobs finish
 - selection identities
 - cache identity, freshness, storage, and repair
 - scanning, cache work, progress, errors, and cancellation
-- work dependency graph state and source fallback
+- the status of every stage, the job queue, and source fallback
 
 The browser owns windows, controls, filters, and temporary rendering state. Annotations store
 user-authored tags, notes, and other user-authored metadata. Other package modules own generic
@@ -180,7 +195,7 @@ beyond the contract methods it calls.
 
 ## Core–Cache boundary
 
-Core owns the workspace, index, scan, and work graph. Cache owns cache storage and returns data
+Core owns the workspace, catalog, and scan. Cache owns cache storage and returns data
 snapshots or payloads through its exported interface. Core does not inspect Cache stores or use its
 private buffer helpers.
 
@@ -191,7 +206,7 @@ payloads use resident `MemoryStore` buffers in both modes.
 
 ```mermaid
 flowchart LR
-    core["DataBrowserCore<br/>workspace and work graph"]
+    core["DataBrowserCore<br/>workspace and catalog"]
     scan["source scan"]
     cache["DataBrowserCache<br/>storage and cache buffers"]
     snapshot[("ProjectCacheIndex<br/>restoration snapshot")]
@@ -364,7 +379,6 @@ flowchart TD
     lcm -.->|"writes"| MD
     lcme -->|"Any"| pmv
     lcme -->|"readlines"| FSYS
-    csi -->|"AbstractCollection[]"| extCore
     msc -->|"Dict"| ocm
     msc -.->|"reads"| MD
     msc -->|"String"| iddc

@@ -175,23 +175,19 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 ### 0.2.3 One index, one status
 
-- [ ] Evaluate the work graph against cancellation, invalidation, priority, streaming, and
-  collection edge cases; finish with a bounded tuning pass or an explicit redesign. The redesign
-  is chosen: [plans/workspace-graph](plans/workspace-graph/workspace-graph.md).
+- [x] Evaluate the work graph against cancellation, invalidation, priority, streaming, and
+  collection edge cases. The outcome is a redesign: the workspace runs on one catalog of source
+  items, items and collections that also holds stage status and the job queue
+  ([plans/workspace-graph](plans/workspace-graph/workspace-graph.md)).
 - [x] Keep one live workspace index. Derive source-check status from scan completion and rebuild
   availability from workspace lifecycle. `SourceScan` remains the Cache load result only.
-- [ ] Add `WorkspaceIndex(source_id)`; replace the two hand-built empty-index constructions.
-- [ ] Name item metadata layers after the pipeline stages on `ItemRecord` and remove the parallel
-  `WorkspaceIndex.item_metadata` dict, so each item's own, process and analyze layers live in one
-  place.
+- [x] Name item metadata layers after the pipeline stages, so each item's own, process and analyze
+  layers live in one place: the catalog.
 - [ ] One status model. `scan.state` (7 symbols), `cache_state` (8), `cache.operation` (4), and the
   `status.label in ("Fresh", "Loaded", "Errors")` check in `workspace_status` collapse into one
   enum and one `busy` derivation; `source_scan_running`, `cache_work_running`,
-  `engine_work_running`, `workspace_busy` become one function. `analysis_errors` becomes a typed
-  collection, not `Dict{Union{String,Int64},String}`.
-- [ ] Small Core cleanups: `indexed_collection_path` and `collection_value` drop the `Workspace`
-  argument they ignore; the `ItemRecord` copy constructor stops `deepcopy`ing metadata by default;
-  the scan's `current::Dict{String,Any}` fingerprint map gets a type.
+  `engine_work_running`, `workspace_busy` become one function.
+- [ ] The scan's `current::Dict{String,Any}` fingerprint map gets a type.
 - [ ] Use compact integer item keys in SQL tables and other measured hot paths while retaining
   stable logical item identities at the project boundary.
 
@@ -206,11 +202,11 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] Extend the common reconstruction contract to collection analysis metadata. Collection
   reconstruction currently receives only `own_metadata`, without analysis results. User types
   decide which results to retain and how to represent them. Remove the registration adapter's
-  reliance on the internal `attach_record`/`ItemRecord` path for labels and collection paths;
+  reliance on the internal `adopt` hook for labels and collections;
   it must consume the same public contract as any other extension. Item payload and metadata
   delivery belongs to 0.2.2.
 - [ ] Preserve member metadata changes returned by collection `process`, including changes with
-  unchanged payloads. `run_collection_process` currently selects outputs only when `item_data`
+  unchanged payloads. The collection process job currently keeps an output only when `item_data`
   changes by identity, and collection completion publishes no member metadata or labels. Cover
   cumulative device history: successive measurements need different wakeup/fatigue counts even
   when their waveform payloads are unchanged.
@@ -220,7 +216,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
   `RegisteredReadResult`. Export what extension authors need and cannot reach today:
   `GuiExtension`, `register_gui_extension!`, `NamedCollection`.
 - [ ] Generate the umbrella's `using`/`export` lists from one table instead of two hand-kept blocks.
-- [ ] One selector concept — `ItemRecord`, id, or current selection — implemented once and shared by
+- [ ] One selector concept — `ItemKey`, id, or current selection — implemented once and shared by
   `select_items!`, `materialize_items`, `read_item_data`; delete the runtime-typed
   `select_items!(::AbstractVector)` fallback. The Cache-side `read_payload` name is handled by
   the payload contract work in 0.2.2.
@@ -286,13 +282,13 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 - [ ] Audit source fingerprinting and document exactly what each change token invalidates across
   live updates and workspace reopen.
-- [ ] Replace `default_collection_path(source, source_item)` with `collection(source_item)`, and
+- [x] Replace `default_collection_path(source, source_item)` with `collection(source_item)`, and
   `annotate_collection_path` with `metadata(source, collections)`, where `collections` are one
   collection's values from the top down. DirectorySource owns `metadata.txt` parsing and matching;
-  Core owns composition and invalidation. Store a collection's own metadata and the source's
-  separately and replace the source's part on item publication, refresh and reopen, so removed keys
-  reveal the collection's own values beneath them. Snapshot source metadata under
-  its lock without calling user reconstruction there. Test both DirectorySource and another source.
+  Core owns composition and invalidation. A collection's own metadata and the source's are stored
+  separately, and the source's part is replaced on item publication, refresh and reopen, so removed
+  keys reveal the collection's own values beneath them.
+- [ ] Test `metadata(source, collections)` with a source other than DirectorySource.
 - [ ] Split `DirectorySource` into scan, `metadata.txt`, and watcher files. The watcher rescans
   the whole tree and fingerprints every file three times on each event; `.git` is skipped by the
   watcher but traversed by the scan; `readdir` order is not sorted; `metadata_lock` is held while

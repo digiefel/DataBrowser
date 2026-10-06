@@ -427,6 +427,10 @@ callers of `materialize_items`.
    their resolution in `ItemIndex.jl`, and the metadata carried inside
    `DirectoryCollection` and `NamedCollection` values.
 
+Steps 1 to 3 are done. `ItemIndex.jl`, `collection_id.jl` and `WorkGraph.jl` no
+longer exist; the cache keeps one version of an item for each collection that
+changes it; the Recipes `collection` callback names its levels.
+
 Cache ledger and key-map deletion, and column restore, follow once the graph
 owns status. Measure reopen against a committed bench baseline. Then
 `ARCHITECTURE.md` and dead code.
