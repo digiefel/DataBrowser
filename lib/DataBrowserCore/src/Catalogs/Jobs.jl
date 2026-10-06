@@ -13,6 +13,9 @@ request. The caller holds the lock.
 When an item's analyze or a collection's collection analyze turns fresh or stops being fresh, the
 counters of the collections that hold it follow. When a stage fails or becomes blocked, the stages
 that read it become blocked, and they are unblocked when it recovers.
+
+This is the one place where a status change queues jobs: for the stage itself, and for the stages
+that read it when it turns fresh.
 """
 function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::PipelineStage) where {K<:RowKey}
     first, second = stages(K)
@@ -38,33 +41,35 @@ function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::Pipel
             end
         end
     end
+    queue!(catalog, key, stage)
+    if new.validity == FRESH && old.validity != FRESH
+        foreach(next -> queue!(catalog, next...), dependents(catalog, key, stage))
+    end
     notify(catalog.changed)
     return catalog
 end
 
 """The stages that read the output of `stage` on `key`."""
-function dependents(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Tuple{RowKey,PipelineStage}}
-    stage == SOURCE_READ && return Tuple{RowKey,PipelineStage}[(key, SOURCE_EXPAND)]
-    stage == SOURCE_EXPAND &&
-        return Tuple{RowKey,PipelineStage}[(item, ITEM_PROCESS) for item in items(catalog, key)]
-    stage == ITEM_PROCESS && return Tuple{RowKey,PipelineStage}[(key, ITEM_ANALYZE)]
-    stage == ITEM_ANALYZE &&
-        return Tuple{RowKey,PipelineStage}[(collection(catalog, key), COLLECTION_PROCESS)]
-    stage == COLLECTION_PROCESS && return Tuple{RowKey,PipelineStage}[(key, COLLECTION_ANALYZE)]
-    key == ROOT && return Tuple{RowKey,PipelineStage}[]
-    return Tuple{RowKey,PipelineStage}[(parent(catalog, key), COLLECTION_PROCESS)]
+function dependents(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Target}
+    stage == SOURCE_READ && return Target[(key, SOURCE_EXPAND)]
+    stage == SOURCE_EXPAND && return Target[(item, ITEM_PROCESS) for item in items(catalog, key)]
+    stage == ITEM_PROCESS && return Target[(key, ITEM_ANALYZE)]
+    stage == ITEM_ANALYZE && return Target[(collection(catalog, key), COLLECTION_PROCESS)]
+    stage == COLLECTION_PROCESS && return Target[(key, COLLECTION_ANALYZE)]
+    key == ROOT && return Target[]
+    return Target[(parent(catalog, key), COLLECTION_PROCESS)]
 end
 
 """The stages whose output `stage` on `key` reads. A source item's read reads outside the catalog."""
-function inputs(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Tuple{RowKey,PipelineStage}}
-    stage == SOURCE_READ && return Tuple{RowKey,PipelineStage}[]
-    stage == SOURCE_EXPAND && return Tuple{RowKey,PipelineStage}[(key, SOURCE_READ)]
-    stage == ITEM_PROCESS && return Tuple{RowKey,PipelineStage}[(source(catalog, key), SOURCE_EXPAND)]
-    stage == ITEM_ANALYZE && return Tuple{RowKey,PipelineStage}[(key, ITEM_PROCESS)]
-    stage == COLLECTION_PROCESS && return Tuple{RowKey,PipelineStage}[
+function inputs(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Target}
+    stage == SOURCE_READ && return Target[]
+    stage == SOURCE_EXPAND && return Target[(key, SOURCE_READ)]
+    stage == ITEM_PROCESS && return Target[(source(catalog, key), SOURCE_EXPAND)]
+    stage == ITEM_ANALYZE && return Target[(key, ITEM_PROCESS)]
+    stage == COLLECTION_PROCESS && return Target[
         [(item, ITEM_ANALYZE) for item in items(catalog, key)];
         [(child, COLLECTION_ANALYZE) for child in children(catalog, key)]]
-    return Tuple{RowKey,PipelineStage}[(key, COLLECTION_PROCESS)]
+    return Target[(key, COLLECTION_PROCESS)]
 end
 
 """
@@ -82,6 +87,30 @@ function ready(catalog::Catalog, key::RowKey, stage::PipelineStage)::Bool
 end
 
 """
+The stages that one job for `stage` on `key` runs. A source item has one job for its two stages; the
+last stage names the job.
+"""
+jobstages(::SourceKey, ::PipelineStage) = stages(SourceKey)
+jobstages(::RowKey, stage::PipelineStage) = (stage,)
+
+"""
+Whether a job for `stage` on `key` can start now: the row exists, the stage is not absent, fresh,
+failed or running, and its inputs allow it.
+"""
+function startable(catalog::Catalog, key::RowKey, stage::PipelineStage)::Bool
+    key in table(catalog, key) || return false
+    old = status(catalog, key, stage)
+    (old.absent || old.failed || old.validity == FRESH || old.running) && return false
+    # Readiness reads one status or one counter.
+    return ready(catalog, key, stage)
+end
+
+"""The status of a stage after a job for it whose result is kept."""
+finished(old::StageStatus, failed::Bool)::StageStatus = failed ?
+    StageStatus(old; running=false, failed=true) :
+    StageStatus(old; validity=FRESH, running=false, output=true)
+
+"""
     invalidate!(catalog, key, stage)
     invalidate!(catalog, targets)
 
@@ -90,16 +119,15 @@ second stage of the row, the items of a source item, the collection that holds a
 collection up to the root. Every stage reached gets one new revision, so a job running for it
 cannot publish, and loses its failure. A stage that was never computed stays missing.
 
-The stages named in the call are queued if they are wanted and their inputs allow it (see
-[`take!`](@ref)). The stages downstream wait for them.
+A stage that is wanted is queued once its inputs allow it (see [`take!`](@ref)).
 """
 invalidate!(catalog::Catalog, key::RowKey, stage::PipelineStage)::Catalog =
     invalidate!(catalog, [(key, stage)])
 
 function invalidate!(catalog::Catalog, targets::AbstractVector{<:Tuple{Any,PipelineStage}})::Catalog
     @lock catalog.lock begin
-        reached = Set{Tuple{RowKey,PipelineStage}}()
-        pending = collect(Tuple{RowKey,PipelineStage}, targets)
+        reached = Set{Target}()
+        pending = collect(Target, targets)
         while !isempty(pending)
             next = pop!(pending)
             next in reached && continue
@@ -110,9 +138,6 @@ function invalidate!(catalog::Catalog, targets::AbstractVector{<:Tuple{Any,Pipel
             validity = old.validity == FRESH ? STALE : old.validity
             catalog[row, row_stage] = StageStatus(old; validity, failed=false, revision=old.revision + 1)
             append!(pending, dependents(catalog, row, row_stage))
-        end
-        for (row, row_stage) in targets
-            queue!(catalog, row, row_stage)
         end
     end
     return catalog
@@ -133,27 +158,22 @@ function priority(catalog::Catalog, key::RowKey, stage::PipelineStage)::Int
     return rank
 end
 
-# TODO: creation, publication, invalidation, completion and requests each call `queue!` at their
-# own points. If another path misses one, collect the touched stages in each operation and schedule
-# them in one place when it ends.
 """
-Queue the job for `stage` on `key` if it is wanted, its inputs allow it to start, and the stage is
-not fresh, failed or running. A job already queued at another priority moves to this one. The
-caller holds the lock.
+Queue the job for `stage` on `key` if it can start and is wanted. A job already queued at another
+priority moves to this one. The caller holds the lock.
+
+A status change queues jobs through `setindex!`. The other callers are those that change what is
+wanted or add a row: a new source item or collection, a request, and `take!`.
 """
 function queue!(catalog::Catalog, key::RowKey, stage::PipelineStage)::Nothing
-    # A source item's job is named by its last stage.
-    key isa SourceKey && (stage = SOURCE_EXPAND)
-    key in table(catalog, key) || return nothing
-    old = status(catalog, key, stage)
-    (old.absent || old.failed || old.validity == FRESH || old.running) && return nothing
-    # Readiness reads one status or one counter; priority walks every stage downstream.
-    ready(catalog, key, stage) || return nothing
+    stage = last(jobstages(key, stage))
+    # Checked first: priority walks every stage downstream.
+    startable(catalog, key, stage) || return nothing
     rank = priority(catalog, key, stage)
     rank > 0 || return nothing
     # A job queued at another priority moves; `take!` skips its old entry.
     get(catalog.queued, (key, stage), 0) == rank && return nothing
-    push!(get!(Vector{Tuple{RowKey,PipelineStage}}, catalog.queue, rank), (key, stage))
+    push!(get!(Vector{Target}, catalog.queue, rank), (key, stage))
     catalog.queued[(key, stage)] = rank
     return nothing
 end
@@ -186,7 +206,7 @@ function Base.take!(catalog::Catalog)::Union{Job,Nothing}
                 queue!(catalog, key, stage)
                 continue
             end
-            job = key isa SourceKey ? start!(catalog, key) : start!(catalog, key, stage)
+            job = start!(catalog, key, stage)
             job === nothing || return job
         end
         return nothing
@@ -218,36 +238,20 @@ inputs is not fresh.
 A source item has one job for its two stages: it runs read, unless read is fresh, and then expand.
 It returns `nothing` when expand is fresh, either stage failed, or the job is already running.
 """
-function start!(
-    catalog::Catalog,
-    key::K,
-    stage::PipelineStage,
-)::Union{Job{K},Nothing} where {K<:Union{ItemKey,CollectionKey}}
+function start!(catalog::Catalog, key::K, stage::PipelineStage)::Union{Job{K},Nothing} where {K<:RowKey}
     @lock catalog.lock begin
-        key in table(catalog, key) || return nothing
-        old = status(catalog, key, stage)
-        if old.absent || old.failed || old.validity == FRESH || old.running ||
-           !ready(catalog, key, stage)
-            return nothing
+        stage = last(jobstages(key, stage))
+        startable(catalog, key, stage) || return nothing
+        # The stage that names the job is marked first, so that marking the other does not queue it.
+        for part in reverse(jobstages(key, stage))
+            old = status(catalog, key, part)
+            old.validity == FRESH || (catalog[key, part] = StageStatus(old; running=true))
         end
-        catalog[key, stage] = StageStatus(old; running=true)
-        return Job(key, stage, old.revision)
+        return Job(key, stage, status(catalog, key, stage).revision)
     end
 end
 
-function start!(catalog::Catalog, source::SourceKey)::Union{Job{SourceKey},Nothing}
-    @lock catalog.lock begin
-        source in catalog.sources || return nothing
-        read = status(catalog, source, SOURCE_READ)
-        expand = status(catalog, source, SOURCE_EXPAND)
-        if read.failed || expand.failed || expand.validity == FRESH || expand.running
-            return nothing
-        end
-        read.validity == FRESH || (catalog[source, SOURCE_READ] = StageStatus(read; running=true))
-        catalog[source, SOURCE_EXPAND] = StageStatus(expand; running=true)
-        return Job(source, SOURCE_EXPAND, expand.revision)
-    end
-end
+start!(catalog::Catalog, source::SourceKey) = start!(catalog, source, SOURCE_EXPAND)
 
 """
 Mark `job` as finished and return whether its result is kept: its row exists and its stage was not
@@ -259,11 +263,10 @@ function claim!(catalog::Catalog, job::Job)::Bool
     job.finished = true
     job.key in table(catalog, job.key) || return false
     status(catalog, job.key, job.stage).revision == job.revision && return true
-    for stage in (job.key isa SourceKey ? stages(SourceKey) : (job.stage,))
+    for stage in jobstages(job.key, job.stage)
         old = status(catalog, job.key, stage)
         old.running && (catalog[job.key, stage] = StageStatus(old; running=false))
     end
-    queue!(catalog, job.key, job.stage)
     return false
 end
 
@@ -272,15 +275,10 @@ The status of a source item's two stages after a job whose result is kept. `fail
 that failed, or is `nothing`. When read fails, expand fails with it. The caller holds the lock.
 """
 function settle!(catalog::Catalog, job::Job{SourceKey}, failed::Union{PipelineStage,Nothing})
-    read = status(catalog, job.key, SOURCE_READ)
-    catalog[job.key, SOURCE_READ] = failed == SOURCE_READ ?
-        StageStatus(read; running=false, failed=true) :
-        StageStatus(read; validity=FRESH, running=false, output=true)
-    # Read after writing read, which can block expand.
-    expand = status(catalog, job.key, SOURCE_EXPAND)
-    catalog[job.key, SOURCE_EXPAND] = failed === nothing ?
-        StageStatus(expand; validity=FRESH, running=false, output=true) :
-        StageStatus(expand; running=false, failed=true)
+    # Expand is read after read is written, which can block it.
+    for (stage, stage_failed) in (SOURCE_READ => failed == SOURCE_READ, SOURCE_EXPAND => failed !== nothing)
+        catalog[job.key, stage] = finished(status(catalog, job.key, stage), stage_failed)
+    end
     return nothing
 end
 
@@ -309,15 +307,7 @@ function finish!(
     @lock catalog.lock begin
         claim!(catalog, job) || return false
         failed || store!(catalog, job.key, job.stage, metadata)
-        old = status(catalog, job.key, job.stage)
-        catalog[job.key, job.stage] = failed ?
-            StageStatus(old; running=false, failed=true) :
-            StageStatus(old; validity=FRESH, running=false, output=true)
-        if !failed
-            for (key, stage) in dependents(catalog, job.key, job.stage)
-                queue!(catalog, key, stage)
-            end
-        end
+        catalog[job.key, job.stage] = finished(status(catalog, job.key, job.stage), failed)
         return true
     end
 end
@@ -332,9 +322,6 @@ function finish!(catalog::Catalog, job::Job{SourceKey}, entries::AbstractVector{
             rethrow()
         end
         settle!(catalog, job, nothing)
-        for (key, stage) in dependents(catalog, job.key, SOURCE_EXPAND)
-            queue!(catalog, key, stage)
-        end
         return true
     end
 end
@@ -377,13 +364,12 @@ function request(catalog::Catalog, key::RowKey, stage::PipelineStage; priority::
     @lock catalog.lock begin
         key in table(catalog, key) || throw(ArgumentError("the row was removed"))
         status(catalog, key, stage).absent && throw(ArgumentError("the $stage stage is absent here"))
-        # A source item's job is named by its last stage.
-        target = key isa SourceKey ? (key, SOURCE_EXPAND) : (key, stage)
+        target = (key, last(jobstages(key, stage)))
         push!(get!(Vector{Int}, catalog.requests, target), priority)
         # Queue every stage on the way that is not fresh. Those whose inputs are not fresh yet are
         # queued when their inputs finish.
-        reached = Set{Tuple{RowKey,PipelineStage}}()
-        pending = Tuple{RowKey,PipelineStage}[target]
+        reached = Set{Target}()
+        pending = Target[target]
         while !isempty(pending)
             next = pop!(pending)
             next in reached && continue
@@ -424,7 +410,7 @@ function Base.close(request::Request)::Nothing
     @lock catalog.lock begin
         request.open || return nothing
         request.open = false
-        target = request.key isa SourceKey ? (request.key, SOURCE_EXPAND) : (request.key, request.stage)
+        target = (request.key, last(jobstages(request.key, request.stage)))
         priorities = catalog.requests[target]
         deleteat!(priorities, findfirst(==(request.priority), priorities))
         isempty(priorities) && delete!(catalog.requests, target)

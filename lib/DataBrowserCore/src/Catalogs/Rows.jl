@@ -110,6 +110,26 @@ function Base.push!(table::Table, id::AbstractString; absent::Bool=false)::Table
     return table
 end
 
+"""Add a collection row without members. Its parent does not list it yet."""
+function Base.push!(
+    collections::CollectionTable,
+    id::AbstractString,
+    label::AbstractString,
+    parent::CollectionKey,
+    type::Type{<:AbstractCollection};
+    absent::Bool=false,
+)::CollectionTable
+    push!(collections, id; absent)
+    push!(collections.labels, label)
+    push!(collections.parent, parent)
+    push!(collections.type, type)
+    push!(collections.items, ItemKey[])
+    push!(collections.children, CollectionKey[])
+    foreach(counter -> push!(counter, 0),
+        (collections.not_fresh, collections.stuck, collections.nested_items, collections.nested_done))
+    return collections
+end
+
 """Whether a row exists and has not been removed."""
 Base.in(key::RowKey, table::Table) =
     1 <= key.index <= length(table) && StageStatus(table.status[key.index] % UInt32).validity != REMOVED
@@ -153,10 +173,10 @@ struct Catalog
     eager::Dict{PipelineStage,Int}
     # Stages ready to run, first in, first out within each priority. An entry whose priority differs
     # from the stage's entry in `queued` is out of date and is skipped.
-    queue::Dict{Int,Vector{Tuple{RowKey,PipelineStage}}}
-    queued::Dict{Tuple{RowKey,PipelineStage},Int}
+    queue::Dict{Int,Vector{Target}}
+    queued::Dict{Target,Int}
     # The priorities of the open requests for each stage.
-    requests::Dict{Tuple{RowKey,PipelineStage},Vector{Int}}
+    requests::Dict{Target,Vector{Int}}
     # Notified whenever a status changes; `wait(request)` waits on it.
     changed::Threads.Condition
     # Metadata values that the last result of a stage produced but that were not stored.
@@ -171,25 +191,14 @@ function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int
         ItemTable(),
         CollectionTable(),
         Dict(eager),
-        Dict{Int,Vector{Tuple{RowKey,PipelineStage}}}(),
-        Dict{Tuple{RowKey,PipelineStage},Int}(),
-        Dict{Tuple{RowKey,PipelineStage},Vector{Int}}(),
+        Dict{Int,Vector{Target}}(),
+        Dict{Target,Int}(),
+        Dict{Target,Vector{Int}}(),
         Threads.Condition(lock),
         Dict{Tuple{RowKey,MetadataLayer},Vector{MetadataConflict}}(),
     )
-    collections = catalog.collections
-    # No collection work runs for the root.
-    push!(collections, "root"; absent=true)
-    push!(collections.labels, "Root")
-    push!(collections.parent, ROOT)
-    push!(collections.items, ItemKey[])
-    push!(collections.children, CollectionKey[])
-    push!(collections.not_fresh, 0)
-    push!(collections.stuck, 0)
-    push!(collections.nested_items, 0)
-    push!(collections.nested_done, 0)
-    # The root is never rebuilt, so it has no concrete type.
-    push!(collections.type, AbstractCollection)
+    # No collection work runs for the root. It is never rebuilt, so it has no concrete type.
+    push!(catalog.collections, "root", "Root", ROOT, AbstractCollection; absent=true)
     return catalog
 end
 
@@ -290,16 +299,8 @@ function Base.get!(catalog::Catalog, parent::CollectionKey, value::AbstractColle
         value_metadata = metadata_dict(metadata(value))
         key = get(collections.lookup, entry, nothing)
         if key === nothing
-            key = CollectionKey(length(push!(collections, entry[3])))
-            push!(collections.labels, value_label)
-            push!(collections.parent, parent)
-            push!(collections.items, ItemKey[])
-            push!(collections.children, CollectionKey[])
-            push!(collections.not_fresh, 0)
-            push!(collections.stuck, 0)
-            push!(collections.nested_items, 0)
-            push!(collections.nested_done, 0)
-            push!(collections.type, typeof(value))
+            push!(collections, entry[3], value_label, parent, typeof(value))
+            key = CollectionKey(length(collections))
             push!(collections.children[parent.index], key)
             collections.not_fresh[parent.index] += 1
             collections.lookup[entry] = key
@@ -324,7 +325,7 @@ function metadata!(catalog::Catalog, collection::CollectionKey, layer::Symbol, v
         collections = catalog.collections
         store!(catalog, collection, layer, values) || return nothing
         # The collection itself is named because it may hold no items.
-        below = Tuple{RowKey,PipelineStage}[(collection, COLLECTION_PROCESS)]
+        below = Target[(collection, COLLECTION_PROCESS)]
         pending = [collection]
         while !isempty(pending)
             next = pop!(pending)
@@ -342,9 +343,12 @@ end
 Replace the items of `source` with `entries`, the result of its source job.
 
 An id that `source` already had keeps its key, and takes the label, collection, item type and
-metadata of its entry; its stages become stale. A new id gets a new key. An id that is not in `entries` any more is removed,
-and so is every collection this leaves empty. Every collection whose members change becomes stale. An id that appears twice or belongs to another source item, a collection that
-does not exist, or a removed `source` throws an `ArgumentError` and leaves the catalog unchanged.
+metadata of its entry; its stages become stale. A new id gets a new key. An id that is not in
+`entries` any more is removed, and so is every collection this leaves empty. Every collection whose
+members change becomes stale.
+
+An id that appears twice or belongs to another source item, a collection that does not exist, or a
+removed `source` throws an `ArgumentError` and leaves the catalog unchanged.
 """
 function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{ItemEntry})::Nothing
     @lock catalog.lock begin
@@ -368,10 +372,18 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
         # Collections whose members change become stale, and so do the items that survive.
         changed = Set{CollectionKey}()
         surviving = ItemKey[]
-        not_fresh = collections.not_fresh
-        counted(key) = status(catalog, key, ITEM_ANALYZE).validity != FRESH
-        stuck(key) = (analyze = status(catalog, key, ITEM_ANALYZE); analyze.failed || analyze.blocked)
         new_keys = ItemKey[]
+        # Put an item into a collection (`sign = 1`) or take it out (`sign = -1`), with its counters.
+        function move!(key::ItemKey, collection::CollectionKey, sign::Int)
+            analyze = status(catalog, key, ITEM_ANALYZE)
+            fresh = analyze.validity == FRESH
+            collections.not_fresh[collection.index] += sign * !fresh
+            add_nested!(collections, collection, sign, sign * fresh)
+            add_stuck!(catalog, collection, sign * (analyze.failed || analyze.blocked))
+            push!(changed, collection)
+            sign > 0 ? push!(collections.items[collection.index], key) :
+                push!(get!(Set{ItemKey}, leaving, collection), key)
+        end
         for entry in entries
             key = get(items.lookup, entry.id, nothing)
             if key === nothing
@@ -380,27 +392,17 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
                 push!(items.source, source)
                 push!(items.collection, entry.collection)
                 push!(items.type, entry.type)
-                push!(collections.items[entry.collection.index], key)
-                not_fresh[entry.collection.index] += 1
-                add_nested!(collections, entry.collection, 1, 0)
-                push!(changed, entry.collection)
                 items.lookup[entry.id] = key
+                move!(key, entry.collection, 1)
             else
                 view(items.labels, key.index) == codeunits(entry.label) ||
                     (items.labels[key.index] = entry.label)
                 items.type[key.index] = entry.type
                 previous = items.collection[key.index]
                 if previous != entry.collection
-                    push!(get!(Set{ItemKey}, leaving, previous), key)
-                    push!(collections.items[entry.collection.index], key)
+                    move!(key, previous, -1)
                     items.collection[key.index] = entry.collection
-                    not_fresh[previous.index] -= counted(key)
-                    not_fresh[entry.collection.index] += counted(key)
-                    add_nested!(collections, previous, -1, counted(key) - 1)
-                    add_nested!(collections, entry.collection, 1, 1 - counted(key))
-                    add_stuck!(catalog, previous, -stuck(key))
-                    add_stuck!(catalog, entry.collection, Int(stuck(key)))
-                    push!(changed, previous, entry.collection)
+                    move!(key, entry.collection, 1)
                 end
                 push!(surviving, key)
             end
@@ -411,12 +413,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
         kept = Set(new_keys)
         for key in catalog.sources.item_keys[item_range(catalog.sources, source)]
             key in kept && continue
-            previous = items.collection[key.index]
-            push!(get!(Set{ItemKey}, leaving, previous), key)
-            not_fresh[previous.index] -= counted(key)
-            add_nested!(collections, previous, -1, counted(key) - 1)
-            add_stuck!(catalog, previous, -stuck(key))
-            push!(changed, previous)
+            move!(key, items.collection[key.index], -1)
             delete!(items, key)
         end
         for (collection, gone) in leaving
@@ -428,7 +425,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
         sources.item_counts[source.index] = length(new_keys)
         append!(sources.item_keys, new_keys)
 
-        invalidate!(catalog, Tuple{RowKey,PipelineStage}[
+        invalidate!(catalog, Target[
             [(key, ITEM_PROCESS) for key in surviving];
             [(collection, COLLECTION_PROCESS) for collection in changed]])
         for collection in changed

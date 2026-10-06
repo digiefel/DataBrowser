@@ -38,6 +38,9 @@ end
 
 const RowKey = Union{SourceKey,ItemKey,CollectionKey}
 
+"""One stage of one row."""
+const Target = Tuple{RowKey,PipelineStage}
+
 """The root collection: it holds the items and top-level collections that have no other."""
 const ROOT = CollectionKey(1)
 
