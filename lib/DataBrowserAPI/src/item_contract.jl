@@ -58,8 +58,27 @@ label(item::AbstractDataItem)::String = id(item)
 """Display name for one item type."""
 label(T::Type{<:AbstractDataItem})::Symbol = nameof(T)
 
-"""Return an item's complete root-to-leaf path of concrete collection values."""
+"""
+    collection(item) -> Vector{AbstractCollection}
+    collection(source_item) -> Vector{AbstractCollection}
+
+The collection that holds an item, as its collection values from the top down.
+
+An item whose answer is empty goes where its source item is: `collection(source_item)`. The default
+for both is empty, which places the item at the root.
+"""
 collection(::AbstractDataItem)::Vector{AbstractCollection} = AbstractCollection[]
+collection(::AbstractDataSourceItem)::Vector{AbstractCollection} = AbstractCollection[]
+
+"""
+    metadata(source, collections) -> Dict
+
+The metadata `source` provides for one collection. `collections` identifies that collection by its
+collection values from the top down. The default is an empty `Dict`.
+
+This metadata is kept apart from `metadata(collection)`, the metadata of the collection value.
+"""
+metadata(::AbstractDataSource, ::AbstractVector{<:AbstractCollection})::Dict = Dict()
 
 """Return metadata supplied directly by a data item. The default is an empty `Dict`."""
 metadata(::AbstractDataItem)::Dict = Dict()

@@ -1,7 +1,7 @@
 using DataBrowserAPI: open_source, close_source!, source_items, id, fingerprint
 using Test, DataBrowserSources, DataBrowserAPI
 using CancellationTokens: CancellationTokenSource, get_token
-using DataBrowserAPI: default_collection_path, metadata
+using DataBrowserAPI: collection, metadata
 
 @testset "directory discovery and fingerprints" begin
     mktempdir() do dir
@@ -17,7 +17,9 @@ using DataBrowserAPI: default_collection_path, metadata
             files = source_items(source; cancel_token)
             @test Set(id.(files)) == Set(["a.dat", joinpath("nested", "b.dat")])
             nested = only(filter(f -> id(f) == joinpath("nested", "b.dat"), files))
-            @test metadata(only(default_collection_path(source, nested)))[:scale] == 3
+            @test id.(collection(nested)) == ["nested"]
+            @test metadata(source, collection(nested))[:scale] == 3
+            @test isempty(collection(only(filter(f -> id(f) == "a.dat", files))))
             original = only(filter(f -> id(f) == "a.dat", files))
             write(joinpath(dir, "a.dat"), "changed value")
             changed = only(filter(f -> id(f) == "a.dat", source_items(source; cancel_token)))

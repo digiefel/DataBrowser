@@ -97,25 +97,15 @@ the round trip without ever entering the payload.
 reconstruct(::Type{<:RegisteredDataItem{K}}, id::AbstractString, data, metadata::Dict) where {K} =
     RegisteredDataItem{K}(String(id), String(id), AbstractCollection[], data, metadata_dict(metadata))
 
-"""
-One collection level of a registered path, identified by its name.
-
-`metadata` carries whatever the source attached to this level — `metadata.txt` entries, say — which
-is why it survives the round trip through `reconstruct` rather than being rebuilt from the name.
-"""
+"""One collection level of a registered path, identified by its name."""
 struct NamedCollection <: AbstractCollection
     name::String
-    metadata::MetadataDict
 end
-
-NamedCollection(name::AbstractString; metadata::AbstractDict=MetadataDict()) =
-    NamedCollection(String(name), metadata_dict(metadata))
 
 id(level::NamedCollection)::String = level.name
 label(level::NamedCollection)::String = level.name
-metadata(level::NamedCollection)::MetadataDict = level.metadata
-reconstruct(::Type{NamedCollection}, identity::AbstractString, metadata::Dict) =
-    NamedCollection(String(identity); metadata)
+reconstruct(::Type{NamedCollection}, identity::AbstractString, ::Dict) =
+    NamedCollection(String(identity))
 Base.:(==)(left::NamedCollection, right::NamedCollection)::Bool = left.name == right.name
 Base.isequal(left::NamedCollection, right::NamedCollection)::Bool =
     isequal(left.name, right.name)

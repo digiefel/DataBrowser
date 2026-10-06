@@ -270,14 +270,13 @@ classDiagram
     }
     class DirectoryCollection {
         String name
-        Dict metadata
     }
 
     AbstractDataSource <|-- DirectorySource
     AbstractDataSourceItem <|-- SourceFile
     AbstractCollection <|-- DirectoryCollection
     DirectorySource --> SourceFile : scans
-    DirectorySource --> DirectoryCollection : builds paths
+    DirectorySource --> DirectoryCollection : places files
     SourceFile *-- FileFingerprint : fingerprint
 
     style AbstractDataSource fill:#cfd8e3,stroke:#5a6b80,stroke-width:1px,color:#111
@@ -310,10 +309,8 @@ flowchart TD
         cmfp("collection_metadata_file_path")
         pmv("parse_metadata_value")
         ocm("own_collection_metadata")
-        np("_named_path")
-        dcp("default_collection_path")
-        al("_annotated_level")
-        acp("annotate_collection_path")
+        csi("collection(::SourceFile)")
+        msc("metadata(::DirectorySource, collections)")
         MD[("collection_metadata_entries")]
     end
 
@@ -336,7 +333,6 @@ flowchart TD
         snoun("source_item_noun(::DirectorySource) → String")
         iddc("id(::DirectoryCollection) → String")
         lbldc("label(::DirectoryCollection) → String")
-        metadc("metadata(::DirectoryCollection) → Dict")
         recon("reconstruct(::DirectoryCollection) → DirectoryCollection")
     end
 
@@ -368,16 +364,10 @@ flowchart TD
     lcm -.->|"writes"| MD
     lcme -->|"Any"| pmv
     lcme -->|"readlines"| FSYS
-    dcp -->|"AbstractCollection[]"| np
-    np -->|"Dict"| ocm
-    np -.->|"reads"| MD
-    al -->|"Dict"| ocm
-    al -.->|"reads"| MD
-    al -->|"AbstractCollection"| recon
-    al -->|"Dict"| metadc
-    al -->|"String"| iddc
-    acp -->|"AbstractCollection"| al
-    acp -->|"String"| iddc
+    csi -->|"AbstractCollection[]"| extCore
+    msc -->|"Dict"| ocm
+    msc -.->|"reads"| MD
+    msc -->|"String"| iddc
 
     osrc -->|"Bool"| lcm
     osrc -->|"isdir"| FSYS
@@ -394,8 +384,8 @@ flowchart TD
     extCore ==> wsrc
     extCore ==> csrc
     extCore ==> isf
-    extCore ==> dcp
-    extCore ==> acp
+    extCore ==> csi
+    extCore ==> msc
     extCore ==> sid
     extCore ==> snoun
     extCore ==> idsf
@@ -418,7 +408,7 @@ flowchart TD
 
     wsrc -.->|"SourceChanges<br/>SourceError"| extCore
 
-    idsf ~~~ lblsf ~~~ fpsf ~~~ sipf ~~~ sitf ~~~ metasf ~~~ sid ~~~ slbl ~~~ snoun ~~~ iddc ~~~ lbldc ~~~ metadc ~~~ recon ~~~ eqfp
+    idsf ~~~ lblsf ~~~ fpsf ~~~ sipf ~~~ sitf ~~~ metasf ~~~ sid ~~~ slbl ~~~ snoun ~~~ iddc ~~~ lbldc ~~~ recon ~~~ eqfp
 
     classDef srcExp fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111;
     classDef srcInt fill:#c9e4c5,stroke:#5a9a52,stroke-width:1px,color:#111;
@@ -431,7 +421,7 @@ flowchart TD
     classDef plotsC fill:#f2c6d4,stroke:#b0466a,color:#111;
 
     class isf,ffp srcExp;
-    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,np,dcp,al,acp,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,sipf,sitf,metasf,sid,slbl,snoun,iddc,lbldc,metadc,recon,eqfp srcInt;
+    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,csi,msc,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,sipf,sitf,metasf,sid,slbl,snoun,iddc,lbldc,recon,eqfp srcInt;
     class extCore coreC;
     class extAPI apiC;
     class extCache cacheC;
