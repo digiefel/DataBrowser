@@ -106,7 +106,7 @@ end
     @test status(catalog, b, ITEM_PROCESS).validity == REMOVED
     @test items(catalog, file) == [a, c]
     @test Set(items(catalog, run2)) == Set([a, c])
-    @test lookup(catalog, CollectionKey, "run1") === nothing
+    @test lookup(catalog, ROOT, TestCollection, "run1") === nothing
     @test children(catalog, ROOT) == [run2]
 
     delete!(catalog, file)
@@ -284,4 +284,41 @@ end
     entries = [ItemEntry("item $i", "Item $i", ROOT, TestItem) for i in 1:1000]
     publish!(catalog, file, entries)
     @test all(entry -> id(catalog, lookup(catalog, ItemKey, entry.id)) == entry.id, entries)
+end
+
+@testset "catalog: a collection is identified by its parent, type and id" begin
+    catalog = Catalog()
+    wafer1 = get!(catalog, ROOT, "wafer1", "Wafer 1", TestCollection)
+    wafer2 = get!(catalog, ROOT, "wafer2", "Wafer 2", TestCollection)
+    device1 = get!(catalog, wafer1, "A", "Device A", TestCollection)
+    device2 = get!(catalog, wafer2, "A", "Device A", TestCollection)
+    @test device1 != device2
+    @test get!(catalog, wafer1, "A", "Device A", TestCollection) == device1
+    @test lookup(catalog, wafer2, TestCollection, "A") == device2
+    @test lookup(catalog, ROOT, TestCollection, "A") === nothing
+end
+
+@testset "catalog: collection metadata reaches every item below" begin
+    catalog = Catalog()
+    wafer = get!(catalog, ROOT, "wafer", "Wafer", TestCollection;
+        metadata=MetadataDict(:lot => 7), source_metadata=MetadataDict(:oxide => "RuO2"))
+    device = get!(catalog, wafer, "A", "Device A", TestCollection)
+    other = get!(catalog, ROOT, "other", "Other", TestCollection)
+    file = get!(catalog, SourceKey, "data.csv")
+    compute!(catalog, file, [ItemEntry("a", "A", device, TestItem), ItemEntry("b", "B", other, TestItem)])
+    a = lookup(catalog, ItemKey, "a")
+    b = lookup(catalog, ItemKey, "b")
+    @test metadata(catalog, wafer, :collection) == MetadataDict(:lot => 7)
+    @test metadata(catalog, wafer, :source) == MetadataDict(:oxide => "RuO2")
+
+    get!(catalog, wafer, "wafer", "Wafer", TestCollection)  # not the wafer below the root
+    get!(catalog, ROOT, "wafer", "Wafer", TestCollection;
+        metadata=MetadataDict(:lot => 7), source_metadata=MetadataDict(:oxide => "RuO2"))
+    @test status(catalog, a, ITEM_PROCESS).validity == FRESH
+
+    get!(catalog, ROOT, "wafer", "Wafer", TestCollection;
+        metadata=MetadataDict(:lot => 7), source_metadata=MetadataDict(:oxide => "HfO2"))
+    @test metadata(catalog, wafer, :source) == MetadataDict(:oxide => "HfO2")
+    @test status(catalog, a, ITEM_PROCESS).validity == STALE
+    @test status(catalog, b, ITEM_PROCESS).validity == FRESH
 end

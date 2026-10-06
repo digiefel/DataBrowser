@@ -255,8 +255,14 @@ end
 # Metadata
 
 """
+What a set of metadata comes from: the stage that produced it, or, for a collection, `:collection`
+for the metadata of its value and `:source` for the metadata its source gives it.
+"""
+const MetadataLayer = Union{PipelineStage,Symbol}
+
+"""
 A metadata value that was not stored: its name already holds values of type `expected` in the same
-stage's metadata, and the value has type `found`.
+layer, and the value has type `found`.
 """
 struct MetadataConflict
     name::Symbol
@@ -265,7 +271,7 @@ struct MetadataConflict
 end
 
 """
-The metadata that one stage produced for the rows of one table: one column per name, holding
+One layer of metadata for the rows of one table: one column per name, holding
 `missing` for rows without a value. The first value stored under a name fixes the type of its
 column.
 """
@@ -368,7 +374,9 @@ end
 struct CollectionTable <: Table
     ids::IdColumn
     labels::LabelColumn
-    lookup::IdLookup{CollectionKey}
+    # A collection is found by its parent, its collection type and its id: an id is unique only
+    # among the collections of one type below one parent.
+    lookup::Dict{Tuple{CollectionKey,Type,String},CollectionKey}
     status::StatusColumn
     parent::Vector{CollectionKey}
     items::Vector{Vector{ItemKey}}
@@ -383,10 +391,9 @@ struct CollectionTable <: Table
     nested_items::Vector{Int}
     nested_done::Vector{Int}
     type::Vector{Type{<:AbstractCollection}}
-    # The metadata that each stage produced.
-    # TODO: two more layers, the collection's own metadata and the metadata its source gives it.
-    # A change to either invalidates process for every item below the collection.
-    metadata::Dict{PipelineStage,MetadataColumns}
+    # The metadata that each stage produced, the metadata of the collection's value (`:collection`)
+    # and the metadata its source gives it (`:source`).
+    metadata::Dict{MetadataLayer,MetadataColumns}
 end
 
 function CollectionTable()
@@ -394,7 +401,7 @@ function CollectionTable()
     return CollectionTable(
         ids,
         LabelColumn(),
-        IdLookup{CollectionKey}(ids),
+        Dict{Tuple{CollectionKey,Type,String},CollectionKey}(),
         StatusColumn(),
         CollectionKey[],
         Vector{ItemKey}[],
@@ -404,7 +411,9 @@ function CollectionTable()
         Int[],
         Int[],
         Type{<:AbstractCollection}[],
-        Dict(stage => MetadataColumns() for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)),
+        Dict{MetadataLayer,MetadataColumns}(
+            layer => MetadataColumns()
+            for layer in (:collection, :source, COLLECTION_PROCESS, COLLECTION_ANALYZE)),
     )
 end
 
@@ -422,11 +431,16 @@ end
 Base.in(key::RowKey, table::Table) =
     1 <= key.index <= length(table) && StageStatus(table.status[key.index] % UInt32).validity != REMOVED
 
-"""Turn a row into a tombstone: its id leaves the lookup and both stages become removed."""
+"""What a row is found by in the lookup of its table."""
+lookup_entry(table::Table, key::RowKey) = table.ids[key.index]
+lookup_entry(table::CollectionTable, key::CollectionKey) =
+    (table.parent[key.index], table.type[key.index], table.ids[key.index])
+
+"""Turn a row into a tombstone: it leaves the lookup and both stages become removed."""
 function Base.delete!(table::Table, key::RowKey)::Table
     # A second removal would take the id away from a newer row that reuses it.
     key in table || return table
-    delete!(table.lookup, table.ids[key.index])
+    delete!(table.lookup, lookup_entry(table, key))
     old = table.status[key.index]
     # A job that started before the removal finds a newer revision and discards its result.
     removed(bits) = StageStatus(; validity=REMOVED, revision=StageStatus(bits).revision + 1)
@@ -463,7 +477,7 @@ struct Catalog
     # Notified whenever a status changes; `wait(request)` waits on it.
     changed::Threads.Condition
     # Metadata values that the last result of a stage produced but that were not stored.
-    conflicts::Dict{Tuple{RowKey,PipelineStage},Vector{MetadataConflict}}
+    conflicts::Dict{Tuple{RowKey,MetadataLayer},Vector{MetadataConflict}}
 end
 
 function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int}())
@@ -478,7 +492,7 @@ function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int
         Dict{Tuple{RowKey,PipelineStage},Int}(),
         Dict{Tuple{RowKey,PipelineStage},Vector{Int}}(),
         Threads.Condition(lock),
-        Dict{Tuple{RowKey,PipelineStage},Vector{MetadataConflict}}(),
+        Dict{Tuple{RowKey,MetadataLayer},Vector{MetadataConflict}}(),
     )
     collections = catalog.collections
     # No collection work runs for the root.
@@ -493,7 +507,6 @@ function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int
     push!(collections.nested_done, 0)
     # The root is never rebuilt, so it has no concrete type.
     push!(collections.type, AbstractCollection)
-    collections.lookup["root"] = ROOT
     return catalog
 end
 
@@ -530,12 +543,12 @@ function add_stuck!(catalog::Catalog, collection::CollectionKey, count::Int)::No
 end
 
 """
-Replace the metadata that `stage` produced for `key`, and keep the values that were not stored for
+Replace the metadata of `key` in `layer`, and keep the values that were not stored for
 [`conflicts`](@ref). The caller holds the lock.
 """
-function store!(catalog::Catalog, key::Union{ItemKey,CollectionKey}, stage::PipelineStage, values::AbstractDict{Symbol})
-    dropped = store!(table(catalog, key).metadata[stage], key.index, values)
-    isempty(dropped) ? delete!(catalog.conflicts, (key, stage)) : (catalog.conflicts[(key, stage)] = dropped)
+function store!(catalog::Catalog, key::Union{ItemKey,CollectionKey}, layer::MetadataLayer, values::AbstractDict{Symbol})
+    dropped = store!(table(catalog, key).metadata[layer], key.index, values)
+    isempty(dropped) ? delete!(catalog.conflicts, (key, layer)) : (catalog.conflicts[(key, layer)] = dropped)
     return nothing
 end
 
@@ -573,10 +586,15 @@ function Base.get!(catalog::Catalog, ::Type{SourceKey}, id::AbstractString)::Sou
 end
 
 """
-    get!(catalog, parent::CollectionKey, id, label, type) -> CollectionKey
+    get!(catalog, parent::CollectionKey, id, label, type; metadata, source_metadata) -> CollectionKey
 
-The key of the collection with public id `id`, added below `parent` with collection type `type`
-when the catalog has none.
+The key of the collection below `parent` with collection type `type` and public id `id`, added when
+`parent` has none. Two collections with the same type and id below different parents are different
+collections.
+
+`metadata` is the metadata of the collection's value, and `source_metadata` the metadata its source
+gives it. Both replace what the catalog holds for the collection. When either changes, process
+becomes stale for every item below the collection, at any depth.
 Throws an `ArgumentError` when `parent` does not exist.
 """
 function Base.get!(
@@ -584,31 +602,48 @@ function Base.get!(
     parent::CollectionKey,
     id::AbstractString,
     label::AbstractString,
-    type::Type{<:AbstractCollection},
+    type::Type{<:AbstractCollection};
+    metadata::AbstractDict{Symbol}=MetadataDict(),
+    source_metadata::AbstractDict{Symbol}=MetadataDict(),
 )::CollectionKey
     @lock catalog.lock begin
         collections = catalog.collections
-        # TODO: find the collection by parent, type and id; collection ids are unique only among
-        # siblings.
-        key = get(collections.lookup, id, nothing)
-        key === nothing || return key
         parent in collections || throw(ArgumentError("the parent collection does not exist"))
-        key = CollectionKey(length(push!(collections, id)))
-        push!(collections.labels, label)
-        push!(collections.parent, parent)
-        push!(collections.items, ItemKey[])
-        push!(collections.children, CollectionKey[])
-        push!(collections.not_fresh, 0)
-        push!(collections.stuck, 0)
-        push!(collections.nested_items, 0)
-        push!(collections.nested_done, 0)
-        push!(collections.type, type)
-        push!(collections.children[parent.index], key)
-        collections.not_fresh[parent.index] += 1
-        collections.lookup[id] = key
-        invalidate!(catalog, parent, COLLECTION_PROCESS)
-        # The parent now waits for this collection, even while it stays empty.
-        queue!(catalog, key, COLLECTION_PROCESS)
+        key = get(collections.lookup, (parent, type, id), nothing)
+        if key === nothing
+            key = CollectionKey(length(push!(collections, id)))
+            push!(collections.labels, label)
+            push!(collections.parent, parent)
+            push!(collections.items, ItemKey[])
+            push!(collections.children, CollectionKey[])
+            push!(collections.not_fresh, 0)
+            push!(collections.stuck, 0)
+            push!(collections.nested_items, 0)
+            push!(collections.nested_done, 0)
+            push!(collections.type, type)
+            push!(collections.children[parent.index], key)
+            collections.not_fresh[parent.index] += 1
+            collections.lookup[(parent, type, String(id))] = key
+            invalidate!(catalog, parent, COLLECTION_PROCESS)
+            # The parent now waits for this collection, even while it stays empty.
+            queue!(catalog, key, COLLECTION_PROCESS)
+        end
+
+        # Compared after storing, so that a value that cannot be stored does not count as a change.
+        layers = (collections.metadata[:collection], collections.metadata[:source])
+        before = map(layer -> layer[key.index], layers)
+        store!(catalog, key, :collection, metadata)
+        store!(catalog, key, :source, source_metadata)
+        if before != map(layer -> layer[key.index], layers)
+            below = Tuple{RowKey,PipelineStage}[]
+            pending = [key]
+            while !isempty(pending)
+                collection = pop!(pending)
+                append!(below, (item, ITEM_PROCESS) for item in collections.items[collection.index])
+                append!(pending, collections.children[collection.index])
+            end
+            invalidate!(catalog, below)
+        end
         return key
     end
 end
@@ -761,12 +796,20 @@ end
 
 """
     lookup(catalog, K, id) -> Union{K,Nothing}
+    lookup(catalog, parent::CollectionKey, type, id) -> Union{CollectionKey,Nothing}
 
-The key of the row of kind `K` (`SourceKey`, `ItemKey` or `CollectionKey`) with public id `id`, or
-`nothing` when there is none. Removed rows are not found.
+The key of the row of kind `K` (`SourceKey` or `ItemKey`) with public id `id`, or of the collection
+below `parent` with collection type `type` and public id `id`; `nothing` when there is none. Removed
+rows are not found.
 """
-function lookup(catalog::Catalog, ::Type{K}, id::AbstractString)::Union{K,Nothing} where {K<:RowKey}
+function lookup(catalog::Catalog, ::Type{K}, id::AbstractString)::Union{K,Nothing} where {K<:Union{SourceKey,ItemKey}}
     return @lock catalog.lock get(table(catalog, K).lookup, id, nothing)
+end
+
+function lookup(
+    catalog::Catalog, parent::CollectionKey, type::Type{<:AbstractCollection}, id::AbstractString,
+)::Union{CollectionKey,Nothing}
+    return @lock catalog.lock get(catalog.collections.lookup, (parent, type, id), nothing)
 end
 
 """The public id of a row."""
@@ -841,25 +884,28 @@ function status(catalog::Catalog, key::K, stage::PipelineStage)::StageStatus whe
 end
 
 """
-    metadata(catalog, key, stage) -> MetadataDict
+    metadata(catalog, key, layer) -> MetadataDict
 
-The metadata that `stage` last produced for an item or a collection. For an item, `SOURCE_EXPAND`
-gives the metadata of its entry in the source job, and `ITEM_PROCESS` and `ITEM_ANALYZE` give the
-metadata of those stages. For a collection, `stage` is `COLLECTION_PROCESS` or
-`COLLECTION_ANALYZE`. The metadata stays when the stage becomes stale, until the stage produces new
-metadata.
+One layer of the metadata of an item or a collection. A stage as `layer` gives the metadata that
+the stage last produced: for an item, `SOURCE_EXPAND` gives the metadata of its entry in the source
+job, and `ITEM_PROCESS` and `ITEM_ANALYZE` give the metadata of those stages; for a collection, the
+stages are `COLLECTION_PROCESS` and `COLLECTION_ANALYZE`. That metadata stays when the stage
+becomes stale, until the stage produces new metadata.
+
+A collection has two more layers: `:collection` gives the metadata of its value, and `:source` the
+metadata its source gives it.
 """
-metadata(catalog::Catalog, key::Union{ItemKey,CollectionKey}, stage::PipelineStage)::MetadataDict =
-    @lock catalog.lock table(catalog, key).metadata[stage][key.index]
+metadata(catalog::Catalog, key::Union{ItemKey,CollectionKey}, layer::MetadataLayer)::MetadataDict =
+    @lock catalog.lock table(catalog, key).metadata[layer][key.index]
 
 """
-    conflicts(catalog, key, stage) -> Vector{MetadataConflict}
+    conflicts(catalog, key, layer) -> Vector{MetadataConflict}
 
-The metadata values that `stage` last produced for `key` but that were not stored, because their
-name already holds values of another type.
+The metadata values last given for `key` in `layer` that were not stored, because their name
+already holds values of another type in that layer.
 """
-conflicts(catalog::Catalog, key::Union{ItemKey,CollectionKey}, stage::PipelineStage)::Vector{MetadataConflict} =
-    @lock catalog.lock copy(get(catalog.conflicts, (key, stage), MetadataConflict[]))
+conflicts(catalog::Catalog, key::Union{ItemKey,CollectionKey}, layer::MetadataLayer)::Vector{MetadataConflict} =
+    @lock catalog.lock copy(get(catalog.conflicts, (key, layer), MetadataConflict[]))
 
 # Stages and jobs
 
