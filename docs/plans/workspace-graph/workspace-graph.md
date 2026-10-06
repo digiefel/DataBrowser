@@ -239,9 +239,13 @@ Defaults:
 
 ### What plots show until pipeline inspection
 
-A plot of an item requests item analyze, because plot code may use analysis
-metadata. A plot of a collection requests collection process, when the project
-defines one, and shows the collection's version of its items.
+An item can have several versions: its own, and one from each collection above
+it that defines collection `process`. They are ordered from the item's own
+version to the version of the outermost collection, which is the order in which
+they are computed. The label and the plot of an item use the latest version
+available. A plot of an item requests the last version in that order; a plot of
+a collection requests that collection's `process`, when the project defines
+one, and shows the collection's version of its items.
 
 Until the requested stage is fresh, the plot shows the deepest fresh output and
 marks it clearly as not final, for example with dimmed traces and a label. A
@@ -252,7 +256,7 @@ counters provide progress.
 
 Only outputs of the current revision are shown. Showing outputs of an older
 revision while new ones are computed is out of scope. Pipeline inspection
-(0.14.0) will let users choose the stage explicitly.
+(0.14.0) will let users choose the stage, and so the version, explicitly.
 
 ### Storage
 
