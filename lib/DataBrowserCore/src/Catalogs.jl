@@ -15,9 +15,8 @@ using DataBrowserAPI:
     ITEM_PROCESS,
     ITEM_ANALYZE,
     COLLECTION_PROCESS,
-    COLLECTION_ANALYZE
-# TODO: step 3 deletes `ItemIndex`; give `metadata_dict` a home outside it.
-using DataBrowserAPI.ItemIndex: metadata_dict
+    COLLECTION_ANALYZE,
+    metadata_dict
 
 # Keys
 
