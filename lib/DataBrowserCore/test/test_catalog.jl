@@ -1,4 +1,5 @@
 using Test
+import DataBrowserAPI
 using DataBrowserAPI:
     AbstractDataItem, AbstractCollection, id, label, metadata, MetadataDict, SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE, COLLECTION_PROCESS,
     COLLECTION_ANALYZE
@@ -8,7 +9,15 @@ using DataBrowserCore.Catalogs:
     conflicts, valuetype, metadata!
 
 struct TestItem <: AbstractDataItem end
-struct TestCollection <: AbstractCollection end
+struct TestCollection <: AbstractCollection
+    id::String
+    label::String
+    metadata::MetadataDict
+end
+TestCollection(id, label) = TestCollection(id, label, MetadataDict())
+DataBrowserAPI.id(collection::TestCollection) = collection.id
+DataBrowserAPI.label(collection::TestCollection) = collection.label
+DataBrowserAPI.metadata(collection::TestCollection) = collection.metadata
 
 # Run the source job of `file` with `entries`, then process and analyze the items named in `done`.
 function compute!(catalog, file, entries; done=[entry.id for entry in entries])
@@ -20,7 +29,7 @@ end
 
 @testset "catalog: a changed source item reaches its collection" begin
     catalog = Catalog()
-    run = get!(catalog, ROOT, "run", "Run", TestCollection)
+    run = get!(catalog, ROOT, TestCollection("run", "Run"))
     file = get!(catalog, SourceKey, "data.csv")
     compute!(catalog, file, [ItemEntry("a", "A", run, TestItem), ItemEntry("b", "B", run, TestItem)]; done=["a"])
     @test start!(catalog, run, COLLECTION_PROCESS) === nothing
@@ -41,7 +50,7 @@ end
 
 @testset "catalog: a failure blocks its collection until invalidation" begin
     catalog = Catalog()
-    run = get!(catalog, ROOT, "run", "Run", TestCollection)
+    run = get!(catalog, ROOT, TestCollection("run", "Run"))
     file = get!(catalog, SourceKey, "data.csv")
     compute!(catalog, file, [ItemEntry("a", "A", run, TestItem)]; done=[])
     a = lookup(catalog, ItemKey, "a")
@@ -57,7 +66,7 @@ end
 
 @testset "catalog: a removed member stops blocking its collection" begin
     catalog = Catalog()
-    run = get!(catalog, ROOT, "run", "Run", TestCollection)
+    run = get!(catalog, ROOT, TestCollection("run", "Run"))
     file = get!(catalog, SourceKey, "data.csv")
     compute!(catalog, file, [ItemEntry("a", "A", run, TestItem), ItemEntry("b", "B", run, TestItem)]; done=["a"])
     @test start!(catalog, run, COLLECTION_PROCESS) === nothing
@@ -69,8 +78,8 @@ end
 
 @testset "catalog: progress counts items at any depth" begin
     catalog = Catalog()
-    day = get!(catalog, ROOT, "day", "Day", TestCollection)
-    run = get!(catalog, day, "run", "Run", TestCollection)
+    day = get!(catalog, ROOT, TestCollection("day", "Day"))
+    run = get!(catalog, day, TestCollection("run", "Run"))
     file = get!(catalog, SourceKey, "data.csv")
     compute!(catalog, file, [ItemEntry("a", "A", run, TestItem), ItemEntry("b", "B", run, TestItem), ItemEntry("c", "C", day, TestItem)];
         done=["a", "c"])
@@ -89,8 +98,8 @@ end
 
 @testset "catalog: a source job published again" begin
     catalog = Catalog()
-    run1 = get!(catalog, ROOT, "run1", "Run 1", TestCollection)
-    run2 = get!(catalog, ROOT, "run2", "Run 2", TestCollection)
+    run1 = get!(catalog, ROOT, TestCollection("run1", "Run 1"))
+    run2 = get!(catalog, ROOT, TestCollection("run2", "Run 2"))
     file = get!(catalog, SourceKey, "data.csv")
     publish!(catalog, file, [ItemEntry("a", "A", run1, TestItem), ItemEntry("b", "B", run1, TestItem)])
     a = lookup(catalog, ItemKey, "a")
@@ -133,7 +142,7 @@ end
 @testset "catalog: items go only into existing collections" begin
     catalog = Catalog()
     file = get!(catalog, SourceKey, "data.csv")
-    run = get!(catalog, ROOT, "run", "Run", TestCollection)
+    run = get!(catalog, ROOT, TestCollection("run", "Run"))
     delete!(catalog, run)
     @test_throws ArgumentError publish!(catalog, file, [ItemEntry("a", "A", run, TestItem)])
     @test_throws ArgumentError publish!(catalog, file, [ItemEntry("a", "A", CollectionKey(99), TestItem)])
@@ -172,7 +181,7 @@ end
 @testset "catalog: a collection changed during its job runs again once" begin
     catalog = Catalog(; eager=Dict(SOURCE_EXPAND => 1, ITEM_ANALYZE => 1, COLLECTION_PROCESS => 1))
     file = get!(catalog, SourceKey, "data.csv")
-    run = get!(catalog, ROOT, "run", "Run", TestCollection)
+    run = get!(catalog, ROOT, TestCollection("run", "Run"))
     entries = Dict("data.csv" => [ItemEntry("a", "A", run, TestItem), ItemEntry("b", "B", run, TestItem)])
     job = take!(catalog)
     while job.key != run
@@ -219,7 +228,7 @@ end
 
 @testset "catalog: a failed input settles a request until it is retried" begin
     catalog = Catalog()
-    run = get!(catalog, ROOT, "run", "Run", TestCollection)
+    run = get!(catalog, ROOT, TestCollection("run", "Run"))
     file = get!(catalog, SourceKey, "data.csv")
     compute!(catalog, file, [ItemEntry("a", "A", run, TestItem), ItemEntry("b", "B", run, TestItem)]; done=["b"])
     a = lookup(catalog, ItemKey, "a")
@@ -236,9 +245,9 @@ end
 
 @testset "catalog: a request settles when an empty collection is added" begin
     catalog = Catalog()
-    day = get!(catalog, ROOT, "day", "Day", TestCollection)
+    day = get!(catalog, ROOT, TestCollection("day", "Day"))
     request(catalog, day, COLLECTION_PROCESS)
-    get!(catalog, day, "run", "Run", TestCollection)
+    get!(catalog, day, TestCollection("run", "Run"))
     drain!(catalog, Dict())
     @test status(catalog, day, COLLECTION_PROCESS).validity == FRESH
 end
@@ -246,7 +255,7 @@ end
 @testset "catalog: invalidation takes targets of different kinds" begin
     catalog = Catalog()
     file = get!(catalog, SourceKey, "data.csv")
-    run = get!(catalog, ROOT, "run", "Run", TestCollection)
+    run = get!(catalog, ROOT, TestCollection("run", "Run"))
     @test invalidate!(catalog, [(file, SOURCE_READ), (run, COLLECTION_PROCESS)]) === catalog
 end
 
@@ -288,23 +297,22 @@ end
 
 @testset "catalog: a collection is identified by its parent, type and id" begin
     catalog = Catalog()
-    wafer1 = get!(catalog, ROOT, "wafer1", "Wafer 1", TestCollection)
-    wafer2 = get!(catalog, ROOT, "wafer2", "Wafer 2", TestCollection)
-    device1 = get!(catalog, wafer1, "A", "Device A", TestCollection)
-    device2 = get!(catalog, wafer2, "A", "Device A", TestCollection)
+    wafer1 = get!(catalog, ROOT, TestCollection("wafer1", "Wafer 1"))
+    wafer2 = get!(catalog, ROOT, TestCollection("wafer2", "Wafer 2"))
+    device1 = get!(catalog, wafer1, TestCollection("A", "Device A"))
+    device2 = get!(catalog, wafer2, TestCollection("A", "Device A"))
     @test device1 != device2
-    @test get!(catalog, wafer1, "A", "Device A", TestCollection) == device1
+    @test get!(catalog, wafer1, TestCollection("A", "Device A")) == device1
     @test lookup(catalog, wafer2, TestCollection, "A") == device2
     @test lookup(catalog, ROOT, TestCollection, "A") === nothing
 end
 
 @testset "catalog: collection metadata reaches every item below" begin
     catalog = Catalog()
-    wafer = get!(catalog, ROOT, "wafer", "Wafer", TestCollection)
-    metadata!(catalog, wafer, :collection, MetadataDict(:lot => 7))
+    wafer = get!(catalog, ROOT, TestCollection("wafer", "Wafer", MetadataDict(:lot => 7)))
     metadata!(catalog, wafer, :source, MetadataDict(:oxide => "RuO2"))
-    device = get!(catalog, wafer, "A", "Device A", TestCollection)
-    other = get!(catalog, ROOT, "other", "Other", TestCollection)
+    device = get!(catalog, wafer, TestCollection("A", "Device A"))
+    other = get!(catalog, ROOT, TestCollection("other", "Other"))
     file = get!(catalog, SourceKey, "data.csv")
     compute!(catalog, file, [ItemEntry("a", "A", device, TestItem), ItemEntry("b", "B", other, TestItem)])
     a = lookup(catalog, ItemKey, "a")
@@ -313,6 +321,7 @@ end
     @test metadata(catalog, wafer, :source) == MetadataDict(:oxide => "RuO2")
 
     metadata!(catalog, wafer, :source, MetadataDict(:oxide => "RuO2"))
+    get!(catalog, ROOT, TestCollection("wafer", "Wafer", MetadataDict(:lot => 7)))
     @test status(catalog, a, ITEM_PROCESS).validity == FRESH
 
     metadata!(catalog, wafer, :source, MetadataDict(:oxide => "HfO2"))

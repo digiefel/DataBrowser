@@ -16,6 +16,7 @@ using DataBrowserAPI:
     ITEM_ANALYZE,
     COLLECTION_PROCESS,
     COLLECTION_ANALYZE
+using DataBrowserAPI.ItemIndex: metadata_dict
 
 # Keys
 
@@ -586,41 +587,39 @@ function Base.get!(catalog::Catalog, ::Type{SourceKey}, id::AbstractString)::Sou
 end
 
 """
-    get!(catalog, parent::CollectionKey, id, label, type) -> CollectionKey
+    get!(catalog, parent::CollectionKey, value::AbstractCollection) -> CollectionKey
 
-The key of the collection below `parent` with collection type `type` and public id `id`, added when
-`parent` has none. Two collections with the same type and id below different parents are different
-collections.
+The key of the collection `value` below `parent`, added when `parent` has none. A collection is
+found by its collection type and its `id`, so two equal values below different parents are
+different collections. The catalog takes the label of a new collection from `value`, and keeps
+`metadata(value)` as the `:collection` layer of its metadata (see [`metadata!`](@ref)).
 Throws an `ArgumentError` when `parent` does not exist.
 """
-function Base.get!(
-    catalog::Catalog,
-    parent::CollectionKey,
-    id::AbstractString,
-    label::AbstractString,
-    type::Type{<:AbstractCollection},
-)::CollectionKey
+function Base.get!(catalog::Catalog, parent::CollectionKey, value::AbstractCollection)::CollectionKey
     @lock catalog.lock begin
         collections = catalog.collections
         parent in collections || throw(ArgumentError("the parent collection does not exist"))
-        key = get(collections.lookup, (parent, type, id), nothing)
-        key === nothing || return key
-        key = CollectionKey(length(push!(collections, id)))
-        push!(collections.labels, label)
-        push!(collections.parent, parent)
-        push!(collections.items, ItemKey[])
-        push!(collections.children, CollectionKey[])
-        push!(collections.not_fresh, 0)
-        push!(collections.stuck, 0)
-        push!(collections.nested_items, 0)
-        push!(collections.nested_done, 0)
-        push!(collections.type, type)
-        push!(collections.children[parent.index], key)
-        collections.not_fresh[parent.index] += 1
-        collections.lookup[(parent, type, String(id))] = key
-        invalidate!(catalog, parent, COLLECTION_PROCESS)
-        # The parent now waits for this collection, even while it stays empty.
-        queue!(catalog, key, COLLECTION_PROCESS)
+        entry = (parent, typeof(value), id(value))
+        key = get(collections.lookup, entry, nothing)
+        if key === nothing
+            key = CollectionKey(length(push!(collections, id(value))))
+            push!(collections.labels, label(value))
+            push!(collections.parent, parent)
+            push!(collections.items, ItemKey[])
+            push!(collections.children, CollectionKey[])
+            push!(collections.not_fresh, 0)
+            push!(collections.stuck, 0)
+            push!(collections.nested_items, 0)
+            push!(collections.nested_done, 0)
+            push!(collections.type, typeof(value))
+            push!(collections.children[parent.index], key)
+            collections.not_fresh[parent.index] += 1
+            collections.lookup[entry] = key
+            invalidate!(catalog, parent, COLLECTION_PROCESS)
+            # The parent now waits for this collection, even while it stays empty.
+            queue!(catalog, key, COLLECTION_PROCESS)
+        end
+        metadata!(catalog, key, :collection, metadata_dict(metadata(value)))
         return key
     end
 end
@@ -628,9 +627,9 @@ end
 """
     metadata!(catalog, collection, layer, values)
 
-Replace one layer of the metadata of `collection`: `:collection` for the metadata of its value, or
-`:source` for the metadata its source gives it. When the layer changes, process becomes stale for
-every item below the collection, at any depth.
+Replace one layer of the metadata of `collection`: `:source` for the metadata its source gives it,
+or `:collection` for the metadata of its value, which [`get!`](@ref) sets. When the layer changes,
+process becomes stale for every item below the collection, at any depth.
 """
 function metadata!(catalog::Catalog, collection::CollectionKey, layer::Symbol, values::AbstractDict{Symbol})::Nothing
     @lock catalog.lock begin
@@ -896,7 +895,7 @@ stages are `COLLECTION_PROCESS` and `COLLECTION_ANALYZE`. That metadata stays wh
 becomes stale, until the stage produces new metadata.
 
 A collection has two more layers: `:collection` gives the metadata of its value, and `:source` the
-metadata its source gives it. [`metadata!`](@ref) sets them.
+metadata its source gives it. [`get!`](@ref) sets the first and [`metadata!`](@ref) the second.
 """
 metadata(catalog::Catalog, key::Union{ItemKey,CollectionKey}, layer::MetadataLayer)::MetadataDict =
     @lock catalog.lock table(catalog, key).metadata[layer][key.index]
