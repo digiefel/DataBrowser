@@ -40,7 +40,6 @@ julia --project=bench --threads=auto test/runtests.jl precompile --force
 
 | Package selector | Test files and behavior |
 | --- | --- |
-| `API` | `test_identity.jl`: stable collection identity across labels, types and parent paths. |
 | `Annotations` | `test_annotations.jl`: coordinates, layouts, tag/note persistence and inheritance. |
 | `Sources` | `test_directory.jl`: discovery, exclusions, recursion and change fingerprints. |
 | `Recipes` | `test_stages.jl`: registration through typed stages and CSV loading. |

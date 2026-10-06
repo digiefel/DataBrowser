@@ -53,9 +53,9 @@ function select_source_item!(
 )::Bool
     workspace = state.workspace
     workspace isa Workspace.Workspace || return false
-    key = Workspace.source_item_key(workspace, String(source_item_id))
-    key === nothing && return false
-    items = [item for item in Workspace.items(workspace) if item.source_item_key == key]
+    items = [
+        item for item in Workspace.items(workspace)
+        if Workspace.source_item_id(workspace, item) == source_item_id]
     isempty(items) && return false
     Workspace.select_items!(workspace, items)
     _reveal_selected_items!(state)
@@ -67,19 +67,14 @@ function _reveal_selected_items!(state::BrowserState)::Nothing
     workspace = state.workspace::Workspace.Workspace
     items = _items_for_ids(state, workspace.selection.item_ids)
     isempty(items) && return nothing
-    item_collections = [Workspace.collection(workspace, item) for item in items]
-    collection_ids = unique(String[id(c) for c in item_collections])
-    expanded_ids = copy(state.expanded_collection_ids)
-    for item_collection in item_collections
-        for ancestor in Workspace.ancestors(workspace, item_collection)
-            ancestor.id in expanded_ids || push!(expanded_ids, ancestor.id)
-        end
+    holders = unique(Workspace.collection(workspace, item) for item in items)
+    for holder in holders, ancestor in Workspace.ancestors(workspace, holder)
+        ids = Workspace.ids(workspace, ancestor)
+        ids in state.expanded_collections || push!(state.expanded_collections, ids)
     end
-
-    state.expanded_collection_ids = expanded_ids
-    workspace.selection.collection_ids = collection_ids
-    state.scroll_to_collection_id = isempty(collection_ids) ? nothing : first(collection_ids)
-    state.scroll_to_item_id = first(items).id
+    workspace.selection.collections = [Workspace.ids(workspace, holder) for holder in holders]
+    state.scroll_to_collection = first(workspace.selection.collections)
+    state.scroll_to_item_id = id(workspace, first(items))
     return nothing
 end
 

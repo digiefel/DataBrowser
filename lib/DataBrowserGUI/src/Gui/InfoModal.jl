@@ -3,7 +3,8 @@ import CImGui.CSyntax: @c
 
 using DataBrowserAPI:
     kind_label,
-    label
+    label,
+    source_item_path
 import DataBrowserCore.Workspace
 
 """Render collection and item details for the visible workspace selection."""
@@ -53,16 +54,18 @@ function render_info_window(state::BrowserState)::Nothing
             # The delivered metadata dict (inherited ⊕ item ⊕ computed layers), exactly what
             # project callbacks and views receive.
             delivered = Workspace.metadata(workspace, m)
-            ig.Text("Title: $(m.label)")
+            ig.Text("Title: $(label(workspace, m))")
             ig.Separator()
-            kind_text = kind_label(workspace.project, label(m.type))
+            kind_text = kind_label(workspace.project, label(Workspace.valuetype(workspace, m)))
             ig.BulletText("Type: $(kind_text)")
-            ig.BulletText("Timestamp: $(m.source_item_timestamp)")
-            source_ref = Workspace.source_item_id(workspace, m.source_item_key)
-            if m.source_item_path !== nothing
+            ig.BulletText("Timestamp: $(_item_timestamp(workspace, m))")
+            source_ref = Workspace.source_item_id(workspace, m)
+            source_item = Workspace.source_item(workspace, m)
+            source_path = source_item === nothing ? nothing : source_item_path(source_item)
+            if source_path !== nothing
                 ig.BulletText("Source item:")
                 ig.SameLine()
-                ig.TextLinkOpenURL(source_ref, m.source_item_path)
+                ig.TextLinkOpenURL(source_ref, source_path)
             else
                 ig.BulletText("Source item: $(source_ref)")
             end
@@ -106,8 +109,7 @@ function render_collection_metadata_modal(state::BrowserState)::Nothing
     ig.SetNextWindowPos(center, ig.ImGuiCond_Always, (0.5, 0.5))
 
     if state.collection_metadata_modal &&
-       all(record -> isempty(record.own_metadata) && isempty(record.analysis),
-           Workspace.collections(workspace))
+       isempty(Workspace.metadata_keys(workspace))
         ig.OpenPopup("Collection Parameters Missing")
     end
 

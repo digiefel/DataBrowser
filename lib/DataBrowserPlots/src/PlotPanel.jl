@@ -8,9 +8,10 @@ import DataBrowserGUI
 const Browser = DataBrowserGUI.Browser
 
 using DataBrowserAPI:
+    id,
     label,
     source_label
-using DataBrowserAPI.ItemIndex: ItemRecord
+using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 using .MakieImguiIntegration: MakieFigure, destroy_figure!
 
@@ -50,7 +51,7 @@ function draw_plot_view!(
     state::Browser.BrowserState,
     view::PlotViewState,
     plot_key::Tuple,
-    records::Vector{ItemRecord},
+    records::Vector{ItemKey},
     plot_kind::Type{<:PlotKind},
 )::Nothing
     workspace = state.workspace::Workspace.Workspace
@@ -74,8 +75,8 @@ function draw_plot_view!(
         view.error = "Plot failed: $summary. See the console for full details."
         item_context = join(
             [
-                "$(record.label) ($(label(record.type)))\n" *
-                "  $(Workspace.source_item_id(workspace, record.source_item_key))"
+                "$(label(workspace, record)) ($(label(Workspace.valuetype(workspace, record))))\n" *
+                "  $(Workspace.source_item_id(workspace, record))"
                 for record in records
             ],
             "\n",
@@ -95,12 +96,13 @@ end
 function render_plot_toolbar!(
     state::Browser.BrowserState,
     view::PlotViewState,
-    records::Vector{ItemRecord},
-    selected_records::Vector{ItemRecord},
+    records::Vector{ItemKey},
+    selected_records::Vector{ItemKey},
     available::Vector{Type{<:PlotKind}},
 )::Nothing
     plots = _plot_state(state)
-    project = (state.workspace::Workspace.Workspace).project
+    workspace = state.workspace::Workspace.Workspace
+    project = workspace.project
     current = view.plot_kind
     if ig.BeginCombo(
         "##plot_kind_$(view.id)",
@@ -112,7 +114,7 @@ function render_plot_toolbar!(
                 view.last_key = nothing
                 view.error = ""
                 for record in records
-                    plots.kind_by_item[label(record.type)] = candidate
+                    plots.kind_by_item[label(Workspace.valuetype(workspace, record))] = candidate
                 end
             end
         end
@@ -125,7 +127,7 @@ function render_plot_toolbar!(
         view.live = live
         view.last_key = nothing
         if !live
-            view.item_ids = [record.id for record in selected_records]
+            view.item_ids = [id(workspace, record) for record in selected_records]
         end
     end
 
@@ -140,10 +142,10 @@ function render_plot_toolbar!(
                 PlotViewState(
                     id="plot_$(plots.next_window_id)",
                     title=length(records) == 1 ?
-                          only(records).label :
+                          label(workspace, only(records)) :
                           "$(length(records)) items",
                     live=false,
-                    item_ids=[record.id for record in records],
+                    item_ids=[id(workspace, record) for record in records],
                     plot_kind=current,
                 ),
             )
@@ -157,7 +159,7 @@ function render_plot_toolbar!(
     if ig.Button("Export##export_$(view.id)") && can_export
         name = current === nothing ? "plot" : plot_kind_name(current)
         default_name = length(records) == 1 ?
-            "$(only(records).id)-$name.png" :
+            "$(id(workspace, only(records)))-$name.png" :
             "$(length(records))-items-$name.png"
         path = save_file(default_name; filterlist="png,jpg,jpeg,svg,pdf")
         if !isempty(path)
@@ -227,30 +229,30 @@ end
 Update and render one plot window.
 
 Live views use the current browser selection. Static views resolve their saved item ids against the
-current workspace index.
+items the workspace has now.
 """
 function render_plot_view!(
     state::Browser.BrowserState,
     view::PlotViewState,
-    selected_records::Vector{ItemRecord},
+    selected_records::Vector{ItemKey},
 )::Nothing
     plots = _plot_state(state)
+    workspace = state.workspace::Workspace.Workspace
 
     if view.live
-        view.item_ids = [record.id for record in selected_records]
+        view.item_ids = [id(workspace, record) for record in selected_records]
     end
     records = view.live ?
         selected_records :
         Browser._items_for_ids(state, view.item_ids)
 
-    workspace = state.workspace::Workspace.Workspace
     source = workspace.source
     project = workspace.project
     kind = if isempty(records)
         nothing
     else
-        T = first(records).type
-        all(record -> record.type === T, records) ? label(T) : nothing
+        T = Workspace.valuetype(workspace, first(records))
+        all(record -> Workspace.valuetype(workspace, record) === T, records) ? label(T) : nothing
     end
     available = kind === nothing ?
         Type{<:PlotKind}[] :
@@ -287,7 +289,7 @@ function render_plot_view!(
             source_label(workspace.source),
             view.id,
             plot_kind_name(view.plot_kind),
-            [record.id for record in records],
+            [id(workspace, record) for record in records],
         )
         view.last_key == plot_key ||
             draw_plot_view!(

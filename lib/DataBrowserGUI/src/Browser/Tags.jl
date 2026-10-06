@@ -1,18 +1,12 @@
 using DataBrowserAnnotations
 
 import DataBrowserCore.Workspace
-using DataBrowserAPI: id, label
-using DataBrowserAPI.ItemIndex:
-    AbstractCollectionRecord,
-    CollectionRecord,
-    ItemRecord,
-    RootCollection,
-    item_timestamp_key
+using DataBrowserAPI: id, label, source_item_timestamp
+using DataBrowserCore.Catalogs: CollectionKey, ItemKey, ROOT
 
 const BAD_TAG_NAME = "bad"
 const BAD_TAG_COLOR = (UInt8(0xff), UInt8(0x30), UInt8(0x30))
 const BAD_TAG_PRIORITY = 100
-const ROOT_COLLECTION = RootCollection()
 
 """
 Load tags for one source root.
@@ -68,30 +62,24 @@ function _tag_state_or_error(state::BrowserState)::DataBrowserAnnotations.Tags.T
     return state.tag_state
 end
 
-"""Return the persisted annotation key for one collection record."""
-function _collection_annotation_key(
-    workspace::Workspace.Workspace,
-    collection_record::CollectionRecord,
-)::String
-    path = [Workspace.ancestors(workspace, collection_record); collection_record]
-    return join(label.(path), '/')
+"""Return the persisted annotation key for one collection: its labels from the top level down."""
+function _collection_annotation_key(workspace::Workspace.Workspace, collection::CollectionKey)::String
+    path = [Workspace.ancestors(workspace, collection); collection]
+    return join((label(workspace, key) for key in path), '/')
 end
 
 """Return every parent annotation key used when resolving inherited tags."""
-function _ancestor_annotation_keys(
-    workspace::Workspace.Workspace,
-    collection_record::AbstractCollectionRecord,
-)::Vector{String}
+function _ancestor_annotation_keys(workspace::Workspace.Workspace, collection::CollectionKey)::Vector{String}
     return String[
         _collection_annotation_key(workspace, ancestor)
-        for ancestor in Workspace.ancestors(workspace, collection_record)
+        for ancestor in Workspace.ancestors(workspace, collection)
     ]
 end
 
 """Return the annotation keys of the collections that hold an item, from the top level down."""
-function _item_ancestor_annotation_keys(workspace::Workspace.Workspace, item::ItemRecord)::Vector{String}
-    path = Workspace.ancestors(workspace, item)
-    return String[join(label.(path[1:depth]), '/') for depth in eachindex(path)]
+function _item_ancestor_annotation_keys(workspace::Workspace.Workspace, item::ItemKey)::Vector{String}
+    labels = String[label(workspace, key) for key in Workspace.ancestors(workspace, item)]
+    return String[join(labels[1:depth], '/') for depth in eachindex(labels)]
 end
 
 """Return whether an item or one of its supplied parents has the bad tag."""
@@ -104,90 +92,91 @@ function _has_bad_tag(
 end
 
 """Return whether a collection remains visible after applying the bad-tag filter."""
-function _collection_is_visible(
-    state::BrowserState,
-    collection_record::CollectionRecord,
-)::Bool
+function _collection_is_visible(state::BrowserState, collection::CollectionKey)::Bool
     _show_bad_effective(state) && return true
     tag_state = _tag_state_or_error(state)
     workspace = state.workspace::Workspace.Workspace
-    collection_key = _collection_annotation_key(workspace, collection_record)
     return !_has_bad_tag(
         tag_state,
-        collection_key,
-        _ancestor_annotation_keys(workspace, collection_record),
+        _collection_annotation_key(workspace, collection),
+        _ancestor_annotation_keys(workspace, collection),
     )
 end
 
 """Return whether an item remains visible after applying inherited bad tags."""
-function _item_is_visible(
-    state::BrowserState,
-    item::ItemRecord,
-)::Bool
+function _item_is_visible(state::BrowserState, item::ItemKey)::Bool
     _show_bad_effective(state) && return true
     tag_state = _tag_state_or_error(state)
     workspace = state.workspace::Workspace.Workspace
     ancestors = _item_ancestor_annotation_keys(workspace, item)
-    return !_has_bad_tag(tag_state, item.id, ancestors)
+    return !_has_bad_tag(tag_state, id(workspace, item), ancestors)
 end
 
 """
 Resolve the current selected collections and items after applying tag visibility.
-The persisted selection ids are left untouched; this returns only the currently visible subset.
+The selection in the workspace is left untouched; this returns only the part of it that exists and
+is visible now. The root is never among the returned collections.
 """
 function _project_visible_selection(
     state::BrowserState,
-)::Tuple{Vector{CollectionRecord},Vector{ItemRecord},Vector{String}}
+)::Tuple{Vector{CollectionKey},Vector{ItemKey},Vector{String}}
     workspace = state.workspace
     if !(workspace isa Workspace.Workspace)
-        return CollectionRecord[], ItemRecord[], String[]
+        return CollectionKey[], ItemKey[], String[]
     end
-    selected_collections = CollectionRecord[]
-    for collection_id in workspace.selection.collection_ids
-        collection_record = Workspace.collection(workspace, collection_id)
-        collection_record === nothing && continue
-        isempty(Workspace.children(workspace, collection_record)) ||
-            error("Selected collection ID '$collection_id' does not point to a leaf collection")
-        !_collection_is_visible(state, collection_record) && continue
-        push!(selected_collections, collection_record)
+    selected_collections = CollectionKey[]
+    for ids in workspace.selection.collections
+        collection = Workspace.collection(workspace, ids)
+        (collection === nothing || collection == ROOT) && continue
+        isempty(Workspace.children(workspace, collection)) ||
+            error("Selected collection '$(join(ids, '/'))' is not a leaf collection")
+        !_collection_is_visible(state, collection) && continue
+        push!(selected_collections, collection)
     end
 
-    visible_collection_ids = Set(id.(selected_collections))
-    id(ROOT_COLLECTION) in workspace.selection.collection_ids &&
-        push!(visible_collection_ids, id(ROOT_COLLECTION))
-    selected_items = ItemRecord[]
+    visible_collections = Set(selected_collections)
+    String[] in workspace.selection.collections && push!(visible_collections, ROOT)
+    selected_items = ItemKey[]
     for item_id in workspace.selection.item_ids
         item = Workspace.item(workspace, item_id)
         item === nothing && continue
-        id(Workspace.collection(workspace, item)) in visible_collection_ids || continue
+        Workspace.collection(workspace, item) in visible_collections || continue
         !_item_is_visible(state, item) && continue
         push!(selected_items, item)
     end
     selected_path = String[]
     if length(selected_collections) == 1
         selected = only(selected_collections)
-        selected_path = [c.label for c in [Workspace.ancestors(workspace, selected); selected]]
+        selected_path = String[
+            label(workspace, key) for key in [Workspace.ancestors(workspace, selected); selected]]
     end
     return selected_collections, selected_items, selected_path
 end
 
 """
-Return every item belonging to the selected visible collections, ordered by time.
+Return every item belonging to the selected visible collections, ordered by the time of the source
+item that produced it. Items whose source item gives no time come last.
 """
-function _items_of_selected_collections(
-    state::BrowserState,
-)::Vector{ItemRecord}
+function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     selected_collections, _, _ = _project_visible_selection(state)
     workspace = state.workspace::Workspace.Workspace
-    all_items = ItemRecord[]
-    if id(ROOT_COLLECTION) in workspace.selection.collection_ids
-        append!(all_items, Workspace.items(workspace, ROOT_COLLECTION))
+    all_items = ItemKey[]
+    String[] in workspace.selection.collections &&
+        append!(all_items, Workspace.items(workspace, ROOT))
+    for collection in selected_collections
+        append!(all_items, Workspace.items(workspace, collection))
     end
-    for collection_record in selected_collections
-        append!(all_items, Workspace.items(workspace, collection_record))
-    end
-    sort!(all_items, by=item_timestamp_key)
-    return all_items
+    return sort!(
+        all_items;
+        by=item -> _item_timestamp(workspace, item),
+        lt=(left, right) -> left !== nothing && (right === nothing || left < right),
+    )
+end
+
+"""The time of the source item that produced an item, when the source reported it and gives one."""
+function _item_timestamp(workspace::Workspace.Workspace, item::ItemKey)
+    source_item = Workspace.source_item(workspace, item)
+    return source_item === nothing ? nothing : source_item_timestamp(source_item)
 end
 
 """

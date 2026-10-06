@@ -17,9 +17,6 @@ project_description(::AbstractProject)::String = ""
 """Return the human-readable label for a project item kind."""
 kind_label(::AbstractProject, kind::Symbol)::String = string(kind)
 
-"""Return the project-specific display label for one collection path."""
-function collection_path_label end
-
 """
 Projects a GUI session can offer when the caller did not supply one, and the preferred default.
 

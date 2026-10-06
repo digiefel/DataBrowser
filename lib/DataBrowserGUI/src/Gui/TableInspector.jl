@@ -4,7 +4,7 @@ import CImGui.CSyntax: @c
 using ..DataBrowserGUI: ItemTable, materialize_item_table
 
 import DataBrowserCore.Workspace
-using DataBrowserAPI: label
+using DataBrowserAPI: id, label
 
 # ---------------------------------------------------------------------------
 # Item-data source helpers
@@ -30,7 +30,7 @@ function _sync_item_data_inspector!(state::BrowserState)::Nothing
     isempty(selected_records) && return nothing
 
     # Compute a cache key so we don't rebuild on every frame
-    key = (workspace.scan.epoch, sort([r.id for r in selected_records]), inspector.show_provenance_column)
+    key = (workspace.scan.epoch, sort([id(workspace, r) for r in selected_records]), inspector.show_provenance_column)
     inspector.inspector_key == key && return nothing
 
     table, warnings = try
@@ -67,7 +67,7 @@ function _sync_item_data_inspector!(state::BrowserState)::Nothing
     inspector.grid.selected_rows = Int[]
 
     # Track current kind to form a stable per-kind DataGrid table id (used by imgui.ini)
-    types = unique([r.type for r in selected_records])
+    types = unique([Workspace.valuetype(workspace, r) for r in selected_records])
     inspector.current_kind = length(types) == 1 ? label(only(types)) : nothing
 
     return nothing

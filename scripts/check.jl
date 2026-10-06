@@ -127,6 +127,8 @@ function check(args=ARGS)
     end
     if full || (!benchmark && !precompile_only)
         for name in (full ? PACKAGES : [package])
+            # A package without tests is checked by precompilation only.
+            isdir(joinpath(ROOT, "lib", name, "test")) || continue
             files = full ? String[] : selected[2:end]
             # A selected file is an explicit diagnostic run, not a pass for the whole package.
             test_code = "using Pkg; Pkg.test($(repr(name)); allow_reresolve=false, julia_args=[\"--check-bounds=auto\"], test_args=$(repr(files)))"

@@ -182,7 +182,6 @@ function _render_workspace_tab!(workspace::Workspace.Workspace)::Nothing
 
     memory = Workspace.workspace_memory_snapshot(workspace)
     ig.Text("Index: $(memory.index_items) items, $(memory.index_collections) collections")
-    ig.Text("Metadata held: $(memory.item_metadata)")
     return nothing
 end
 

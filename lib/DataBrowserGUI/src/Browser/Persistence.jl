@@ -1,7 +1,7 @@
 using TOML
 
 using DataBrowserAPI: project_name
-using DataBrowserAPI.ItemIndex: ItemRecord
+using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 
 """Convert a user path into the stable absolute form used by persistence."""
@@ -104,14 +104,14 @@ function _save_project_view(root_path::AbstractString, view::PersistedProjectVie
     return nothing
 end
 
-"""Resolve stable item ids against the current workspace index."""
+"""Resolve stable item ids against the items the workspace has now."""
 function _items_for_ids(
     state::BrowserState,
     ids::Vector{String},
-)::Vector{ItemRecord}
+)::Vector{ItemKey}
     workspace = state.workspace
-    workspace isa Workspace.Workspace || return ItemRecord[]
-    return ItemRecord[
+    workspace isa Workspace.Workspace || return ItemKey[]
+    return ItemKey[
         item for item in (Workspace.item(workspace, id) for id in ids) if item !== nothing]
 end
 
@@ -125,8 +125,8 @@ function _project_view_from_browser(
     return PersistedProjectView(
         project=project_name(workspace.project),
         tree=PersistedTreeView(
-            expanded=copy(state.expanded_collection_ids),
-            selected=copy(workspace.selection.collection_ids),
+            expanded=copy(state.expanded_collections),
+            selected=copy(workspace.selection.collections),
             filter=state.tree_filter,
         ),
         items=PersistedItemsView(
@@ -156,8 +156,8 @@ function _apply_project_view!(
     view::PersistedProjectView,
 )::Nothing
     workspace = state.workspace::Workspace.Workspace
-    state.expanded_collection_ids = copy(view.tree.expanded)
-    workspace.selection.collection_ids = copy(view.tree.selected)
+    state.expanded_collections = copy(view.tree.expanded)
+    workspace.selection.collections = copy(view.tree.selected)
     workspace.selection.item_ids = copy(view.items.selected)
     state.tree_filter = view.tree.filter
     state.item_filter = view.items.filter

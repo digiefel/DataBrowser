@@ -25,8 +25,7 @@ function check_items(ws, session, expected_peaks)
     items = materialize_items(ws)
     sort([metadata(item)[:peak] for item in items]) == expected_peaks || error("Incorrect analysis results")
     read_item_data(ws) == item_data.(items) || error("Selection did not deliver the selected payloads")
-    records = [ws.index.items[id] for id in ids]
-    table, warnings = materialize_item_table(ws, records)
+    table, warnings = materialize_item_table(ws, [DataBrowser.Workspace.item(ws, id) for id in ids])
     isempty(warnings) || error("Table preparation skipped selected data")
     y = findfirst(==("y"), table.columns)
     [table.getvalue(row, y) for row in 1:table.rows] ==

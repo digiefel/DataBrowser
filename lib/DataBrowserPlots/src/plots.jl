@@ -57,10 +57,10 @@ function plot_kind_from_name(name::AbstractString)::Union{Nothing,Type{<:PlotKin
     return RegisteredPlot{Symbol(kind),Symbol(label)}
 end
 
-"""Materialize records and create the figure layout required by a visualizer."""
+"""Create the figure layout a plot kind requires for the given items."""
 function setup_plot end
 
-"""Materialize records and draw their items into an existing figure."""
+"""Draw the given items into an existing figure."""
 function plot_data! end
 
 """

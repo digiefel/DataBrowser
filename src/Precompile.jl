@@ -51,7 +51,7 @@ end
 
     @compile_workload begin
         project = _precompile_project()
-        records = [only(items_for_file(project, path)) for path in fixture_paths]
+        foreach(path -> items_for_file(project, path), fixture_paths)
 
         precompile_depot = mktempdir()
         pushfirst!(DEPOT_PATH, precompile_depot)
@@ -70,8 +70,9 @@ end
                 plot_kind = only(registered_plot_kinds(project, :iv))
                 figure = setup_plot(workspace, plot_kind, items)
                 plot_data!(workspace, plot_kind, items, figure)
-                Cache.read_payload(workspace.cache.db, records; stage=DataBrowserAPI.SOURCE_EXPAND)
-                Cache.read_payload(workspace.cache.db, records; stage=DataBrowserAPI.ITEM_PROCESS)
+                ids = Workspace.query_items(workspace)
+                Cache.read_payload(workspace.cache.db, ids; stage=DataBrowserAPI.SOURCE_EXPAND)
+                Cache.read_payload(workspace.cache.db, ids; stage=DataBrowserAPI.ITEM_PROCESS)
             end
             Workspace.workspace_memory_snapshot(workspace)
             Cache.load_cache_index(workspace.cache.db)

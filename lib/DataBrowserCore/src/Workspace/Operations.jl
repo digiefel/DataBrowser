@@ -117,7 +117,7 @@ function _install_runtime!(
     workspace.catalog = Catalog(background_processing)
     foreach(empty!, (
         workspace.source_items, workspace.source_locks, workspace.collection_keys,
-        workspace.errors, workspace.wanted, workspace.selection.collections))
+        workspace.errors, workspace.wanted))
     workspace.next_collection_key = 1
     workspace.running = 0
     workspace.completed = 0
@@ -278,7 +278,6 @@ function forget_stale!(workspace::Workspace)::Nothing
             saved === nothing || clear_cached_result_state!(cache, stage, saved)
         else
             filter!(target -> first(target) != key, workspace.errors)
-            filter!(!=(key), workspace.selection.collections)
             saved = pop!(workspace.collection_keys, key, nothing)
             saved === nothing && continue
             delete_collection_metadata!(cache, [saved])

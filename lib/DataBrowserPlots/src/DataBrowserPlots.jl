@@ -7,7 +7,7 @@ import DataBrowserAPI
 import DataBrowserAPI:
     AbstractDataItem,
     AbstractProject
-import DataBrowserAPI.ItemIndex: ItemRecord
+import DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 using DataBrowserAPI: @timed_dbg
 import DataBrowserGUI
@@ -23,21 +23,21 @@ include("PlotPanel.jl")
 include("TablePlotPanel.jl")
 include("PlotsExtension.jl")
 
-"""Materialize records and create the figure layout required by a visualizer."""
+"""Load the items of the given keys and create the figure layout required by a visualizer."""
 function setup_plot(
     workspace::Workspace.Workspace,
     plot_kind::Type{<:PlotKind},
-    records::Vector{ItemRecord},
+    records::Vector{ItemKey},
 )::Figure
     return setup_plot(
         workspace, plot_kind, Workspace.materialize_items(workspace, records))
 end
 
-"""Materialize records and draw their items into an existing figure."""
+"""Load the items of the given keys and draw them into an existing figure."""
 function plot_data!(
     workspace::Workspace.Workspace,
     plot_kind::Type{<:PlotKind},
-    records::Vector{ItemRecord},
+    records::Vector{ItemKey},
     figure::Figure,
 )::Nothing
     plot_data!(
