@@ -1,6 +1,13 @@
 """
 Start cache loading and source scanning for one new workspace.
 With `cache=false`, keep the cache in memory and discard it on close; the project cache file is untouched.
+
+`expanded_data_limit` is the memory limit, in MiB, for expanded data: the data that `expand` gave
+each item, kept until the `process` of the item has used it. The default is 3072, or a quarter of
+the memory of the machine when that is less. While the expanded data is under half the limit, the
+workspace reads its source items first. Above that, it processes items first, which releases their
+expanded data. A lower limit uses less memory and lists the items of all source items later. The
+size of the data is estimated.
 """
 function open_workspace(
     project::AbstractProject,
@@ -8,6 +15,7 @@ function open_workspace(
     rebuild::Bool=false,
     cache::Bool=true,
     background_processing::Bool=false,
+    expanded_data_limit::Integer=default_expanded_data_limit(),
 )::Workspace
     opened_source = open_source(source)
     workspace = try
@@ -17,6 +25,7 @@ function open_workspace(
             rebuild,
             cache,
             background_processing,
+            expanded_data_limit,
         )
     catch
         close_source!(opened_source)
@@ -37,8 +46,8 @@ function open_workspace(
 end
 
 """
-Rebuild `workspace` in place. The project cannot change. Omitted `source`, `cache`, and
-`background_processing` stay as they are. Omitted `source` is a `copy` of the current source so the
+Rebuild `workspace` in place. The project cannot change. Omitted `source`, `cache`,
+`background_processing` and `expanded_data_limit` stay as they are. Omitted `source` is a `copy` of the current source so the
 closed source's watchers are not reused. `rebuild` is a one-shot cache action, not a stored setting.
 
 A failed rebuild leaves the workspace closed.
@@ -49,6 +58,7 @@ function modify_workspace!(
     rebuild::Bool=false,
     cache::Union{Nothing,Bool}=nothing,
     background_processing::Union{Nothing,Bool}=nothing,
+    expanded_data_limit::Union{Nothing,Integer}=nothing,
 )::Nothing
     lock(workspace.lifecycle_lock) do
         workspace.closed && error("Cannot modify a closed workspace")
@@ -66,6 +76,7 @@ function modify_workspace!(
                 rebuild,
                 cache=next_cache,
                 background_processing=next_background,
+                expanded_data_limit=something(expanded_data_limit, workspace.expanded_data_limit),
             )
             scan_source!(workspace; rebuild)
             watch_source(
@@ -109,10 +120,11 @@ function _install_runtime!(
     rebuild::Bool,
     cache::Bool,
     background_processing::Bool,
+    expanded_data_limit::Integer,
 )::Nothing
     metrics = BuildMetrics()
-    cache_db, disk_error, identity =
-        _open_workspace_cache(workspace.project, source, metrics; rebuild, cache)
+    cache_db, disk_error, identity = _open_workspace_cache(
+        workspace.project, source, metrics; rebuild, cache, expanded_data_limit)
     workspace.source = source
     workspace.catalog = Catalog(background_processing)
     foreach(empty!, (
@@ -128,6 +140,7 @@ function _install_runtime!(
     workspace.source_error = ""
     workspace.background_processing = background_processing
     workspace.disk_cache = cache
+    workspace.expanded_data_limit = expanded_data_limit
     workspace.metrics = metrics
     @atomic workspace.status = -1 => WorkspaceStatus()
     changed!(workspace)

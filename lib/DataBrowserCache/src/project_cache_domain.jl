@@ -19,26 +19,12 @@ function set_cache_memory_limit!(mib::Integer)::Int
 end
 
 """
-Memory limit (MiB) for expanded data: the data that `expand` gave each item, kept until the
-`process` of the item has used it. The size of the data is estimated.
-"""
-const EXPANDED_DATA_LIMIT_MIB = Ref(3072)
+    default_expanded_data_limit() -> Int
 
+The default of `expanded_data_limit` in [`open_cache_db`](@ref), in MiB: 3072, or a quarter of the
+memory of the machine when that is less.
 """
-    set_expanded_data_limit!(mib) -> Int
-
-Set the memory limit (MiB) for expanded data in workspaces opened later. The default is 3072 MiB,
-or a quarter of the memory of the machine when that is less.
-
-While the expanded data is under half the limit, a workspace reads its source items first. Above
-that, it processes items first, which releases their expanded data; the other half is room for the
-source items that are being read at that moment. A lower limit uses less memory and shows the
-items of all source items later.
-"""
-function set_expanded_data_limit!(mib::Integer)::Int
-    mib >= 1 || throw(ArgumentError("the limit for expanded data must be at least 1 MiB"))
-    return EXPANDED_DATA_LIMIT_MIB[] = Int(mib)
-end
+default_expanded_data_limit()::Int = min(3072, Sys.total_memory() ÷ 4 ÷ 1024^2)
 
 # An estimate without reading the values: 8 bytes for each cell of a table.
 _expanded_bytes(data)::Int = Tables.istable(data) ?
@@ -559,8 +545,12 @@ end
 Open a ready-to-use cache, initializing its schema and identity or validating the existing identity.
 A different project or source is rejected before cache stores start. `rebuild=true` first discards
 all generated data in the file and binds the new cache to the supplied identity.
-With `persistent=false`, use a private in-memory database and disable temporary-file spilling.
-The supplied cache path is untouched, including when `rebuild=true`; closing discards all results.
+With `persistent=false`, use a private in-memory database, which moves data that exceeds its memory
+limit to a temporary directory of its own. The supplied cache path is untouched, including when
+`rebuild=true`; closing discards all results.
+
+`expanded_data_limit` is the memory limit, in MiB, for the data that `expand` gave each item and
+that is kept until the `process` of the item has used it.
 """
 function open_cache_db(
     identity::ProjectCacheIdentity,
@@ -568,7 +558,10 @@ function open_cache_db(
     ;
     rebuild::Bool=false,
     persistent::Bool=true,
+    expanded_data_limit::Integer=default_expanded_data_limit(),
 )::CacheDB
+    expanded_data_limit >= 1 ||
+        throw(ArgumentError("the limit for expanded data must be at least 1 MiB"))
     if persistent
         mkpath(dirname(identity.cache_path))
         rebuild && _remove_cache_files!(identity.cache_path)
@@ -578,7 +571,9 @@ function open_cache_db(
     try
         try
             DBInterface.execute(connection, _memory_limit_sql(CACHE_MEMORY_LIMIT_MIB[]))
-            persistent || DBInterface.execute(connection, "SET temp_directory = ''")
+            # A database in memory moves what exceeds its memory limit to a directory of its own,
+            # removed when Julia exits.
+            persistent || DBInterface.execute(connection, "SET temp_directory = '$(mktempdir())'")
             has_meta = only(Int[
                 row.n
                 for row in DBInterface.execute(
@@ -635,7 +630,7 @@ function open_cache_db(
             payload,
             MemoryStore{Int64,Any}(; capacity=256 * 1024^2, weight=Base.summarysize),
             MemoryStore{String,Any}(;
-                capacity=EXPANDED_DATA_LIMIT_MIB[] * 1024^2, weight=_expanded_bytes),
+                capacity=Int(expanded_data_limit) * 1024^2, weight=_expanded_bytes),
             item_keys,
             next_item_key,
             source_item_keys,
@@ -866,8 +861,8 @@ function store_collection!(
 end
 
 """
-Keep the expanded data of one item in memory. When the limit is exceeded, the data kept longest
-is dropped; see [`set_expanded_data_limit!`](@ref).
+Keep the expanded data of one item in memory. When the limit of the cache is exceeded, the data
+kept longest is dropped.
 """
 function store_item_payload!(cache::CacheDB, id::AbstractString, payload)::Nothing
     append!(cache.unprocessed, String(id), payload)

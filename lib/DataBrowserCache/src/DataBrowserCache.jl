@@ -33,11 +33,6 @@ include("cache_buffer.jl")
 include("project_cache_domain.jl")
 include("source_stages.jl")
 
-function __init__()
-    EXPANDED_DATA_LIMIT_MIB[] = min(3072, Sys.total_memory() ÷ 4 ÷ 1024^2)
-    return nothing
-end
-
 export BuildMetrics,
     CacheResultKey,
     CacheResultStatus,
@@ -73,7 +68,7 @@ export BuildMetrics,
     record_cache_phase!,
     reset_build_metrics!,
     set_cache_memory_limit!,
-    set_expanded_data_limit!,
+    default_expanded_data_limit,
     release_item_payload!,
     expanded_data_full,
     store_collection_metadata!,

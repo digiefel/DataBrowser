@@ -37,25 +37,35 @@ function work!(workspace::Workspace)::Nothing
             workspace.running += 1
             job
         end
-        while job !== nothing
-            changed!(workspace)
-            try
-                run!(workspace, job)
-            catch error
-                # A job that already finished failed while it saved its result.
-                job.finished ?
-                    @error("Could not save the result of a job", stage=job.stage, exception=(error, catch_backtrace())) :
-                    fail!(workspace, job, error, catch_backtrace())
+        try
+            while job !== nothing
+                changed!(workspace)
+                try
+                    run!(workspace, job)
+                catch error
+                    # A job that already finished failed while it saved its result.
+                    job.finished ?
+                        @error("Could not save the result of a job", stage=job.stage, exception=(error, catch_backtrace())) :
+                        fail!(workspace, job, error, catch_backtrace())
+                end
+                job = @lock catalog.lock begin
+                    workspace.completed += 1
+                    finish_publish!(workspace)
+                    job.stage == ITEM_PROCESS && job.key in catalog &&
+                        Catalogs.priority(catalog, job.key, ITEM_ANALYZE) > 0 ?
+                        Catalogs.start!(catalog, job.key, ITEM_ANALYZE) : nothing
+                end
             end
-            job = @lock catalog.lock begin
-                workspace.completed += 1
+        catch error
+            # The failure of a job could not be recorded, for example because the cache stopped
+            # accepting writes. The worker goes on with other jobs.
+            @error("A worker could not finish a job", exception=(error, catch_backtrace()))
+        finally
+            @lock catalog.lock begin
+                workspace.running -= 1
                 finish_publish!(workspace)
-                job.stage == ITEM_PROCESS && job.key in catalog &&
-                    Catalogs.priority(catalog, job.key, ITEM_ANALYZE) > 0 ?
-                    Catalogs.start!(catalog, job.key, ITEM_ANALYZE) : nothing
             end
         end
-        @lock catalog.lock workspace.running -= 1
     end
 end
 

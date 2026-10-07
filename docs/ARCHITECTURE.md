@@ -165,7 +165,7 @@ passes keys.
 Jobs run in this order: what a view asks for, then source items, then the background work on items,
 then the background work on collections. The data that `expand` gives each item stays in memory
 until the `process` of the item has used it. When that data reaches half its memory limit
-(`set_expanded_data_limit!`), items are processed before more source items are read, so that a
+(`expanded_data_limit` of `open_workspace`), items are processed before more source items are read, so that a
 source item is not read and expanded a second time. The `analyze` of an item runs right after its
 `process`, in the same worker.
 
@@ -209,8 +209,9 @@ snapshots or payloads through its exported interface. Core does not inspect Cach
 private buffer helpers.
 
 Both persistent and in-memory workspaces use the same DuckDB stores and cache operations.
-`cache=false` opens a private `:memory:` database with temporary-file spilling disabled; closing
-the workspace discards it without changing the project's cache file. Source-read and unprocessed
+`cache=false` opens a private `:memory:` database that moves data it cannot hold in memory to a
+temporary directory of its own; closing the workspace discards it without changing the project's
+cache file. Source-read and unprocessed
 payloads use resident `MemoryStore` buffers in both modes.
 
 ```mermaid

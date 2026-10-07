@@ -84,6 +84,7 @@ using DataBrowserCache:
     store_item_payload!,
     release_item_payload!,
     expanded_data_full,
+    default_expanded_data_limit,
     store_item_metadata!,
     store_item_label!,
     store_item_metadata_layer!,
@@ -97,7 +98,7 @@ using DataBrowserCache:
     cache_knows_source,
     source_item_key!
 import DataBrowserCache
-import DataBrowserCache: query_items, set_cache_memory_limit!, set_expanded_data_limit!
+import DataBrowserCache: query_items, set_cache_memory_limit!
 using ..DataBrowserCore: ExpandedItem
 import DataBrowserAPI
 import DataBrowserAPI:
@@ -251,6 +252,8 @@ mutable struct Workspace{P<:AbstractProject}
     # Requested disk cache. Kept even when a schema error falls back to a memory cache, so a
     # rebuild can open a real disk cache again.
     disk_cache::Bool
+    # Memory limit (MiB) for the data that `expand` gave the items and `process` has not used yet.
+    expanded_data_limit::Int
     background_tasks::Vector{Task}
     metrics::BuildMetrics
     # Held for the whole of `modify_workspace!` / `close_workspace!` so a frame cannot read a
@@ -298,11 +301,12 @@ function _open_workspace_cache(
     metrics::BuildMetrics;
     rebuild::Bool,
     cache::Bool,
+    expanded_data_limit::Integer,
 )::Tuple{CacheDB,Union{Nothing,Exception},ProjectCacheIdentity}
     identity = project_cache_identity(project_name(project), source)
     disk_error::Union{Nothing,Exception} = nothing
     cache_db::CacheDB = try
-        @timed_dbg open_cache_db(identity, metrics; rebuild, persistent=cache)
+        @timed_dbg open_cache_db(identity, metrics; rebuild, persistent=cache, expanded_data_limit)
     catch error
         if cache && !rebuild && error isa ProjectCacheSchemaError
             disk_error = error
@@ -311,7 +315,7 @@ function _open_workspace_cache(
                 cache=identity.cache_path,
                 error,
             )
-            open_cache_db(identity, metrics; persistent=false)
+            open_cache_db(identity, metrics; persistent=false, expanded_data_limit)
         else
             rethrow()
         end
@@ -328,10 +332,11 @@ function Workspace(
     rebuild::Bool=false,
     cache::Bool=true,
     background_processing::Bool=false,
+    expanded_data_limit::Integer=default_expanded_data_limit(),
 )::Workspace{P} where {P<:AbstractProject}
     metrics = BuildMetrics()
     cache_db, disk_error, identity =
-        _open_workspace_cache(project, source, metrics; rebuild, cache)
+        _open_workspace_cache(project, source, metrics; rebuild, cache, expanded_data_limit)
     workspace = Workspace(
         project,
         source,
@@ -355,6 +360,7 @@ function Workspace(
         "",
         background_processing,
         cache,
+        Int(expanded_data_limit),
         Task[],
         metrics,
         ReentrantLock(),
@@ -403,6 +409,7 @@ function open_workspace(
     rebuild::Bool=false,
     cache::Bool=true,
     background_processing::Bool=false,
+    expanded_data_limit::Integer=default_expanded_data_limit(),
 )::Workspace
     return open_workspace(
         project,
@@ -410,6 +417,7 @@ function open_workspace(
         rebuild,
         cache,
         background_processing,
+        expanded_data_limit,
     )
 end
 
