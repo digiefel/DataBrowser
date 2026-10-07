@@ -133,8 +133,6 @@ Base.@kwdef mutable struct BrowserState
     show_implot_user_guide::Bool = false
     show_implot_demo::Bool = false
     implot_context::Ptr{ig.lib.ImPlotContext} = C_NULL
-    collection_metadata_modal::Bool = true
-    modal_root_path::String = ""
     loaded_source_id::String = ""
     cache_rebuild_modal::Bool = false
     cache_rebuild_error::String = ""

@@ -22,7 +22,7 @@ CImGui = "8.0"
 GLFW = "3.4.4"
 ModernGL = "1.1.8"
 TimerOutputs = "1"
-julia = "1.12"
+julia = "1.13"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

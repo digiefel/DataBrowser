@@ -583,7 +583,6 @@ function _run_browser(
                 end
                 @timed "modals" begin
                     render_cache_rebuild_modal(state)
-                    render_collection_metadata_modal(state)
                 end
             end
             full_frame_submitted[] = true

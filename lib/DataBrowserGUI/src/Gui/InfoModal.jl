@@ -77,49 +77,6 @@ function render_info_window(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Tell the user when the current source did not provide collection parameters."""
-function render_collection_metadata_modal(state::BrowserState)::Nothing
-    # Dear ImGui cannot hold two sibling root modals open: their per-frame OpenPopup calls replace
-    # each other in the popup stack, leaving an invisible modal that swallows all input. Yield to
-    # the cache-rebuild modal and appear after it is dismissed.
-    state.cache_rebuild_modal && return nothing
-    workspace = state.workspace
-    workspace isa Workspace.Workspace || return nothing
-    # Reset dismissal when root path changes
-    current_root = workspace.cache.identity.source_id
-    if state.modal_root_path != current_root
-        state.modal_root_path = current_root
-        state.collection_metadata_modal = true
-    end
-    # always center
-    center = ig.ImGuiViewport_GetCenter(ig.GetMainViewport())
-    ig.SetNextWindowPos(center, ig.ImGuiCond_Always, (0.5, 0.5))
-
-    if state.collection_metadata_modal &&
-       isempty(Workspace.metadata_keys(workspace))
-        ig.OpenPopup("Collection Parameters Missing")
-    end
-
-    opened = state.collection_metadata_modal
-
-    if @c ig.BeginPopupModal("Collection Parameters Missing", &opened, ig.ImGuiWindowFlags_AlwaysAutoResize)
-        ig.Text("No collection parameters were provided by this source.")
-        ig.Separator()
-        ig.TextWrapped(
-            "The browser will still work, but collection-level fields such as area, thickness, " *
-            "or layout coordinates will be empty until the source supplies them.",
-        )
-        ig.Spacing()
-        if ig.Button("Got it")
-            opened = false
-            ig.CloseCurrentPopup()
-        end
-        ig.EndPopup()
-    end
-    state.collection_metadata_modal = opened
-    return nothing
-end
-
 """Ask before discarding an old generated cache whose schema cannot be opened."""
 function render_cache_rebuild_modal(state::BrowserState)::Nothing
     state.cache_rebuild_modal || return nothing
