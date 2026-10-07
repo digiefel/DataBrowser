@@ -41,7 +41,8 @@ function browser_workload(root, opening, started_ns)
     workspace = open_workspace(project, root; background_processing=true)
     session = nothing
     try
-        session = open_browser(workspace; wait=false)
+        # The benchmark must not take keyboard focus from the person at the machine.
+        session = open_browser(workspace; wait=false, window_start=:background)
         wait_browser_ready(session)
         opening_s = (time_ns() - started_ns) / 1e9
         finish_work(workspace)
