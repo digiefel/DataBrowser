@@ -9,30 +9,32 @@ function workspace_status(workspace::Workspace)::WorkspaceStatus
     current = generation(workspace)
     seen, previous = @atomic workspace.status
     current == seen && return previous
-    status = build_status(workspace, previous)
-    # If another caller stored an older pair meanwhile, the next call sees the mismatch and recomputes.
-    @atomic workspace.status = current => status
-    return status
-end
-
-"""Fold a workspace's job and cache state into a status, using the previous one where noted."""
-function build_status(workspace::Workspace, previous::WorkspaceStatus)::WorkspaceStatus
     # Never wait for the catalog lock here: a publication can hold it for a while, and this runs
-    # every GUI frame. If one is in flight, reuse the errors of the last status: they change
-    # rarely, so a delay of one frame is invisible and keeps the frame from stalling.
+    # every GUI frame. If one is in flight, show the errors of the last status and keep its
+    # generation, so that the next call reads the errors again.
     catalog = workspace.catalog
-    errors = if trylock(catalog.lock)
+    locked = trylock(catalog.lock)
+    errors = previous.errors
+    if locked
         try
-            sort!(
+            errors = sort!(
                 Pair{String,String}[id(catalog, key) => message for ((key, _), message) in workspace.errors];
                 by=first,
             )
         finally
             unlock(catalog.lock)
         end
-    else
-        previous.errors
     end
+    status = build_status(workspace, previous, errors)
+    # If another caller stored an older pair meanwhile, the next call sees the mismatch and recomputes.
+    @atomic workspace.status = (locked ? current : seen) => status
+    return status
+end
+
+"""Fold a workspace's job and cache state and its `errors` into a status, using the previous one where noted."""
+function build_status(
+    workspace::Workspace, previous::WorkspaceStatus, errors::Vector{Pair{String,String}},
+)::WorkspaceStatus
     scan = workspace.scan
     counts = workspace_stage_counts(workspace)
     # During an incremental update, keep the last settled verdict on the chip instead of flashing
