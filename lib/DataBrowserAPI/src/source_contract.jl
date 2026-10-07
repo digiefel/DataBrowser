@@ -67,9 +67,6 @@ source may return its items as well without them being processed twice.
 """
 function items end
 
-"""Human noun for source items, used by status surfaces."""
-source_item_noun(::AbstractDataSource)::String = "source items"
-
 """
 Watch a source and call `on_change` with each `SourceChanges` batch or recoverable `SourceError`.
 `nothing` means the source is static.

@@ -47,11 +47,10 @@ function build_status(
 
     # Active work: one live line, determinate bar when totals are known.
     if scan.state == :discovering
-        noun = source_item_noun(workspace.source)
         return WorkspaceStatus(
             calm_level,
             calm_label,
-            @sprintf("Finding %s… (%d found)", noun, counts.sources_found),
+            @sprintf("Finding source items… (%d found)", counts.sources_found),
             true,
             nothing,
             counts,
@@ -114,7 +113,6 @@ function workspace_stage_counts(workspace::Workspace)::WorkspaceStageCounts
     workspace.scan.state === :discovering && (found = max(found, workspace.scan.discovered[]))
     done = cache_counts.cached_sources + cache_counts.failed_read + cache_counts.failed_expand
     return WorkspaceStageCounts(
-        source_item_noun(workspace.source),
         found,
         max(found - done, 0),
         cache_counts,

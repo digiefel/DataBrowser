@@ -120,7 +120,6 @@ import DataBrowserAPI:
     open_source,
     project_name,
     items,
-    source_item_noun,
     watch_source
 
 
@@ -164,14 +163,13 @@ end
 
 """Counts row shown by status watchers."""
 struct WorkspaceStageCounts
-    source_noun::String
     sources_found::Int
     sources_pending::Int
     cache::CacheStageSummary
 end
 
 WorkspaceStageCounts()::WorkspaceStageCounts =
-    WorkspaceStageCounts("source items", 0, 0, CacheStageSummary())
+    WorkspaceStageCounts(0, 0, CacheStageSummary())
 
 """
 A single snapshot of everything a watcher needs to show about a workspace's background work.

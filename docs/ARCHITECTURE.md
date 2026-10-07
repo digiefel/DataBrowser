@@ -343,7 +343,6 @@ flowchart TD
         metasf("metadata(::SourceFile) → Dict")
         sid("id(::DirectorySource) → String")
         slbl("label(::DirectorySource) → String")
-        snoun("source_item_noun(::DirectorySource) → String")
         iddc("id(::DirectoryCollection) → String")
         lbldc("label(::DirectoryCollection) → String")
         recon("reconstruct(::DirectoryCollection) → DirectoryCollection")
@@ -399,7 +398,6 @@ flowchart TD
     extCore ==> csi
     extCore ==> msc
     extCore ==> sid
-    extCore ==> snoun
     extCore ==> idsf
     extCore ==> lblsf
     extCore ==> metasf
@@ -415,7 +413,7 @@ flowchart TD
 
     wsrc -.->|"SourceChanges<br/>SourceError"| extCore
 
-    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ sid ~~~ slbl ~~~ snoun ~~~ iddc ~~~ lbldc ~~~ recon ~~~ eqfp
+    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ sid ~~~ slbl ~~~ iddc ~~~ lbldc ~~~ recon ~~~ eqfp
 
     classDef srcExp fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111;
     classDef srcInt fill:#c9e4c5,stroke:#5a9a52,stroke-width:1px,color:#111;
@@ -428,7 +426,7 @@ flowchart TD
     classDef plotsC fill:#f2c6d4,stroke:#b0466a,color:#111;
 
     class isf,ffp srcExp;
-    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,csi,msc,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl,snoun,iddc,lbldc,recon,eqfp srcInt;
+    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,csi,msc,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl,iddc,lbldc,recon,eqfp srcInt;
     class extCore coreC;
     class extAPI apiC;
     class extCache cacheC;

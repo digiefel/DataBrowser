@@ -16,7 +16,6 @@ import DataBrowserAPI:
     label,
     metadata,
     open_source,
-    source_item_noun,
     items,
     watch_source
 
@@ -91,7 +90,6 @@ end
 
 id(source::DirectorySource)::String = source.root_path
 label(source::DirectorySource)::String = basename(source.root_path)
-source_item_noun(::DirectorySource)::String = "source files"
 
 """Extract a source-item timestamp from the supported filename conventions."""
 function parse_timestamp(filename::AbstractString)::Union{DateTime,Nothing}

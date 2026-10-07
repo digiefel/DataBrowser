@@ -201,7 +201,7 @@ function _render_stage_counts!(status::WorkspaceStatus)::Nothing
     ig.BeginTable("stage_counts", 4, flags) || return nothing
     ig.TableNextRow()
     _stage_count_cell("$(counts.sources_found) Sources", [
-        "$(counts.sources_found) $(counts.source_noun) found",
+        "$(counts.sources_found) source items found",
         "$(cache.read_sources) read",
         "$(cache.cached_sources) indexed",
         "$(counts.sources_pending) pending source work",
