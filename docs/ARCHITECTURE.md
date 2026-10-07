@@ -169,6 +169,12 @@ until the `process` of the item has used it. When that data reaches half its mem
 source item is not read and expanded a second time. The `analyze` of an item runs right after its
 `process`, in the same worker.
 
+The source items that are not read yet (`unread`) are in the collection tree of the browser from
+the moment the source lists them. Their ids, split at `/`, give folders. A folder with the label of
+a collection is shown as that collection, and other folders and source items are gray rows.
+Selecting such a collection, or clicking a gray row, reads the source items below it before any
+other (`read_first!`).
+
 A collection is one node of the collection tree, identified by its parent and by the type and `id`
 of its value. An item goes where `collection(item)` says, or where `collection(source_item)` says
 when that is empty. A collection contains every item below it, at any depth. Collection `process`
@@ -178,6 +184,10 @@ version the collections below gave it. Views and collection `analyze` use an ite
 the one of the outermost collection that changed it. The same holds for the metadata values and
 the label that a collection's `process` changes: views, queries and the item list show them, and
 the outermost collection replaces the values of the collections below it.
+
+A collection stage that the project does not define for a collection is skipped: the items of the
+collection are not loaded for it. `has_stage(project, collection, stage)` decides, and by default
+answers from the `process` and `analyze` methods that apply to the collection.
 
 It defines:
 
