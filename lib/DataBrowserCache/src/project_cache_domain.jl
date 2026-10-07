@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 27
+const PROJECT_CACHE_SCHEMA_VERSION = 28
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -720,6 +720,7 @@ function ensure_schema!(connection)::Nothing
             storage_id USMALLINT,
             seq UINTEGER,
             container TEXT,
+            rows UBIGINT,
             PRIMARY KEY (item_key, collection_key),
             UNIQUE (storage_id, seq))
     """)

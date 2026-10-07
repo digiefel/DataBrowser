@@ -626,6 +626,8 @@ mutable struct TabularFamilyStore <:
     payload_schemas::Dict{PayloadShape,UInt16}
     # Hex-serialized container type per stored payload, rebuilt on read via Tables.materializer.
     containers::Dict{Tuple{UInt16,UInt32},String}
+    # Number of rows per stored payload, which sets how many payloads one query of a read takes.
+    rows::Dict{Tuple{UInt16,UInt32},Int}
     next_seq::UInt32
 end
 
@@ -639,11 +641,13 @@ function TabularFamilyStore(
     write_connection = DBInterface.connect(database)
     locations = Dict{PayloadKey,Tuple{UInt16,UInt32}}()
     containers = Dict{Tuple{UInt16,UInt32},String}()
+    rows = Dict{Tuple{UInt16,UInt32},Int}()
     for row in DBInterface.execute(
-        read_connection, "SELECT item_key, collection_key, storage_id, seq, container FROM item_data")
+        read_connection, "SELECT item_key, collection_key, storage_id, seq, container, rows FROM item_data")
         location = (UInt16(row.storage_id), UInt32(row.seq))
         locations[(Int64(row.item_key), Int64(row.collection_key))] = location
         containers[location] = String(row.container)
+        rows[location] = Int(row.rows)
     end
     schemas = Dict{PayloadShape,UInt16}()
     for row in DBInterface.execute(
@@ -678,6 +682,7 @@ function TabularFamilyStore(
         locations,
         schemas,
         containers,
+        rows,
         UInt32(max_seq + 1),
     )
     store.flush_task = Base.Threads.@spawn _flush_loop!(store)
@@ -797,6 +802,7 @@ function _queue_delete_location!(
     location::Tuple{UInt16,UInt32},
 )::Nothing
     delete!(store.containers, location)
+    delete!(store.rows, location)
     previous = get(store.queued, location, nothing)
     if previous !== nothing && previous.kind === BUFFER_APPEND
         _set_queued!(store, location, nothing)
@@ -859,6 +865,7 @@ function Base.append!(
         old_location = pop!(store.item_locations, payload_key, nothing)
         store.item_locations[payload_key] = location
         store.containers[location] = batch.container
+        store.rows[location] = _payload_rows(batch.body)
         old_location === nothing || _queue_delete_location!(store, old_location)
         _set_queued!(
             store,
@@ -1025,29 +1032,34 @@ const READ_BATCH_VALUES = 2_500_000
 const READ_BATCH_PAYLOADS = 1024
 
 """
-Read the stored payloads at `locations`, each as a `NamedTuple` of columns.
+Read the stored payloads at `locations`, each as a `NamedTuple` of columns. `locations` gives the
+number of values of each payload, rows times columns.
 
-The result of a query is taken one chunk at a time and appended to the columns of each payload, so
-no table of the whole result exists. A read is split into queries of about `READ_BATCH_VALUES`
-values: the first query asks for one payload, and the size of the payloads read so far sets how
-many the next one asks for.
+A read is split into queries of at most `READ_BATCH_VALUES` values, and a payload larger than that
+has a query of its own. The result of a query is taken one chunk at a time and appended to the
+columns of each payload, so no table of the whole result exists.
 """
 function _read_tabular_locations(
     store::TabularFamilyStore,
-    locations::Vector{Tuple{UInt16,UInt32}},
+    locations::Dict{Tuple{UInt16,UInt32},Int},
 )::Dict{Tuple{UInt16,UInt32},Any}
     by_storage = Dict{UInt16,Vector{UInt32}}()
-    for (storage_id, seq) in locations
+    for (storage_id, seq) in keys(locations)
         push!(get!(() -> UInt32[], by_storage, storage_id), seq)
     end
     rows_by_location = Dict{Tuple{UInt16,UInt32},Any}()
     seq_name, row_name = Symbol(MB_SEQ_COLUMN), Symbol(MB_ROW_COLUMN)
     for (storage_id, seqs) in by_storage
         table = _quote_identifier(_payload_table_name(storage_id))
-        remaining = sort!(unique(seqs))
-        batch, payloads_read, values_read = 1, 0, 0
+        remaining = sort!(seqs)
         while !isempty(remaining)
-            batch_seqs = splice!(remaining, 1:min(batch, length(remaining)))
+            batch, batch_values = 1, locations[(storage_id, remaining[1])]
+            while batch < min(length(remaining), READ_BATCH_PAYLOADS) &&
+                    batch_values + locations[(storage_id, remaining[batch+1])] <= READ_BATCH_VALUES
+                batch += 1
+                batch_values += locations[(storage_id, remaining[batch])]
+            end
+            batch_seqs = splice!(remaining, 1:batch)
             placeholders = join(fill("?", length(batch_seqs)), ", ")
             # A streamed result uses the connection until it is closed, so the lock covers it.
             lock(store.read_lock) do
@@ -1082,7 +1094,6 @@ function _read_tabular_locations(
                             end
                             run_start = run_end + 1
                         end
-                        values_read += length(seq_column) * length(data_names)
                     end
                     for seq in batch_seqs
                         # A zero-row payload has a pointer and schema but no physical rows; it
@@ -1097,8 +1108,6 @@ function _read_tabular_locations(
                     DBInterface.close!(statement)
                 end
             end
-            payloads_read += length(batch_seqs)
-            batch = clamp(READ_BATCH_VALUES * payloads_read ÷ max(values_read, 1), 1, READ_BATCH_PAYLOADS)
         end
     end
     return rows_by_location
@@ -1128,8 +1137,10 @@ function Base.read(
     results = Dict{PayloadKey,Any}()
     while !isempty(remaining)
         locations = Dict{PayloadKey,Tuple{UInt16,UInt32}}()
+        stored_values = Dict{Tuple{UInt16,UInt32},Int}()
         lock(store.flush_condition) do
             _require_open(store)
+            columns = Dict(storage_id => length(first(shape)) for (shape, storage_id) in store.payload_schemas)
             for key in remaining
                 location = get(store.item_locations, key, nothing)
                 if location === nothing
@@ -1141,14 +1152,12 @@ function Base.read(
                     results[key] = data
                 else
                     locations[key] = location
+                    stored_values[location] = store.rows[location] * columns[first(location)]
                 end
             end
         end
         isempty(locations) && break
-        stored_rows = _read_tabular_locations(
-            store,
-            collect(Set(values(locations))),
-        )
+        stored_rows = _read_tabular_locations(store, stored_values)
         retry = PayloadKey[]
         lock(store.flush_condition) do
             _require_open(store)
@@ -1391,6 +1400,7 @@ function _flush_to_db!(
                     DuckDB.append(appender, location[1])
                     DuckDB.append(appender, location[2])
                     DuckDB.append(appender, entry.container)
+                    DuckDB.append(appender, UInt64(_payload_rows(entry.body)))
                     DuckDB.end_row(appender)
                 end
             end
@@ -1429,6 +1439,7 @@ function _reset_memory!(store::TabularFamilyStore)::Nothing
     empty!(store.item_locations)
     empty!(store.payload_schemas)
     empty!(store.containers)
+    empty!(store.rows)
     store.next_seq = UInt32(1)
     return nothing
 end
