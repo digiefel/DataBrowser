@@ -103,57 +103,6 @@ function _visible_items(
     return visible
 end
 
-"""
-Render the source items that are not read yet as a tree of the folders in their ids. A click on a
-source item or on a folder asks the workspace to read what is below it first.
-
-`paths` holds each id split at "/", sorted.
-"""
-function _render_unread!(workspace::Workspace.Workspace, paths::Vector{Vector{String}})::Nothing
-    isempty(paths) && return nothing
-    opened = ig.CollapsingHeader("Not read yet ($(length(paths)))###unread", ig.ImGuiTreeNodeFlags_DefaultOpen)
-    ig.SameLine()
-    _helpmarker("Files whose items are not listed yet. Click a file or a folder to read it first.")
-    opened || return nothing
-    read_first(range) = Workspace.read_first!(workspace, [join(path, '/') for path in paths[range]])
-
-    # TODO: mark the source items that were asked for, and show a source item in the place of its
-    # collection once the collection of a source item is known before `read`.
-    function render(range::UnitRange{Int}, depth::Int)::Nothing
-        start = first(range)
-        while start <= last(range)
-            name = paths[start][depth]
-            if length(paths[start]) == depth
-                flags = ig.ImGuiTreeNodeFlags_Leaf | ig.ImGuiTreeNodeFlags_Bullet |
-                    ig.ImGuiTreeNodeFlags_NoTreePushOnOpen | ig.ImGuiTreeNodeFlags_SpanFullWidth
-                ig.TreeNodeEx(name, flags, name)
-                ig.IsItemClicked() && read_first(start:start)
-                start += 1
-                continue
-            end
-            stop = start
-            while stop < last(range) && length(paths[stop+1]) > depth && paths[stop+1][depth] == name
-                stop += 1
-            end
-            flags = ig.ImGuiTreeNodeFlags_OpenOnArrow | ig.ImGuiTreeNodeFlags_SpanFullWidth
-            folder_opened = ig.TreeNodeEx(name, flags, "$name ($(stop - start + 1))")
-            ig.IsItemClicked() && !ig.IsItemToggledOpen() && read_first(start:stop)
-            if folder_opened
-                render(start:stop, depth + 1)
-                ig.TreePop()
-            end
-            start = stop + 1
-        end
-        return nothing
-    end
-
-    ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
-    render(1:length(paths), 1)
-    ig.PopStyleColor()
-    ig.Separator()
-    return nothing
-end
-
 """Render the collection hierarchy and write collection selection into the workspace."""
 function _render_hierarchy_tree_panel(
     state::BrowserState,
@@ -184,7 +133,7 @@ function _render_hierarchy_tree_panel(
                 sort!([String.(split(id, '/')) for id in Workspace.unread(workspace)]) :
                 Vector{String}[])
     end
-    workspace isa Workspace.Workspace && _render_unread!(workspace, cache.unread)
+    unread = cache.unread
     visible_collections = cache.visible
     # A collection is selected and expanded by its path.
     visible_collection_ids_ref = Ref{Union{Nothing,Vector{Workspace.CollectionPath}}}(nothing)
@@ -198,7 +147,7 @@ function _render_hierarchy_tree_panel(
     has_root_items = workspace isa Workspace.Workspace &&
         !isempty(Workspace.items(workspace, ROOT))
     if workspace isa Workspace.Workspace &&
-       (!isempty(Workspace.collections(workspace)) || has_root_items)
+       (!isempty(Workspace.collections(workspace)) || has_root_items || !isempty(unread))
         has_visible_leaf_cache = cache.has_visible_leaf
         subtree_matches_cache = cache.subtree_matches
 
@@ -348,11 +297,70 @@ function _render_hierarchy_tree_panel(
             return nothing
         end
 
-        """Render one hierarchy row and recursively render its open descendants."""
+        read_first(range) =
+            Workspace.read_first!(workspace, [join(path, '/') for path in unread[range]])
+
+        # The source items of `range` that are below the folder `name`; `depth` is the position
+        # of the folder in their ids.
+        function below(range::UnitRange{Int}, depth::Int, name::AbstractString)::UnitRange{Int}
+            inside(index) = length(unread[index]) > depth && unread[index][depth] == name
+            start = findfirst(inside, range)
+            start === nothing && return 1:0
+            return range[start]:range[findlast(inside, range)]
+        end
+
+        """
+        Render the source items of `range` that are not read yet, and their folders, as gray rows.
+        `depth` is the position in their ids of the names to show, and the folders in `shown` are
+        left out: they are the collections with the same label. A click on a row asks the
+        workspace to read what is below it first.
+        """
+        function render_unread(range::UnitRange{Int}, depth::Int, shown)::Nothing
+            # TODO: mark the source items that were asked for.
+            (isempty(range) || filter_active) && return nothing
+            gray = ig.GetColorU32(ig.ImGuiCol_TextDisabled)
+            start = first(range)
+            while start <= last(range)
+                name = unread[start][depth]
+                stop = start
+                is_file = length(unread[start]) == depth
+                while !is_file && stop < last(range) &&
+                        length(unread[stop+1]) > depth && unread[stop+1][depth] == name
+                    stop += 1
+                end
+                if is_file || !(name in shown)
+                    state.performance.node_count += 1
+                    ig.TableNextRow()
+                    ig.TableSetColumnIndex(0)
+                    flags = ig.ImGuiTreeNodeFlags_OpenOnArrow | ig.ImGuiTreeNodeFlags_SpanFullWidth |
+                        ig.ImGuiTreeNodeFlags_DrawLinesToNodes | ig.ImGuiTreeNodeFlags_SpanAllColumns
+                    is_file && (flags |= ig.ImGuiTreeNodeFlags_Leaf | ig.ImGuiTreeNodeFlags_Bullet |
+                        ig.ImGuiTreeNodeFlags_NoTreePushOnOpen)
+                    ig.PushStyleColor(ig.ImGuiCol_Text, gray)
+                    opened = ig.TreeNodeEx("unread/$name", flags, name)
+                    ig.PopStyleColor()
+                    ig.IsItemClicked() && !ig.IsItemToggledOpen() && read_first(start:stop)
+                    if opened && !is_file
+                        render_unread(start:stop, depth + 1, ())
+                        ig.TreePop()
+                    end
+                end
+                start = stop + 1
+            end
+            return nothing
+        end
+
+        """
+        Render one hierarchy row and recursively render its open descendants. `unread_below` are
+        the source items not read yet in the folders with the labels of this collection and of
+        the collections above it; `depth` is the number of those folders.
+        """
         function render_collection(
             collection_record::CollectionKey,
             row_id::UInt64,
-            force_show::Bool=false,
+            force_show::Bool,
+            unread_below::UnitRange{Int},
+            depth::Int,
         )::Nothing
             has_visible_leaf(collection_record) || return
             force_show || subtree_matches(collection_record) || return
@@ -437,6 +445,7 @@ function _render_hierarchy_tree_panel(
                     selected_collection_ids = copy(workspace.selection.collections)
                     _update_multi_selection!(selected_collection_ids, leaf_collection_id, visible_collection_ids(), shift_held, ctrl_held)
                     workspace.selection.collections = selected_collection_ids
+                    isempty(unread_below) || read_first(unread_below)
                 elseif !isempty(workspace.selection.collections)
                     empty!(workspace.selection.collections)
                 end
@@ -484,8 +493,11 @@ function _render_hierarchy_tree_panel(
 
             if opened && !is_leaf
                 for child in children
-                    render_collection(child, next_row_id(row_id, child), direct_match)
+                    render_collection(
+                        child, next_row_id(row_id, child), direct_match,
+                        below(unread_below, depth + 1, label(workspace, child)), depth + 1)
                 end
+                render_unread(unread_below, depth + 1, Set(label(workspace, child) for child in children))
                 ig.TreePop()
             end
             ig.PopID()
@@ -508,8 +520,11 @@ function _render_hierarchy_tree_panel(
             ig.TableHeadersRow()
             render_root_items()
             for child in roots
-                render_collection(child, next_row_id(row_seed, child), false)
+                render_collection(
+                    child, next_row_id(row_seed, child), false,
+                    below(1:length(unread), 1, label(workspace, child)), 1)
             end
+            render_unread(1:length(unread), 1, Set(label(workspace, child) for child in roots))
             ig.EndTable()
         end
     else
