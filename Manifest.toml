@@ -176,9 +176,11 @@ version = "0.1.0"
 
     [deps.DataBrowserPlots.extensions]
     DataBrowserPlotsGLMakieExt = "GLMakie"
+    DataBrowserPlotsMakieExt = "Makie"
 
     [deps.DataBrowserPlots.weakdeps]
     GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+    Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 
 [[deps.DataBrowserRecipes]]
 deps = ["CSV", "DataBrowserAPI", "DataBrowserSources", "DataFrames"]

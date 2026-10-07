@@ -15,9 +15,9 @@ Every example takes a data directory as its first command-line argument:
 julia --project=examples examples/01_simple_csv/project.jl /path/to/data
 ```
 
-The `examples` environment holds DataBrowser and the packages the examples load. Plots are part of
-the browser once GLMakie is loaded, so an example that draws plots starts with
-`using DataBrowser, GLMakie`.
+The `examples` environment holds DataBrowser and the packages the examples load. `register_plot!` has
+no method until a Makie backend is loaded, and the browser shows plots once GLMakie is loaded, so
+an example that registers plots starts with `using DataBrowser, GLMakie`.
 
 The scripts contain the complete project definitions. Domain projects can move the same definitions
 into a Julia package and expose a narrower constructor or launch function to their users.

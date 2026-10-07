@@ -231,9 +231,10 @@ DataBrowserCore    → API, Sources, Cache : the workspace, the index, backgroun
                    needing heavy dependencies (audio, say) live in extension packages
 DataBrowserGUI     → API, Core (+ CImGui/GLFW) : the host shell, panels, browser, shared widgets,
                    the window registry, and lightweight visualizers for Core-supported data shapes
-DataBrowserPlots   → API, Core, GUI : plot registration and high-level plot APIs; its plot windows
-                   (Makie embedding, enhanced default visualizers) are a package extension that
-                   loads when GLMakie is loaded: `using DataBrowser, GLMakie`
+DataBrowserPlots   → API, Core, GUI : plot registration and high-level plot APIs, in two package
+                   extensions. `register_plot!` gets its method when any Makie backend is
+                   loaded. The plot windows (Makie embedding, enhanced default visualizers)
+                   load when GLMakie is loaded: `using DataBrowser, GLMakie`
 DataBrowserCLI     → API, Core : a command-line frontend over the same commands (may come later)
 DataBrowser        → GUI, default extensions : umbrella / install target; re-exports the API
                    and the recipes dialect, and wires defaults
