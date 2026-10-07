@@ -336,10 +336,10 @@ function _init_browser_context!()
     ig.AddFontDefault(fonts)
     icons = ig.lib.ImFontConfig_ImFontConfig()
     icons.MergeMode = true
-    # An icon stands on the text baseline and is taller than the letters: moved down, it stays
-    # inside the line.
-    icons.GlyphOffset = ig.ImVec2(0.0f0, 2.0f0)
-    ig.AddFontFromFileTTF(fonts, ICON_FONT, 13.0f0, icons)
+    # An icon fills its whole font size, while the capital letters of the 13-pixel text font are
+    # 9 pixels tall: the icons are loaded smaller and moved down to stand on the text baseline.
+    icons.GlyphOffset = ig.ImVec2(0.0f0, 1.0f0)
+    ig.AddFontFromFileTTF(fonts, ICON_FONT, 10.0f0, icons)
     ig.lib.ImFontConfig_destroy(icons)
 
     # Point imgui at a per-machine ini file so [Table] column widths persist across restarts.
