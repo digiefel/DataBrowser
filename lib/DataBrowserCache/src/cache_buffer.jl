@@ -95,6 +95,20 @@ function _append_table!(emit::Function, connection, table::AbstractString)::Noth
     return nothing
 end
 
+"""
+Append the rows of one payload. The columns come as a tuple, so that this function is compiled for
+their element types and appending a value needs no dispatch at run time.
+"""
+function _append_rows!(appender, seq::UInt32, rows::Int, columns::Tuple)::Nothing
+    for row_index in 1:rows
+        DuckDB.append(appender, seq)
+        DuckDB.append(appender, UInt64(row_index))
+        foreach(column -> DuckDB.append(appender, column[row_index]), columns)
+        DuckDB.end_row(appender)
+    end
+    return nothing
+end
+
 const PayloadShape = Tuple{Tuple{Vararg{String}},Tuple{Vararg{String}}}
 
 """Column names and DuckDB column types of one tabular payload, via the Tables.jl interface."""
@@ -1381,17 +1395,8 @@ function _flush_to_db!(
                         body_columns = Tables.columns(entry.body)
                         _payload_shape(entry.body) == (columns, types) ||
                             error("Storage id $storage_id has incompatible payload shapes")
-                        vectors = [
-                            Tables.getcolumn(body_columns, Symbol(name)) for name in columns
-                        ]
-                        for row_index in 1:_payload_rows(entry.body)
-                            DuckDB.append(appender, location[2])
-                            DuckDB.append(appender, UInt64(row_index))
-                            for column in vectors
-                                DuckDB.append(appender, column[row_index])
-                            end
-                            DuckDB.end_row(appender)
-                        end
+                        _append_rows!(appender, location[2], _payload_rows(entry.body), Tuple(
+                            Tables.getcolumn(body_columns, Symbol(name)) for name in columns))
                     end
                 end
             end
