@@ -75,6 +75,33 @@ function DataBrowserAPI.process(project::ObservedProject, item::EngineItem)
     return item
 end
 
+struct Outer <: DataBrowserAPI.AbstractCollection end
+struct Inner <: DataBrowserAPI.AbstractCollection end
+struct Other <: DataBrowserAPI.AbstractCollection end
+DataBrowserAPI.id(::Outer) = "outer"
+DataBrowserAPI.id(::Union{Inner,Other}) = "same"
+DataBrowserAPI.reconstruct(::Type{T}, ::AbstractString, ::Dict) where {T<:Union{Outer,Inner,Other}} = T()
+struct NestedItem <: AbstractDataItem
+    key::String
+    data::Any
+end
+DataBrowserAPI.id(i::NestedItem) = i.key
+DataBrowserAPI.item_data(i::NestedItem) = i.data
+DataBrowserAPI.reconstruct(::Type{NestedItem}, key::AbstractString, data, ::Dict) = NestedItem(key, data)
+DataBrowserAPI.collection(i::NestedItem) =
+    DataBrowserAPI.AbstractCollection[Outer(), i.key == "a" ? Inner() : Other()]
+struct NestedProject <: AbstractProject end
+DataBrowserAPI.project_name(::NestedProject) = "nested"
+DataBrowserAPI.read(::NestedProject, ::EngineSource, s::EngineSourceItem) = s.version
+DataBrowserAPI.expand(::NestedProject, ::EngineSourceItem, version) =
+    [NestedItem(key, (x=[version],)) for key in ("a", "b")]
+DataBrowserAPI.process(::NestedProject, ::Inner, items::AbstractVector) =
+    [NestedItem(i.key, (x=i.data.x .+ 1,)) for i in items]
+DataBrowserAPI.process(::NestedProject, ::Outer, items::AbstractVector) =
+    [NestedItem(i.key, (x=i.data.x .* 10,)) for i in items]
+DataBrowserAPI.analyze(::NestedProject, ::Inner, items::AbstractVector) =
+    Dict(:seen => only(only(items).data.x))
+
 function settled(ws)
     W.wait_workspace_idle!(ws; timeout=20)
     @test !W.workspace_status(ws).busy
@@ -94,6 +121,31 @@ end
         @test observed[].busy
         @test observed[].generation > seen
         settled(ws)
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
+@testset "nested collections: versions, staleness and paths" begin
+    ws = W.open_workspace(NestedProject(), EngineSource("source", 1, false); cache=false, background_processing=true)
+    try
+        settled(ws)
+        x(key) = only(item_data(only(W.materialize_items(ws, [key]))).x)
+        holder(key) = W.collection(ws, W.item(ws, key))
+        # The outer collection receives the inner collection's version, and views get the outer one.
+        @test (x("a"), x("b")) == (20, 10)
+        @test W.metadata(ws, holder("a"))[:seen] == 2
+        # Two collections with the same id and parent differ by type.
+        @test holder("a") != holder("b")
+        @test all(key -> W.collection(ws, W.path(ws, holder(key))) == holder(key), ("a", "b"))
+        # A version from before a source change is not delivered while its collection is stale.
+        W.modify_workspace!(ws; source=EngineSource("source", 5, false), background_processing=false)
+        settled(ws)
+        @test x("a") == 5
+        W.modify_workspace!(ws; source=EngineSource("source", 5, false), background_processing=true)
+        settled(ws)
+        @test (x("a"), x("b")) == (60, 50)
+        @test W.metadata(ws, holder("a"))[:seen] == 6
     finally
         W.close_workspace!(ws)
     end

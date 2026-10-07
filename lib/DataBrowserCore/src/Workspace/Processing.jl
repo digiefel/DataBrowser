@@ -308,16 +308,13 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_ANALYZE})::Not
     catalog = workspace.catalog
     cache = workspace.cache.db
     item = job.key
-    payload = only(read_payload(cache, [id(catalog, item)]; stage=ITEM_PROCESS))
-    payload === nothing &&
-        error("Cannot analyze item '$(id(catalog, item))': processed data is missing")
+    input = only(versions(workspace, [item]; reader=(item, ITEM_ANALYZE)))
     given = metadata(workspace, item; through=ITEM_PROCESS)
-    input = rebuilt(workspace, item, something(payload), given)
     analysis = @timed_dbg "analyze" metadata_dict(analyze(workspace.project, input))
     delivered = merge(given, analysis)
     # An item type that does not rebuild from a payload keeps the item that analyze received.
     analyzed = something(
-        reconstruct(valuetype(catalog, item), id(catalog, item), something(payload), delivered),
+        reconstruct(valuetype(catalog, item), id(catalog, item), item_data(input), delivered),
         input)
     new_label = label(workspace.project, adopted(workspace, item, analyzed, delivered))
     @lock catalog.lock begin
@@ -344,25 +341,47 @@ function members(workspace::Workspace, collection::CollectionKey)::Vector{ItemKe
 end
 
 """
-    versions(workspace, items; below=nothing) -> Vector{AbstractDataItem}
+    versions(workspace, items; reader=nothing) -> Vector{AbstractDataItem}
 
-The processed versions of `items`, built from saved data. Each collection whose `process` changed
-an item keeps its own version of it. An item comes in its latest version: the one of the outermost
-collection that has one, or its own processed data when no collection changed it. `below` leaves
-out that collection and the collections above it, which gives what its `process` receives.
+The processed versions of `items`, each built from saved data with its label and its metadata.
+This is the only place that decides which version of an item a stage or a view receives.
+
+Each collection whose `process` changed an item keeps its own version of it. An item comes in the
+version of the outermost collection that has one and whose `process` result is fresh, or in its
+own processed data. `reader` is the stage that receives the items, and limits what it may read:
+
+- `(item, ITEM_ANALYZE)`: the item's own processed data, with the metadata `analyze` receives.
+- `(collection, COLLECTION_PROCESS)`: the versions of the collections below `collection`.
+- `(collection, COLLECTION_ANALYZE)`: the versions of `collection` and the collections below it.
+- `nothing`, for views: the versions of every collection.
+
+The caller makes sure that item `process` is fresh for every item.
 """
 function versions(
-    workspace::Workspace, items::Vector{ItemKey}; below::Union{CollectionKey,Nothing}=nothing,
+    workspace::Workspace, items::Vector{ItemKey}; reader::Union{Target,Nothing}=nothing,
 )::Vector{AbstractDataItem}
+    catalog = workspace.catalog
     cache = workspace.cache.db
     item_ids = String[id(workspace, item) for item in items]
+    own = reader !== nothing && first(reader) isa ItemKey
     # For each item, the saved key of the collection whose version to read; 0 is the item's own.
-    chosen = @lock workspace.catalog.lock map(items, item_ids) do item, item_id
-        holders = ancestors(workspace, item)
-        below === nothing || (holders = holders[findfirst(==(below), holders)+1:end])
-        saved = Int64[get(workspace.collection_keys, holder, 0) for holder in holders]
-        position = findfirst(key -> key != 0 && has_payload(cache, item_id; collection=key), saved)
-        position === nothing ? Int64(0) : saved[position]
+    chosen, given = @lock catalog.lock begin
+        chosen = map(items, item_ids) do item, item_id
+            own && return Int64(0)
+            holders = ancestors(workspace, item)
+            if reader !== nothing
+                first_allowed = findfirst(==(first(reader)), holders) + (last(reader) == COLLECTION_PROCESS)
+                holders = holders[first_allowed:end]
+            end
+            for holder in holders
+                Catalogs.status(catalog, holder, COLLECTION_PROCESS).validity == Catalogs.FRESH || continue
+                saved = get(workspace.collection_keys, holder, Int64(0))
+                saved != 0 && has_payload(cache, item_id; collection=saved) && return saved
+            end
+            return Int64(0)
+        end
+        through = own ? ITEM_PROCESS : ITEM_ANALYZE
+        chosen, MetadataDict[metadata(workspace, item; through) for item in items]
     end
     payloads = read_payload(cache, item_ids; collections=chosen)
     # A collection job that runs at the same time may have removed the version just chosen.
@@ -372,8 +391,8 @@ function versions(
     missing = findfirst(isnothing, payloads)
     missing === nothing || error("The processed data of item '$(item_ids[missing])' is missing")
     return AbstractDataItem[
-        rebuilt(workspace, item, something(payload), metadata(workspace, item))
-        for (item, payload) in zip(items, payloads)]
+        rebuilt(workspace, item, something(payload), metadata)
+        for (item, payload, metadata) in zip(items, payloads, given)]
 end
 
 """
@@ -386,7 +405,7 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
     cache = workspace.cache.db
     saved = workspace.collection_keys[job.key]
     items = members(workspace, job.key)
-    inputs = versions(workspace, items; below=job.key)
+    inputs = versions(workspace, items; reader=(job.key, COLLECTION_PROCESS))
     outputs = process(workspace.project, last(values(workspace, job.key)), inputs)
     length(outputs) == length(inputs) || error(
         "Collection process for '$(label(catalog, job.key))' returned $(length(outputs)) items " *
@@ -410,10 +429,10 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
     return nothing
 end
 
-"""Run collection `analyze` over the latest version of every item below one collection."""
+"""Run collection `analyze` over every item below one collection, each in the version this collection has of it."""
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_ANALYZE})::Nothing
     catalog = workspace.catalog
-    inputs = versions(workspace, members(workspace, job.key))
+    inputs = versions(workspace, members(workspace, job.key); reader=(job.key, COLLECTION_ANALYZE))
     analysis = metadata_dict(analyze(workspace.project, last(values(workspace, job.key)), inputs))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=analysis) || return nothing

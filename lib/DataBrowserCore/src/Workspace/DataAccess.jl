@@ -3,8 +3,8 @@
     materialize_items(workspace)
 
 The processed items for `items`, given as item keys or public ids, in the same order; or for the
-current selection. Each item comes in its latest version: the version of a collection `process`
-that rewrote it, or else its own.
+current selection. Each item comes in its latest version: the version of the outermost collection
+whose `process` changed it and whose result is current, or else its own processed data.
 
 An item that is not processed yet is processed now, ahead of background work, and the call waits
 for it. Analyze is requested for every delivered item, so that its metadata becomes complete. A
