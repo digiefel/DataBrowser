@@ -213,6 +213,12 @@ function process(
     return rewritten
 end
 
+"""A collection stage is defined when any kind registered it, or the collection type has a method."""
+has_stage(project::Project, collection_value::AbstractCollection, stage::DataBrowserAPI.PipelineStage)::Bool =
+    any(values(project.collections)) do recipe
+        (stage == DataBrowserAPI.COLLECTION_PROCESS ? recipe.process : recipe.analyze) !== nothing
+    end || has_stage(collection_value, stage)
+
 """Fold one collection's post-process members into collection-node metadata."""
 function analyze(
     project::Project,

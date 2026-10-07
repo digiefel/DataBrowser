@@ -26,6 +26,7 @@ import DataBrowserAPI:
     analyze,
     adopt,
     expand,
+    has_stage,
     collection,
     id,
     item_data,

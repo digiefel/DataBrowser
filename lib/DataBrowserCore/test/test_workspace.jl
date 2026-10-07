@@ -148,6 +148,10 @@ end
         @test timedwait(() -> !W.cache_has_pending_writes(ws.cache.db), 20) === :ok
         @test W.query_items(ws, "step = 2") == ["a"]
         @test W.metadata(ws, holder("a"))[:seen] == 2
+        # A stage that the project does not define for a collection is skipped.
+        @test DataBrowserAPI.has_stage(NestedProject(), Inner(), DataBrowserAPI.COLLECTION_PROCESS)
+        @test !DataBrowserAPI.has_stage(NestedProject(), Other(), DataBrowserAPI.COLLECTION_PROCESS)
+        @test (x("a"), x("b")) == (20, 10)
         # Two collections with the same id and parent differ by type.
         @test holder("a") != holder("b")
         @test all(key -> W.collection(ws, W.path(ws, holder(key))) == holder(key), ("a", "b"))

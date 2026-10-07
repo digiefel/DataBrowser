@@ -120,6 +120,7 @@ import DataBrowserAPI:
     label,
     metadata,
     process,
+    has_stage,
     read,
     reconstruct,
     open_source,

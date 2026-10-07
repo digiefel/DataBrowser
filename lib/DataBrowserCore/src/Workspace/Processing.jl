@@ -453,6 +453,16 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
     cache = workspace.cache.db
     saved = workspace.collection_keys[job.key]
     items = members(workspace, job.key)
+    # A collection without `process` has no version of any item, and its items are not loaded.
+    if !has_stage(workspace.project, last(values(workspace, job.key)), COLLECTION_PROCESS)
+        @lock catalog.lock begin
+            finish!(catalog, job) || return nothing
+            foreach(item -> delete_processed!(cache, id(catalog, item); collection=saved), items)
+            workspace.changes[job.key] = Dict{ItemKey,MetadataDict}()
+            store_collection_process_result!(cache, saved, Dict{String,MetadataDict}())
+        end
+        return nothing
+    end
     inputs = versions(workspace, items; reader=(job.key, COLLECTION_PROCESS))
     # The metadata each input came with: what the collections below this one changed is included.
     given = map(items) do item
@@ -503,8 +513,13 @@ end
 """Run collection `analyze` over every item below one collection, each in the version this collection has of it."""
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_ANALYZE})::Nothing
     catalog = workspace.catalog
-    inputs = versions(workspace, members(workspace, job.key); reader=(job.key, COLLECTION_ANALYZE))
-    analysis = metadata_dict(analyze(workspace.project, last(values(workspace, job.key)), inputs))
+    value = last(values(workspace, job.key))
+    # A collection without `analyze` has no metadata from it, and its items are not loaded.
+    analysis = has_stage(workspace.project, value, COLLECTION_ANALYZE) ?
+        metadata_dict(analyze(
+            workspace.project, value,
+            versions(workspace, members(workspace, job.key); reader=(job.key, COLLECTION_ANALYZE)))) :
+        MetadataDict()
     @lock catalog.lock begin
         finish!(catalog, job; metadata=analysis) || return nothing
         conflicts!(workspace, job.key, COLLECTION_ANALYZE, store_collection_metadata!(

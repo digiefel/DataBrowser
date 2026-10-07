@@ -141,6 +141,29 @@ analyze(project::AbstractProject, collection::AbstractCollection, items::Abstrac
 
 analyze(::AbstractCollection, items::AbstractVector)::Dict = Dict()
 
+"""
+    has_stage(project, collection, stage) -> Bool
+    has_stage(collection, stage) -> Bool
+
+Whether `stage`, `COLLECTION_PROCESS` or `COLLECTION_ANALYZE`, is defined for `collection`. A
+workspace skips a stage that is not defined and does not load the items of the collection for it.
+
+The default answers from the methods: a stage is defined when a `process` or `analyze` method
+other than the defaults of this package applies to the collection. A project that decides in
+another way which collections have a stage adds a method; the default forwards to
+`has_stage(collection, stage)`.
+"""
+function has_stage(project::AbstractProject, collection::AbstractCollection, stage::PipelineStage)::Bool
+    callback = stage == COLLECTION_PROCESS ? process : analyze
+    signature = Tuple{typeof(project),typeof(collection),Vector{AbstractDataItem}}
+    return which(callback, signature).module != (@__MODULE__) || has_stage(collection, stage)
+end
+
+function has_stage(collection::AbstractCollection, stage::PipelineStage)::Bool
+    callback = stage == COLLECTION_PROCESS ? process : analyze
+    return which(callback, Tuple{typeof(collection),Vector{AbstractDataItem}}).module != (@__MODULE__)
+end
+
 # ---------------------------------------------------------------------------
 # reconstruct
 # ---------------------------------------------------------------------------
