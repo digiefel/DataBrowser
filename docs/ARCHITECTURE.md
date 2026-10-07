@@ -37,7 +37,7 @@ flowchart TB
 
     subgraph frontend["Frontend"]
         gui["<b>DataBrowserGUI</b> 🖼<br/>main GUI functionality"]
-        plots["<b>DataBrowserPlots</b> 📈<br/>GLMakie-based plots"]
+        plots["<b>DataBrowserPlots</b> 📈<br/>plot registration; plot windows<br/>load with GLMakie"]
     end
 
     subgraph engine["Engine"]

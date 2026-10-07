@@ -12,8 +12,12 @@ These projects show the public API in increasing levels of specialization.
 Every example takes a data directory as its first command-line argument:
 
 ```bash
-julia --project examples/01_simple_csv/project.jl /path/to/data
+julia --project=examples examples/01_simple_csv/project.jl /path/to/data
 ```
+
+The `examples` environment holds DataBrowser and the packages the examples load. Plots are part of
+the browser once GLMakie is loaded, so an example that draws plots starts with
+`using DataBrowser, GLMakie`.
 
 The scripts contain the complete project definitions. Domain projects can move the same definitions
 into a Julia package and expose a narrower constructor or launch function to their users.

@@ -13,7 +13,7 @@ import DataBrowser:
     reconstruct,
     items
 
-length(ARGS) == 1 || error("Usage: julia --project project.jl DATA_DIRECTORY")
+length(ARGS) == 1 || error("Usage: julia --project=examples project.jl DATA_DIRECTORY")
 
 struct MicrographDirectory <: AbstractDataSource
     root::String

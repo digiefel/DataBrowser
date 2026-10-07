@@ -389,6 +389,11 @@ the GUI becomes one caller of those operations rather than a second implementati
 - [ ] Expose progress, failures, cancellation, and results in forms usable by both interactive and
   programmatic callers.
 - [ ] Keep the REPL usable while workspaces and GUI windows remain open.
+- [ ] Let `DataBrowserRecipes` provide `register_plot!` without loading the GUI. `DataBrowserPlots`
+  then depends only on `DataBrowserAPI`; `DataBrowserGUI`, `DataBrowserCore` and the windowing
+  libraries (CImGui, GLFW, ModernGL, NativeFileDialog) become weak dependencies and join GLMakie as
+  triggers of its plot-window extension. `DataBrowserRecipes` can then depend on `DataBrowserPlots`,
+  and a script that loads only `DataBrowserRecipes` defines a whole project, plots included.
 
 ## 0.7.0 — Figure composer
 

@@ -231,8 +231,9 @@ DataBrowserCore    → API, Sources, Cache : the workspace, the index, backgroun
                    needing heavy dependencies (audio, say) live in extension packages
 DataBrowserGUI     → API, Core (+ CImGui/GLFW) : the host shell, panels, browser, shared widgets,
                    the window registry, and lightweight visualizers for Core-supported data shapes
-DataBrowserPlots   → API, Core, GUI (+ GLMakie) : a first-party/default GUI extension for Makie
-                   embedding, high-level plot APIs, and enhanced default visualizers
+DataBrowserPlots   → API, Core, GUI : plot registration and high-level plot APIs; its plot windows
+                   (Makie embedding, enhanced default visualizers) are a package extension that
+                   loads when GLMakie is loaded: `using DataBrowser, GLMakie`
 DataBrowserCLI     → API, Core : a command-line frontend over the same commands (may come later)
 DataBrowser        → GUI, default extensions : umbrella / install target; re-exports the API
                    and the recipes dialect, and wires defaults
@@ -240,8 +241,8 @@ DataBrowser        → GUI, default extensions : umbrella / install target; re-e
 
 The dependency graph is acyclic with `DataBrowserAPI` at the bottom and the GUI host/extensions at
 the top. Heavy dependencies live where their feature lives — DuckDB in `DataBrowserCache`, CImGui/GLFW
-in `DataBrowserGUI`, GLMakie in `DataBrowserPlots` — so headless engine work never recompiles the GUI
-or GPU stack, and the GUI shell can exist without importing Makie.
+in `DataBrowserGUI`, GLMakie as a weak dependency of `DataBrowserPlots` — so headless engine work
+never recompiles the GUI or GPU stack, and `using DataBrowser` does not load Makie.
 
 `DataBrowserAPI` stays a clean leaf only under one discipline: something belongs in it only if it is
 shared by two or more packages **and** is declaration or data — abstract extension types, lightweight

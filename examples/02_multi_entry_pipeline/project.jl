@@ -3,7 +3,7 @@ using DataBrowser
 using DataFrames: DataFrame
 using GLMakie: Axis, Figure, contents, lines!
 
-length(ARGS) == 1 || error("Usage: julia --project project.jl DATA_DIRECTORY")
+length(ARGS) == 1 || error("Usage: julia --project=examples project.jl DATA_DIRECTORY")
 
 project = define_project("Fatigue cycles")
 
