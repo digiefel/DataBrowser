@@ -64,18 +64,40 @@ function setup_plot end
 function plot_data! end
 
 """
+    embed(figure, id)
+
+Draw `figure` inside the browser window that is being drawn. `id` names the place of the figure in
+that window and stays the same from frame to frame. A plot backend adds a method for its figure
+type; the GLMakie extension has the one for a Makie `Figure`.
+"""
+function embed end
+
+"""
     register_plot!(project, kind; label, setup, draw) -> project
 
-Register (or replace) one plot for an item kind. The function has methods only once a Makie backend
-is loaded, for example `using GLMakie` or `using CairoMakie`.
+Register (or replace) one plot for an item kind. Registering needs no plot backend: the browser
+chooses how to show a plot from the type of the figure that `setup` returns.
 
-`setup(workspace, items)` builds and returns the Makie figure; `draw(workspace, items, figure)`
-fills it in. `items` are the loaded, data-bearing items for the selection
-(`Vector{<:AbstractDataItem}`); each has already passed through `process(item)`, if registered, so
-neither callback resolves item data itself. A kind may have multiple plots; re-registering the same
-`label` for the same kind replaces that plot, which keeps REPL iteration stable.
+`setup(workspace, items)` builds and returns the figure; `draw(workspace, items, figure)` fills it
+in. `items` are the loaded, data-bearing items for the selection (`Vector{<:AbstractDataItem}`);
+each has already passed through `process(item)`, if registered, so neither callback resolves item
+data itself. A kind may have multiple plots; re-registering the same `label` for the same kind
+replaces that plot, which keeps REPL iteration stable.
 """
-function register_plot! end
+function register_plot!(
+    project::AbstractProject,
+    kind::Symbol;
+    label::AbstractString,
+    setup::Function,
+    draw::Function,
+)::AbstractProject
+    label_string = String(label)
+    recipes = get!(_plot_recipes(project), kind) do
+        Dict{String,PlotRecipe}()
+    end
+    recipes[label_string] = PlotRecipe(kind, label_string, setup, draw)
+    return project
+end
 
 """Every plot registered for an item kind, sorted by label."""
 function registered_plot_kinds(project, kind::Symbol)::Vector{Type{<:PlotKind}}

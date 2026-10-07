@@ -10,7 +10,7 @@ Base.@kwdef mutable struct PlotViewState
     item_ids::Vector{String} = String[]
     kind::Union{Nothing,Symbol} = nothing
     plot_kind::Union{Nothing,Type{<:PlotKind}} = nothing
-    figure::Union{Nothing,Figure} = nothing
+    figure::Any = nothing
     last_key::Union{Nothing,Tuple} = nothing
     error::String = ""
     export_error::String = ""

@@ -389,12 +389,11 @@ the GUI becomes one caller of those operations rather than a second implementati
 - [ ] Expose progress, failures, cancellation, and results in forms usable by both interactive and
   programmatic callers.
 - [ ] Keep the REPL usable while workspaces and GUI windows remain open.
-- [ ] Draw registered plots without the GUI. `register_plot!` gets its method when a Makie backend
-  is loaded, so `using DataBrowser, CairoMakie` can register plots today, but `DataBrowserPlots`
-  still loads the GUI. Make `DataBrowserGUI`, `DataBrowserCore` and the windowing libraries (CImGui,
-  GLFW, ModernGL, NativeFileDialog) weak dependencies of `DataBrowserPlots` that join GLMakie as
-  triggers of its plot-window extension. A script can then draw a registered plot to a file with
-  any Makie backend, and `DataBrowserRecipes` can depend on `DataBrowserPlots`.
+- [ ] Draw registered plots without the GUI. `register_plot!` needs no plot backend, but
+  `DataBrowserPlots` still loads the GUI. Make `DataBrowserGUI`, `DataBrowserCore` and the windowing
+  libraries (CImGui, GLFW, ModernGL, NativeFileDialog) weak dependencies of `DataBrowserPlots` that
+  join GLMakie as triggers of its plot-window extension. A script can then draw a registered plot
+  to a file with any backend, and `DataBrowserRecipes` can depend on `DataBrowserPlots`.
 - [ ] Build the info window from sections, each drawn by a method of one generic function for the
   type of the selected value. A GUI method for `SourceFile` then shows the link that opens the file.
 

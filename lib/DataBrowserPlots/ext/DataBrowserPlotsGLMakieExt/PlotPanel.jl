@@ -63,6 +63,8 @@ function draw_plot_view!(
         result = Browser.@timed "plot_setup" (@timed_dbg setup_plot(workspace, plot_kind, items))
         Browser.@timed "plot_data" (@timed_dbg plot_data!(workspace, plot_kind, items, result))
         result === nothing && error("Plot renderer returned no figure.")
+        hasmethod(embed, Tuple{typeof(result),String}) ||
+            error("No loaded plot backend can show a $(typeof(result))")
         view.figure = result
         view.last_key = plot_key
         view.error = ""
@@ -206,12 +208,7 @@ function render_plot_body!(
     if view.figure !== nothing
         makie_id = _plot_makie_id(plots, view)
         Browser.@timed "makie_fig" begin
-            MakieFigure(
-                makie_id,
-                view.figure;
-                auto_resize_x=true,
-                auto_resize_y=true,
-            )
+            embed(view.figure, makie_id)
         end
     elseif status == :needs_kind
         ig.TextDisabled("No plot kind selected")

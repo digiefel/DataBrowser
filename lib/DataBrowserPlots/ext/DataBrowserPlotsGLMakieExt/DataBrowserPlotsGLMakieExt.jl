@@ -22,11 +22,14 @@ using DataBrowserPlots:
     plot_data!,
     registered_plot_kinds,
     setup_plot
+import DataBrowserPlots: embed
 
 include("MakieIntegration.jl")
 using .MakieImguiIntegration
 
 include("PlotState.jl")
+
+embed(figure::Figure, id::String) = MakieFigure(id, figure; auto_resize_x=true, auto_resize_y=true)
 include("PlotPanel.jl")
 include("TablePlotPanel.jl")
 include("PlotsExtension.jl")
