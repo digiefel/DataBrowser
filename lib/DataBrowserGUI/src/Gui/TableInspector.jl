@@ -30,7 +30,8 @@ function _sync_item_data_inspector!(state::BrowserState)::Nothing
     isempty(selected_records) && return nothing
 
     # Compute a cache key so we don't rebuild on every frame
-    key = (workspace.scan.epoch, sort([id(workspace, r) for r in selected_records]), inspector.show_provenance_column)
+    key = (workspace.scan.epoch, sort([id(workspace, r) for r in selected_records]),
+        Workspace.revision(workspace, selected_records), inspector.show_provenance_column)
     inspector.inspector_key == key && return nothing
 
     table, warnings = try

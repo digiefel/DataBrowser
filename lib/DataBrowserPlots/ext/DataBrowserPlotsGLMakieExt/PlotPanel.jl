@@ -289,6 +289,7 @@ function render_plot_view!(
             view.id,
             plot_kind_name(view.plot_kind),
             [id(workspace, record) for record in records],
+            Workspace.revision(workspace, records),
         )
         view.last_key == plot_key ||
             draw_plot_view!(

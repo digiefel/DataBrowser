@@ -79,7 +79,8 @@ function _sync_table_plot_table!(
         return nothing
     end
 
-    key = (workspace.scan.epoch, Tuple(sort!([Workspace.id(workspace, r) for r in selected_records])))
+    key = (workspace.scan.epoch, Tuple(sort!([Workspace.id(workspace, r) for r in selected_records])),
+        Workspace.revision(workspace, selected_records))
     table_plot.table_key == key && return table_plot.table
 
     table_plot.table_key = key

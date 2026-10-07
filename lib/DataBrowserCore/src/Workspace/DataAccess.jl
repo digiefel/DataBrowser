@@ -7,14 +7,19 @@ current selection. Each item comes in its latest version: the version of the out
 whose `process` changed it and whose result is current, or else its own processed data.
 
 An item that is not processed yet is processed now, ahead of background work, and the call waits
-for it. Analyze is requested for every delivered item, so that its metadata becomes complete. A
-failed item throws its error.
+for it. Analyze is requested for every delivered item, so that its metadata becomes complete. The
+collections above each item are requested too and the call does not wait for them: a later call
+delivers their versions once they are ready. A failed item throws its error.
 """
 function materialize_items(workspace::Workspace, items::Vector{ItemKey})::Vector{AbstractDataItem}
     catalog = workspace.catalog
     @lock catalog.lock begin
         for item in setdiff(items, workspace.wanted)
             request(catalog, item, ITEM_ANALYZE; priority=4)
+            # The collections above the item are queued and not waited for.
+            for holder in ancestors(workspace, item), stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
+                Catalogs.status(catalog, holder, stage).absent || request(catalog, holder, stage; priority=3)
+            end
             push!(workspace.wanted, item)
         end
         for item in items
@@ -47,6 +52,25 @@ end
 
 materialize_items(workspace::Workspace)::Vector{AbstractDataItem} =
     materialize_items(workspace, workspace.selection.item_ids)
+
+"""
+    revision(workspace, items) -> UInt
+
+A number that changes when `materialize_items` would deliver different versions of `items`: an item
+was processed again, or the `process` of a collection above one became current or stopped being so.
+A view keeps the number it drew with and draws again when it differs.
+"""
+function revision(workspace::Workspace, items::Vector{ItemKey})::UInt
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        seed = UInt(0)
+        for item in items, target in [(item, ITEM_PROCESS); [(holder, COLLECTION_PROCESS) for holder in ancestors(workspace, item)]]
+            status = Catalogs.status(catalog, target...)
+            seed = hash((status.validity == Catalogs.FRESH, status.revision), seed)
+        end
+        return seed
+    end
+end
 
 """
     read_item_data(workspace, items) -> Vector{Any}

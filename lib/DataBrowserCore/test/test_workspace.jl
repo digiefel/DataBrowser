@@ -141,10 +141,15 @@ end
         # A version from before a source change is not delivered while its collection is stale.
         W.modify_workspace!(ws; source=EngineSource("source", 5, false), background_processing=false)
         settled(ws)
-        @test x("a") == 5
-        W.modify_workspace!(ws; source=EngineSource("source", 5, false), background_processing=true)
+        drawn = W.revision(ws, [W.item(ws, "a")])
+        @test x("a") in (5, 60)
+        # Without background processing, delivering an item queues the collections above it.
         settled(ws)
-        @test (x("a"), x("b")) == (60, 50)
+        @test x("a") == 60
+        @test W.revision(ws, [W.item(ws, "a")]) != drawn
+        @test x("b") in (5, 50)
+        settled(ws)
+        @test x("b") == 50
         @test W.metadata(ws, holder("a"))[:seen] == 6
     finally
         W.close_workspace!(ws)
