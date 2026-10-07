@@ -336,6 +336,9 @@ function _init_browser_context!()
     ig.AddFontDefault(fonts)
     icons = ig.lib.ImFontConfig_ImFontConfig()
     icons.MergeMode = true
+    # An icon stands on the text baseline and is taller than the letters: moved down, it stays
+    # inside the line.
+    icons.GlyphOffset = ig.ImVec2(0.0f0, 2.0f0)
     ig.AddFontFromFileTTF(fonts, ICON_FONT, 13.0f0, icons)
     ig.lib.ImFontConfig_destroy(icons)
 
@@ -378,6 +381,36 @@ function _promote_to_foreground_app()
         )::Cvoid
     catch error
         @warn "Could not promote to a macOS foreground app" exception=error
+    end
+    return nothing
+end
+
+"""
+Give the keyboard focus back when the browser window closes. The process was made a regular macOS
+app to show the window; without a window it would stay the active app, with nothing to click on.
+No-op off macOS; never throws.
+"""
+function _leave_foreground_app()
+    Sys.isapple() || return nothing
+    try
+        objc_class(name) = @ccall objc_getClass(name::Cstring)::Ptr{Cvoid}
+        objc_sel(name) = @ccall sel_registerName(name::Cstring)::Ptr{Cvoid}
+        nsapplication = objc_class("NSApplication")
+        nsapplication == C_NULL && return nothing
+        app = @ccall objc_msgSend(
+            nsapplication::Ptr{Cvoid}, objc_sel("sharedApplication")::Ptr{Cvoid},
+        )::Ptr{Cvoid}
+        app == C_NULL && return nothing
+        # Hiding activates the app that was in front before.
+        @ccall objc_msgSend(
+            app::Ptr{Cvoid}, objc_sel("hide:")::Ptr{Cvoid}, C_NULL::Ptr{Cvoid},
+        )::Cvoid
+        # NSApplicationActivationPolicyAccessory = 1: no Dock icon and no entry in Cmd-Tab.
+        @ccall objc_msgSend(
+            app::Ptr{Cvoid}, objc_sel("setActivationPolicy:")::Ptr{Cvoid}, 1::Clong,
+        )::Bool
+    catch error
+        @warn "Could not give the keyboard focus back" exception=error
     end
     return nothing
 end
@@ -499,6 +532,7 @@ function _run_browser(
             _shutdown_extensions!(state)
             _shutdown_implot_context!(state)
             _save_project_view_if_changed!(state)
+            window_start == :normal && _leave_foreground_app()
             @debug sprint(show, MAIN_TIMER)
         end,
     ) do
