@@ -315,6 +315,12 @@ function _window_close_requested(state::BrowserState)::Bool
     return GLFW.WindowShouldClose(window)
 end
 
+# The Lucide icon font, version 1.52.0 (ISC licence, in `assets/lucide-LICENSE`). Its icons are
+# characters in the private-use range, so a string can hold text and icons together.
+const ICON_FONT = joinpath(pkgdir(@__MODULE__), "assets", "lucide.ttf")
+const ICON_PARTIAL = "\ue4b0"  # circle-dashed
+const ICON_FAILED = "\ue084"   # circle-x
+
 """Create the ImGui context with the docking/viewport configuration the browser needs."""
 function _init_browser_context!()
     ig.set_backend(:GlfwOpenGL3)
@@ -323,6 +329,14 @@ function _init_browser_context!()
     io.ConfigFlags = unsafe_load(io.ConfigFlags) | ig.ImGuiConfigFlags_DockingEnable
     io.ConfigFlags = unsafe_load(io.ConfigFlags) | ig.ImGuiConfigFlags_ViewportsEnable
     io.ConfigFlags = unsafe_load(io.ConfigFlags) | ig.ImGuiConfigFlags_NavEnableKeyboard
+
+    # Add the icons to the default text font.
+    fonts = unsafe_load(io.Fonts)
+    ig.AddFontDefault(fonts)
+    icons = ig.lib.ImFontConfig_ImFontConfig()
+    icons.MergeMode = true
+    ig.AddFontFromFileTTF(fonts, ICON_FONT, 13.0f0, icons)
+    ig.lib.ImFontConfig_destroy(icons)
 
     # Point imgui at a per-machine ini file so [Table] column widths persist across restarts.
     # The pointer must live for the whole process — _IMGUI_INI_BYTES holds the bytes.

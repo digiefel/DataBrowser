@@ -13,12 +13,16 @@ a tooltip. A row that is current or not processed has no mark and keeps the squa
 """
 function _render_readiness_mark!(readiness::Workspace.Readiness)::Nothing
     size = ig.GetTextLineHeight()
-    cursor = ig.GetCursorScreenPos()
-    center = ig.ImVec2(cursor.x + size / 2, cursor.y + size / 2)
-    radius = size * 0.28f0
-    draw_list = ig.GetWindowDrawList()
-    if readiness == Workspace.WORKING
-        # A spinner: spokes that fade around the circle and turn with time.
+    if readiness == Workspace.PARTIAL
+        ig.TextDisabled(ICON_PARTIAL)
+    elseif readiness == Workspace.FAILED
+        ig.TextColored(ig.ImVec4(0.9f0, 0.3f0, 0.3f0, 1.0f0), ICON_FAILED)
+    elseif readiness == Workspace.WORKING
+        # A spinner: spokes that fade around the circle and turn with time. A font cannot animate.
+        cursor = ig.GetCursorScreenPos()
+        center = ig.ImVec2(cursor.x + size / 2, cursor.y + size / 2)
+        radius = size * 0.28f0
+        draw_list = ig.GetWindowDrawList()
         phase = Float32(ig.GetTime() * 8.0)
         for index in 0:7
             angle = phase + Float32(2π * index / 8)
@@ -26,16 +30,10 @@ function _render_readiness_mark!(readiness::Workspace.Readiness)::Nothing
             far = ig.ImVec2(center.x + cos(angle) * radius, center.y + sin(angle) * radius)
             ig.AddLine(draw_list, near, far, ig.GetColorU32(ig.ImGuiCol_Text, 0.2f0 + 0.1f0 * index), 1.5f0)
         end
-    elseif readiness == Workspace.PARTIAL
-        ig.AddCircle(draw_list, center, radius, ig.GetColorU32(ig.ImGuiCol_TextDisabled), 16, 1.5f0)
-    elseif readiness == Workspace.FAILED
-        color = ig.GetColorU32(ig.ImVec4(0.9f0, 0.3f0, 0.3f0, 1.0f0))
-        ig.AddLine(draw_list, ig.ImVec2(center.x - radius, center.y - radius),
-            ig.ImVec2(center.x + radius, center.y + radius), color, 2.0f0)
-        ig.AddLine(draw_list, ig.ImVec2(center.x - radius, center.y + radius),
-            ig.ImVec2(center.x + radius, center.y - radius), color, 2.0f0)
+        ig.Dummy((size, size))
+    else
+        ig.Dummy((size, size))
     end
-    ig.Dummy((size, size))
     if ig.IsItemHovered()
         readiness == Workspace.WORKING && ig.SetTooltip("Processing")
         readiness == Workspace.PARTIAL && ig.SetTooltip("Shown without the later stages; they are not queued")
