@@ -84,6 +84,7 @@ using DataBrowserCache:
     store_item_metadata!,
     store_item_label!,
     store_item_metadata_layer!,
+    store_item_stage_metadata!,
     store_processed!,
     store_result_failure!,
     store_source_identity!,

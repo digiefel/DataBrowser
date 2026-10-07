@@ -1097,9 +1097,11 @@ function _read_tabular_locations(
                     end
                     for seq in batch_seqs
                         # A zero-row payload has a pointer and schema but no physical rows; it
-                        # reconstructs as an empty value with the correct columns and types.
+                        # reconstructs as an empty value with the correct columns. The database
+                        # reports every column as one that allows missing values; a column with
+                        # rows and no missing value comes back without `Missing`, and so does this.
                         payload = get(columns, seq) do
-                            AbstractVector[type[] for type in result.types[data]]
+                            AbstractVector[nonmissingtype(type)[] for type in result.types[data]]
                         end
                         rows_by_location[(storage_id, seq)] = NamedTuple{data_names}(Tuple(payload))
                     end

@@ -294,6 +294,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     @lock catalog.lock begin
         if finish!(catalog, job; metadata=computed)
             relabel!(workspace, item, label(workspace.project, output))
+            store_item_stage_metadata!(cache, id(catalog, item), ITEM_PROCESS, computed)
             conflicts!(workspace, item, ITEM_PROCESS,
                 store_item_metadata_layer!(cache, id(catalog, item), delivered))
         else
@@ -320,6 +321,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_ANALYZE})::Not
     @lock catalog.lock begin
         finish!(catalog, job; metadata=analysis) || return nothing
         relabel!(workspace, item, new_label)
+        store_item_stage_metadata!(cache, id(catalog, item), ITEM_ANALYZE, analysis)
         conflicts!(workspace, item, ITEM_ANALYZE,
             store_item_metadata!(cache, id(catalog, item), cache_key(workspace, item), delivered))
     end

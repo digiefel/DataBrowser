@@ -10,8 +10,24 @@ An item that is not processed yet is processed now, ahead of background work, an
 for it. Analyze is requested for every delivered item, so that its metadata becomes complete. The
 collections above each item are requested too and the call does not wait for them: a later call
 delivers their versions once they are ready. A failed item throws its error.
+
+The data and the metadata of each delivered item belong together: when an item changes while it is
+loaded, it is loaded again.
 """
 function materialize_items(workspace::Workspace, items::Vector{ItemKey})::Vector{AbstractDataItem}
+    catalog = workspace.catalog
+    while true
+        seen = wait_processed(workspace, items)
+        delivered = versions(workspace, items)
+        revision(workspace, items) == seen && return delivered
+    end
+end
+
+"""
+Request `items` ahead of background work, wait until each is processed, and return their
+[`revision`](@ref). A failed item throws its error.
+"""
+function wait_processed(workspace::Workspace, items::Vector{ItemKey})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
         for item in setdiff(items, workspace.wanted)
@@ -36,8 +52,8 @@ function materialize_items(workspace::Workspace, items::Vector{ItemKey})::Vector
                 get(workspace.errors, (first(failed), SOURCE_READ), "work failed")
             end)
         end
+        return revision(workspace, items)
     end
-    return versions(workspace, items)
 end
 
 function materialize_items(
@@ -57,14 +73,14 @@ materialize_items(workspace::Workspace)::Vector{AbstractDataItem} =
     revision(workspace, items) -> UInt
 
 A number that changes when `materialize_items` would deliver different versions of `items`: an item
-was processed again, or the `process` of a collection above one became current or stopped being so.
-A view keeps the number it drew with and draws again when it differs.
+was processed or analyzed again, or the `process` of a collection above one became current or
+stopped being so. A view keeps the number it drew with and draws again when it differs.
 """
 function revision(workspace::Workspace, items::Vector{ItemKey})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
         seed = UInt(0)
-        for item in items, target in [(item, ITEM_PROCESS); [(holder, COLLECTION_PROCESS) for holder in ancestors(workspace, item)]]
+        for item in items, target in [(item, ITEM_PROCESS); (item, ITEM_ANALYZE); [(holder, COLLECTION_PROCESS) for holder in ancestors(workspace, item)]]
             status = Catalogs.status(catalog, target...)
             seed = hash((status.validity == Catalogs.FRESH, status.revision), seed)
         end

@@ -137,6 +137,7 @@ end
             for (id, read) in zip(ids, read_payload(cache, ids; stage=ITEM_PROCESS))
                 table = Tables.columntable(something(read))
                 @test isequal(table.x, payloads[id].x)
+                @test eltype(table.x) == eltype(payloads[id].x)
                 @test table.name == payloads[id].name
             end
         finally

@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 29
+const PROJECT_CACHE_SCHEMA_VERSION = 30
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -121,9 +121,10 @@ const SavedCollection = @NamedTuple{
 }
 
 """
-An item as the cache saved it. `metadata` is what its source item gave it, and `delivered` the
-metadata project code last received with the item, or empty when no stage of the item has run.
-`collection_key` is `nothing` for an item at the root.
+An item as the cache saved it. `metadata` is what its source item gave it, `process` and `analysis`
+what its `process` and its `analyze` produced, and `delivered` the metadata project code last
+received with the item, or empty when no stage of the item has run. `collection_key` is `nothing`
+for an item at the root.
 """
 const SavedItem = @NamedTuple{
     id::String,
@@ -132,6 +133,8 @@ const SavedItem = @NamedTuple{
     type::Type,
     collection_key::Union{Nothing,Int64},
     metadata::MetadataDict,
+    process::MetadataDict,
+    analysis::MetadataDict,
     delivered::MetadataDict,
 }
 
@@ -416,6 +419,16 @@ end
 MemberChangesRow(row)::MemberChangesRow =
     MemberChangesRow(Int64(row.collection_key), String(row.changes_hex))
 
+"""The metadata that one stage of one item produced."""
+struct StageMetadataRow
+    stage::Int8
+    item_key::Int64
+    metadata_hex::String
+end
+
+StageMetadataRow(row)::StageMetadataRow =
+    StageMetadataRow(Int8(row.stage), Int64(row.item_key), String(row.metadata_hex))
+
 struct ItemRow
     id::String
     item_key::Int64
@@ -488,6 +501,7 @@ mutable struct CacheDB
     result_states::RowStore{Tuple{Int8,String},CachedResultState}
     keyed_result_states::RowStore{Tuple{Int8,Int64},CachedKeyedResultState}
     member_changes::RowStore{Int64,MemberChangesRow}
+    stage_metadata::RowStore{Tuple{Int8,Int64},StageMetadataRow}
     payload::TabularFamilyStore
     source_reads::MemoryStore{Int64,Any}
     unprocessed::MemoryStore{String,Any}
@@ -565,6 +579,8 @@ function open_cache_db(
         keyed_result_states = RowStore{Tuple{Int8,Int64},CachedKeyedResultState}(
             db, "keyed_result_states", ("kind", "entity"))
         member_changes = RowStore{Int64,MemberChangesRow}(db, "member_changes", ("collection_key",))
+        stage_metadata = RowStore{Tuple{Int8,Int64},StageMetadataRow}(
+            db, "item_stage_metadata", ("stage", "item_key"))
         payload = TabularFamilyStore(db; row_limit=CACHE_BUFFER_ROW_LIMIT)
         item_keys, next_item_key = _load_item_keys(db)
         source_item_keys, source_item_ids, next_source_item_key = _load_source_item_keys(db)
@@ -589,6 +605,7 @@ function open_cache_db(
             result_states,
             keyed_result_states,
             member_changes,
+            stage_metadata,
             payload,
             MemoryStore{Int64,Any}(; capacity=256 * 1024^2, weight=Base.summarysize),
             MemoryStore{String,Any}(; capacity=CACHE_BUFFER_ROW_LIMIT),
@@ -713,6 +730,8 @@ function ensure_schema!(connection)::Nothing
         CachedKeyedResultState, "keyed_result_states", (:kind, :entity)))
     DBInterface.execute(connection,
         create_table_sql(MemberChangesRow, "member_changes", (:collection_key,)))
+    DBInterface.execute(connection,
+        create_table_sql(StageMetadataRow, "item_stage_metadata", (:stage, :item_key)))
     DBInterface.execute(connection, """
         CREATE TABLE IF NOT EXISTS wide_columns(
             table_name TEXT,
@@ -915,6 +934,19 @@ function store_item_metadata_layer!(
     return _conflict_messages(dropped)
 end
 
+"""
+Persist the metadata that `stage` of one item produced, `ITEM_PROCESS` or `ITEM_ANALYZE`. It is
+kept apart from the delivered metadata, where a later stage or a collection can replace its values.
+"""
+function store_item_stage_metadata!(
+    cache::CacheDB, id::AbstractString, stage::PipelineStage, produced::AbstractDict,
+)::Nothing
+    key = item_key!(cache, id)
+    edit!(cache.stage_metadata, (Int8(stage), key),
+        StageMetadataRow(Int8(stage), key, _serialize_hex(metadata_dict(produced))))
+    return nothing
+end
+
 """Persist one item's delivered metadata and mark its analysis stage complete."""
 function store_item_metadata!(
     cache::CacheDB, id::AbstractString, source_key::Int64, effective::AbstractDict,
@@ -979,6 +1011,8 @@ function delete_source_output!(
         _stage_ledger_item!(cache.stage_ledger, id, false)
         delete!(cache.source_item_metadata, key)
         delete!(cache.analyzed_item_metadata, key)
+        delete!(cache.stage_metadata, (Int8(ITEM_PROCESS), key))
+        delete!(cache.stage_metadata, (Int8(ITEM_ANALYZE), key))
         delete!(cache.payload, (key, 0))
         for collection in collections
             delete!(cache.payload, (key, collection))
@@ -1036,7 +1070,7 @@ function cache_pending_counts(cache::CacheDB)::NamedTuple{(:items, :rows),Tuple{
         (cache.source_items, cache.collections, cache.items, cache.source_item_metadata,
          cache.analyzed_item_metadata,
          cache.analyzed_collection_metadata, cache.failures, cache.result_states,
-         cache.keyed_result_states, cache.member_changes, cache.payload)
+         cache.keyed_result_states, cache.member_changes, cache.stage_metadata, cache.payload)
         lock(buffer.flush_condition) do
             items += length(buffer.queued) + length(buffer.writing)
             rows += buffer.queued_rows + buffer.writing_rows
@@ -1172,7 +1206,8 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.analyzed_item_metadata,
          cachedb.analyzed_collection_metadata, cachedb.failures,
-         cachedb.result_states, cachedb.keyed_result_states, cachedb.member_changes, cachedb.payload,
+         cachedb.result_states, cachedb.keyed_result_states, cachedb.member_changes,
+         cachedb.stage_metadata, cachedb.payload,
          cachedb.unprocessed, cachedb.source_reads)
         try
             close!(buffer)
@@ -1226,7 +1261,8 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.analyzed_item_metadata,
          cachedb.analyzed_collection_metadata, cachedb.failures,
-         cachedb.result_states, cachedb.keyed_result_states, cachedb.member_changes, cachedb.payload,
+         cachedb.result_states, cachedb.keyed_result_states, cachedb.member_changes,
+         cachedb.stage_metadata, cachedb.payload,
          cachedb.unprocessed, cachedb.source_reads)
         clear!(buffer)
     end
@@ -1352,6 +1388,9 @@ function load_cache_index(cache::CacheDB)::ProjectCacheIndex
     collection_keys = Set(collection.key for collection in collections)
     item_layer = read(cache.source_item_metadata)
     delivered = read(cache.analyzed_item_metadata)
+    produced = read(cache.stage_metadata)
+    stage_metadata(stage, key) = haskey(produced, (Int8(stage), key)) ?
+        metadata_dict(_deserialize_hex(produced[(Int8(stage), key)].metadata_hex)) : MetadataDict()
     items = SavedItem[]
     for row in values(read(cache.items))
         row.collection_key === nothing || row.collection_key in collection_keys ||
@@ -1366,6 +1405,8 @@ function load_cache_index(cache::CacheDB)::ProjectCacheIndex
             type=_deserialize_type(row.type_hex),
             row.collection_key,
             metadata=get(item_layer, row.item_key, MetadataDict()),
+            process=stage_metadata(ITEM_PROCESS, row.item_key),
+            analysis=stage_metadata(ITEM_ANALYZE, row.item_key),
             delivered=get(delivered, row.item_key, MetadataDict()),
         ))
     end

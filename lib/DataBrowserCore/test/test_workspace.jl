@@ -103,6 +103,7 @@ DataBrowserAPI.process(::NestedProject, ::Inner, items::AbstractVector) =
     [NestedItem(i.key, (x=i.data.x .+ 1,), Dict(:step => 1, :name => "inner $(i.key)")) for i in items]
 DataBrowserAPI.process(::NestedProject, ::Outer, items::AbstractVector) =
     [NestedItem(i.key, (x=i.data.x .* 10,), merge(i.metadata, Dict(:step => get(i.metadata, :step, 0) + 1))) for i in items]
+DataBrowserAPI.analyze(::NestedProject, ::NestedItem) = Dict(:step => 0)
 DataBrowserAPI.analyze(::NestedProject, ::Inner, items::AbstractVector) =
     Dict(:seen => only(only(items).data.x))
 
@@ -320,6 +321,8 @@ end
                     settled(ws)
                     @test W.metadata(ws, W.item(ws, "a"))[:step] == 2
                     @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
+                    # The value that a collection replaced is still what the item's own stage made.
+                    @test W.metadata(ws, W.item(ws, "b"); above=W.CollectionKey[])[:step] == 0
                     @test W.label(ws, W.item(ws, "a")) == "inner a"
                     @test only(item_data(only(W.materialize_items(ws, ["a"]))).x) == 20
                 finally

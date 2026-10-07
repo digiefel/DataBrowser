@@ -620,11 +620,6 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
         workspace.next_collection_key = max(workspace.next_collection_key, saved.key + 1)
     end
 
-    # What the collections changed in the metadata of each item, by item id.
-    collected = Dict{String,MetadataDict}()
-    for saved in index.collections, (item_id, changed) in saved.changes
-        merge!(get!(MetadataDict, collected, item_id), changed)
-    end
     saved_items = Dict{Int64,Vector{eltype(index.items)}}()
     foreach(item -> push!(get!(valtype(saved_items), saved_items, item.source_key), item), index.items)
     for (saved, source_id_value) in index.sources
@@ -654,17 +649,8 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     for saved in index.items
         item = lookup(catalog, ItemKey, saved.id)
         item === nothing && continue
-        # The cache saves the metadata an item is delivered with. What its stages produced is the
-        # part that its collections and its source item do not give it, and that the `process`
-        # of a collection did not set.
-        base = merge(metadata(workspace, item; through=SOURCE_EXPAND), get(collected, saved.id, MetadataDict()))
-        computed = MetadataDict(
-            name => value for (name, value) in saved.delivered
-            if !haskey(base, name) || !isequal(base[name], value))
-        # The saved metadata is not split by stage, so the last stage that finished takes it.
-        analyzed = state(ITEM_ANALYZE, saved.id) !== nothing
-        restore(item, ITEM_PROCESS, saved.id; metadata=analyzed ? MetadataDict() : computed) &&
-            restore(item, ITEM_ANALYZE, saved.id; metadata=computed)
+        restore(item, ITEM_PROCESS, saved.id; metadata=saved.process) &&
+            restore(item, ITEM_ANALYZE, saved.id; metadata=saved.analysis)
     end
     # A collection comes after its parent, so the reverse order restores members first.
     for saved in reverse(index.collections)
