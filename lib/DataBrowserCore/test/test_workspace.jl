@@ -107,6 +107,25 @@ DataBrowserAPI.analyze(::NestedProject, ::NestedItem) = Dict(:step => 0)
 DataBrowserAPI.analyze(::NestedProject, ::Inner, items::AbstractVector) =
     Dict(:seen => only(only(items).data.x))
 
+struct GatedProject <: AbstractProject
+    gate::Base.Event
+end
+DataBrowserAPI.project_name(::GatedProject) = "gated"
+struct GatedSource <: AbstractDataSource end
+struct GatedSourceItem <: AbstractDataSourceItem
+    name::String
+end
+DataBrowserAPI.id(::GatedSource) = "gated"
+DataBrowserAPI.label(::GatedSource) = "gated"
+DataBrowserAPI.items(::GatedSource; kwargs...) = GatedSourceItem.(["folder/a", "folder/b"])
+DataBrowserAPI.id(s::GatedSourceItem) = s.name
+DataBrowserAPI.label(s::GatedSourceItem) = s.name
+DataBrowserAPI.fingerprint(::GatedSourceItem) = 1
+function DataBrowserAPI.read(p::GatedProject, ::GatedSource, s::GatedSourceItem)
+    wait(p.gate)
+    return EngineItem(s.name, (x=[1],), Dict())
+end
+
 function settled(ws)
     W.wait_workspace_idle!(ws; timeout=20)
     @test !W.workspace_status(ws).busy
@@ -337,5 +356,23 @@ end
         finally
             popfirst!(DEPOT_PATH)
         end
+    end
+end
+
+@testset "source items are listed before they are read" begin
+    project = GatedProject(Base.Event())
+    ws = W.open_workspace(project, GatedSource(); cache=false)
+    try
+        @test timedwait(() -> length(W.unread(ws)) == 2, 20) === :ok
+        @test sort(W.unread(ws)) == ["folder/a", "folder/b"]
+        @test isempty(W.items(ws))
+        W.read_first!(ws, ["folder/b", "not there"])
+        notify(project.gate)
+        settled(ws)
+        @test isempty(W.unread(ws))
+        @test length(W.items(ws)) == 2
+    finally
+        notify(project.gate)
+        W.close_workspace!(ws)
     end
 end

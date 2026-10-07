@@ -181,6 +181,24 @@ function source_item(workspace::Workspace, item::ItemKey)::Union{AbstractDataSou
 end
 
 """
+    unread(workspace) -> Vector{String}
+
+The public ids of the source items that the source lists and the workspace has not read yet: their
+items are not in the workspace. A source item whose `read` or `expand` failed is not included. For
+a directory source, an id is the path of a file below the source root.
+
+[`read_first!`](@ref) reads chosen source items ahead of the others.
+"""
+function unread(workspace::Workspace)::Vector{String}
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        return String[
+            Catalogs.id(catalog, source) for source in keys(catalog, SourceKey)
+            if !settled(Catalogs.status(catalog, source, SOURCE_EXPAND))]
+    end
+end
+
+"""
     metadata(workspace, collection) -> MetadataDict
     metadata(workspace, item; through=ITEM_ANALYZE, above=ancestors(workspace, item)) -> MetadataDict
 

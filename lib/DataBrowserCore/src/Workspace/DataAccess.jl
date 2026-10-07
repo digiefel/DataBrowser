@@ -56,6 +56,25 @@ function wait_processed(workspace::Workspace, items::Vector{ItemKey})::UInt
     end
 end
 
+"""
+    read_first!(workspace, ids)
+
+Read the source items with public ids `ids` ahead of background work, and ahead of the memory limit
+for expanded data. The call does not wait. Ids of source items that are read already, or that the
+workspace does not have, are ignored. See [`unread`](@ref).
+"""
+function read_first!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Nothing
+    catalog = workspace.catalog
+    @lock catalog.lock for id in ids
+        source = lookup(catalog, SourceKey, id)
+        source === nothing && continue
+        settled(Catalogs.status(catalog, source, SOURCE_EXPAND)) && continue
+        Catalogs.priority(catalog, source, SOURCE_EXPAND) >= VIEWED_ITEM ||
+            request(catalog, source, SOURCE_EXPAND; priority=VIEWED_ITEM)
+    end
+    return nothing
+end
+
 function materialize_items(
     workspace::Workspace, ids::AbstractVector{<:AbstractString},
 )::Vector{AbstractDataItem}

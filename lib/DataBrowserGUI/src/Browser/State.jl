@@ -111,6 +111,9 @@ mutable struct TreeCache
     visible::Vector{Workspace.Catalogs.CollectionKey}
     # The number of leaf collections, or -1 before the tree was walked.
     leaves::Int
+    # The ids of the source items that are not read yet, each split at "/" and all sorted, so that
+    # the source items below one folder follow each other.
+    unread::Vector{Vector{String}}
 end
 
 """

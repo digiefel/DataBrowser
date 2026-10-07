@@ -103,6 +103,57 @@ function _visible_items(
     return visible
 end
 
+"""
+Render the source items that are not read yet as a tree of the folders in their ids. A click on a
+source item or on a folder asks the workspace to read what is below it first.
+
+`paths` holds each id split at "/", sorted.
+"""
+function _render_unread!(workspace::Workspace.Workspace, paths::Vector{Vector{String}})::Nothing
+    isempty(paths) && return nothing
+    opened = ig.CollapsingHeader("Not read yet ($(length(paths)))###unread", ig.ImGuiTreeNodeFlags_DefaultOpen)
+    ig.SameLine()
+    _helpmarker("Files whose items are not listed yet. Click a file or a folder to read it first.")
+    opened || return nothing
+    read_first(range) = Workspace.read_first!(workspace, [join(path, '/') for path in paths[range]])
+
+    # TODO: mark the source items that were asked for, and show a source item in the place of its
+    # collection once the collection of a source item is known before `read`.
+    function render(range::UnitRange{Int}, depth::Int)::Nothing
+        start = first(range)
+        while start <= last(range)
+            name = paths[start][depth]
+            if length(paths[start]) == depth
+                flags = ig.ImGuiTreeNodeFlags_Leaf | ig.ImGuiTreeNodeFlags_Bullet |
+                    ig.ImGuiTreeNodeFlags_NoTreePushOnOpen | ig.ImGuiTreeNodeFlags_SpanFullWidth
+                ig.TreeNodeEx(name, flags, name)
+                ig.IsItemClicked() && read_first(start:start)
+                start += 1
+                continue
+            end
+            stop = start
+            while stop < last(range) && length(paths[stop+1]) > depth && paths[stop+1][depth] == name
+                stop += 1
+            end
+            flags = ig.ImGuiTreeNodeFlags_OpenOnArrow | ig.ImGuiTreeNodeFlags_SpanFullWidth
+            folder_opened = ig.TreeNodeEx(name, flags, "$name ($(stop - start + 1))")
+            ig.IsItemClicked() && !ig.IsItemToggledOpen() && read_first(start:stop)
+            if folder_opened
+                render(start:stop, depth + 1)
+                ig.TreePop()
+            end
+            start = stop + 1
+        end
+        return nothing
+    end
+
+    ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
+    render(1:length(paths), 1)
+    ig.PopStyleColor()
+    ig.Separator()
+    return nothing
+end
+
 """Render the collection hierarchy and write collection selection into the workspace."""
 function _render_hierarchy_tree_panel(
     state::BrowserState,
@@ -128,8 +179,12 @@ function _render_hierarchy_tree_panel(
     if cache === nothing || cache.key != cache_key
         cache = state.tree_cache = TreeCache(
             cache_key, Dict{CollectionKey,Vector{CollectionKey}}(), Dict{CollectionKey,Bool}(),
-            Dict{CollectionKey,Bool}(), CollectionKey[], -1)
+            Dict{CollectionKey,Bool}(), CollectionKey[], -1,
+            workspace isa Workspace.Workspace ?
+                sort!([String.(split(id, '/')) for id in Workspace.unread(workspace)]) :
+                Vector{String}[])
     end
+    workspace isa Workspace.Workspace && _render_unread!(workspace, cache.unread)
     visible_collections = cache.visible
     # A collection is selected and expanded by its path.
     visible_collection_ids_ref = Ref{Union{Nothing,Vector{Workspace.CollectionPath}}}(nothing)
@@ -466,7 +521,7 @@ function _render_hierarchy_tree_panel(
             () -> nothing;
             item_label="collections", filter_id="##tree_filter"
         )
-        ig.Text("No data loaded")
+        isempty(cache.unread) && ig.Text("No data loaded")
     end
 
     isempty(visible_collections) && all_collection_count[] > 0 && ig.TextDisabled("No collections match filter")
