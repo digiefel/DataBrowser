@@ -45,12 +45,7 @@ include("registration.jl")
 include("stages.jl")
 include("premade.jl")
 
-export CollectionRecipe,
-    ItemRecipe,
-    NoMatch,
-    Project,
-    RegisteredDataItem,
-    RegisteredReadResult,
+export Project,
     define_project,
     register_collection_analysis!,
     register_csv!,

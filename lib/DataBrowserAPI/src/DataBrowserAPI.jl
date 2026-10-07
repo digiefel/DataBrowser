@@ -20,4 +20,28 @@ include("item_contract.jl")
 include("stage_contract.jl")
 include("timing_debug.jl")
 
+export AbstractProject,
+    AbstractDataSource,
+    AbstractDataSourceItem,
+    AbstractDataItem,
+    AbstractCollection,
+    open_source,
+    close_source!,
+    watch_source,
+    source_id,
+    source_label,
+    source_items,
+    source_item_path,
+    source_item_timestamp,
+    fingerprint,
+    expand,
+    process,
+    analyze,
+    reconstruct,
+    id,
+    label,
+    collection,
+    metadata,
+    item_data
+
 end

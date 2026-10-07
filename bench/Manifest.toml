@@ -361,7 +361,7 @@ uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.16.0"
 
 [[deps.DataBrowser]]
-deps = ["BetterFileWatching", "CImGui", "CSV", "CancellationTokens", "DBInterface", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "Dates", "DuckDB", "GLFW", "GLMakie", "ModernGL", "NativeFileDialog", "Observables", "PrecompileTools", "Printf", "SHA", "Serialization", "SmoothData", "Statistics", "TOML"]
+deps = ["BetterFileWatching", "CImGui", "CSV", "CancellationTokens", "DBInterface", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "Dates", "DuckDB", "GLFW", "GLMakie", "ModernGL", "NativeFileDialog", "Observables", "PrecompileTools", "Printf", "Reexport", "SHA", "Serialization", "SmoothData", "Statistics", "TOML"]
 path = ".."
 uuid = "a11ddd67-7e33-4db9-a4a8-4453f6eb9e68"
 version = "0.1.0-alpha.1"

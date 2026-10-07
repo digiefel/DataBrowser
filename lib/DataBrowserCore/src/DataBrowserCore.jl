@@ -13,4 +13,26 @@ include("project_engine.jl")
 include("Catalogs.jl")
 include("Workspace.jl")
 
+using .Workspace:
+    open_workspace,
+    modify_workspace!,
+    close_workspace!,
+    wait_workspace_idle!,
+    workspace_status,
+    query_items,
+    select_items!,
+    materialize_items,
+    read_item_data
+
+export items_for_file,
+    open_workspace,
+    modify_workspace!,
+    close_workspace!,
+    wait_workspace_idle!,
+    workspace_status,
+    query_items,
+    select_items!,
+    materialize_items,
+    read_item_data
+
 end

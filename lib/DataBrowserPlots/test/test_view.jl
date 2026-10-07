@@ -1,4 +1,5 @@
 using Test, DataBrowserPlots, DataBrowserGUI
+using DataBrowserPlots: PlotsExtension
 
 @testset "plot views preserve fixed and live selections" begin
     browser = DataBrowserGUI.Browser

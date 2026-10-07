@@ -4,8 +4,6 @@ using DataBrowserAPI: item_data, label
 using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 
-export ItemTable, merge_item_tables, materialize_item_table
-
 """
 Table view over one or more items' Tables-compatible payloads.
 

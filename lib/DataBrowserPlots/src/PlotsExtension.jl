@@ -188,5 +188,3 @@ function plots_extension(state::Browser.BrowserState)::PlotsExtension
     end
     error("PlotsExtension is not loaded")
 end
-
-export PlotsExtension, plots_extension

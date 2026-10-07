@@ -69,13 +69,7 @@ function __init__()
     Browser.register_gui_extension!(PlotsExtension)
 end
 
-export PlotsExtension,
-    plots_extension,
-    PlotState,
-    PlotViewState,
-    PersistedPlotView,
-    PlotKind,
-    PlotRecipe,
+export PlotKind,
     RegisteredPlot,
     register_plot!,
     setup_plot,
@@ -83,7 +77,6 @@ export PlotsExtension,
     registered_plot_kinds,
     plot_kind_label,
     plot_kind_name,
-    plot_kind_from_name,
-    plot_kinds
+    plot_kind_from_name
 
 end
