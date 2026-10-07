@@ -621,12 +621,18 @@ end
 
 _buffer_rows(batch::TabularBodyBatch)::Int = _payload_rows(batch.body)
 
+# The number of tasks that append payload rows during one flush. One task cannot store payloads
+# as fast as several workers produce them.
+const PAYLOAD_APPEND_TASKS = 4
+
 mutable struct TabularFamilyStore <:
                AbstractDatabaseStore{Tuple{UInt16,UInt32},TabularBodyBatch}
     read_connection::DuckDB.Connection
     # DuckDB connections are not thread-safe; every read_connection use holds this lock.
     read_lock::ReentrantLock
     write_connection::DuckDB.Connection
+    # One connection for each task that appends payload rows during a flush.
+    append_connections::Vector{DuckDB.Connection}
     flush_condition::Base.Threads.Condition
     queued::Dict{Tuple{UInt16,UInt32},BufferMutation{TabularBodyBatch}}
     writing::Dict{Tuple{UInt16,UInt32},BufferMutation{TabularBodyBatch}}
@@ -642,6 +648,8 @@ mutable struct TabularFamilyStore <:
     containers::Dict{Tuple{UInt16,UInt32},String}
     # Number of rows per stored payload, which sets how many payloads one query of a read takes.
     rows::Dict{Tuple{UInt16,UInt32},Int}
+    # The hex-serialized name of each container type stored so far.
+    container_names::Dict{Type,String}
     next_seq::UInt32
 end
 
@@ -678,12 +686,20 @@ function TabularFamilyStore(
         read_connection,
         "SELECT coalesce(max(seq), 0) AS seq FROM item_data",
     )).seq)
+    # A flush that stopped half way leaves payload rows that `item_data` does not name. Their
+    # sequence numbers are not given out again.
+    for storage_id in values(schemas)
+        table = _quote_identifier(_payload_table_name(storage_id))
+        max_seq = max(max_seq, Int128(only(DBInterface.execute(
+            read_connection, "SELECT coalesce(max($MB_SEQ_COLUMN), 0) AS seq FROM $table")).seq))
+    end
     max_seq < typemax(UInt32) ||
         error("Processed-data cache exhausted its UInt32 sequence space")
     store = TabularFamilyStore(
         read_connection,
         ReentrantLock(),
         write_connection,
+        [DBInterface.connect(database) for _ in 1:PAYLOAD_APPEND_TASKS],
         Base.Threads.Condition(),
         Dict{Tuple{UInt16,UInt32},BufferMutation{TabularBodyBatch}}(),
         Dict{Tuple{UInt16,UInt32},BufferMutation{TabularBodyBatch}}(),
@@ -697,6 +713,7 @@ function TabularFamilyStore(
         schemas,
         containers,
         rows,
+        Dict{Type,String}(),
         UInt32(max_seq + 1),
     )
     store.flush_task = Base.Threads.@spawn _flush_loop!(store)
@@ -742,11 +759,11 @@ function _accept_rows!(
     row::R,
 )::Nothing where {K,R}
     store.row_limit === nothing && return nothing
-    incoming = _buffer_rows(row)
     previous = get(store.queued, key, nothing)
     previous_rows = _mutation_rows(store, previous)
-    while store.queued_rows - previous_rows > 0 &&
-          store.queued_rows - previous_rows + incoming > store.row_limit
+    # A writer waits only while the queue is at its limit, which is also when a flush is due:
+    # otherwise the writer and the flush task would wait for each other until the flush interval.
+    while store.queued_rows - previous_rows >= store.row_limit
         wait(store.flush_condition)
         _require_writable(store)
         previous = get(store.queued, key, nothing)
@@ -842,19 +859,18 @@ function Base.append!(
         "Tabular item '$(payload_key[1])' uses a reserved cache column name " *
         "'$MB_SEQ_COLUMN' or '$MB_ROW_COLUMN'",
     )
-    batch = TabularBodyBatch(
-        payload_key[1], payload_key[2], body, something(_serialize_hex(typeof(body))))
     lock(store.flush_condition)
     try
         _require_writable(store)
-        incoming = _buffer_rows(batch)
+        batch = TabularBodyBatch(
+            payload_key[1], payload_key[2], body,
+            get!(() -> something(_serialize_hex(typeof(body))), store.container_names, typeof(body)))
         old_location = get(store.item_locations, payload_key, nothing)
         old_mutation = old_location === nothing ?
             nothing : get(store.queued, old_location, nothing)
         old_rows = _mutation_rows(store, old_mutation)
-        while store.row_limit !== nothing &&
-              store.queued_rows - old_rows > 0 &&
-              store.queued_rows - old_rows + incoming > store.row_limit
+        # A writer waits only while the queue is at its limit, which is also when a flush is due.
+        while store.row_limit !== nothing && store.queued_rows - old_rows >= store.row_limit
             wait(store.flush_condition)
             _require_writable(store)
             old_location = get(store.item_locations, payload_key, nothing)
@@ -1352,46 +1368,51 @@ function _flush_to_db!(
             error("TabularFamilyStore replaces physical data with delete plus append, never edit")
         end
     end
+    groups = Dict{UInt16,Vector{Pair{Tuple{UInt16,UInt32},TabularBodyBatch}}}()
+    for append in appends
+        push!(get!(() -> Pair{Tuple{UInt16,UInt32},TabularBodyBatch}[], groups, append.first[1]), append)
+    end
+    # The flush has three transactions, so that several tasks can append the payload rows. A
+    # reader finds a payload through `item_data`, which is written last.
     _transaction(store.write_connection) do
         _delete_payloads!(store.write_connection, deleted)
-        if !isempty(appends)
-            groups =
-                Dict{UInt16,Vector{Pair{Tuple{UInt16,UInt32},TabularBodyBatch}}}()
-            for append in appends
-                push!(get!(
-                    () -> Pair{Tuple{UInt16,UInt32},TabularBodyBatch}[],
-                    groups,
-                    append.first[1],
-                ), append)
-            end
-            for (storage_id, storage_appends) in groups
-                columns, types = _payload_shape(first(storage_appends).second.body)
-                definitions = join(
-                    ("$(_quote_identifier(name)) $type" for
-                     (name, type) in zip(columns, types)),
-                    ", ",
-                )
-                table = _quote_identifier(_payload_table_name(storage_id))
-                DBInterface.execute(
+        for (storage_id, storage_appends) in groups
+            columns, types = _payload_shape(first(storage_appends).second.body)
+            definitions = join(
+                ("$(_quote_identifier(name)) $type" for (name, type) in zip(columns, types)), ", ")
+            table = _quote_identifier(_payload_table_name(storage_id))
+            DBInterface.execute(
+                store.write_connection,
+                "CREATE TABLE IF NOT EXISTS $table (" *
+                "$MB_SEQ_COLUMN UINTEGER, $MB_ROW_COLUMN UBIGINT, $definitions)",
+            )
+            DBInterface.execute(
+                DBInterface.prepare(
                     store.write_connection,
-                    "CREATE TABLE IF NOT EXISTS $table (" *
-                    "$MB_SEQ_COLUMN UINTEGER, $MB_ROW_COLUMN UBIGINT, $definitions)",
-                )
-                DBInterface.execute(
-                    DBInterface.prepare(
-                        store.write_connection,
-                        """
-                        INSERT INTO payload_schemas VALUES (?, ?, ?)
-                        ON CONFLICT (storage_id) DO NOTHING
-                        """,
-                    ),
-                    (storage_id, collect(columns), collect(types)),
-                )
-                _append_table!(
-                    store.write_connection,
-                    _payload_table_name(storage_id),
-                ) do appender
-                    for (location, entry) in storage_appends
+                    """
+                    INSERT INTO payload_schemas VALUES (?, ?, ?)
+                    ON CONFLICT (storage_id) DO NOTHING
+                    """,
+                ),
+                (storage_id, collect(columns), collect(types)),
+            )
+        end
+    end
+    isempty(appends) && return nothing
+
+    # Each task takes parts of the payloads of one table until none is left.
+    parts = Channel{Tuple{UInt16,Vector{Pair{Tuple{UInt16,UInt32},TabularBodyBatch}}}}(Inf)
+    for (storage_id, storage_appends) in groups,
+            part in Iterators.partition(storage_appends, cld(length(storage_appends), PAYLOAD_APPEND_TASKS))
+        put!(parts, (storage_id, collect(part)))
+    end
+    close(parts)
+    tasks = map(store.append_connections) do connection
+        Base.Threads.@spawn for (storage_id, part) in parts
+            columns, types = _payload_shape(first(groups[storage_id]).second.body)
+            _transaction(connection) do
+                _append_table!(connection, _payload_table_name(storage_id)) do appender
+                    for (location, entry) in part
                         body_columns = Tables.columns(entry.body)
                         _payload_shape(entry.body) == (columns, types) ||
                             error("Storage id $storage_id has incompatible payload shapes")
@@ -1400,16 +1421,22 @@ function _flush_to_db!(
                     end
                 end
             end
-            _append_table!(store.write_connection, "item_data") do appender
-                for (location, entry) in appends
-                    DuckDB.append(appender, entry.item_key)
-                    DuckDB.append(appender, entry.collection_key)
-                    DuckDB.append(appender, location[1])
-                    DuckDB.append(appender, location[2])
-                    DuckDB.append(appender, entry.container)
-                    DuckDB.append(appender, UInt64(_payload_rows(entry.body)))
-                    DuckDB.end_row(appender)
-                end
+        end
+    end
+    foreach(task -> try wait(task) catch end, tasks)
+    failed = findfirst(istaskfailed, tasks)
+    failed === nothing || throw(tasks[failed].exception)
+
+    _transaction(store.write_connection) do
+        _append_table!(store.write_connection, "item_data") do appender
+            for (location, entry) in appends
+                DuckDB.append(appender, entry.item_key)
+                DuckDB.append(appender, entry.collection_key)
+                DuckDB.append(appender, location[1])
+                DuckDB.append(appender, location[2])
+                DuckDB.append(appender, entry.container)
+                DuckDB.append(appender, UInt64(_payload_rows(entry.body)))
+                DuckDB.end_row(appender)
             end
         end
     end
@@ -1484,6 +1511,7 @@ function close!(store::AbstractDatabaseStore)::Nothing
     end
     try
         DBInterface.close!(store.read_connection)
+        store isa TabularFamilyStore && foreach(DBInterface.close!, store.append_connections)
     finally
         DBInterface.close!(store.write_connection)
     end

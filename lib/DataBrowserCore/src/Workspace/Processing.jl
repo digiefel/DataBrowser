@@ -331,7 +331,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
         if !haskey(given, name) || !isequal(given[name], value))
     # The payload is saved outside the lock, because the cache makes a writer wait when it is full.
     iscurrent(catalog, job) &&
-        store_processed!(cache, id(catalog, item), cache_key(workspace, item), item_data(output))
+        @timed_dbg store_processed!(cache, id(catalog, item), cache_key(workspace, item), item_data(output))
     @lock catalog.lock begin
         if finish!(catalog, job; metadata=computed)
             release_item_payload!(cache, id(catalog, item))
