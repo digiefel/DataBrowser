@@ -474,7 +474,7 @@ function scan_source!(
                         length(pending_upserts[]) >= upsert_batch && flush_pending_upserts!()
                     end
                 end
-                discovered = @timed_dbg "source_walk" source_items(
+                discovered = @timed_dbg "source_walk" items(
                     workspace.source;
                     cancel_token=scan_token,
                     on_progress=count -> begin
@@ -586,8 +586,8 @@ the source. A stage takes its saved result only while its inputs have theirs, so
 runs again. The caller holds the catalog lock.
 """
 function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
-    index.identity.source_id == source_id(workspace.source) ||
-        error("Loaded cache belongs to $(index.identity.source_id), not $(source_id(workspace.source))")
+    index.identity.source_id == id(workspace.source) ||
+        error("Loaded cache belongs to $(index.identity.source_id), not $(id(workspace.source))")
     workspace.cache.identity = index.identity
     catalog = workspace.catalog
     cache = workspace.cache.db
@@ -795,7 +795,7 @@ function publish_scan_end!(
                 (workspace.cache_state = :error)
             @error(
                 "Source scan failed",
-                source=source_id(workspace.source),
+                source=id(workspace.source),
                 exception=(error, backtrace),
             )
         else

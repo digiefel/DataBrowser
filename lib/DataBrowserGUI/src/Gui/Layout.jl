@@ -11,7 +11,7 @@ import CImGui.CSyntax: @c
 const _IMGUI_INI_BYTES = Ref{Vector{UInt8}}(UInt8[])
 
 using DataBrowserAPI:
-    source_label
+    label
 using DataBrowserCache: ProjectCacheIdentity
 import DataBrowserCore.Workspace
 using DataBrowserCore.Workspace:
@@ -76,7 +76,7 @@ function render_menu_bar(state::BrowserState)::Nothing
         if ig.BeginMenu("Project")
             ig.TextDisabled(
                 workspace isa Workspace.Workspace ?
-                "Active: $(source_label(workspace.source))" :
+                "Active: $(label(workspace.source))" :
                 "No project loaded",
             )
             ig.Separator()
@@ -263,7 +263,7 @@ function render_project_window(state::BrowserState)::Nothing
     if ig.Begin("Project Settings###project_window", open_ref, ig.ImGuiWindowFlags_AlwaysAutoResize)
         workspace = state.workspace
         if workspace isa Workspace.Workspace
-            ig.Text("Active: $(source_label(workspace.source))")
+            ig.Text("Active: $(label(workspace.source))")
         else
             ig.TextDisabled("No workspace open")
         end

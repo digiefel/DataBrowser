@@ -309,7 +309,7 @@ classDiagram
 %%{init: {'theme':'base','themeVariables':{'textColor':'#111','lineColor':'#555'}}}%%
 flowchart TD
     subgraph sgScan["scan"]
-        si("source_items")
+        si("items(source)")
         csf("collect_source_files")
         asf("append_source_files!")
         isf("index_source_file")
@@ -343,8 +343,8 @@ flowchart TD
         sipf("source_item_path(::SourceFile) → String")
         sitf("source_item_timestamp(::SourceFile) → DateTime?")
         metasf("metadata(::SourceFile) → Dict")
-        sid("source_id(::DirectorySource) → String")
-        slbl("source_label(::DirectorySource) → String")
+        sid("id(::DirectorySource) → String")
+        slbl("label(::DirectorySource) → String")
         snoun("source_item_noun(::DirectorySource) → String")
         iddc("id(::DirectoryCollection) → String")
         lbldc("label(::DirectoryCollection) → String")

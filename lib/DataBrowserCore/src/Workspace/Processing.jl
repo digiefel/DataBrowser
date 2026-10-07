@@ -201,11 +201,11 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
         source_id_value = id(catalog, source)
         source_item = @lock catalog.lock get(workspace.source_items, source, nothing)
         if source_item === nothing
-            reported = source_items(workspace.source; cancel_token=get_token(workspace.cancel_source))
+            reported = items(workspace.source; cancel_token=get_token(workspace.cancel_source))
             position = findfirst(reported_item -> id(reported_item) == source_id_value, reported)
             position === nothing && error(
                 "Cannot load item '$(id(catalog, item))': source item '$source_id_value' " *
-                "is no longer present in source '$(source_id(workspace.source))'",
+                "is no longer present in source '$(id(workspace.source))'",
             )
             source_item = reported[position]
         end

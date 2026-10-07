@@ -37,7 +37,8 @@ workspace internals.
   column; retain source-item fingerprints as the change tokens compared across workspace openings.
 - [x] Give source items, data items, and collections the same `id(value)` and `label(value)` public
   interface. Replace `source_item_id`, `source_item_label`, and `item_label` cleanly, without
-  compatibility aliases; keep `source_id` and `source_label` for the workspace's data source.
+  compatibility aliases. A data source uses the same `id(source)` and `label(source)`, and lists its
+  source items with `items(source)`.
 - [x] Add a package-owned `source_item_key::Int64`, persist the source-item id-to-key mapping once,
   and use the integer key for internal and database references just as `item_key` and
   `collection_key` are used. Keep source-item ids as the stable public identity and measure the

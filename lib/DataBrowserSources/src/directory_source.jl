@@ -16,12 +16,10 @@ import DataBrowserAPI:
     label,
     metadata,
     open_source,
-    source_id,
     source_item_noun,
     source_item_path,
     source_item_timestamp,
-    source_items,
-    source_label,
+    items,
     watch_source
 
 const DEFAULT_DIRECTORY_METADATA_FILE = "metadata.txt"
@@ -89,8 +87,8 @@ function metadata(file::SourceFile)::Dict
     return values
 end
 
-source_id(source::DirectorySource)::String = source.root_path
-source_label(source::DirectorySource)::String = basename(source.root_path)
+id(source::DirectorySource)::String = source.root_path
+label(source::DirectorySource)::String = basename(source.root_path)
 source_item_noun(::DirectorySource)::String = "source files"
 
 """Extract a source-item timestamp from the supported filename conventions."""
@@ -329,7 +327,7 @@ function metadata(
     end
 end
 
-function source_items(
+function items(
     source::DirectorySource;
     on_progress::Union{Nothing,Function}=nothing,
     on_item::Union{Nothing,Function}=nothing,

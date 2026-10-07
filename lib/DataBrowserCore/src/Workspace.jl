@@ -119,10 +119,8 @@ import DataBrowserAPI:
     reconstruct,
     open_source,
     project_name,
-    source_id,
-    source_items,
+    items,
     source_item_noun,
-    source_label,
     watch_source
 
 
@@ -358,14 +356,14 @@ end
 
 Base.show(io::IO, workspace::Workspace) = print(
     io,
-    "Workspace(", project_name(workspace.project), ", ", source_label(workspace.source),
+    "Workspace(", project_name(workspace.project), ", ", label(workspace.source),
     ", ", progress(workspace.catalog, ROOT)[2], " items)",
 )
 
 function Base.show(io::IO, ::MIME"text/plain", workspace::Workspace)
     println(io, "Workspace · ", project_name(workspace.project))
-    println(io, "  source label: ", source_label(workspace.source))
-    println(io, "  source:       ", source_id(workspace.source))
+    println(io, "  source label: ", label(workspace.source))
+    println(io, "  source:       ", id(workspace.source))
     println(io, "  scan:         ", workspace.scan.state)
     println(io, "  cache:        ", workspace.cache_state)
     println(io, "  items:        ", progress(workspace.catalog, ROOT)[2])

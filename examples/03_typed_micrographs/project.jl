@@ -11,10 +11,8 @@ import DataBrowser:
     project_name,
     read,
     reconstruct,
-    source_id,
     source_item_path,
-    source_items,
-    source_label
+    items
 
 length(ARGS) == 1 || error("Usage: julia --project project.jl DATA_DIRECTORY")
 
@@ -27,14 +25,14 @@ struct MicrographFile <: AbstractDataSourceItem
     modified::Float64
 end
 
-source_id(source::MicrographDirectory)::String = abspath(source.root)
-source_label(source::MicrographDirectory)::String = basename(abspath(source.root))
+id(source::MicrographDirectory)::String = abspath(source.root)
+label(source::MicrographDirectory)::String = basename(abspath(source.root))
 Base.copy(source::MicrographDirectory) = MicrographDirectory(source.root)
 
 # The engine scans with `cancel_token`, `on_progress`, and `on_item` keywords so a slow source can
 # stream and be interrupted. A source that discovers everything at once absorbs and ignores them:
 # the engine queues the returned batch when `on_item` was never called.
-function source_items(source::MicrographDirectory; kwargs...)::Vector{MicrographFile}
+function items(source::MicrographDirectory; kwargs...)::Vector{MicrographFile}
     paths = sort!(filter(
         path -> endswith(lowercase(path), ".txt"),
         readdir(source.root; join=true),

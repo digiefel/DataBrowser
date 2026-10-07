@@ -1,6 +1,6 @@
 using DataBrowserAPI:
     project_name,
-    source_id
+    id
 using DataBrowserCache: ProjectCacheSchemaError
 import DataBrowserCore.Workspace
 using DataBrowserCore.Workspace:
@@ -11,7 +11,7 @@ function _check_source_identity!(
     state::BrowserState,
     workspace::Workspace.Workspace,
 )::Nothing
-    current = source_id(workspace.source)
+    current = id(workspace.source)
     current == state.loaded_source_id && return nothing
     isempty(state.loaded_source_id) || _reset_extensions!(state)
     source_root = hasproperty(workspace.source, :root_path) ? workspace.source.root_path : ""

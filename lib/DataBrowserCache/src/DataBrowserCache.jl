@@ -19,10 +19,9 @@ using DataBrowserAPI:
     fingerprint,
     id,
     metadata,
-    source_id,
     source_item_path,
     source_item_timestamp,
-    source_label
+    label
 using DataBrowserAPI: @timed_dbg
 
 using DuckDB

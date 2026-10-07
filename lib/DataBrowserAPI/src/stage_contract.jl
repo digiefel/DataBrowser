@@ -1,7 +1,7 @@
 """
 The typed pipeline stage contract.
 
-Source discovery belongs to the source (`source_items`). Everything after it is these stages:
+Source discovery belongs to the source (`items`). Everything after it is these stages:
 
 ```text
 read → (expand) → process → analyze → collection process → collection analyze

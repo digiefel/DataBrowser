@@ -4,7 +4,7 @@ membership and the status of each stage.
 """
 module Catalogs
 
-import DataBrowserAPI: id, label, metadata
+import DataBrowserAPI: id, items, label, metadata
 using DataBrowserAPI:
     AbstractCollection,
     AbstractDataItem,

@@ -1,4 +1,4 @@
-using DataBrowserAPI: open_source, close_source!, source_items, id, fingerprint
+using DataBrowserAPI: open_source, close_source!, items, id, fingerprint
 using Test, DataBrowserSources, DataBrowserAPI
 using CancellationTokens: CancellationTokenSource, get_token
 using DataBrowserAPI: collection, metadata
@@ -14,7 +14,7 @@ using DataBrowserAPI: collection, metadata
         cancel_token = get_token(CancellationTokenSource())
         source = open_source(DirectorySource(dir))
         try
-            files = source_items(source; cancel_token)
+            files = items(source; cancel_token)
             @test Set(id.(files)) == Set(["a.dat", joinpath("nested", "b.dat")])
             nested = only(filter(f -> id(f) == joinpath("nested", "b.dat"), files))
             @test id.(collection(nested)) == ["nested"]
@@ -22,11 +22,11 @@ using DataBrowserAPI: collection, metadata
             @test isempty(collection(only(filter(f -> id(f) == "a.dat", files))))
             original = only(filter(f -> id(f) == "a.dat", files))
             write(joinpath(dir, "a.dat"), "changed value")
-            changed = only(filter(f -> id(f) == "a.dat", source_items(source; cancel_token)))
+            changed = only(filter(f -> id(f) == "a.dat", items(source; cancel_token)))
             @test id(changed) == id(original)
             @test fingerprint(changed) != fingerprint(original)
             shallow = DirectorySource(dir; recursive=false)
-            @test id.(source_items(shallow; cancel_token)) == ["a.dat"]
+            @test id.(items(shallow; cancel_token)) == ["a.dat"]
         finally
             close_source!(source)
         end

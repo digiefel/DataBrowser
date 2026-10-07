@@ -21,9 +21,9 @@ struct EngineItem <: AbstractDataItem
     data::Any
     meta::Dict
 end
-DataBrowserAPI.source_id(s::EngineSource) = s.name
-DataBrowserAPI.source_label(s::EngineSource) = s.name
-DataBrowserAPI.source_items(s::EngineSource; kwargs...) =
+DataBrowserAPI.id(s::EngineSource) = s.name
+DataBrowserAPI.label(s::EngineSource) = s.name
+DataBrowserAPI.items(s::EngineSource; kwargs...) =
     s.version == 0 ? EngineSourceItem[] : [EngineSourceItem(s.version, s.fail)]
 DataBrowserAPI.id(::EngineSourceItem) = "source"
 DataBrowserAPI.label(::EngineSourceItem) = "source"
@@ -46,9 +46,9 @@ mutable struct ControlledSource <: AbstractDataSource
     release::Channel{Nothing}
 end
 struct ControlledSourceItem <: AbstractDataSourceItem end
-DataBrowserAPI.source_id(::ControlledSource) = "controlled"
-DataBrowserAPI.source_label(::ControlledSource) = "controlled"
-DataBrowserAPI.source_items(
+DataBrowserAPI.id(::ControlledSource) = "controlled"
+DataBrowserAPI.label(::ControlledSource) = "controlled"
+DataBrowserAPI.items(
     source::ControlledSource;
     kwargs...,
 ) = begin

@@ -9,8 +9,7 @@ const Browser = DataBrowserGUI.Browser
 
 using DataBrowserAPI:
     id,
-    label,
-    source_label
+    label
 using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 using .MakieImguiIntegration: MakieFigure, destroy_figure!
@@ -83,7 +82,7 @@ function draw_plot_view!(
         )
         @error(
             "Plot drawing failed\n" *
-            "Source: $(source_label(source))\n" *
+            "Source: $(label(source))\n" *
             "Plot: $(plot_kind_name(plot_kind))\n" *
             "Items: $(length(records))\n$item_context",
             exception=(err, bt),
@@ -286,7 +285,7 @@ function render_plot_view!(
     if status == :ready
         plot_key = (
             workspace.scan.epoch,
-            source_label(workspace.source),
+            label(workspace.source),
             view.id,
             plot_kind_name(view.plot_kind),
             [id(workspace, record) for record in records],

@@ -454,8 +454,8 @@ function project_cache_identity(
     depot = isempty(DEPOT_PATH) ? homedir() : DEPOT_PATH[1]
     return ProjectCacheIdentity(
         name,
-        source_id(source),
-        source_label(source),
+        id(source),
+        label(source),
         joinpath(depot, "databrowser", name, "cache.duckdb"),
     )
 end

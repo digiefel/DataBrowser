@@ -47,12 +47,6 @@ struct SourceError
     message::String
 end
 
-"""Stable source identity used for workspace/cache ownership."""
-function source_id end
-
-"""Human-readable source name."""
-function source_label end
-
 """Prepare a source for use. Simple immutable sources return themselves."""
 open_source(source::AbstractDataSource)::AbstractDataSource = source
 
@@ -60,7 +54,7 @@ open_source(source::AbstractDataSource)::AbstractDataSource = source
 close_source!(::AbstractDataSource)::Nothing = nothing
 
 """
-    source_items(source; cancel_token, on_progress, on_item) -> Vector{<:AbstractDataSourceItem}
+    items(source; cancel_token, on_progress, on_item) -> Vector{<:AbstractDataSourceItem}
 
 Return the current source items discovered by a source.
 
@@ -71,7 +65,7 @@ immediately rather than waiting for the return), reports counts through `on_prog
 `cancel_token`. The returned vector is queued only when `on_item` was never called, so a streaming
 source may return its items as well without them being processed twice.
 """
-function source_items end
+function items end
 
 """Human noun for source items, used by status surfaces."""
 source_item_noun(::AbstractDataSource)::String = "source items"
@@ -88,15 +82,15 @@ watch_source(::AbstractDataSource, ::Function; cancel_token::CancellationToken) 
 Stable identity supplied by `value`, used exactly as returned. Sources, source items, data items,
 and collections all implement it; none has a default, and none has its answer wrapped or
 namespaced. An id has to stay stable across scans and reopenings, and two values answering the same
-id collide.
+id collide. The id of a source says which cache belongs to it.
 """
 function id end
 
 """
     label(value) -> String
 
-Human-readable label supplied by `value`. Source items must implement this; data items and
-collections have defaults (see the item contract).
+Human-readable label supplied by `value`. Sources and source items must implement this; data items
+and collections have defaults (see the item contract).
 """
 function label end
 
