@@ -6,9 +6,9 @@ using ..DataBrowserGUI: ItemTable
 
 """Saved tree controls from `databrowser.toml`."""
 Base.@kwdef struct PersistedTreeView
-    # Each collection is saved as its ids from the top-level collection down; the root is empty.
-    expanded::Vector{Vector{String}} = Vector{String}[]
-    selected::Vector{Vector{String}} = Vector{String}[]
+    # Each collection is saved as its path: the type name and id of each level from the top down.
+    expanded::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
+    selected::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
     filter::String = ""
 end
 
@@ -107,14 +107,14 @@ Base.@kwdef mutable struct BrowserState
     table_inspector::TableInspectorState = TableInspectorState()
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()
-    # Each expanded collection, as its ids from the top-level collection down.
-    expanded_collections::Vector{Vector{String}} = Vector{String}[]
+    # The path of each expanded collection.
+    expanded_collections::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
     tree_filter::String = ""
     item_filter::String = ""
     tree_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
     item_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
     reset_project_filters::Bool = false
-    scroll_to_collection::Union{Nothing,Vector{String}} = nothing
+    scroll_to_collection::Union{Nothing,Workspace.CollectionPath} = nothing
     scroll_to_item_id::Union{Nothing,String} = nothing
     show_bad::Bool = true
     tag_state::Union{Nothing,DataBrowserAnnotations.Tags.TagState} = nothing

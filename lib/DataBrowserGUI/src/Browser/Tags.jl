@@ -125,17 +125,17 @@ function _project_visible_selection(
         return CollectionKey[], ItemKey[], String[]
     end
     selected_collections = CollectionKey[]
-    for ids in workspace.selection.collections
-        collection = Workspace.collection(workspace, ids)
+    for path in workspace.selection.collections
+        collection = Workspace.collection(workspace, path)
         (collection === nothing || collection == ROOT) && continue
         isempty(Workspace.children(workspace, collection)) ||
-            error("Selected collection '$(join(ids, '/'))' is not a leaf collection")
+            error("Selected collection '$(join(last.(path), '/'))' is not a leaf collection")
         !_collection_is_visible(state, collection) && continue
         push!(selected_collections, collection)
     end
 
     visible_collections = Set(selected_collections)
-    String[] in workspace.selection.collections && push!(visible_collections, ROOT)
+    Workspace.CollectionPath() in workspace.selection.collections && push!(visible_collections, ROOT)
     selected_items = ItemKey[]
     for item_id in workspace.selection.item_ids
         item = Workspace.item(workspace, item_id)
@@ -161,7 +161,7 @@ function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     selected_collections, _, _ = _project_visible_selection(state)
     workspace = state.workspace::Workspace.Workspace
     all_items = ItemKey[]
-    String[] in workspace.selection.collections &&
+    Workspace.CollectionPath() in workspace.selection.collections &&
         append!(all_items, Workspace.items(workspace, ROOT))
     for collection in selected_collections
         append!(all_items, Workspace.items(workspace, collection))

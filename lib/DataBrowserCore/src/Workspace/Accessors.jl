@@ -36,44 +36,54 @@ Every collection in a workspace, at every level of the tree. The root is not inc
 collections(workspace::Workspace)::Vector{CollectionKey} = keys(workspace.catalog, CollectionKey)
 
 """
+What names a collection across sessions: for each collection from the top-level one down to the
+collection itself, the name of its collection type and its public id. The root is the empty path.
+See [`path`](@ref).
+"""
+const CollectionPath = Vector{Tuple{String,String}}
+
+"""
     collection(workspace, item) -> CollectionKey
-    collection(workspace, ids) -> Union{CollectionKey,Nothing}
+    collection(workspace, path) -> Union{CollectionKey,Nothing}
 
 Given an item, the collection that directly holds it, or `ROOT` when it belongs to no collection.
 
-Given the public ids of a collection and of the collections above it, from the top-level
-collection down, the collection they lead to, or `nothing` when there is none. An empty list gives
-`ROOT`. See [`ids`](@ref).
+Given a [`CollectionPath`](@ref), the collection it leads to, or `nothing` when there is none. The
+empty path gives `ROOT`.
 """
 collection(workspace::Workspace, item::ItemKey)::CollectionKey =
     Catalogs.collection(workspace.catalog, item)
 
-function collection(
-    workspace::Workspace,
-    ids::AbstractVector{<:AbstractString},
-)::Union{CollectionKey,Nothing}
+function collection(workspace::Workspace, path::CollectionPath)::Union{CollectionKey,Nothing}
     catalog = workspace.catalog
     @lock catalog.lock begin
         found = ROOT
-        for id in ids
+        for level in path
+            below = Catalogs.children(catalog, found)
             position = findfirst(
-                child -> Catalogs.id(catalog, child) == id, Catalogs.children(catalog, found))
+                child -> (string(valuetype(catalog, child)), Catalogs.id(catalog, child)) == level,
+                below)
             position === nothing && return nothing
-            found = Catalogs.children(catalog, found)[position]
+            found = below[position]
         end
         return found
     end
 end
 
 """
-    ids(workspace, collection) -> Vector{String}
+    path(workspace, collection) -> CollectionPath
 
-The public ids of the collections above `collection` and of `collection` itself, from the top-level
-collection down. They name the same collection after the workspace is closed and opened again;
-[`collection`](@ref) finds it. The root has no ids.
+The [`CollectionPath`](@ref) of a collection. It names the same collection after the workspace is
+closed and opened again; [`collection`](@ref) finds it.
 """
-ids(workspace::Workspace, collection::CollectionKey)::Vector{String} = String[
-    id(workspace, key) for key in [ancestors(workspace, collection); collection] if key != ROOT]
+function path(workspace::Workspace, collection::CollectionKey)::CollectionPath
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        return Tuple{String,String}[
+            (string(valuetype(catalog, key)), Catalogs.id(catalog, key))
+            for key in [ancestors(workspace, collection); collection] if key != ROOT]
+    end
+end
 
 """
     children(workspace, collection) -> Vector{CollectionKey}

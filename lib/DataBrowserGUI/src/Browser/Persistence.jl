@@ -34,6 +34,12 @@ function _project_view_from_toml(::Type{Bool}, value::Any)::Bool
     return value
 end
 
+function _project_view_from_toml(::Type{Tuple{String,String}}, value::Any)::Tuple{String,String}
+    value isa AbstractVector && length(value) == 2 ||
+        error("Expected an array of a type name and an id, got $(repr(value))")
+    return (_project_view_from_toml(String, value[1]), _project_view_from_toml(String, value[2]))
+end
+
 function _project_view_from_toml(::Type{Vector{T}}, value::Any)::Vector{T} where {T}
     value isa AbstractVector || error("Expected array, got $(typeof(value))")
     return [_project_view_from_toml(T, item) for item in value]
@@ -74,6 +80,7 @@ end
 
 _project_view_to_toml(value::AbstractString)::String = String(value)
 _project_view_to_toml(value::Bool)::Bool = value
+_project_view_to_toml(value::Tuple)::Vector = [_project_view_to_toml(item) for item in value]
 _project_view_to_toml(value::AbstractVector)::Vector = [_project_view_to_toml(item) for item in value]
 _project_view_to_toml(value::AbstractDict)::Dict{String,Any} =
     Dict{String,Any}(String(key) => _project_view_to_toml(item) for (key, item) in value)

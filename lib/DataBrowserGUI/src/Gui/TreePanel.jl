@@ -84,12 +84,12 @@ function _render_hierarchy_tree_panel(
     selected_collections, _, _ = _project_visible_selection(state)
 
     visible_collections = CollectionKey[]
-    # A collection is selected and expanded by its ids from the top-level collection down.
-    visible_collection_ids_ref = Ref{Union{Nothing,Vector{Vector{String}}}}(nothing)
+    # A collection is selected and expanded by its path.
+    visible_collection_ids_ref = Ref{Union{Nothing,Vector{Workspace.CollectionPath}}}(nothing)
     expanded_collection_id_set = Set(state.expanded_collections)
     selected_collection_id_set = workspace isa Workspace.Workspace ?
         Set(workspace.selection.collections) :
-        Set{Vector{String}}()
+        Set{Workspace.CollectionPath}()
     all_collection_count = Ref(0)
     filter_active = ig.ImGuiTextFilter_IsActive(filter_tree)
 
@@ -177,8 +177,8 @@ function _render_hierarchy_tree_panel(
         visible_collection_ids = function ()
             ids = visible_collection_ids_ref[]
             if ids === nothing
-                ids = [Workspace.ids(workspace, collection) for collection in visible_collections]
-                root_visible && pushfirst!(ids, String[])
+                ids = [Workspace.path(workspace, collection) for collection in visible_collections]
+                root_visible && pushfirst!(ids, Workspace.CollectionPath())
                 visible_collection_ids_ref[] = ids
             end
             return ids
@@ -186,7 +186,7 @@ function _render_hierarchy_tree_panel(
 
         _render_selection_toolbar!(
             length(selected_collections) +
-                (String[] in workspace.selection.collections ? 1 : 0),
+                (Workspace.CollectionPath() in workspace.selection.collections ? 1 : 0),
             length(visible_collections) + (root_visible ? 1 : 0),
             all_collection_count[],
             filter_tree,
@@ -208,7 +208,7 @@ function _render_hierarchy_tree_panel(
             ig.TableNextRow()
             ig.TableSetColumnIndex(0)
             ig.PushID("##root_items")
-            selected = String[] in selected_collection_id_set
+            selected = Workspace.CollectionPath() in selected_collection_id_set
             flags = (
                 ig.ImGuiTreeNodeFlags_Leaf |
                 ig.ImGuiTreeNodeFlags_Bullet |
@@ -218,7 +218,7 @@ function _render_hierarchy_tree_panel(
             )
             selected && (flags |= ig.ImGuiTreeNodeFlags_Selected)
             ig.TreeNodeEx("", flags, label(workspace, ROOT))
-            if state.scroll_to_collection == String[]
+            if state.scroll_to_collection == Workspace.CollectionPath()
                 ig.SetScrollHereY(0.5)
                 state.scroll_to_collection = nothing
             end
@@ -227,7 +227,7 @@ function _render_hierarchy_tree_panel(
                 selected_ids = copy(workspace.selection.collections)
                 _update_multi_selection!(
                     selected_ids,
-                    String[],
+                    Workspace.CollectionPath(),
                     visible_collection_ids(),
                     unsafe_load(io.KeyShift),
                     unsafe_load(io.KeyCtrl),
@@ -260,7 +260,7 @@ function _render_hierarchy_tree_panel(
 
             children = child_records(collection_record)
             is_leaf = isempty(children)
-            collection_id_value = Workspace.ids(workspace, collection_record)
+            collection_id_value = Workspace.path(workspace, collection_record)
             leaf_collection_id = is_leaf ? collection_id_value : nothing
             selected = is_leaf && (leaf_collection_id in selected_collection_id_set)
 
@@ -482,7 +482,7 @@ function _render_items_panel(
 
     selected_collections, selected_items, selected_path =
         _project_visible_selection(state)
-    root_selected = String[] in workspace.selection.collections
+    root_selected = Workspace.CollectionPath() in workspace.selection.collections
     all_items = @timed "items_panel" _items_of_selected_collections(state)
     visible_items = @timed "visible_items" _visible_items(state, workspace, all_items, filter_item)
     selected_id_set = Set(workspace.selection.item_ids)

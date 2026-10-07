@@ -143,13 +143,13 @@ end
 WorkspaceScan()::WorkspaceScan = WorkspaceScan(0, :idle, "", nothing, Base.Threads.Atomic{Int}(0))
 
 """
-What is selected in a workspace: items by public id, and each collection by its public ids from the
-top-level collection down (see [`ids`](@ref); the root is the empty list). Both stay the same when
+What is selected in a workspace: items by public id, and each collection by its
+[`CollectionPath`](@ref) (the root is the empty path). Both stay the same when
 the workspace is closed and opened again, so a selection may name rows the workspace does not have
 yet or no longer has.
 """
 Base.@kwdef mutable struct WorkspaceSelection
-    collections::Vector{Vector{String}} = Vector{String}[]
+    collections::Vector{Vector{Tuple{String,String}}} = Vector{Tuple{String,String}}[]
     item_ids::Vector{String} = String[]
 end
 

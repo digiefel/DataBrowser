@@ -69,10 +69,10 @@ function _reveal_selected_items!(state::BrowserState)::Nothing
     isempty(items) && return nothing
     holders = unique(Workspace.collection(workspace, item) for item in items)
     for holder in holders, ancestor in Workspace.ancestors(workspace, holder)
-        ids = Workspace.ids(workspace, ancestor)
-        ids in state.expanded_collections || push!(state.expanded_collections, ids)
+        path = Workspace.path(workspace, ancestor)
+        path in state.expanded_collections || push!(state.expanded_collections, path)
     end
-    workspace.selection.collections = [Workspace.ids(workspace, holder) for holder in holders]
+    workspace.selection.collections = [Workspace.path(workspace, holder) for holder in holders]
     state.scroll_to_collection = first(workspace.selection.collections)
     state.scroll_to_item_id = id(workspace, first(items))
     return nothing
