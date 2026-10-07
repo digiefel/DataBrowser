@@ -154,10 +154,12 @@ end
         W.modify_workspace!(ws; source=EngineSource("source", 5, false), background_processing=false)
         settled(ws)
         drawn = W.revision(ws, [W.item(ws, "a")])
+        @test W.readiness(ws, W.item(ws, "a")) == W.UNPROCESSED
         @test x("a") in (5, 60)
         # Without background processing, delivering an item queues the collections above it.
         settled(ws)
         @test x("a") == 60
+        @test W.readiness(ws, W.item(ws, "a")) == W.CURRENT
         @test W.revision(ws, [W.item(ws, "a")]) != drawn
         @test x("b") in (5, 50)
         settled(ws)

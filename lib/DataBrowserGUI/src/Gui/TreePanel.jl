@@ -7,6 +7,43 @@ using DataBrowserAPI:
 using DataBrowserCore.Catalogs: CollectionKey, ItemKey, ROOT
 import DataBrowserCore.Workspace
 
+"""
+Draw the mark for how far the work of one row is, in a square of one text line, and explain it in
+a tooltip. A row that is current or not processed has no mark and keeps the square empty.
+"""
+function _render_readiness_mark!(readiness::Workspace.Readiness)::Nothing
+    size = ig.GetTextLineHeight()
+    cursor = ig.GetCursorScreenPos()
+    center = ig.ImVec2(cursor.x + size / 2, cursor.y + size / 2)
+    radius = size * 0.28f0
+    draw_list = ig.GetWindowDrawList()
+    if readiness == Workspace.WORKING
+        # A spinner: spokes that fade around the circle and turn with time.
+        phase = Float32(ig.GetTime() * 8.0)
+        for index in 0:7
+            angle = phase + Float32(2π * index / 8)
+            near = ig.ImVec2(center.x + cos(angle) * radius * 0.45f0, center.y + sin(angle) * radius * 0.45f0)
+            far = ig.ImVec2(center.x + cos(angle) * radius, center.y + sin(angle) * radius)
+            ig.AddLine(draw_list, near, far, ig.GetColorU32(ig.ImGuiCol_Text, 0.2f0 + 0.1f0 * index), 1.5f0)
+        end
+    elseif readiness == Workspace.PARTIAL
+        ig.AddCircle(draw_list, center, radius, ig.GetColorU32(ig.ImGuiCol_TextDisabled), 16, 1.5f0)
+    elseif readiness == Workspace.FAILED
+        color = ig.GetColorU32(ig.ImVec4(0.9f0, 0.3f0, 0.3f0, 1.0f0))
+        ig.AddLine(draw_list, ig.ImVec2(center.x - radius, center.y - radius),
+            ig.ImVec2(center.x + radius, center.y + radius), color, 2.0f0)
+        ig.AddLine(draw_list, ig.ImVec2(center.x - radius, center.y + radius),
+            ig.ImVec2(center.x + radius, center.y - radius), color, 2.0f0)
+    end
+    ig.Dummy((size, size))
+    if ig.IsItemHovered()
+        readiness == Workspace.WORKING && ig.SetTooltip("Processing")
+        readiness == Workspace.PARTIAL && ig.SetTooltip("Shown without the later stages; they are not queued")
+        readiness == Workspace.FAILED && ig.SetTooltip("A stage failed")
+    end
+    return nothing
+end
+
 """Destroy text-filter widgets before their saved text is replaced."""
 function _reset_project_filter_widgets!(state::BrowserState)::Nothing
     state.tree_filter_widget === nothing || ig.Destroy(state.tree_filter_widget)
@@ -297,11 +334,18 @@ function _render_hierarchy_tree_panel(
             if !is_leaf && !filter_active
                 ig.SetNextItemOpen(collection_id_value in expanded_collection_id_set, ig.ImGuiCond_Always)
             end
+            readiness = Workspace.readiness(workspace, collection_record)
+            # A collection that is not processed is gray, unless a tag already colors its text.
+            grayed = !bad_text_pushed && readiness == Workspace.UNPROCESSED
+            grayed && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
             opened = ig.TreeNodeEx(
                 is_leaf ? "" : label(workspace, collection_record),
                 flags,
                 label(workspace, collection_record),
             )
+            grayed && ig.PopStyleColor()
+            ig.SameLine()
+            _render_readiness_mark!(readiness)
             if is_leaf && state.scroll_to_collection == leaf_collection_id
                 ig.SetScrollHereY(0.5)
                 state.scroll_to_collection = nothing
@@ -557,11 +601,19 @@ function _render_items_panel(
                             bad_text_pushed = _push_tag_text_style!(
                                 tag_state, item_id, _item_ancestor_annotation_keys(workspace, item))
                         end
-                        if ig.Selectable(
+                        readiness = Workspace.readiness(workspace, item)
+                        _render_readiness_mark!(readiness)
+                        ig.SameLine()
+                        # An item that is not processed is gray, unless a tag already colors its text.
+                        grayed = !bad_text_pushed && readiness == Workspace.UNPROCESSED
+                        grayed && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
+                        clicked = ig.Selectable(
                             item_label,
                             is_selected,
                             ig.ImGuiSelectableFlags_SpanAllColumns,
                         )
+                        grayed && ig.PopStyleColor()
+                        if clicked
                             io = ig.GetIO()
                             shift_held = unsafe_load(io.KeyShift)
                             ctrl_held = unsafe_load(io.KeyCtrl)

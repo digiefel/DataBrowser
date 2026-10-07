@@ -236,6 +236,47 @@ function metadata(
 end
 
 """
+How far the work for one item or one collection is. See [`readiness`](@ref).
+
+- `CURRENT`: every stage is done.
+- `PARTIAL`: its own data is ready and a later stage is not, and nothing is queued for it. For an
+  item, a later stage is its `analyze` or the `process` of a collection above it, so views show
+  the item without the changes of that collection.
+- `WORKING`: a stage that is not done is queued or runs, or waits for one that is.
+- `UNPROCESSED`: its own data is not ready and nothing is queued for it.
+- `FAILED`: a stage failed, or waits for one that failed.
+"""
+@enum Readiness CURRENT PARTIAL WORKING UNPROCESSED FAILED
+
+"""
+    readiness(workspace, item) -> Readiness
+    readiness(workspace, collection) -> Readiness
+
+How far the work is for an item, from its `process`, its `analyze` and the `process` of each
+collection above it; or for a collection, from its `process` and its `analyze`.
+"""
+function readiness(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Readiness
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        # The first stage gives the row its own data.
+        stages = key isa ItemKey ?
+            Target[(key, ITEM_PROCESS); (key, ITEM_ANALYZE);
+                [(holder, COLLECTION_PROCESS) for holder in ancestors(workspace, key)]] :
+            Target[(key, COLLECTION_PROCESS), (key, COLLECTION_ANALYZE)]
+        pending = Target[
+            stage for stage in stages
+            if !Catalogs.status(catalog, stage...).absent &&
+                Catalogs.status(catalog, stage...).validity != Catalogs.FRESH]
+        isempty(pending) && return CURRENT
+        any(stage -> (status = Catalogs.status(catalog, stage...); status.failed || status.blocked), pending) &&
+            return FAILED
+        any(stage -> Catalogs.status(catalog, stage...).running || Catalogs.priority(catalog, stage...) > 0, pending) &&
+            return WORKING
+        return first(stages) in pending ? UNPROCESSED : PARTIAL
+    end
+end
+
+"""
     metadata_keys(workspace) -> Vector{Symbol}
 
 The keys used in the metadata of any collection, sorted by name.
