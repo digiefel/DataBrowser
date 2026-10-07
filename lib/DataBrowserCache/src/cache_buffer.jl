@@ -1019,11 +1019,19 @@ function _pending_tabular_body(
         (false, nothing)
 end
 
-# A batch of 64 payloads of 10,000 rows and 4 columns measured 14% less peak memory than one query
-# for 400 of them, at 2% lower read throughput; half that size read noticeably slower.
+# The most values that one query of a read returns, about 20 MiB of numbers. The query sorts its
+# result, so the database holds one batch in memory while the reader takes it.
 const READ_BATCH_VALUES = 2_500_000
 const READ_BATCH_PAYLOADS = 1024
 
+"""
+Read the stored payloads at `locations`, each as a `NamedTuple` of columns.
+
+The result of a query is taken one chunk at a time and appended to the columns of each payload, so
+no table of the whole result exists. A read is split into queries of about `READ_BATCH_VALUES`
+values: the first query asks for one payload, and the size of the payloads read so far sets how
+many the next one asks for.
+"""
 function _read_tabular_locations(
     store::TabularFamilyStore,
     locations::Vector{Tuple{UInt16,UInt32}},
@@ -1033,54 +1041,63 @@ function _read_tabular_locations(
         push!(get!(() -> UInt32[], by_storage, storage_id), seq)
     end
     rows_by_location = Dict{Tuple{UInt16,UInt32},Any}()
+    seq_name, row_name = Symbol(MB_SEQ_COLUMN), Symbol(MB_ROW_COLUMN)
     for (storage_id, seqs) in by_storage
         table = _quote_identifier(_payload_table_name(storage_id))
         remaining = sort!(unique(seqs))
-        # One query result and the payloads copied from it are in memory together, so read in
-        # batches of about READ_BATCH_VALUES values. The first batch is one payload; the size of
-        # the payloads read so far sets how many the next batch holds.
         batch, payloads_read, values_read = 1, 0, 0
         while !isempty(remaining)
             batch_seqs = splice!(remaining, 1:min(batch, length(remaining)))
             placeholders = join(fill("?", length(batch_seqs)), ", ")
-            rows = lock(store.read_lock) do
-                Tables.columntable(DBInterface.execute(
-                    DBInterface.prepare(store.read_connection, """
-                        SELECT *
-                        FROM $table
-                        WHERE $MB_SEQ_COLUMN IN ($placeholders)
-                        ORDER BY $MB_SEQ_COLUMN, $MB_ROW_COLUMN
-                    """),
-                    Tuple(batch_seqs),
-                ))
-            end
-            data_names = Tuple(
-                name for name in keys(rows) if String(name) ∉ (MB_SEQ_COLUMN, MB_ROW_COLUMN)
-            )
-            # The query orders by seq, so one payload is one contiguous run of the seq column.
-            seq_column = rows[Symbol(MB_SEQ_COLUMN)]
-            run_start = 1
-            while run_start <= length(seq_column)
-                run_end = run_start
-                while run_end < length(seq_column) &&
-                      seq_column[run_end + 1] == seq_column[run_start]
-                    run_end += 1
+            # A streamed result uses the connection until it is closed, so the lock covers it.
+            lock(store.read_lock) do
+                statement = DuckDB.Stmt(store.read_connection, """
+                    SELECT *
+                    FROM $table
+                    WHERE $MB_SEQ_COLUMN IN ($placeholders)
+                    ORDER BY $MB_SEQ_COLUMN, $MB_ROW_COLUMN
+                """, DuckDB.StreamResult)
+                result = DuckDB.execute(statement, Tuple(batch_seqs))
+                try
+                    data = findall(name -> name ∉ (seq_name, row_name), result.names)
+                    data_names = Tuple(result.names[data])
+                    # The columns of each payload, in the order of `data_names`.
+                    columns = Dict{UInt32,Vector{AbstractVector}}()
+                    for chunk in Tables.partitions(result)
+                        seq_column = chunk.tbl[seq_name]
+                        # The query orders by seq, so one payload is contiguous runs of the seq column.
+                        run_start = 1
+                        while run_start <= length(seq_column)
+                            run_end = something(
+                                findnext(!=(seq_column[run_start]), seq_column, run_start),
+                                length(seq_column) + 1) - 1
+                            target = get!(columns, seq_column[run_start]) do
+                                AbstractVector[similar(chunk.tbl[name], 0) for name in data_names]
+                            end
+                            for (index, name) in enumerate(data_names)
+                                rows = view(chunk.tbl[name], run_start:run_end)
+                                # A chunk without missing values has a narrower element type than one with them.
+                                target[index] = eltype(rows) <: eltype(target[index]) ?
+                                    append!(target[index], rows) : vcat(target[index], rows)
+                            end
+                            run_start = run_end + 1
+                        end
+                        values_read += length(seq_column) * length(data_names)
+                    end
+                    for seq in batch_seqs
+                        # A zero-row payload has a pointer and schema but no physical rows; it
+                        # reconstructs as an empty value with the correct columns and types.
+                        payload = get(columns, seq) do
+                            AbstractVector[type[] for type in result.types[data]]
+                        end
+                        rows_by_location[(storage_id, seq)] = NamedTuple{data_names}(Tuple(payload))
+                    end
+                finally
+                    DBInterface.close!(result)
+                    DBInterface.close!(statement)
                 end
-                rows_by_location[(storage_id, UInt32(seq_column[run_start]))] =
-                    NamedTuple{data_names}(
-                        Tuple(rows[name][run_start:run_end] for name in data_names))
-                run_start = run_end + 1
-            end
-            # A zero-row payload has a pointer and schema but no physical rows; it reconstructs as
-            # an empty value with the correct columns and types.
-            for seq in batch_seqs
-                location = (storage_id, seq)
-                haskey(rows_by_location, location) && continue
-                rows_by_location[location] =
-                    NamedTuple{data_names}(Tuple(rows[name][1:0] for name in data_names))
             end
             payloads_read += length(batch_seqs)
-            values_read += length(seq_column) * length(data_names)
             batch = clamp(READ_BATCH_VALUES * payloads_read ÷ max(values_read, 1), 1, READ_BATCH_PAYLOADS)
         end
     end

@@ -114,3 +114,33 @@ end
         end
     end
 end
+
+@testset "payloads with missing values, with no rows and of many rows are read back unchanged" begin
+    mktempdir() do dir
+        identity = ProjectCacheIdentity("payloads", "source", "source", joinpath(dir, "cache.duckdb"))
+        rows = 5000
+        payloads = Dict(
+            "plain" => (x=Float64.(1:rows), name=string.(1:rows)),
+            "missing at the end" => (x=[i > 4500 ? missing : Float64(i) for i in 1:rows], name=string.(1:rows)),
+            "empty" => (x=Float64[], name=String[]))
+        cache = open_cache_db(identity; rebuild=true)
+        source_key = source_item_key!(cache, "source"; mint=true)
+        store_source_identity!(cache, CacheSourceItem(), "source")
+        for (id, payload) in payloads
+            store_item!(cache, id, source_key, id, CacheItem, nothing, DataBrowserAPI.MetadataDict())
+            store_processed!(cache, id, source_key, payload)
+        end
+        close_cache_db!(cache)
+        cache = open_cache_db(identity)
+        try
+            ids = collect(keys(payloads))
+            for (id, read) in zip(ids, read_payload(cache, ids; stage=ITEM_PROCESS))
+                table = Tables.columntable(something(read))
+                @test isequal(table.x, payloads[id].x)
+                @test table.name == payloads[id].name
+            end
+        finally
+            close_cache_db!(cache)
+        end
+    end
+end
