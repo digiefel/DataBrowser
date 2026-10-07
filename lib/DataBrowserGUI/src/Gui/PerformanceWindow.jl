@@ -98,7 +98,7 @@ function _render_timings_tab(state::BrowserState)::Nothing
         state.performance.reset_main_timer = true   # applied at frame top, outside any @timed section
     end
     ig.SameLine()
-    if ig.Button("Copy")
+    if ig.Button("$ICON_COPY Copy")
         # Copy the unicode tree — the paste target isn't limited to ImGui's ASCII-only font.
         ig.SetClipboardText(_timer_text(:unicode))
     end

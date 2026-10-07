@@ -183,7 +183,7 @@ function _copy_path_button(
     path::AbstractString,
     tooltip::AbstractString,
 )::Nothing
-    if ig.SmallButton("⧉##$id")
+    if ig.SmallButton("$ICON_COPY##$id")
         ig.SetClipboardText(String(path))
     end
     if ig.BeginItemTooltip()
@@ -320,6 +320,7 @@ end
 const ICON_FONT = joinpath(pkgdir(@__MODULE__), "assets", "lucide.ttf")
 const ICON_PARTIAL = "\ue4b0"  # circle-dashed
 const ICON_FAILED = "\ue084"   # circle-x
+const ICON_COPY = "\ue09e"     # copy
 
 """Create the ImGui context with the docking/viewport configuration the browser needs."""
 function _init_browser_context!()
