@@ -162,6 +162,13 @@ that depend on it; workers take jobs from the catalog and report their results t
 accessors (`items`, `children`, `label`, `metadata` and others) read the catalog, and the browser
 passes keys.
 
+Jobs run in this order: what a view asks for, then source items, then the background work on items,
+then the background work on collections. The data that `expand` gives each item stays in memory
+until the `process` of the item has used it. When that data reaches half its memory limit
+(`set_expanded_data_limit!`), items are processed before more source items are read, so that a
+source item is not read and expanded a second time. The `analyze` of an item runs right after its
+`process`, in the same worker.
+
 A collection is one node of the collection tree, identified by its parent and by the type and `id`
 of its value. An item goes where `collection(item)` says, or where `collection(source_item)` says
 when that is empty. A collection contains every item below it, at any depth. Collection `process`

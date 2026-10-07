@@ -31,10 +31,10 @@ function wait_processed(workspace::Workspace, items::Vector{ItemKey})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
         for item in setdiff(items, workspace.wanted)
-            request(catalog, item, ITEM_ANALYZE; priority=4)
+            request(catalog, item, ITEM_ANALYZE; priority=VIEWED_ITEM)
             # The collections above the item are queued and not waited for.
             for holder in ancestors(workspace, item), stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
-                Catalogs.status(catalog, holder, stage).absent || request(catalog, holder, stage; priority=3)
+                Catalogs.status(catalog, holder, stage).absent || request(catalog, holder, stage; priority=VIEWED_COLLECTION)
             end
             push!(workspace.wanted, item)
         end

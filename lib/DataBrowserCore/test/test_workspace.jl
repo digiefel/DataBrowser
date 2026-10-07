@@ -156,7 +156,8 @@ end
         settled(ws)
         drawn = W.revision(ws, [W.item(ws, "a")])
         @test W.readiness(ws, W.item(ws, "a")) == W.UNPROCESSED
-        @test x("a") in (5, 60)
+        # The inner collection can be ready before the outer one.
+        @test x("a") in (5, 6, 60)
         # Without background processing, delivering an item queues the collections above it.
         settled(ws)
         @test x("a") == 60

@@ -198,6 +198,28 @@ function priority(catalog::Catalog, key::RowKey, stage::PipelineStage)::Int
 end
 
 """
+    eager!(catalog, stage, rank)
+
+Change the priority that the eager policy gives the jobs of `stage`. Jobs already queued move to
+their new priority and keep their order.
+"""
+function eager!(catalog::Catalog, stage::PipelineStage, rank::Int)::Nothing
+    @lock catalog.lock begin
+        get(catalog.eager, stage, 0) == rank && return nothing
+        catalog.eager[stage] = rank
+        moved = Target[]
+        for (old, bucket) in collect(catalog.queue)
+            append!(moved, filter(target -> last(target) == stage, bucket))
+            filter!(target -> last(target) != stage, bucket)
+            isempty(bucket) && delete!(catalog.queue, old)
+        end
+        foreach(target -> delete!(catalog.queued, target), moved)
+        foreach(target -> queue!(catalog, target...), moved)
+        return nothing
+    end
+end
+
+"""
 Queue the job for `stage` on `key` if it can start and is wanted. A job already queued at another
 priority moves to this one. The caller holds the lock.
 

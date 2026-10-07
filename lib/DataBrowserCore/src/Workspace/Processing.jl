@@ -21,7 +21,10 @@ function stop_workers!(workspace::Workspace)::Nothing
     return nothing
 end
 
-"""Take and run jobs until the workspace stops."""
+"""
+Take and run jobs until the workspace stops. The `analyze` of an item runs right after its
+`process` in the same worker, while the processed data is still in memory.
+"""
 function work!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
     while true
@@ -34,20 +37,25 @@ function work!(workspace::Workspace)::Nothing
             workspace.running += 1
             job
         end
-        changed!(workspace)
-        try
-            run!(workspace, job)
-        catch error
-            # A job that already finished failed while it saved its result.
-            job.finished ?
-                @error("Could not save the result of a job", stage=job.stage, exception=(error, catch_backtrace())) :
-                fail!(workspace, job, error, catch_backtrace())
+        while job !== nothing
+            changed!(workspace)
+            try
+                run!(workspace, job)
+            catch error
+                # A job that already finished failed while it saved its result.
+                job.finished ?
+                    @error("Could not save the result of a job", stage=job.stage, exception=(error, catch_backtrace())) :
+                    fail!(workspace, job, error, catch_backtrace())
+            end
+            job = @lock catalog.lock begin
+                workspace.completed += 1
+                finish_publish!(workspace)
+                job.stage == ITEM_PROCESS && job.key in catalog &&
+                    Catalogs.priority(catalog, job.key, ITEM_ANALYZE) > 0 ?
+                    Catalogs.start!(catalog, job.key, ITEM_ANALYZE) : nothing
+            end
         end
-        @lock catalog.lock begin
-            workspace.running -= 1
-            workspace.completed += 1
-            finish_publish!(workspace)
-        end
+        @lock catalog.lock workspace.running -= 1
     end
 end
 
@@ -100,6 +108,15 @@ function conflicts!(workspace::Workspace, key::RowKey, stage::PipelineStage, con
 end
 
 # Source items
+
+"""
+Choose what runs first in the background. While the expanded data that waits for `process` is
+under half its memory limit, source items are read first, so that all items appear soon. Above
+that, items are processed first, which releases their expanded data.
+"""
+pace!(workspace::Workspace)::Nothing = eager!(
+    workspace.catalog, SOURCE_EXPAND,
+    expanded_data_full(workspace.cache.db) ? ITEMS_FIRST : SOURCES_FIRST)
 
 """
 Read one source item, or reuse its saved read result, turn it into items and publish them.
@@ -162,6 +179,7 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             store_item_payload!(cache, entry.id, item_data(item.item))
         end
         store_source_result!(cache, SOURCE_EXPAND, saved)
+        pace!(workspace)
         kept = Set(entry.id for entry in entries)
         filter!(id -> !(id in previous) || id in kept, workspace.selection.item_ids)
         conflicts!(workspace, job.key, SOURCE_EXPAND, unique!(conflicts))
@@ -191,7 +209,8 @@ end
 Run `expand` for the source item of `item` again and return the item it produces now.
 
 This runs inside the job that needs the item, because a worker must not wait for another job. One
-task at a time does it for each source item, and it saves the payload of every item it produces.
+task at a time does it for each source item. It keeps the payload of every item it produces that
+is not processed yet, so the jobs of those items do not run `expand` again.
 """
 function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
     catalog = workspace.catalog
@@ -209,11 +228,23 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
             )
             source_item = reported[position]
         end
+        # Another task may have expanded this source item while this one waited.
+        kept = only(read_payload(workspace.cache.db, [id(catalog, item)]; stage=SOURCE_EXPAND))
+        value = kept === nothing ? nothing : reconstruct(
+            valuetype(catalog, item), id(catalog, item), something(kept),
+            metadata(workspace, item; through=SOURCE_EXPAND))
+        value === nothing || return value
         expanded = expand(
             workspace.project, workspace.source, source_item,
             read_again(workspace, source, source_item))
-        for produced in expanded
-            store_item_payload!(workspace.cache.db, produced.id, item_data(produced.item))
+        @lock catalog.lock begin
+            for produced in expanded
+                sibling = lookup(catalog, ItemKey, produced.id)
+                sibling === nothing && continue
+                Catalogs.status(catalog, sibling, ITEM_PROCESS).validity == Catalogs.FRESH ||
+                    store_item_payload!(workspace.cache.db, produced.id, item_data(produced.item))
+            end
+            pace!(workspace)
         end
         position = findfirst(produced -> produced.id == id(catalog, item), expanded)
         position === nothing && error(
@@ -293,6 +324,8 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
         store_processed!(cache, id(catalog, item), cache_key(workspace, item), item_data(output))
     @lock catalog.lock begin
         if finish!(catalog, job; metadata=computed)
+            release_item_payload!(cache, id(catalog, item))
+            pace!(workspace)
             relabel!(workspace, item, label(workspace.project, output))
             store_item_stage_metadata!(cache, id(catalog, item), ITEM_PROCESS, computed)
             conflicts!(workspace, item, ITEM_PROCESS,

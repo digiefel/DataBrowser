@@ -5,7 +5,7 @@ using DataBrowserAPI:
     COLLECTION_ANALYZE
 using DataBrowserCore.Catalogs:
     Catalog, SourceKey, ItemKey, CollectionKey, ItemEntry, Job, ROOT, REMOVED, STALE, FRESH,
-    publish!, lookup, items, children, status, progress, invalidate!, start!, finish!, request,
+    publish!, lookup, items, children, status, progress, invalidate!, start!, finish!, request, eager!,
     conflicts, valuetype, metadata!
 
 struct TestItem <: AbstractDataItem end
@@ -176,6 +176,16 @@ end
     @test all(item -> status(catalog, lookup(catalog, ItemKey, item), ITEM_ANALYZE).validity == FRESH,
         ["a", "b"])
     @test take!(catalog) === nothing
+end
+
+@testset "catalog: changing an eager priority moves the queued jobs" begin
+    catalog = Catalog(; eager=Dict(SOURCE_EXPAND => 3, ITEM_PROCESS => 2))
+    first_file = get!(catalog, SourceKey, "first.csv")
+    second_file = get!(catalog, SourceKey, "second.csv")
+    finish!(catalog, take!(catalog), [ItemEntry("a", "A", ROOT, TestItem)])
+    eager!(catalog, SOURCE_EXPAND, 1)
+    @test take!(catalog).key == lookup(catalog, ItemKey, "a")
+    @test take!(catalog).key == second_file
 end
 
 @testset "catalog: a collection changed during its job runs again once" begin

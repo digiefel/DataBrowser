@@ -31,6 +31,7 @@ using ..Catalogs:
     publish!,
     queued,
     request,
+    eager!,
     settled,
     stale!
 using DataBrowserAPI:
@@ -81,6 +82,8 @@ using DataBrowserCache:
     store_collection_process_result!,
     store_item!,
     store_item_payload!,
+    release_item_payload!,
+    expanded_data_full,
     store_item_metadata!,
     store_item_label!,
     store_item_metadata_layer!,
@@ -94,7 +97,7 @@ using DataBrowserCache:
     cache_knows_source,
     source_item_key!
 import DataBrowserCache
-import DataBrowserCache: query_items, set_cache_memory_limit!
+import DataBrowserCache: query_items, set_cache_memory_limit!, set_expanded_data_limit!
 using ..DataBrowserCore: ExpandedItem
 import DataBrowserAPI
 import DataBrowserAPI:
@@ -266,13 +269,25 @@ end
 An empty catalog for a workspace. A source item's job always runs without a request. With
 `background_processing`, so does every stage of every item and collection; without it, those run
 when something requests them.
+
+Source items come before the background work on items; [`pace!`](@ref) changes that while the
+expanded data waiting for `process` fills its memory limit. Collections come last.
 """
 function Catalog(background_processing::Bool)::Catalog
-    eager = Dict{PipelineStage,Int}(SOURCE_EXPAND => 3)
+    eager = Dict{PipelineStage,Int}(SOURCE_EXPAND => SOURCES_FIRST)
     background_processing && merge!(eager, Dict(
-        ITEM_PROCESS => 2, ITEM_ANALYZE => 2, COLLECTION_PROCESS => 1, COLLECTION_ANALYZE => 1))
+        ITEM_PROCESS => 3, ITEM_ANALYZE => 3, COLLECTION_PROCESS => 1, COLLECTION_ANALYZE => 1))
     return Catalog(; eager)
 end
+
+# The priority of source item jobs: above the background jobs of items, or between those and the
+# background jobs of collections.
+const SOURCES_FIRST = 4
+const ITEMS_FIRST = 2
+
+# The priorities of what a view asks for: above all background work.
+const VIEWED_ITEM = 6
+const VIEWED_COLLECTION = 5
 
 """
 Open the cache for one project/source pair, falling back to memory on a schema error.

@@ -18,6 +18,32 @@ function set_cache_memory_limit!(mib::Integer)::Int
     return CACHE_MEMORY_LIMIT_MIB[] = Int(mib)
 end
 
+"""
+Memory limit (MiB) for expanded data: the data that `expand` gave each item, kept until the
+`process` of the item has used it. The size of the data is estimated.
+"""
+const EXPANDED_DATA_LIMIT_MIB = Ref(3072)
+
+"""
+    set_expanded_data_limit!(mib) -> Int
+
+Set the memory limit (MiB) for expanded data in workspaces opened later. The default is 3072 MiB,
+or a quarter of the memory of the machine when that is less.
+
+While the expanded data is under half the limit, a workspace reads its source items first. Above
+that, it processes items first, which releases their expanded data; the other half is room for the
+source items that are being read at that moment. A lower limit uses less memory and shows the
+items of all source items later.
+"""
+function set_expanded_data_limit!(mib::Integer)::Int
+    mib >= 1 || throw(ArgumentError("the limit for expanded data must be at least 1 MiB"))
+    return EXPANDED_DATA_LIMIT_MIB[] = Int(mib)
+end
+
+# An estimate without reading the values: 8 bytes for each cell of a table.
+_expanded_bytes(data)::Int = Tables.istable(data) ?
+    8 * _payload_rows(data) * length(Tables.columnnames(Tables.columns(data))) : Base.summarysize(data)
+
 """Error raised when a project cache is missing or does not match the current project."""
 struct ProjectCacheError <: Exception
     path::String
@@ -608,7 +634,8 @@ function open_cache_db(
             stage_metadata,
             payload,
             MemoryStore{Int64,Any}(; capacity=256 * 1024^2, weight=Base.summarysize),
-            MemoryStore{String,Any}(; capacity=CACHE_BUFFER_ROW_LIMIT),
+            MemoryStore{String,Any}(;
+                capacity=EXPANDED_DATA_LIMIT_MIB[] * 1024^2, weight=_expanded_bytes),
             item_keys,
             next_item_key,
             source_item_keys,
@@ -838,11 +865,24 @@ function store_collection!(
     return nothing
 end
 
-"""Store the unprocessed payload of one item in the memory-only buffer."""
+"""
+Keep the expanded data of one item in memory. When the limit is exceeded, the data kept longest
+is dropped; see [`set_expanded_data_limit!`](@ref).
+"""
 function store_item_payload!(cache::CacheDB, id::AbstractString, payload)::Nothing
     append!(cache.unprocessed, String(id), payload)
     return nothing
 end
+
+"""Drop the expanded data of one item, after its `process` has used it."""
+function release_item_payload!(cache::CacheDB, id::AbstractString)::Nothing
+    delete!(cache.unprocessed, String(id))
+    return nothing
+end
+
+"""Whether the expanded data kept in memory has reached half its limit."""
+expanded_data_full(cache::CacheDB)::Bool =
+    lock(() -> 2 * cache.unprocessed.size >= cache.unprocessed.capacity, cache.unprocessed.lock)
 
 """
     store_processed!(cache, id, source_key, payload; collection=0)
