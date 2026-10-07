@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 28
+const PROJECT_CACHE_SCHEMA_VERSION = 29
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -116,6 +116,8 @@ const SavedCollection = @NamedTuple{
     metadata::MetadataDict,
     source_metadata::MetadataDict,
     analysis::MetadataDict,
+    # What the `process` of the collection changed in the metadata of its items, by item id.
+    changes::Dict{String,MetadataDict},
 }
 
 """
@@ -405,6 +407,15 @@ CollectionRow(row)::CollectionRow = CollectionRow(
     String(row.type_hex),
 )
 
+"""What the `process` of one collection changed in the metadata of its items, by item id."""
+struct MemberChangesRow
+    collection_key::Int64
+    changes_hex::String
+end
+
+MemberChangesRow(row)::MemberChangesRow =
+    MemberChangesRow(Int64(row.collection_key), String(row.changes_hex))
+
 struct ItemRow
     id::String
     item_key::Int64
@@ -476,6 +487,7 @@ mutable struct CacheDB
     failures::RowStore{Tuple{String,Int64},FailureRow}
     result_states::RowStore{Tuple{Int8,String},CachedResultState}
     keyed_result_states::RowStore{Tuple{Int8,Int64},CachedKeyedResultState}
+    member_changes::RowStore{Int64,MemberChangesRow}
     payload::TabularFamilyStore
     source_reads::MemoryStore{Int64,Any}
     unprocessed::MemoryStore{String,Any}
@@ -552,6 +564,7 @@ function open_cache_db(
             db, "result_states", ("kind", "entity"))
         keyed_result_states = RowStore{Tuple{Int8,Int64},CachedKeyedResultState}(
             db, "keyed_result_states", ("kind", "entity"))
+        member_changes = RowStore{Int64,MemberChangesRow}(db, "member_changes", ("collection_key",))
         payload = TabularFamilyStore(db; row_limit=CACHE_BUFFER_ROW_LIMIT)
         item_keys, next_item_key = _load_item_keys(db)
         source_item_keys, source_item_ids, next_source_item_key = _load_source_item_keys(db)
@@ -575,6 +588,7 @@ function open_cache_db(
             failures,
             result_states,
             keyed_result_states,
+            member_changes,
             payload,
             MemoryStore{Int64,Any}(; capacity=256 * 1024^2, weight=Base.summarysize),
             MemoryStore{String,Any}(; capacity=CACHE_BUFFER_ROW_LIMIT),
@@ -697,6 +711,8 @@ function ensure_schema!(connection)::Nothing
     DBInterface.execute(connection, create_table_sql(CachedResultState, "result_states", (:kind, :entity)))
     DBInterface.execute(connection, create_table_sql(
         CachedKeyedResultState, "keyed_result_states", (:kind, :entity)))
+    DBInterface.execute(connection,
+        create_table_sql(MemberChangesRow, "member_changes", (:collection_key,)))
     DBInterface.execute(connection, """
         CREATE TABLE IF NOT EXISTS wide_columns(
             table_name TEXT,
@@ -925,11 +941,15 @@ function store_collection_metadata!(
     return _conflict_messages(dropped)
 end
 
-"""Persist one collection-process result state (payloads and member metadata land separately)."""
+"""
+Record that the `process` of one collection finished, with what it changed in the metadata of its
+items, by item id. The payloads it changed are stored separately.
+"""
 function store_collection_process_result!(
-    cache::CacheDB, collection_key::Integer,
+    cache::CacheDB, collection_key::Integer, changes::Dict{String,MetadataDict},
 )::Nothing
     entity = Int64(collection_key)
+    edit!(cache.member_changes, entity, MemberChangesRow(entity, _serialize_hex(changes)))
     state = CachedKeyedResultState(
         Int8(COLLECTION_PROCESS), entity, Int8(RESULT_READY), 0, nothing)
     edit!(cache.keyed_result_states, (Int8(COLLECTION_PROCESS), entity), state)
@@ -1001,6 +1021,7 @@ function delete_collection_metadata!(
         _stage_ledger_result!(
             cache.stage_ledger, (Int8(COLLECTION_ANALYZE), collection_key), nothing)
         delete!(cache.keyed_result_states, (Int8(COLLECTION_PROCESS), collection_key))
+        delete!(cache.member_changes, collection_key)
         _stage_ledger_result!(
             cache.stage_ledger, (Int8(COLLECTION_PROCESS), collection_key), nothing)
     end
@@ -1015,7 +1036,7 @@ function cache_pending_counts(cache::CacheDB)::NamedTuple{(:items, :rows),Tuple{
         (cache.source_items, cache.collections, cache.items, cache.source_item_metadata,
          cache.analyzed_item_metadata,
          cache.analyzed_collection_metadata, cache.failures, cache.result_states,
-         cache.keyed_result_states, cache.payload)
+         cache.keyed_result_states, cache.member_changes, cache.payload)
         lock(buffer.flush_condition) do
             items += length(buffer.queued) + length(buffer.writing)
             rows += buffer.queued_rows + buffer.writing_rows
@@ -1151,7 +1172,7 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.analyzed_item_metadata,
          cachedb.analyzed_collection_metadata, cachedb.failures,
-         cachedb.result_states, cachedb.keyed_result_states, cachedb.payload,
+         cachedb.result_states, cachedb.keyed_result_states, cachedb.member_changes, cachedb.payload,
          cachedb.unprocessed, cachedb.source_reads)
         try
             close!(buffer)
@@ -1205,7 +1226,7 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.analyzed_item_metadata,
          cachedb.analyzed_collection_metadata, cachedb.failures,
-         cachedb.result_states, cachedb.keyed_result_states, cachedb.payload,
+         cachedb.result_states, cachedb.keyed_result_states, cachedb.member_changes, cachedb.payload,
          cachedb.unprocessed, cachedb.source_reads)
         clear!(buffer)
     end
@@ -1285,6 +1306,7 @@ end
 function _load_collections(cache::CacheDB)::Vector{SavedCollection}
     rows = read(cache.collections)
     analysis = read(cache.analyzed_collection_metadata)
+    changes = read(cache.member_changes)
     saved = SavedCollection[]
     loaded = Set{Int64}()
     function load(key::Int64, depth::Int)::Nothing
@@ -1304,6 +1326,8 @@ function _load_collections(cache::CacheDB)::Vector{SavedCollection}
             metadata=metadata_dict(_deserialize_hex(row.metadata_hex)),
             source_metadata=metadata_dict(_deserialize_hex(row.source_metadata_hex)),
             analysis=get(analysis, key, MetadataDict()),
+            changes=haskey(changes, key) ? _deserialize_hex(changes[key].changes_hex) :
+                Dict{String,MetadataDict}(),
         ))
         return nothing
     end

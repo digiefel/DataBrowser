@@ -117,7 +117,7 @@ function _install_runtime!(
     workspace.catalog = Catalog(background_processing)
     foreach(empty!, (
         workspace.source_items, workspace.source_locks, workspace.collection_keys,
-        workspace.errors, workspace.wanted))
+        workspace.changes, workspace.errors, workspace.wanted))
     workspace.next_collection_key = 1
     workspace.running = 0
     workspace.completed = 0
@@ -271,6 +271,13 @@ function forget_stale!(workspace::Workspace)::Nothing
         delete!(workspace.errors, (key, stage))
         # A source item's results are removed where its source reports the change.
         key isa SourceKey && continue
+        # The items lose what the collection changed in their metadata, also where queries read it.
+        if stage == COLLECTION_PROCESS
+            for item in keys(pop!(workspace.changes, key, Dict{ItemKey,MetadataDict}()))
+                item in catalog &&
+                    store_item_metadata_layer!(cache, id(catalog, item), metadata(workspace, item))
+            end
+        end
         if key isa ItemKey
             clear_cached_result_state!(cache, stage, id(catalog, key))
         elseif key in catalog
@@ -613,6 +620,11 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
         workspace.next_collection_key = max(workspace.next_collection_key, saved.key + 1)
     end
 
+    # What the collections changed in the metadata of each item, by item id.
+    collected = Dict{String,MetadataDict}()
+    for saved in index.collections, (item_id, changed) in saved.changes
+        merge!(get!(MetadataDict, collected, item_id), changed)
+    end
     saved_items = Dict{Int64,Vector{eltype(index.items)}}()
     foreach(item -> push!(get!(valtype(saved_items), saved_items, item.source_key), item), index.items)
     for (saved, source_id_value) in index.sources
@@ -643,8 +655,9 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
         item = lookup(catalog, ItemKey, saved.id)
         item === nothing && continue
         # The cache saves the metadata an item is delivered with. What its stages produced is the
-        # part that its collections and its source item do not give it.
-        base = metadata(workspace, item; through=SOURCE_EXPAND)
+        # part that its collections and its source item do not give it, and that the `process`
+        # of a collection did not set.
+        base = merge(metadata(workspace, item; through=SOURCE_EXPAND), get(collected, saved.id, MetadataDict()))
         computed = MetadataDict(
             name => value for (name, value) in saved.delivered
             if !haskey(base, name) || !isequal(base[name], value))
@@ -656,8 +669,12 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     # A collection comes after its parent, so the reverse order restores members first.
     for saved in reverse(index.collections)
         collection = restored[saved.key]
-        restore(collection, COLLECTION_PROCESS, saved.key) &&
+        if restore(collection, COLLECTION_PROCESS, saved.key)
+            workspace.changes[collection] = Dict{ItemKey,MetadataDict}(
+                lookup(catalog, ItemKey, item_id) => changed
+                for (item_id, changed) in saved.changes if lookup(catalog, ItemKey, item_id) !== nothing)
             restore(collection, COLLECTION_ANALYZE, saved.key; metadata=saved.analysis)
+        end
         # A collection whose items were all left to the scan is empty.
         delete!(catalog, collection)
     end

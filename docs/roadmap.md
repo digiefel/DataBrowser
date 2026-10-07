@@ -206,9 +206,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
   reliance on the internal `adopt` hook for labels and collections;
   it must consume the same public contract as any other extension. Item payload and metadata
   delivery belongs to 0.2.2.
-- [ ] Preserve member metadata changes returned by collection `process`, including changes with
-  unchanged payloads. The collection process job currently keeps an output only when `item_data`
-  changes by identity, and collection completion publishes no member metadata or labels. Cover
+- [x] Preserve member metadata and label changes returned by collection `process`, including
+  changes with unchanged payloads. Cover
   cumulative device history: successive measurements need different wakeup/fatigue counts even
   when their waveform payloads are unchanged.
 - [ ] Sort every exported name into the project-author or extension-author tier and stop exporting

@@ -118,6 +118,11 @@ analyze(project::AbstractProject, item::AbstractDataItem) = analyze(item)
 
 Rewrite one collection's members, returning exactly one output per input with matching ids. The
 default passes the members through unchanged.
+
+An output may differ from its input in data, in `metadata(output)` and in its label. Each change
+is kept as this collection's version of the item, and the item's own processed data and metadata
+stay as they are. Views, queries, collection `analyze` and the collections above receive the
+changes, where the outermost collection replaces the values of the collections below it.
 """
 process(project::AbstractProject, collection::AbstractCollection, items::AbstractVector) =
     process(collection, items)

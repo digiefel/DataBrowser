@@ -182,7 +182,7 @@ end
 
 """
     metadata(workspace, collection) -> MetadataDict
-    metadata(workspace, item; through=ITEM_ANALYZE) -> MetadataDict
+    metadata(workspace, item; through=ITEM_ANALYZE, above=ancestors(workspace, item)) -> MetadataDict
 
 The metadata of a collection or an item, as a new dictionary.
 
@@ -190,10 +190,13 @@ For a collection: for each collection above it and then for the collection itsel
 its value and then the metadata its source provides for it; then the result of its collection
 `analyze`. For an item: what project code receives with the item, which is the metadata of its
 collections, then the metadata its source item and `expand` gave it, then the results of `process`
-and `analyze`. Later values replace earlier values with the same key.
+and `analyze`, then what the `process` of each collection above it changed, from the collection
+that holds the item up to the top-level one. Later values replace earlier values with the same key.
 
-`through` leaves out the results of the item stages after it: `SOURCE_EXPAND` gives the metadata
-that `process` receives, and `ITEM_PROCESS` the metadata that `analyze` receives.
+`through` leaves out the results of the stages after it: `SOURCE_EXPAND` gives the metadata that
+`process` receives, and `ITEM_PROCESS` the metadata that `analyze` receives. `above` limits the
+collections whose changes are included; a collection whose `process` result is not current is
+always left out.
 """
 function metadata(workspace::Workspace, collection::CollectionKey)::MetadataDict
     catalog = workspace.catalog
@@ -209,7 +212,8 @@ function metadata(workspace::Workspace, collection::CollectionKey)::MetadataDict
 end
 
 function metadata(
-    workspace::Workspace, item::ItemKey; through::PipelineStage=ITEM_ANALYZE,
+    workspace::Workspace, item::ItemKey;
+    through::PipelineStage=ITEM_ANALYZE, above::Vector{CollectionKey}=ancestors(workspace, item),
 )::MetadataDict
     catalog = workspace.catalog
     @lock catalog.lock begin
@@ -220,6 +224,12 @@ function metadata(
         for stage in (SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE)
             merge!(merged, metadata(catalog, item, stage))
             stage == through && break
+        end
+        through == ITEM_ANALYZE || return merged
+        for holder in reverse(above)
+            Catalogs.status(catalog, holder, COLLECTION_PROCESS).validity == Catalogs.FRESH || continue
+            changed = get(workspace.changes, holder, nothing)
+            changed === nothing || merge!(merged, get(changed, item, MetadataDict()))
         end
         return merged
     end

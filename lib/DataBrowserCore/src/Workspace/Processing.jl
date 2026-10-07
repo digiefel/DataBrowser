@@ -348,7 +348,7 @@ This is the only place that decides which version of an item a stage or a view r
 
 Each collection whose `process` changed an item keeps its own version of it. An item comes in the
 version of the outermost collection that has one and whose `process` result is fresh, or in its
-own processed data. `reader` is the stage that receives the items, and limits what it may read:
+own processed data. Its metadata includes what the same collections changed in it. `reader` is the stage that receives the items, and limits what it may read:
 
 - `(item, ITEM_ANALYZE)`: the item's own processed data, with the metadata `analyze` receives.
 - `(collection, COLLECTION_PROCESS)`: the versions of the collections below `collection`.
@@ -366,22 +366,24 @@ function versions(
     own = reader !== nothing && first(reader) isa ItemKey
     # For each item, the saved key of the collection whose version to read; 0 is the item's own.
     chosen, given = @lock catalog.lock begin
-        chosen = map(items, item_ids) do item, item_id
-            own && return Int64(0)
-            holders = ancestors(workspace, item)
-            if reader !== nothing
+        chosen, given = Int64[], MetadataDict[]
+        for (item, item_id) in zip(items, item_ids)
+            # The collections whose version and changes the reader may receive, from the top down.
+            holders = own ? CollectionKey[] : ancestors(workspace, item)
+            if !own && reader !== nothing
                 first_allowed = findfirst(==(first(reader)), holders) + (last(reader) == COLLECTION_PROCESS)
                 holders = holders[first_allowed:end]
             end
+            version = Int64(0)
             for holder in holders
                 Catalogs.status(catalog, holder, COLLECTION_PROCESS).validity == Catalogs.FRESH || continue
                 saved = get(workspace.collection_keys, holder, Int64(0))
-                saved != 0 && has_payload(cache, item_id; collection=saved) && return saved
+                saved != 0 && has_payload(cache, item_id; collection=saved) && (version = saved; break)
             end
-            return Int64(0)
+            push!(chosen, version)
+            push!(given, metadata(workspace, item; through=own ? ITEM_PROCESS : ITEM_ANALYZE, above=holders))
         end
-        through = own ? ITEM_PROCESS : ITEM_ANALYZE
-        chosen, MetadataDict[metadata(workspace, item; through) for item in items]
+        chosen, given
     end
     payloads = read_payload(cache, item_ids; collections=chosen)
     # A collection job that runs at the same time may have removed the version just chosen.
@@ -398,7 +400,8 @@ end
 """
 Run collection `process` over every item below one collection, each in the version the collections
 below this one gave it. The collection keeps its own version of each item it changed: an item
-counts as changed when its data is not the same object as before.
+counts as changed when its data is not the same object as before. It also keeps the metadata values
+it changed, and gives the item the label of the output when that differs from the label of the input.
 """
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PROCESS})::Nothing
     catalog = workspace.catalog
@@ -406,6 +409,11 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
     saved = workspace.collection_keys[job.key]
     items = members(workspace, job.key)
     inputs = versions(workspace, items; reader=(job.key, COLLECTION_PROCESS))
+    # The metadata each input came with: what the collections below this one changed is included.
+    given = map(items) do item
+        holders = ancestors(workspace, item)
+        metadata(workspace, item; above=holders[findfirst(==(job.key), holders)+1:end])
+    end
     outputs = process(workspace.project, last(values(workspace, job.key)), inputs)
     length(outputs) == length(inputs) || error(
         "Collection process for '$(label(catalog, job.key))' returned $(length(outputs)) items " *
@@ -423,8 +431,26 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
             end
         end
     end
+    changes = Dict{ItemKey,MetadataDict}()
+    for (item, before, output) in zip(items, given, outputs)
+        changed = MetadataDict(
+            name => value for (name, value) in metadata_dict(metadata(output))
+            if !haskey(before, name) || !isequal(before[name], value))
+        isempty(changed) || (changes[item] = changed)
+    end
     @lock catalog.lock begin
-        finish!(catalog, job) && store_collection_process_result!(cache, saved)
+        finish!(catalog, job) || return nothing
+        workspace.changes[job.key] = changes
+        store_collection_process_result!(cache, saved, Dict{String,MetadataDict}(
+            id(catalog, item) => changed for (item, changed) in changes))
+        dropped = String[]
+        for (item, input, output) in zip(items, inputs, outputs)
+            new_label = label(workspace.project, output)
+            new_label == label(workspace.project, input) || relabel!(workspace, item, new_label)
+            haskey(changes, item) && append!(dropped,
+                store_item_metadata_layer!(cache, id(catalog, item), metadata(workspace, item)))
+        end
+        conflicts!(workspace, job.key, COLLECTION_PROCESS, dropped)
     end
     return nothing
 end

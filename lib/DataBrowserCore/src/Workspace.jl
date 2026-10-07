@@ -223,6 +223,8 @@ mutable struct Workspace{P<:AbstractProject}
     # The key the cache uses for each collection. The cache keeps its keys from session to session.
     collection_keys::Dict{CollectionKey,Int64}
     next_collection_key::Int64
+    # What the current `process` result of each collection changed in the metadata of its items.
+    changes::Dict{CollectionKey,Dict{ItemKey,MetadataDict}}
     # The message of each failed stage, and of each stage whose metadata the cache stored in part.
     errors::Dict{Target,String}
     # Items that were delivered. Their analyze is requested, so their metadata becomes complete.
@@ -322,6 +324,7 @@ function Workspace(
         Dict{SourceKey,ReentrantLock}(),
         Dict{CollectionKey,Int64}(),
         Int64(1),
+        Dict{CollectionKey,Dict{ItemKey,MetadataDict}}(),
         Dict{Target,String}(),
         Set{ItemKey}(),
         Task[],

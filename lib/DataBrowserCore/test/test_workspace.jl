@@ -84,21 +84,25 @@ DataBrowserAPI.reconstruct(::Type{T}, ::AbstractString, ::Dict) where {T<:Union{
 struct NestedItem <: AbstractDataItem
     key::String
     data::Any
+    metadata::Dict
 end
+NestedItem(key, data) = NestedItem(key, data, Dict())
+DataBrowserAPI.metadata(i::NestedItem) = i.metadata
 DataBrowserAPI.id(i::NestedItem) = i.key
 DataBrowserAPI.item_data(i::NestedItem) = i.data
-DataBrowserAPI.reconstruct(::Type{NestedItem}, key::AbstractString, data, ::Dict) = NestedItem(key, data)
+DataBrowserAPI.reconstruct(::Type{NestedItem}, key::AbstractString, data, metadata::Dict) = NestedItem(key, data, metadata)
 DataBrowserAPI.collection(i::NestedItem) =
     DataBrowserAPI.AbstractCollection[Outer(), i.key == "a" ? Inner() : Other()]
 struct NestedProject <: AbstractProject end
+DataBrowserAPI.label(::NestedProject, i::NestedItem) = get(i.metadata, :name, i.key)
 DataBrowserAPI.project_name(::NestedProject) = "nested"
 DataBrowserAPI.read(::NestedProject, ::EngineSource, s::EngineSourceItem) = s.version
 DataBrowserAPI.expand(::NestedProject, ::EngineSourceItem, version) =
     [NestedItem(key, (x=[version],)) for key in ("a", "b")]
 DataBrowserAPI.process(::NestedProject, ::Inner, items::AbstractVector) =
-    [NestedItem(i.key, (x=i.data.x .+ 1,)) for i in items]
+    [NestedItem(i.key, (x=i.data.x .+ 1,), Dict(:step => 1, :name => "inner $(i.key)")) for i in items]
 DataBrowserAPI.process(::NestedProject, ::Outer, items::AbstractVector) =
-    [NestedItem(i.key, (x=i.data.x .* 10,)) for i in items]
+    [NestedItem(i.key, (x=i.data.x .* 10,), merge(i.metadata, Dict(:step => get(i.metadata, :step, 0) + 1))) for i in items]
 DataBrowserAPI.analyze(::NestedProject, ::Inner, items::AbstractVector) =
     Dict(:seen => only(only(items).data.x))
 
@@ -134,6 +138,14 @@ end
         holder(key) = W.collection(ws, W.item(ws, key))
         # The outer collection receives the inner collection's version, and views get the outer one.
         @test (x("a"), x("b")) == (20, 10)
+        # The metadata and the label that collection `process` changed reach every reader.
+        @test W.metadata(ws, W.item(ws, "a"))[:step] == 2
+        @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
+        @test only(W.materialize_items(ws, ["a"])).metadata[:step] == 2
+        @test W.label(ws, W.item(ws, "a")) == "inner a"
+        # A query reads what the cache has written to its database.
+        @test timedwait(() -> !W.cache_has_pending_writes(ws.cache.db), 20) === :ok
+        @test W.query_items(ws, "step = 2") == ["a"]
         @test W.metadata(ws, holder("a"))[:seen] == 2
         # Two collections with the same id and parent differ by type.
         @test holder("a") != holder("b")
@@ -288,6 +300,29 @@ end
                 @test item_data(only(W.materialize_items(ws, ["1"]))).x == [2]
             finally
                 W.close_workspace!(ws)
+            end
+        finally
+            popfirst!(DEPOT_PATH)
+        end
+    end
+end
+
+@testset "metadata and labels from collection process are kept after reopening" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            for _ in 1:2
+                ws = W.open_workspace(
+                    NestedProject(), EngineSource("source", 1, false); background_processing=true)
+                try
+                    settled(ws)
+                    @test W.metadata(ws, W.item(ws, "a"))[:step] == 2
+                    @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
+                    @test W.label(ws, W.item(ws, "a")) == "inner a"
+                    @test only(item_data(only(W.materialize_items(ws, ["a"]))).x) == 20
+                finally
+                    W.close_workspace!(ws)
+                end
             end
         finally
             popfirst!(DEPOT_PATH)

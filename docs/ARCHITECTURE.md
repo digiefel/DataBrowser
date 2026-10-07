@@ -168,7 +168,9 @@ when that is empty. A collection contains every item below it, at any depth. Col
 receives all of them and returns the collection's own version of each; the cache keeps that version
 next to the item's own processed data and never replaces it. A collection receives each item in the
 version the collections below gave it. Views and collection `analyze` use an item's latest version:
-the one of the outermost collection that changed it.
+the one of the outermost collection that changed it. The same holds for the metadata values and
+the label that a collection's `process` changes: views, queries and the item list show them, and
+the outermost collection replaces the values of the collections below it.
 
 It defines:
 
