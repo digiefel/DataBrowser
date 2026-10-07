@@ -118,7 +118,19 @@ function _render_hierarchy_tree_panel(
         Symbol[]
     selected_collections, _, _ = _project_visible_selection(state)
 
-    visible_collections = CollectionKey[]
+    # Walking the whole tree costs time in proportion to its size, so the result is kept until
+    # something it depends on changes.
+    cache_key = workspace isa Workspace.Workspace ? hash((
+        objectid(workspace), Workspace.generation(workspace), _imgui_text_filter_text(filter_tree),
+        _show_bad_effective(state), state.tag_state === nothing ? 0 : hash(state.tag_state.assignments),
+    )) : UInt(0)
+    cache = state.tree_cache
+    if cache === nothing || cache.key != cache_key
+        cache = state.tree_cache = TreeCache(
+            cache_key, Dict{CollectionKey,Vector{CollectionKey}}(), Dict{CollectionKey,Bool}(),
+            Dict{CollectionKey,Bool}(), CollectionKey[], -1)
+    end
+    visible_collections = cache.visible
     # A collection is selected and expanded by its path.
     visible_collection_ids_ref = Ref{Union{Nothing,Vector{Workspace.CollectionPath}}}(nothing)
     expanded_collection_id_set = Set(state.expanded_collections)
@@ -132,11 +144,12 @@ function _render_hierarchy_tree_panel(
         !isempty(Workspace.items(workspace, ROOT))
     if workspace isa Workspace.Workspace &&
        (!isempty(Workspace.collections(workspace)) || has_root_items)
-        has_visible_leaf_cache = Dict{CollectionKey,Bool}()
-        subtree_matches_cache = Dict{CollectionKey,Bool}()
+        has_visible_leaf_cache = cache.has_visible_leaf
+        subtree_matches_cache = cache.subtree_matches
 
-        child_records(collection_record::CollectionKey) =
+        child_records(collection_record::CollectionKey) = get!(cache.children, collection_record) do
             Workspace.children(workspace, collection_record)
+        end
 
         """Return whether this subtree contains a visible collection."""
         function has_visible_leaf(collection_record::CollectionKey)::Bool
@@ -198,15 +211,18 @@ function _render_hierarchy_tree_panel(
             return total
         end
 
-        roots = Workspace.children(workspace, ROOT)
+        roots = child_records(ROOT)
         root_visible = has_root_items &&
             ig.ImGuiTextFilter_PassFilter(filter_tree, label(workspace, ROOT), C_NULL)
         @timed "hierarchy_prep" begin
-            all_collection_count[] = sum(count_leaf_collections, roots; init=0) +
-                (has_root_items ? 1 : 0)
-            for child in roots
-                collect_visible_collections!(child, false)
+            # Under the lock, so that the count and the visible collections are of the same tree.
+            cache.leaves < 0 && @lock workspace.catalog.lock begin
+                cache.leaves = sum(count_leaf_collections, roots; init=0)
+                for child in roots
+                    collect_visible_collections!(child, false)
+                end
             end
+            all_collection_count[] = cache.leaves + (has_root_items ? 1 : 0)
         end
 
         visible_collection_ids = function ()
@@ -342,8 +358,6 @@ function _render_hierarchy_tree_panel(
                 label(workspace, collection_record),
             )
             grayed && ig.PopStyleColor()
-            ig.SameLine()
-            _render_readiness_mark!(readiness)
             if is_leaf && state.scroll_to_collection == leaf_collection_id
                 ig.SetScrollHereY(0.5)
                 state.scroll_to_collection = nothing
@@ -398,6 +412,10 @@ function _render_hierarchy_tree_panel(
                 !editable && ig.EndDisabled()
                 ig.EndPopup()
             end
+
+            # Drawn after every question about the row: the mark is an item of its own.
+            ig.SameLine()
+            _render_readiness_mark!(readiness)
 
             effective_collection_metadata = Workspace.metadata(workspace, collection_record)
             for (i, k) in enumerate(parameter_keys)

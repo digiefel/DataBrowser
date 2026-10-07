@@ -97,6 +97,23 @@ Base.@kwdef mutable struct PerformanceState
 end
 
 """
+What the tree panel worked out about the collection tree. It is kept from frame to frame and
+replaced when `key` changes: the key covers the workspace and its generation, the tree filter and
+the tags.
+"""
+mutable struct TreeCache
+    key::UInt
+    # The collections directly below each collection, in display order.
+    children::Dict{Workspace.Catalogs.CollectionKey,Vector{Workspace.Catalogs.CollectionKey}}
+    has_visible_leaf::Dict{Workspace.Catalogs.CollectionKey,Bool}
+    subtree_matches::Dict{Workspace.Catalogs.CollectionKey,Bool}
+    # The leaf collections that the filter and the tags leave visible, in display order.
+    visible::Vector{Workspace.Catalogs.CollectionKey}
+    # The number of leaf collections, or -1 before the tree was walked.
+    leaves::Int
+end
+
+"""
 Runtime state owned by the browser.
 
 The workspace owns items, selection, cache state, data, and background work. This type owns
@@ -104,6 +121,7 @@ only controls, windows, local persistence, annotations, and rendering state.
 """
 Base.@kwdef mutable struct BrowserState
     workspace::Union{Nothing,Workspace.Workspace} = nothing
+    tree_cache::Union{Nothing,TreeCache} = nothing
     table_inspector::TableInspectorState = TableInspectorState()
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()
