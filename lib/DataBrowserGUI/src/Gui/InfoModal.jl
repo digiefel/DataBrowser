@@ -55,17 +55,7 @@ function render_info_window(state::BrowserState)::Nothing
             ig.Separator()
             kind_text = kind_label(workspace.project, label(Workspace.valuetype(workspace, m)))
             ig.BulletText("Type: $(kind_text)")
-            source_ref = Workspace.source_item_id(workspace, m)
-            source_item = Workspace.source_item(workspace, m)
-            # A source item that is a file has a `filepath`, which the link opens.
-            source_path = hasproperty(source_item, :filepath) ? source_item.filepath : nothing
-            if source_path !== nothing
-                ig.BulletText("Source item:")
-                ig.SameLine()
-                ig.TextLinkOpenURL(source_ref, source_path)
-            else
-                ig.BulletText("Source item: $(source_ref)")
-            end
+            ig.BulletText("Source item: $(Workspace.source_item_id(workspace, m))")
             ig.Separator()
             if !isempty(delivered)
                 ig.Text("Metadata")

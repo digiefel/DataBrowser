@@ -417,7 +417,7 @@ uuid = "eec02e18-64b4-4cc2-bb20-84dd2a3ff701"
 version = "0.1.0"
 
 [[deps.DataBrowserRecipes]]
-deps = ["CSV", "DataBrowserAPI", "DataFrames"]
+deps = ["CSV", "DataBrowserAPI", "DataBrowserSources", "DataFrames"]
 path = "../lib/DataBrowserRecipes"
 uuid = "a7c3e5d9-2b4f-4816-9e0d-3f5a7c9b1e24"
 version = "0.1.0"

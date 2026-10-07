@@ -18,14 +18,9 @@ function _has_extension(source_item::AbstractDataSourceItem, extensions::Vector{
     return any(extension -> endswith(name, extension), extensions)
 end
 
-"""Parse one source item's file into a `DataFrame`."""
-function _read_delimited(source_item::AbstractDataSourceItem, options::NamedTuple)::DataFrame
-    hasproperty(source_item, :filepath) || error(
-        "register_csv! needs a source item with a `filepath`, and " *
-        "$(typeof(source_item)) has none; give that registration its own `read` callback",
-    )
-    return CSV.read(source_item.filepath, DataFrame; options...)
-end
+"""Parse the file of one source item into a `DataFrame`."""
+_read_delimited(file::SourceFile, options::NamedTuple)::DataFrame =
+    CSV.read(file.filepath, DataFrame; options...)
 
 """
     register_csv!(project, [kind]; extensions, read_options, callbacks...) -> project
@@ -46,9 +41,9 @@ register_csv!(project, :sweep;
 ```
 
 Detection runs in registration order and the first match wins, so register narrower recipes before
-this one when several could claim the same file. The file is read from the `filepath` of the
-source item, which a directory source provides; a source whose items have no `filepath` needs a
-registration with its own `read` callback.
+this one when several could claim the same file. `read` has a method for the `SourceFile` items of a
+directory source; a source with another type of source item needs a registration with its own
+`read` callback.
 """
 function register_csv!(
     project::Project,

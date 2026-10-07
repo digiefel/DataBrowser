@@ -37,6 +37,7 @@ import DataBrowserAPI:
     read,
     reconstruct
 using DataBrowserAPI: MetadataDict, metadata_dict
+using DataBrowserSources: SourceFile
 
 include("carriers.jl")
 include("recipes.jl")

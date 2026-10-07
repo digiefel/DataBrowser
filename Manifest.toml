@@ -181,7 +181,7 @@ version = "0.1.0"
     GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 
 [[deps.DataBrowserRecipes]]
-deps = ["CSV", "DataBrowserAPI", "DataFrames"]
+deps = ["CSV", "DataBrowserAPI", "DataBrowserSources", "DataFrames"]
 path = "lib/DataBrowserRecipes"
 uuid = "a7c3e5d9-2b4f-4816-9e0d-3f5a7c9b1e24"
 version = "0.1.0"

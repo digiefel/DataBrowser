@@ -1,5 +1,7 @@
 using DataBrowserAPI: AbstractDataSource, AbstractDataSourceItem, expand, process, analyze, reconstruct, id, label, item_data, metadata
 using Test, DataBrowserRecipes, DataBrowserAPI
+import DataBrowserSources
+using DataBrowserSources: DirectorySource
 
 struct RecipeSource <: AbstractDataSource end
 struct RecipeFile <: AbstractDataSourceItem
@@ -29,12 +31,13 @@ DataBrowserAPI.label(f::RecipeFile) = basename(f.filepath)
     end
 end
 
-@testset "CSV recipe uses the source-item contract" begin
+@testset "CSV recipe reads the files of a directory source" begin
     mktempdir() do dir
-        file = RecipeFile(joinpath(dir, "sample.csv"))
-        write(file.filepath, "x,y\n1,2\n3,4\n")
+        write(joinpath(dir, "sample.csv"), "x,y\n1,2\n3,4\n")
+        source = DirectorySource(dir)
+        file = DataBrowserSources.index_source_file(joinpath(dir, "sample.csv"), dir)
         project = register_csv!(define_project("csv"))
-        item = only(expand(project, file, read(project, RecipeSource(), file)))
+        item = only(expand(project, file, read(project, source, file)))
         @test item_data(item).x == [1, 3]
         @test item_data(item).y == [2, 4]
     end
