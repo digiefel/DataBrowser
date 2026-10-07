@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 26
+const PROJECT_CACHE_SCHEMA_VERSION = 27
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -372,8 +372,6 @@ struct SourceItemRow
     source_item_key::Int64
     label::String
     fingerprint_hex::Union{Nothing,String}
-    path::Union{Nothing,String}
-    timestamp::Union{Nothing,DateTime}
 end
 
 SourceItemRow(row)::SourceItemRow = SourceItemRow(
@@ -381,8 +379,6 @@ SourceItemRow(row)::SourceItemRow = SourceItemRow(
     Int64(row.source_item_key),
     String(row.label),
     _null_to_nothing(row.fingerprint_hex),
-    _null_to_nothing(row.path),
-    _null_to_nothing(row.timestamp),
 )
 
 """Display label of one cached source item, resolved once when its items are published."""

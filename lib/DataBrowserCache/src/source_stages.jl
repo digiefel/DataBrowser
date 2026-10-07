@@ -4,8 +4,7 @@ function store_source_identity!(
 )::Nothing
     source_key = source_item_key!(cache, id(item); mint=true)
     edit!(cache.source_items, id(item), SourceItemRow(
-        id(item), source_key, String(display_label), _serialize_hex(fingerprint(item)),
-        source_item_path(item), source_item_timestamp(item)))
+        id(item), source_key, String(display_label), _serialize_hex(fingerprint(item))))
     _stage_ledger_source!(cache.stage_ledger, source_key, true)
     return nothing
 end

@@ -340,8 +340,6 @@ flowchart TD
         idsf("id(::SourceFile) → String")
         lblsf("label(::SourceFile) → String")
         fpsf("fingerprint(::SourceFile) → FileFingerprint")
-        sipf("source_item_path(::SourceFile) → String")
-        sitf("source_item_timestamp(::SourceFile) → DateTime?")
         metasf("metadata(::SourceFile) → Dict")
         sid("id(::DirectorySource) → String")
         slbl("label(::DirectorySource) → String")
@@ -405,24 +403,19 @@ flowchart TD
     extCore ==> idsf
     extCore ==> lblsf
     extCore ==> metasf
-    extCore ==> sipf
-    extCore ==> sitf
     extCore ==> fpsf
     extCore ==> cpyds
     extCache ==> sid
     extCache ==> fpsf
-    extCache ==> sipf
-    extCache ==> sitf
     extAPI ==> sid
     extAPI ==> slbl
     extAPI ==> recon
-    extRecipes ==> sipf
     extGUI ==> slbl
     extPlots ==> slbl
 
     wsrc -.->|"SourceChanges<br/>SourceError"| extCore
 
-    idsf ~~~ lblsf ~~~ fpsf ~~~ sipf ~~~ sitf ~~~ metasf ~~~ sid ~~~ slbl ~~~ snoun ~~~ iddc ~~~ lbldc ~~~ recon ~~~ eqfp
+    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ sid ~~~ slbl ~~~ snoun ~~~ iddc ~~~ lbldc ~~~ recon ~~~ eqfp
 
     classDef srcExp fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111;
     classDef srcInt fill:#c9e4c5,stroke:#5a9a52,stroke-width:1px,color:#111;
@@ -435,7 +428,7 @@ flowchart TD
     classDef plotsC fill:#f2c6d4,stroke:#b0466a,color:#111;
 
     class isf,ffp srcExp;
-    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,csi,msc,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,sipf,sitf,metasf,sid,slbl,snoun,iddc,lbldc,recon,eqfp srcInt;
+    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,csi,msc,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl,snoun,iddc,lbldc,recon,eqfp srcInt;
     class extCore coreC;
     class extAPI apiC;
     class extCache cacheC;

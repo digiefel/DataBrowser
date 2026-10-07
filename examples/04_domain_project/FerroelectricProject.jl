@@ -30,13 +30,13 @@ function define_ferroelectric_project()::Project
     project = define_project("Semiconductor and ferroelectric characterization")
 
     register_item!(project, :iv;
-        # `detect` and `read` receive a source item, whatever kind of source produced it. Reach it
-        # through the contract — `label`, `source_item_path` — rather than any one source's fields.
+        # `detect` and `read` receive a source item. A directory source gives a `SourceFile`, whose
+        # `filepath` is the path to read.
         detect = source_item -> endswith(label(source_item), "_iv.csv"),
         read = source_item -> begin
             parts = filename_parts(label(source_item))
             (
-                data=CSV.read(source_item_path(source_item), DataFrame),
+                data=CSV.read(source_item.filepath, DataFrame),
                 metadata=Dict(:chip => parts.chip, :device => parts.device),
             )
         end,
@@ -49,7 +49,7 @@ function define_ferroelectric_project()::Project
     register_item!(project, :pund;
         detect = source_item -> endswith(label(source_item), "_pund.csv"),
         read = source_item -> begin
-            table = CSV.read(source_item_path(source_item), DataFrame)
+            table = CSV.read(source_item.filepath, DataFrame)
             parts = filename_parts(label(source_item))
             (
                 data=table,

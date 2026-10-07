@@ -22,10 +22,10 @@ function analyze_cycle(table::DataFrame, metadata::Dict)::Dict{Symbol,Any}
 end
 
 register_item!(project, :cycles;
-    # `detect` and `read` receive a source item, whatever kind of source produced it. Reach it
-    # through the contract — `label`, `source_item_path` — rather than any one source's fields.
+    # `detect` and `read` receive a source item. A directory source gives a `SourceFile`, whose
+    # `filepath` is the path to read.
     detect = source_item -> endswith(label(source_item), "_fatigue.csv"),
-    read = source_item -> CSV.read(source_item_path(source_item), DataFrame),
+    read = source_item -> CSV.read(source_item.filepath, DataFrame),
     expand = (table::DataFrame, metadata::Dict) -> [
         (
             data=view(table, findall(==(cycle), table.cycle), :),

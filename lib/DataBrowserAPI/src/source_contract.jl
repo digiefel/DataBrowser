@@ -98,9 +98,3 @@ function label end
 function fingerprint end
 
 fingerprint(::AbstractDataSourceItem) = nothing
-
-"""Filesystem path for a source item, when one exists."""
-source_item_path(::AbstractDataSourceItem)::Union{Nothing,String} = nothing
-
-"""Timestamp for a source item, when one exists."""
-source_item_timestamp(::AbstractDataSourceItem) = nothing

@@ -21,7 +21,6 @@ using DataBrowserAPI:
     AbstractDataSource,
     AbstractDataSourceItem,
     AbstractProject,
-    source_item_path,
     @timed_dbg
 import DataBrowserAPI:
     analyze,

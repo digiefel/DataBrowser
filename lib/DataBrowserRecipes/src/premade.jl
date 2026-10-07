@@ -20,12 +20,11 @@ end
 
 """Parse one source item's file into a `DataFrame`."""
 function _read_delimited(source_item::AbstractDataSourceItem, options::NamedTuple)::DataFrame
-    path = source_item_path(source_item)
-    path === nothing && error(
-        "register_csv! needs a source item with a filesystem path, and " *
+    hasproperty(source_item, :filepath) || error(
+        "register_csv! needs a source item with a `filepath`, and " *
         "$(typeof(source_item)) has none; give that registration its own `read` callback",
     )
-    return CSV.read(path, DataFrame; options...)
+    return CSV.read(source_item.filepath, DataFrame; options...)
 end
 
 """
@@ -47,9 +46,9 @@ register_csv!(project, :sweep;
 ```
 
 Detection runs in registration order and the first match wins, so register narrower recipes before
-this one when several could claim the same file. Because detection and reading go through the
-generic source-item contract rather than any file type, this recipe works with any source whose
-items expose a path.
+this one when several could claim the same file. The file is read from the `filepath` of the
+source item, which a directory source provides; a source whose items have no `filepath` needs a
+registration with its own `read` callback.
 """
 function register_csv!(
     project::Project,

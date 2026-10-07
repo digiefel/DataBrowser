@@ -11,7 +11,6 @@ import DataBrowser:
     project_name,
     read,
     reconstruct,
-    source_item_path,
     items
 
 length(ARGS) == 1 || error("Usage: julia --project project.jl DATA_DIRECTORY")
@@ -42,7 +41,6 @@ end
 
 id(file::MicrographFile)::String = abspath(file.path)
 label(file::MicrographFile)::String = basename(file.path)
-source_item_path(file::MicrographFile)::String = file.path
 fingerprint(file::MicrographFile)::Float64 = file.modified
 
 # A typed project supplies its own collection levels too. `collection` returns `AbstractCollection`

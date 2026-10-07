@@ -1,10 +1,7 @@
 import CImGui as ig
 import CImGui.CSyntax: @c
 
-using DataBrowserAPI:
-    kind_label,
-    label,
-    source_item_path
+using DataBrowserAPI: kind_label, label
 import DataBrowserCore.Workspace
 
 """Render collection and item details for the visible workspace selection."""
@@ -58,10 +55,10 @@ function render_info_window(state::BrowserState)::Nothing
             ig.Separator()
             kind_text = kind_label(workspace.project, label(Workspace.valuetype(workspace, m)))
             ig.BulletText("Type: $(kind_text)")
-            ig.BulletText("Timestamp: $(_item_timestamp(workspace, m))")
             source_ref = Workspace.source_item_id(workspace, m)
             source_item = Workspace.source_item(workspace, m)
-            source_path = source_item === nothing ? nothing : source_item_path(source_item)
+            # A source item that is a file has a `filepath`, which the link opens.
+            source_path = hasproperty(source_item, :filepath) ? source_item.filepath : nothing
             if source_path !== nothing
                 ig.BulletText("Source item:")
                 ig.SameLine()

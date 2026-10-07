@@ -1,7 +1,7 @@
 using DataBrowserAnnotations
 
 import DataBrowserCore.Workspace
-using DataBrowserAPI: id, label, source_item_timestamp
+using DataBrowserAPI: id, label
 using DataBrowserCore.Catalogs: CollectionKey, ItemKey, ROOT
 
 const BAD_TAG_NAME = "bad"
@@ -168,15 +168,11 @@ function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     end
     return sort!(
         all_items;
-        by=item -> _item_timestamp(workspace, item),
-        lt=(left, right) -> left !== nothing && (right === nothing || left < right),
+        by=item -> get(Workspace.metadata(workspace, item), :timestamp, nothing),
+        # Items without a timestamp come last. Timestamps of different types keep their order.
+        lt=(left, right) -> left !== nothing &&
+            (right === nothing || (typeof(left) == typeof(right) && left < right)),
     )
-end
-
-"""The time of the source item that produced an item, when the source reported it and gives one."""
-function _item_timestamp(workspace::Workspace.Workspace, item::ItemKey)
-    source_item = Workspace.source_item(workspace, item)
-    return source_item === nothing ? nothing : source_item_timestamp(source_item)
 end
 
 """

@@ -3,11 +3,10 @@ using Test, DataBrowserRecipes, DataBrowserAPI
 
 struct RecipeSource <: AbstractDataSource end
 struct RecipeFile <: AbstractDataSourceItem
-    path::String
+    filepath::String
 end
-DataBrowserAPI.id(f::RecipeFile) = basename(f.path)
-DataBrowserAPI.label(f::RecipeFile) = basename(f.path)
-DataBrowserAPI.source_item_path(f::RecipeFile) = f.path
+DataBrowserAPI.id(f::RecipeFile) = basename(f.filepath)
+DataBrowserAPI.label(f::RecipeFile) = basename(f.filepath)
 
 @testset "registered callbacks implement the type API" begin
     project = define_project("recipe")
@@ -33,7 +32,7 @@ end
 @testset "CSV recipe uses the source-item contract" begin
     mktempdir() do dir
         file = RecipeFile(joinpath(dir, "sample.csv"))
-        write(file.path, "x,y\n1,2\n3,4\n")
+        write(file.filepath, "x,y\n1,2\n3,4\n")
         project = register_csv!(define_project("csv"))
         item = only(expand(project, file, read(project, RecipeSource(), file)))
         @test item_data(item).x == [1, 3]

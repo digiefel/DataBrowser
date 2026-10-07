@@ -17,8 +17,6 @@ import DataBrowserAPI:
     metadata,
     open_source,
     source_item_noun,
-    source_item_path,
-    source_item_timestamp,
     items,
     watch_source
 
@@ -65,7 +63,13 @@ function DirectorySource(
     )
 end
 
-"""One physical source file discovered inside a directory source."""
+"""
+One file found in a directory source.
+
+`filepath` is the absolute path, `filename` the name with its extension, and `relative_path` the
+path below the source root, which is also the `id` and the `label`. `timestamp` is the time read
+from the file name, or `nothing`; when present it is also the `:timestamp` metadata of the file.
+"""
 struct SourceFile <: AbstractDataSourceItem
     filepath::String
     filename::String
@@ -79,8 +83,6 @@ end
 id(file::SourceFile)::String = file.relative_path
 label(file::SourceFile)::String = file.relative_path
 fingerprint(file::SourceFile)::FileFingerprint = file.fingerprint
-source_item_path(file::SourceFile)::String = file.filepath
-source_item_timestamp(file::SourceFile)::Union{DateTime,Nothing} = file.timestamp
 function metadata(file::SourceFile)::Dict
     values = Dict{Symbol,Any}(:filename => file.filename)
     file.timestamp === nothing || (values[:timestamp] = file.timestamp)

@@ -19,8 +19,6 @@ using DataBrowserAPI:
     fingerprint,
     id,
     metadata,
-    source_item_path,
-    source_item_timestamp,
     label
 using DataBrowserAPI: @timed_dbg
 
