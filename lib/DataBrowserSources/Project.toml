@@ -12,7 +12,7 @@ Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 [compat]
 BetterFileWatching = "1.0.0"
 CancellationTokens = "2.3.0"
-julia = "1.12"
+julia = "1.13"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
