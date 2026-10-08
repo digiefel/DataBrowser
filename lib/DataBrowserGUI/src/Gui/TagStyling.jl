@@ -26,8 +26,9 @@ function _push_tag_text_style!(
 end
 
 """
-Draw one button per tag above the collection tree. A click steps the tag through shown, hidden and
-only: hidden hides its rows, only hides the items without it.
+Draw one button per tag above the collection tree, with the name of the tag. A click steps the tag
+through shown (no mark), hidden (a cross) and only (a check mark): hidden hides its rows, only
+hides the items without it.
 """
 function _render_tag_visibility!(state::BrowserState)::Nothing
     _tags_ready(state) || return nothing
@@ -36,12 +37,30 @@ function _render_tag_visibility!(state::BrowserState)::Nothing
     for tag in defined
         visibility = get(state.tag_visibility, tag.name, :shown)
         red, green, blue = Float32.(tag.color) ./ 255f0
-        ig.PushStyleColor(ig.ImGuiCol_Button, (red, green, blue, visibility == :hidden ? 0.15f0 : 0.55f0))
-        clicked = ig.SmallButton("$(tag.name): $visibility")
+        ig.PushStyleColor(ig.ImGuiCol_Button, (red, green, blue, visibility == :hidden ? 0.25f0 : 0.55f0))
+        # Trailing spaces leave room for the mark.
+        clicked = ig.SmallButton(visibility == :shown ? tag.name : "$(tag.name)   ##$(tag.name)")
         ig.PopStyleColor()
+        if visibility != :shown
+            # The mark is drawn in a square at the right end of the button.
+            corner = ig.GetItemRectMax()
+            size = ig.GetFontSize() * 0.6f0
+            right, bottom = corner.x - size * 0.5f0, corner.y - (ig.GetItemRectSize().y - size) / 2
+            left, top = right - size, bottom - size
+            draw_list, color = ig.GetWindowDrawList(), ig.GetColorU32(ig.ImGuiCol_Text)
+            if visibility == :hidden
+                ig.AddLine(draw_list, ig.ImVec2(left, top), ig.ImVec2(right, bottom), color, 1.5f0)
+                ig.AddLine(draw_list, ig.ImVec2(left, bottom), ig.ImVec2(right, top), color, 1.5f0)
+            else
+                ig.AddLine(draw_list, ig.ImVec2(left, top + size * 0.55f0), ig.ImVec2(left + size * 0.35f0, bottom), color, 1.5f0)
+                ig.AddLine(draw_list, ig.ImVec2(left + size * 0.35f0, bottom), ig.ImVec2(right, top), color, 1.5f0)
+            end
+        end
         if ig.BeginItemTooltip()
-            ig.TextUnformatted("Click to step through shown, hidden and only.\n" *
-                "hidden: rows with this tag are hidden.\nonly: items without this tag are hidden.")
+            ig.TextUnformatted(
+                visibility == :shown ? "Rows with this tag are shown. Click to hide them." :
+                visibility == :hidden ? "Rows with this tag are hidden. Click to show only items with this tag." :
+                "Only items with this tag are shown. Click to show everything.")
             ig.EndTooltip()
         end
         if clicked
@@ -55,8 +74,9 @@ function _render_tag_visibility!(state::BrowserState)::Nothing
 end
 
 """
-Draw the tags as entries of an open context menu. A click puts the tag on every key, or takes it
-off when every key has it. A tag that comes from a collection above cannot be taken off here.
+Draw the tags as entries of an open context menu, each in its colour, with a check mark when every
+key has the tag. A click puts the tag on every key, or takes it off when every key has it. A tag
+that comes from a collection above cannot be taken off here.
 """
 function _render_tag_menu!(
     state::BrowserState, keys::Vector{<:Union{ItemKey,CollectionKey}},
@@ -66,19 +86,24 @@ function _render_tag_menu!(
         return nothing
     end
     workspace = state.workspace::Workspace.Workspace
-    ig.SeparatorText("Tags")
+    ig.Separator()
     for tag in tags(workspace)
         own = all(key -> tag in tags(workspace, key; inherited=false), keys)
         from_above = !own && all(key -> tag in tags(workspace, key), keys) &&
             !any(key -> tag in tags(workspace, key; inherited=false), keys)
-        if from_above
-            ig.MenuItem("$(tag.name) (from a collection)", C_NULL, true, false)
-        elseif ig.MenuItem(tag.name, C_NULL, own)
-            own ? untag!(workspace, keys, tag) : tag!(workspace, keys, tag)
+        red, green, blue = Float32.(tag.color) ./ 255f0
+        ig.PushStyleColor(ig.ImGuiCol_Text, (red, green, blue, 1.0f0))
+        # A tag from a collection above shows its check mark and takes no click.
+        clicked = ig.MenuItem(tag.name, C_NULL, own || from_above, !from_above)
+        ig.PopStyleColor()
+        if from_above && ig.BeginItemTooltip()
+            ig.TextUnformatted("From a collection above. Take it off that collection.")
+            ig.EndTooltip()
         end
+        clicked && (own ? untag!(workspace, keys, tag) : tag!(workspace, keys, tag))
     end
     # TODO: choose the colour and the priority of a new tag here.
-    ig.SetNextItemWidth(ig.GetFontSize() * 10)
+    ig.SetNextItemWidth(max(ig.GetContentRegionAvail().x, ig.GetFontSize() * 10))
     if ig.InputTextWithHint("##new_tag", "New tag", state.new_tag, length(state.new_tag),
             ig.ImGuiInputTextFlags_EnterReturnsTrue)
         name = strip(unsafe_string(pointer(state.new_tag)))

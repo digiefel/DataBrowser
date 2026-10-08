@@ -351,7 +351,7 @@ Every change keeps `tags.txt` human-readable and recoverable independently of th
   menu of items and collections lists the tags, and a click toggles one. A field in the menu
   defines a new tag.
 - [x] Set the visibility of each tag with a button above the collection tree: shown, hidden, or
-  only.
+  only, marked on the button with nothing, a cross, or a check mark.
 - [ ] Edit the colour and the priority of a tag, and remove a tag, in the GUI.
 - [ ] Save the visibility of each tag with the view. With `only`, hide the collections that hold
   no item with the tag.
