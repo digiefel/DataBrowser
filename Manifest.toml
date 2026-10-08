@@ -149,7 +149,7 @@ uuid = "a11ddd67-7e33-4db9-a4a8-4453f6eb9e68"
 version = "0.1.0-alpha.1"
 
     [deps.DataBrowser.extensions]
-    DataBrowserGLMakieExt = "GLMakie"
+    DataBrowserGLMakieExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL"]
 
     [deps.DataBrowser.weakdeps]
     GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"

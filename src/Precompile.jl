@@ -39,7 +39,9 @@ function _precompile_workspace(use::Function, project)::Nothing
     pushfirst!(DEPOT_PATH, precompile_depot)
     workspace = nothing
     try
-        workspace = open_workspace(project, PRECOMPILE_FIXTURES)
+        # The browser saves its view beside the data, so the workspace opens a copy of the fixtures.
+        fixtures = cp(PRECOMPILE_FIXTURES, joinpath(precompile_depot, "fixtures"))
+        workspace = open_workspace(project, fixtures)
         Workspace.wait_workspace_idle!(workspace; timeout=45)
         records = collect(Workspace.items(workspace))
         isempty(records) || use(workspace, Workspace.materialize_items(workspace, records))
@@ -72,6 +74,20 @@ function _precompile_engine(
         state = Browser.BrowserState(workspace=workspace)
         Browser.current_status(state)
         Browser._project_visible_selection(state)
+        # Draw the browser with the items selected, in a hidden window. A machine without a
+        # display cannot create the window, and then only the code above is compiled.
+        try
+            session = open_browser(workspace; wait=false, window_start=:hidden)
+            wait_browser_ready(session)
+            select_items!(session, collect(Workspace.items(workspace)))
+            drawn = session.state.performance.frame
+            while session.state.performance.frame < drawn + 30 && !istaskdone(session.task)
+                sleep(0.01)
+            end
+            close_browser!(session)
+        catch error
+            @debug "The browser window was not drawn during precompilation" exception=error
+        end
     end
     return nothing
 end

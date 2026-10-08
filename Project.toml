@@ -47,7 +47,7 @@ DataBrowserSources = {path = "lib/DataBrowserSources"}
 SmoothData = {rev = "main", url = "https://github.com/dgfl-gh/SmoothData"}
 
 [extensions]
-DataBrowserGLMakieExt = "GLMakie"
+DataBrowserGLMakieExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL"]
 
 [compat]
 BetterFileWatching = "1.0.0"
