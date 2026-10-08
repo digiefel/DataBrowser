@@ -2,6 +2,7 @@ using DataBrowserAnnotations
 import CImGui as ig
 
 import DataBrowserCore.Workspace
+using DataBrowserAPI: MetadataDict
 using ..DataBrowserGUI: ItemTable
 
 """Saved tree controls from `databrowser.toml`."""
@@ -98,11 +99,15 @@ end
 
 """
 What the tree panel worked out about the collection tree. It is kept from frame to frame and
-replaced when `key` changes: the key covers the workspace and its generation, the tree filter and
-the tags.
+replaced when `key` changes: the key covers the workspace, the tree filter and the tags. It is also
+replaced when the workspace changed, at most once per `TREE_REFRESH_SECONDS`: reading it again
+costs time in proportion to the size of the tree, and a workspace at work changes in every frame.
 """
 mutable struct TreeCache
     key::UInt
+    # The generation of the workspace and the time when this was worked out.
+    generation::Int
+    built::Float64
     # The collections directly below each collection, in display order.
     children::Dict{Workspace.Catalogs.CollectionKey,Vector{Workspace.Catalogs.CollectionKey}}
     has_visible_leaf::Dict{Workspace.Catalogs.CollectionKey,Bool}
@@ -114,7 +119,12 @@ mutable struct TreeCache
     # The ids of the source items that are not read yet, each split at "/" and all sorted, so that
     # the source items below one folder follow each other.
     unread::Vector{Vector{String}}
+    # The path and the metadata of each collection that was drawn.
+    paths::Dict{Workspace.Catalogs.CollectionKey,Workspace.CollectionPath}
+    metadata::Dict{Workspace.Catalogs.CollectionKey,MetadataDict}
 end
+
+const TREE_REFRESH_SECONDS = 0.25
 
 """
 Runtime state owned by the browser.

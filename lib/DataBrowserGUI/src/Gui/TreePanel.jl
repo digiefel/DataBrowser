@@ -118,20 +118,22 @@ function _render_hierarchy_tree_panel(
         Symbol[]
     selected_collections, _, _ = _project_visible_selection(state)
 
-    # Walking the whole tree costs time in proportion to its size, so the result is kept until
-    # something it depends on changes.
     cache_key = workspace isa Workspace.Workspace ? hash((
-        objectid(workspace), Workspace.generation(workspace), _imgui_text_filter_text(filter_tree),
+        objectid(workspace), _imgui_text_filter_text(filter_tree),
         _show_bad_effective(state), state.tag_state === nothing ? 0 : hash(state.tag_state.assignments),
     )) : UInt(0)
+    generation = workspace isa Workspace.Workspace ? Workspace.generation(workspace) : 0
     cache = state.tree_cache
-    if cache === nothing || cache.key != cache_key
+    if cache === nothing || cache.key != cache_key ||
+       (cache.generation != generation && time() - cache.built >= TREE_REFRESH_SECONDS)
         cache = state.tree_cache = TreeCache(
-            cache_key, Dict{CollectionKey,Vector{CollectionKey}}(), Dict{CollectionKey,Bool}(),
+            cache_key, generation, time(),
+            Dict{CollectionKey,Vector{CollectionKey}}(), Dict{CollectionKey,Bool}(),
             Dict{CollectionKey,Bool}(), CollectionKey[], -1,
             workspace isa Workspace.Workspace ?
                 sort!([String.(split(id, '/')) for id in Workspace.unread(workspace)]) :
-                Vector{String}[])
+                Vector{String}[],
+            Dict{CollectionKey,Workspace.CollectionPath}(), Dict{CollectionKey,MetadataDict}())
     end
     unread = cache.unread
     visible_collections = cache.visible
@@ -374,7 +376,9 @@ function _render_hierarchy_tree_panel(
 
             children = child_records(collection_record)
             is_leaf = isempty(children)
-            collection_id_value = Workspace.path(workspace, collection_record)
+            collection_id_value = get!(cache.paths, collection_record) do
+                Workspace.path(workspace, collection_record)
+            end
             leaf_collection_id = is_leaf ? collection_id_value : nothing
             selected = is_leaf && (leaf_collection_id in selected_collection_id_set)
 
@@ -481,7 +485,9 @@ function _render_hierarchy_tree_panel(
             ig.SameLine()
             _render_readiness_mark!(readiness)
 
-            effective_collection_metadata = Workspace.metadata(workspace, collection_record)
+            effective_collection_metadata = get!(cache.metadata, collection_record) do
+                Workspace.metadata(workspace, collection_record)
+            end
             for (i, k) in enumerate(parameter_keys)
                 ig.TableSetColumnIndex(i)
                 if haskey(effective_collection_metadata, k)
