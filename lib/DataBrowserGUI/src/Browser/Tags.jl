@@ -155,7 +155,8 @@ end
 
 """
 Return every item belonging to the selected visible collections, ordered by the time of the source
-item that produced it. Items whose source item gives no time come last.
+item that produced it. Items whose source item gives no time come last. Items that the time does
+not order follow the natural order of their labels: `run2` comes before `run10`.
 """
 function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     workspace = state.workspace::Workspace.Workspace
@@ -175,13 +176,17 @@ function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     for collection in selected_collections
         append!(all_items, Workspace.items(workspace, collection))
     end
-    sort!(
-        all_items;
-        by=item -> get(Workspace.metadata(workspace, item), :timestamp, nothing),
-        # Items without a timestamp come last. Timestamps of different types keep their order.
-        lt=(left, right) -> left !== nothing &&
-            (right === nothing || (typeof(left) == typeof(right) && left < right)),
-    )
+    times = [get(Workspace.metadata(workspace, item), :timestamp, nothing) for item in all_items]
+    names = [Workspace.natural_key(label(workspace, item)) for item in all_items]
+    order = sort!(collect(eachindex(all_items)); lt=(left, right) -> begin
+        earlier, later = times[left], times[right]
+        # Items without a timestamp come last.
+        (earlier === nothing) != (later === nothing) && return later === nothing
+        earlier !== nothing && typeof(earlier) == typeof(later) && earlier != later &&
+            return earlier < later
+        return names[left] < names[right]
+    end)
+    all_items = all_items[order]
     state.item_list = ItemList(key, generation, time(), all_items)
     return all_items
 end
