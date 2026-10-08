@@ -296,6 +296,32 @@ end
     end
 end
 
+@testset "an item whose processed data is missing from the cache is processed again" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            project = EngineProject("engine", 0)
+            ws = W.open_workspace(project, EngineSource("source", 2, false); background_processing=true)
+            try
+                settled(ws)
+                W.delete_processed!(ws.cache.db, "1"; collection=0)
+            finally
+                W.close_workspace!(ws)
+            end
+            ws = W.open_workspace(project, EngineSource("source", 2, false); background_processing=true)
+            try
+                settled(ws)
+                @test item_data(only(W.materialize_items(ws, ["1"]))).x == [4]
+                @test isempty(W.workspace_status(ws).errors)
+            finally
+                W.close_workspace!(ws)
+            end
+        finally
+            popfirst!(DEPOT_PATH)
+        end
+    end
+end
+
 @testset "failure reuse and recovery (cache=$cache)" for cache in (true, false)
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
