@@ -287,7 +287,12 @@ function MakieFigure(
     # element under the mouse.
     if hovered && ig.IsKeyPressed(ig.ImGuiKey_I, false) && !unsafe_load(io.WantTextInput)
         inspector = scene.data_inspector
-        inspector === nothing ? Makie.DataInspector(scene) : delete!(scene, inspector)
+        # The tooltip takes the colors of the figure. Makie gives it the text color of the theme
+        # on a white background, which cannot be read in a dark theme.
+        background, text = scene.backgroundcolor[], Makie.theme(scene, :textcolor)[]
+        inspector === nothing ?
+            Makie.DataInspector(scene; backgroundcolor=background, strokecolor=background, outline_color=text) :
+            delete!(scene, inspector)
     end
 
     if hovered && ig.IsMouseClicked(1)
