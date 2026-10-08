@@ -12,11 +12,11 @@ using DataBrowserAPI:
     label
 using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
-using .MakieImguiIntegration: MakieFigure, destroy_figure!
+using .MakieImguiIntegration: MakieFigure, destroy_figure!, inspect!, plot_theme
 
 _plot_state(state::Browser.BrowserState) = plots_extension(state).plots
 
-const PLOT_HELP_TEXT = "Live follows the browser selection.\nDetach opens an independent plot window.\nExport saves the current figure.\nScroll zooms, drag zooms to a rectangle, right-drag pans, Ctrl-click resets limits.\nHold x or y to change that direction only.\nOn the ticks of one axis, scroll and drag change that axis only.\nThe i key shows or hides the values under the mouse."
+const PLOT_HELP_TEXT = "Live follows the browser selection.\nDetach opens an independent plot window.\nExport saves the current figure.\nScroll zooms, drag zooms to a rectangle, right-drag pans, Ctrl-click resets limits.\nHold x or y to change that direction only.\nOn the ticks of one axis, scroll and drag change that axis only.\nInspect, or the i key, shows the values under the mouse."
 
 """Return the stable embedded-Makie id for one plot view."""
 function _plot_makie_id(plots::PlotState, view::PlotViewState)::String
@@ -60,8 +60,11 @@ function draw_plot_view!(
         # @timed records each phase (time, allocs, ncalls) into the main-task tree;
         # the inner @timed_dbg feeds the dev-only engine profiler when enabled.
         items = Browser.@timed "plot_load" (@timed_dbg Workspace.materialize_items(workspace, records))
-        result = Browser.@timed "plot_setup" (@timed_dbg setup_plot(workspace, plot_kind, items))
-        Browser.@timed "plot_data" (@timed_dbg plot_data!(workspace, plot_kind, items, result))
+        result = Makie.with_theme(plot_theme(_plot_state(state).dark)) do
+            figure = Browser.@timed "plot_setup" (@timed_dbg setup_plot(workspace, plot_kind, items))
+            Browser.@timed "plot_data" (@timed_dbg plot_data!(workspace, plot_kind, items, figure))
+            figure
+        end
         result === nothing && error("Plot renderer returned no figure.")
         hasmethod(embed, Tuple{typeof(result),String}) ||
             error("No loaded plot backend can show a $(typeof(result))")
@@ -154,6 +157,13 @@ function render_plot_toolbar!(
         !can_detach && ig.EndDisabled()
     end
 
+    ig.SameLine()
+    inspector = view.inspector
+    @c(ig.Checkbox("Inspect##inspect_$(view.id)", &inspector)) && (view.inspector = inspector)
+    ig.SameLine()
+    dark = plots.dark
+    @c(ig.Checkbox("Dark##dark_$(view.id)", &dark)) && (plots.dark = dark)
+
     can_export = view.figure !== nothing
     ig.SameLine()
     !can_export && ig.BeginDisabled()
@@ -207,6 +217,12 @@ function render_plot_body!(
 
     if view.figure !== nothing
         makie_id = _plot_makie_id(plots, view)
+        # The i key does what the Inspect checkbox does, with the mouse over the plot window.
+        if ig.IsWindowHovered(ig.ImGuiHoveredFlags_ChildWindows) &&
+                ig.IsKeyPressed(ig.ImGuiKey_I, false) && !unsafe_load(ig.GetIO().WantTextInput)
+            view.inspector = !view.inspector
+        end
+        view.figure isa Figure && inspect!(view.figure, view.inspector)
         Browser.@timed "makie_fig" begin
             embed(view.figure, makie_id)
         end
@@ -285,6 +301,7 @@ function render_plot_view!(
             label(workspace.source),
             view.id,
             plot_kind_name(view.plot_kind),
+            plots.dark,
             [id(workspace, record) for record in records],
             Workspace.revision(workspace, records),
         )

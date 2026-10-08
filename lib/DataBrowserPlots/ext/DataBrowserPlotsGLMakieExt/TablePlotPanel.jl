@@ -7,7 +7,7 @@ const Browser = DataBrowserGUI.Browser
 
 using DataBrowserGUI: ItemTable, materialize_item_table
 import DataBrowserCore.Workspace
-using .MakieImguiIntegration: MakieFigure
+using .MakieImguiIntegration: MakieFigure, plot_theme
 
 function _column_combo!(
     label::String,
@@ -109,7 +109,8 @@ function _ensure_table_plot!(
 
     x_index = clamp(table_plot.x_column, 1, length(table.columns))
     y_index = clamp(table_plot.y_column, 1, length(table.columns))
-    plot_key = (table_plot.table_key, x_index, y_index)
+    dark = _plot_state(state).dark
+    plot_key = (table_plot.table_key, x_index, y_index, dark)
     table_plot.plot_key == plot_key && table_plot.figure !== nothing && return nothing
 
     x_col_name = table.columns[x_index]
@@ -123,10 +124,13 @@ function _ensure_table_plot!(
         return nothing
     end
 
-    fig = Figure(size=(600, 400))
-    ax = Axis(fig[1, 1], xlabel=x_col_name, ylabel=y_col_name, title="Table Plot")
-    lines!(ax, x_values, y_values; linewidth=1)
-    scatter!(ax, x_values, y_values; markersize=4)
+    fig = Makie.with_theme(plot_theme(dark)) do
+        fig = Figure(size=(600, 400))
+        ax = Axis(fig[1, 1], xlabel=x_col_name, ylabel=y_col_name, title="Table Plot")
+        lines!(ax, x_values, y_values; linewidth=1)
+        scatter!(ax, x_values, y_values; markersize=4)
+        fig
+    end
     table_plot.figure = fig
     table_plot.plot_key = plot_key
     table_plot.plot_error = ""

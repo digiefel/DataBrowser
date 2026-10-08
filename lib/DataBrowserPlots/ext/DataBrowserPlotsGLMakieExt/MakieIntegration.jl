@@ -283,18 +283,6 @@ function MakieFigure(
     scroll = hovered ? (unsafe_load(io.MouseWheelH), unsafe_load(io.MouseWheel)) : (0.0f0, 0.0f0)
     scroll != events.scroll[] && (events.scroll[] = scroll)
 
-    # The i key shows or hides the inspector of Makie: a tooltip with the values of the plot
-    # element under the mouse.
-    if hovered && ig.IsKeyPressed(ig.ImGuiKey_I, false) && !unsafe_load(io.WantTextInput)
-        inspector = scene.data_inspector
-        # The tooltip takes the colors of the figure. Makie gives it the text color of the theme
-        # on a white background, which cannot be read in a dark theme.
-        background, text = scene.backgroundcolor[], Makie.theme(scene, :textcolor)[]
-        inspector === nothing ?
-            Makie.DataInspector(scene; backgroundcolor=background, strokecolor=background, outline_color=text) :
-            delete!(scene, inspector)
-    end
-
     if hovered && ig.IsMouseClicked(1)
         imfigure.menu_blocked = unsafe_load(io.MouseCtrlLeftAsRightClick)
     elseif hovered && ig.IsMouseDragging(1)
@@ -313,19 +301,41 @@ function MakieFigure(
     return do_render
 end
 
-"""Return the Makie theme used by figures embedded in CImGui."""
-function _imgui_theme()::Makie.Attributes
-    theme = Makie.theme_light()
+"""
+The Makie theme of the figures in the browser, dark or light. Figures are created inside
+`Makie.with_theme(plot_theme(dark))`.
+"""
+function plot_theme(dark::Bool)::Makie.Attributes
+    theme = dark ? Makie.theme_dark() : Makie.theme_light()
+    theme.textcolor = dark ? :gray90 : :gray20
     theme.Legend.framevisible = true
     theme.Legend.padding = (5, 5, 5, 5)
+    dark && (theme.Legend.backgroundcolor = Makie.RGBAf(0, 0, 0, 0.75))
     theme.GLMakie = Makie.Attributes(fxaa=false)
 
     return theme
 end
 
+"""
+Show or hide the inspector of Makie on `figure`: a tooltip with the values of the plot element
+under the mouse.
+"""
+function inspect!(figure::Makie.Figure, shown::Bool)::Nothing
+    scene = Makie.get_scene(figure)
+    inspector = scene.data_inspector
+    if shown && inspector === nothing
+        # The tooltip takes the colors of the figure. Makie gives it the text color of the theme
+        # on a white background, which cannot be read in a dark theme.
+        background, text = scene.backgroundcolor[], Makie.theme(scene, :textcolor)[]
+        Makie.DataInspector(scene; backgroundcolor=background, strokecolor=background, outline_color=text)
+    elseif !shown && inspector !== nothing
+        delete!(scene, inspector)
+    end
+    return nothing
+end
+
 function __init__()::Nothing
     ig.atrenderexit(destroy_context!)
-    Makie.set_theme!(_imgui_theme())
     return nothing
 end
 
