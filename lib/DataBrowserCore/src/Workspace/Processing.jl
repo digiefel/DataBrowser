@@ -163,7 +163,7 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
         entries = map(expanded) do item
             holder = ROOT
             for (value, provided) in zip(item.collections, item.source_metadata)
-                holder = get!(catalog, holder, value)
+                holder = get!(catalog, holder, value; absent=undefined(workspace, value))
                 metadata!(catalog, holder, :source, provided)
                 holder in placed || (save!(workspace, holder); push!(placed, holder))
             end
@@ -473,16 +473,6 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
     cache = workspace.cache.db
     saved = workspace.collection_keys[job.key]
     items = members(workspace, job.key)
-    # A collection without `process` has no version of any item, and its items are not loaded.
-    if !has_stage(workspace.project, last(values(workspace, job.key)), COLLECTION_PROCESS)
-        @lock catalog.lock begin
-            finish!(catalog, job) || return nothing
-            foreach(item -> delete_processed!(cache, id(catalog, item); collection=saved), items)
-            workspace.changes[job.key] = Dict{ItemKey,MetadataDict}()
-            store_collection_process_result!(cache, saved, Dict{String,MetadataDict}())
-        end
-        return nothing
-    end
     inputs = versions(workspace, items; reader=(job.key, COLLECTION_PROCESS))
     # The metadata each input came with: what the collections below this one changed is included.
     given = map(items) do item
@@ -534,12 +524,9 @@ end
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_ANALYZE})::Nothing
     catalog = workspace.catalog
     value = last(values(workspace, job.key))
-    # A collection without `analyze` has no metadata from it, and its items are not loaded.
-    analysis = has_stage(workspace.project, value, COLLECTION_ANALYZE) ?
-        metadata_dict(analyze(
-            workspace.project, value,
-            versions(workspace, members(workspace, job.key); reader=(job.key, COLLECTION_ANALYZE)))) :
-        MetadataDict()
+    analysis = metadata_dict(analyze(
+        workspace.project, value,
+        versions(workspace, members(workspace, job.key); reader=(job.key, COLLECTION_ANALYZE))))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=analysis) || return nothing
         conflicts!(workspace, job.key, COLLECTION_ANALYZE, store_collection_metadata!(

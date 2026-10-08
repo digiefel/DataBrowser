@@ -2,10 +2,6 @@
 
 # Stages and jobs
 
-# TODO: absent stages. Only the root has them so far, and it has no parent that waits for it. An
-# absent stage should become fresh as soon as its inputs are fresh, once the project decides which
-# stages exist.
-
 """
 Write the status of one stage of a row that is not removed, and wake the tasks waiting for a
 request. The caller holds the lock.
@@ -225,9 +221,18 @@ priority moves to this one. The caller holds the lock.
 
 A status change queues jobs through `setindex!`. The other callers are those that change what is
 wanted or add a row: a new source item or collection, a request, and `take!`.
+
+An absent stage has no job. It turns fresh here as soon as its inputs allow it, so that the stages
+that read it can start.
 """
 function queue!(catalog::Catalog, key::RowKey, stage::PipelineStage)::Nothing
     stage = last(jobstages(key, stage))
+    old = status(catalog, key, stage)
+    if old.absent
+        old.validity != FRESH && !old.blocked && ready(catalog, key, stage) &&
+            (catalog[key, stage] = StageStatus(old; validity=FRESH))
+        return nothing
+    end
     # Checked first: priority walks every stage downstream.
     startable(catalog, key, stage) || return nothing
     rank = priority(catalog, key, stage)

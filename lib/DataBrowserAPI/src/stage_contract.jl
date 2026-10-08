@@ -146,7 +146,8 @@ analyze(::AbstractCollection, items::AbstractVector)::Dict = Dict()
     has_stage(collection, stage) -> Bool
 
 Whether `stage`, `COLLECTION_PROCESS` or `COLLECTION_ANALYZE`, is defined for `collection`. A
-workspace skips a stage that is not defined and does not load the items of the collection for it.
+workspace runs no job for a stage that is not defined, and shows no work in progress for it. It
+asks once for each collection, when it first finds the collection.
 
 The default answers from the methods: a stage is defined when a `process` or `analyze` method
 other than the defaults of this package applies to the collection. A project that decides in

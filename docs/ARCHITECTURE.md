@@ -185,9 +185,10 @@ the one of the outermost collection that changed it. The same holds for the meta
 the label that a collection's `process` changes: views, queries and the item list show them, and
 the outermost collection replaces the values of the collections below it.
 
-A collection stage that the project does not define for a collection is skipped: the items of the
-collection are not loaded for it. `has_stage(project, collection, stage)` decides, and by default
-answers from the `process` and `analyze` methods that apply to the collection.
+A collection stage that the project does not define for a collection has no job: nothing is queued
+or shown as in progress for it, and it counts as done once everything below the collection is done.
+`has_stage(project, collection, stage)` decides, and by default answers from the `process` and
+`analyze` methods that apply to the collection.
 
 It defines:
 

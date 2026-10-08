@@ -247,6 +247,11 @@ cache_key(workspace::Workspace, source::SourceKey)::Int64 =
 cache_key(workspace::Workspace, item::ItemKey)::Int64 =
     cache_key(workspace, Catalogs.source(workspace.catalog, item))
 
+"""The collection stages the project does not define for `value`. The catalog gives them no job."""
+undefined(workspace::Workspace, value::AbstractCollection)::Vector{PipelineStage} = PipelineStage[
+    stage for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
+    if !has_stage(workspace.project, value, stage)]
+
 """
 Save the row of a collection to the cache, under a new cache key when it has none. The caller holds
 the catalog lock.
@@ -626,7 +631,8 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     restored = Dict{Int64,CollectionKey}()
     for saved in index.collections
         above = saved.parent_key === nothing ? ROOT : restored[saved.parent_key]
-        collection = get!(catalog, above, reconstruct(saved.type, saved.id, saved.metadata))
+        value = reconstruct(saved.type, saved.id, saved.metadata)
+        collection = get!(catalog, above, value; absent=undefined(workspace, value))
         metadata!(catalog, collection, :source, saved.source_metadata)
         restored[saved.key] = collection
         workspace.collection_keys[collection] = saved.key

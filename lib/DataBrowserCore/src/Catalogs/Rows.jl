@@ -233,7 +233,7 @@ function add_stuck!(catalog::Catalog, collection::CollectionKey, count::Int)::No
     collections.stuck[collection.index] += count
     old = status(catalog, collection, COLLECTION_PROCESS)
     blocked = collections.stuck[collection.index] > 0
-    (old.absent || old.blocked == blocked) && return nothing
+    old.blocked == blocked && return nothing
     catalog[collection, COLLECTION_PROCESS] = StageStatus(old; blocked)
     return nothing
 end
@@ -290,9 +290,13 @@ The key of the collection `value` below `parent`, added when `parent` has none. 
 found by its collection type and its `id`, so two equal values below different parents are
 different collections. The catalog takes the label of a new collection from `value`, and keeps
 `metadata(value)` as the `:collection` layer of its metadata (see [`metadata!`](@ref)).
+`absent` lists the stages the project does not define for a new collection: they get no job.
 Throws an `ArgumentError` when `parent` does not exist.
 """
-function Base.get!(catalog::Catalog, parent::CollectionKey, value::AbstractCollection)::CollectionKey
+function Base.get!(
+    catalog::Catalog, parent::CollectionKey, value::AbstractCollection;
+    absent::Vector{PipelineStage}=PipelineStage[],
+)::CollectionKey
     @lock catalog.lock begin
         collections = catalog.collections
         parent in collections || throw(ArgumentError("the parent collection does not exist"))
@@ -305,6 +309,9 @@ function Base.get!(catalog::Catalog, parent::CollectionKey, value::AbstractColle
         if key === nothing
             push!(collections, entry[3], value_label, parent, typeof(value))
             key = CollectionKey(length(collections))
+            collections.status[key.index] = word(
+                StageStatus(; absent=COLLECTION_PROCESS in absent),
+                StageStatus(; absent=COLLECTION_ANALYZE in absent))
             push!(collections.children[parent.index], key)
             collections.not_fresh[parent.index] += 1
             collections.lookup[entry] = key
