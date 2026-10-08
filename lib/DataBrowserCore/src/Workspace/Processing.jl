@@ -265,23 +265,30 @@ end
 
 # Items
 
-"""Let `value` take what the workspace holds for `item`: its label, `metadata` and its collections."""
-adopted(workspace::Workspace, item::ItemKey, value::AbstractDataItem, metadata::MetadataDict) = adopt(
-    value, label(workspace, item), metadata, values(workspace, collection(workspace, item)))
+"""
+What the workspace holds for an item apart from its data and metadata: its id, its item type, its
+label and the values of its collections. One call reads them under one hold of the catalog lock,
+which every worker needs.
+"""
+function row(workspace::Workspace, item::ItemKey)
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        return (
+            id=id(catalog, item), type=valuetype(catalog, item), label=label(catalog, item),
+            collections=values(workspace, Catalogs.collection(catalog, item)))
+    end
+end
 
 """
-The item that `process` receives: rebuilt from the payload `expand` gave it, with the metadata of
-its collections and its source item. When the payload is gone, or the item type does not rebuild
-from a payload, `expand` runs again.
+The item that `process` receives: rebuilt from the payload `expand` gave it, with `given`, the
+metadata of its collections and its source item. `known` is the [`row`](@ref) of the item. When
+the payload is gone, or the item type does not rebuild from a payload, `expand` runs again.
 """
-function unprocessed(workspace::Workspace, item::ItemKey)::AbstractDataItem
-    catalog = workspace.catalog
-    given = metadata(workspace, item; through=SOURCE_EXPAND)
-    cached = only(read_payload(workspace.cache.db, [id(catalog, item)]; stage=SOURCE_EXPAND))
-    value = cached === nothing ? nothing :
-        reconstruct(valuetype(catalog, item), id(catalog, item), something(cached), given)
+function unprocessed(workspace::Workspace, item::ItemKey, known, given::MetadataDict)::AbstractDataItem
+    cached = only(read_payload(workspace.cache.db, [known.id]; stage=SOURCE_EXPAND))
+    value = cached === nothing ? nothing : reconstruct(known.type, known.id, something(cached), given)
     value === nothing && (value = expand_again(workspace, item))
-    return adopted(workspace, item, value, given)
+    return adopt(value, known.label, given, known.collections)
 end
 
 """Run `process` of the project on `input` and check what it returns."""
@@ -295,14 +302,15 @@ function processed(workspace::Workspace, input::AbstractDataItem)::AbstractDataI
 end
 
 """
-The item for one saved payload of a processed version of `item`, with `metadata`. When the item
-type does not rebuild from a payload, `expand` and `process` run again.
+The item for one saved payload of a processed version of `item`, with `delivered` as its metadata. `known` is the
+[`row`](@ref) of the item. When the item type does not rebuild from a payload, `expand` and
+`process` run again.
 """
-function rebuilt(workspace::Workspace, item::ItemKey, payload, metadata::MetadataDict)::AbstractDataItem
-    catalog = workspace.catalog
-    value = reconstruct(valuetype(catalog, item), id(catalog, item), payload, metadata)
-    value === nothing && (value = processed(workspace, unprocessed(workspace, item)))
-    return adopted(workspace, item, value, metadata)
+function rebuilt(workspace::Workspace, item::ItemKey, known, payload, delivered::MetadataDict)::AbstractDataItem
+    value = reconstruct(known.type, known.id, payload, delivered)
+    value === nothing && (value = processed(workspace, unprocessed(
+        workspace, item, known, metadata(workspace, item; through=SOURCE_EXPAND))))
+    return adopt(value, known.label, delivered, known.collections)
 end
 
 """Replace the label of an item in the catalog and the cache. The caller holds the catalog lock."""
@@ -322,19 +330,19 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     catalog = workspace.catalog
     cache = workspace.cache.db
     item = job.key
-    input = unprocessed(workspace, item)
-    output = processed(workspace, input)
-    given = metadata(workspace, item; through=SOURCE_EXPAND)
+    known, given, saved = @lock catalog.lock (
+        row(workspace, item), metadata(workspace, item; through=SOURCE_EXPAND), cache_key(workspace, item))
+    output = processed(workspace, unprocessed(workspace, item, known, given))
     delivered = merge(given, metadata_dict(metadata(output)))
     computed = MetadataDict(
         name => value for (name, value) in delivered
         if !haskey(given, name) || !isequal(given[name], value))
     # The results are saved outside the lock: saving takes time, and every other worker needs the
     # lock. A job that turns out not to be current drops the record that its result is ready.
-    item_id = id(catalog, item)
+    item_id = known.id
     dropped = String[]
     if iscurrent(catalog, job)
-        @timed_dbg store_processed!(cache, item_id, cache_key(workspace, item), item_data(output))
+        @timed_dbg store_processed!(cache, item_id, saved, item_data(output))
         store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, computed)
         dropped = store_item_metadata_layer!(cache, item_id, delivered)
     end
@@ -357,20 +365,19 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_ANALYZE})::Not
     cache = workspace.cache.db
     item = job.key
     input = only(versions(workspace, [item]; reader=(item, ITEM_ANALYZE)))
-    given = metadata(workspace, item; through=ITEM_PROCESS)
+    known, given, saved = @lock catalog.lock (
+        row(workspace, item), metadata(workspace, item; through=ITEM_PROCESS), cache_key(workspace, item))
     analysis = @timed_dbg "analyze" metadata_dict(analyze(workspace.project, input))
     delivered = merge(given, analysis)
     # An item type that does not rebuild from a payload keeps the item that analyze received.
-    analyzed = something(
-        reconstruct(valuetype(catalog, item), id(catalog, item), item_data(input), delivered),
-        input)
-    new_label = label(workspace.project, adopted(workspace, item, analyzed, delivered))
+    analyzed = something(reconstruct(known.type, known.id, item_data(input), delivered), input)
+    new_label = label(workspace.project, adopt(analyzed, known.label, delivered, known.collections))
     # Saved outside the lock, as in `process`.
-    item_id = id(catalog, item)
+    item_id = known.id
     dropped = String[]
     if iscurrent(catalog, job)
         store_item_stage_metadata!(cache, item_id, ITEM_ANALYZE, analysis)
-        dropped = store_item_metadata!(cache, item_id, cache_key(workspace, item), delivered)
+        dropped = store_item_metadata!(cache, item_id, saved, delivered)
     end
     @lock catalog.lock begin
         if finish!(catalog, job; metadata=analysis)
@@ -419,12 +426,12 @@ function versions(
 )::Vector{AbstractDataItem}
     catalog = workspace.catalog
     cache = workspace.cache.db
-    item_ids = String[id(workspace, item) for item in items]
     own = reader !== nothing && first(reader) isa ItemKey
     # For each item, the saved key of the collection whose version to read; 0 is the item's own.
-    chosen, given = @lock catalog.lock begin
+    known, chosen, given = @lock catalog.lock begin
+        known = [row(workspace, item) for item in items]
         chosen, given = Int64[], MetadataDict[]
-        for (item, item_id) in zip(items, item_ids)
+        for (item, item_id) in zip(items, getproperty.(known, :id))
             # The collections whose version and changes the reader may receive, from the top down.
             holders = own ? CollectionKey[] : ancestors(workspace, item)
             if !own && reader !== nothing
@@ -440,8 +447,9 @@ function versions(
             push!(chosen, version)
             push!(given, metadata(workspace, item; through=own ? ITEM_PROCESS : ITEM_ANALYZE, above=holders))
         end
-        chosen, given
+        known, chosen, given
     end
+    item_ids = String[getproperty.(known, :id)...]
     payloads = read_payload(cache, item_ids; collections=chosen)
     # A collection job that runs at the same time may have removed the version just chosen.
     for index in findall(isnothing, payloads)
@@ -450,8 +458,8 @@ function versions(
     missing = findfirst(isnothing, payloads)
     missing === nothing || error("The processed data of item '$(item_ids[missing])' is missing")
     return AbstractDataItem[
-        rebuilt(workspace, item, something(payload), metadata)
-        for (item, payload, metadata) in zip(items, payloads, given)]
+        rebuilt(workspace, item, facts, something(payload), metadata)
+        for (item, facts, payload, metadata) in zip(items, known, payloads, given)]
 end
 
 """
