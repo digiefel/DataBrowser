@@ -124,10 +124,10 @@ function _append_rows!(appender, seq::UInt32, rows::Int, columns::Tuple)::Nothin
         DuckDB.append(appender, seq)
         DuckDB.append(appender, UInt64(row_index))
         foreach(column -> DuckDB.append(appender, column[row_index]), columns)
-        DuckDB.end_row(appender)
-        # The loop allocates nothing, so without this the garbage collector, and with it every
-        # other thread, waits until all the rows are appended.
-        GC.safepoint()
+        # Ending a row sometimes writes the rows appended so far. As in `_run`, the garbage
+        # collector may run meanwhile.
+        @ccall gc_safe=true DuckDB.libduckdb.duckdb_appender_end_row(
+            appender.handle::DuckDB.duckdb_appender)::DuckDB.duckdb_state
     end
     return nothing
 end
