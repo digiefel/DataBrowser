@@ -283,6 +283,13 @@ function MakieFigure(
     scroll = hovered ? (unsafe_load(io.MouseWheelH), unsafe_load(io.MouseWheel)) : (0.0f0, 0.0f0)
     scroll != events.scroll[] && (events.scroll[] = scroll)
 
+    # The i key shows or hides the inspector of Makie: a tooltip with the values of the plot
+    # element under the mouse.
+    if hovered && ig.IsKeyPressed(ig.ImGuiKey_I, false) && !unsafe_load(io.WantTextInput)
+        inspector = scene.data_inspector
+        inspector === nothing ? Makie.DataInspector(scene) : delete!(scene, inspector)
+    end
+
     if hovered && ig.IsMouseClicked(1)
         imfigure.menu_blocked = unsafe_load(io.MouseCtrlLeftAsRightClick)
     elseif hovered && ig.IsMouseDragging(1)

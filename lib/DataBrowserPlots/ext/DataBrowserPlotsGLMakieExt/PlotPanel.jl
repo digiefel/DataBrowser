@@ -16,7 +16,7 @@ using .MakieImguiIntegration: MakieFigure, destroy_figure!
 
 _plot_state(state::Browser.BrowserState) = plots_extension(state).plots
 
-const PLOT_HELP_TEXT = "Live follows the browser selection.\nDetach opens an independent plot window.\nExport saves the current figure.\nScroll zooms, drag zooms to a rectangle, right-drag pans, Ctrl-click resets limits.\nHold x or y to change that direction only.\nOn the ticks of one axis, scroll and drag change that axis only."
+const PLOT_HELP_TEXT = "Live follows the browser selection.\nDetach opens an independent plot window.\nExport saves the current figure.\nScroll zooms, drag zooms to a rectangle, right-drag pans, Ctrl-click resets limits.\nHold x or y to change that direction only.\nOn the ticks of one axis, scroll and drag change that axis only.\nThe i key shows or hides the values under the mouse."
 
 """Return the stable embedded-Makie id for one plot view."""
 function _plot_makie_id(plots::PlotState, view::PlotViewState)::String
