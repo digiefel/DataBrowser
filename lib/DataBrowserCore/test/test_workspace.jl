@@ -438,6 +438,7 @@ end
             table = DataFrame(ws, items(ws, Tag("leaky")))
             @test table.id == ["a"] && table.tags == [["bad", "leaky"]]
             @test size(DataFrame(ws), 1) == 2
+            @test DataFrame(ws, first(W.ancestors(ws, a))).id == ["a", "b"]
             @test items(ws, !Tag("leaky")) == [b]
             untag!(ws, [a, b], "leaky")
             @test names(tags(ws, a)) == ["bad"]

@@ -413,9 +413,9 @@ on it with a few verbs.
 - [ ] Save a figure as PDF through a CairoMakie extension of `DataBrowserPlots`.
 - [x] Build a tidy table of items with `DataFrame(workspace)` and `DataFrame(workspace, items)`,
   through an extension that loads with DataFrames: one row per item, with the id, the label, the
-  collection, the tags, and one column per metadata field.
-- [ ] Tidy table: add the item type of each item, one column per collection level, and the items below
-  a collection with `DataFrame(workspace, collection)`.
+  item type, the collection, the tags, and one column per metadata field. `DataFrame(workspace,
+  collection)` gives the items in and below a collection.
+- [ ] Tidy table: one column per collection level.
 - [ ] Move GUI actions onto those operations and keep GUI-only state limited to rendering and local
   interaction.
 - [ ] Make repeated project setup, workspace operations, and view changes idempotent where users
