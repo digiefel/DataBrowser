@@ -161,8 +161,12 @@ function render_plot_toolbar!(
     inspector = view.inspector
     @c(ig.Checkbox("Inspect##inspect_$(view.id)", &inspector)) && (view.inspector = inspector)
     ig.SameLine()
-    dark = plots.dark
-    @c(ig.Checkbox("Dark##dark_$(view.id)", &dark)) && (plots.dark = dark)
+    # The button names the theme in use and switches to the other one.
+    ig.Button((plots.dark ? "Dark" : "Light") * "###theme_$(view.id)") && (plots.dark = !plots.dark)
+    if ig.BeginItemTooltip()
+        ig.TextUnformatted(plots.dark ? "Switch to the light theme" : "Switch to the dark theme")
+        ig.EndTooltip()
+    end
 
     can_export = view.figure !== nothing
     ig.SameLine()
