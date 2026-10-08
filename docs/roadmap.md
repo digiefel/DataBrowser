@@ -385,7 +385,19 @@ Give Julia code and the GUI the same application capabilities through ordinary p
 The API covers operations on projects, workspaces, selections, queries, views, and background work;
 the GUI becomes one caller of those operations rather than a second implementation.
 
+The measure of success: a user who cannot read the source of the package or of the project can do
+from the REPL everything the GUI allows. They find out what exists by asking the workspace, and act
+on it with a few verbs.
+
 - [ ] Define the public operations needed to drive a workspace from Julia without browser state.
+- [ ] Let the workspace list what it holds: the item kinds, the metadata fields of a kind, the
+  collections, the tags, and the plots registered for a set of items. Each prints readably in the
+  REPL.
+- [ ] Find items with one call that filters by kind, metadata, and tag, and sorts by a metadata
+  field.
+- [ ] Draw a registered plot with one call that takes its label and the items and returns the
+  figure the GUI shows.
+- [ ] Open a project from a script without opening the browser window.
 - [ ] Move GUI actions onto those operations and keep GUI-only state limited to rendering and local
   interaction.
 - [ ] Make repeated project setup, workspace operations, and view changes idempotent where users
