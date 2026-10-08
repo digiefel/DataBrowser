@@ -3,6 +3,8 @@
 
 """Start the workers that run the jobs of every stage."""
 function start_workers!(workspace::Workspace)::Nothing
+    Base.Threads.nthreads() == 1 && !Base.generating_output() && @warn "Julia runs with one worker thread, so items are \
+        processed one at a time. Start Julia with `--threads=auto` to use every core." maxlog=1
     for _ in 1:max(2, Base.Threads.nthreads())
         push!(workspace.workers, Base.Threads.@spawn work!(workspace))
     end
