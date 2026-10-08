@@ -482,19 +482,16 @@ function _render_workspace_updating!()::Nothing
 end
 
 """
-Move Julia's libuv event loop off the GLFW sticky thread when the runtime supports it.
+Give Julia's I/O event loop (libuv) its own thread, once per process.
 
-The browser render loop is pinned to thread 1 (the `:interactive` pool tid when that pool exists).
-Julia historically also ran libuv there ([JuliaLang/julia#50643](https://github.com/JuliaLang/julia/issues/50643)).
-A busy `PollEvents` UI loop then delays IO completions, so pipeline workers that read source files
-starve and GUI source throughput collapses versus headless. Julia 1.12's
-`Base.Experimental.make_io_thread()` gives libuv its own thread; call it before the render loop starts.
+The render loop of the browser is pinned to thread 1, where Julia also runs its I/O event loop
+([JuliaLang/julia#50643](https://github.com/JuliaLang/julia/issues/50643)). A busy render loop
+then delays I/O completions, and the workers that read source files slow down. Call
+`DEDICATED_IO_THREAD()` before the render loop starts.
 """
-function _ensure_dedicated_io_thread!()::Nothing
-    if isdefined(Base.Experimental, :make_io_thread)
-        Base.Experimental.make_io_thread()
-    end
-    return nothing
+const DEDICATED_IO_THREAD = Base.OncePerProcess{Nothing}() do
+    Base.Experimental.make_io_thread()
+    nothing
 end
 
 """
@@ -512,7 +509,7 @@ function _run_browser(
 )
     exit_after_frames === nothing || exit_after_frames > 0 ||
         error("exit_after_frames must be positive when provided; got $exit_after_frames")
-    _ensure_dedicated_io_thread!()
+    DEDICATED_IO_THREAD()
     _set_browser_window_hints(window_start)
     first_frame       = Ref(true)
     setup_layout      = Ref(true)
