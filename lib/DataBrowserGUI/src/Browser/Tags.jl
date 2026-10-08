@@ -8,17 +8,16 @@ const BAD_TAG_NAME = "bad"
 const BAD_TAG_COLOR = (UInt8(0xff), UInt8(0x30), UInt8(0x30))
 const BAD_TAG_PRIORITY = 100
 
+"""Return the folder that holds `tags.txt`: the source root, or `""` for a source without one."""
+function _annotation_root(workspace::Workspace.Workspace)::String
+    return hasproperty(workspace.source, :root_path) ? workspace.source.root_path : ""
+end
+
 """
 Load tags for one source root.
 
 Parse or I/O failures leave tags unavailable but keep bad items visible.
 """
-function _annotation_root(workspace::Workspace.Workspace)::String
-    root = dirname(workspace.cache.identity.cache_path)
-    mkpath(root)
-    return root
-end
-
 function _load_tag_state_for_root!(
     state::BrowserState,
     root_path::String,

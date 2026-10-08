@@ -301,8 +301,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
   reported as "already watching".
 - [ ] `metadata.txt`: decide whether values may be quoted; validate metadata value types at parse
   time instead of failing downstream.
-- [ ] Annotations live in the project root. The GUI currently derives the annotation root from the
-  cache path under `DEPOT_PATH` (`Browser/Operations.jl:23-26`), against the vision. The GUI uses
+- [x] `tags.txt` lives in the source root, as the vision states. The GUI read it from the cache
+  folder under `DEPOT_PATH`.
+- [ ] The GUI uses
   `item_annotation_key`/`ancestor_annotation_keys` instead of rebuilding keys; enforce or drop the
   "item ids and collection paths never overlap" claim; one parse-error type for the three stores.
 - [x] Profiling: sampling profiler API and `process_rss_bytes` removed; TimerOutputs is the profiler.
@@ -397,7 +398,7 @@ on it with a few verbs.
   field.
 - [ ] Draw a registered plot with one call that takes its label and the items and returns the
   figure the GUI shows.
-- [ ] Open a project from a script without opening the browser window.
+- [ ] Save a figure as PDF through a CairoMakie extension of `DataBrowserPlots`.
 - [ ] Move GUI actions onto those operations and keep GUI-only state limited to rendering and local
   interaction.
 - [ ] Make repeated project setup, workspace operations, and view changes idempotent where users
