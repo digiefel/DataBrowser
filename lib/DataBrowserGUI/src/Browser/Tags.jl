@@ -198,7 +198,7 @@ function _ensure_bad_catalog_entry!(
 )::Nothing
     any(t -> t.name == BAD_TAG_NAME, tag_state.catalog) && return
     pushfirst!(tag_state.catalog,
-        DataBrowserAnnotations.Tags.TagDef(BAD_TAG_NAME, BAD_TAG_COLOR, BAD_TAG_PRIORITY))
+        DataBrowserAnnotations.Tags.Tag(BAD_TAG_NAME, BAD_TAG_COLOR, BAD_TAG_PRIORITY))
     return nothing
 end
 

@@ -159,7 +159,7 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
 
         @testset "effective inheritance" begin
             state = Annotations.Tags.TagState(
-                Annotations.Tags.TagDef[],
+                Annotations.Tags.Tag[],
                 Dict{String,Set{String}}(
                     "ChipA" => Set(["bad"]),
                     "ChipA/SiteVI/D1" => Set(["todo"]),
@@ -175,9 +175,9 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
 
         @testset "dominant_color priority" begin
             catalog = [
-                Annotations.Tags.TagDef("low", (0x10, 0x10, 0x10), 1),
-                Annotations.Tags.TagDef("hi", (0xff, 0x00, 0x00), 100),
-                Annotations.Tags.TagDef("mid", (0x80, 0x80, 0x80), 50),
+                Annotations.Tags.Tag("low"; color="101010", priority=1),
+                Annotations.Tags.Tag("hi"; color="ff0000", priority=100),
+                Annotations.Tags.Tag("mid"; priority=50),
             ]
             state = Annotations.Tags.TagState(catalog, Dict{String,Set{String}}())
             @test Annotations.Tags.dominant_color(state, Set(["low", "hi", "mid"])) ==

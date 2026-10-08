@@ -25,7 +25,7 @@ module Tags
 
 using ..DataBrowserAnnotations: AnnotationKey, collection_annotation_key
 
-export TagDef, TagState, load, save, effective, dominant_color,
+export Tag, TagState, load, save, effective, dominant_color,
        tags_path, TAGS_FILENAME
 
 const TAGS_FILENAME = "tags.txt"
@@ -33,21 +33,34 @@ const TAGS_FILENAME = "tags.txt"
 tags_path(root::AbstractString) = joinpath(String(root), TAGS_FILENAME)
 
 """
-    TagDef(name, color, priority)
+    Tag(name; color="808080", priority=0)
 
-A single catalog entry. `color` is a `(r, g, b)` tuple of bytes;
-`priority` is an integer (higher wins when multiple tags apply).
+A label that the user puts on items and collections, for example `Tag("bad")`.
+
+The name identifies the tag. `color` is six hexadecimal digits, and is the colour of tagged rows
+in the browser. When several tags apply to one row, the tag with the highest `priority` gives the
+colour.
 """
-struct TagDef
+struct Tag
     name::String
     color::NTuple{3,UInt8}
     priority::Int
 end
 
+function Tag(name::AbstractString; color::AbstractString="808080", priority::Integer=0)
+    digits = lstrip(color, '#')
+    length(digits) == 6 && all(isxdigit, digits) ||
+        throw(ArgumentError("a tag colour is six hexadecimal digits, got \"$color\""))
+    return Tag(name, ntuple(i -> parse(UInt8, digits[2i-1:2i]; base=16), 3), priority)
+end
+
+Base.show(io::IO, tag::Tag) =
+    print(io, "Tag(\"", tag.name, "\"; color=\"", _format_color(tag.color), "\", priority=", tag.priority, ")")
+
 """
     TagState
 
-Catalog of `TagDef`s plus a single `assignments` map.
+Catalog of `Tag`s plus a single `assignments` map.
 
 Keys are [`AnnotationKey`](@ref) values — either collection paths or item ids.
 The two namespaces never overlap.
@@ -56,11 +69,11 @@ Only explicitly attached tags are stored; inheritance is applied at lookup time
 via `effective`.
 """
 struct TagState
-    catalog::Vector{TagDef}
+    catalog::Vector{Tag}
     assignments::Dict{AnnotationKey,Set{String}}
 end
 
-TagState() = TagState(TagDef[], Dict{AnnotationKey,Set{String}}())
+TagState() = TagState(Tag[], Dict{AnnotationKey,Set{String}}())
 
 struct TagsParseError <: Exception
     path::String
@@ -95,7 +108,7 @@ end
 function load(root::AbstractString)::TagState
     path = tags_path(root)
 
-    catalog = TagDef[]
+    catalog = Tag[]
     assignments = Dict{AnnotationKey,Set{String}}()
 
     if isfile(path)
@@ -126,7 +139,7 @@ function load(root::AbstractString)::TagState
                 priority = tryparse(Int, fields[3])
                 priority === nothing && throw(TagsParseError(path, line_number,
                     "bad priority '$(fields[3])'"))
-                push!(catalog, TagDef(name, color, priority))
+                push!(catalog, Tag(name, color, priority))
             elseif section == :assignments
                 length(fields) == 2 || throw(TagsParseError(path, line_number,
                     "expected '<key>\\t<tag_name>'"))
@@ -215,7 +228,7 @@ contains no catalog matches.
 """
 function dominant_color(state::TagState, effective_tags)::Union{Nothing,NTuple{3,UInt8}}
     isempty(effective_tags) && return nothing
-    best::Union{Nothing,TagDef} = nothing
+    best::Union{Nothing,Tag} = nothing
     for tag in state.catalog
         in(tag.name, effective_tags) || continue
         if best === nothing || tag.priority > best.priority
