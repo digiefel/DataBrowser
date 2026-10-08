@@ -798,12 +798,17 @@ function render_selection_window(state::BrowserState)::Nothing
     if ig.Begin("Hierarchy", C_NULL, ig.ImGuiWindowFlags_MenuBar)
         render_menu_bar(state)
         ig.Columns(2, "main_layout")
-        @timed "collection_tree" begin
-            _render_hierarchy_tree_panel(state, filter_tree)
-        end
-        ig.NextColumn()
-        @timed "item_panel" begin
-            _render_items_panel(state, filter_item)
+        # Both panels read many rows of the catalog. Holding its lock for the two panels keeps them
+        # from waiting for the workers at every row.
+        workspace = state.workspace
+        @lock (workspace isa Workspace.Workspace ? workspace.catalog.lock : ReentrantLock()) begin
+            @timed "collection_tree" begin
+                _render_hierarchy_tree_panel(state, filter_tree)
+            end
+            ig.NextColumn()
+            @timed "item_panel" begin
+                _render_items_panel(state, filter_item)
+            end
         end
     end
     ig.End()
