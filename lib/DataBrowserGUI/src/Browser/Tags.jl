@@ -3,23 +3,23 @@ import DataBrowserCore.Workspace: Tag, tags, tag!, untag!
 using DataBrowserAPI: id, label
 using DataBrowserCore.Catalogs: CollectionKey, ItemKey, ROOT
 
-# The tag behind "Mark Bad" and "Show Bad". The browser defines it in a workspace on first use.
-const BAD_TAG = Tag("bad"; color="ff3030", priority=100)
-
 """Whether the workspace read its tags; they cannot be shown or changed otherwise."""
 _tags_ready(state::BrowserState)::Bool =
     state.workspace isa Workspace.Workspace && isempty(state.workspace.tags.error)
 
 """
-Return whether bad-tagged items should be visible in the current UI state.
-Bad items stay visible when tags cannot be loaded, so missing tag metadata never hides data.
+Return whether an item or collection remains visible under the visibility chosen for each tag.
+Everything stays visible when tags cannot be loaded, so a broken `tags.txt` never hides data.
 """
-_show_bad_effective(state::BrowserState)::Bool = state.show_bad || !_tags_ready(state)
-
-"""Return whether an item or collection remains visible after applying the bad-tag filter."""
 function _is_visible(state::BrowserState, key::Union{ItemKey,CollectionKey})::Bool
-    _show_bad_effective(state) && return true
-    return !any(tag -> tag.name == BAD_TAG.name, tags(state.workspace::Workspace.Workspace, key))
+    visibility = state.tag_visibility
+    (isempty(visibility) || !_tags_ready(state)) && return true
+    found = tags(state.workspace::Workspace.Workspace, key)
+    any(tag -> get(visibility, tag.name, :shown) == :hidden, found) && return false
+    # TODO: `:only` filters items; a collection without any such item stays in the tree.
+    key isa ItemKey && :only in values(visibility) &&
+        return any(tag -> get(visibility, tag.name, :shown) == :only, found)
+    return true
 end
 
 """
@@ -71,7 +71,7 @@ not order follow the natural order of their labels: `run2` comes before `run10`.
 function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     workspace = state.workspace::Workspace.Workspace
     key = hash((
-        objectid(workspace), workspace.selection.collections, _show_bad_effective(state),
+        objectid(workspace), workspace.selection.collections, hash(state.tag_visibility),
         workspace.tags.revision))
     generation = Workspace.generation(workspace)
     list = state.item_list
@@ -99,19 +99,6 @@ function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     all_items = all_items[order]
     state.item_list = ItemList(key, generation, time(), all_items)
     return all_items
-end
-
-"""Put the bad tag on items or collections, or take it off, and define it on first use."""
-function _set_bad!(state::BrowserState, keys::Vector{<:Union{ItemKey,CollectionKey}}, bad::Bool)::Nothing
-    workspace = state.workspace::Workspace.Workspace
-    defined = any(tag -> tag.name == BAD_TAG.name, tags(workspace))
-    if bad
-        defined || tag!(workspace, BAD_TAG)
-        tag!(workspace, keys, BAD_TAG)
-    elseif defined
-        untag!(workspace, keys, BAD_TAG)
-    end
-    return nothing
 end
 
 """Apply a context-menu action to the selection when the clicked item belongs to it."""

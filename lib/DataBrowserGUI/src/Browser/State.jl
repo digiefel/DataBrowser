@@ -158,7 +158,11 @@ Base.@kwdef mutable struct BrowserState
     reset_project_filters::Bool = false
     scroll_to_collection::Union{Nothing,Workspace.CollectionPath} = nothing
     scroll_to_item_id::Union{Nothing,String} = nothing
-    show_bad::Bool = true
+    # How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,
+    # `:only` hides the items without it.
+    tag_visibility::Dict{String,Symbol} = Dict{String,Symbol}()
+    # The text typed in the "New tag" field of the tag menu.
+    new_tag::Vector{UInt8} = zeros(UInt8, 64)
     show_project_window::Bool = false
     show_performance_window::Bool = false
     show_imgui_metrics::Bool = false

@@ -347,7 +347,14 @@ Every change keeps `tags.txt` human-readable and recoverable independently of th
 - [x] Find the items with or without a tag: `items(workspace, Tag("bad"))` and
   `items(workspace, !Tag("bad"))`.
 - [ ] A tag can leave its items out of collection `process` and `analyze`.
-- [ ] Provide GUI controls for the same operations, including multi-selection.
+- [x] Provide GUI controls to assign and unassign tags, including multi-selection: the context
+  menu of items and collections lists the tags, and a click toggles one. A field in the menu
+  defines a new tag.
+- [x] Set the visibility of each tag with a button above the collection tree: shown, hidden, or
+  only.
+- [ ] Edit the colour and the priority of a tag, and remove a tag, in the GUI.
+- [ ] Save the visibility of each tag with the view. With `only`, hide the collections that hold
+  no item with the tag.
 - [ ] Apply tags consistently to colours, visibility, and the selected item set.
 
 ## 0.4.0 — Notes

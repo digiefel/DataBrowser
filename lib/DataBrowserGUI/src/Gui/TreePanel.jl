@@ -89,7 +89,7 @@ function _visible_items(
     items::Vector{ItemKey},
     filter_item::Ptr{ig.lib.ImGuiTextFilter},
 )::Vector{ItemKey}
-    if _show_bad_effective(state) && !ig.ImGuiTextFilter_IsActive(filter_item)
+    if isempty(state.tag_visibility) && !ig.ImGuiTextFilter_IsActive(filter_item)
         return items
     end
 
@@ -111,6 +111,7 @@ function _render_hierarchy_tree_panel(
     ig.BeginChild("Tree", (0, 0), true)
     ig.SeparatorText("Collection Selection")
     _render_tag_state_error!(state)
+    _render_tag_visibility!(state)
 
     workspace = state.workspace
     parameter_keys = workspace isa Workspace.Workspace ?
@@ -120,7 +121,7 @@ function _render_hierarchy_tree_panel(
 
     cache_key = workspace isa Workspace.Workspace ? hash((
         objectid(workspace), _imgui_text_filter_text(filter_tree),
-        _show_bad_effective(state), workspace.tags.revision,
+        hash(state.tag_visibility), workspace.tags.revision,
     )) : UInt(0)
     generation = workspace isa Workspace.Workspace ? Workspace.generation(workspace) : 0
     cache = state.tree_cache
@@ -456,20 +457,7 @@ function _render_hierarchy_tree_panel(
                 selected_count = length(target_collections)
                 selected_count > 1 && ig.TextDisabled("Apply to $selected_count collections")
 
-                editable = _tags_ready(state)
-                if !editable
-                    ig.TextDisabled("Fix tags.txt and rescan to edit")
-                    ig.Separator()
-                end
-
-                !editable && ig.BeginDisabled()
-                if ig.MenuItem("Mark Bad")
-                    _set_bad!(state, target_collections, true)
-                end
-                if ig.MenuItem("Unmark Bad")
-                    _set_bad!(state, target_collections, false)
-                end
-                !editable && ig.EndDisabled()
+                _render_tag_menu!(state, target_collections)
                 ig.EndPopup()
             end
 
@@ -731,20 +719,7 @@ function _render_items_panel(
                                 )
                             end
 
-                            editable = _tags_ready(state)
-                            if !editable
-                                ig.TextDisabled("Fix tags.txt and rescan to edit")
-                                ig.Separator()
-                            end
-
-                            !editable && ig.BeginDisabled()
-                            if ig.MenuItem("Mark Bad")
-                                _set_bad!(state, target_items, true)
-                            end
-                            if ig.MenuItem("Unmark Bad")
-                                _set_bad!(state, target_items, false)
-                            end
-                            !editable && ig.EndDisabled()
+                            _render_tag_menu!(state, target_items)
                             ig.EndPopup()
                         end
                         ig.PopID()

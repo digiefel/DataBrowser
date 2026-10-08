@@ -27,25 +27,29 @@ end
 
 """
     tags(workspace) -> Vector{Tag}
-    tags(workspace, key) -> Vector{Tag}
+    tags(workspace, key; inherited=true) -> Vector{Tag}
 
 The tags defined in a workspace, or the tags of one item or collection.
 
 The tags of an item or collection are its own and those of every collection above it, with the
-highest priority first.
+highest priority first. With `inherited=false` they are only its own.
 """
 tags(workspace::Workspace)::Vector{Tag} = copy(workspace.tags.state.catalog)
 
-function tags(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Vector{Tag}
+function tags(
+    workspace::Workspace, key::Union{ItemKey,CollectionKey}; inherited::Bool=true,
+)::Vector{Tag}
     assignments = workspace.tags.state.assignments
     isempty(assignments) && return Tag[]
     names = Set{String}()
-    path = ""
-    for collection in (key isa CollectionKey ? [ancestors(workspace, key); key] : ancestors(workspace, key))
-        path = isempty(path) ? label(workspace, collection) : string(path, '/', label(workspace, collection))
-        union!(names, get(assignments, path, ()))
+    if inherited
+        path = ""
+        for collection in ancestors(workspace, key)
+            path = isempty(path) ? label(workspace, collection) : string(path, '/', label(workspace, collection))
+            union!(names, get(assignments, path, ()))
+        end
     end
-    key isa ItemKey && union!(names, get(assignments, id(workspace, key), ()))
+    union!(names, get(assignments, tag_key(workspace, key), ()))
     isempty(names) && return Tag[]
     return sort!(filter(tag -> tag.name in names, workspace.tags.state.catalog); by=tag -> -tag.priority)
 end
