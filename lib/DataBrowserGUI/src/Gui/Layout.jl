@@ -419,11 +419,11 @@ function _set_browser_window_hints(window_start::Symbol)::Nothing
     if window_start == :normal
         GLFW.WindowHint(GLFW.FOCUSED, true)
         GLFW.WindowHint(GLFW.FOCUS_ON_SHOW, true)
-    elseif window_start == :background
+    elseif window_start in (:background, :hidden)
         GLFW.WindowHint(GLFW.FOCUSED, false)
         GLFW.WindowHint(GLFW.FOCUS_ON_SHOW, false)
     else
-        error("Unsupported browser window_start '$window_start'; use :normal or :background")
+        error("Unsupported browser window_start '$window_start'; use :normal, :background or :hidden")
     end
     return nothing
 end
@@ -567,6 +567,8 @@ function _run_browser(
             if first_frame[]
                 state.performance.gl_info = _gl_info()
                 window_start == :normal && _promote_to_foreground_app()
+                # The backend always creates the window visible.
+                window_start == :hidden && GLFW.HideWindow(ig.current_window())
                 first_frame[] = false
             end
             if !_extensions_ready(state)
@@ -635,6 +637,9 @@ in the REPL so it stays interactive.
 With `wait=false`, returns a [`BrowserSession`](@ref) (`task` + `state`). Use
 [`wait_browser_ready`](@ref) to wait until extension initialization is complete and the first
 full browser frame has been presented. Use [`close_browser!`](@ref) to exit the loop cleanly.
+
+`window_start` says how the window appears: `:normal` shows it and gives it the keyboard focus,
+`:background` shows it without the focus, and `:hidden` does not show it.
 """
 function open_browser(
     workspace::Workspace.Workspace;
