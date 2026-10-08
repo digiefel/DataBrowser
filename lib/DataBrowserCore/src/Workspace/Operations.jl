@@ -587,10 +587,12 @@ end
 rebuild_cache!(workspace::Workspace)::Nothing = scan_source!(workspace; rebuild=true)
 
 """
-Return the ids of items whose delivered metadata satisfies a SQL predicate over the query view.
+Return the ids of the items that satisfy a SQL predicate.
 
-Columns are exactly the metadata names project callbacks emit. Queries committed cache state, so a
-value written in the last ≤2s may not yet appear. Memory-only workspaces return an empty vector.
+The predicate can use the metadata names that project code gave the items, and the columns the cache
+keeps for every item: `id`, `label`, `item_key`, `source_item_key`, `type_hex` and `collection_key`.
+The query reads what the cache has written to disk, so a value from the last 2 seconds may be
+missing. A workspace without a cache returns an empty vector.
 """
 query_items(workspace::Workspace, predicate::AbstractString)::Vector{String} =
     query_items(workspace.cache.db, predicate)
@@ -598,10 +600,6 @@ query_items(workspace::Workspace, predicate::AbstractString)::Vector{String} =
 """Return the stable IDs of all items currently published in a workspace."""
 query_items(workspace::Workspace)::Vector{String} =
     sort!(String[id(workspace, item) for item in items(workspace)])
-
-"""Resize this workspace's DuckDB cache buffer-pool limit (MiB) live; suits a GUI control."""
-set_cache_memory_limit!(workspace::Workspace, mib::Integer)::Int =
-    set_cache_memory_limit!(workspace.cache.db, mib)
 
 """
 The words shown before the message of a failed source stage. They are plain words, because the

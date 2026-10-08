@@ -5,8 +5,8 @@ DuckDB buffer-pool limit (MiB) for cache connections.
 
 DuckDB otherwise defaults to most of system RAM and retains committed table blocks for the workspace's
 lifetime; cache writes are bounded batches, so a smaller buffer keeps large caches out of swap without
-reducing scan parallelism. Settable at runtime — e.g. from a GUI slider — via
-[`set_cache_memory_limit!`](@ref). Changes apply to caches opened afterward.
+reducing scan parallelism. Set it with [`set_cache_memory_limit!`](@ref). A change applies to caches
+opened afterward, not to a cache that is already open.
 """
 const CACHE_MEMORY_LIMIT_MIB = Ref(1024)
 
@@ -730,9 +730,6 @@ function source_item_id(cache::CacheDB, key::Integer)::String
     end
 end
 
-set_cache_memory_limit!(::CacheDB, mib::Integer)::Int =
-    set_cache_memory_limit!(mib)
-
 _buffer_rows(data)::Int = Tables.istable(data) ? _payload_rows(data) : 1
 
 """Create the cache tables if they do not already exist."""
@@ -1114,7 +1111,10 @@ function cache_pending_counts(cache::CacheDB)::NamedTuple{(:items, :rows),Tuple{
     return (items=items, rows=rows)
 end
 
-"""Return persisted stage counts owned by the cache layer."""
+"""
+The number of results the cache has accepted for each stage. A result counts from the moment it is
+queued, before it is written to disk.
+"""
 function cache_stage_summary(cache::CacheDB)::CacheStageSummary
     return lock(cache.stage_ledger.lock) do
         cache.stage_ledger.summary
@@ -1466,10 +1466,11 @@ end
 # Query surface
 
 """
-Return the ids of items whose delivered effective metadata satisfies a SQL predicate.
+Return the ids of the items that satisfy a SQL predicate.
 
-Queries committed DB state over `items LEFT JOIN analyzed_item_metadata USING (item_key)`; the
-buffer's ≤2s staleness applies. Columns are exactly the metadata names users coded.
+The predicate runs over `items LEFT JOIN analyzed_item_metadata USING (item_key)`: the columns of
+the `items` table, and one column per metadata name that project code gave the items. The query
+reads what is written to disk, so a value from the last 2 seconds may be missing.
 """
 function query_items(cache::CacheDB, predicate::AbstractString)::Vector{String}
     _ensure_items_view!(cache)

@@ -114,11 +114,10 @@ Decisions taken during the audit:
   `_callback_name`, and `plot_kind_symbol`.
 - [x] Remove unused GUI state fields and declared dependencies, and Core's unused annotation import.
 - [x] Remove unused scheduler fields and queue timestamp bookkeeping.
-- [ ] Fix docstrings that describe behavior the code does not have: `set_cache_memory_limit!`
-  (workspace) is not live; `cache_stage_summary`
-  counts queued, not persisted; `query_items` exposes item columns too;
-  `finish_debug_timings!` still records in-flight sections. Remove or create the missing
-  `docs/cache.md` and `docs/profiling.md` targets.
+- [x] Fix docstrings that describe behavior the code does not have: `cache_stage_summary`,
+  `query_items` and `finish_debug_timings!`. Remove the `set_cache_memory_limit!` methods that took
+  a workspace or an open cache and did not change it. Remove the references to the missing
+  `docs/cache.md` and `docs/profiling.md`.
 
 ### 0.2.2 Cache boundary and one backend
 
@@ -322,8 +321,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] `ARCHITECTURE.md` promises two diagrams per package and has them for Sources only. Add Core
   and Cache after Phases 1–2, GUI after Phase 4.
 - [ ] `docs/api.md`: the two tiers from Phase 3, one line per name.
-- [ ] `vision.md` links to `cache.md`, `plans/plotting-api-design.md`, `plans/spatial-browser.md`,
-  `plans/project-persistence.md`; none exist. Fix or remove.
+- [x] Remove the links in `vision.md` to documents that do not exist, and point its roadmap links
+  to `roadmap.md`.
 - [ ] `AGENTS.md`: require a bench smoke before committing engine changes.
 
 ## 0.3.0 — Tags

@@ -5,7 +5,7 @@ import TimerOutputs
 
 # Performance window: the MAIN_TIMER section tree (Timings), live throughput sparklines
 # (Throughput), and workspace pipeline counters (Workspace). For deep multi-task engine timing
-# use `@timed_dbg` + DataBrowserProfiling instead (docs/profiling.md).
+# use `@timed_dbg` + DataBrowserProfiling instead.
 
 """Append `v` to an ordered history ring, dropping the oldest sample past `PERF_HISTORY_CAP`."""
 @inline function _push_capped!(buf::Vector{Float32}, v::Real)::Nothing

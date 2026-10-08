@@ -253,7 +253,7 @@ implementations and live machinery (the `Workspace`, the index, the scheduler) l
 packages that add methods to those declarations. If the API starts absorbing behavior or heavy types,
 that is a signal a boundary is wrong, not that the rule should bend.
 
-See [plans/roadmap.md](plans/roadmap.md) for the concrete boundaries, current-code mapping, and
+See [roadmap.md](roadmap.md) for the concrete boundaries, current-code mapping, and
 phasing.
 
 ## 7. Registration and Callback Model
@@ -331,9 +331,7 @@ selection and state, replaying the workflow reopens all three.
 
 Open design questions: whether a self-contained figure stores a data snapshot, only rendered marks, or
 both; how live figures degrade when the source project is unavailable; and whether figure annotations
-live in workflow files, figure files, or a shared store. See
-[plans/plotting-api-design.md](plans/plotting-api-design.md) and
-[plans/spatial-browser.md](plans/spatial-browser.md).
+live in workflow files, figure files, or a shared store.
 
 ## 9. REPL, CLI, and Agent Readiness
 
@@ -417,8 +415,7 @@ thing the GUI observes and mutates through the same operations available to Juli
 
 Normal project persistence is a small text project file plus generated cache. Export/archive
 workflows may later package a Julia environment, data copies, and cache, but that is separate from
-ordinary open/save. See [cache.md](cache.md) for the current cache design and
-[plans/project-persistence.md](plans/project-persistence.md) for the saved-project model.
+ordinary open/save.
 
 ## 13. Packaging the Julia Application
 
@@ -454,7 +451,7 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
 
 ## 15. Roadmap
 
-The concrete, current split is [plans/roadmap.md](plans/roadmap.md). The longer product arc:
+The concrete, current split is [roadmap.md](roadmap.md). The longer product arc:
 
 1. **Architectural cleanup.** Split the package into the functional family of §6; pin the workspace /
    project / package / command vocabulary; establish `DataBrowserAPI` as the command-and-definitions

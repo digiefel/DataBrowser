@@ -98,7 +98,7 @@ using DataBrowserCache:
     cache_knows_source,
     source_item_key!
 import DataBrowserCache
-import DataBrowserCache: query_items, set_cache_memory_limit!
+import DataBrowserCache: query_items
 using ..DataBrowserCore: ExpandedItem
 import DataBrowserAPI
 import DataBrowserAPI:
