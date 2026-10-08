@@ -3,8 +3,6 @@ using DataBrowserAPI:
     id
 using DataBrowserCache: ProjectCacheSchemaError
 import DataBrowserCore.Workspace
-using DataBrowserCore.Workspace:
-    close_workspace!
 
 """Reload tags and the persisted view when the workspace source identity changes."""
 function _check_source_identity!(
@@ -78,11 +76,3 @@ function _reveal_selected_items!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Stop browser and workspace work before the render loop exits."""
-function _shutdown_background_jobs!(state::BrowserState)::Nothing
-    state.shutdown_complete && return nothing
-    workspace = state.workspace
-    workspace isa Workspace.Workspace && close_workspace!(workspace)
-    state.shutdown_complete = true
-    return nothing
-end

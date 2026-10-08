@@ -528,18 +528,21 @@ function _run_browser(
         opengl_version=v"3.3",
         wait_events=false,
         on_exit=() -> begin
-            _shutdown_background_jobs!(state)
             _shutdown_extensions!(state)
             _shutdown_implot_context!(state)
             _save_project_view_if_changed!(state)
+            GLFW.HideWindow(ig.current_window())
             window_start == :normal && _leave_foreground_app()
+            # macOS takes the window off the screen while the process handles window events, and
+            # nothing handles them after the loop ends.
+            for _ in 1:20
+                GLFW.PollEvents()
+                sleep(0.01)
+            end
             @debug sprint(show, MAIN_TIMER)
         end,
     ) do
-        if _window_close_requested(state)
-            _shutdown_background_jobs!(state)
-            return :imgui_exit_loop
-        end
+        _window_close_requested(state) && return :imgui_exit_loop
         state.performance.frame += 1
         # The backend renders and swaps the previous frame before calling us again.
         # Discard startup timings once the first full frame has been presented, or on request.
@@ -560,10 +563,8 @@ function _run_browser(
                 _check_source_identity!(state, workspace)
                 _check_cache_error!(state, workspace)
             end
-            if exit_after_frames !== nothing && state.performance.frame >= exit_after_frames
-                _shutdown_background_jobs!(state)
+            exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
                 return :imgui_exit_loop
-            end
             if first_frame[]
                 state.performance.gl_info = _gl_info()
                 window_start == :normal && _promote_to_foreground_app()
@@ -638,6 +639,9 @@ With `wait=false`, returns a [`BrowserSession`](@ref) (`task` + `state`). Use
 [`wait_browser_ready`](@ref) to wait until extension initialization is complete and the first
 full browser frame has been presented. Use [`close_browser!`](@ref) to exit the loop cleanly.
 
+Closing the window closes the browser only. The workspace stays open and keeps processing items,
+and `open_browser` can show it again. Use `close_workspace!` to close the workspace.
+
 `window_start` says how the window appears: `:normal` shows it and gives it the keyboard focus,
 `:background` shows it without the focus, and `:hidden` does not show it.
 """
@@ -648,6 +652,7 @@ function open_browser(
     wait::Bool=!isinteractive(),
     window_start::Symbol=:normal,
 )
+    workspace.closed && error("The workspace is closed. Open it again with `open_workspace`.")
     state = BrowserState()
     state.extensions = _instantiate_extensions()
     for ext in state.extensions
