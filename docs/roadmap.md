@@ -247,8 +247,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] Tighten the extension boundary: `PlotsExtension` calls `Browser._project_visible_selection`
   and `Browser._items_for_ids`; make those tier-B functions. Reduce the twelve-hook protocol to
   what the one extension uses; type `save_view`/`load_view!` instead of `Dict{String,Any}`.
-- [ ] Create the dedicated I/O thread once per process. Every browser start calls
-  `make_io_thread()` and adds a native thread; use `Base.OncePerProcess`.
+- [x] Create the dedicated I/O thread once per process, with `Base.OncePerProcess`.
 - [ ] Split `BrowserState` (40 fields) into selection/filter, windows, diagnostics, persistence,
   and lifecycle state. Last, because the items above shrink it first.
 
@@ -259,9 +258,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
   `_duckdb_sql_type_maybe`).
 - [ ] A `with_connection(db) do … end` helper replacing thirteen hand-written connect/try/finally
   sites.
-- [ ] Wait for the payload writer tasks with `waitall(tasks; failfast=false)` in place of the
-  hand-written join in `cache_buffer.jl`. Every writer must finish before payload locations are
-  published or connections close. Apply the same to shutdown paths that drain every worker.
+- [x] Wait for the payload writer tasks with `waitall(tasks; failfast=false)`: every writer
+  finishes before payload locations are published.
 - [ ] Group `CacheDB` (25 fields) into index stores, metadata stores, payload store, and runtime
   state. Inline `load_cache_index_body` and `_report_loaded_cache_index`.
 - [x] Use one `PipelineStage` for scheduling and cache results, ordered from source read through

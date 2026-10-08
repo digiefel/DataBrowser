@@ -1448,9 +1448,8 @@ function _flush_to_db!(
             end
         end
     end
-    foreach(task -> try wait(task) catch end, tasks)
-    failed = findfirst(istaskfailed, tasks)
-    failed === nothing || throw(tasks[failed].exception)
+    # Every writer finishes before the payload locations are recorded, also when one fails.
+    waitall(tasks; failfast=false)
 
     _transaction(store.write_connection) do
         _append_table!(store.write_connection, "item_data") do appender
