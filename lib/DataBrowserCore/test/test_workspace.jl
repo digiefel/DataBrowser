@@ -1,5 +1,6 @@
 using DataBrowserAPI: AbstractProject, AbstractDataSource, AbstractDataSourceItem, AbstractDataItem, id, item_data, metadata
 using Test, DataBrowserAPI, DataBrowserCore
+using DataFrames: DataFrame
 import DataBrowserCore.Workspace as W
 
 mutable struct EngineProject <: AbstractProject
@@ -432,6 +433,11 @@ end
             @test names(tags(ws, a)) == ["bad", "leaky"]
             @test names(tags(ws, b)) == ["bad"]
             @test items(ws, Tag("leaky")) == [a]
+            # An item can be given by its public id, and a table has one row per item.
+            @test names(tags(ws, "a")) == ["bad", "leaky"]
+            table = DataFrame(ws, items(ws, Tag("leaky")))
+            @test table.id == ["a"] && table.tags == [["bad", "leaky"]]
+            @test size(DataFrame(ws), 1) == 2
             @test items(ws, !Tag("leaky")) == [b]
             untag!(ws, [a, b], "leaky")
             @test names(tags(ws, a)) == ["bad"]

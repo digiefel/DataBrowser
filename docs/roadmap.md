@@ -411,10 +411,11 @@ on it with a few verbs.
 - [ ] Draw a registered plot with one call that takes its label and the items and returns the
   figure the GUI shows.
 - [ ] Save a figure as PDF through a CairoMakie extension of `DataBrowserPlots`.
-- [ ] Build a tidy table from what the API returns: one row per item, one column per metadata
-  field, with the id, the kind, the collection levels and the tags. The result of an item query, a
-  collection and the workspace each convert with `DataFrame(…)`, through an extension that loads
-  with DataFrames.
+- [x] Build a tidy table of items with `DataFrame(workspace)` and `DataFrame(workspace, items)`,
+  through an extension that loads with DataFrames: one row per item, with the id, the label, the
+  collection, the tags, and one column per metadata field.
+- [ ] Tidy table: add the kind of each item, one column per collection level, and the items below
+  a collection with `DataFrame(workspace, collection)`.
 - [ ] Move GUI actions onto those operations and keep GUI-only state limited to rendering and local
   interaction.
 - [ ] Make repeated project setup, workspace operations, and view changes idempotent where users

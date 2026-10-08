@@ -29,6 +29,20 @@ item(workspace::Workspace, id::AbstractString)::Union{ItemKey,Nothing} =
     lookup(workspace.catalog, ItemKey, id)
 
 """
+    key(workspace, item) -> ItemKey
+
+The key of an item given as a key, a public id, or a data item. An item that the workspace does not
+have is an error.
+"""
+key(workspace::Workspace, item::ItemKey)::ItemKey = item
+key(workspace::Workspace, value::AbstractDataItem)::ItemKey = key(workspace, id(value))
+function key(workspace::Workspace, id::AbstractString)::ItemKey
+    found = item(workspace, id)
+    found === nothing && error("This workspace has no item with id \"$id\"")
+    return found
+end
+
+"""
     collections(workspace) -> Vector{CollectionKey}
 
 Every collection in a workspace, at every level of the tree. The root is not included.

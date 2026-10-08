@@ -29,12 +29,16 @@ end
     tags(workspace) -> Vector{Tag}
     tags(workspace, key; inherited=true) -> Vector{Tag}
 
-The tags defined in a workspace, or the tags of one item or collection.
+The tags defined in a workspace, or the tags of one item or collection. Give an item as one of
+the values that [`items`](@ref) returns, as its public id, or as a data item.
 
 The tags of an item or collection are its own and those of every collection above it, with the
 highest priority first. With `inherited=false` they are only its own.
 """
 tags(workspace::Workspace)::Vector{Tag} = copy(workspace.tags.state.catalog)
+
+tags(workspace::Workspace, item::Union{AbstractString,AbstractDataItem}; inherited::Bool=true)::Vector{Tag} =
+    tags(workspace, key(workspace, item); inherited)
 
 function tags(
     workspace::Workspace, key::Union{ItemKey,CollectionKey}; inherited::Bool=true,
@@ -73,8 +77,13 @@ function items(workspace::Workspace, condition::Untagged)::Vector{ItemKey}
     return filter(key -> !any(found -> found.name == name, tags(workspace, key)), items(workspace))
 end
 
-"""The name of an item or a collection in `tags.txt`."""
+"""
+The name of an item or a collection in `tags.txt`. An item is given as its key, its public id, or
+a data item.
+"""
 tag_key(workspace::Workspace, item::ItemKey)::String = id(workspace, item)
+tag_key(workspace::Workspace, item::Union{AbstractString,AbstractDataItem})::String =
+    id(workspace, key(workspace, item))
 tag_key(workspace::Workspace, collection::CollectionKey)::String =
     join((label(workspace, key) for key in [ancestors(workspace, collection); collection]), '/')
 
@@ -110,8 +119,9 @@ Define a tag in a workspace, or put a defined tag on items and collections.
 `tag!(workspace, Tag("leaky"; color="ffaa00"))` defines the tag, or replaces the colour and
 priority of the tag with that name.
 
-`tag!(workspace, keys, tag)` puts the tag on one key or on each key of a list. Give the tag or its
-name. A tag on a collection also applies to everything below it.
+`tag!(workspace, keys, tag)` puts the tag on one item or collection, or on each one of a list. Give
+an item as one of the values that [`items`](@ref) returns, as its public id, or as a data item.
+Give the tag or its name. A tag on a collection also applies to everything below it.
 """
 function tag!(workspace::Workspace, tag::Tag)::Nothing
     change_tags!(workspace) do state
@@ -129,8 +139,10 @@ function tag!(workspace::Workspace, keys::AbstractVector, tag::Union{Tag,Abstrac
     end
 end
 
-tag!(workspace::Workspace, key::Union{ItemKey,CollectionKey}, tag::Union{Tag,AbstractString})::Nothing =
-    tag!(workspace, [key], tag)
+tag!(
+    workspace::Workspace, key::Union{ItemKey,CollectionKey,AbstractString,AbstractDataItem},
+    tag::Union{Tag,AbstractString},
+)::Nothing = tag!(workspace, [key], tag)
 
 """
     untag!(workspace, keys, tag)
@@ -156,8 +168,10 @@ function untag!(workspace::Workspace, keys::AbstractVector, tag::Union{Tag,Abstr
     end
 end
 
-untag!(workspace::Workspace, key::Union{ItemKey,CollectionKey}, tag::Union{Tag,AbstractString})::Nothing =
-    untag!(workspace, [key], tag)
+untag!(
+    workspace::Workspace, key::Union{ItemKey,CollectionKey,AbstractString,AbstractDataItem},
+    tag::Union{Tag,AbstractString},
+)::Nothing = untag!(workspace, [key], tag)
 
 function untag!(workspace::Workspace, tag::Union{Tag,AbstractString})::Nothing
     name = tag_name(workspace, tag)
