@@ -403,10 +403,10 @@ from the REPL everything the GUI allows. They find out what exists by asking the
 on it with a few verbs.
 
 - [ ] Define the public operations needed to drive a workspace from Julia without browser state.
-- [ ] Let the workspace list what it holds: the item kinds, the metadata fields of a kind, the
-  collections, the tags, and the plots registered for a set of items. Each prints readably in the
+- [ ] Let the workspace list what it holds: the item types, the metadata fields of an item
+  type, the collections, the tags, and the plots registered for a set of items. Each prints readably in the
   REPL.
-- [ ] Find items with one call that filters by kind, metadata, and tag, and sorts by a metadata
+- [ ] Find items with one call that filters by item type, metadata, and tag, and sorts by a metadata
   field.
 - [ ] Draw a registered plot with one call that takes its label and the items and returns the
   figure the GUI shows.
@@ -414,7 +414,7 @@ on it with a few verbs.
 - [x] Build a tidy table of items with `DataFrame(workspace)` and `DataFrame(workspace, items)`,
   through an extension that loads with DataFrames: one row per item, with the id, the label, the
   collection, the tags, and one column per metadata field.
-- [ ] Tidy table: add the kind of each item, one column per collection level, and the items below
+- [ ] Tidy table: add the item type of each item, one column per collection level, and the items below
   a collection with `DataFrame(workspace, collection)`.
 - [ ] Move GUI actions onto those operations and keep GUI-only state limited to rendering and local
   interaction.
