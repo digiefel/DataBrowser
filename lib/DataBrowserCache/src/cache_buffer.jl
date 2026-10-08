@@ -72,13 +72,31 @@ function create_table_sql(
         "($(join(definitions, ", ")))"
 end
 
+"""
+Run a statement that returns no rows and takes no parameters.
+
+The garbage collector may run while DuckDB works on the statement. In the calls that DuckDB.jl
+makes, it cannot: it waits for the statement to end, and every other thread waits with it.
+"""
+function _run(connection::DuckDB.Connection, sql::String)::Nothing
+    result = Ref{DuckDB.duckdb_result}()
+    state = @ccall gc_safe=true DuckDB.libduckdb.duckdb_query(
+        connection.handle::DuckDB.duckdb_connection, sql::Cstring,
+        result::Ref{DuckDB.duckdb_result})::DuckDB.duckdb_state
+    message = state == DuckDB.DuckDBSuccess ? nothing :
+        unsafe_string(DuckDB.duckdb_result_error(result))
+    DuckDB.duckdb_destroy_result(result)
+    message === nothing || error("DuckDB could not run `$sql`: $message")
+    return nothing
+end
+
 function _transaction(work::Function, connection)::Nothing
-    DBInterface.execute(connection, "BEGIN TRANSACTION")
+    _run(connection, "BEGIN TRANSACTION")
     try
         work()
-        DBInterface.execute(connection, "COMMIT")
+        _run(connection, "COMMIT")
     catch
-        DBInterface.execute(connection, "ROLLBACK")
+        _run(connection, "ROLLBACK")
         rethrow()
     end
     return nothing
@@ -88,7 +106,9 @@ function _append_table!(emit::Function, connection, table::AbstractString)::Noth
     appender = DuckDB.Appender(connection, table)
     try
         emit(appender)
-        DuckDB.flush(appender)
+        # As in `_run`: the garbage collector may run while the rows are written.
+        @ccall gc_safe=true DuckDB.libduckdb.duckdb_appender_flush(
+            appender.handle::DuckDB.duckdb_appender)::DuckDB.duckdb_state
     finally
         DuckDB.close(appender)
     end
@@ -105,6 +125,9 @@ function _append_rows!(appender, seq::UInt32, rows::Int, columns::Tuple)::Nothin
         DuckDB.append(appender, UInt64(row_index))
         foreach(column -> DuckDB.append(appender, column[row_index]), columns)
         DuckDB.end_row(appender)
+        # The loop allocates nothing, so without this the garbage collector, and with it every
+        # other thread, waits until all the rows are appended.
+        GC.safepoint()
     end
     return nothing
 end
@@ -1237,7 +1260,7 @@ function _delete_keys_with_temp_table!(
         ),
         ", ",
     )
-    DBInterface.execute(connection, "CREATE TEMPORARY TABLE $quoted_temp ($definitions)")
+    _run(connection, "CREATE TEMPORARY TABLE $quoted_temp ($definitions)")
     try
         _append_table!(connection, table_name) do appender
             for key in keys
@@ -1254,12 +1277,9 @@ function _delete_keys_with_temp_table!(
             ),
             " AND ",
         )
-        DBInterface.execute(
-            connection,
-            "DELETE FROM $quoted_table USING $quoted_temp WHERE $predicate",
-        )
+        _run(connection, "DELETE FROM $quoted_table USING $quoted_temp WHERE $predicate")
     finally
-        DBInterface.execute(connection, "DROP TABLE $quoted_temp")
+        _run(connection, "DROP TABLE $quoted_temp")
     end
     return nothing
 end
