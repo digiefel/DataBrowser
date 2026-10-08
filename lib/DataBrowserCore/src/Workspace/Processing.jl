@@ -329,19 +329,23 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     computed = MetadataDict(
         name => value for (name, value) in delivered
         if !haskey(given, name) || !isequal(given[name], value))
-    # The payload is saved outside the lock, because the cache makes a writer wait when it is full.
-    iscurrent(catalog, job) &&
-        @timed_dbg store_processed!(cache, id(catalog, item), cache_key(workspace, item), item_data(output))
+    # The results are saved outside the lock: saving takes time, and every other worker needs the
+    # lock. A job that turns out not to be current drops the record that its result is ready.
+    item_id = id(catalog, item)
+    dropped = String[]
+    if iscurrent(catalog, job)
+        @timed_dbg store_processed!(cache, item_id, cache_key(workspace, item), item_data(output))
+        store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, computed)
+        dropped = store_item_metadata_layer!(cache, item_id, delivered)
+    end
     @lock catalog.lock begin
         if finish!(catalog, job; metadata=computed)
-            release_item_payload!(cache, id(catalog, item))
+            release_item_payload!(cache, item_id)
             pace!(workspace)
             relabel!(workspace, item, label(workspace.project, output))
-            store_item_stage_metadata!(cache, id(catalog, item), ITEM_PROCESS, computed)
-            conflicts!(workspace, item, ITEM_PROCESS,
-                store_item_metadata_layer!(cache, id(catalog, item), delivered))
+            conflicts!(workspace, item, ITEM_PROCESS, dropped)
         else
-            clear_cached_result_state!(cache, ITEM_PROCESS, id(catalog, item))
+            clear_cached_result_state!(cache, ITEM_PROCESS, item_id)
         end
     end
     return nothing
@@ -361,12 +365,20 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_ANALYZE})::Not
         reconstruct(valuetype(catalog, item), id(catalog, item), item_data(input), delivered),
         input)
     new_label = label(workspace.project, adopted(workspace, item, analyzed, delivered))
+    # Saved outside the lock, as in `process`.
+    item_id = id(catalog, item)
+    dropped = String[]
+    if iscurrent(catalog, job)
+        store_item_stage_metadata!(cache, item_id, ITEM_ANALYZE, analysis)
+        dropped = store_item_metadata!(cache, item_id, cache_key(workspace, item), delivered)
+    end
     @lock catalog.lock begin
-        finish!(catalog, job; metadata=analysis) || return nothing
-        relabel!(workspace, item, new_label)
-        store_item_stage_metadata!(cache, id(catalog, item), ITEM_ANALYZE, analysis)
-        conflicts!(workspace, item, ITEM_ANALYZE,
-            store_item_metadata!(cache, id(catalog, item), cache_key(workspace, item), delivered))
+        if finish!(catalog, job; metadata=analysis)
+            relabel!(workspace, item, new_label)
+            conflicts!(workspace, item, ITEM_ANALYZE, dropped)
+        else
+            clear_cached_result_state!(cache, ITEM_ANALYZE, item_id)
+        end
     end
     return nothing
 end
