@@ -11,9 +11,8 @@ struct CacheItem <: AbstractDataItem end
 """Store the item "item" of the source item "source" with its unprocessed payload."""
 function store_fixture_item!(cache, source_key, payload)
     store_source_identity!(cache, CacheSourceItem(), "source")
-    store_item!(cache, "item", source_key, "item", CacheItem, nothing, DataBrowserAPI.MetadataDict())
-    store_item_payload!(cache, "item", payload)
-    store_source_result!(cache, SOURCE_EXPAND, source_key)
+    replace_source_output!(cache, source_key, String[],
+        [ItemOutput("item", "item", CacheItem, nothing, DataBrowserAPI.MetadataDict(), payload)])
 end
 delivered(cache) = only(load_cache_index(cache).items).delivered
 
@@ -126,8 +125,10 @@ end
         cache = open_cache_db(identity; rebuild=true)
         source_key = source_item_key!(cache, "source"; mint=true)
         store_source_identity!(cache, CacheSourceItem(), "source")
+        replace_source_output!(cache, source_key, String[], [
+            ItemOutput(id, id, CacheItem, nothing, DataBrowserAPI.MetadataDict(), payload)
+            for (id, payload) in payloads])
         for (id, payload) in payloads
-            store_item!(cache, id, source_key, id, CacheItem, nothing, DataBrowserAPI.MetadataDict())
             store_processed!(cache, id, source_key, payload)
         end
         close_cache_db!(cache)
@@ -159,8 +160,10 @@ end
         source_key = source_item_key!(cache, "source"; mint=true)
         store_source_identity!(cache, CacheSourceItem(), "source")
         # 150 MiB of numbers.
+        replace_source_output!(cache, source_key, String[], [
+            ItemOutput("$index", "$index", CacheItem, nothing, DataBrowserAPI.MetadataDict(), nothing)
+            for index in 1:500])
         for index in 1:500
-            store_item!(cache, "$index", source_key, "$index", CacheItem, nothing, DataBrowserAPI.MetadataDict())
             store_processed!(cache, "$index", source_key, NamedTuple{(:a, :b, :c, :d)}(ntuple(_ -> rand(10_000), 4)))
         end
         @test timedwait(() -> !DataBrowserCache.cache_has_pending_writes(cache), 120) === :ok

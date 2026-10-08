@@ -802,26 +802,47 @@ end
 # onto RowStore rows and TabularFamilyStore batches. The stores know none of this; they buffer typed rows.
 
 """
-Store one new item of a source item: its row, and the metadata its source item gave it.
-`collection_key` is `nothing` for an item at the root. Returns type-conflict messages for keys
-dropped from the metadata row.
+One item that a source item produced, in the form the cache stores: its row, the metadata its
+source item gave it, and its expanded data. `collection_key` is `nothing` for an item at the root.
 """
-function store_item!(
+struct ItemOutput
+    id::String
+    label::String
+    type::Type
+    collection_key::Union{Nothing,Int64}
+    metadata::MetadataDict
+    payload::Any
+end
+
+"""
+    replace_source_output!(cache, source_key, previous, outputs) -> conflicts
+
+Replace what the source item `source_key` produced. The items with the ids in `previous` and every
+result made from them are deleted, `outputs` are stored, and the expand stage of the source item is
+recorded as finished. An id in both lists is a new item: its earlier results do not survive.
+`outputs` may be empty.
+
+Returns type-conflict messages for metadata keys that could not be stored.
+"""
+function replace_source_output!(
     cache::CacheDB,
-    id::AbstractString,
     source_key::Int64,
-    label::AbstractString,
-    type::Type,
-    collection_key::Union{Nothing,Int64},
-    metadata::MetadataDict,
+    previous::Vector{String},
+    outputs::Vector{ItemOutput},
 )::Vector{String}
-    started = time_ns()
-    key = item_key!(cache, id; mint=true)
-    append!(cache.items, String(id),
-        ItemRow(id, key, source_key, label, _serialize_type(type), collection_key))
-    _stage_ledger_item!(cache.stage_ledger, id, true)
-    dropped = edit!(cache.source_item_metadata, key, metadata)
-    record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
+    isempty(previous) || delete_source_output!(cache, source_key, previous)
+    dropped = WideConflict[]
+    for output in outputs
+        started = time_ns()
+        key = item_key!(cache, output.id; mint=true)
+        append!(cache.items, output.id, ItemRow(
+            output.id, key, source_key, output.label, _serialize_type(output.type), output.collection_key))
+        _stage_ledger_item!(cache.stage_ledger, output.id, true)
+        append!(dropped, edit!(cache.source_item_metadata, key, output.metadata))
+        record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
+        store_item_payload!(cache, output.id, output.payload)
+    end
+    store_source_result!(cache, SOURCE_EXPAND, source_key)
     return _conflict_messages(unique(dropped))
 end
 

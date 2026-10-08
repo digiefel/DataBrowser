@@ -151,9 +151,13 @@ Decisions taken during the audit:
   buffered overlays and transactional flush, check revisions at acceptance, and validate output
   publications on restore. Include metadata-only collection-process output; remove the split
   stage-specific storage/completion calls.
-- [ ] Replace one source's output and membership changes through one Cache operation. Core supplies
-  replacements and invalidations; Cache retires storage. Cover fewer/empty outputs, moved members,
-  shared collections and selection preservation for surviving public IDs.
+- [x] Replace one source's output through one Cache operation, `replace_source_output!`. Core
+  supplies the earlier item ids and the new items; Cache deletes the earlier items with their
+  results, stores the new ones and records the expand stage.
+- [ ] Test source replacement with moved members and with collections that two source items share.
+- [ ] Keep the selection consistent when `modify_workspace!` changes the source. Today the
+  selection becomes empty with a disk cache, and keeps the ids of items that no longer exist with
+  a memory cache, where `materialize_items(workspace)` then throws.
 - [x] Fix four concurrency issues: the query view is replaced in one statement under a lock;
   `cache_pending_counts` reads every store at the same moment; `open_cache_db` closes the stores
   that already started when opening fails; `close_cache_db!` reports every exception.

@@ -181,20 +181,16 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             @error("A stage failed", id=id(catalog, job.key), stage=SOURCE_EXPAND, exception=(error, catch_backtrace()))
             return nothing
         end
-        isempty(previous) || delete_source_output!(cache, saved, previous)
-        conflicts = String[]
-        for (item, entry) in zip(expanded, entries)
-            append!(conflicts, store_item!(
-                cache, entry.id, saved, entry.label, entry.type,
+        conflicts = replace_source_output!(cache, saved, previous, ItemOutput[
+            ItemOutput(
+                entry.id, entry.label, entry.type,
                 entry.collection == ROOT ? nothing : workspace.collection_keys[entry.collection],
-                entry.metadata))
-            store_item_payload!(cache, entry.id, item_data(item.item))
-        end
-        store_source_result!(cache, SOURCE_EXPAND, saved)
+                entry.metadata, item_data(item.item))
+            for (item, entry) in zip(expanded, entries)])
         pace!(workspace)
         kept = Set(entry.id for entry in entries)
         filter!(id -> !(id in previous) || id in kept, workspace.selection.item_ids)
-        conflicts!(workspace, job.key, SOURCE_EXPAND, unique!(conflicts))
+        conflicts!(workspace, job.key, SOURCE_EXPAND, conflicts)
         forget_stale!(workspace)
     end
     return nothing
