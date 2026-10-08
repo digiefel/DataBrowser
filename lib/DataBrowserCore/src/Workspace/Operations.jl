@@ -8,6 +8,9 @@ the memory of the machine when that is less. While the expanded data is under ha
 workspace reads its source items first. Above that, it processes items first, which releases their
 expanded data. A lower limit uses less memory and lists the items of all source items later. The
 size of the data is estimated.
+
+Close the workspace with [`close_workspace!`](@ref). A workspace that is still open when Julia exits
+is closed then.
 """
 function open_workspace(
     project::AbstractProject,
@@ -38,6 +41,9 @@ function open_workspace(
             event -> publish_source_event!(workspace, event);
             cancel_token=get_token(workspace.cancel_source),
         )
+        # A workspace that is still open when Julia exits is closed, so the cache keeps its results.
+        open_at_exit = WeakRef(workspace)
+        atexit(() -> open_at_exit.value === nothing || close_workspace!(open_at_exit.value))
         return workspace
     catch
         close_workspace!(workspace)
