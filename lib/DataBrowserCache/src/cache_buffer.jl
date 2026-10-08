@@ -1301,7 +1301,7 @@ function _delete_keys!(
         placeholders = join(fill("?", length(chunk)), ", ")
         sql = "DELETE FROM $quoted_table WHERE $(only(quoted_key_columns)) " *
             "IN ($placeholders)"
-        DBInterface.execute(DBInterface.prepare(connection, sql), Tuple(chunk))
+        DBInterface.execute(DBInterface.prepare(connection, sql), chunk)
     end
     return nothing
 end
