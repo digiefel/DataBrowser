@@ -21,7 +21,11 @@ using .Workspace:
     query_items,
     select_items!,
     materialize_items,
-    read_item_data
+    read_item_data,
+    Tag,
+    tags,
+    tag!,
+    untag!
 
 export items_for_file,
     open_workspace,
@@ -32,6 +36,10 @@ export items_for_file,
     query_items,
     select_items!,
     materialize_items,
-    read_item_data
+    read_item_data,
+    Tag,
+    tags,
+    tag!,
+    untag!
 
 end

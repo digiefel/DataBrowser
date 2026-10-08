@@ -342,8 +342,11 @@ Every change keeps `tags.txt` human-readable and recoverable independently of th
 
 - [x] Implement plain-text tag definitions, item/collection assignments, inherited lookup, and the
   current `bad` bridge. ([#2](https://github.com/digiefel/MeasurementBrowser/pull/2))
-- [ ] Provide API operations to create, edit, remove, assign, and unassign tags on items and
-  collections.
+- [x] Provide API operations to create, edit, remove, assign, and unassign tags on items and
+  collections: `Tag`, `tags`, `tag!` and `untag!`.
+- [ ] Find the items with or without a tag: `items(workspace, Tag("bad"))` and
+  `items(workspace, !Tag("bad"))`.
+- [ ] A tag can leave its items out of collection `process` and `analyze`.
 - [ ] Provide GUI controls for the same operations, including multi-selection.
 - [ ] Apply tags consistently to colours, visibility, and the selected item set.
 

@@ -17,7 +17,6 @@ function _check_source_identity!(
     project = project_name(workspace.project)
     !isempty(view.project) && view.project != project &&
         (view = PersistedProjectView(project=project))
-    _load_tag_state_for_root!(state, _annotation_root(workspace))
     _apply_project_view!(state, view)
     state.saved_project_view = view
     state.loaded_source_id = current

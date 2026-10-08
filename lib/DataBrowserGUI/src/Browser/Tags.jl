@@ -1,114 +1,25 @@
-using DataBrowserAnnotations
-
 import DataBrowserCore.Workspace
+import DataBrowserCore.Workspace: Tag, tags, tag!, untag!
 using DataBrowserAPI: id, label
 using DataBrowserCore.Catalogs: CollectionKey, ItemKey, ROOT
 
-const BAD_TAG_NAME = "bad"
-const BAD_TAG_COLOR = (UInt8(0xff), UInt8(0x30), UInt8(0x30))
-const BAD_TAG_PRIORITY = 100
+# The tag behind "Mark Bad" and "Show Bad". The browser defines it in a workspace on first use.
+const BAD_TAG = Tag("bad"; color="ff3030", priority=100)
 
-"""Return the folder that holds `tags.txt`: the source root, or `""` for a source without one."""
-function _annotation_root(workspace::Workspace.Workspace)::String
-    return hasproperty(workspace.source, :root_path) ? workspace.source.root_path : ""
-end
-
-"""
-Load tags for one source root.
-
-Parse or I/O failures leave tags unavailable but keep bad items visible.
-"""
-function _load_tag_state_for_root!(
-    state::BrowserState,
-    root_path::String,
-)::Nothing
-    if isempty(root_path)
-        state.tag_state = nothing
-        state.tag_state_error = ""
-        return nothing
-    end
-
-    try
-        state.tag_state = DataBrowserAnnotations.Tags.load(root_path)
-        state.tag_state_error = ""
-    catch err
-        if err isa DataBrowserAnnotations.Tags.TagsParseError || err isa IOError
-            state.tag_state = nothing
-            state.tag_state_error = sprint(showerror, err)
-            return nothing
-        end
-        rethrow()
-    end
-    return nothing
-end
-
-function _tag_state_ready(state::BrowserState)::Bool
-    return state.tag_state !== nothing && isempty(state.tag_state_error)
-end
+"""Whether the workspace read its tags; they cannot be shown or changed otherwise."""
+_tags_ready(state::BrowserState)::Bool =
+    state.workspace isa Workspace.Workspace && isempty(state.workspace.tags.error)
 
 """
 Return whether bad-tagged items should be visible in the current UI state.
 Bad items stay visible when tags cannot be loaded, so missing tag metadata never hides data.
 """
-function _show_bad_effective(state::BrowserState)::Bool
-    return state.show_bad || !_tag_state_ready(state)
-end
+_show_bad_effective(state::BrowserState)::Bool = state.show_bad || !_tags_ready(state)
 
-"""Return loaded tags or fail with the error that prevented loading them."""
-function _tag_state_or_error(state::BrowserState)::DataBrowserAnnotations.Tags.TagState
-    state.tag_state === nothing &&
-        error("Tag state unavailable: $(state.tag_state_error)")
-    return state.tag_state
-end
-
-"""Return the persisted annotation key for one collection: its labels from the top level down."""
-function _collection_annotation_key(workspace::Workspace.Workspace, collection::CollectionKey)::String
-    path = [Workspace.ancestors(workspace, collection); collection]
-    return join((label(workspace, key) for key in path), '/')
-end
-
-"""Return every parent annotation key used when resolving inherited tags."""
-function _ancestor_annotation_keys(workspace::Workspace.Workspace, collection::CollectionKey)::Vector{String}
-    return String[
-        _collection_annotation_key(workspace, ancestor)
-        for ancestor in Workspace.ancestors(workspace, collection)
-    ]
-end
-
-"""Return the annotation keys of the collections that hold an item, from the top level down."""
-function _item_ancestor_annotation_keys(workspace::Workspace.Workspace, item::ItemKey)::Vector{String}
-    labels = String[label(workspace, key) for key in Workspace.ancestors(workspace, item)]
-    return String[join(labels[1:depth], '/') for depth in eachindex(labels)]
-end
-
-"""Return whether an item or one of its supplied parents has the bad tag."""
-function _has_bad_tag(
-    tag_state::DataBrowserAnnotations.Tags.TagState,
-    key::AbstractString,
-    ancestor_keys::Vector{String},
-)::Bool
-    return "bad" in DataBrowserAnnotations.Tags.effective(tag_state, key, ancestor_keys)
-end
-
-"""Return whether a collection remains visible after applying the bad-tag filter."""
-function _collection_is_visible(state::BrowserState, collection::CollectionKey)::Bool
+"""Return whether an item or collection remains visible after applying the bad-tag filter."""
+function _is_visible(state::BrowserState, key::Union{ItemKey,CollectionKey})::Bool
     _show_bad_effective(state) && return true
-    tag_state = _tag_state_or_error(state)
-    workspace = state.workspace::Workspace.Workspace
-    return !_has_bad_tag(
-        tag_state,
-        _collection_annotation_key(workspace, collection),
-        _ancestor_annotation_keys(workspace, collection),
-    )
-end
-
-"""Return whether an item remains visible after applying inherited bad tags."""
-function _item_is_visible(state::BrowserState, item::ItemKey)::Bool
-    _show_bad_effective(state) && return true
-    tag_state = _tag_state_or_error(state)
-    workspace = state.workspace::Workspace.Workspace
-    ancestors = _item_ancestor_annotation_keys(workspace, item)
-    return !_has_bad_tag(tag_state, id(workspace, item), ancestors)
+    return !any(tag -> tag.name == BAD_TAG.name, tags(state.workspace::Workspace.Workspace, key))
 end
 
 """
@@ -129,7 +40,7 @@ function _project_visible_selection(
         (collection === nothing || collection == ROOT) && continue
         isempty(Workspace.children(workspace, collection)) ||
             error("Selected collection '$(join(last.(path), '/'))' is not a leaf collection")
-        !_collection_is_visible(state, collection) && continue
+        !_is_visible(state, collection) && continue
         push!(selected_collections, collection)
     end
 
@@ -140,7 +51,7 @@ function _project_visible_selection(
         item = Workspace.item(workspace, item_id)
         item === nothing && continue
         Workspace.collection(workspace, item) in visible_collections || continue
-        !_item_is_visible(state, item) && continue
+        !_is_visible(state, item) && continue
         push!(selected_items, item)
     end
     selected_path = String[]
@@ -161,7 +72,7 @@ function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     workspace = state.workspace::Workspace.Workspace
     key = hash((
         objectid(workspace), workspace.selection.collections, _show_bad_effective(state),
-        state.tag_state === nothing ? 0 : hash(state.tag_state.assignments)))
+        workspace.tags.revision))
     generation = Workspace.generation(workspace)
     list = state.item_list
     list !== nothing && list.key == key &&
@@ -190,86 +101,17 @@ function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     return all_items
 end
 
-"""
-Ensure the bad tag exists before writing bad-collection or bad-item assignments.
-"""
-function _ensure_bad_catalog_entry!(
-    tag_state::DataBrowserAnnotations.Tags.TagState,
-)::Nothing
-    any(t -> t.name == BAD_TAG_NAME, tag_state.catalog) && return
-    pushfirst!(tag_state.catalog,
-        DataBrowserAnnotations.Tags.Tag(BAD_TAG_NAME, BAD_TAG_COLOR, BAD_TAG_PRIORITY))
+"""Put the bad tag on items or collections, or take it off, and define it on first use."""
+function _set_bad!(state::BrowserState, keys::Vector{<:Union{ItemKey,CollectionKey}}, bad::Bool)::Nothing
+    workspace = state.workspace::Workspace.Workspace
+    defined = any(tag -> tag.name == BAD_TAG.name, tags(workspace))
+    if bad
+        defined || tag!(workspace, BAD_TAG)
+        tag!(workspace, keys, BAD_TAG)
+    elseif defined
+        untag!(workspace, keys, BAD_TAG)
+    end
     return nothing
-end
-
-"""
-Set or clear the bad tag on collections and persist the updated tag file.
-Returns `false` when tag state is unavailable or there is nothing to change.
-"""
-function _set_collections_bad!(
-    state::BrowserState,
-    annotation_keys::Vector{String},
-    bad::Bool,
-)::Bool
-    unique_annotation_keys = unique(copy(annotation_keys))
-    isempty(unique_annotation_keys) && return false
-    _tag_state_ready(state) || return false
-
-    workspace = state.workspace::Workspace.Workspace
-
-    tag_state = _tag_state_or_error(state)
-    _ensure_bad_catalog_entry!(tag_state)
-
-    for annotation_key in unique_annotation_keys
-        if bad
-            set = get!(() -> Set{String}(), tag_state.assignments, annotation_key)
-            push!(set, BAD_TAG_NAME)
-        else
-            tags = get(tag_state.assignments, annotation_key, nothing)
-            if tags !== nothing
-                delete!(tags, BAD_TAG_NAME)
-                isempty(tags) && delete!(tag_state.assignments, annotation_key)
-            end
-        end
-    end
-
-    DataBrowserAnnotations.Tags.save(_annotation_root(workspace), tag_state)
-    return true
-end
-
-"""
-Set or clear the bad tag on items and persist the updated tag file.
-Returns `false` when tag state is unavailable or there is nothing to change.
-"""
-function _set_items_bad!(
-    state::BrowserState,
-    item_ids::Vector{String},
-    bad::Bool,
-)::Bool
-    unique_ids = unique(copy(item_ids))
-    isempty(unique_ids) && return false
-    _tag_state_ready(state) || return false
-
-    workspace = state.workspace::Workspace.Workspace
-
-    tag_state = _tag_state_or_error(state)
-    _ensure_bad_catalog_entry!(tag_state)
-
-    for id in unique_ids
-        if bad
-            set = get!(() -> Set{String}(), tag_state.assignments, id)
-            push!(set, BAD_TAG_NAME)
-        else
-            tags = get(tag_state.assignments, id, nothing)
-            if tags !== nothing
-                delete!(tags, BAD_TAG_NAME)
-                isempty(tags) && delete!(tag_state.assignments, id)
-            end
-        end
-    end
-
-    DataBrowserAnnotations.Tags.save(_annotation_root(workspace), tag_state)
-    return true
 end
 
 """Apply a context-menu action to the selection when the clicked item belongs to it."""

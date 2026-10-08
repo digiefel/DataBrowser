@@ -96,7 +96,7 @@ function _visible_items(
     visible = ItemKey[]
     sizehint!(visible, length(items))
     for item in items
-        _item_is_visible(state, item) || continue
+        _is_visible(state, item) || continue
         _item_matches_filter(workspace, item, filter_item) || continue
         push!(visible, item)
     end
@@ -120,7 +120,7 @@ function _render_hierarchy_tree_panel(
 
     cache_key = workspace isa Workspace.Workspace ? hash((
         objectid(workspace), _imgui_text_filter_text(filter_tree),
-        _show_bad_effective(state), state.tag_state === nothing ? 0 : hash(state.tag_state.assignments),
+        _show_bad_effective(state), workspace.tags.revision,
     )) : UInt(0)
     generation = workspace isa Workspace.Workspace ? Workspace.generation(workspace) : 0
     cache = state.tree_cache
@@ -162,7 +162,7 @@ function _render_hierarchy_tree_panel(
             return get!(has_visible_leaf_cache, collection_record) do
                 children = child_records(collection_record)
                 if isempty(children)
-                    return _collection_is_visible(state, collection_record)
+                    return _is_visible(state, collection_record)
                 end
                 for child in children
                     has_visible_leaf(child) && return true
@@ -409,11 +409,8 @@ function _render_hierarchy_tree_panel(
             end
 
             bad_text_pushed = false
-            if on_screen && is_leaf && _tag_state_ready(state)
-                tag_state = _tag_state_or_error(state)
-                annotation_key = _collection_annotation_key(workspace, collection_record)
-                ancestor_keys = _ancestor_annotation_keys(workspace, collection_record)
-                bad_text_pushed = _push_tag_text_style!(tag_state, annotation_key, ancestor_keys)
+            if on_screen && is_leaf && _tags_ready(state)
+                bad_text_pushed = _push_tag_text_style!(workspace, collection_record)
             end
             if !is_leaf && !filter_active
                 ig.SetNextItemOpen(collection_id_value in expanded_collection_id_set, ig.ImGuiCond_Always)
@@ -456,14 +453,10 @@ function _render_hierarchy_tree_panel(
 
             if on_screen && is_leaf && ig.BeginPopupContextItem()
                 target_collections = _selection_targets(selected_collections, collection_record)
-                target_keys = [
-                    _collection_annotation_key(workspace, target)
-                    for target in target_collections
-                ]
-                selected_count = length(target_keys)
+                selected_count = length(target_collections)
                 selected_count > 1 && ig.TextDisabled("Apply to $selected_count collections")
 
-                editable = _tag_state_ready(state)
+                editable = _tags_ready(state)
                 if !editable
                     ig.TextDisabled("Fix tags.txt and rescan to edit")
                     ig.Separator()
@@ -471,10 +464,10 @@ function _render_hierarchy_tree_panel(
 
                 !editable && ig.BeginDisabled()
                 if ig.MenuItem("Mark Bad")
-                    _set_collections_bad!(state, target_keys, true)
+                    _set_bad!(state, target_collections, true)
                 end
                 if ig.MenuItem("Unmark Bad")
-                    _set_collections_bad!(state, target_keys, false)
+                    _set_bad!(state, target_collections, false)
                 end
                 !editable && ig.EndDisabled()
                 ig.EndPopup()
@@ -623,7 +616,7 @@ function _render_items_panel(
     all_items = @timed "items_panel" _items_of_selected_collections(state)
     visible_items = @timed "visible_items" _visible_items(state, workspace, all_items, filter_item)
     selected_id_set = Set(workspace.selection.item_ids)
-    registry_ready = _tag_state_ready(state)
+    registry_ready = _tags_ready(state)
 
     _render_selection_toolbar!(
         length(selected_items),
@@ -689,11 +682,7 @@ function _render_items_panel(
 
                         is_selected = item_id in selected_id_set
                         bad_text_pushed = false
-                        if registry_ready
-                            tag_state = _tag_state_or_error(state)
-                            bad_text_pushed = _push_tag_text_style!(
-                                tag_state, item_id, _item_ancestor_annotation_keys(workspace, item))
-                        end
+                        registry_ready && (bad_text_pushed = _push_tag_text_style!(workspace, item))
                         readiness = Workspace.readiness(workspace, item)
                         _render_readiness_mark!(readiness)
                         ig.SameLine()
@@ -729,8 +718,7 @@ function _render_items_panel(
 
                         if ig.BeginPopupContextItem()
                             target_items = _selection_targets(selected_items, item)
-                            target_ids = [id(workspace, target) for target in target_items]
-                            selected_count = length(target_ids)
+                            selected_count = length(target_items)
                             selected_count > 1 && ig.TextDisabled("Apply to $selected_count items")
 
                             for ext in state.extensions
@@ -743,7 +731,7 @@ function _render_items_panel(
                                 )
                             end
 
-                            editable = _tag_state_ready(state)
+                            editable = _tags_ready(state)
                             if !editable
                                 ig.TextDisabled("Fix tags.txt and rescan to edit")
                                 ig.Separator()
@@ -751,10 +739,10 @@ function _render_items_panel(
 
                             !editable && ig.BeginDisabled()
                             if ig.MenuItem("Mark Bad")
-                                _set_items_bad!(state, target_ids, true)
+                                _set_bad!(state, target_items, true)
                             end
                             if ig.MenuItem("Unmark Bad")
-                                _set_items_bad!(state, target_ids, false)
+                                _set_bad!(state, target_items, false)
                             end
                             !editable && ig.EndDisabled()
                             ig.EndPopup()

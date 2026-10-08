@@ -25,7 +25,7 @@ module Tags
 
 using ..DataBrowserAnnotations: AnnotationKey, collection_annotation_key
 
-export Tag, TagState, load, save, effective, dominant_color,
+export Tag, TagState, load, save,
        tags_path, TAGS_FILENAME
 
 const TAGS_FILENAME = "tags.txt"
@@ -48,6 +48,8 @@ struct Tag
 end
 
 function Tag(name::AbstractString; color::AbstractString="808080", priority::Integer=0)
+    (isempty(strip(name)) || occursin(r"[\t\n]", name)) &&
+        throw(ArgumentError("a tag name is text on one line without tabs, got \"$(escape_string(name))\""))
     digits = lstrip(color, '#')
     length(digits) == 6 && all(isxdigit, digits) ||
         throw(ArgumentError("a tag colour is six hexadecimal digits, got \"$color\""))
@@ -65,8 +67,8 @@ Catalog of `Tag`s plus a single `assignments` map.
 Keys are [`AnnotationKey`](@ref) values — either collection paths or item ids.
 The two namespaces never overlap.
 
-Only explicitly attached tags are stored; inheritance is applied at lookup time
-via `effective`.
+Only explicitly attached tags are stored; a reader applies the tags of a collection to
+everything below it.
 """
 struct TagState
     catalog::Vector{Tag}
@@ -191,52 +193,6 @@ function save(root::AbstractString, state::TagState)
             end
         end
     end
-end
-
-"""
-    effective(state, key, ancestor_keys) -> Set{String}
-
-Return tags that apply to `key`: its own assignments unioned with any
-assignments on ancestor keys. The caller supplies `ancestor_keys`
-(order doesn't affect the union).
-
-To get the full applicable set for an item, call:
-
-    effective(state, item_annotation_key(item), collection_ancestors)
-
-This works because collection paths and item ids live in the
-same `assignments` map and are looked up uniformly.
-"""
-function effective(state::TagState, key::AnnotationKey, ancestor_keys)::Set{String}
-    out = Set{String}()
-    for ancestor in ancestor_keys
-        tags = get(state.assignments, collection_annotation_key(ancestor), nothing)
-        tags === nothing && continue
-        union!(out, tags)
-    end
-    own = get(state.assignments, collection_annotation_key(key), nothing)
-    own !== nothing && union!(out, own)
-    return out
-end
-
-"""
-    dominant_color(state, effective_tags) -> Union{Nothing, NTuple{3,UInt8}}
-
-Resolve `effective_tags` against the catalog and return the highest-
-priority hit's color. Returns `nothing` if `effective_tags` is empty or
-contains no catalog matches.
-"""
-function dominant_color(state::TagState, effective_tags)::Union{Nothing,NTuple{3,UInt8}}
-    isempty(effective_tags) && return nothing
-    best::Union{Nothing,Tag} = nothing
-    for tag in state.catalog
-        in(tag.name, effective_tags) || continue
-        if best === nothing || tag.priority > best.priority
-            best = tag
-        end
-    end
-    best === nothing && return nothing
-    return best.color
 end
 
 end # module

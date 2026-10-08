@@ -88,8 +88,7 @@ function render_menu_bar(state::BrowserState)::Nothing
         end
         _render_cache_toolbar_button!(state)
         show_bad_effective = _show_bad_effective(state)
-        bad_visibility_toggle_enabled = _tag_state_ready(state) ||
-                                        isempty(state.tag_state_error)
+        bad_visibility_toggle_enabled = _tags_ready(state)
         !bad_visibility_toggle_enabled && ig.BeginDisabled()
         if ig.MenuItem("Show Bad", C_NULL, show_bad_effective)
             state.show_bad = !state.show_bad

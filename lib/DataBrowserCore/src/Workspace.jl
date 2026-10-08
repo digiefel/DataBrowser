@@ -99,6 +99,8 @@ using DataBrowserCache:
     source_item_key!
 import DataBrowserCache
 import DataBrowserCache: query_items
+import DataBrowserAnnotations: Tags
+import DataBrowserAnnotations.Tags: Tag, TagState
 using ..DataBrowserCore: ExpandedItem
 import DataBrowserAPI
 import DataBrowserAPI:
@@ -154,6 +156,18 @@ yet or no longer has.
 Base.@kwdef mutable struct WorkspaceSelection
     collections::Vector{Vector{Tuple{String,String}}} = Vector{Tuple{String,String}}[]
     item_ids::Vector{String} = String[]
+end
+
+"""
+The tags of a workspace: the content of `tags.txt` in the source root.
+
+`error` says why the file could not be read; tags cannot change while it is set. `revision`
+increases with every change, for views that keep what they computed from the tags.
+"""
+mutable struct WorkspaceTags
+    state::TagState
+    error::String
+    revision::Int
 end
 
 """
@@ -241,6 +255,7 @@ mutable struct Workspace{P<:AbstractProject}
     completed::Int
     stopping::Bool
     selection::WorkspaceSelection
+    tags::WorkspaceTags
     cache::WorkspaceCache
     scan::WorkspaceScan
     # The cache is the persistence side of the scan, not a separately cancellable job, so it needs
@@ -354,6 +369,7 @@ function Workspace(
         0,
         false,
         WorkspaceSelection(),
+        WorkspaceTags(source),
         WorkspaceCache(identity, cache_db, disk_error, nothing, :load),
         WorkspaceScan(),
         :idle,
@@ -396,6 +412,7 @@ function Base.show(io::IO, ::MIME"text/plain", workspace::Workspace)
 end
 
 include("Workspace/Accessors.jl")
+include("Workspace/Tags.jl")
 include("Workspace/Operations.jl")
 include("Workspace/Status.jl")
 include("Workspace/DataAccess.jl")

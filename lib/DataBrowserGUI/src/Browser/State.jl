@@ -1,4 +1,3 @@
-using DataBrowserAnnotations
 import CImGui as ig
 
 import DataBrowserCore.Workspace
@@ -160,8 +159,6 @@ Base.@kwdef mutable struct BrowserState
     scroll_to_collection::Union{Nothing,Workspace.CollectionPath} = nothing
     scroll_to_item_id::Union{Nothing,String} = nothing
     show_bad::Bool = true
-    tag_state::Union{Nothing,DataBrowserAnnotations.Tags.TagState} = nothing
-    tag_state_error::String = ""
     show_project_window::Bool = false
     show_performance_window::Bool = false
     show_imgui_metrics::Bool = false

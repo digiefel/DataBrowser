@@ -132,6 +132,7 @@ function _install_runtime!(
     cache_db, disk_error, identity = _open_workspace_cache(
         workspace.project, source, metrics; rebuild, cache, expanded_data_limit)
     workspace.source = source
+    workspace.tags = WorkspaceTags(source)
     workspace.catalog = Catalog(background_processing)
     foreach(empty!, (
         workspace.source_items, workspace.source_locks, workspace.collection_keys,

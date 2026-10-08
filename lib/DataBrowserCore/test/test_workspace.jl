@@ -107,6 +107,14 @@ DataBrowserAPI.analyze(::NestedProject, ::NestedItem) = Dict(:step => 0)
 DataBrowserAPI.analyze(::NestedProject, ::Inner, items::AbstractVector) =
     Dict(:seen => only(only(items).data.x))
 
+struct RootedSource <: AbstractDataSource
+    root_path::String
+end
+DataBrowserAPI.id(s::RootedSource) = s.root_path
+DataBrowserAPI.label(s::RootedSource) = s.root_path
+DataBrowserAPI.items(::RootedSource; kwargs...) = [EngineSourceItem(1, false)]
+DataBrowserAPI.read(::NestedProject, ::RootedSource, s::EngineSourceItem) = s.version
+
 struct GatedProject <: AbstractProject
     gate::Base.Event
 end
@@ -405,5 +413,39 @@ end
     finally
         notify(project.gate)
         W.close_workspace!(ws)
+    end
+end
+
+@testset "tags apply below a collection and are kept in tags.txt" begin
+    mktempdir() do root
+        names(found) = [tag.name for tag in found]
+        ws = W.open_workspace(NestedProject(), RootedSource(root); cache=false)
+        try
+            settled(ws)
+            a, b = W.item(ws, "a"), W.item(ws, "b")
+            # A name that is not defined is refused.
+            @test_throws ErrorException tag!(ws, a, "leaky")
+            tag!(ws, Tag("leaky"))
+            tag!(ws, Tag("bad"; priority=5))
+            tag!(ws, a, "leaky")
+            tag!(ws, first(W.ancestors(ws, a)), Tag("bad"))
+            @test names(tags(ws, a)) == ["bad", "leaky"]
+            @test names(tags(ws, b)) == ["bad"]
+            untag!(ws, [a, b], "leaky")
+            @test names(tags(ws, a)) == ["bad"]
+        finally
+            W.close_workspace!(ws)
+        end
+        ws = W.open_workspace(NestedProject(), RootedSource(root); cache=false)
+        try
+            settled(ws)
+            @test names(tags(ws)) == ["leaky", "bad"]
+            @test names(tags(ws, W.item(ws, "b"))) == ["bad"]
+            untag!(ws, "bad")
+            @test names(tags(ws)) == ["leaky"]
+            @test isempty(tags(ws, W.item(ws, "b")))
+        finally
+            W.close_workspace!(ws)
+        end
     end
 end
