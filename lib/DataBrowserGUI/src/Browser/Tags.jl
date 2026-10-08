@@ -158,21 +158,32 @@ Return every item belonging to the selected visible collections, ordered by the 
 item that produced it. Items whose source item gives no time come last.
 """
 function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
-    selected_collections, _, _ = _project_visible_selection(state)
     workspace = state.workspace::Workspace.Workspace
+    key = hash((
+        objectid(workspace), workspace.selection.collections, _show_bad_effective(state),
+        state.tag_state === nothing ? 0 : hash(state.tag_state.assignments)))
+    generation = Workspace.generation(workspace)
+    list = state.item_list
+    list !== nothing && list.key == key &&
+        (list.generation == generation || time() - list.built < TREE_REFRESH_SECONDS) &&
+        return list.items
+
+    selected_collections, _, _ = _project_visible_selection(state)
     all_items = ItemKey[]
     Workspace.CollectionPath() in workspace.selection.collections &&
         append!(all_items, Workspace.items(workspace, ROOT))
     for collection in selected_collections
         append!(all_items, Workspace.items(workspace, collection))
     end
-    return sort!(
+    sort!(
         all_items;
         by=item -> get(Workspace.metadata(workspace, item), :timestamp, nothing),
         # Items without a timestamp come last. Timestamps of different types keep their order.
         lt=(left, right) -> left !== nothing &&
             (right === nothing || (typeof(left) == typeof(right) && left < right)),
     )
+    state.item_list = ItemList(key, generation, time(), all_items)
+    return all_items
 end
 
 """

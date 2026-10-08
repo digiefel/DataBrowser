@@ -127,6 +127,17 @@ end
 const TREE_REFRESH_SECONDS = 0.1
 
 """
+The items of the selected collections in display order. Kept and replaced like [`TreeCache`](@ref);
+its key covers the workspace, the selected collections and the tags.
+"""
+struct ItemList
+    key::UInt
+    generation::Int
+    built::Float64
+    items::Vector{Workspace.Catalogs.ItemKey}
+end
+
+"""
 Runtime state owned by the browser.
 
 The workspace owns items, selection, cache state, data, and background work. This type owns
@@ -135,6 +146,7 @@ only controls, windows, local persistence, annotations, and rendering state.
 Base.@kwdef mutable struct BrowserState
     workspace::Union{Nothing,Workspace.Workspace} = nothing
     tree_cache::Union{Nothing,TreeCache} = nothing
+    item_list::Union{Nothing,ItemList} = nothing
     table_inspector::TableInspectorState = TableInspectorState()
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()
