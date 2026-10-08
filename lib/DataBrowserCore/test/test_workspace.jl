@@ -431,6 +431,8 @@ end
             tag!(ws, first(W.ancestors(ws, a)), Tag("bad"))
             @test names(tags(ws, a)) == ["bad", "leaky"]
             @test names(tags(ws, b)) == ["bad"]
+            @test items(ws, Tag("leaky")) == [a]
+            @test items(ws, !Tag("leaky")) == [b]
             untag!(ws, [a, b], "leaky")
             @test names(tags(ws, a)) == ["bad"]
         finally

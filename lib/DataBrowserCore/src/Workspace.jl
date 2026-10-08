@@ -100,7 +100,7 @@ using DataBrowserCache:
 import DataBrowserCache
 import DataBrowserCache: query_items
 import DataBrowserAnnotations: Tags
-import DataBrowserAnnotations.Tags: Tag, TagState
+import DataBrowserAnnotations.Tags: Tag, TagState, Untagged
 using ..DataBrowserCore: ExpandedItem
 import DataBrowserAPI
 import DataBrowserAPI:

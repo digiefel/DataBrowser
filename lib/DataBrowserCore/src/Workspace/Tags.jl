@@ -50,6 +50,25 @@ function tags(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Vector{T
     return sort!(filter(tag -> tag.name in names, workspace.tags.state.catalog); by=tag -> -tag.priority)
 end
 
+"""
+    items(workspace, tag::Tag) -> Vector{ItemKey}
+    items(workspace, !tag) -> Vector{ItemKey}
+
+The items of a workspace that have a tag, or with `!`, the items that do not have it. An item has
+the tags of the collections above it.
+
+    items(workspace, !Tag("bad"))
+"""
+function items(workspace::Workspace, tag::Tag)::Vector{ItemKey}
+    name = tag_name(workspace, tag)
+    return filter(key -> any(found -> found.name == name, tags(workspace, key)), items(workspace))
+end
+
+function items(workspace::Workspace, condition::Untagged)::Vector{ItemKey}
+    name = tag_name(workspace, condition.tag)
+    return filter(key -> !any(found -> found.name == name, tags(workspace, key)), items(workspace))
+end
+
 """The name of an item or a collection in `tags.txt`."""
 tag_key(workspace::Workspace, item::ItemKey)::String = id(workspace, item)
 tag_key(workspace::Workspace, collection::CollectionKey)::String =

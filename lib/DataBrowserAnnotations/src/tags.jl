@@ -25,7 +25,7 @@ module Tags
 
 using ..DataBrowserAnnotations: AnnotationKey, collection_annotation_key
 
-export Tag, TagState, load, save,
+export Tag, Untagged, TagState, load, save,
        tags_path, TAGS_FILENAME
 
 const TAGS_FILENAME = "tags.txt"
@@ -55,6 +55,16 @@ function Tag(name::AbstractString; color::AbstractString="808080", priority::Int
         throw(ArgumentError("a tag colour is six hexadecimal digits, got \"$color\""))
     return Tag(name, ntuple(i -> parse(UInt8, digits[2i-1:2i]; base=16), 3), priority)
 end
+
+"""
+The condition "does not have this tag", written `!Tag("bad")`.
+"""
+struct Untagged
+    tag::Tag
+end
+
+Base.:!(tag::Tag) = Untagged(tag)
+Base.:!(condition::Untagged) = condition.tag
 
 Base.show(io::IO, tag::Tag) =
     print(io, "Tag(\"", tag.name, "\"; color=\"", _format_color(tag.color), "\", priority=", tag.priority, ")")
