@@ -353,6 +353,8 @@ Every change keeps `tags.txt` human-readable and recoverable independently of th
 - [x] Set the visibility of each tag with a button above the collection tree: shown, hidden, or
   only, marked on the button with nothing, a cross, or a check mark.
 - [ ] Edit the colour and the priority of a tag, and remove a tag, in the GUI.
+- [ ] Open question: what the GUI may define. It can write only to files beside the data, while
+  a project is defined in Julia. Find a rule that feels obvious before adding more GUI editing.
 - [ ] Save the visibility of each tag with the view. With `only`, hide the collections that hold
   no item with the tag.
 - [ ] Apply tags consistently to colours, visibility, and the selected item set.
