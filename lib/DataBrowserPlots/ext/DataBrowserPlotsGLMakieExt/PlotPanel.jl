@@ -16,6 +16,8 @@ using .MakieImguiIntegration: MakieFigure, destroy_figure!, inspect!, plot_theme
 
 _plot_state(state::Browser.BrowserState) = plots_extension(state).plots
 
+# The time the theme button takes to change its colors after a click.
+const THEME_BLEND_SECONDS = 0.25
 const PLOT_HELP_TEXT = "Live follows the browser selection.\nDetach opens an independent plot window.\nExport saves the current figure.\nScroll zooms, drag zooms to a rectangle, right-drag pans, Ctrl-click resets limits.\nHold x or y to change that direction only.\nOn the ticks of one axis, scroll and drag change that axis only.\nInspect, or the i key, shows the values under the mouse."
 
 """Return the stable embedded-Makie id for one plot view."""
@@ -161,8 +163,27 @@ function render_plot_toolbar!(
     inspector = view.inspector
     @c(ig.Checkbox("Inspect##inspect_$(view.id)", &inspector)) && (view.inspector = inspector)
     ig.SameLine()
-    # The button names the theme in use and switches to the other one.
-    ig.Button((plots.dark ? "Dark" : "Light") * "###theme_$(view.id)") && (plots.dark = !plots.dark)
+    # The theme button looks like the theme in use: dark with a light frame, or light with a dark
+    # frame. After a click its colors blend from one to the other. `blend` is 0 for dark and 1
+    # for light, and ImGui keeps it between frames.
+    storage, blend_id = ig.GetStateStorage(), ig.GetID("theme_blend_$(view.id)")
+    blend = ig.GetFloat(storage, blend_id, plots.dark ? 0.0f0 : 1.0f0)
+    step = unsafe_load(ig.GetIO().DeltaTime) / THEME_BLEND_SECONDS
+    blend = plots.dark ? max(blend - step, 0.0f0) : min(blend + step, 1.0f0)
+    ig.SetFloat(storage, blend_id, blend)
+    fill = ntuple(i -> Float32((0.1, 0.1, 0.1, 1.0)[i] * (1 - blend) + blend), 4)
+    # The frame and the text switch at the middle of the blend, so they stay readable.
+    frame = blend < 0.5 ? (0.9f0, 0.9f0, 0.9f0, 1.0f0) : (0.1f0, 0.1f0, 0.1f0, 1.0f0)
+    hovered_fill = ntuple(i -> 0.85f0 * fill[i] + 0.15f0 * frame[i], 4)
+    ig.PushStyleColor(ig.ImGuiCol_Button, fill)
+    ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, hovered_fill)
+    ig.PushStyleColor(ig.ImGuiCol_ButtonActive, hovered_fill)
+    ig.PushStyleColor(ig.ImGuiCol_Text, frame)
+    ig.PushStyleColor(ig.ImGuiCol_Border, frame)
+    ig.PushStyleVar(ig.ImGuiStyleVar_FrameBorderSize, 1.0f0)
+    ig.Button((blend < 0.5 ? "Dark" : "Light") * "###theme_$(view.id)") && (plots.dark = !plots.dark)
+    ig.PopStyleVar()
+    ig.PopStyleColor(5)
     if ig.BeginItemTooltip()
         ig.TextUnformatted(plots.dark ? "Switch to the light theme" : "Switch to the dark theme")
         ig.EndTooltip()
