@@ -743,13 +743,18 @@ function _set_queued!(
 )::Nothing where {K,R}
     previous = get(store.queued, key, nothing)
     previous === nothing || (store.queued_rows -= _mutation_rows(store, previous))
+    was_empty = isempty(store.queued)
     if mutation === nothing
         delete!(store.queued, key)
     else
         store.queued[key] = mutation
         store.queued_rows += _mutation_rows(store, mutation)
     end
-    notify(store.flush_condition)
+    # The flush task is woken only when its wait can end: the queue got its first entry, or
+    # reached its limit. A removed entry can make room for a writer that waits. Waking the flush
+    # task for every entry makes all writers queue for the lock behind it.
+    at_limit = store.row_limit !== nothing && store.queued_rows >= store.row_limit
+    (was_empty || at_limit || mutation === nothing) && notify(store.flush_condition)
     return nothing
 end
 

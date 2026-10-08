@@ -21,10 +21,10 @@ end
 """
     default_expanded_data_limit() -> Int
 
-The default of `expanded_data_limit` in [`open_cache_db`](@ref), in MiB: 3072, or a quarter of the
+The default of `expanded_data_limit` in [`open_cache_db`](@ref), in MiB: 512, or a quarter of the
 memory of the machine when that is less.
 """
-default_expanded_data_limit()::Int = min(3072, Sys.total_memory() ÷ 4 ÷ 1024^2)
+default_expanded_data_limit()::Int = min(512, Sys.total_memory() ÷ 4 ÷ 1024^2)
 
 # An estimate without reading the values: 8 bytes for each cell of a table.
 _expanded_bytes(data)::Int = Tables.istable(data) ?
