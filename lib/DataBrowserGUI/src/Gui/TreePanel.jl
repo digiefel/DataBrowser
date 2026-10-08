@@ -367,11 +367,15 @@ function _render_hierarchy_tree_panel(
             has_visible_leaf(collection_record) || return
             force_show || subtree_matches(collection_record) || return
 
-            state.performance.node_count += 1
             ig.TableNextRow()
+            ig.TableSetColumnIndex(0)
+            # A row outside the visible part of the panel only takes its place and keeps its
+            # children: nothing of it is read from the workspace or drawn.
+            on_screen = ig.IsRectVisible((1.0f0, ig.GetTextLineHeight()))
+            on_screen && (state.performance.node_count += 1)
 
-            direct_match = force_show ||
-                ig.ImGuiTextFilter_PassFilter(filter_tree, label(workspace, collection_record), C_NULL)
+            name = label(workspace, collection_record)
+            direct_match = force_show || ig.ImGuiTextFilter_PassFilter(filter_tree, name, C_NULL)
             ig.PushID(to_imgui_id(row_id))
 
             children = child_records(collection_record)
@@ -404,9 +408,8 @@ function _render_hierarchy_tree_panel(
                 flags |= ig.ImGuiTreeNodeFlags_DefaultOpen
             end
 
-            ig.TableSetColumnIndex(0)
             bad_text_pushed = false
-            if is_leaf && leaf_collection_id !== nothing && _tag_state_ready(state)
+            if on_screen && is_leaf && _tag_state_ready(state)
                 tag_state = _tag_state_or_error(state)
                 annotation_key = _collection_annotation_key(workspace, collection_record)
                 ancestor_keys = _ancestor_annotation_keys(workspace, collection_record)
@@ -415,15 +418,11 @@ function _render_hierarchy_tree_panel(
             if !is_leaf && !filter_active
                 ig.SetNextItemOpen(collection_id_value in expanded_collection_id_set, ig.ImGuiCond_Always)
             end
-            readiness = Workspace.readiness(workspace, collection_record)
+            readiness = on_screen ? Workspace.readiness(workspace, collection_record) : nothing
             # A collection that is not processed is gray, unless a tag already colors its text.
             grayed = !bad_text_pushed && readiness == Workspace.UNPROCESSED
             grayed && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
-            opened = ig.TreeNodeEx(
-                is_leaf ? "" : label(workspace, collection_record),
-                flags,
-                label(workspace, collection_record),
-            )
+            opened = ig.TreeNodeEx(is_leaf ? "" : name, flags, name)
             grayed && ig.PopStyleColor()
             if is_leaf && state.scroll_to_collection == leaf_collection_id
                 ig.SetScrollHereY(0.5)
@@ -441,7 +440,7 @@ function _render_hierarchy_tree_panel(
             end
             bad_text_pushed && ig.PopStyleColor()
 
-            if ig.IsItemClicked()
+            if on_screen && ig.IsItemClicked()
                 if is_leaf
                     io = ig.GetIO()
                     shift_held = unsafe_load(io.KeyShift)
@@ -455,7 +454,7 @@ function _render_hierarchy_tree_panel(
                 end
             end
 
-            if is_leaf && ig.BeginPopupContextItem()
+            if on_screen && is_leaf && ig.BeginPopupContextItem()
                 target_collections = _selection_targets(selected_collections, collection_record)
                 target_keys = [
                     _collection_annotation_key(workspace, target)
@@ -481,19 +480,21 @@ function _render_hierarchy_tree_panel(
                 ig.EndPopup()
             end
 
-            # Drawn after every question about the row: the mark is an item of its own.
-            ig.SameLine()
-            _render_readiness_mark!(readiness)
+            if on_screen
+                # Drawn after every question about the row: the mark is an item of its own.
+                ig.SameLine()
+                _render_readiness_mark!(readiness)
 
-            effective_collection_metadata = get!(cache.metadata, collection_record) do
-                Workspace.metadata(workspace, collection_record)
-            end
-            for (i, k) in enumerate(parameter_keys)
-                ig.TableSetColumnIndex(i)
-                if haskey(effective_collection_metadata, k)
-                    ig.Text(string(effective_collection_metadata[k]))
-                elseif is_leaf
-                    ig.TextDisabled("--")
+                effective_collection_metadata = get!(cache.metadata, collection_record) do
+                    Workspace.metadata(workspace, collection_record)
+                end
+                for (i, k) in enumerate(parameter_keys)
+                    ig.TableSetColumnIndex(i)
+                    if haskey(effective_collection_metadata, k)
+                        ig.Text(string(effective_collection_metadata[k]))
+                    elseif is_leaf
+                        ig.TextDisabled("--")
+                    end
                 end
             end
 

@@ -124,7 +124,7 @@ mutable struct TreeCache
     metadata::Dict{Workspace.Catalogs.CollectionKey,MetadataDict}
 end
 
-const TREE_REFRESH_SECONDS = 0.25
+const TREE_REFRESH_SECONDS = 0.1
 
 """
 Runtime state owned by the browser.
