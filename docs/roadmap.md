@@ -155,9 +155,9 @@ Decisions taken during the audit:
   supplies the earlier item ids and the new items; Cache deletes the earlier items with their
   results, stores the new ones and records the expand stage.
 - [ ] Test source replacement with moved members and with collections that two source items share.
-- [ ] Keep the selection consistent when `modify_workspace!` changes the source. Today the
-  selection becomes empty with a disk cache, and keeps the ids of items that no longer exist with
-  a memory cache, where `materialize_items(workspace)` then throws.
+- [x] Keep the selection when the source changes: items that still exist stay selected, with a
+  disk cache and with a memory cache. Selected ids without an item are left out when the
+  selection is read.
 - [x] Fix four concurrency issues: the query view is replaced in one statement under a lock;
   `cache_pending_counts` reads every store at the same moment; `open_cache_db` closes the stores
   that already started when opening fails; `close_cache_db!` reports every exception.

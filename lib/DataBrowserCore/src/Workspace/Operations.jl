@@ -330,7 +330,6 @@ function remove_items!(workspace::Workspace, source::SourceKey)::Nothing
     delete_source_output!(workspace.cache.db, cache_key(workspace, source), removed_ids)
     filter!(target -> !(first(target) in removed), workspace.errors)
     setdiff!(workspace.wanted, removed)
-    filter!(id -> !(id in removed_ids), workspace.selection.item_ids)
     forget_stale!(workspace)
     return nothing
 end
@@ -372,6 +371,10 @@ function ingest_source_changes!(
         saved === nothing && continue
         source = lookup(catalog, SourceKey, removed)
         if source !== nothing
+            # The items of a source item that is gone leave the selection. The items of a source
+            # item that changed stay selected, and are found again once it is expanded.
+            gone = String[id(catalog, item) for item in Catalogs.items(catalog, source)]
+            filter!(id -> !(id in gone), workspace.selection.item_ids)
             remove_items!(workspace, source)
             delete!(catalog, source)
             delete!(workspace.source_items, source)
@@ -735,7 +738,6 @@ function publish_cache_state!(
             catalog = workspace.catalog
             foreach(source -> delete!(catalog, source), keys(catalog, SourceKey))
             foreach(empty!, (workspace.source_items, workspace.errors, workspace.wanted))
-            empty!(workspace.selection.item_ids)
             forget_stale!(workspace)
         else
             restore!(workspace, index)

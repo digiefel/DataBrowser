@@ -3,7 +3,7 @@
     materialize_items(workspace)
 
 The processed items for `items`, given as item keys or public ids, in the same order; or for the
-current selection. Each item comes in its latest version: the version of the outermost collection
+current selection, without the selected ids that the workspace has no item for. Each item comes in its latest version: the version of the outermost collection
 whose `process` changed it and whose result is current, or else its own processed data.
 
 An item that is not processed yet is processed now, ahead of background work, and the call waits
@@ -85,8 +85,9 @@ function materialize_items(
     return materialize_items(workspace, ItemKey[found...])
 end
 
-materialize_items(workspace::Workspace)::Vector{AbstractDataItem} =
-    materialize_items(workspace, workspace.selection.item_ids)
+# The selection may name items that the workspace does not have: they are left out.
+materialize_items(workspace::Workspace)::Vector{AbstractDataItem} = materialize_items(
+    workspace, ItemKey[key for key in item.(Ref(workspace), workspace.selection.item_ids) if key !== nothing])
 
 """
     revision(workspace, items) -> UInt
