@@ -58,13 +58,14 @@ function collection(workspace::Workspace, path::CollectionPath)::Union{Collectio
     catalog = workspace.catalog
     @lock catalog.lock begin
         found = ROOT
-        for level in path
-            below = Catalogs.children(catalog, found)
-            position = findfirst(
-                child -> (string(valuetype(catalog, child)), Catalogs.id(catalog, child)) == level,
-                below)
+        for (type, id) in path
+            # The ids are compared as bytes: no text is built for a child that does not match.
+            position = findfirst(catalog.collections.children[found.index]) do child
+                view(catalog.collections.ids, child.index) == codeunits(id) &&
+                    string(valuetype(catalog, child)) == type
+            end
             position === nothing && return nothing
-            found = below[position]
+            found = catalog.collections.children[found.index][position]
         end
         return found
     end
@@ -93,12 +94,13 @@ numeric order when every label is a Roman numeral. Pass `ROOT` for the top-level
 """
 function children(workspace::Workspace, collection::CollectionKey)::Vector{CollectionKey}
     catalog = workspace.catalog
-    @lock catalog.lock begin
+    keys, labels = @lock catalog.lock begin
         keys = Catalogs.children(catalog, collection)
-        labels = Dict(key => Catalogs.label(catalog, key) for key in keys)
-        roman = !isempty(keys) && all(text -> roman_value(text) !== nothing, values(labels))
-        return sort!(keys; by=key -> roman ? roman_value(labels[key]) : natural_key(labels[key]))
+        keys, [Catalogs.label(catalog, key) for key in keys]
     end
+    length(keys) < 2 && return keys
+    roman = all(text -> roman_value(text) !== nothing, labels)
+    return keys[sortperm(roman ? roman_value.(labels) : natural_key.(labels))]
 end
 
 """The integer value of a Roman numeral, or `nothing` for other text."""
