@@ -568,6 +568,10 @@ function open_cache_db(
     end
     db = DBInterface.connect(DuckDB.DB, persistent ? identity.cache_path : ":memory:")
     connection = DBInterface.connect(db)
+    # Each store starts a task that writes to the database. When opening fails, the stores that
+    # already started are closed.
+    stores = AbstractDatabaseStore[]
+    started(store) = (push!(stores, store); store)
     try
         try
             DBInterface.execute(connection, _memory_limit_sql(CACHE_MEMORY_LIMIT_MIB[]))
@@ -589,20 +593,21 @@ function open_cache_db(
         finally
             DBInterface.close!(connection)
         end
-        source_items = RowStore{String,SourceItemRow}(db, "source_items", ("id",))
-        collections = RowStore{Int64,CollectionRow}(
-            db, "collections", ("collection_key",))
-        items = RowStore{String,ItemRow}(db, "items", ("id",))
-        failures = RowStore{Tuple{String,Int64},FailureRow}(
-            db, "item_failures", ("item_id", "source_item_key"))
-        result_states = RowStore{Tuple{Int8,String},CachedResultState}(
-            db, "result_states", ("kind", "entity"))
-        keyed_result_states = RowStore{Tuple{Int8,Int64},CachedKeyedResultState}(
-            db, "keyed_result_states", ("kind", "entity"))
-        member_changes = RowStore{Int64,MemberChangesRow}(db, "member_changes", ("collection_key",))
-        stage_metadata = RowStore{Tuple{Int8,Int64},StageMetadataRow}(
-            db, "item_stage_metadata", ("stage", "item_key"))
-        payload = TabularFamilyStore(db; row_limit=CACHE_BUFFER_ROW_LIMIT)
+        source_items = started(RowStore{String,SourceItemRow}(db, "source_items", ("id",)))
+        collections = started(RowStore{Int64,CollectionRow}(
+            db, "collections", ("collection_key",)))
+        items = started(RowStore{String,ItemRow}(db, "items", ("id",)))
+        failures = started(RowStore{Tuple{String,Int64},FailureRow}(
+            db, "item_failures", ("item_id", "source_item_key")))
+        result_states = started(RowStore{Tuple{Int8,String},CachedResultState}(
+            db, "result_states", ("kind", "entity")))
+        keyed_result_states = started(RowStore{Tuple{Int8,Int64},CachedKeyedResultState}(
+            db, "keyed_result_states", ("kind", "entity")))
+        member_changes = started(
+            RowStore{Int64,MemberChangesRow}(db, "member_changes", ("collection_key",)))
+        stage_metadata = started(RowStore{Tuple{Int8,Int64},StageMetadataRow}(
+            db, "item_stage_metadata", ("stage", "item_key")))
+        payload = started(TabularFamilyStore(db; row_limit=CACHE_BUFFER_ROW_LIMIT))
         item_keys, next_item_key = _load_item_keys(db)
         source_item_keys, source_item_ids, next_source_item_key = _load_source_item_keys(db)
         stage_ledger = CacheStageLedger(
@@ -619,9 +624,9 @@ function open_cache_db(
             source_items,
             collections,
             items,
-            WideRowStore{Int64}(db, "source_item_metadata", "item_key"),
-            WideRowStore{Int64}(db, "analyzed_item_metadata", "item_key"),
-            WideRowStore{Int64}(db, "analyzed_collection_metadata", "collection_key"),
+            started(WideRowStore{Int64}(db, "source_item_metadata", "item_key")),
+            started(WideRowStore{Int64}(db, "analyzed_item_metadata", "item_key")),
+            started(WideRowStore{Int64}(db, "analyzed_collection_metadata", "collection_key")),
             failures,
             result_states,
             keyed_result_states,
@@ -642,6 +647,12 @@ function open_cache_db(
             Symbol[],
         )
     catch
+        for store in stores
+            try
+                close!(store)
+            catch
+            end
+        end
         DBInterface.close!(db)
         rethrow()
     end
@@ -1094,21 +1105,25 @@ function delete_collection_metadata!(
     return nothing
 end
 
-"""Aggregate staged durable keys and payload rows."""
+"""
+The number of keys and of payload rows that are queued or being written, over every store at the
+same moment.
+"""
 function cache_pending_counts(cache::CacheDB)::NamedTuple{(:items, :rows),Tuple{Int,Int}}
-    items = 0
-    rows = 0
-    for buffer in
-        (cache.source_items, cache.collections, cache.items, cache.source_item_metadata,
-         cache.analyzed_item_metadata,
-         cache.analyzed_collection_metadata, cache.failures, cache.result_states,
-         cache.keyed_result_states, cache.member_changes, cache.stage_metadata, cache.payload)
-        lock(buffer.flush_condition) do
-            items += length(buffer.queued) + length(buffer.writing)
-            rows += buffer.queued_rows + buffer.writing_rows
-        end
+    buffers = (cache.source_items, cache.collections, cache.items, cache.source_item_metadata,
+        cache.analyzed_item_metadata,
+        cache.analyzed_collection_metadata, cache.failures, cache.result_states,
+        cache.keyed_result_states, cache.member_changes, cache.stage_metadata, cache.payload)
+    # Every store is locked before any is read. No other code holds two of these locks.
+    foreach(buffer -> lock(buffer.flush_condition), buffers)
+    try
+        return (
+            items=sum(length(buffer.queued) + length(buffer.writing) for buffer in buffers),
+            rows=sum(buffer.queued_rows + buffer.writing_rows for buffer in buffers),
+        )
+    finally
+        foreach(buffer -> unlock(buffer.flush_condition), buffers)
     end
-    return (items=items, rows=rows)
 end
 
 """
@@ -1236,7 +1251,7 @@ end
 
 """Flush and close cache stores, then checkpoint and close the database."""
 function close_cache_db!(cachedb::CacheDB)::Nothing
-    failure::Union{Nothing,Exception} = nothing
+    failures = Any[]
     for buffer in
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.analyzed_item_metadata,
@@ -1247,17 +1262,21 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
         try
             close!(buffer)
         catch error
-            failure === nothing && (failure = error)
+            push!(failures, error)
         end
     end
-    connection = DBInterface.connect(cachedb.db)
     try
-        DBInterface.execute(connection, "CHECKPOINT")
-    finally
-        DBInterface.close!(connection)
-        DBInterface.close!(cachedb.db)
+        connection = DBInterface.connect(cachedb.db)
+        try
+            DBInterface.execute(connection, "CHECKPOINT")
+        finally
+            DBInterface.close!(connection)
+            DBInterface.close!(cachedb.db)
+        end
+    catch error
+        push!(failures, error)
     end
-    failure === nothing || throw(failure)
+    isempty(failures) || throw(CompositeException(failures))
     return nothing
 end
 
@@ -1495,13 +1514,15 @@ function _ensure_items_view!(cache::CacheDB)::Nothing
         """)
             push!(signature, Symbol(String(row.column_name)))
         end
-        signature == cache.query_view_signature && return nothing
-        DBInterface.execute(connection, "DROP VIEW IF EXISTS mb_item_query")
-        DBInterface.execute(connection, """
-            CREATE VIEW mb_item_query AS
-            SELECT * FROM items LEFT JOIN analyzed_item_metadata USING (item_key)
-        """)
-        cache.query_view_signature = signature
+        # The view is replaced in one statement, so a query on another task always finds it.
+        lock(cache.key_lock) do
+            signature == cache.query_view_signature && return nothing
+            DBInterface.execute(connection, """
+                CREATE OR REPLACE VIEW mb_item_query AS
+                SELECT * FROM items LEFT JOIN analyzed_item_metadata USING (item_key)
+            """)
+            cache.query_view_signature = signature
+        end
     finally
         DBInterface.close!(connection)
     end

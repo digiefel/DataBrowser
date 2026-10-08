@@ -154,10 +154,9 @@ Decisions taken during the audit:
 - [ ] Replace one source's output and membership changes through one Cache operation. Core supplies
   replacements and invalidations; Cache retires storage. Cover fewer/empty outputs, moved members,
   shared collections and selection preservation for surviving public IDs.
-- [ ] Fix the concurrency issues this exposes: `query_view_signature` is recreated without a lock;
-  `cache_pending_counts` locks ten stores separately and returns an incoherent snapshot;
-  `open_cache_db` does not stop already-started stores and flush tasks when a later constructor
-  fails; `close_cache_db!` keeps only the first exception.
+- [x] Fix four concurrency issues: the query view is replaced in one statement under a lock;
+  `cache_pending_counts` reads every store at the same moment; `open_cache_db` closes the stores
+  that already started when opening fails; `close_cache_db!` reports every exception.
 
 Target interface for the remaining cache work: lifecycle/flush and storage diagnostics; bulk restore;
 exact-reference payload reads/checks; complete result writes; source identity, removal and output
