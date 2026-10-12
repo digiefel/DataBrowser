@@ -114,8 +114,13 @@ function check(args=ARGS)
         command = julia_command(["-e", "using Pkg; Pkg.precompile($(repr(vcat(PACKAGES, ["DataBrowser"]))); strict=true)"]; depot)
         code = fingerprint(vcat(PACKAGES, ["DataBrowser"]), command)
         checked(records, "precompile", code; force=force && precompile_only) do
-            # Only this runner-owned compiled directory is removed. Sources/artifacts are retained.
-            rm(joinpath(depot, "compiled"); recursive=true, force=true)
+            # Remove the compiled code of the DataBrowser packages only, in this runner-owned
+            # depot. A dependency keeps its compiled code, which Julia rebuilds by itself when
+            # the version of the dependency changes.
+            compiled = joinpath(depot, "compiled", "v$(VERSION.major).$(VERSION.minor)")
+            for name in (isdir(compiled) ? readdir(compiled) : String[])
+                startswith(name, "DataBrowser") && rm(joinpath(compiled, name); recursive=true)
+            end
             seconds = @elapsed run(command)
             fingerprint(vcat(PACKAGES, ["DataBrowser"]), command) == code || error("Package code changed during precompilation")
             # Development measurements may include automatic compilation during import.
