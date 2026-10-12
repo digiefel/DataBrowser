@@ -74,19 +74,19 @@ mutable struct Window
     # `stamp` is `nothing` until the visualizer is given the value.
     value::Any
     stamp::Any
-    # The settings the visualizer declared for the value, which the window draws in its header.
-    settings::NamedTuple
     # Why the window does not show the value; empty when it shows it.
     error::String
 end
 
 """
-What the browser tells a visualizer about its window in `draw!`.
+What the browser tells a visualizer about its window.
 
 `id` names the window. It is unique in the browser and stays the same from frame to frame.
+`workspace` is the open workspace.
 """
-struct DrawContext
+struct WindowContext
     id::String
+    workspace::Workspace.Workspace
 end
 
 """Newest-last cap for the throughput history ring buffers (~1 minute at the 0.25s sample rate)."""

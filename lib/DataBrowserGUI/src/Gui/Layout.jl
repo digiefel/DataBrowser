@@ -519,6 +519,8 @@ function _run_browser(
         opengl_version=v"3.3",
         wait_events=false,
         on_exit=() -> begin
+            # A visualizer may hold a figure that must be released before the window goes.
+            foreach(window -> close_window!(state, window), copy(state.windows))
             _shutdown_extensions!(state)
             _shutdown_implot_context!(state)
             _save_project_view_if_changed!(state)

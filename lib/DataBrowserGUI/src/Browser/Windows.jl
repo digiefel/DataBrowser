@@ -34,7 +34,7 @@ are read at each call, so a visualizer defined while the browser is open is foun
 """
 function visualizers(T::Type)::Vector{AbstractVisualizer}
     types = Set{Type}()
-    for method in methods(prepare!, Tuple{AbstractVisualizer,T})
+    for method in methods(prepare!, Tuple{AbstractVisualizer,T,Any})
         V = Base.unwrap_unionall(method.sig).parameters[2]
         isconcretetype(V) && push!(types, V)
     end
@@ -52,14 +52,28 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, nothing, (;), "")
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, nothing, "")
     push!(state.windows, window)
     return window
 end
 
 """Remove `window` from the browser."""
 function close_window!(state::BrowserState, window::Window)::Nothing
-    filter!(!==(window), state.windows)
+    close(window.visualizer)
+    filter!(other -> other !== window, state.windows)
+    return nothing
+end
+
+"""
+    visualizer!(window, visualizer)
+
+Show the value of `window` with another visualizer.
+"""
+function visualizer!(window::Window, visualizer::AbstractVisualizer)::Nothing
+    close(window.visualizer)
+    window.visualizer = visualizer
+    # The new visualizer is given the value in the next frame.
+    window.stamp = nothing
     return nothing
 end
 
@@ -67,11 +81,12 @@ end
     setting!(window, name, value)
 
 Change the setting `name` of the visualizer of `window`. The visualizer is given the value of the
-window again in the next frame.
+window again in the next frame, unless the setting needs no `prepare!`.
 """
 function setting!(window::Window, name::Symbol, value)::Nothing
-    setproperty!(window.visualizer, name, value)
-    window.stamp = nothing
+    visualizer = window.visualizer
+    setproperty!(visualizer, name, value)
+    settings(visualizer)[name].prepare && (window.stamp = nothing)
     return nothing
 end
 
@@ -93,14 +108,13 @@ function refresh!(state::BrowserState, window::Window)::Nothing
     )
     stamp == window.stamp && return nothing
     window.stamp = stamp
-    window.settings = (;)
     visualizer = window.visualizer
+    ctx = WindowContext(window.id, workspace)
     try
         # Narrow the element type, so that `prepare!` methods can dispatch on the type of the items.
         window.value = identity.(Workspace.materialize_items(workspace, items))
-        if applicable(prepare!, visualizer, window.value)
-            prepare!(visualizer, window.value)
-            window.settings = settings(visualizer, window.value)
+        if applicable(prepare!, visualizer, window.value, ctx)
+            prepare!(visualizer, window.value, ctx)
             window.error = ""
         else
             window.error = "$(label(visualizer)) cannot show these items. Choose another visualizer."

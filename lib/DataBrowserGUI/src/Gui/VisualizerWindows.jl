@@ -1,7 +1,7 @@
 import CImGui as ig
 import CImGui.CSyntax: @c
 
-using DataBrowserAPI: Setting, id, label
+using DataBrowserAPI: Setting, draw_header!, id, label, settings
 import DataBrowserCore.Workspace
 
 """
@@ -12,11 +12,7 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
     if ig.BeginCombo("##visualizer", label(window.visualizer), ig.ImGuiComboFlags_WidthFitPreview)
         for candidate in visualizers(typeof(window.value))
             current = typeof(candidate) === typeof(window.visualizer)
-            if ig.Selectable(label(candidate), current) && !current
-                window.visualizer = candidate
-                # The new visualizer is given the value in the next frame.
-                window.stamp = nothing
-            end
+            ig.Selectable(label(candidate), current) && !current && visualizer!(window, candidate)
         end
         ig.EndCombo()
     end
@@ -37,12 +33,24 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
     return nothing
 end
 
-# How the user changes one setting. The type of the field decides: a `Bool` is a checkmark. Each
-# method draws the control and returns the value the user chose, which is `current` when the user
-# changed nothing.
+# How the user changes one setting. The type of the field decides: a `Bool` is a checkmark and a
+# `String` is a menu. Each method draws the control and returns the value the user chose, which is
+# `current` when the user changed nothing.
 function _render_setting!(setting::Setting, current::Bool)::Bool
     chosen = current
     @c ig.Checkbox(setting.label, &chosen)
+    return chosen
+end
+
+function _render_setting!(setting::Setting, current::String)::String
+    chosen = current
+    if ig.BeginCombo("##$(setting.label)", current, ig.ImGuiComboFlags_WidthFitPreview)
+        for option in setting.options
+            ig.Selectable(option, option == current) && (chosen = option)
+        end
+        ig.EndCombo()
+    end
+    ig.SetItemTooltip(setting.label)
     return chosen
 end
 
@@ -52,7 +60,7 @@ changes.
 """
 function _render_window_settings!(window::Window)::Nothing
     # TODO: start a new row when the window is too narrow for the next setting.
-    for (name, setting) in pairs(window.settings)
+    for (name, setting) in pairs(settings(window.visualizer))
         ig.SameLine()
         current = getproperty(window.visualizer, name)
         chosen = _render_setting!(setting, current)
@@ -73,13 +81,19 @@ function render_windows!(state::BrowserState)::Nothing
         # ImGui knows the window by the part after "###", so the title can change.
         if ig.Begin("$(title(state, window))###$(window.id)", open)
             refresh!(state, window)
+            ctx = WindowContext(window.id, state.workspace)
+            # TODO: catch an error of `draw_header!` and `draw!` and show it in the window. ImGui
+            # must first be brought back to the state it had before the call.
             _render_window_header!(state, window)
             _render_window_settings!(window)
+            # A group is one item of the row, also when the visualizer draws no button.
+            ig.SameLine()
+            ig.BeginGroup()
+            draw_header!(window.visualizer, ctx)
+            ig.EndGroup()
             ig.Separator()
             if isempty(window.error)
-                # TODO: catch an error of `draw!` and show it in the window. ImGui must first be
-                # brought back to the state it had before the call.
-                draw!(window.visualizer, DrawContext(window.id))
+                draw!(window.visualizer, ctx)
             else
                 ig.TextWrapped(window.error)
             end

@@ -25,10 +25,11 @@ end
 label(::TableView)::String = "Table"
 
 # One item needs no column that names it.
-settings(::TableView, items::AbstractVector{<:AbstractDataItem}) =
-    length(items) > 1 ? (provenance_column=Setting("Provenance column"),) : (;)
+settings(view::TableView) =
+    view.table !== nothing && length(view.table.item_labels) > 1 ?
+    (provenance_column=Setting("Provenance column"),) : (;)
 
-function prepare!(view::TableView, items::AbstractVector{<:AbstractDataItem})::Nothing
+function prepare!(view::TableView, items::AbstractVector{<:AbstractDataItem}, ctx)::Nothing
     view.table, view.warnings = merge_item_tables(items)
     view.grid = DataGridState()
     types = unique(typeof.(items))

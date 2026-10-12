@@ -45,6 +45,7 @@ export AbstractProject,
     item_data,
     prepare!,
     settings,
+    draw_header!,
     draw!
 
 end
