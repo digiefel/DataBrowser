@@ -5,20 +5,14 @@ using GLMakie: Figure
 
 import DataBrowserAPI
 import DataBrowserAPI: AbstractDataItem
-import DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 using DataBrowserAPI: @timed_dbg
 import DataBrowserGUI
 const Browser = DataBrowserGUI.Browser
 
 using DataBrowserPlots:
-    PlotKind,
     RegisteredPlot,
-    _plot_recipes,
-    plot_kind_from_name,
     plot_kind_label,
-    plot_kind_name,
-    plot_kinds,
     plot_data!,
     registered_plot_kinds,
     setup_plot
@@ -27,10 +21,8 @@ import DataBrowserPlots: embed
 include("MakieIntegration.jl")
 using .MakieImguiIntegration
 
-include("PlotState.jl")
-
 embed(figure::Figure, id::String) = MakieFigure(id, figure; auto_resize_x=true, auto_resize_y=true)
-include("PlotPanel.jl")
+include("PlotView.jl")
 include("TablePlotPanel.jl")
 include("PlotsExtension.jl")
 

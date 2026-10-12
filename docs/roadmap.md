@@ -245,11 +245,10 @@ workloads, completed disk writes, cache reads and process memory measurements.
   collection tree five times per frame; cache the prepared projection between invalidations and
   rebuild item-panel rows only when selection, visibility, tags, or item state change.
 - [ ] Remove duplicated GUI state: filters held both as Julia strings and ImGui pointers and synced
-  every frame; the main plot window special-cased instead of being a `PlotViewState`;
-  `PlotState.kind_by_item` beside `PlotViewState.plot_kind`; `PROJECT_PLOT_RECIPES` with no removal
-  path; `PlotsExtension.reset!` not clearing `MAKIE_CONTEXT`.
-- [ ] Tighten the extension boundary: `PlotsExtension` calls `Browser._project_visible_selection`
-  and `Browser._items_for_ids`; make those tier-B functions. Reduce the twelve-hook protocol to
+  every frame; `PROJECT_PLOT_RECIPES` with no removal path; `PlotsExtension.reset!` not clearing
+  `MAKIE_CONTEXT`.
+- [ ] Tighten the extension boundary: the table plot calls `Browser._project_visible_selection`;
+  it stops when the table plot becomes a visualizer. Reduce the eleven-hook protocol to
   what the one extension uses; type `save_view`/`load_view!` instead of `Dict{String,Any}`.
 - [x] Create the dedicated I/O thread once per process, with `Base.OncePerProcess`.
 - [ ] Split `BrowserState` (40 fields) into selection/filter, windows, diagnostics, persistence,
@@ -496,9 +495,13 @@ the table as a first-class view.
   "+ Window" opens it.
 - [x] Let a visualizer declare its settings with `settings`. The window draws them in its
   header and gives the value to the visualizer again when the user changes one.
-- [ ] Make the registered plots and the table plot visualizers, so that every window that shows
-  items has the same header. The registered plot is a setting of one "Plot" visualizer.
-- [ ] Save the windows with the view.
+- [x] Make the registered plots a visualizer. One "Plot" visualizer shows the plots a project
+  registered; the plot is a setting in the header. It replaces "Plot Area", "Detach" and the
+  detached plot windows. The browser opens one "Plot" window when it starts.
+- [ ] Make the table plot a visualizer, so that every window that shows items has the same header.
+- [ ] Save the windows with the view, with the theme of the plots and the plot chosen for each
+  type of item. Until then a browser that opens again has one "Plot" window that follows the
+  selection.
 - [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
 - [ ] Update [plans/visualizers.md](plans/visualizers.md), which still describes a zoomable canvas,
   for windows, tabs and inputs.

@@ -44,19 +44,6 @@ it applies to and the label that distinguishes plots for that kind.
 """
 struct RegisteredPlot{Kind,Label} <: PlotKind end
 
-"""Stable name used to persist a plot choice in workspace view state."""
-plot_kind_name(plot_kind::Type{<:PlotKind})::String = String(nameof(plot_kind))
-plot_kind_name(::Type{RegisteredPlot{Kind,Label}}) where {Kind,Label} =
-    string(Kind, "::", Label)
-
-"""Resolve a persisted plot name back to its internal identity (a registered plot kind)."""
-function plot_kind_from_name(name::AbstractString)::Union{Nothing,Type{<:PlotKind}}
-    parts = split(name, "::"; limit=2)
-    length(parts) == 2 || return nothing
-    kind, label = parts
-    return RegisteredPlot{Symbol(kind),Symbol(label)}
-end
-
 """Create the figure layout a plot kind requires for the given items."""
 function setup_plot end
 

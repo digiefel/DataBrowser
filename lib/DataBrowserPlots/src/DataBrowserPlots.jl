@@ -60,8 +60,6 @@ export PlotKind,
     setup_plot,
     plot_data!,
     registered_plot_kinds,
-    plot_kind_label,
-    plot_kind_name,
-    plot_kind_from_name
+    plot_kind_label
 
 end

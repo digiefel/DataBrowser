@@ -1,45 +1,26 @@
 import CImGui as ig
+using GLMakie: Axis, Figure, lines!
 
 import DataBrowserGUI
 const Browser = DataBrowserGUI.Browser
 
+using .MakieImguiIntegration: MakieFigure, destroy_figure!
+
 """
 The Makie plotting extension registered with the `DataBrowserGUI` shell.
 
-One instance per browser owns all plot state: the main and detached plot
-windows (`plots`) and the table-plot window (`table_plot`).
+One instance per browser opens the first "Plot" window, owns the table-plot window (`table_plot`),
+and warms GLMakie before the first visible plot.
 """
-mutable struct PlotsExtension <: Browser.GuiExtension
-    plots::PlotState
-    table_plot::TablePlotState
+Base.@kwdef mutable struct PlotsExtension <: Browser.GuiExtension
+    table_plot::TablePlotState = TablePlotState()
+    runtime_warmed::Bool = false
+    warmup_figure::Union{Nothing,Figure} = nothing
 end
 
-PlotsExtension() = PlotsExtension(PlotState(), TablePlotState())
-
-function _persisted_plot_view_from_dict(data::AbstractDict)::PersistedPlotView
-    items = get(data, "items", Any[])
-    return PersistedPlotView(
-        id=String(get(data, "id", "")),
-        title=String(get(data, "title", "")),
-        plot_kind=String(get(data, "plot_kind", "")),
-        live=Bool(get(data, "live", false)),
-        items=items isa AbstractVector ? String.(items) : String[],
-    )
-end
-
-function _plot_view_from_persisted(plot_view::PersistedPlotView)::PlotViewState
-    return PlotViewState(
-        id=plot_view.id,
-        title=isempty(plot_view.title) ? "Plot" : plot_view.title,
-        live=plot_view.live,
-        item_ids=copy(plot_view.items),
-        plot_kind=isempty(plot_view.plot_kind) ?
-            nothing :
-            plot_kind_from_name(plot_view.plot_kind),
-    )
-end
-
-function Browser.init!(::PlotsExtension, ::Browser.BrowserState)
+# TODO: once the windows are saved with the view, open this window only when none was saved.
+function Browser.init!(::PlotsExtension, state::Browser.BrowserState)
+    Browser.open_window!(state, PlotView())
     return nothing
 end
 
@@ -49,142 +30,66 @@ function Browser.menu!(ext::PlotsExtension, state::Browser.BrowserState)
 end
 
 function Browser.draw!(ext::PlotsExtension, state::Browser.BrowserState)
-    render_plot_window(state)
-    render_additional_plot_windows(state)
     render_table_plot_window!(state, ext.table_plot)
     return nothing
 end
 
 function Browser.reset!(ext::PlotsExtension, ::Browser.BrowserState)
-    ext.plots = PlotState()
     ext.table_plot = TablePlotState()
     return nothing
 end
 
 function Browser.shutdown!(ext::PlotsExtension, ::Browser.BrowserState)
-    clear_plot_views!(ext.plots)
     ext.table_plot.figure = nothing
     return nothing
 end
 
-function Browser.is_ready(ext::PlotsExtension, ::Browser.BrowserState)
-    return ext.plots.runtime_warmed
-end
+Browser.is_ready(ext::PlotsExtension, ::Browser.BrowserState) = ext.runtime_warmed
 
-function Browser.warmup!(::PlotsExtension, state::Browser.BrowserState)
-    ensure_plot_runtime_warmed!(state)
-    return nothing
-end
-
-function Browser.save_view(ext::PlotsExtension, ::Browser.BrowserState)
-    plots = ext.plots
-    return Dict{String,Any}(
-        "plot_kinds" => Dict(
-            String(kind) => plot_kind_name(plot_kind)
-            for (kind, plot_kind) in plots.kind_by_item
-        ),
-        "main_plot" => Dict{String,Any}(
-            "id" => plots.main.id,
-            "title" => plots.main.title,
-            "plot_kind" => plots.main.plot_kind === nothing ?
-                "" : plot_kind_name(plots.main.plot_kind),
-            "live" => plots.main.live,
-            "items" => copy(plots.main.item_ids),
-        ),
-        "plot_windows" => [
-            Dict{String,Any}(
-                "id" => view.id,
-                "title" => view.title,
-                "plot_kind" => view.plot_kind === nothing ? "" : plot_kind_name(view.plot_kind),
-                "live" => view.live,
-                "items" => copy(view.item_ids),
-            )
-            for view in plots.windows
-        ],
-    )
-end
-
-function Browser.load_view!(ext::PlotsExtension, ::Browser.BrowserState, view::Dict{String,Any})
-    plots = ext.plots
-    empty!(plots.kind_by_item)
-    plot_kinds = get(view, "plot_kinds", Dict{String,Any}())
-    if plot_kinds isa AbstractDict
-        for (kind, plot_kind_name_value) in plot_kinds
-            isempty(plot_kind_name_value) && continue
-            plot_kind = plot_kind_from_name(String(plot_kind_name_value))
-            plot_kind === nothing && continue
-            plots.kind_by_item[Symbol(String(kind))] = plot_kind
+"""Warm GLMakie once in a hidden window before the first visible plot."""
+function Browser.warmup!(ext::PlotsExtension, ::Browser.BrowserState)
+    ext.runtime_warmed && return nothing
+    flags = ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoInputs |
+            ig.ImGuiWindowFlags_NoBackground | ig.ImGuiWindowFlags_NoSavedSettings |
+            ig.ImGuiWindowFlags_NoNav | ig.ImGuiWindowFlags_NoFocusOnAppearing
+    # Pin the hidden warmup window to the main viewport. Otherwise, with multi-viewport
+    # enabled, its off-screen position promotes it to its own platform window (a separate,
+    # shared GL context), where sampling Makie's FBO-backed texture makes the macOS GL
+    # driver report "unit 0 GLD_TEXTURE_INDEX_2D is unloadable". Staying in the main
+    # viewport keeps the warmup render in the main context.
+    ig.SetNextWindowViewport(unsafe_load(ig.GetMainViewport()).ID)
+    ig.SetNextWindowPos((-10_000.0, -10_000.0), ig.ImGuiCond_Always)
+    ig.SetNextWindowSize((8.0, 8.0), ig.ImGuiCond_Always)
+    if ig.Begin("###plot_runtime_warmup", C_NULL, flags)
+        if ext.warmup_figure === nothing
+            figure = Figure(size=(64, 48))
+            axis = Axis(figure[1, 1], xlabel="x", ylabel="y", title="warm")
+            lines!(axis, [0.0, 1.0], [0.0, 1.0], color=:blue)
+            ext.warmup_figure = figure
         end
+        MakieFigure(
+            "_plot_runtime_warmup",
+            ext.warmup_figure;
+            auto_resize_x=false,
+            auto_resize_y=false,
+        )
+        destroy_figure!("_plot_runtime_warmup")
+        ext.warmup_figure = nothing
+        ext.runtime_warmed = true
     end
-
-    main_data = get(view, "main_plot", Dict{String,Any}())
-    plots.main = _plot_view_from_persisted(
-        main_data isa AbstractDict ?
-            _persisted_plot_view_from_dict(main_data) :
-            PersistedPlotView(id="main", title="Plot Area", live=true),
-    )
-
-    window_data = get(view, "plot_windows", Any[])
-    plots.windows = PlotViewState[]
-    if window_data isa AbstractVector
-        for entry in window_data
-            entry isa AbstractDict || continue
-            push!(plots.windows, _plot_view_from_persisted(_persisted_plot_view_from_dict(entry)))
-        end
-    end
-
-    counters = [
-        parse(Int, only(match_result.captures))
-        for plot_view in plots.windows
-        for match_result in (match(r"^plot_(\d+)$", plot_view.id),)
-        if match_result !== nothing
-    ]
-    plots.next_window_id = isempty(counters) ? 0 : maximum(counters)
-    return nothing
-end
-
-"""Open a detached plot window pre-populated with the given items."""
-function open_detached_plot!(
-    ext::PlotsExtension;
-    item_ids::Vector{String},
-    title::String,
-    kind::Union{Nothing,Symbol},
-)::Nothing
-    plots = ext.plots
-    plots.next_window_id += 1
-    push!(
-        plots.windows,
-        PlotViewState(
-            id="plot_$(plots.next_window_id)",
-            title=title,
-            live=false,
-            item_ids=copy(item_ids),
-            plot_kind=kind === nothing ? nothing : get(plots.kind_by_item, kind, nothing),
-        ),
-    )
+    ig.End()
     return nothing
 end
 
 function Browser.item_context_menu!(
-    ext::PlotsExtension,
-    ::Browser.BrowserState;
+    ::PlotsExtension,
+    state::Browser.BrowserState;
     item_ids::Vector{String},
     label::String,
     kind::Union{Nothing,Symbol},
 )
     if ig.MenuItem("Open Plot in New Window")
-        open_detached_plot!(ext; item_ids, title=label, kind)
+        Browser.open_window!(state, PlotView(); input=Browser.FixedItems(item_ids))
     end
     return nothing
-end
-
-Browser.main_dock_windows(ext::PlotsExtension, ::Browser.BrowserState) =
-    [ext.plots.main.title]
-
-"""Return the browser's `PlotsExtension` instance; error if it is not loaded."""
-function plots_extension(state::Browser.BrowserState)::PlotsExtension
-    for ext in state.extensions
-        ext isa PlotsExtension && return ext
-    end
-    error("PlotsExtension is not loaded")
 end

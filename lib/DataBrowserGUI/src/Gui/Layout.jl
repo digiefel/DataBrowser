@@ -268,8 +268,8 @@ function render_project_window(state::BrowserState)::Nothing
 end
 
 """
-Create the initial docking layout: shell panels on the left, extension-claimed main
-windows (via `main_dock_windows`) in the primary right slot.
+Create the initial docking layout: shell panels on the left, and the windows that are open when the
+browser starts in the primary right slot.
 """
 function _setup_docking_layout!(state::BrowserState, dockspace_id::UInt32)::Nothing
     vp = ig.GetMainViewport()
@@ -291,10 +291,9 @@ function _setup_docking_layout!(state::BrowserState, dockspace_id::UInt32)::Noth
 
     ig.DockBuilderDockWindow("Hierarchy",         top_left[])
     ig.DockBuilderDockWindow("Information Panel", bottom_left[])
-    for ext in state.extensions
-        for title in main_dock_windows(ext, state)
-            ig.DockBuilderDockWindow(title, right[])
-        end
+    for window in state.windows
+        # ImGui knows a window by the part of its name after "###".
+        ig.DockBuilderDockWindow("###$(window.id)", right[])
     end
 
     ig.DockBuilderFinish(dockspace_id)

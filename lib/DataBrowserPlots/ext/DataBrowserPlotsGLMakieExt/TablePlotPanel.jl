@@ -9,6 +9,20 @@ using DataBrowserGUI: ItemTable, materialize_item_table
 import DataBrowserCore.Workspace
 using .MakieImguiIntegration: MakieFigure, plot_theme
 
+"""State for the workspace-selection table plot window."""
+Base.@kwdef mutable struct TablePlotState
+    visible::Bool = false
+    x_column::Int = 1
+    y_column::Int = 2
+    # Merged table cached per selection so the window does not rebuild it every frame.
+    table::Union{Nothing,ItemTable} = nothing
+    table_key::Union{Nothing,Tuple} = nothing
+    table_error::String = ""
+    figure::Union{Nothing,Figure} = nothing
+    plot_key::Union{Nothing,Tuple} = nothing
+    plot_error::String = ""
+end
+
 function _column_combo!(
     label::String,
     current::Int,
@@ -109,7 +123,7 @@ function _ensure_table_plot!(
 
     x_index = clamp(table_plot.x_column, 1, length(table.columns))
     y_index = clamp(table_plot.y_column, 1, length(table.columns))
-    dark = _plot_state(state).dark
+    dark = DARK[]
     plot_key = (table_plot.table_key, x_index, y_index, dark)
     table_plot.plot_key == plot_key && table_plot.figure !== nothing && return nothing
 

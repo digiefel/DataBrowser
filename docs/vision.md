@@ -152,9 +152,9 @@ predictable effects, and is inspectable so an agent can discover what is possibl
 **Visualizer, Figure, Workflow, Annotation.** A **visualizer** renders or interacts with a kind of
 data (generic built-ins or package-supplied), optionally exposing declarative state. At runtime a
 visualizer presents as zero-or-more windows the user can spawn, toggle, minimize, and close; the
-current plot window is the first such visualizer (today 1-to-many, since it is the only one).
-Registered plot APIs like `register_plot!` create one visualizer for each project callback; they
-are a convenience, not the contract every visualizer follows. A **figure** is
+table and the plot are the first two visualizers. Registered plot APIs like `register_plot!` add a
+plot that the plot visualizer offers for one type of item; they are a convenience, not the contract
+every visualizer follows. A **figure** is
 a composed visual artifact: visualizer outputs, layout, styling, annotations, and optional embedded
 data. A **workflow** is the persisted graph of views: selections, transforms, visualizers, fits,
 annotations, exports — intent, not pixels, saved as an ordinary Julia file, the workspace file.
