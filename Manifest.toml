@@ -173,19 +173,23 @@ uuid = "c7d8e9f0-1a2b-3c4d-5e6f-708192a3b4c5"
 version = "0.1.0"
 
 [[deps.DataBrowserCore]]
-deps = ["CancellationTokens", "DataBrowserAPI", "DataBrowserCache", "DataBrowserSources", "Dates", "InteractiveUtils", "Printf", "Serialization", "TOML"]
+deps = ["CancellationTokens", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserSources", "Dates", "InteractiveUtils", "Printf", "Serialization", "TOML"]
 path = "lib/DataBrowserCore"
 uuid = "d1e2f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f6a"
 version = "0.1.0"
+weakdeps = ["DataFrames"]
+
+    [deps.DataBrowserCore.extensions]
+    DataBrowserCoreDataFramesExt = "DataFrames"
 
 [[deps.DataBrowserGUI]]
-deps = ["CImGui", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "GLFW", "ModernGL", "Printf", "TOML", "Tables", "TimerOutputs"]
+deps = ["CImGui", "DataBrowserAPI", "DataBrowserCache", "DataBrowserCore", "GLFW", "ModernGL", "Printf", "TOML", "Tables", "TimerOutputs"]
 path = "lib/DataBrowserGUI"
 uuid = "f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"
 version = "0.1.0"
 
 [[deps.DataBrowserPlots]]
-deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserGUI", "GLFW", "InteractiveUtils", "ModernGL", "NativeFileDialog", "Printf"]
+deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserGUI", "GLFW", "InteractiveUtils", "ModernGL", "NativeFileDialog", "Printf", "Tables"]
 path = "lib/DataBrowserPlots"
 uuid = "e2f3a4b5-c6d7-8e9f-0a1b-2c3d4e5f6a7b"
 version = "0.1.0"

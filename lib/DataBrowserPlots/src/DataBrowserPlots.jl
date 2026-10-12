@@ -11,6 +11,7 @@ import DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 
 include("plots.jl")
+include("description.jl")
 
 """Load the items of the given keys and create the figure layout required by a visualizer."""
 function setup_plot(

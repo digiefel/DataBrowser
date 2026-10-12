@@ -498,14 +498,29 @@ the table as a first-class view.
 - [x] Make the registered plots a visualizer. One "Plot" visualizer shows the plots a project
   registered; the plot is a setting in the header. It replaces "Plot Area", "Detach" and the
   detached plot windows. The browser opens one "Plot" window when it starts.
-- [ ] Make the table plot a visualizer, so that every window that shows items has the same header.
+- [ ] Replace the "Table Plot" window with the plot builder below, so that every window that shows
+  items has the same header.
 - [ ] Save the windows with the view, with the theme of the plots and the plot chosen for each
   type of item. Until then a browser that opens again has one "Plot" window that follows the
   selection.
 - [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
 - [ ] Update [plans/visualizers.md](plans/visualizers.md), which still describes a zoomable canvas,
   for windows, tabs and inputs.
-- [ ] Add a lightweight line/scatter visualizer for simple numeric tables and vectors.
+- [ ] Plot builder: a window in which the user builds a plot of a table from menus, and which a
+  script can write as code. The plot is one description as plain data: roles that say which column
+  is on which axis or gives the color, and a list of layers, each with a mark. The builder must be
+  able to grow to everything AlgebraOfGraphics expresses.
+  - [x] The description (`PlotDescription`, `Layer`) and `figure(description, table)`, which draws
+    it for any Tables.jl table. Roles `x`, `y`, `color`; marks `points`, `lines`. A plot of a new
+    shape compiles no new code.
+  - [ ] The builder as a visualizer. The description is shown as code to the right of the figure,
+    one argument on each line, and every value is a control. Axis labels and the legend are menus,
+    and a right-click on a mark changes its layer.
+  - [ ] Menus that filter their entries as the user types.
+  - [ ] More roles, marks and statistics, for example panels, histograms and fits; settings of the
+    axes.
+  - [ ] The functions a script writes a description with. Everything the builder does is one of
+    them.
 - [ ] Add concise scalar, metadata, and nested-value inspectors.
 - [ ] Let users open several independent visualizer windows over different live selections.
 - [ ] Register every built-in visualizer by defining its type, as any package does.
