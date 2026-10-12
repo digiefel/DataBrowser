@@ -27,6 +27,7 @@ export AbstractProject,
     AbstractDataItem,
     AbstractCollection,
     AbstractVisualizer,
+    Setting,
     open_source,
     close_source!,
     watch_source,
@@ -43,6 +44,7 @@ export AbstractProject,
     metadata,
     item_data,
     prepare!,
+    settings,
     draw!
 
 end

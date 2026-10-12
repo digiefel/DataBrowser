@@ -1,7 +1,7 @@
 import CImGui as ig
 import CImGui.CSyntax: @c
 
-using DataBrowserAPI: id, label
+using DataBrowserAPI: Setting, id, label
 import DataBrowserCore.Workspace
 
 """
@@ -37,6 +37,26 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
     return nothing
 end
 
+# How the user changes one setting. The type of the field decides: a `Bool` is a checkmark. Each
+# method draws the control and returns the value the user chose, which is `current` when the user
+# changed nothing.
+function _render_setting!(setting::Setting, current::Bool)::Bool
+    chosen = current
+    @c ig.Checkbox(setting.label, &chosen)
+    return chosen
+end
+
+"""Draw the settings the visualizer declared, in one row, and apply what the user changes."""
+function _render_window_settings!(window::Window)::Nothing
+    for (i, (name, setting)) in enumerate(pairs(window.settings))
+        i > 1 && ig.SameLine()
+        current = getproperty(window.visualizer, name)
+        chosen = _render_setting!(setting, current)
+        chosen == current || setting!(window, name, chosen)
+    end
+    return nothing
+end
+
 """
 Draw every window that shows a value with a visualizer, and remove those the user closed. A window
 that is not visible, for example behind another tab, is not brought up to date.
@@ -50,6 +70,7 @@ function render_windows!(state::BrowserState)::Nothing
         if ig.Begin("$(title(state, window))###$(window.id)", open)
             refresh!(state, window)
             _render_window_header!(state, window)
+            _render_window_settings!(window)
             ig.Separator()
             if isempty(window.error)
                 # TODO: catch an error of `draw!` and show it in the window. ImGui must first be

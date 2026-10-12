@@ -3,7 +3,7 @@
 #
 # TODO: these are the actions a script will call (roadmap 0.6). They take the browser state for now.
 
-using DataBrowserAPI: AbstractVisualizer, id, label, prepare!
+using DataBrowserAPI: AbstractVisualizer, id, label, prepare!, settings
 using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 
@@ -52,7 +52,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, nothing, "")
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, nothing, (;), "")
     push!(state.windows, window)
     return window
 end
@@ -60,6 +60,18 @@ end
 """Remove `window` from the browser."""
 function close_window!(state::BrowserState, window::Window)::Nothing
     filter!(!==(window), state.windows)
+    return nothing
+end
+
+"""
+    setting!(window, name, value)
+
+Change the setting `name` of the visualizer of `window`. The visualizer is given the value of the
+window again in the next frame.
+"""
+function setting!(window::Window, name::Symbol, value)::Nothing
+    setproperty!(window.visualizer, name, value)
+    window.stamp = nothing
     return nothing
 end
 
@@ -81,12 +93,14 @@ function refresh!(state::BrowserState, window::Window)::Nothing
     )
     stamp == window.stamp && return nothing
     window.stamp = stamp
+    window.settings = (;)
     visualizer = window.visualizer
     try
         # Narrow the element type, so that `prepare!` methods can dispatch on the type of the items.
         window.value = identity.(Workspace.materialize_items(workspace, items))
         if applicable(prepare!, visualizer, window.value)
             prepare!(visualizer, window.value)
+            window.settings = settings(visualizer, window.value)
             window.error = ""
         else
             window.error = "$(label(visualizer)) cannot show these items. Choose another visualizer."

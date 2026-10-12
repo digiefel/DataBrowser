@@ -9,6 +9,7 @@ drawing. A visualizer type `V` has:
 - a constructor without arguments, `V()`, which the browser calls for a new window;
 - a method `prepare!(visualizer::V, value)` for each type of value it shows;
 - a method `draw!(visualizer::V, ctx)`;
+- optionally a method `settings(visualizer::V, value)`, the settings the user may change;
 - optionally a method `label(visualizer::V)`, the name of the visualizer in the menus of the
   browser. The default is the name of the type.
 
@@ -35,10 +36,41 @@ method that accepts everything else.
 function prepare! end
 
 """
+    Setting(label)
+
+Describes one setting of a visualizer to the user. `label` names the setting in the window.
+
+The type of the visualizer's field decides how the user changes the setting: a `Bool` field is a
+checkmark.
+"""
+struct Setting
+    # TODO: the values the user may choose from, for a setting that is one of several names.
+    label::String
+end
+
+"""
+    settings(visualizer, value) -> NamedTuple
+
+The settings of `visualizer` that the user may change while it shows `value`. Each name is a field
+of the visualizer, and each value is a [`Setting`](@ref). A visualizer without a method has no
+settings.
+
+    settings(view::TableView, items) = (provenance_column=Setting("Provenance column"),)
+
+The window draws the settings in a row below its header. When the user changes one, the browser
+writes the field and calls [`prepare!`](@ref) again, so `draw!` does not draw a setting and does
+not watch it for changes.
+
+Give each such field a default value. The constructor `V()` then makes a visualizer with the
+default settings, and `V(name=value)` makes one with a setting already changed.
+"""
+settings(::AbstractVisualizer, value) = (;)
+
+"""
     draw!(visualizer, ctx)
 
 Draw what `prepare!` stored. The browser calls `draw!` in every frame in which the window is
-visible, inside the window and below its header, and only after `prepare!` succeeded.
+visible, inside the window and below its header and settings, and only after `prepare!` succeeded.
 
 `ctx` is what the browser tells the visualizer about its window. `ctx.id` names the window: it is
 unique in the browser and stays the same from frame to frame.

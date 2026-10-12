@@ -1,8 +1,7 @@
 import CImGui as ig
-import CImGui.CSyntax: @c
 
-import DataBrowserAPI: draw!, label, prepare!
-using DataBrowserAPI: AbstractDataItem, AbstractVisualizer
+import DataBrowserAPI: draw!, label, prepare!, settings
+using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, Setting
 using ..DataBrowserGUI: ItemTable, merge_item_tables
 
 """
@@ -13,7 +12,7 @@ columns of all items, and a cell is empty where an item has no such column. With
 each row has the tint of its item.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
-    # Setting: with several items, a first column names the item of each row.
+    # Setting: a first column names the item of each row.
     provenance_column::Bool = false
     table::Union{Nothing,ItemTable} = nothing
     warnings::Vector{String} = String[]
@@ -24,6 +23,10 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
 end
 
 label(::TableView)::String = "Table"
+
+# One item needs no column that names it.
+settings(::TableView, items::AbstractVector{<:AbstractDataItem}) =
+    length(items) > 1 ? (provenance_column=Setting("Provenance column"),) : (;)
 
 function prepare!(view::TableView, items::AbstractVector{<:AbstractDataItem})::Nothing
     view.table, view.warnings = merge_item_tables(items)
@@ -50,14 +53,6 @@ function draw!(view::TableView, ctx)::Nothing
     table = view.table::ItemTable
     several = length(table.item_labels) > 1
 
-    if several
-        provenance_column = view.provenance_column
-        if @c ig.Checkbox("Provenance column", &provenance_column)
-            view.provenance_column = provenance_column
-            # The selected cells are counted by column, and the columns moved by one.
-            view.grid = DataGridState()
-        end
-    end
     for warning in view.warnings
         ig.TextDisabled(warning)
     end
