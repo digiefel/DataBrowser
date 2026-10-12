@@ -494,8 +494,8 @@ the table as a first-class view.
   list of items. Its header has a menu to change the visualizer and "Live", which makes the window
   follow the selection. Its title names the items. The table is the first visualizer, and
   "+ Window" opens it.
-- [x] Let a visualizer declare its settings with `settings`. The window draws them in a row below
-  its header and gives the value to the visualizer again when the user changes one.
+- [x] Let a visualizer declare its settings with `settings`. The window draws them in its
+  header and gives the value to the visualizer again when the user changes one.
 - [ ] Make the registered plots and the table plot visualizers, so that every window that shows
   items has the same header. The registered plot is a setting of one "Plot" visualizer.
 - [ ] Save the windows with the view.

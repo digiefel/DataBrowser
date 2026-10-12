@@ -46,10 +46,14 @@ function _render_setting!(setting::Setting, current::Bool)::Bool
     return chosen
 end
 
-"""Draw the settings the visualizer declared, in one row, and apply what the user changes."""
+"""
+Draw the settings the visualizer declared, in the row of the header, and apply what the user
+changes.
+"""
 function _render_window_settings!(window::Window)::Nothing
-    for (i, (name, setting)) in enumerate(pairs(window.settings))
-        i > 1 && ig.SameLine()
+    # TODO: start a new row when the window is too narrow for the next setting.
+    for (name, setting) in pairs(window.settings)
+        ig.SameLine()
         current = getproperty(window.visualizer, name)
         chosen = _render_setting!(setting, current)
         chosen == current || setting!(window, name, chosen)

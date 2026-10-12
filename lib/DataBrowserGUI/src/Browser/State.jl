@@ -74,7 +74,7 @@ mutable struct Window
     # `stamp` is `nothing` until the visualizer is given the value.
     value::Any
     stamp::Any
-    # The settings the visualizer declared for the value, which the window draws below its header.
+    # The settings the visualizer declared for the value, which the window draws in its header.
     settings::NamedTuple
     # Why the window does not show the value; empty when it shows it.
     error::String

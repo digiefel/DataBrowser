@@ -57,7 +57,7 @@ settings.
 
     settings(view::TableView, items) = (provenance_column=Setting("Provenance column"),)
 
-The window draws the settings in a row below its header. When the user changes one, the browser
+The window draws the settings in its header. When the user changes one, the browser
 writes the field and calls [`prepare!`](@ref) again, so `draw!` does not draw a setting and does
 not watch it for changes.
 
@@ -70,7 +70,7 @@ settings(::AbstractVisualizer, value) = (;)
     draw!(visualizer, ctx)
 
 Draw what `prepare!` stored. The browser calls `draw!` in every frame in which the window is
-visible, inside the window and below its header and settings, and only after `prepare!` succeeded.
+visible, inside the window and below its header, and only after `prepare!` succeeded.
 
 `ctx` is what the browser tells the visualizer about its window. `ctx.id` names the window: it is
 unique in the browser and stays the same from frame to frame.
