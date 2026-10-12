@@ -55,7 +55,7 @@ flowchart TB
     db --> plots
     gui -->|"open_workspace<br/>modify_workspace!<br/>select_items!<br/>materialize_items<br/>workspace_status"| core
     gui --> cache
-    plots -->|"GUI extension hooks<br/>ItemTable<br/>materialize_item_table"| gui
+    plots -->|"GUI extension hooks<br/>ItemTable<br/>merge_item_tables"| gui
     plots -->|"materialize_items"| core
     core --> src
     core --> cache

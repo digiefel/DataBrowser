@@ -1,6 +1,6 @@
 include("smoke_project.jl")
 using DataBrowserGUI.Browser: TimerOutputs
-using DataBrowserGUI: materialize_item_table
+using DataBrowserGUI: merge_item_tables
 
 function wait_for(predicate, session; timeout=120)
     deadline = time() + timeout
@@ -25,7 +25,7 @@ function check_items(ws, session, expected_peaks)
     items = materialize_items(ws)
     sort([metadata(item)[:peak] for item in items]) == expected_peaks || error("Incorrect analysis results")
     read_item_data(ws) == item_data.(items) || error("Selection did not deliver the selected payloads")
-    table, warnings = materialize_item_table(ws, [DataBrowser.Workspace.item(ws, id) for id in ids])
+    table, warnings = merge_item_tables(items)
     isempty(warnings) || error("Table preparation skipped selected data")
     y = findfirst(==("y"), table.columns)
     [table.getvalue(row, y) for row in 1:table.rows] ==

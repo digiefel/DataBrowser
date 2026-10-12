@@ -247,9 +247,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] Remove duplicated GUI state: filters held both as Julia strings and ImGui pointers and synced
   every frame; `PROJECT_PLOT_RECIPES` with no removal path; `PlotsExtension.reset!` not clearing
   `MAKIE_CONTEXT`.
-- [ ] Tighten the extension boundary: the table plot calls `Browser._project_visible_selection`;
-  it stops when the table plot becomes a visualizer. Reduce the eleven-hook protocol to
-  what the one extension uses; type `save_view`/`load_view!` instead of `Dict{String,Any}`.
+- [ ] Tighten the extension boundary: reduce the eleven-hook protocol to what the one extension
+  uses. Since the plots and the plot builder are visualizers, the extension uses `init!`,
+  `is_ready`, `warmup!` and `item_context_menu!` only.
 - [x] Create the dedicated I/O thread once per process, with `Base.OncePerProcess`.
 - [ ] Split `BrowserState` (40 fields) into selection/filter, windows, diagnostics, persistence,
   and lifecycle state. Last, because the items above shrink it first.
@@ -498,7 +498,7 @@ the table as a first-class view.
 - [x] Make the registered plots a visualizer. One "Plot" visualizer shows the plots a project
   registered; the plot is a setting in the header. It replaces "Plot Area", "Detach" and the
   detached plot windows. The browser opens one "Plot" window when it starts.
-- [ ] Replace the "Table Plot" window with the plot builder below, so that every window that shows
+- [x] Replace the "Table Plot" window with the plot builder below, so that every window that shows
   items has the same header.
 - [ ] Save the windows with the view, with the theme of the plots and the plot chosen for each
   type of item. Until then a browser that opens again has one "Plot" window that follows the
@@ -513,9 +513,12 @@ the table as a first-class view.
   - [x] The description (`PlotDescription`, `Layer`) and `figure(description, table)`, which draws
     it for any Tables.jl table. Roles `x`, `y`, `color`; marks `points`, `lines`. A plot of a new
     shape compiles no new code.
-  - [ ] The builder as a visualizer. The description is shown as code to the right of the figure,
-    one argument on each line, and every value is a control. Axis labels and the legend are menus,
-    and a right-click on a mark changes its layer.
+  - [x] The builder as a visualizer, "Plot builder", for the table data of the items. The
+    description is shown as code to the right of the figure, one argument on each line, and every
+    value is a menu. With several items, the column `item` names the item of each row.
+  - [ ] Roles and fixed values of one layer, and a control that adds an argument.
+  - [ ] Edit on the figure: axis labels and the legend are menus, and a right-click on a mark
+    changes its layer.
   - [ ] Menus that filter their entries as the user types.
   - [ ] More roles, marks and statistics, for example panels, histograms and fits; settings of the
     axes.

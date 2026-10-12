@@ -1,8 +1,6 @@
 using Tables
 
 using DataBrowserAPI: AbstractDataItem, item_data, label
-using DataBrowserCore.Catalogs: ItemKey
-import DataBrowserCore.Workspace
 
 """
 Table view over one or more items' Tables-compatible payloads.
@@ -153,36 +151,4 @@ function merge_item_tables(items::AbstractVector{<:AbstractDataItem})::Tuple{Ite
     end
     table, merge_warnings = merge_item_tables(pairs)
     return table, append!(warnings, merge_warnings)
-end
-
-# TODO: remove with the Table Plot window, the last caller in the browser. A visualizer is given
-# loaded items and uses the method above.
-"""
-    materialize_item_table(workspace, items) -> (table, warnings)
-
-Load the processed items for the item keys `items` and combine their Tables-compatible payloads
-into an `ItemTable`. Item labels identify each item's rows. Payload extraction failures and non-tabular
-payloads are reported in `warnings` and skipped; materialization and table construction errors
-propagate to the caller. This function does not select items or retain view state.
-"""
-function materialize_item_table(
-    workspace::Workspace.Workspace,
-    items::Vector{ItemKey},
-)::Tuple{ItemTable,Vector{String}}
-    pairs = Tuple{String,Any}[]
-    warnings = String[]
-    for (key, item) in zip(items, Workspace.materialize_items(workspace, items))
-        item_label = label(workspace, key)
-        data = try
-            item_data(item)
-        catch err
-            @error "Failed to load item data for table" label=item_label exception=(err, catch_backtrace())
-            push!(warnings, "Item '$item_label': failed to load data; skipped.")
-            continue
-        end
-        push!(pairs, (item_label, data))
-    end
-    table, merge_warnings = merge_item_tables(pairs)
-    append!(warnings, merge_warnings)
-    return table, warnings
 end

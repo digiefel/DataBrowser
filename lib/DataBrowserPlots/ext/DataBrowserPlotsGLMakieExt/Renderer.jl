@@ -53,7 +53,9 @@ function figure(description::PlotDescription, @nospecialize(table))::Figure
         end
     end
 
-    # Layers that show the same value share one entry.
-    isempty(legend_title) || Legend(result[1, 2], axis, legend_title; merge=true)
+    # Layers that show the same value share one entry. The legend is under the axis, where long
+    # names do not take the width of the plot.
+    # TODO: let the description place the legend.
+    isempty(legend_title) || Legend(result[2, 1], axis, legend_title; merge=true, tellwidth=false, tellheight=true)
     return result
 end

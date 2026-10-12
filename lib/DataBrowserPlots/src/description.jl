@@ -4,8 +4,9 @@
 # A description holds column names and marks as values, never as type parameters. Every description
 # has the same type, so drawing a plot of a new shape compiles no new code.
 #
-# TODO: the functions a script writes a description with, and the builder window that edits one
-# (roadmap 0.11.0). Until both exist, the types are not exported.
+# The "Plot builder" window edits a description.
+# TODO: the functions a script writes a description with (roadmap 0.11.0). Until they exist, the
+# types are not exported.
 
 """
     Layer(mark; roles=[], fixed=[])
