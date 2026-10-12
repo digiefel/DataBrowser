@@ -39,3 +39,4 @@ DataBrowserPlots = {path = "../lib/DataBrowserPlots"}
 DataBrowserProfiling = {path = "../lib/DataBrowserProfiling"}
 DataBrowserRecipes = {path = "../lib/DataBrowserRecipes"}
 DataBrowserSources = {path = "../lib/DataBrowserSources"}
+SmoothData = {rev = "main", url = "https://github.com/dgfl-gh/SmoothData"}

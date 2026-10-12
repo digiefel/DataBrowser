@@ -21,12 +21,12 @@ using DataBrowserAPI:
     AbstractDataSource,
     AbstractDataSourceItem,
     AbstractProject,
-    source_item_path,
     @timed_dbg
 import DataBrowserAPI:
     analyze,
-    attach_record,
-    entries,
+    adopt,
+    expand,
+    has_stage,
     collection,
     id,
     item_data,
@@ -37,7 +37,8 @@ import DataBrowserAPI:
     project_name,
     read,
     reconstruct
-using DataBrowserAPI.ItemIndex: ItemRecord, MetadataDict, metadata_dict
+using DataBrowserAPI: MetadataDict, metadata_dict
+using DataBrowserSources: SourceFile
 
 include("carriers.jl")
 include("recipes.jl")
@@ -45,12 +46,7 @@ include("registration.jl")
 include("stages.jl")
 include("premade.jl")
 
-export CollectionRecipe,
-    ItemRecipe,
-    NoMatch,
-    Project,
-    RegisteredDataItem,
-    RegisteredReadResult,
+export Project,
     define_project,
     register_collection_analysis!,
     register_csv!,

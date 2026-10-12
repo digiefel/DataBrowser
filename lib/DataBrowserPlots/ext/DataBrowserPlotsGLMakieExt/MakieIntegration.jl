@@ -6,6 +6,8 @@ import GLFW
 import GLMakie
 import GLMakie.Makie as Makie
 
+include("AxisGestures.jl")
+
 """GLFW window adapter required by a GLMakie screen embedded in CImGui."""
 struct ImMakieWindow
     glfw_window::GLFW.Window
@@ -15,10 +17,11 @@ end
 mutable struct ImMakieFigure
     figure::GLMakie.Figure
     screen::GLMakie.Screen{ImMakieWindow}
-    was_dragging::Bool
-    was_ctrl_left_click::Bool
+    # The last right click panned or reset the axes, so it does not open the axis menu.
+    menu_blocked::Bool
     display_texture::gl.GLuint
     display_size::Tuple{Int,Int}
+    gesture::Union{Nothing,AxisGesture}
 end
 
 const MAKIE_CONTEXT = Dict{String,ImMakieFigure}()
@@ -140,12 +143,6 @@ function _imgui_mouse_to_makie(
     return (Float64(pos.x - origin.x), Float64(image_size[2] - (pos.y - origin.y)))
 end
 
-_ctrl_left_as_right_click(io) = unsafe_load(io.MouseCtrlLeftAsRightClick)
-_makie_button_for_imgui_right(ctrl_left_as_right, was_ctrl_left_click=false) =
-    (ctrl_left_as_right || was_ctrl_left_click) ? Makie.Mouse.left : Makie.Mouse.right
-_should_open_axis_popup(was_dragging, was_ctrl_left_click, ctrl_left_as_right) =
-    !(was_dragging || was_ctrl_left_click || ctrl_left_as_right)
-
 """Render the scale choices for one Makie axis direction."""
 function _draw_axis_scale_buttons!(scale, index::Int)::Nothing
     if ig.RadioButton("linear##$(index)", scale[] === identity)
@@ -214,7 +211,7 @@ function MakieFigure(
         window = ig.current_window()
         makie_window = ImMakieWindow(window)
         screen = GLMakie.Screen(; window=makie_window, start_renderloop=false)
-        MAKIE_CONTEXT[id] = ImMakieFigure(figure, screen, false, false, gl.GLuint(0), (0, 0))
+        MAKIE_CONTEXT[id] = ImMakieFigure(figure, screen, false, gl.GLuint(0), (0, 0), nothing)
         scene = Makie.get_scene(figure)
         scene.events.window_open[] = true
         display(screen, figure)
@@ -267,75 +264,31 @@ function MakieFigure(
     end
 
     io = ig.GetIO()
-    if ig.IsItemHovered()
-        pos = ig.GetMousePos()
-        new_pos = _imgui_mouse_to_makie(pos, cursor_pos, image_size)
-        if new_pos != scene.events.mouseposition[]
-            scene.events.mouseposition[] = new_pos
-            @debug "mouse position updated", scene.events.mouseposition
-        end
+    hovered = ig.IsItemHovered()
+    position = _imgui_mouse_to_makie(ig.GetMousePos(), cursor_pos, image_size)
+    imfigure.gesture = axis_gestures!(imfigure.gesture, imfigure.figure, position, hovered,
+        point -> (cursor_pos.x + point[1], cursor_pos.y + image_size[2] - point[2]))
 
-        ctrl_left_as_right = _ctrl_left_as_right_click(io)
-
-        # Makie gestures read modifier state when the mouse event arrives.
-        for (igkey, glfwkey) in ((ig.lib.ImGuiKey_X, Int(GLFW.KEY_X)),
-            (ig.lib.ImGuiKey_Y, Int(GLFW.KEY_Y)),
-            (ig.lib.ImGuiKey_LeftCtrl, Int(GLFW.KEY_LEFT_CONTROL)))
-            if ig.IsKeyPressed(igkey) ||
-                    (ctrl_left_as_right && igkey == ig.lib.ImGuiKey_LeftCtrl)
-                event = Makie.KeyEvent(Makie.Keyboard.Button(glfwkey), Makie.Keyboard.press)
-                scene.events.keyboardbutton[] = event
-                @debug "keyboard button pressed event", scene.events.keyboardbutton
-            elseif ig.IsKeyReleased(igkey)
-                event = Makie.KeyEvent(Makie.Keyboard.Button(glfwkey), Makie.Keyboard.release)
-                scene.events.keyboardbutton[] = event
-                @debug "keyboard button released event", scene.events.keyboardbutton
-            end
+    # Makie receives the mouse for everything the axis gestures leave to it, such as legends,
+    # sliders and the interactions a project adds.
+    events = scene.events
+    hovered && position != events.mouseposition[] && (events.mouseposition[] = position)
+    for (button, makie_button) in ((0, Makie.Mouse.left), (1, Makie.Mouse.right))
+        if hovered && ig.IsMouseClicked(button)
+            events.mousebutton[] = Makie.MouseButtonEvent(makie_button, Makie.Mouse.press)
+        elseif ig.IsMouseReleased(button) && makie_button in events.mousebuttonstate
+            events.mousebutton[] = Makie.MouseButtonEvent(makie_button, Makie.Mouse.release)
         end
-
-        # macOS may report Ctrl+left-click as right-click; translate it back for Makie.
-        if ig.IsKeyPressed(ig.ImGuiKey_MouseLeft)
-            scene.events.mousebutton[] = Makie.MouseButtonEvent(Makie.Mouse.left, Makie.Mouse.press)
-            @debug "mouse button pressed event", scene.events.mousebutton
-        elseif ig.IsKeyReleased(ig.ImGuiKey_MouseLeft)
-            scene.events.mousebutton[] = Makie.MouseButtonEvent(Makie.Mouse.left, Makie.Mouse.release)
-            @debug "mouse button released event", scene.events.mousebutton
-        end
-
-        if ig.IsKeyPressed(ig.ImGuiKey_MouseRight)
-            makie_button = _makie_button_for_imgui_right(ctrl_left_as_right)
-            imfigure.was_ctrl_left_click = ctrl_left_as_right
-            scene.events.mousebutton[] = Makie.MouseButtonEvent(makie_button, Makie.Mouse.press)
-            @debug "mouse button pressed event", scene.events.mousebutton
-        elseif ig.IsKeyReleased(ig.ImGuiKey_MouseRight)
-            makie_button = _makie_button_for_imgui_right(false, imfigure.was_ctrl_left_click)
-            scene.events.mousebutton[] = Makie.MouseButtonEvent(makie_button, Makie.Mouse.release)
-            imfigure.was_ctrl_left_click = false
-            @debug "mouse button released event", scene.events.mousebutton
-        end
-
-        if !imfigure.was_ctrl_left_click && ig.IsMouseDragging(ig.lib.ImGuiMouseButton_Right)
-            imfigure.was_dragging = true
-        end
-
-        wheel_y = unsafe_load(io.MouseWheel)
-        wheel_x = unsafe_load(io.MouseWheelH)
-        if (wheel_x, wheel_y) != scene.events.scroll[]
-            scene.events.scroll[] = (wheel_x, wheel_y)
-            @debug "scrolling" scene.events.scroll
-        end
-    elseif imfigure.was_ctrl_left_click && ig.IsKeyReleased(ig.ImGuiKey_MouseRight)
-        scene.events.mousebutton[] = Makie.MouseButtonEvent(Makie.Mouse.left, Makie.Mouse.release)
-        imfigure.was_ctrl_left_click = false
-        @debug "mouse button released event", scene.events.mousebutton
     end
+    scroll = hovered ? (unsafe_load(io.MouseWheelH), unsafe_load(io.MouseWheel)) : (0.0f0, 0.0f0)
+    scroll != events.scroll[] && (events.scroll[] = scroll)
 
-    ctrl_left_as_right = _ctrl_left_as_right_click(ig.GetIO())
-    if !ctrl_left_as_right && ig.IsMouseClicked(ig.lib.ImGuiMouseButton_Right)
-        imfigure.was_dragging = false
+    if hovered && ig.IsMouseClicked(1)
+        imfigure.menu_blocked = unsafe_load(io.MouseCtrlLeftAsRightClick)
+    elseif hovered && ig.IsMouseDragging(1)
+        imfigure.menu_blocked = true
     end
-
-    if _should_open_axis_popup(imfigure.was_dragging, imfigure.was_ctrl_left_click, ctrl_left_as_right)
+    if !imfigure.menu_blocked
         for content in figure.content
             if content isa Makie.Axis && GLMakie.is_mouseinside(content)
                 _draw_axis_popup!(content)
@@ -348,19 +301,41 @@ function MakieFigure(
     return do_render
 end
 
-"""Return the Makie theme used by figures embedded in CImGui."""
-function _imgui_theme()::Makie.Attributes
-    theme = Makie.theme_light()
+"""
+The Makie theme of the figures in the browser, dark or light. Figures are created inside
+`Makie.with_theme(plot_theme(dark))`.
+"""
+function plot_theme(dark::Bool)::Makie.Attributes
+    theme = dark ? Makie.theme_dark() : Makie.theme_light()
+    theme.textcolor = dark ? :gray90 : :gray20
     theme.Legend.framevisible = true
     theme.Legend.padding = (5, 5, 5, 5)
+    dark && (theme.Legend.backgroundcolor = Makie.RGBAf(0, 0, 0, 0.75))
     theme.GLMakie = Makie.Attributes(fxaa=false)
 
     return theme
 end
 
+"""
+Show or hide the inspector of Makie on `figure`: a tooltip with the values of the plot element
+under the mouse.
+"""
+function inspect!(figure::Makie.Figure, shown::Bool)::Nothing
+    scene = Makie.get_scene(figure)
+    inspector = scene.data_inspector
+    if shown && inspector === nothing
+        # The tooltip takes the colors of the figure. Makie gives it the text color of the theme
+        # on a white background, which cannot be read in a dark theme.
+        background, text = scene.backgroundcolor[], Makie.theme(scene, :textcolor)[]
+        Makie.DataInspector(scene; backgroundcolor=background, strokecolor=background, outline_color=text)
+    elseif !shown && inspector !== nothing
+        delete!(scene, inspector)
+    end
+    return nothing
+end
+
 function __init__()::Nothing
     ig.atrenderexit(destroy_context!)
-    Makie.set_theme!(_imgui_theme())
     return nothing
 end
 

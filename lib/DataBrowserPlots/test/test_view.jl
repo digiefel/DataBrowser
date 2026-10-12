@@ -1,4 +1,6 @@
-using Test, DataBrowserPlots, DataBrowserGUI
+using Test, DataBrowserPlots, DataBrowserGUI, GLMakie
+
+const PlotsExtension = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt).PlotsExtension
 
 @testset "plot views preserve fixed and live selections" begin
     browser = DataBrowserGUI.Browser

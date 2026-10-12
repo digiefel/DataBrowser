@@ -1,7 +1,7 @@
 using TOML
 
 using DataBrowserAPI: project_name
-using DataBrowserAPI.ItemIndex: ItemRecord
+using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 
 """Convert a user path into the stable absolute form used by persistence."""
@@ -32,6 +32,12 @@ end
 function _project_view_from_toml(::Type{Bool}, value::Any)::Bool
     value isa Bool || error("Expected boolean, got $(typeof(value))")
     return value
+end
+
+function _project_view_from_toml(::Type{Tuple{String,String}}, value::Any)::Tuple{String,String}
+    value isa AbstractVector && length(value) == 2 ||
+        error("Expected an array of a type name and an id, got $(repr(value))")
+    return (_project_view_from_toml(String, value[1]), _project_view_from_toml(String, value[2]))
 end
 
 function _project_view_from_toml(::Type{Vector{T}}, value::Any)::Vector{T} where {T}
@@ -74,6 +80,7 @@ end
 
 _project_view_to_toml(value::AbstractString)::String = String(value)
 _project_view_to_toml(value::Bool)::Bool = value
+_project_view_to_toml(value::Tuple)::Vector = [_project_view_to_toml(item) for item in value]
 _project_view_to_toml(value::AbstractVector)::Vector = [_project_view_to_toml(item) for item in value]
 _project_view_to_toml(value::AbstractDict)::Dict{String,Any} =
     Dict{String,Any}(String(key) => _project_view_to_toml(item) for (key, item) in value)
@@ -104,15 +111,15 @@ function _save_project_view(root_path::AbstractString, view::PersistedProjectVie
     return nothing
 end
 
-"""Resolve stable item ids against the current workspace index."""
+"""Resolve stable item ids against the items the workspace has now."""
 function _items_for_ids(
     state::BrowserState,
     ids::Vector{String},
-)::Vector{ItemRecord}
+)::Vector{ItemKey}
     workspace = state.workspace
-    workspace isa Workspace.Workspace || return ItemRecord[]
-    index = workspace.index.items
-    return [index[id] for id in ids if haskey(index, id)]
+    workspace isa Workspace.Workspace || return ItemKey[]
+    return ItemKey[
+        item for item in (Workspace.item(workspace, id) for id in ids) if item !== nothing]
 end
 
 """Capture the browser controls that belong in the source-root state file."""
@@ -125,8 +132,8 @@ function _project_view_from_browser(
     return PersistedProjectView(
         project=project_name(workspace.project),
         tree=PersistedTreeView(
-            expanded=copy(state.expanded_collection_ids),
-            selected=copy(workspace.selection.collection_ids),
+            expanded=copy(state.expanded_collections),
+            selected=copy(workspace.selection.collections),
             filter=state.tree_filter,
         ),
         items=PersistedItemsView(
@@ -156,8 +163,8 @@ function _apply_project_view!(
     view::PersistedProjectView,
 )::Nothing
     workspace = state.workspace::Workspace.Workspace
-    state.expanded_collection_ids = copy(view.tree.expanded)
-    workspace.selection.collection_ids = copy(view.tree.selected)
+    state.expanded_collections = copy(view.tree.expanded)
+    workspace.selection.collections = copy(view.tree.selected)
     workspace.selection.item_ids = copy(view.items.selected)
     state.tree_filter = view.tree.filter
     state.item_filter = view.items.filter

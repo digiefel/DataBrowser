@@ -4,8 +4,7 @@ function store_source_identity!(
 )::Nothing
     source_key = source_item_key!(cache, id(item); mint=true)
     edit!(cache.source_items, id(item), SourceItemRow(
-        id(item), source_key, String(display_label), _serialize_hex(fingerprint(item)),
-        source_item_path(item), source_item_timestamp(item)))
+        id(item), source_key, String(display_label), _serialize_hex(fingerprint(item))))
     _stage_ledger_source!(cache.stage_ledger, source_key, true)
     return nothing
 end
@@ -46,10 +45,10 @@ function has_payload(cache::CacheDB, source_key::Integer; stage::PipelineStage=S
     return haskey(cache.source_reads, Int64(source_key))
 end
 
-"""Whether a source has finished interpretation or failed at either source stage."""
+"""Whether a source has published its items or failed at either source stage."""
 function source_complete(cache::CacheDB, source_key::Integer)::Bool
-    interpreted = cached_result_state(cache, SOURCE_INTERPRET, source_key)
-    interpreted === nothing || return true
+    items = cached_result_state(cache, SOURCE_EXPAND, source_key)
+    items === nothing || return true
     loaded = cached_result_state(cache, SOURCE_READ, source_key)
     return loaded !== nothing && CacheResultStatus(loaded.status) === RESULT_FAILED
 end
@@ -63,8 +62,8 @@ end
 
 """Delete a source identity and all its stage results, including its memory-only read result."""
 function delete_source_item!(cache::CacheDB, source_key::Integer,
-        old_records::Vector{ItemRecord})::Nothing
-    delete_source_output!(cache, source_key, old_records)
+        item_ids::Vector{String})::Nothing
+    delete_source_output!(cache, source_key, item_ids)
     delete!(cache.source_reads, Int64(source_key))
     clear_cached_result_state!(cache, SOURCE_READ, source_key)
     _delete_source_identity!(cache, Int64(source_key))

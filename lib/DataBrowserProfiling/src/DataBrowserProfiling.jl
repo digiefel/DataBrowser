@@ -132,9 +132,10 @@ end
 """
     finish_debug_timings!() -> TimerOutput
 
-Stop admitting new sections and return the final accumulated debug timings.
-Sections still in flight are no longer recorded. Intended to be called once at
-shutdown, after the GUI and workspace are closed.
+Stop admitting new sections and return the debug timings accumulated so far. A
+section still running at the call is not in the returned timings: it is recorded
+when it ends, and a later [`take_debug_timings!`](@ref) returns it. Intended to
+be called once at shutdown, after the GUI and workspace are closed.
 """
 function finish_debug_timings!()
     RECORDING[] = false

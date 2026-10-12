@@ -1,13 +1,12 @@
 using CSV
 using DataFrames: DataFrame, nrow
-using GLMakie: Axis, Figure, contents, lines!
 
 """
 Minimal fixture project used only to exercise engine pipelines during precompilation.
 
 User project callbacks are not precompilable for other projects; this registry exists solely to
-drive scan, interpret, process, analyze, collection analysis, cache writes, and plotting through the
-package machinery using bundled test fixtures.
+drive scan, read, process, analyze, collection analysis and cache writes through the package
+machinery using bundled test fixtures.
 """
 function _precompile_project()
     project = define_project("Precompile")
@@ -15,7 +14,7 @@ function _precompile_project()
         detect=file -> endswith(file.filename, ".csv"),
         read=file -> DataFrame(CSV.File(file.filepath; ntasks=1)),
         label=(data, metadata) -> metadata[:filename],
-        collection=(data, metadata) -> [splitext(metadata[:filename])[1]],
+        collection=(data, metadata) -> (file = splitext(metadata[:filename])[1],),
         process=function (input, metadata)
             data = copy(input)
             data.engine_warm = data.Current_A ./ max.(abs.(data.VoltageHigh_V), 1e-12)
@@ -26,63 +25,71 @@ function _precompile_project()
     register_collection_analysis!(project, :iv;
         analyze=(data, metadata) -> Dict{Symbol,Any}(:items => length(data)),
     )
-    register_plot!(project, :iv; label="I-V",
-        setup=(_workspace, _items) -> (figure = Figure(); Axis(figure[1, 1]); figure),
-        draw=function (_workspace, items, figure)
-            axis = only(contents(figure[1, 1]))
-            for item in items
-                df = item_data(item)
-                nrow(df) == 0 && continue
-                hasproperty(df, :VoltageHigh_V) && hasproperty(df, :Current_A) || continue
-                lines!(axis, df.VoltageHigh_V, df.Current_A)
-            end
-            nothing
-        end)
     return project
 end
 
-@setup_workload begin
-    fixture_dir = normpath(joinpath(@__DIR__, "..", "test", "fixtures", "TASE"))
-    filenames = [
-        "TASESNS1c1f_A_2TSNJunction_11_20260224_111623_298K_FourTerminalIV.csv",
-        "TASESNS1c1f_A_2TSNJunction_31_20260224_111700_298K_FourTerminalIV.csv",
-    ]
-    fixture_paths = [joinpath(fixture_dir, filename) for filename in filenames]
+const PRECOMPILE_FIXTURES = normpath(joinpath(@__DIR__, "..", "test", "fixtures", "TASE"))
 
-    @compile_workload begin
-        project = _precompile_project()
-        records = [only(items_for_file(project, path)) for path in fixture_paths]
+"""
+Open a workspace of `project` on the bundled fixtures in a temporary depot, wait for it, and call
+`use(workspace, items)` with every item loaded.
+"""
+function _precompile_workspace(use::Function, project)::Nothing
+    precompile_depot = mktempdir()
+    pushfirst!(DEPOT_PATH, precompile_depot)
+    workspace = nothing
+    try
+        # The browser saves its view beside the data, so the workspace opens a copy of the fixtures.
+        fixtures = cp(PRECOMPILE_FIXTURES, joinpath(precompile_depot, "fixtures"))
+        workspace = open_workspace(project, fixtures)
+        Workspace.wait_workspace_idle!(workspace; timeout=45)
+        records = collect(Workspace.items(workspace))
+        isempty(records) || use(workspace, Workspace.materialize_items(workspace, records))
+    finally
+        workspace === nothing || close_workspace!(workspace)
+        popfirst!(DEPOT_PATH)
+        rm(precompile_depot; force=true, recursive=true)
+    end
+    return nothing
+end
 
-        precompile_depot = mktempdir()
-        pushfirst!(DEPOT_PATH, precompile_depot)
-        workspace = nothing
+"""
+Run `project` through the engine and the browser state, as a precompilation workload. `selected`
+receives the workspace and every item loaded.
+"""
+function _precompile_engine(
+    project=_precompile_project(); selected::Function=(workspace, items) -> nothing,
+)::Nothing
+    foreach(path -> items_for_file(project, path), readdir(PRECOMPILE_FIXTURES; join=true))
+    _precompile_workspace(project) do workspace, items
+        selected(workspace, items)
+        Workspace.workspace_status(workspace)
+        select_items!(workspace, collect(Workspace.items(workspace)))
+        ids = Workspace.query_items(workspace)
+        Cache.read_payload(workspace.cache.db, ids; stage=DataBrowserAPI.SOURCE_EXPAND)
+        Cache.read_payload(workspace.cache.db, ids; stage=DataBrowserAPI.ITEM_PROCESS)
+        Workspace.workspace_memory_snapshot(workspace)
+        Cache.load_cache_index(workspace.cache.db)
+
+        state = Browser.BrowserState(workspace=workspace)
+        Browser.current_status(state)
+        Browser._project_visible_selection(state)
+        # Draw the browser with the items selected, in a hidden window. A machine without a
+        # display cannot create the window, and then only the code above is compiled.
         try
-            workspace = open_workspace(
-                project,
-                fixture_dir;
-            )
-            Workspace.wait_workspace_idle!(workspace; timeout=45)
-            Workspace.refresh_status!(workspace)
-            records = collect(values(workspace.index.items))
-            if !isempty(records)
-                select_items!(workspace, records)
-                items = Workspace.materialize_items(workspace, records)
-                plot_kind = only(registered_plot_kinds(project, :iv))
-                figure = setup_plot(workspace, plot_kind, items)
-                plot_data!(workspace, plot_kind, items, figure)
-                Cache.read_payload(workspace.cache.db, records; stage=DataBrowserAPI.SOURCE_INTERPRET)
-                Cache.read_payload(workspace.cache.db, records; stage=DataBrowserAPI.ITEM_PROCESS)
+            session = open_browser(workspace; wait=false, window_start=:hidden)
+            wait_browser_ready(session)
+            select_items!(session, collect(Workspace.items(workspace)))
+            drawn = session.state.performance.frame
+            while session.state.performance.frame < drawn + 30 && !istaskdone(session.task)
+                sleep(0.01)
             end
-            Workspace.workspace_memory_snapshot(workspace)
-            Cache.load_cache_index(workspace.cache.db)
-
-            state = Browser.BrowserState(workspace=workspace)
-            Browser.current_status(state)
-            Browser._project_visible_selection(state)
-        finally
-            workspace === nothing || close_workspace!(workspace)
-            popfirst!(DEPOT_PATH)
-            rm(precompile_depot; force=true, recursive=true)
+            close_browser!(session)
+        catch error
+            @debug "The browser window was not drawn during precompilation" exception=error
         end
     end
+    return nothing
 end
+
+@compile_workload _precompile_engine()

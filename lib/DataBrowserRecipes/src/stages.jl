@@ -2,7 +2,7 @@
 The dialect's implementation of the typed stage contract.
 
 Every registration callback runs through these adapter methods over the same stage runners and work
-keys as a typed project's methods. Nothing here is privileged: the engine calls `read`, `entries`,
+keys as a typed project's methods. Nothing here is privileged: the engine calls `read`, `expand`,
 `process`, and `analyze`, and this file answers them.
 """
 
@@ -43,14 +43,14 @@ _detects(recipe::ItemRecipe, source_item::AbstractDataSourceItem)::Bool =
     recipe.detect(source_item)::Bool
 
 
-function _registration_collection_path(value)::Vector{String}
-    value isa AbstractVector || throw(ArgumentError(
-        "a register_item! collection callback must return a vector of strings; got $(typeof(value))",
+"""The collections that the result of a `collection` callback names, from the top level down."""
+function _registration_collections(value)::Vector{AbstractCollection}
+    value isa NamedTuple || throw(ArgumentError(
+        "a register_item! collection callback must return a named tuple that names each level, " *
+        "such as (wafer = \"W1\", device = \"A\"); got $(repr(value))",
     ))
-    all(segment -> segment isa AbstractString, value) || throw(ArgumentError(
-        "a register_item! collection callback must return only strings; got $(repr(value))",
-    ))
-    return String[segment for segment in value]
+    return AbstractCollection[
+        NamedCollection{level}(string(name)) for (level, name) in pairs(value)]
 end
 
 
@@ -58,7 +58,7 @@ end
 Adapt one registration callback result into a `RegisteredDataItem`.
 
 This translates the registration dialect (entry tuples, callback-supplied keys, labels, and
-collection strings) into the item contract. A recipe without a `collection` callback leaves the path
+named collection levels) into the item contract. A recipe without a `collection` callback leaves the path
 empty, and the engine applies the source's default placement afterwards — the same rule typed items
 get.
 
@@ -76,16 +76,14 @@ function _registered_item(
     data, entry_metadata = _data_and_metadata(value)
     local_metadata = merge(copy(inherited_metadata), entry_metadata)
     collection_path = recipe.collection === nothing ? AbstractCollection[] :
-        named_collection_path(
-            _registration_collection_path(recipe.collection(data, local_metadata)))
+        _registration_collections(recipe.collection(data, local_metadata))
     supplied_key = recipe.id === nothing ? nothing : recipe.id(data, local_metadata)
     key = supplied_key === nothing || supplied_key == "" ?
         string(position) : string(supplied_key)
     item_id = "$(source_item_id)#$(recipe.kind):$(key)"
-    label = recipe.label === nothing ? item_id : String(recipe.label(data, local_metadata))
     return RegisteredDataItem{recipe.kind}(
         item_id,
-        label,
+        item_id,
         collection_path,
         data,
         local_metadata,
@@ -111,12 +109,20 @@ function process(project::Project, item::RegisteredDataItem{K})::AbstractDataIte
     return _processed_item(recipe, item)
 end
 
+"""Label one registered item through its `label` callback, or with its id when there is none."""
+function label(project::Project, item::RegisteredDataItem{K})::String where {K}
+    recipe = _recipe(project, K)
+    recipe === nothing && error("Missing registration $K")
+    recipe.label === nothing && return item.id
+    return String(recipe.label(item.data, item.metadata))
+end
+
 """
 Run the matching registration's `read` callback, tagging its result with the registration name.
 
 Detection happens here rather than in a pipeline stage of its own: `read` runs for every changed
 source item anyway, and `detect` costs filename-predicate time. A source item matching no
-registration yields `NoMatch`, whose `entries` produces no items.
+registration yields `NoMatch`, whose `expand` produces no items.
 """
 function read(project::Project, ::AbstractDataSource, item::AbstractDataSourceItem)
     recipe = @timed_dbg _detect_recipe(project, item)
@@ -130,7 +136,7 @@ function _invoke_read(recipe::ItemRecipe, item::AbstractDataSourceItem)
     return RegisteredReadResult{recipe.kind}(data, read_metadata)
 end
 
-entries(::Project, ::AbstractDataSourceItem, ::NoMatch)::Vector{AbstractDataItem} =
+expand(::Project, ::AbstractDataSourceItem, ::NoMatch)::Vector{AbstractDataItem} =
     AbstractDataItem[]
 
 """
@@ -139,7 +145,7 @@ Expand one registration's read result into its data items.
 The source item is still in hand because identity is not payload: collection defaults and inherited
 metadata derive from it, while the loaded value stays purely the expensive data.
 """
-function entries(
+function expand(
     project::Project,
     source_item::AbstractDataSourceItem,
     loaded::RegisteredReadResult{K},
@@ -147,11 +153,11 @@ function entries(
     recipe = _recipe(project, K)
     recipe === nothing && error("Missing registration $K")
     inherited_metadata = merge(metadata_dict(metadata(source_item)), loaded.metadata)
-    return @timed_dbg "entries" begin
-        values = recipe.entries === nothing ? Any[loaded.data] :
-            recipe.entries(loaded.data, inherited_metadata)
+    return @timed_dbg "expand" begin
+        values = recipe.expand === nothing ? Any[loaded.data] :
+            recipe.expand(loaded.data, inherited_metadata)
         values isa AbstractVector || error(
-            "entries callback for registration $K must return a vector; got $(typeof(values))",
+            "expand callback for registration $K must return a vector; got $(typeof(values))",
         )
         AbstractDataItem[
             _registered_item(recipe, value, inherited_metadata, id(source_item), position)
@@ -206,6 +212,12 @@ function process(
     end
     return rewritten
 end
+
+"""A collection stage is defined when any kind registered it, or the collection type has a method."""
+has_stage(project::Project, collection_value::AbstractCollection, stage::DataBrowserAPI.PipelineStage)::Bool =
+    any(values(project.collections)) do recipe
+        (stage == DataBrowserAPI.COLLECTION_PROCESS ? recipe.process : recipe.analyze) !== nothing
+    end || has_stage(collection_value, stage)
 
 """Fold one collection's post-process members into collection-node metadata."""
 function analyze(

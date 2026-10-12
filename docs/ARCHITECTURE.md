@@ -16,7 +16,7 @@ The intended experience is live and composable. A project can stay open while so
 or changed, and the browser should update without forcing the user back through startup or manual
 reload steps. Views should be able to follow selections, collections, or matching rules, so a plot or
 inspection tool can continue to show the relevant data as the source tree changes. Built-in
-visualizers should handle common inspection tasks, while project code adds only the interpretation
+visualizers should handle common inspection tasks, while project code adds only the expansion
 and presentation details that are specific to the experiment.
 
 ## Package map
@@ -37,7 +37,7 @@ flowchart TB
 
     subgraph frontend["Frontend"]
         gui["<b>DataBrowserGUI</b> 🖼<br/>main GUI functionality"]
-        plots["<b>DataBrowserPlots</b> 📈<br/>GLMakie-based plots"]
+        plots["<b>DataBrowserPlots</b> 📈<br/>plot registration; plot windows<br/>load with GLMakie"]
     end
 
     subgraph engine["Engine"]
@@ -48,14 +48,13 @@ flowchart TB
     end
 
     subgraph contracts["Contracts"]
-        api["<b>DataBrowserAPI</b><br/>AbstractProject, stage and source interfaces, ItemIndex"]
+        api["<b>DataBrowserAPI</b><br/>AbstractProject, stage, source and item interfaces"]
     end
 
     db --> recipes
     db --> plots
     gui -->|"open_workspace<br/>modify_workspace!<br/>select_items!<br/>materialize_items<br/>workspace_status"| core
     gui --> cache
-    gui --> ann
     plots -->|"GUI extension hooks<br/>ItemTable<br/>materialize_item_table"| gui
     plots -->|"materialize_items"| core
     core --> src
@@ -69,7 +68,7 @@ flowchart TB
     userpkg --> api
     prof --> api
 
-    core -.->|"read<br/>entries<br/>process<br/>analyze"| projects
+    core -.->|"read<br/>expand<br/>process<br/>analyze"| projects
     gui -.->|"draw!<br/>menu!<br/>init!"| plots
     cache -.->|"@timed_dbg"| prof
     core -.->|"@timed_dbg"| prof
@@ -109,33 +108,34 @@ flowchart LR
     source["source item"]
     read["read"]
     read_cache[("read input<br/>memory cache")]
-    entries["entries"]
-    index[("item and collection<br/>index")]
-    interpreted[("interpreted payload<br/>memory cache")]
+    expand["expand<br/>(optional)"]
+    index[("catalog<br/>source items, items, collections")]
+    unprocessed[("unprocessed payload<br/>memory cache")]
     item_process["item process"]
     processed[("processed payload<br/>cache store")]
     item_analyze["item analyze"]
     item_metadata[("item metadata<br/>cache store")]
     collection_process["collection process"]
-    collection_payload[("collection-processed<br/>payload cache")]
+    collection_payload[("each collection's version<br/>of its items")]
     collection_analyze["collection analyze"]
     collection_metadata[("collection metadata<br/>cache store")]
     views["views and inspectors"]
 
     source --> read
-    read -->|"loaded value"| entries
+    read -->|"one item"| index
+    read -->|"loaded value"| expand
     read --> read_cache
-    read_cache -.->|"reused input"| entries
-    entries -->|"items and identities"| index
-    entries --> interpreted
-    interpreted --> item_process
+    read_cache -.->|"reused input"| expand
+    expand -->|"items and identities"| index
+    index --> unprocessed
+    unprocessed --> item_process
     item_process --> processed
     processed --> item_analyze
     item_analyze --> item_metadata
     processed --> collection_process
     collection_process --> collection_payload
     collection_payload --> collection_analyze
-    processed -.->|"when no collection rewrite"| collection_analyze
+    processed -.->|"items no collection changed"| collection_analyze
     collection_analyze --> collection_metadata
     processed --> views
     collection_payload --> views
@@ -143,31 +143,68 @@ flowchart LR
     classDef stage fill:#bcd4f0,stroke:#3f6fb0,color:#111
     classDef state fill:#f5d6a8,stroke:#c08a3f,color:#111
     classDef output fill:#c9e4c5,stroke:#5a9a52,color:#111
-    class source,read,entries,item_process,item_analyze,collection_process,collection_analyze,views stage
-    class read_cache,interpreted,processed,item_metadata,collection_payload,collection_metadata state
+    class source,read,expand,item_process,item_analyze,collection_process,collection_analyze,views stage
+    class read_cache,unprocessed,processed,item_metadata,collection_payload,collection_metadata state
     class index output
 ```
 
 A project/source implementation defines the callbacks behind the stages. `read` is the only stage
-that receives the source; `entries` expands its loaded value into logical data items and may run
-again with the cached read input.
+that receives the source. When a source item holds one data item, `read` returns that item. When it
+holds zero or several, `read` returns the loaded value and `expand` turns it into data items; `expand`
+may run again with the cached read input. Both run in one source job, which records whether reading
+succeeded (`SOURCE_READ`) and whether the items were created (`SOURCE_EXPAND`).
+
+The catalog (`DataBrowserCore.Catalogs`) holds one row for each source item, item and collection,
+and the status of each stage of each row. A row is named by a key (`SourceKey`, `ItemKey`,
+`CollectionKey`) that stays the same while the workspace is open. Setting a status queues the jobs
+that depend on it; workers take jobs from the catalog and report their results to it. The workspace
+accessors (`items`, `children`, `label`, `metadata` and others) read the catalog, and the browser
+passes keys.
+
+Jobs run in this order: what a view asks for, then source items, then the background work on items,
+then the background work on collections. The data that `expand` gives each item stays in memory
+until the `process` of the item has used it. When that data reaches half its memory limit
+(`expanded_data_limit` of `open_workspace`), items are processed before more source items are read, so that a
+source item is not read and expanded a second time. The `analyze` of an item runs right after its
+`process`, in the same worker.
+
+The source items that are not read yet (`unread`) are in the collection tree of the browser from
+the moment the source lists them. Their ids, split at `/`, give folders. A folder with the label of
+a collection is shown as that collection, and other folders and source items are gray rows.
+Selecting such a collection, or clicking a gray row, reads the source items below it before any
+other (`read_first!`).
+
+A collection is one node of the collection tree, identified by its parent and by the type and `id`
+of its value. An item goes where `collection(item)` says, or where `collection(source_item)` says
+when that is empty. A collection contains every item below it, at any depth. Collection `process`
+receives all of them and returns the collection's own version of each; the cache keeps that version
+next to the item's own processed data and never replaces it. A collection receives each item in the
+version the collections below gave it. Views and collection `analyze` use an item's latest version:
+the one of the outermost collection that changed it. The same holds for the metadata values and
+the label that a collection's `process` changes: views, queries and the item list show them, and
+the outermost collection replaces the values of the collections below it.
+
+A collection stage that the project does not define for a collection has no job: nothing is queued
+or shown as in progress for it, and it counts as done once everything below the collection is done.
+`has_stage(project, collection, stage)` decides, and by default answers from the `process` and
+`analyze` methods that apply to the collection.
 
 It defines:
 
 - reading each source item
-- expanding the loaded value into logical data items
-- processing one interpreted item
+- expanding the loaded value into logical data items, when a source item holds several
+- processing one data item
 - computing per-item and per-collection metadata (item/collection `analyze`, collection `process`)
 - defining project-specific visualizers when generic ones are not enough
 
 The workspace owns:
 
 - the open source(s) and their identity
-- the progressively populated item index
+- the catalog of source items, items and collections, filled as source jobs finish
 - selection identities
 - cache identity, freshness, storage, and repair
 - scanning, cache work, progress, errors, and cancellation
-- work dependency graph state and source fallback
+- the status of every stage, the job queue, and source fallback
 
 The browser owns windows, controls, filters, and temporary rendering state. Annotations store
 user-authored tags, notes, and other user-authored metadata. Other package modules own generic
@@ -177,18 +214,19 @@ beyond the contract methods it calls.
 
 ## Core–Cache boundary
 
-Core owns the workspace, index, scan, and work graph. Cache owns cache storage and returns data
+Core owns the workspace, catalog, and scan. Cache owns cache storage and returns data
 snapshots or payloads through its exported interface. Core does not inspect Cache stores or use its
 private buffer helpers.
 
 Both persistent and in-memory workspaces use the same DuckDB stores and cache operations.
-`cache=false` opens a private `:memory:` database with temporary-file spilling disabled; closing
-the workspace discards it without changing the project's cache file. Source-read and interpreted
+`cache=false` opens a private `:memory:` database that moves data it cannot hold in memory to a
+temporary directory of its own; closing the workspace discards it without changing the project's
+cache file. Source-read and unprocessed
 payloads use resident `MemoryStore` buffers in both modes.
 
 ```mermaid
 flowchart LR
-    core["DataBrowserCore<br/>workspace and work graph"]
+    core["DataBrowserCore<br/>workspace and catalog"]
     scan["source scan"]
     cache["DataBrowserCache<br/>storage and cache buffers"]
     snapshot[("ProjectCacheIndex<br/>restoration snapshot")]
@@ -206,8 +244,8 @@ flowchart LR
     core -->|"cached_result_state"| cache
     cache -->|"payloads and stage state"| payloads
     payloads --> core
-    core -->|"store_source_read!<br/>store_interpreted!<br/>store_processed!"| cache
-    source -->|"read / entries / process / analyze"| core
+    core -->|"store_source_read!<br/>store_source_items!<br/>store_processed!"| cache
+    source -->|"read / expand / process / analyze"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111
     classDef cacheC fill:#f5d6a8,stroke:#c08a3f,color:#111
@@ -267,14 +305,13 @@ classDiagram
     }
     class DirectoryCollection {
         String name
-        Dict metadata
     }
 
     AbstractDataSource <|-- DirectorySource
     AbstractDataSourceItem <|-- SourceFile
     AbstractCollection <|-- DirectoryCollection
     DirectorySource --> SourceFile : scans
-    DirectorySource --> DirectoryCollection : builds paths
+    DirectorySource --> DirectoryCollection : places files
     SourceFile *-- FileFingerprint : fingerprint
 
     style AbstractDataSource fill:#cfd8e3,stroke:#5a6b80,stroke-width:1px,color:#111
@@ -292,7 +329,7 @@ classDiagram
 %%{init: {'theme':'base','themeVariables':{'textColor':'#111','lineColor':'#555'}}}%%
 flowchart TD
     subgraph sgScan["scan"]
-        si("source_items")
+        si("items(source)")
         csf("collect_source_files")
         asf("append_source_files!")
         isf("index_source_file")
@@ -307,10 +344,8 @@ flowchart TD
         cmfp("collection_metadata_file_path")
         pmv("parse_metadata_value")
         ocm("own_collection_metadata")
-        np("_named_path")
-        dcp("default_collection_path")
-        al("_annotated_level")
-        acp("annotate_collection_path")
+        csi("collection(::SourceFile)")
+        msc("metadata(::DirectorySource, collections)")
         MD[("collection_metadata_entries")]
     end
 
@@ -325,15 +360,11 @@ flowchart TD
         idsf("id(::SourceFile) → String")
         lblsf("label(::SourceFile) → String")
         fpsf("fingerprint(::SourceFile) → FileFingerprint")
-        sipf("source_item_path(::SourceFile) → String")
-        sitf("source_item_timestamp(::SourceFile) → DateTime?")
         metasf("metadata(::SourceFile) → Dict")
-        sid("source_id(::DirectorySource) → String")
-        slbl("source_label(::DirectorySource) → String")
-        snoun("source_item_noun(::DirectorySource) → String")
+        sid("id(::DirectorySource) → String")
+        slbl("label(::DirectorySource) → String")
         iddc("id(::DirectoryCollection) → String")
         lbldc("label(::DirectoryCollection) → String")
-        metadc("metadata(::DirectoryCollection) → Dict")
         recon("reconstruct(::DirectoryCollection) → DirectoryCollection")
     end
 
@@ -365,16 +396,9 @@ flowchart TD
     lcm -.->|"writes"| MD
     lcme -->|"Any"| pmv
     lcme -->|"readlines"| FSYS
-    dcp -->|"AbstractCollection[]"| np
-    np -->|"Dict"| ocm
-    np -.->|"reads"| MD
-    al -->|"Dict"| ocm
-    al -.->|"reads"| MD
-    al -->|"AbstractCollection"| recon
-    al -->|"Dict"| metadc
-    al -->|"String"| iddc
-    acp -->|"AbstractCollection"| al
-    acp -->|"String"| iddc
+    msc -->|"Dict"| ocm
+    msc -.->|"reads"| MD
+    msc -->|"String"| iddc
 
     osrc -->|"Bool"| lcm
     osrc -->|"isdir"| FSYS
@@ -391,31 +415,25 @@ flowchart TD
     extCore ==> wsrc
     extCore ==> csrc
     extCore ==> isf
-    extCore ==> dcp
-    extCore ==> acp
+    extCore ==> csi
+    extCore ==> msc
     extCore ==> sid
-    extCore ==> snoun
     extCore ==> idsf
     extCore ==> lblsf
     extCore ==> metasf
-    extCore ==> sipf
-    extCore ==> sitf
     extCore ==> fpsf
     extCore ==> cpyds
     extCache ==> sid
     extCache ==> fpsf
-    extCache ==> sipf
-    extCache ==> sitf
     extAPI ==> sid
     extAPI ==> slbl
     extAPI ==> recon
-    extRecipes ==> sipf
     extGUI ==> slbl
     extPlots ==> slbl
 
     wsrc -.->|"SourceChanges<br/>SourceError"| extCore
 
-    idsf ~~~ lblsf ~~~ fpsf ~~~ sipf ~~~ sitf ~~~ metasf ~~~ sid ~~~ slbl ~~~ snoun ~~~ iddc ~~~ lbldc ~~~ metadc ~~~ recon ~~~ eqfp
+    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ sid ~~~ slbl ~~~ iddc ~~~ lbldc ~~~ recon ~~~ eqfp
 
     classDef srcExp fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111;
     classDef srcInt fill:#c9e4c5,stroke:#5a9a52,stroke-width:1px,color:#111;
@@ -428,7 +446,7 @@ flowchart TD
     classDef plotsC fill:#f2c6d4,stroke:#b0466a,color:#111;
 
     class isf,ffp srcExp;
-    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,np,dcp,al,acp,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,sipf,sitf,metasf,sid,slbl,snoun,iddc,lbldc,metadc,recon,eqfp srcInt;
+    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,csi,msc,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl,iddc,lbldc,recon,eqfp srcInt;
     class extCore coreC;
     class extAPI apiC;
     class extCache cacheC;

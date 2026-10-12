@@ -25,8 +25,7 @@ function check_items(ws, session, expected_peaks)
     items = materialize_items(ws)
     sort([metadata(item)[:peak] for item in items]) == expected_peaks || error("Incorrect analysis results")
     read_item_data(ws) == item_data.(items) || error("Selection did not deliver the selected payloads")
-    records = [ws.index.items[id] for id in ids]
-    table, warnings = materialize_item_table(ws, records)
+    table, warnings = materialize_item_table(ws, [DataBrowser.Workspace.item(ws, id) for id in ids])
     isempty(warnings) || error("Table preparation skipped selected data")
     y = findfirst(==("y"), table.columns)
     [table.getvalue(row, y) for row in 1:table.rows] ==
@@ -42,12 +41,14 @@ function browser_workload(root, opening, started_ns)
     workspace = open_workspace(project, root; background_processing=true)
     session = nothing
     try
-        session = open_browser(workspace; wait=false)
+        # The benchmark must not take keyboard focus from the person at the machine.
+        session = open_browser(workspace; wait=false, window_start=:background)
         wait_browser_ready(session)
         opening_s = (time_ns() - started_ns) / 1e9
         finish_work(workspace)
         items = check_items(workspace, session, [4.0, 6.0, 9.0])
-        sort([first(item_data(item).members) for item in items]) == [1, 2, 2] ||
+        # "runs" holds every item and is the outermost collection, so its version is the latest.
+        [first(item_data(item).members) for item in items] == [3, 3, 3] ||
             error("Collection processing did not reach the selected items")
         # The normal plot panel must invoke the registered drawing callback.
         wait_for(() -> counters.draws[] > 0, session)

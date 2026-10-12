@@ -2,7 +2,6 @@ using DataBrowser
 using DelimitedFiles: readdlm
 import DataBrowser:
     collection,
-    entries,
     fingerprint,
     id,
     item_data,
@@ -12,12 +11,9 @@ import DataBrowser:
     project_name,
     read,
     reconstruct,
-    source_id,
-    source_item_path,
-    source_items,
-    source_label
+    items
 
-length(ARGS) == 1 || error("Usage: julia --project project.jl DATA_DIRECTORY")
+length(ARGS) == 1 || error("Usage: julia --project=examples project.jl DATA_DIRECTORY")
 
 struct MicrographDirectory <: AbstractDataSource
     root::String
@@ -28,14 +24,14 @@ struct MicrographFile <: AbstractDataSourceItem
     modified::Float64
 end
 
-source_id(source::MicrographDirectory)::String = abspath(source.root)
-source_label(source::MicrographDirectory)::String = basename(abspath(source.root))
+id(source::MicrographDirectory)::String = abspath(source.root)
+label(source::MicrographDirectory)::String = basename(abspath(source.root))
 Base.copy(source::MicrographDirectory) = MicrographDirectory(source.root)
 
 # The engine scans with `cancel_token`, `on_progress`, and `on_item` keywords so a slow source can
 # stream and be interrupted. A source that discovers everything at once absorbs and ignores them:
 # the engine queues the returned batch when `on_item` was never called.
-function source_items(source::MicrographDirectory; kwargs...)::Vector{MicrographFile}
+function items(source::MicrographDirectory; kwargs...)::Vector{MicrographFile}
     paths = sort!(filter(
         path -> endswith(lowercase(path), ".txt"),
         readdir(source.root; join=true),
@@ -45,7 +41,6 @@ end
 
 id(file::MicrographFile)::String = abspath(file.path)
 label(file::MicrographFile)::String = basename(file.path)
-source_item_path(file::MicrographFile)::String = file.path
 fingerprint(file::MicrographFile)::Float64 = file.modified
 
 # A typed project supplies its own collection levels too. `collection` returns `AbstractCollection`
@@ -89,12 +84,10 @@ function process(image::Micrograph)::Micrograph
     return Micrograph(image.path, image.name, normalized, image.exposure_ms)
 end
 
-# `read` is the only stage that touches the source; `entries` is a pure function of its result.
-read(::MicrographDirectory, file::MicrographFile)::Matrix{Float32} =
-    Float32.(readdlm(file.path, ','))
-
-entries(file::MicrographFile, pixels::Matrix{Float32})::Vector{Micrograph} =
-    [Micrograph(file.path, splitext(basename(file.path))[1], pixels, 10.0)]
+# `read` is the only stage that touches the source. One file holds one micrograph, so `read` returns
+# the item itself and the project needs no `expand` method.
+read(::MicrographDirectory, file::MicrographFile)::Micrograph = Micrograph(
+    file.path, splitext(basename(file.path))[1], Float32.(readdlm(file.path, ',')), 10.0)
 
 struct MicrographProject <: DataBrowser.AbstractProject end
 

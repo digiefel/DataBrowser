@@ -130,7 +130,7 @@ register_item!(PROJECT, :pund_fatigue;
         data=read_pund_fatigue_file(file.filepath),
         metadata=ruo2_file_metadata(file),
     ),
-    entries = (data, metadata) -> [
+    expand = (data, metadata) -> [
         let cycle_data = select_pund_fatigue_cycle(data, Int(c))
             ruo2_entry(
                 cycle_data,
@@ -152,7 +152,7 @@ register_item!(PROJECT, :pund_fatigue;
 register_item!(PROJECT, :wakeup;
     detect = file -> contains_ci(file.filename, "PUND_Wakeup"),
     read   = read_wakeup,
-    entries = wakeup_measurements,
+    expand = wakeup_measurements,
     process = process_wakeup,
     analyze = pund_stats,
     label   = (_data, metadata) -> strcat(ruo2_timestamp_label(metadata), get(metadata, :segment, :pund) === :pn ? "Wakeup PN" : "Wakeup PUND", ruo2_voltage_label(metadata), ruo2_temperature_label(metadata)),
@@ -182,7 +182,7 @@ register_item!(PROJECT, :breakdown;
         data=read_iv_sweep(file.filepath),
         metadata=ruo2_file_metadata(file),
     ),
-    entries = breakdown_measurements,
+    expand = breakdown_measurements,
     process = (data, _metadata) -> iv_resistance(data),
     analyze = iv_stats,
     label   = (_data, metadata) -> strcat(ruo2_timestamp_label(metadata), "Breakdown", ruo2_temperature_label(metadata)),

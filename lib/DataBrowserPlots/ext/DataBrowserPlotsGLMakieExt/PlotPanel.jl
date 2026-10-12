@@ -8,15 +8,17 @@ import DataBrowserGUI
 const Browser = DataBrowserGUI.Browser
 
 using DataBrowserAPI:
-    label,
-    source_label
-using DataBrowserAPI.ItemIndex: ItemRecord
+    id,
+    label
+using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
-using .MakieImguiIntegration: MakieFigure, destroy_figure!
+using .MakieImguiIntegration: MakieFigure, destroy_figure!, inspect!, plot_theme
 
 _plot_state(state::Browser.BrowserState) = plots_extension(state).plots
 
-const PLOT_HELP_TEXT = "Live follows the browser selection.\nDetach opens an independent plot window.\nExport saves the current figure.\nScroll zooms, right-drag pans, Ctrl-click resets limits."
+# The time the theme button takes to change its colors after a click.
+const THEME_BLEND_SECONDS = 0.25
+const PLOT_HELP_TEXT = "Live follows the browser selection.\nDetach opens an independent plot window.\nExport saves the current figure.\nScroll zooms, drag zooms to a rectangle, right-drag pans, Ctrl-click resets limits.\nHold x or y to change that direction only.\nOn the ticks of one axis, scroll and drag change that axis only.\nInspect, or the i key, shows the values under the mouse."
 
 """Return the stable embedded-Makie id for one plot view."""
 function _plot_makie_id(plots::PlotState, view::PlotViewState)::String
@@ -50,7 +52,7 @@ function draw_plot_view!(
     state::Browser.BrowserState,
     view::PlotViewState,
     plot_key::Tuple,
-    records::Vector{ItemRecord},
+    records::Vector{ItemKey},
     plot_kind::Type{<:PlotKind},
 )::Nothing
     workspace = state.workspace::Workspace.Workspace
@@ -60,9 +62,14 @@ function draw_plot_view!(
         # @timed records each phase (time, allocs, ncalls) into the main-task tree;
         # the inner @timed_dbg feeds the dev-only engine profiler when enabled.
         items = Browser.@timed "plot_load" (@timed_dbg Workspace.materialize_items(workspace, records))
-        result = Browser.@timed "plot_setup" (@timed_dbg setup_plot(workspace, plot_kind, items))
-        Browser.@timed "plot_data" (@timed_dbg plot_data!(workspace, plot_kind, items, result))
+        result = Makie.with_theme(plot_theme(_plot_state(state).dark)) do
+            figure = Browser.@timed "plot_setup" (@timed_dbg setup_plot(workspace, plot_kind, items))
+            Browser.@timed "plot_data" (@timed_dbg plot_data!(workspace, plot_kind, items, figure))
+            figure
+        end
         result === nothing && error("Plot renderer returned no figure.")
+        hasmethod(embed, Tuple{typeof(result),String}) ||
+            error("No loaded plot backend can show a $(typeof(result))")
         view.figure = result
         view.last_key = plot_key
         view.error = ""
@@ -74,15 +81,15 @@ function draw_plot_view!(
         view.error = "Plot failed: $summary. See the console for full details."
         item_context = join(
             [
-                "$(record.label) ($(label(record.type)))\n" *
-                "  $(Workspace.source_item_id(workspace, record.source_item_key))"
+                "$(label(workspace, record)) ($(label(Workspace.valuetype(workspace, record))))\n" *
+                "  $(Workspace.source_item_id(workspace, record))"
                 for record in records
             ],
             "\n",
         )
         @error(
             "Plot drawing failed\n" *
-            "Source: $(source_label(source))\n" *
+            "Source: $(label(source))\n" *
             "Plot: $(plot_kind_name(plot_kind))\n" *
             "Items: $(length(records))\n$item_context",
             exception=(err, bt),
@@ -95,12 +102,13 @@ end
 function render_plot_toolbar!(
     state::Browser.BrowserState,
     view::PlotViewState,
-    records::Vector{ItemRecord},
-    selected_records::Vector{ItemRecord},
+    records::Vector{ItemKey},
+    selected_records::Vector{ItemKey},
     available::Vector{Type{<:PlotKind}},
 )::Nothing
     plots = _plot_state(state)
-    project = (state.workspace::Workspace.Workspace).project
+    workspace = state.workspace::Workspace.Workspace
+    project = workspace.project
     current = view.plot_kind
     if ig.BeginCombo(
         "##plot_kind_$(view.id)",
@@ -112,7 +120,7 @@ function render_plot_toolbar!(
                 view.last_key = nothing
                 view.error = ""
                 for record in records
-                    plots.kind_by_item[label(record.type)] = candidate
+                    plots.kind_by_item[label(Workspace.valuetype(workspace, record))] = candidate
                 end
             end
         end
@@ -125,7 +133,7 @@ function render_plot_toolbar!(
         view.live = live
         view.last_key = nothing
         if !live
-            view.item_ids = [record.id for record in selected_records]
+            view.item_ids = [id(workspace, record) for record in selected_records]
         end
     end
 
@@ -140,15 +148,45 @@ function render_plot_toolbar!(
                 PlotViewState(
                     id="plot_$(plots.next_window_id)",
                     title=length(records) == 1 ?
-                          only(records).label :
+                          label(workspace, only(records)) :
                           "$(length(records)) items",
                     live=false,
-                    item_ids=[record.id for record in records],
+                    item_ids=[id(workspace, record) for record in records],
                     plot_kind=current,
                 ),
             )
         end
         !can_detach && ig.EndDisabled()
+    end
+
+    ig.SameLine()
+    inspector = view.inspector
+    @c(ig.Checkbox("Inspect##inspect_$(view.id)", &inspector)) && (view.inspector = inspector)
+    ig.SameLine()
+    # The theme button looks like the theme in use: dark with a light frame, or light with a dark
+    # frame. After a click its colors blend from one to the other. `blend` is 0 for dark and 1
+    # for light, and ImGui keeps it between frames.
+    storage, blend_id = ig.GetStateStorage(), ig.GetID("theme_blend_$(view.id)")
+    blend = ig.GetFloat(storage, blend_id, plots.dark ? 0.0f0 : 1.0f0)
+    step = unsafe_load(ig.GetIO().DeltaTime) / THEME_BLEND_SECONDS
+    blend = plots.dark ? max(blend - step, 0.0f0) : min(blend + step, 1.0f0)
+    ig.SetFloat(storage, blend_id, blend)
+    fill = ntuple(i -> Float32((0.1, 0.1, 0.1, 1.0)[i] * (1 - blend) + blend), 4)
+    # The frame and the text switch at the middle of the blend, so they stay readable.
+    frame = blend < 0.5 ? (0.9f0, 0.9f0, 0.9f0, 1.0f0) : (0.1f0, 0.1f0, 0.1f0, 1.0f0)
+    hovered_fill = ntuple(i -> 0.85f0 * fill[i] + 0.15f0 * frame[i], 4)
+    ig.PushStyleColor(ig.ImGuiCol_Button, fill)
+    ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, hovered_fill)
+    ig.PushStyleColor(ig.ImGuiCol_ButtonActive, hovered_fill)
+    ig.PushStyleColor(ig.ImGuiCol_Text, frame)
+    ig.PushStyleColor(ig.ImGuiCol_Border, frame)
+    ig.PushStyleVar(ig.ImGuiStyleVar_FrameBorderSize, 1.0f0)
+    ig.Button((blend < 0.5 ? "Dark" : "Light") * "###theme_$(view.id)") && (plots.dark = !plots.dark)
+    ig.PopStyleVar()
+    ig.PopStyleColor(5)
+    if ig.BeginItemTooltip()
+        ig.TextUnformatted(plots.dark ? "Switch to the light theme" : "Switch to the dark theme")
+        ig.EndTooltip()
     end
 
     can_export = view.figure !== nothing
@@ -157,7 +195,7 @@ function render_plot_toolbar!(
     if ig.Button("Export##export_$(view.id)") && can_export
         name = current === nothing ? "plot" : plot_kind_name(current)
         default_name = length(records) == 1 ?
-            "$(only(records).id)-$name.png" :
+            "$(id(workspace, only(records)))-$name.png" :
             "$(length(records))-items-$name.png"
         path = save_file(default_name; filterlist="png,jpg,jpeg,svg,pdf")
         if !isempty(path)
@@ -204,13 +242,14 @@ function render_plot_body!(
 
     if view.figure !== nothing
         makie_id = _plot_makie_id(plots, view)
+        # The i key does what the Inspect checkbox does, with the mouse over the plot window.
+        if ig.IsWindowHovered(ig.ImGuiHoveredFlags_ChildWindows) &&
+                ig.IsKeyPressed(ig.ImGuiKey_I, false) && !unsafe_load(ig.GetIO().WantTextInput)
+            view.inspector = !view.inspector
+        end
+        view.figure isa Figure && inspect!(view.figure, view.inspector)
         Browser.@timed "makie_fig" begin
-            MakieFigure(
-                makie_id,
-                view.figure;
-                auto_resize_x=true,
-                auto_resize_y=true,
-            )
+            embed(view.figure, makie_id)
         end
     elseif status == :needs_kind
         ig.TextDisabled("No plot kind selected")
@@ -227,30 +266,30 @@ end
 Update and render one plot window.
 
 Live views use the current browser selection. Static views resolve their saved item ids against the
-current workspace index.
+items the workspace has now.
 """
 function render_plot_view!(
     state::Browser.BrowserState,
     view::PlotViewState,
-    selected_records::Vector{ItemRecord},
+    selected_records::Vector{ItemKey},
 )::Nothing
     plots = _plot_state(state)
+    workspace = state.workspace::Workspace.Workspace
 
     if view.live
-        view.item_ids = [record.id for record in selected_records]
+        view.item_ids = [id(workspace, record) for record in selected_records]
     end
     records = view.live ?
         selected_records :
         Browser._items_for_ids(state, view.item_ids)
 
-    workspace = state.workspace::Workspace.Workspace
     source = workspace.source
     project = workspace.project
     kind = if isempty(records)
         nothing
     else
-        T = first(records).type
-        all(record -> record.type === T, records) ? label(T) : nothing
+        T = Workspace.valuetype(workspace, first(records))
+        all(record -> Workspace.valuetype(workspace, record) === T, records) ? label(T) : nothing
     end
     available = kind === nothing ?
         Type{<:PlotKind}[] :
@@ -284,10 +323,12 @@ function render_plot_view!(
     if status == :ready
         plot_key = (
             workspace.scan.epoch,
-            source_label(workspace.source),
+            label(workspace.source),
             view.id,
             plot_kind_name(view.plot_kind),
-            [record.id for record in records],
+            plots.dark,
+            [id(workspace, record) for record in records],
+            Workspace.revision(workspace, records),
         )
         view.last_key == plot_key ||
             draw_plot_view!(

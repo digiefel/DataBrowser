@@ -32,9 +32,9 @@ API.fingerprint(::BenchSourceItem) = 1
 struct PreparedSource <: API.AbstractDataSource
     items::Vector{BenchSourceItem}
 end
-API.source_id(::PreparedSource) = "prepared-benchmark"
-API.source_label(::PreparedSource) = "Prepared benchmark data"
-API.source_items(source::PreparedSource; kwargs...) = source.items
+API.id(::PreparedSource) = "prepared-benchmark"
+API.label(::PreparedSource) = "Prepared benchmark data"
+API.items(source::PreparedSource; kwargs...) = source.items
 
 """Callback counts are correctness checks, not performance measurements."""
 Base.@kwdef struct BenchProject <: API.AbstractProject

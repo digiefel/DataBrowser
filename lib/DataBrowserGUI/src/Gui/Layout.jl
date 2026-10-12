@@ -11,13 +11,12 @@ import CImGui.CSyntax: @c
 const _IMGUI_INI_BYTES = Ref{Vector{UInt8}}(UInt8[])
 
 using DataBrowserAPI:
-    source_label
+    label
 using DataBrowserCache: ProjectCacheIdentity
 import DataBrowserCore.Workspace
 using DataBrowserCore.Workspace:
     WorkspaceStatus,
     can_rebuild_cache,
-    refresh_status!,
     rebuild_cache!
 
 """Brighten or darken an ImGui button color by `delta` per RGB channel, clamped to [0, 1]."""
@@ -37,7 +36,7 @@ end
 
 """The workspace status snapshot, or a neutral placeholder when no source is open."""
 current_status(state::BrowserState)::WorkspaceStatus =
-    state.workspace isa Workspace.Workspace ? state.workspace.status :
+    state.workspace isa Workspace.Workspace ? Workspace.workspace_status(state.workspace) :
     WorkspaceStatus(:none, "No Project", "No workspace is open.",
         false, nothing, Workspace.WorkspaceStageCounts(), Pair{String,String}[])
 
@@ -77,7 +76,7 @@ function render_menu_bar(state::BrowserState)::Nothing
         if ig.BeginMenu("Project")
             ig.TextDisabled(
                 workspace isa Workspace.Workspace ?
-                "Active: $(source_label(workspace.source))" :
+                "Active: $(label(workspace.source))" :
                 "No project loaded",
             )
             ig.Separator()
@@ -88,20 +87,6 @@ function render_menu_bar(state::BrowserState)::Nothing
             ig.EndMenu()
         end
         _render_cache_toolbar_button!(state)
-        show_bad_effective = _show_bad_effective(state)
-        bad_visibility_toggle_enabled = _tag_state_ready(state) ||
-                                        isempty(state.tag_state_error)
-        !bad_visibility_toggle_enabled && ig.BeginDisabled()
-        if ig.MenuItem("Show Bad", C_NULL, show_bad_effective)
-            state.show_bad = !state.show_bad
-        end
-        if !bad_visibility_toggle_enabled
-            ig.EndDisabled()
-            if ig.BeginItemTooltip()
-                ig.TextUnformatted("Fix tags.txt and rescan before hiding bad items")
-                ig.EndTooltip()
-            end
-        end
         _render_table_inspector_menu!(state)
         if ig.BeginMenu("Debug")
             if ig.MenuItem("Performance Window", C_NULL, state.show_performance_window)
@@ -184,7 +169,7 @@ function _copy_path_button(
     path::AbstractString,
     tooltip::AbstractString,
 )::Nothing
-    if ig.SmallButton("⧉##$id")
+    if ig.SmallButton("$ICON_COPY##$id")
         ig.SetClipboardText(String(path))
     end
     if ig.BeginItemTooltip()
@@ -202,13 +187,13 @@ function _render_stage_counts!(status::WorkspaceStatus)::Nothing
     ig.BeginTable("stage_counts", 4, flags) || return nothing
     ig.TableNextRow()
     _stage_count_cell("$(counts.sources_found) Sources", [
-        "$(counts.sources_found) $(counts.source_noun) found",
+        "$(counts.sources_found) source items found",
         "$(cache.read_sources) read",
-        "$(cache.cached_sources) interpreted",
+        "$(cache.cached_sources) indexed",
         "$(counts.sources_pending) pending source work",
     ]; align=:center)
-    _stage_count_cell("$(cache.interpreted_items) entries", [
-        "$(cache.interpreted_items) items interpreted and cached",
+    _stage_count_cell("$(cache.created_items) items", [
+        "$(cache.created_items) items created and cached",
     ]; align=:center)
     _stage_count_cell("$(cache.analyzed) analyzed", [
         "$(cache.processed) processed",
@@ -216,16 +201,16 @@ function _render_stage_counts!(status::WorkspaceStatus)::Nothing
         # processing is off; the cache reports each stage independently.
         "$(cache.analyzed) analyzed",
     ]; align=:center)
-    stage_failures = cache.failed_read + cache.failed_interpret + cache.failed_process +
+    stage_failures = cache.failed_read + cache.failed_expand + cache.failed_process +
         cache.failed_analyze + cache.failed_collection
     extra_analyze_issues = max(length(status.errors) - stage_failures, 0)
     analyze_issues = cache.failed_analyze + extra_analyze_issues
-    issues = cache.failed_read + cache.failed_interpret + cache.failed_process + analyze_issues +
+    issues = cache.failed_read + cache.failed_expand + cache.failed_process + analyze_issues +
         cache.failed_collection
     issue_word = issues == 1 ? "issue" : "issues"
     _stage_count_cell("$(issues) $issue_word", [
         "$(cache.failed_read) read",
-        "$(cache.failed_interpret) interpret",
+        "$(cache.failed_expand) item creation",
         "$(cache.failed_process) process",
         "$analyze_issues analyze",
         "$(cache.failed_collection) collection",
@@ -264,7 +249,7 @@ function render_project_window(state::BrowserState)::Nothing
     if ig.Begin("Project Settings###project_window", open_ref, ig.ImGuiWindowFlags_AlwaysAutoResize)
         workspace = state.workspace
         if workspace isa Workspace.Workspace
-            ig.Text("Active: $(source_label(workspace.source))")
+            ig.Text("Active: $(label(workspace.source))")
         else
             ig.TextDisabled("No workspace open")
         end
@@ -316,6 +301,13 @@ function _window_close_requested(state::BrowserState)::Bool
     return GLFW.WindowShouldClose(window)
 end
 
+# The Lucide icon font, version 1.52.0 (ISC licence, in `assets/lucide-LICENSE`). Its icons are
+# characters in the private-use range, so a string can hold text and icons together.
+const ICON_FONT = joinpath(pkgdir(@__MODULE__), "assets", "lucide.ttf")
+const ICON_PARTIAL = "\ue4b0"  # circle-dashed
+const ICON_FAILED = "\ue084"   # circle-x
+const ICON_COPY = "\ue09e"     # copy
+
 """Create the ImGui context with the docking/viewport configuration the browser needs."""
 function _init_browser_context!()
     ig.set_backend(:GlfwOpenGL3)
@@ -324,6 +316,17 @@ function _init_browser_context!()
     io.ConfigFlags = unsafe_load(io.ConfigFlags) | ig.ImGuiConfigFlags_DockingEnable
     io.ConfigFlags = unsafe_load(io.ConfigFlags) | ig.ImGuiConfigFlags_ViewportsEnable
     io.ConfigFlags = unsafe_load(io.ConfigFlags) | ig.ImGuiConfigFlags_NavEnableKeyboard
+
+    # Add the icons to the default text font.
+    fonts = unsafe_load(io.Fonts)
+    ig.AddFontDefault(fonts)
+    icons = ig.lib.ImFontConfig_ImFontConfig()
+    icons.MergeMode = true
+    # An icon fills its whole font size, while the capital letters of the 13-pixel text font are
+    # 9 pixels tall: the icons are loaded smaller and moved down to stand on the text baseline.
+    icons.GlyphOffset = ig.ImVec2(0.0f0, 1.0f0)
+    ig.AddFontFromFileTTF(fonts, ICON_FONT, 10.0f0, icons)
+    ig.lib.ImFontConfig_destroy(icons)
 
     # Point imgui at a per-machine ini file so [Table] column widths persist across restarts.
     # The pointer must live for the whole process — _IMGUI_INI_BYTES holds the bytes.
@@ -368,15 +371,45 @@ function _promote_to_foreground_app()
     return nothing
 end
 
+"""
+Give the keyboard focus back when the browser window closes. The process was made a regular macOS
+app to show the window; without a window it would stay the active app, with nothing to click on.
+No-op off macOS; never throws.
+"""
+function _leave_foreground_app()
+    Sys.isapple() || return nothing
+    try
+        objc_class(name) = @ccall objc_getClass(name::Cstring)::Ptr{Cvoid}
+        objc_sel(name) = @ccall sel_registerName(name::Cstring)::Ptr{Cvoid}
+        nsapplication = objc_class("NSApplication")
+        nsapplication == C_NULL && return nothing
+        app = @ccall objc_msgSend(
+            nsapplication::Ptr{Cvoid}, objc_sel("sharedApplication")::Ptr{Cvoid},
+        )::Ptr{Cvoid}
+        app == C_NULL && return nothing
+        # Hiding activates the app that was in front before.
+        @ccall objc_msgSend(
+            app::Ptr{Cvoid}, objc_sel("hide:")::Ptr{Cvoid}, C_NULL::Ptr{Cvoid},
+        )::Cvoid
+        # NSApplicationActivationPolicyAccessory = 1: no Dock icon and no entry in Cmd-Tab.
+        @ccall objc_msgSend(
+            app::Ptr{Cvoid}, objc_sel("setActivationPolicy:")::Ptr{Cvoid}, 1::Clong,
+        )::Bool
+    catch error
+        @warn "Could not give the keyboard focus back" exception=error
+    end
+    return nothing
+end
+
 function _set_browser_window_hints(window_start::Symbol)::Nothing
     if window_start == :normal
         GLFW.WindowHint(GLFW.FOCUSED, true)
         GLFW.WindowHint(GLFW.FOCUS_ON_SHOW, true)
-    elseif window_start == :background
+    elseif window_start in (:background, :hidden)
         GLFW.WindowHint(GLFW.FOCUSED, false)
         GLFW.WindowHint(GLFW.FOCUS_ON_SHOW, false)
     else
-        error("Unsupported browser window_start '$window_start'; use :normal or :background")
+        error("Unsupported browser window_start '$window_start'; use :normal, :background or :hidden")
     end
     return nothing
 end
@@ -435,19 +468,16 @@ function _render_workspace_updating!()::Nothing
 end
 
 """
-Move Julia's libuv event loop off the GLFW sticky thread when the runtime supports it.
+Give Julia's I/O event loop (libuv) its own thread, once per process.
 
-The browser render loop is pinned to thread 1 (the `:interactive` pool tid when that pool exists).
-Julia historically also ran libuv there ([JuliaLang/julia#50643](https://github.com/JuliaLang/julia/issues/50643)).
-A busy `PollEvents` UI loop then delays IO completions, so pipeline workers that read source files
-starve and GUI interpret throughput collapses versus headless. Julia 1.12's
-`Base.Experimental.make_io_thread()` gives libuv its own thread; call it before the render loop starts.
+The render loop of the browser is pinned to thread 1, where Julia also runs its I/O event loop
+([JuliaLang/julia#50643](https://github.com/JuliaLang/julia/issues/50643)). A busy render loop
+then delays I/O completions, and the workers that read source files slow down. Call
+`DEDICATED_IO_THREAD()` before the render loop starts.
 """
-function _ensure_dedicated_io_thread!()::Nothing
-    if isdefined(Base.Experimental, :make_io_thread)
-        Base.Experimental.make_io_thread()
-    end
-    return nothing
+const DEDICATED_IO_THREAD = Base.OncePerProcess{Nothing}() do
+    Base.Experimental.make_io_thread()
+    nothing
 end
 
 """
@@ -465,7 +495,7 @@ function _run_browser(
 )
     exit_after_frames === nothing || exit_after_frames > 0 ||
         error("exit_after_frames must be positive when provided; got $exit_after_frames")
-    _ensure_dedicated_io_thread!()
+    DEDICATED_IO_THREAD()
     _set_browser_window_hints(window_start)
     first_frame       = Ref(true)
     setup_layout      = Ref(true)
@@ -481,17 +511,21 @@ function _run_browser(
         opengl_version=v"3.3",
         wait_events=false,
         on_exit=() -> begin
-            _shutdown_background_jobs!(state)
             _shutdown_extensions!(state)
             _shutdown_implot_context!(state)
             _save_project_view_if_changed!(state)
+            GLFW.HideWindow(ig.current_window())
+            window_start == :normal && _leave_foreground_app()
+            # macOS takes the window off the screen while the process handles window events, and
+            # nothing handles them after the loop ends.
+            for _ in 1:20
+                GLFW.PollEvents()
+                sleep(0.01)
+            end
             @debug sprint(show, MAIN_TIMER)
         end,
     ) do
-        if _window_close_requested(state)
-            _shutdown_background_jobs!(state)
-            return :imgui_exit_loop
-        end
+        _window_close_requested(state) && return :imgui_exit_loop
         state.performance.frame += 1
         # The backend renders and swaps the previous frame before calling us again.
         # Discard startup timings once the first full frame has been presented, or on request.
@@ -509,19 +543,16 @@ function _run_browser(
                 return nothing
             end
             if workspace isa Workspace.Workspace
-                @timed "refresh_status" begin
-                    refresh_status!(workspace)
-                end
                 _check_source_identity!(state, workspace)
                 _check_cache_error!(state, workspace)
             end
-            if exit_after_frames !== nothing && state.performance.frame >= exit_after_frames
-                _shutdown_background_jobs!(state)
+            exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
                 return :imgui_exit_loop
-            end
             if first_frame[]
                 state.performance.gl_info = _gl_info()
                 window_start == :normal && _promote_to_foreground_app()
+                # The backend always creates the window visible.
+                window_start == :hidden && GLFW.HideWindow(ig.current_window())
                 first_frame[] = false
             end
             if !_extensions_ready(state)
@@ -573,7 +604,6 @@ function _run_browser(
                 end
                 @timed "modals" begin
                     render_cache_rebuild_modal(state)
-                    render_collection_metadata_modal(state)
                 end
             end
             full_frame_submitted[] = true
@@ -591,6 +621,12 @@ in the REPL so it stays interactive.
 With `wait=false`, returns a [`BrowserSession`](@ref) (`task` + `state`). Use
 [`wait_browser_ready`](@ref) to wait until extension initialization is complete and the first
 full browser frame has been presented. Use [`close_browser!`](@ref) to exit the loop cleanly.
+
+Closing the window closes the browser only. The workspace stays open and keeps processing items,
+and `open_browser` can show it again. Use `close_workspace!` to close the workspace.
+
+`window_start` says how the window appears: `:normal` shows it and gives it the keyboard focus,
+`:background` shows it without the focus, and `:hidden` does not show it.
 """
 function open_browser(
     workspace::Workspace.Workspace;
@@ -599,6 +635,7 @@ function open_browser(
     wait::Bool=!isinteractive(),
     window_start::Symbol=:normal,
 )
+    workspace.closed && error("The workspace is closed. Open it again with `open_workspace`.")
     state = BrowserState()
     state.extensions = _instantiate_extensions()
     for ext in state.extensions

@@ -72,13 +72,31 @@ function create_table_sql(
         "($(join(definitions, ", ")))"
 end
 
+"""
+Run a statement that returns no rows and takes no parameters.
+
+The garbage collector may run while DuckDB works on the statement. In the calls that DuckDB.jl
+makes, it cannot: it waits for the statement to end, and every other thread waits with it.
+"""
+function _run(connection::DuckDB.Connection, sql::String)::Nothing
+    result = Ref{DuckDB.duckdb_result}()
+    state = @ccall gc_safe=true DuckDB.libduckdb.duckdb_query(
+        connection.handle::DuckDB.duckdb_connection, sql::Cstring,
+        result::Ref{DuckDB.duckdb_result})::DuckDB.duckdb_state
+    message = state == DuckDB.DuckDBSuccess ? nothing :
+        unsafe_string(DuckDB.duckdb_result_error(result))
+    DuckDB.duckdb_destroy_result(result)
+    message === nothing || error("DuckDB could not run `$sql`: $message")
+    return nothing
+end
+
 function _transaction(work::Function, connection)::Nothing
-    DBInterface.execute(connection, "BEGIN TRANSACTION")
+    _run(connection, "BEGIN TRANSACTION")
     try
         work()
-        DBInterface.execute(connection, "COMMIT")
+        _run(connection, "COMMIT")
     catch
-        DBInterface.execute(connection, "ROLLBACK")
+        _run(connection, "ROLLBACK")
         rethrow()
     end
     return nothing
@@ -88,9 +106,28 @@ function _append_table!(emit::Function, connection, table::AbstractString)::Noth
     appender = DuckDB.Appender(connection, table)
     try
         emit(appender)
-        DuckDB.flush(appender)
+        # As in `_run`: the garbage collector may run while the rows are written.
+        @ccall gc_safe=true DuckDB.libduckdb.duckdb_appender_flush(
+            appender.handle::DuckDB.duckdb_appender)::DuckDB.duckdb_state
     finally
         DuckDB.close(appender)
+    end
+    return nothing
+end
+
+"""
+Append the rows of one payload. The columns come as a tuple, so that this function is compiled for
+their element types and appending a value needs no dispatch at run time.
+"""
+function _append_rows!(appender, seq::UInt32, rows::Int, columns::Tuple)::Nothing
+    for row_index in 1:rows
+        DuckDB.append(appender, seq)
+        DuckDB.append(appender, UInt64(row_index))
+        foreach(column -> DuckDB.append(appender, column[row_index]), columns)
+        # Ending a row sometimes writes the rows appended so far. As in `_run`, the garbage
+        # collector may run meanwhile.
+        @ccall gc_safe=true DuckDB.libduckdb.duckdb_appender_end_row(
+            appender.handle::DuckDB.duckdb_appender)::DuckDB.duckdb_state
     end
     return nothing
 end
@@ -588,8 +625,11 @@ end
 
 # Database-backed tabular table family
 
-"""One item's payload key: its integer surrogate and the payload stage it belongs to."""
-const PayloadKey = Tuple{Int64,PipelineStage}
+"""
+One processed payload's key: the integer surrogate of its item, and the key of the collection whose
+version of the item it is. Collection key 0 marks the item's own processed data.
+"""
+const PayloadKey = Tuple{Int64,Int64}
 
 # `body` is the caller's original Tables.jl container; pending reads hand it back untouched, and
 # the flush loop reads it only through the interface. `container` is the hex-serialized container
@@ -597,12 +637,16 @@ const PayloadKey = Tuple{Int64,PipelineStage}
 # while its append is still being flushed.
 struct TabularBodyBatch
     item_key::Int64
-    stage::PipelineStage
+    collection_key::Int64
     body::Any
     container::String
 end
 
 _buffer_rows(batch::TabularBodyBatch)::Int = _payload_rows(batch.body)
+
+# The number of tasks that append payload rows during one flush. One task cannot store payloads
+# as fast as several workers produce them.
+const PAYLOAD_APPEND_TASKS = 4
 
 mutable struct TabularFamilyStore <:
                AbstractDatabaseStore{Tuple{UInt16,UInt32},TabularBodyBatch}
@@ -610,6 +654,8 @@ mutable struct TabularFamilyStore <:
     # DuckDB connections are not thread-safe; every read_connection use holds this lock.
     read_lock::ReentrantLock
     write_connection::DuckDB.Connection
+    # One connection for each task that appends payload rows during a flush.
+    append_connections::Vector{DuckDB.Connection}
     flush_condition::Base.Threads.Condition
     queued::Dict{Tuple{UInt16,UInt32},BufferMutation{TabularBodyBatch}}
     writing::Dict{Tuple{UInt16,UInt32},BufferMutation{TabularBodyBatch}}
@@ -623,6 +669,10 @@ mutable struct TabularFamilyStore <:
     payload_schemas::Dict{PayloadShape,UInt16}
     # Hex-serialized container type per stored payload, rebuilt on read via Tables.materializer.
     containers::Dict{Tuple{UInt16,UInt32},String}
+    # Number of rows per stored payload, which sets how many payloads one query of a read takes.
+    rows::Dict{Tuple{UInt16,UInt32},Int}
+    # The hex-serialized name of each container type stored so far.
+    container_names::Dict{Type,String}
     next_seq::UInt32
 end
 
@@ -636,11 +686,13 @@ function TabularFamilyStore(
     write_connection = DBInterface.connect(database)
     locations = Dict{PayloadKey,Tuple{UInt16,UInt32}}()
     containers = Dict{Tuple{UInt16,UInt32},String}()
+    rows = Dict{Tuple{UInt16,UInt32},Int}()
     for row in DBInterface.execute(
-        read_connection, "SELECT item_key, stage, storage_id, seq, container FROM item_data")
+        read_connection, "SELECT item_key, collection_key, storage_id, seq, container, rows FROM item_data")
         location = (UInt16(row.storage_id), UInt32(row.seq))
-        locations[(Int64(row.item_key), PipelineStage(row.stage))] = location
+        locations[(Int64(row.item_key), Int64(row.collection_key))] = location
         containers[location] = String(row.container)
+        rows[location] = Int(row.rows)
     end
     schemas = Dict{PayloadShape,UInt16}()
     for row in DBInterface.execute(
@@ -657,12 +709,20 @@ function TabularFamilyStore(
         read_connection,
         "SELECT coalesce(max(seq), 0) AS seq FROM item_data",
     )).seq)
+    # A flush that stopped half way leaves payload rows that `item_data` does not name. Their
+    # sequence numbers are not given out again.
+    for storage_id in values(schemas)
+        table = _quote_identifier(_payload_table_name(storage_id))
+        max_seq = max(max_seq, Int128(only(DBInterface.execute(
+            read_connection, "SELECT coalesce(max($MB_SEQ_COLUMN), 0) AS seq FROM $table")).seq))
+    end
     max_seq < typemax(UInt32) ||
         error("Processed-data cache exhausted its UInt32 sequence space")
     store = TabularFamilyStore(
         read_connection,
         ReentrantLock(),
         write_connection,
+        [DBInterface.connect(database) for _ in 1:PAYLOAD_APPEND_TASKS],
         Base.Threads.Condition(),
         Dict{Tuple{UInt16,UInt32},BufferMutation{TabularBodyBatch}}(),
         Dict{Tuple{UInt16,UInt32},BufferMutation{TabularBodyBatch}}(),
@@ -675,6 +735,8 @@ function TabularFamilyStore(
         locations,
         schemas,
         containers,
+        rows,
+        Dict{Type,String}(),
         UInt32(max_seq + 1),
     )
     store.flush_task = Base.Threads.@spawn _flush_loop!(store)
@@ -704,13 +766,18 @@ function _set_queued!(
 )::Nothing where {K,R}
     previous = get(store.queued, key, nothing)
     previous === nothing || (store.queued_rows -= _mutation_rows(store, previous))
+    was_empty = isempty(store.queued)
     if mutation === nothing
         delete!(store.queued, key)
     else
         store.queued[key] = mutation
         store.queued_rows += _mutation_rows(store, mutation)
     end
-    notify(store.flush_condition)
+    # The flush task is woken only when its wait can end: the queue got its first entry, or
+    # reached its limit. A removed entry can make room for a writer that waits. Waking the flush
+    # task for every entry makes all writers queue for the lock behind it.
+    at_limit = store.row_limit !== nothing && store.queued_rows >= store.row_limit
+    (was_empty || at_limit || mutation === nothing) && notify(store.flush_condition)
     return nothing
 end
 
@@ -720,11 +787,11 @@ function _accept_rows!(
     row::R,
 )::Nothing where {K,R}
     store.row_limit === nothing && return nothing
-    incoming = _buffer_rows(row)
     previous = get(store.queued, key, nothing)
     previous_rows = _mutation_rows(store, previous)
-    while store.queued_rows - previous_rows > 0 &&
-          store.queued_rows - previous_rows + incoming > store.row_limit
+    # A writer waits only while the queue is at its limit, which is also when a flush is due:
+    # otherwise the writer and the flush task would wait for each other until the flush interval.
+    while store.queued_rows - previous_rows >= store.row_limit
         wait(store.flush_condition)
         _require_writable(store)
         previous = get(store.queued, key, nothing)
@@ -794,6 +861,7 @@ function _queue_delete_location!(
     location::Tuple{UInt16,UInt32},
 )::Nothing
     delete!(store.containers, location)
+    delete!(store.rows, location)
     previous = get(store.queued, location, nothing)
     if previous !== nothing && previous.kind === BUFFER_APPEND
         _set_queued!(store, location, nothing)
@@ -819,19 +887,18 @@ function Base.append!(
         "Tabular item '$(payload_key[1])' uses a reserved cache column name " *
         "'$MB_SEQ_COLUMN' or '$MB_ROW_COLUMN'",
     )
-    batch = TabularBodyBatch(
-        payload_key[1], payload_key[2], body, something(_serialize_hex(typeof(body))))
     lock(store.flush_condition)
     try
         _require_writable(store)
-        incoming = _buffer_rows(batch)
+        batch = TabularBodyBatch(
+            payload_key[1], payload_key[2], body,
+            get!(() -> something(_serialize_hex(typeof(body))), store.container_names, typeof(body)))
         old_location = get(store.item_locations, payload_key, nothing)
         old_mutation = old_location === nothing ?
             nothing : get(store.queued, old_location, nothing)
         old_rows = _mutation_rows(store, old_mutation)
-        while store.row_limit !== nothing &&
-              store.queued_rows - old_rows > 0 &&
-              store.queued_rows - old_rows + incoming > store.row_limit
+        # A writer waits only while the queue is at its limit, which is also when a flush is due.
+        while store.row_limit !== nothing && store.queued_rows - old_rows >= store.row_limit
             wait(store.flush_condition)
             _require_writable(store)
             old_location = get(store.item_locations, payload_key, nothing)
@@ -856,6 +923,7 @@ function Base.append!(
         old_location = pop!(store.item_locations, payload_key, nothing)
         store.item_locations[payload_key] = location
         store.containers[location] = batch.container
+        store.rows[location] = _payload_rows(batch.body)
         old_location === nothing || _queue_delete_location!(store, old_location)
         _set_queued!(
             store,
@@ -1016,54 +1084,90 @@ function _pending_tabular_body(
         (false, nothing)
 end
 
+# The most values that one query of a read returns, about 20 MiB of numbers. The query sorts its
+# result, so the database holds one batch in memory while the reader takes it.
+const READ_BATCH_VALUES = 2_500_000
+const READ_BATCH_PAYLOADS = 1024
+
+"""
+Read the stored payloads at `locations`, each as a `NamedTuple` of columns. `locations` gives the
+number of values of each payload, rows times columns.
+
+A read is split into queries of at most `READ_BATCH_VALUES` values, and a payload larger than that
+has a query of its own. The result of a query is taken one chunk at a time and appended to the
+columns of each payload, so no table of the whole result exists.
+"""
 function _read_tabular_locations(
     store::TabularFamilyStore,
-    locations::Vector{Tuple{UInt16,UInt32}},
+    locations::Dict{Tuple{UInt16,UInt32},Int},
 )::Dict{Tuple{UInt16,UInt32},Any}
     by_storage = Dict{UInt16,Vector{UInt32}}()
-    for (storage_id, seq) in locations
+    for (storage_id, seq) in keys(locations)
         push!(get!(() -> UInt32[], by_storage, storage_id), seq)
     end
     rows_by_location = Dict{Tuple{UInt16,UInt32},Any}()
+    seq_name, row_name = Symbol(MB_SEQ_COLUMN), Symbol(MB_ROW_COLUMN)
     for (storage_id, seqs) in by_storage
-        unique_seqs = unique(seqs)
         table = _quote_identifier(_payload_table_name(storage_id))
-        placeholders = join(fill("?", length(unique_seqs)), ", ")
-        rows = lock(store.read_lock) do
-            Tables.columntable(DBInterface.execute(
-                DBInterface.prepare(store.read_connection, """
+        remaining = sort!(seqs)
+        while !isempty(remaining)
+            batch, batch_values = 1, locations[(storage_id, remaining[1])]
+            while batch < min(length(remaining), READ_BATCH_PAYLOADS) &&
+                    batch_values + locations[(storage_id, remaining[batch+1])] <= READ_BATCH_VALUES
+                batch += 1
+                batch_values += locations[(storage_id, remaining[batch])]
+            end
+            batch_seqs = splice!(remaining, 1:batch)
+            placeholders = join(fill("?", length(batch_seqs)), ", ")
+            # A streamed result uses the connection until it is closed, so the lock covers it.
+            lock(store.read_lock) do
+                statement = DuckDB.Stmt(store.read_connection, """
                     SELECT *
                     FROM $table
                     WHERE $MB_SEQ_COLUMN IN ($placeholders)
                     ORDER BY $MB_SEQ_COLUMN, $MB_ROW_COLUMN
-                """),
-                Tuple(unique_seqs),
-            ))
-        end
-        data_names = Tuple(
-            name for name in keys(rows) if String(name) ∉ (MB_SEQ_COLUMN, MB_ROW_COLUMN)
-        )
-        # The query orders by seq, so one payload is one contiguous run of the seq column.
-        seq_column = rows[Symbol(MB_SEQ_COLUMN)]
-        run_start = 1
-        while run_start <= length(seq_column)
-            run_end = run_start
-            while run_end < length(seq_column) &&
-                  seq_column[run_end + 1] == seq_column[run_start]
-                run_end += 1
+                """, DuckDB.StreamResult)
+                result = DuckDB.execute(statement, Tuple(batch_seqs))
+                try
+                    data = findall(name -> name ∉ (seq_name, row_name), result.names)
+                    data_names = Tuple(result.names[data])
+                    # The columns of each payload, in the order of `data_names`.
+                    columns = Dict{UInt32,Vector{AbstractVector}}()
+                    for chunk in Tables.partitions(result)
+                        seq_column = chunk.tbl[seq_name]
+                        # The query orders by seq, so one payload is contiguous runs of the seq column.
+                        run_start = 1
+                        while run_start <= length(seq_column)
+                            run_end = something(
+                                findnext(!=(seq_column[run_start]), seq_column, run_start),
+                                length(seq_column) + 1) - 1
+                            target = get!(columns, seq_column[run_start]) do
+                                AbstractVector[similar(chunk.tbl[name], 0) for name in data_names]
+                            end
+                            for (index, name) in enumerate(data_names)
+                                rows = view(chunk.tbl[name], run_start:run_end)
+                                # A chunk without missing values has a narrower element type than one with them.
+                                target[index] = eltype(rows) <: eltype(target[index]) ?
+                                    append!(target[index], rows) : vcat(target[index], rows)
+                            end
+                            run_start = run_end + 1
+                        end
+                    end
+                    for seq in batch_seqs
+                        # A zero-row payload has a pointer and schema but no physical rows; it
+                        # reconstructs as an empty value with the correct columns. The database
+                        # reports every column as one that allows missing values; a column with
+                        # rows and no missing value comes back without `Missing`, and so does this.
+                        payload = get(columns, seq) do
+                            AbstractVector[nonmissingtype(type)[] for type in result.types[data]]
+                        end
+                        rows_by_location[(storage_id, seq)] = NamedTuple{data_names}(Tuple(payload))
+                    end
+                finally
+                    DBInterface.close!(result)
+                    DBInterface.close!(statement)
+                end
             end
-            rows_by_location[(storage_id, UInt32(seq_column[run_start]))] =
-                NamedTuple{data_names}(
-                    Tuple(rows[name][run_start:run_end] for name in data_names))
-            run_start = run_end + 1
-        end
-        # A zero-row payload has a pointer and schema but no physical rows; it reconstructs as
-        # an empty value with the correct columns and types.
-        for seq in unique_seqs
-            location = (storage_id, seq)
-            haskey(rows_by_location, location) && continue
-            rows_by_location[location] =
-                NamedTuple{data_names}(Tuple(rows[name][1:0] for name in data_names))
         end
     end
     return rows_by_location
@@ -1093,8 +1197,10 @@ function Base.read(
     results = Dict{PayloadKey,Any}()
     while !isempty(remaining)
         locations = Dict{PayloadKey,Tuple{UInt16,UInt32}}()
+        stored_values = Dict{Tuple{UInt16,UInt32},Int}()
         lock(store.flush_condition) do
             _require_open(store)
+            columns = Dict(storage_id => length(first(shape)) for (shape, storage_id) in store.payload_schemas)
             for key in remaining
                 location = get(store.item_locations, key, nothing)
                 if location === nothing
@@ -1106,14 +1212,12 @@ function Base.read(
                     results[key] = data
                 else
                     locations[key] = location
+                    stored_values[location] = store.rows[location] * columns[first(location)]
                 end
             end
         end
         isempty(locations) && break
-        stored_rows = _read_tabular_locations(
-            store,
-            collect(Set(values(locations))),
-        )
+        stored_rows = _read_tabular_locations(store, stored_values)
         retry = PayloadKey[]
         lock(store.flush_condition) do
             _require_open(store)
@@ -1156,7 +1260,7 @@ function _delete_keys_with_temp_table!(
         ),
         ", ",
     )
-    DBInterface.execute(connection, "CREATE TEMPORARY TABLE $quoted_temp ($definitions)")
+    _run(connection, "CREATE TEMPORARY TABLE $quoted_temp ($definitions)")
     try
         _append_table!(connection, table_name) do appender
             for key in keys
@@ -1173,12 +1277,9 @@ function _delete_keys_with_temp_table!(
             ),
             " AND ",
         )
-        DBInterface.execute(
-            connection,
-            "DELETE FROM $quoted_table USING $quoted_temp WHERE $predicate",
-        )
+        _run(connection, "DELETE FROM $quoted_table USING $quoted_temp WHERE $predicate")
     finally
-        DBInterface.execute(connection, "DROP TABLE $quoted_temp")
+        _run(connection, "DROP TABLE $quoted_temp")
     end
     return nothing
 end
@@ -1200,7 +1301,7 @@ function _delete_keys!(
         placeholders = join(fill("?", length(chunk)), ", ")
         sql = "DELETE FROM $quoted_table WHERE $(only(quoted_key_columns)) " *
             "IN ($placeholders)"
-        DBInterface.execute(DBInterface.prepare(connection, sql), Tuple(chunk))
+        DBInterface.execute(DBInterface.prepare(connection, sql), chunk)
     end
     return nothing
 end
@@ -1292,72 +1393,74 @@ function _flush_to_db!(
             error("TabularFamilyStore replaces physical data with delete plus append, never edit")
         end
     end
+    groups = Dict{UInt16,Vector{Pair{Tuple{UInt16,UInt32},TabularBodyBatch}}}()
+    for append in appends
+        push!(get!(() -> Pair{Tuple{UInt16,UInt32},TabularBodyBatch}[], groups, append.first[1]), append)
+    end
+    # The flush has three transactions, so that several tasks can append the payload rows. A
+    # reader finds a payload through `item_data`, which is written last.
     _transaction(store.write_connection) do
         _delete_payloads!(store.write_connection, deleted)
-        if !isempty(appends)
-            groups =
-                Dict{UInt16,Vector{Pair{Tuple{UInt16,UInt32},TabularBodyBatch}}}()
-            for append in appends
-                push!(get!(
-                    () -> Pair{Tuple{UInt16,UInt32},TabularBodyBatch}[],
-                    groups,
-                    append.first[1],
-                ), append)
-            end
-            for (storage_id, storage_appends) in groups
-                columns, types = _payload_shape(first(storage_appends).second.body)
-                definitions = join(
-                    ("$(_quote_identifier(name)) $type" for
-                     (name, type) in zip(columns, types)),
-                    ", ",
-                )
-                table = _quote_identifier(_payload_table_name(storage_id))
-                DBInterface.execute(
+        for (storage_id, storage_appends) in groups
+            columns, types = _payload_shape(first(storage_appends).second.body)
+            definitions = join(
+                ("$(_quote_identifier(name)) $type" for (name, type) in zip(columns, types)), ", ")
+            table = _quote_identifier(_payload_table_name(storage_id))
+            DBInterface.execute(
+                store.write_connection,
+                "CREATE TABLE IF NOT EXISTS $table (" *
+                "$MB_SEQ_COLUMN UINTEGER, $MB_ROW_COLUMN UBIGINT, $definitions)",
+            )
+            DBInterface.execute(
+                DBInterface.prepare(
                     store.write_connection,
-                    "CREATE TABLE IF NOT EXISTS $table (" *
-                    "$MB_SEQ_COLUMN UINTEGER, $MB_ROW_COLUMN UBIGINT, $definitions)",
-                )
-                DBInterface.execute(
-                    DBInterface.prepare(
-                        store.write_connection,
-                        """
-                        INSERT INTO payload_schemas VALUES (?, ?, ?)
-                        ON CONFLICT (storage_id) DO NOTHING
-                        """,
-                    ),
-                    (storage_id, collect(columns), collect(types)),
-                )
-                _append_table!(
-                    store.write_connection,
-                    _payload_table_name(storage_id),
-                ) do appender
-                    for (location, entry) in storage_appends
+                    """
+                    INSERT INTO payload_schemas VALUES (?, ?, ?)
+                    ON CONFLICT (storage_id) DO NOTHING
+                    """,
+                ),
+                (storage_id, collect(columns), collect(types)),
+            )
+        end
+    end
+    isempty(appends) && return nothing
+
+    # Each task takes parts of the payloads of one table until none is left.
+    parts = Channel{Tuple{UInt16,Vector{Pair{Tuple{UInt16,UInt32},TabularBodyBatch}}}}(Inf)
+    for (storage_id, storage_appends) in groups,
+            part in Iterators.partition(storage_appends, cld(length(storage_appends), PAYLOAD_APPEND_TASKS))
+        put!(parts, (storage_id, collect(part)))
+    end
+    close(parts)
+    tasks = map(store.append_connections) do connection
+        Base.Threads.@spawn for (storage_id, part) in parts
+            columns, types = _payload_shape(first(groups[storage_id]).second.body)
+            _transaction(connection) do
+                _append_table!(connection, _payload_table_name(storage_id)) do appender
+                    for (location, entry) in part
                         body_columns = Tables.columns(entry.body)
                         _payload_shape(entry.body) == (columns, types) ||
                             error("Storage id $storage_id has incompatible payload shapes")
-                        vectors = [
-                            Tables.getcolumn(body_columns, Symbol(name)) for name in columns
-                        ]
-                        for row_index in 1:_payload_rows(entry.body)
-                            DuckDB.append(appender, location[2])
-                            DuckDB.append(appender, UInt64(row_index))
-                            for column in vectors
-                                DuckDB.append(appender, column[row_index])
-                            end
-                            DuckDB.end_row(appender)
-                        end
+                        _append_rows!(appender, location[2], _payload_rows(entry.body), Tuple(
+                            Tables.getcolumn(body_columns, Symbol(name)) for name in columns))
                     end
                 end
             end
-            _append_table!(store.write_connection, "item_data") do appender
-                for (location, entry) in appends
-                    DuckDB.append(appender, entry.item_key)
-                    DuckDB.append(appender, Int8(entry.stage))
-                    DuckDB.append(appender, location[1])
-                    DuckDB.append(appender, location[2])
-                    DuckDB.append(appender, entry.container)
-                    DuckDB.end_row(appender)
-                end
+        end
+    end
+    # Every writer finishes before the payload locations are recorded, also when one fails.
+    waitall(tasks; failfast=false)
+
+    _transaction(store.write_connection) do
+        _append_table!(store.write_connection, "item_data") do appender
+            for (location, entry) in appends
+                DuckDB.append(appender, entry.item_key)
+                DuckDB.append(appender, entry.collection_key)
+                DuckDB.append(appender, location[1])
+                DuckDB.append(appender, location[2])
+                DuckDB.append(appender, entry.container)
+                DuckDB.append(appender, UInt64(_payload_rows(entry.body)))
+                DuckDB.end_row(appender)
             end
         end
     end
@@ -1394,6 +1497,7 @@ function _reset_memory!(store::TabularFamilyStore)::Nothing
     empty!(store.item_locations)
     empty!(store.payload_schemas)
     empty!(store.containers)
+    empty!(store.rows)
     store.next_seq = UInt32(1)
     return nothing
 end
@@ -1431,6 +1535,7 @@ function close!(store::AbstractDatabaseStore)::Nothing
     end
     try
         DBInterface.close!(store.read_connection)
+        store isa TabularFamilyStore && foreach(DBInterface.close!, store.append_connections)
     finally
         DBInterface.close!(store.write_connection)
     end

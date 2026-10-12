@@ -40,14 +40,13 @@ julia --project=bench --threads=auto test/runtests.jl precompile --force
 
 | Package selector | Test files and behavior |
 | --- | --- |
-| `API` | `test_identity.jl`: stable collection identity across labels, types and parent paths. |
 | `Annotations` | `test_annotations.jl`: coordinates, layouts, tag/note persistence and inheritance. |
 | `Sources` | `test_directory.jl`: discovery, exclusions, recursion and change fingerprints. |
 | `Recipes` | `test_stages.jl`: registration through typed stages and CSV loading. |
 | `Cache` | `test_persistence.jl`: payload replacement/deletion across reopen; cached `nothing`. |
-| `Core` | `test_workspace.jl`: reconstruction, metadata precedence, reuse, invalidation and failures. |
+| `Core` | `test_workspace.jl`: reconstruction, metadata precedence, reuse, invalidation, failures and status during on-demand processing. `test_catalog.jl`: catalog rows keep their keys across source jobs; removal, membership, progress, the job queue, requests and metadata; a collection is identified by its parent, type and id, and a change to its metadata reaches every item below it. |
 | `GUI` | `test_tables.jl`: heterogeneous table values and provenance. `test_clipboard.jl`: clipboard interchange preserves cell boundaries and quoting. |
-| `Plots` | `test_view.jl`: live and fixed plot selections survive view persistence. |
+| `Plots` | `test_view.jl`: live and fixed plot selections survive view persistence. `test_gestures.jl`: axes that share a cell of a figure zoom together. |
 | `Profiling` | `test_timings.jl`: concurrent instrumentation, snapshots and lifecycle. |
 
 ## What runs again

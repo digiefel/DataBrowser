@@ -38,18 +38,47 @@ id(item::AbstractDataItem)::String = error(
     "Item type $(typeof(item)) must implement id(::$(typeof(item)))::String")
 
 """
+    label(project, item) -> String
+    label(item) -> String
+
 Human-readable label for an item.
 
-The default is its stable id, so an item always has a visible label without storing presentation
-state or consulting its source. Override this when a more descriptive label is available.
+The workspace calls `label` when the item is created, and again after `process` and after
+`analyze`, each time on the item with its metadata so far. A label can therefore use metadata that
+only a later stage adds; until then, `get(metadata(item), key, nothing)` returns `nothing`. From
+`process` on, the metadata includes the metadata inherited from the item's collections.
+
+The default is the item's id. Define `label(item)` for a more descriptive label, or the project form
+when the label depends on the project.
 """
+label(project::AbstractProject, item::AbstractDataItem)::String = label(item)
+
 label(item::AbstractDataItem)::String = id(item)
 
 """Display name for one item type."""
 label(T::Type{<:AbstractDataItem})::Symbol = nameof(T)
 
-"""Return an item's complete root-to-leaf path of concrete collection values."""
+"""
+    collection(item) -> Vector{AbstractCollection}
+    collection(source_item) -> Vector{AbstractCollection}
+
+The collection that holds an item, as its collection values from the top down.
+
+An item whose answer is empty goes where its source item is: `collection(source_item)`. The default
+for both is empty, which places the item at the root.
+"""
 collection(::AbstractDataItem)::Vector{AbstractCollection} = AbstractCollection[]
+collection(::AbstractDataSourceItem)::Vector{AbstractCollection} = AbstractCollection[]
+
+"""
+    metadata(source, collections) -> Dict
+
+The metadata `source` provides for one collection. `collections` identifies that collection by its
+collection values from the top down. The default is an empty `Dict`.
+
+This metadata is kept apart from `metadata(collection)`, the metadata of the collection value.
+"""
+metadata(::AbstractDataSource, ::AbstractVector{<:AbstractCollection})::Dict = Dict()
 
 """Return metadata supplied directly by a data item. The default is an empty `Dict`."""
 metadata(::AbstractDataItem)::Dict = Dict()
@@ -68,8 +97,11 @@ analyze(::AbstractDataItem)::Dict = Dict()
 # ---------------------------------------------------------------------------
 
 """
-Let an item adopt the normalized record interpretation produced for it, and the collection path the
-index holds for it. Internal workspace hook; the default keeps the item unchanged, because a typed
-item derives its own path from its own state. Package-owned carriers adopt both.
+    adopt(item, label, metadata, collections) -> AbstractDataItem
+
+Let an item take the label, the metadata and the collection values the workspace holds for it.
+Internal workspace hook; the default keeps the item unchanged, because a typed item derives all
+three from its own state. Package-owned carriers adopt them.
 """
-attach_record(item::AbstractDataItem, record, path::AbstractVector=AbstractCollection[]) = item
+adopt(item::AbstractDataItem, label::AbstractString, metadata::AbstractDict, collections::AbstractVector) =
+    item

@@ -13,7 +13,7 @@ function Base.show(io::IO, ::MIME"text/plain", project::Project)
     pad = isempty(project.recipes) ? 0 : maximum(length(string(r.kind)) for r in project.recipes)
     for recipe in project.recipes
         optional = [name for (name, f) in
-            (("entries", recipe.entries), ("process", recipe.process),
+            (("expand", recipe.expand), ("process", recipe.process),
              ("analyze", recipe.analyze), ("label", recipe.label),
              ("collection", recipe.collection), ("id", recipe.id))
             if f !== nothing]
@@ -49,6 +49,14 @@ Register or replace one item pipeline. `read` is the only required callback. Reg
 callbacks receive ordinary project data and metadata dictionaries; DataBrowser owns item identity
 and storage records internally.
 
+`collection(data, metadata)` places the item in the collection tree. It returns a named tuple that
+names each level from the top down, such as `(wafer = metadata[:wafer], device = metadata[:device])`.
+Without it, the item goes where its source item is: for a directory source, the file's directories.
+
+`label(data, metadata)` runs when the item is created, and again after `process` and after
+`analyze` with the metadata those stages added, so a label can show analysis results once they
+exist.
+
 Calling the unnamed form again replaces the project's unnamed registration. Calling the named form
 again with the same name replaces that registration in place.
 """
@@ -57,7 +65,7 @@ function register_item!(
     kind::Symbol;
     read,
     detect=Returns(true),
-    entries=nothing,
+    expand=nothing,
     process=nothing,
     analyze=nothing,
     label=nothing,
@@ -65,7 +73,7 @@ function register_item!(
     id=nothing,
 )::Project
     recipe = ItemRecipe(
-        kind, detect, read, entries, process, analyze, label, collection, id)
+        kind, detect, read, expand, process, analyze, label, collection, id)
     index = findfirst(r -> r.kind === kind, project.recipes)
     index === nothing ? push!(project.recipes, recipe) : (project.recipes[index] = recipe)
     return project

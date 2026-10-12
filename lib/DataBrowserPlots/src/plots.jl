@@ -57,14 +57,26 @@ function plot_kind_from_name(name::AbstractString)::Union{Nothing,Type{<:PlotKin
     return RegisteredPlot{Symbol(kind),Symbol(label)}
 end
 
-"""Materialize records and create the figure layout required by a visualizer."""
+"""Create the figure layout a plot kind requires for the given items."""
 function setup_plot end
 
-"""Materialize records and draw their items into an existing figure."""
+"""Draw the given items into an existing figure."""
 function plot_data! end
 
 """
-Register (or replace) one plot recipe for an item kind.
+    embed(figure, id)
+
+Draw `figure` inside the browser window that is being drawn. `id` names the place of the figure in
+that window and stays the same from frame to frame. A plot backend adds a method for its figure
+type; the GLMakie extension has the one for a Makie `Figure`.
+"""
+function embed end
+
+"""
+    register_plot!(project, kind; label, setup, draw) -> project
+
+Register (or replace) one plot for an item kind. Registering needs no plot backend: the browser
+chooses how to show a plot from the type of the figure that `setup` returns.
 
 `setup(workspace, items)` builds and returns the figure; `draw(workspace, items, figure)` fills it
 in. `items` are the loaded, data-bearing items for the selection (`Vector{<:AbstractDataItem}`);

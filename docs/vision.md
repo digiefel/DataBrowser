@@ -228,13 +228,16 @@ DataBrowserRecipes → API : the callback dialect (define_project, register_*) i
 DataBrowserCache   → API : persistence (DuckDB where it fits); keyed by PROJECT, not workspace
 DataBrowserCore    → API, Sources, Cache : the workspace, the index, background work,
                    command execution, project save/load, provenance, REPL, and the runtime that
-                   drives a project's callbacks through interpret → process → analyze; base support
+                   drives a project's callbacks through read → process → analyze; base support
                    for common data shapes such as tables, vectors, arrays, and image-like data; shapes
                    needing heavy dependencies (audio, say) live in extension packages
 DataBrowserGUI     → API, Core (+ CImGui/GLFW) : the host shell, panels, browser, shared widgets,
                    the window registry, and lightweight visualizers for Core-supported data shapes
-DataBrowserPlots   → API, Core, GUI (+ GLMakie) : a first-party/default GUI extension for Makie
-                   embedding, high-level plot APIs, and enhanced default visualizers
+DataBrowserPlots   → API, Core, GUI : plot registration and high-level plot APIs. Registering a
+                   plot needs no backend; the browser shows a plot through the `embed` method
+                   for the type of its figure. The plot windows (Makie embedding, enhanced
+                   default visualizers) and `embed` for a Makie figure are a package extension
+                   that loads when GLMakie is loaded: `using DataBrowser, GLMakie`
 DataBrowserCLI     → API, Core : a command-line frontend over the same commands (may come later)
 DataBrowser        → GUI, default extensions : umbrella / install target; re-exports the API
                    and the recipes dialect, and wires defaults
@@ -242,8 +245,8 @@ DataBrowser        → GUI, default extensions : umbrella / install target; re-e
 
 The dependency graph is acyclic with `DataBrowserAPI` at the bottom and the GUI host/extensions at
 the top. Heavy dependencies live where their feature lives — DuckDB in `DataBrowserCache`, CImGui/GLFW
-in `DataBrowserGUI`, GLMakie in `DataBrowserPlots` — so headless engine work never recompiles the GUI
-or GPU stack, and the GUI shell can exist without importing Makie.
+in `DataBrowserGUI`, GLMakie as a weak dependency of `DataBrowserPlots` — so headless engine work
+never recompiles the GUI or GPU stack, and `using DataBrowser` does not load Makie.
 
 `DataBrowserAPI` stays a clean leaf only under one discipline: something belongs in it only if it is
 shared by two or more packages **and** is declaration or data — abstract extension types, lightweight
@@ -252,15 +255,16 @@ implementations and live machinery (the `Workspace`, the index, the scheduler) l
 packages that add methods to those declarations. If the API starts absorbing behavior or heavy types,
 that is a signal a boundary is wrong, not that the rule should bend.
 
-See [plans/roadmap.md](plans/roadmap.md) for the concrete boundaries, current-code mapping, and
+See [roadmap.md](roadmap.md) for the concrete boundaries, current-code mapping, and
 phasing.
 
 ## 7. Registration and Callback Model
 
 The registration API defines named or default pipelines over ordinary Julia data. It ships as
 `DataBrowserRecipes`, an ordinary package implemented purely as a client of the typed stage
-contract; the engine never learns it exists. `read` performs the per-source-item source read once
-and `entries` expands the result into one or several data items. Item construction supplies cheap
+contract; the engine never learns it exists. `read` performs the per-source-item source read once.
+Its result is one data item unless the registration supplies `expand`, which splits the result into
+zero or several data items. Item construction supplies cheap
 sibling identity, labels, collection placement, and metadata at the same time data is split.
 Deferred `process` and `analyze` callbacks receive data and effective metadata. A registration
 name provides stable replacement and associates extension or collection operations. It is not a
@@ -329,9 +333,7 @@ selection and state, replaying the workflow reopens all three.
 
 Open design questions: whether a self-contained figure stores a data snapshot, only rendered marks, or
 both; how live figures degrade when the source project is unavailable; and whether figure annotations
-live in workflow files, figure files, or a shared store. See
-[plans/plotting-api-design.md](plans/plotting-api-design.md) and
-[plans/spatial-browser.md](plans/spatial-browser.md).
+live in workflow files, figure files, or a shared store.
 
 ## 9. REPL, CLI, and Agent Readiness
 
@@ -415,8 +417,7 @@ thing the GUI observes and mutates through the same operations available to Juli
 
 Normal project persistence is a small text project file plus generated cache. Export/archive
 workflows may later package a Julia environment, data copies, and cache, but that is separate from
-ordinary open/save. See [cache.md](cache.md) for the current cache design and
-[plans/project-persistence.md](plans/project-persistence.md) for the saved-project model.
+ordinary open/save.
 
 ## 13. Packaging the Julia Application
 
@@ -452,7 +453,7 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
 
 ## 15. Roadmap
 
-The concrete, current split is [plans/roadmap.md](plans/roadmap.md). The longer product arc:
+The concrete, current split is [roadmap.md](roadmap.md). The longer product arc:
 
 1. **Architectural cleanup.** Split the package into the functional family of §6; pin the workspace /
    project / package / command vocabulary; establish `DataBrowserAPI` as the command-and-definitions

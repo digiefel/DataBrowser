@@ -18,15 +18,9 @@ function _has_extension(source_item::AbstractDataSourceItem, extensions::Vector{
     return any(extension -> endswith(name, extension), extensions)
 end
 
-"""Parse one source item's file into a `DataFrame`."""
-function _read_delimited(source_item::AbstractDataSourceItem, options::NamedTuple)::DataFrame
-    path = source_item_path(source_item)
-    path === nothing && error(
-        "register_csv! needs a source item with a filesystem path, and " *
-        "$(typeof(source_item)) has none; give that registration its own `read` callback",
-    )
-    return CSV.read(path, DataFrame; options...)
-end
+"""Parse the file of one source item into a `DataFrame`."""
+_read_delimited(file::SourceFile, options::NamedTuple)::DataFrame =
+    CSV.read(file.filepath, DataFrame; options...)
 
 """
     register_csv!(project, [kind]; extensions, read_options, callbacks...) -> project
@@ -41,15 +35,15 @@ forwarded untouched, so a premade recipe is a starting point rather than a diffe
 register_csv!(project, :sweep;
     extensions=[".csv", ".txt"],
     read_options=(; delim='\\t', comment="#"),
-    collection=(data, metadata) -> ["sweeps", metadata[:device]],
+    collection=(data, metadata) -> (measurement = "sweeps", device = metadata[:device]),
     analyze=(data, _metadata) -> Dict(:rows => nrow(data)),
 )
 ```
 
 Detection runs in registration order and the first match wins, so register narrower recipes before
-this one when several could claim the same file. Because detection and reading go through the
-generic source-item contract rather than any file type, this recipe works with any source whose
-items expose a path.
+this one when several could claim the same file. `read` has a method for the `SourceFile` items of a
+directory source; a source with another type of source item needs a registration with its own
+`read` callback.
 """
 function register_csv!(
     project::Project,

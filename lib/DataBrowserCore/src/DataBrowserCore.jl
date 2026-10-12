@@ -1,16 +1,45 @@
 """
-Headless workspace engine: work graph and workspace lifecycle over the `DataBrowserAPI` item index
-and the `DataBrowserCache` store.
+Headless workspace engine: the catalog of rows and jobs, and the workspace lifecycle over it and
+the `DataBrowserCache` store.
 """
 module DataBrowserCore
 
 using DataBrowserAPI
-using DataBrowserAPI: source_item_path
 using DataBrowserSources
 using DataBrowserAPI: @timed_dbg
 
 include("project_engine.jl")
-include("WorkGraph.jl")
+include("Catalogs.jl")
 include("Workspace.jl")
+
+using .Workspace:
+    open_workspace,
+    modify_workspace!,
+    close_workspace!,
+    wait_workspace_idle!,
+    workspace_status,
+    query_items,
+    select_items!,
+    materialize_items,
+    read_item_data,
+    Tag,
+    tags,
+    tag!,
+    untag!
+
+export items_for_file,
+    open_workspace,
+    modify_workspace!,
+    close_workspace!,
+    wait_workspace_idle!,
+    workspace_status,
+    query_items,
+    select_items!,
+    materialize_items,
+    read_item_data,
+    Tag,
+    tags,
+    tag!,
+    untag!
 
 end

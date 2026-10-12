@@ -1,10 +1,8 @@
 using Tables
 
 using DataBrowserAPI: item_data, label
-using DataBrowserAPI.ItemIndex: ItemRecord
+using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
-
-export ItemTable, merge_item_tables, materialize_item_table
 
 """
 Table view over one or more items' Tables-compatible payloads.
@@ -132,22 +130,21 @@ function merge_item_tables(pairs)::Tuple{ItemTable,Vector{String}}
 end
 
 """
-    materialize_item_table(workspace, records) -> (table, warnings)
+    materialize_item_table(workspace, items) -> (table, warnings)
 
-Load the processed items for `records` and combine their Tables-compatible payloads into an
-`ItemTable`. Record labels identify each item's rows. Payload extraction failures and non-tabular
+Load the processed items for the item keys `items` and combine their Tables-compatible payloads
+into an `ItemTable`. Item labels identify each item's rows. Payload extraction failures and non-tabular
 payloads are reported in `warnings` and skipped; materialization and table construction errors
 propagate to the caller. This function does not select items or retain view state.
 """
 function materialize_item_table(
     workspace::Workspace.Workspace,
-    records::Vector{ItemRecord},
+    items::Vector{ItemKey},
 )::Tuple{ItemTable,Vector{String}}
-    items = Workspace.materialize_items(workspace, records)
     pairs = Tuple{String,Any}[]
     warnings = String[]
-    for (record, item) in zip(records, items)
-        item_label = label(record)
+    for (key, item) in zip(items, Workspace.materialize_items(workspace, items))
+        item_label = label(workspace, key)
         data = try
             item_data(item)
         catch err

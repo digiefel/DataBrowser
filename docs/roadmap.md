@@ -37,7 +37,8 @@ workspace internals.
   column; retain source-item fingerprints as the change tokens compared across workspace openings.
 - [x] Give source items, data items, and collections the same `id(value)` and `label(value)` public
   interface. Replace `source_item_id`, `source_item_label`, and `item_label` cleanly, without
-  compatibility aliases; keep `source_id` and `source_label` for the workspace's data source.
+  compatibility aliases. A data source uses the same `id(source)` and `label(source)`, and lists its
+  source items with `items(source)`.
 - [x] Add a package-owned `source_item_key::Int64`, persist the source-item id-to-key mapping once,
   and use the integer key for internal and database references just as `item_key` and
   `collection_key` are used. Keep source-item ids as the stable public identity and measure the
@@ -113,11 +114,10 @@ Decisions taken during the audit:
   `_callback_name`, and `plot_kind_symbol`.
 - [x] Remove unused GUI state fields and declared dependencies, and Core's unused annotation import.
 - [x] Remove unused scheduler fields and queue timestamp bookkeeping.
-- [ ] Fix docstrings that describe behavior the code does not have: `set_cache_memory_limit!`
-  (workspace) is not live; `cache_stage_summary`
-  counts queued, not persisted; `query_items` exposes item columns too;
-  `finish_debug_timings!` still records in-flight sections. Remove or create the missing
-  `docs/cache.md` and `docs/profiling.md` targets.
+- [x] Fix docstrings that describe behavior the code does not have: `cache_stage_summary`,
+  `query_items` and `finish_debug_timings!`. Remove the `set_cache_memory_limit!` methods that took
+  a workspace or an open cache and did not change it. Remove the references to the missing
+  `docs/cache.md` and `docs/profiling.md`.
 
 ### 0.2.2 Cache boundary and one backend
 
@@ -131,6 +131,12 @@ Decisions taken during the audit:
   results in a bounded memory cache, reuse them during interpretation replay, and distinguish source
   failures, invalidation, and progress by stage. Persist source fingerprints for failed and empty
   interpretations as well as successful ones.
+- [x] Replace `entries` with an optional `expand`. `read` returns the data item when a source item
+  holds exactly one. `read` and `expand` run in one source job that records two results:
+  `SOURCE_READ` and `SOURCE_EXPAND`, which replaces `SOURCE_INTERPRET`.
+- [x] Compute item labels again after `process` and `analyze`, so a label can show metadata those
+  stages add, and persist the latest label. `label(project, item)` replaces the `display_label`
+  hook.
 - [x] Finish removing Core's reads of Cache fields. Stage, fingerprint, metadata, and payload
   access uses Cache's exported interface. Core owns its workspace idle deadline; Cache keeps its
   flush-deadline helper private. Remove unused imports, including the concrete cache backend.
@@ -145,13 +151,16 @@ Decisions taken during the audit:
   buffered overlays and transactional flush, check revisions at acceptance, and validate output
   publications on restore. Include metadata-only collection-process output; remove the split
   stage-specific storage/completion calls.
-- [ ] Replace one source's output and membership changes through one Cache operation. Core supplies
-  replacements and invalidations; Cache retires storage. Cover fewer/empty outputs, moved members,
-  shared collections and selection preservation for surviving public IDs.
-- [ ] Fix the concurrency issues this exposes: `query_view_signature` is recreated without a lock;
-  `cache_pending_counts` locks ten stores separately and returns an incoherent snapshot;
-  `open_cache_db` does not stop already-started stores and flush tasks when a later constructor
-  fails; `close_cache_db!` keeps only the first exception.
+- [x] Replace one source's output through one Cache operation, `replace_source_output!`. Core
+  supplies the earlier item ids and the new items; Cache deletes the earlier items with their
+  results, stores the new ones and records the expand stage.
+- [ ] Test source replacement with moved members and with collections that two source items share.
+- [x] Keep the selection when the source changes: items that still exist stay selected, with a
+  disk cache and with a memory cache. Selected ids without an item are left out when the
+  selection is read.
+- [x] Fix four concurrency issues: the query view is replaced in one statement under a lock;
+  `cache_pending_counts` reads every store at the same moment; `open_cache_db` closes the stores
+  that already started when opening fails; `close_cache_db!` reports every exception.
 
 Target interface for the remaining cache work: lifecycle/flush and storage diagnostics; bulk restore;
 exact-reference payload reads/checks; complete result writes; source identity, removal and output
@@ -169,51 +178,57 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 ### 0.2.3 One index, one status
 
-- [ ] Evaluate the work graph against cancellation, invalidation, priority, streaming, and
-  collection edge cases; finish with a bounded tuning pass or an explicit redesign.
+- [x] Evaluate the work graph against cancellation, invalidation, priority, streaming, and
+  collection edge cases. The outcome is a redesign: the workspace runs on one catalog of source
+  items, items and collections that also holds stage status and the job queue
+  ([plans/workspace-graph](plans/workspace-graph/workspace-graph.md)).
 - [x] Keep one live workspace index. Derive source-check status from scan completion and rebuild
   availability from workspace lifecycle. `SourceScan` remains the Cache load result only.
-- [ ] Add `WorkspaceIndex(source_id)`; replace the two hand-built empty-index constructions.
-- [ ] Name item metadata layers after the pipeline stages on `ItemRecord` and remove the parallel
-  `WorkspaceIndex.item_metadata` dict, so each item's interpret and analyze layers live in one place.
+- [x] Name item metadata layers after the pipeline stages, so each item's own, process and analyze
+  layers live in one place: the catalog.
 - [ ] One status model. `scan.state` (7 symbols), `cache_state` (8), `cache.operation` (4), and the
   `status.label in ("Fresh", "Loaded", "Errors")` check in `workspace_status` collapse into one
   enum and one `busy` derivation; `source_scan_running`, `cache_work_running`,
-  `engine_work_running`, `workspace_busy` become one function. `analysis_errors` becomes a typed
-  collection, not `Dict{Union{String,Int64},String}`.
-- [ ] Small Core cleanups: `indexed_collection_path` and `collection_value` drop the `Workspace`
-  argument they ignore; the `ItemRecord` copy constructor stops `deepcopy`ing metadata by default;
-  the scan's `current::Dict{String,Any}` fingerprint map gets a type.
+  `engine_work_running`, `workspace_busy` become one function.
+- [ ] The scan's `current::Dict{String,Any}` fingerprint map gets a type.
 - [ ] Use compact integer item keys in SQL tables and other measured hot paths while retaining
   stable logical item identities at the project boundary.
 
 ### 0.2.4 Public API tiers
 
+- [ ] Collection `analyze` receives `analyze(project, collection, items, subcollections)`: all
+  items below the collection, with data loaded on access, and the child collections carrying their
+  own analysis results.
+- [ ] `analyze` returns an updated value instead of a `Dict`, for items and collections. The engine
+  stores `metadata` of the returned value, and reconstruction restores it. Recipes keeps its
+  `Dict`-returning callbacks and adapts them.
 - [ ] Extend the common reconstruction contract to collection analysis metadata. Collection
   reconstruction currently receives only `own_metadata`, without analysis results. User types
   decide which results to retain and how to represent them. Remove the registration adapter's
-  reliance on the internal `attach_record`/`ItemRecord` path for labels and collection paths;
+  reliance on the internal `adopt` hook for labels and collections;
   it must consume the same public contract as any other extension. Item payload and metadata
   delivery belongs to 0.2.2.
-- [ ] Preserve member metadata changes returned by collection `process`, including changes with
-  unchanged payloads. `run_collection_process` currently selects outputs only when `item_data`
-  changes by identity, and collection completion publishes no member metadata. Cover cumulative
-  device history: successive measurements need different wakeup/fatigue counts even when their
-  waveform payloads are unchanged.
+- [x] Preserve member metadata and label changes returned by collection `process`, including
+  changes with unchanged payloads. Cover
+  cumulative device history: successive measurements need different wakeup/fatigue counts even
+  when their waveform payloads are unchanged.
 - [ ] Sort every exported name into the project-author or extension-author tier and stop exporting
   the rest: `items_for_file`, `SourceFile`, the concrete `Project`, `gui_timings`,
   `reset_timings!`, `plot_kinds`, `CollectionRecipe`, `ItemRecipe`, `NoMatch`,
   `RegisteredReadResult`. Export what extension authors need and cannot reach today:
   `GuiExtension`, `register_gui_extension!`, `NamedCollection`.
 - [ ] Generate the umbrella's `using`/`export` lists from one table instead of two hand-kept blocks.
-- [ ] One selector concept — `ItemRecord`, id, or current selection — implemented once and shared by
+- [ ] One selector concept — `ItemKey`, id, or current selection — implemented once and shared by
   `select_items!`, `materialize_items`, `read_item_data`; delete the runtime-typed
   `select_items!(::AbstractVector)` fallback. The Cache-side `read_payload` name is handled by
   the payload contract work in 0.2.2.
   `query_items(ws)` becomes `item_ids(ws)`; `query_items(ws, sql)` becomes internal.
-- [ ] Add the workspace accessors the GUI currently reaches for by field: `items(ws)`,
-  `item(ws, id)`, `collections(ws)`, `selection(ws)`, `errors(ws)`, and an `on_change(ws, f)`
-  subscription replacing the `status_dirty` poll.
+- [x] Read the item tree through workspace accessors instead of `workspace.index`: `items`, `item`,
+  `collections`, `collection`, `children`, `ancestors`, `metadata` and `metadata_keys`, with
+  `RootCollection()` for the top of the tree.
+- [x] Replace the single-reader `status_dirty` flag with `generation(ws)`, a counter every watcher
+  can compare, and let `workspace_status(ws)` recompute only when it moved.
+- [ ] Add the remaining workspace accessors: `selection(ws)` and `errors(ws)`.
 - [ ] Recipes: rename `register_collection_analysis!` to `register_collection!` (it registers
   `process` too); look the recipe up once per stage chain instead of three linear scans.
 - [ ] Strengthen internal module boundaries and import hygiene across the package family.
@@ -236,6 +251,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] Tighten the extension boundary: `PlotsExtension` calls `Browser._project_visible_selection`
   and `Browser._items_for_ids`; make those tier-B functions. Reduce the twelve-hook protocol to
   what the one extension uses; type `save_view`/`load_view!` instead of `Dict{String,Any}`.
+- [x] Create the dedicated I/O thread once per process, with `Base.OncePerProcess`.
 - [ ] Split `BrowserState` (40 fields) into selection/filter, windows, diagnostics, persistence,
   and lifecycle state. Last, because the items above shrink it first.
 
@@ -246,6 +262,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
   `_duckdb_sql_type_maybe`).
 - [ ] A `with_connection(db) do … end` helper replacing thirteen hand-written connect/try/finally
   sites.
+- [x] Wait for the payload writer tasks with `waitall(tasks; failfast=false)`: every writer
+  finishes before payload locations are published.
 - [ ] Group `CacheDB` (25 fields) into index stores, metadata stores, payload store, and runtime
   state. Inline `load_cache_index_body` and `_report_loaded_cache_index`.
 - [x] Use one `PipelineStage` for scheduling and cache results, ordered from source read through
@@ -256,11 +274,11 @@ workloads, completed disk writes, cache reads and process memory measurements.
   Changed code must invalidate success and failure automatically. Investigate Revise integration
   and a stable persisted code/environment fingerprint; begin conservatively at project scope.
   Mismatch follows eager/requested recomputation policy, not a warning-only path.
-- [ ] Define and test persistence at every expensive pipeline boundary (discovery, read, entries,
+- [ ] Define and test persistence at every expensive pipeline boundary (discovery, read, expand,
   item and collection process/analyze). A valid persisted stage satisfies downstream work without
   rerunning earlier user code.
 - [ ] Support expensive or non-repeatable sources (simulations, compressed inputs, streams) through
-  source-owned durable handles or persisted interpreted outputs; add `replayable(::AbstractDataSource)`
+  source-owned durable handles or persisted unprocessed outputs; add `replayable(::AbstractDataSource)`
   when the first such source arrives.
 - [ ] Profile the DuckDB flush path at millions of rows and remove the dominant avoidable cost.
 - [ ] Document cache contracts in source docstrings and the generated public documentation.
@@ -269,13 +287,13 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 - [ ] Audit source fingerprinting and document exactly what each change token invalidates across
   live updates and workspace reopen.
-- [ ] Keep `default_collection_path(source, source_item)` source-owned. Replace
-  `annotate_collection_path` with `source_collection_metadata(source, paths)`: a batch of public
-  collection-identity paths in, owned metadata dictionaries per path level out. DirectorySource
-  owns sidecar parsing and matching; Core owns composition and invalidation. Store declared and
-  source metadata separately and replace the source contribution on interpretation, refresh and
-  reopen, so removed keys reveal the declared values beneath them. Snapshot source metadata under
-  its lock without calling user reconstruction there. Test both DirectorySource and another source.
+- [x] Replace `default_collection_path(source, source_item)` with `collection(source_item)`, and
+  `annotate_collection_path` with `metadata(source, collections)`, where `collections` are one
+  collection's values from the top down. DirectorySource owns `metadata.txt` parsing and matching;
+  Core owns composition and invalidation. A collection's own metadata and the source's are stored
+  separately, and the source's part is replaced on item publication, refresh and reopen, so removed
+  keys reveal the collection's own values beneath them.
+- [ ] Test `metadata(source, collections)` with a source other than DirectorySource.
 - [ ] Split `DirectorySource` into scan, `metadata.txt`, and watcher files. The watcher rescans
   the whole tree and fingerprints every file three times on each event; `.git` is skipped by the
   watcher but traversed by the scan; `readdir` order is not sorted; `metadata_lock` is held while
@@ -283,8 +301,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
   reported as "already watching".
 - [ ] `metadata.txt`: decide whether values may be quoted; validate metadata value types at parse
   time instead of failing downstream.
-- [ ] Annotations live in the project root. The GUI currently derives the annotation root from the
-  cache path under `DEPOT_PATH` (`Browser/Operations.jl:23-26`), against the vision. The GUI uses
+- [x] `tags.txt` lives in the source root, as the vision states. The GUI read it from the cache
+  folder under `DEPOT_PATH`.
+- [ ] The GUI uses
   `item_annotation_key`/`ancestor_annotation_keys` instead of rebuilding keys; enforce or drop the
   "item ids and collection paths never overlap" claim; one parse-error type for the three stores.
 - [x] Profiling: sampling profiler API and `process_rss_bytes` removed; TimerOutputs is the profiler.
@@ -309,8 +328,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] `ARCHITECTURE.md` promises two diagrams per package and has them for Sources only. Add Core
   and Cache after Phases 1–2, GUI after Phase 4.
 - [ ] `docs/api.md`: the two tiers from Phase 3, one line per name.
-- [ ] `vision.md` links to `cache.md`, `plans/plotting-api-design.md`, `plans/spatial-browser.md`,
-  `plans/project-persistence.md`; none exist. Fix or remove.
+- [x] Remove the links in `vision.md` to documents that do not exist, and point its roadmap links
+  to `roadmap.md`.
 - [ ] `AGENTS.md`: require a bench smoke before committing engine changes.
 
 ## 0.3.0 — Tags
@@ -323,9 +342,21 @@ Every change keeps `tags.txt` human-readable and recoverable independently of th
 
 - [x] Implement plain-text tag definitions, item/collection assignments, inherited lookup, and the
   current `bad` bridge. ([#2](https://github.com/digiefel/MeasurementBrowser/pull/2))
-- [ ] Provide API operations to create, edit, remove, assign, and unassign tags on items and
-  collections.
-- [ ] Provide GUI controls for the same operations, including multi-selection.
+- [x] Provide API operations to create, edit, remove, assign, and unassign tags on items and
+  collections: `Tag`, `tags`, `tag!` and `untag!`.
+- [x] Find the items with or without a tag: `items(workspace, Tag("bad"))` and
+  `items(workspace, !Tag("bad"))`.
+- [ ] A tag can leave its items out of collection `process` and `analyze`.
+- [x] Provide GUI controls to assign and unassign tags, including multi-selection: the context
+  menu of items and collections lists the tags, and a click toggles one. A field in the menu
+  defines a new tag.
+- [x] Set the visibility of each tag with a button above the collection tree: shown, hidden, or
+  only, marked on the button with nothing, a cross, or a check mark.
+- [ ] Edit the colour and the priority of a tag, and remove a tag, in the GUI.
+- [ ] Open question: what the GUI may define. It can write only to files beside the data, while
+  a project is defined in Julia. Find a rule that feels obvious before adding more GUI editing.
+- [ ] Save the visibility of each tag with the view. With `only`, hide the collections that hold
+  no item with the tag.
 - [ ] Apply tags consistently to colours, visibility, and the selected item set.
 
 ## 0.4.0 — Notes
@@ -355,6 +386,9 @@ selection model.
 - [ ] Add a visual filter builder to the GUI.
 - [ ] Add a flat item table with selectable metadata columns alongside the hierarchy view.
 - [ ] Support flattening, grouping, sorting, and filtering without copying item state into the GUI.
+- [ ] Group across a collection level, for example "group across wafer": collections whose values
+  are equal once that level is left out form one group, and collection analysis runs on each group.
+  The Recipes `collection` callback names the levels, `(wafer = …, device = …)`.
 - [ ] Show when computed statistics used by a filter are still being populated.
 - [ ] Persist useful item-view and filter state with the project.
 
@@ -364,7 +398,24 @@ Give Julia code and the GUI the same application capabilities through ordinary p
 The API covers operations on projects, workspaces, selections, queries, views, and background work;
 the GUI becomes one caller of those operations rather than a second implementation.
 
+The measure of success: a user who cannot read the source of the package or of the project can do
+from the REPL everything the GUI allows. They find out what exists by asking the workspace, and act
+on it with a few verbs.
+
 - [ ] Define the public operations needed to drive a workspace from Julia without browser state.
+- [ ] Let the workspace list what it holds: the item types, the metadata fields of an item
+  type, the collections, the tags, and the plots registered for a set of items. Each prints readably in the
+  REPL.
+- [ ] Find items with one call that filters by item type, metadata, and tag, and sorts by a metadata
+  field.
+- [ ] Draw a registered plot with one call that takes its label and the items and returns the
+  figure the GUI shows.
+- [ ] Save a figure as PDF through a CairoMakie extension of `DataBrowserPlots`.
+- [x] Build a tidy table of items with `DataFrame(workspace)` and `DataFrame(workspace, items)`,
+  through an extension that loads with DataFrames: one row per item, with the id, the label, the
+  item type, the collection, the tags, and one column per metadata field. `DataFrame(workspace,
+  collection)` gives the items in and below a collection.
+- [ ] Tidy table: one column per collection level.
 - [ ] Move GUI actions onto those operations and keep GUI-only state limited to rendering and local
   interaction.
 - [ ] Make repeated project setup, workspace operations, and view changes idempotent where users
@@ -372,6 +423,13 @@ the GUI becomes one caller of those operations rather than a second implementati
 - [ ] Expose progress, failures, cancellation, and results in forms usable by both interactive and
   programmatic callers.
 - [ ] Keep the REPL usable while workspaces and GUI windows remain open.
+- [ ] Draw registered plots without the GUI. `register_plot!` needs no plot backend, but
+  `DataBrowserPlots` still loads the GUI. Make `DataBrowserGUI`, `DataBrowserCore` and the windowing
+  libraries (CImGui, GLFW, ModernGL, NativeFileDialog) weak dependencies of `DataBrowserPlots` that
+  join GLMakie as triggers of its plot-window extension. A script can then draw a registered plot
+  to a file with any backend, and `DataBrowserRecipes` can depend on `DataBrowserPlots`.
+- [ ] Build the info window from sections, each drawn by a method of one generic function for the
+  type of the selected value. A GUI method for `SourceFile` then shows the link that opens the file.
 
 ## 0.7.0 — Figure composer
 
@@ -447,7 +505,7 @@ presentation.
 
 - [ ] Add two-dimensional array and image visualizers.
 - [ ] Persist supported dense N-dimensional array payloads and verify warm delivery without rereading
-  or reinterpreting their source items.
+  or expanding their source items again.
 - [ ] Add heatmaps for gridded arrays and suitable tables.
 - [ ] Add dimension and slice controls for higher-dimensional arrays.
 - [ ] Add editable colour limits, scales, colormaps, and image display settings.
@@ -471,7 +529,7 @@ Let users inspect the values produced throughout a project pipeline. The workspa
 chosen value through its normal data-access path; inspectors and visualizers continue to consume the
 payload they are given rather than learning special pipeline logic.
 
-- [ ] Expose the results of `read`, `entries`, `process`, `analyze`, collection `process`, and
+- [ ] Expose the results of `read`, `expand`, `process`, `analyze`, collection `process`, and
   collection `analyze` through the shared application API.
 - [ ] Use the public API vocabulary for the GUI control and skip operations absent from a project.
 - [ ] Coalesce sibling items when moving to a source-level result and group items when moving to a

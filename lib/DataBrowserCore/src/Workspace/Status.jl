@@ -1,39 +1,56 @@
-"""Fold a workspace's job and cache state into the watcher-facing [`WorkspaceStatus`](@ref)."""
+"""
+    workspace_status(workspace) -> WorkspaceStatus
+
+The current [`WorkspaceStatus`](@ref) of a workspace. The status is recomputed only when the
+workspace has changed since the last call, so watchers can call this every frame.
+"""
 function workspace_status(workspace::Workspace)::WorkspaceStatus
-    # Never wait on publish_lock here: a source-item publish or cache flush can hold it for 100ms+,
-    # and this runs every GUI frame. If a publish is mid-flight, reuse the last snapshot's errors —
-    # they change rarely, so a one-frame delay is invisible and keeps the frame from stalling.
-    errors = if trylock(workspace.publish_lock)
+    # Read the generation first: a change during the computation then triggers the next one.
+    current = generation(workspace)
+    seen, previous = @atomic workspace.status
+    current == seen && return previous
+    # Never wait for the catalog lock here: a publication can hold it for a while, and this runs
+    # every GUI frame. If one is in flight, show the errors of the last status and keep its
+    # generation, so that the next call reads the errors again.
+    catalog = workspace.catalog
+    locked = trylock(catalog.lock)
+    errors = previous.errors
+    if locked
         try
-            lock(workspace.work.lock) do
-                sort!(
-                    Pair{String,String}[string(k) => v for (k, v) in workspace.index.analysis_errors];
-                    by=first,
-                )
-            end
+            errors = sort!(
+                Pair{String,String}[id(catalog, key) => message for ((key, _), message) in workspace.errors];
+                by=first,
+            )
         finally
-            unlock(workspace.publish_lock)
+            unlock(catalog.lock)
         end
-    else
-        workspace.status.errors
     end
+    status = build_status(workspace, previous, errors)
+    # If another caller stored an older pair meanwhile, the next call sees the mismatch and recomputes.
+    @atomic workspace.status = (locked ? current : seen) => status
+    return status
+end
+
+"""Fold a workspace's job and cache state and its `errors` into a status, using the previous one where noted."""
+function build_status(
+    workspace::Workspace, previous::WorkspaceStatus, errors::Vector{Pair{String,String}},
+)::WorkspaceStatus
     scan = workspace.scan
     counts = workspace_stage_counts(workspace)
     # During an incremental update, keep the last settled verdict on the chip instead of flashing
     # colors. A rebuild or first build voids any verdict — the cache was just discarded or has
     # never existed — and without one nothing is known fresh yet, so the chip says Building.
     settled = workspace.cache.operation === :update &&
-        workspace.status.label in ("Fresh", "Loaded", "Errors")
-    calm_level = settled ? workspace.status.level : :busy
-    calm_label = settled ? workspace.status.label : "Building"
+        previous.label in ("Fresh", "Loaded", "Errors")
+    calm_level = settled ? previous.level : :busy
+    calm_label = settled ? previous.label : "Building"
 
     # Active work: one live line, determinate bar when totals are known.
     if scan.state == :discovering
-        noun = source_item_noun(workspace.source)
         return WorkspaceStatus(
             calm_level,
             calm_label,
-            @sprintf("Finding %s… (%d found)", noun, counts.sources_found),
+            @sprintf("Finding source items… (%d found)", counts.sources_found),
             true,
             nothing,
             counts,
@@ -92,11 +109,10 @@ function workspace_stage_counts(workspace::Workspace)::WorkspaceStageCounts
     cache_counts = cache_stage_summary(workspace.cache.db)
     status = workspace.cache.status
     found = status isa ProjectCacheStatus ? status.total_source_items :
-        cache_counts.cached_sources + cache_counts.failed_read + cache_counts.failed_interpret
+        cache_counts.cached_sources + cache_counts.failed_read + cache_counts.failed_expand
     workspace.scan.state === :discovering && (found = max(found, workspace.scan.discovered[]))
-    done = cache_counts.cached_sources + cache_counts.failed_read + cache_counts.failed_interpret
+    done = cache_counts.cached_sources + cache_counts.failed_read + cache_counts.failed_expand
     return WorkspaceStageCounts(
-        source_item_noun(workspace.source),
         found,
         max(found - done, 0),
         cache_counts,

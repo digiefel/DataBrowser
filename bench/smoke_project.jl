@@ -7,7 +7,7 @@ const PUBLIC_VARIANTS = joinpath(@__DIR__, "..", "test", "fixtures", "public_api
 
 struct ToyCounters
     reads::Dict{String,Threads.Atomic{Int}}
-    entries::Threads.Atomic{Int}
+    expand::Threads.Atomic{Int}
     processes::Threads.Atomic{Int}
     analyses::Threads.Atomic{Int}
     collection_processes::Threads.Atomic{Int}
@@ -30,8 +30,8 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
             Threads.atomic_add!(counters.reads[file.filename], 1)
             return (data=TOML.parsefile(file.filepath), metadata=Dict(:instrument => "toy"))
         end,
-        entries=function (source, _metadata)
-            Threads.atomic_add!(counters.entries, 1)
+        expand=function (source, _metadata)
+            Threads.atomic_add!(counters.expand, 1)
             values = Float64.(source["values"])
             return [(
                 data=(x=Float64.(eachindex(values)), y=values .+ (index - 1)),
@@ -41,7 +41,7 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
         end,
         id=(_data, metadata) -> metadata[:channel],
         label=(_data, metadata) -> "$(metadata[:filename])/$(metadata[:channel])",
-        collection=(_data, metadata) -> ["runs", metadata[:device]],
+        collection=(_data, metadata) -> (set = "runs", device = metadata[:device]),
         process=function (data, metadata)
             Threads.atomic_add!(counters.processes, 1)
             return (x=data.x, y=data.y .* metadata[:scale])

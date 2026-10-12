@@ -9,11 +9,16 @@ DataBrowserAPI = "08de5a46-6e49-4091-bc31-d2c451d3c374"
 DataBrowserCore = "d1e2f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f6a"
 DataBrowserGUI = "f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"
 GLFW = "f7f18e0c-5ee9-5ccd-a5bf-e8befd85ed98"
-GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 ModernGL = "66fc600b-dfda-50eb-8b99-91cfa97b1301"
 NativeFileDialog = "e1fe445b-aa65-4df4-81c1-2041507f0fd4"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+
+[weakdeps]
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+
+[extensions]
+DataBrowserPlotsGLMakieExt = "GLMakie"
 
 [compat]
 CImGui = "8.0"
@@ -22,10 +27,11 @@ GLMakie = "0.13.5"
 InteractiveUtils = "1.11"
 ModernGL = "1.1.8"
 NativeFileDialog = "0.2.1"
-julia = "1.12"
+julia = "1.13"
 
 [extras]
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["GLMakie", "Test"]

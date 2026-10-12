@@ -1,4 +1,5 @@
 using Test, DataBrowserGUI
+using DataBrowserGUI: merge_item_tables
 
 @testset "table union preserves values and item provenance" begin
     table, warnings = merge_item_tables(Tuple{Any,Any}[

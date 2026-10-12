@@ -22,7 +22,7 @@ One source-owned change batch.
 
 Sources report physical source-item replacements/removals and source-provided metadata changes
 through the same update contract. An empty item batch with `metadata_changed=true` updates
-existing logical items without reinterpreting their source items.
+existing logical items without reading their source items again.
 """
 struct SourceChanges{S<:AbstractDataSourceItem}
     upserts::Vector{S}
@@ -47,12 +47,6 @@ struct SourceError
     message::String
 end
 
-"""Stable source identity used for workspace/cache ownership."""
-function source_id end
-
-"""Human-readable source name."""
-function source_label end
-
 """Prepare a source for use. Simple immutable sources return themselves."""
 open_source(source::AbstractDataSource)::AbstractDataSource = source
 
@@ -60,7 +54,7 @@ open_source(source::AbstractDataSource)::AbstractDataSource = source
 close_source!(::AbstractDataSource)::Nothing = nothing
 
 """
-    source_items(source; cancel_token, on_progress, on_item) -> Vector{<:AbstractDataSourceItem}
+    items(source; cancel_token, on_progress, on_item) -> Vector{<:AbstractDataSourceItem}
 
 Return the current source items discovered by a source.
 
@@ -71,10 +65,7 @@ immediately rather than waiting for the return), reports counts through `on_prog
 `cancel_token`. The returned vector is queued only when `on_item` was never called, so a streaming
 source may return its items as well without them being processed twice.
 """
-function source_items end
-
-"""Human noun for source items, used by status surfaces."""
-source_item_noun(::AbstractDataSource)::String = "source items"
+function items end
 
 """
 Watch a source and call `on_change` with each `SourceChanges` batch or recoverable `SourceError`.
@@ -88,15 +79,15 @@ watch_source(::AbstractDataSource, ::Function; cancel_token::CancellationToken) 
 Stable identity supplied by `value`, used exactly as returned. Sources, source items, data items,
 and collections all implement it; none has a default, and none has its answer wrapped or
 namespaced. An id has to stay stable across scans and reopenings, and two values answering the same
-id collide.
+id collide. The id of a source says which cache belongs to it.
 """
 function id end
 
 """
     label(value) -> String
 
-Human-readable label supplied by `value`. Source items must implement this; data items and
-collections have defaults (see the item contract).
+Human-readable label supplied by `value`. Sources and source items must implement this; data items
+and collections have defaults (see the item contract).
 """
 function label end
 
@@ -104,26 +95,3 @@ function label end
 function fingerprint end
 
 fingerprint(::AbstractDataSourceItem) = nothing
-
-"""Filesystem path for a source item, when one exists."""
-source_item_path(::AbstractDataSourceItem)::Union{Nothing,String} = nothing
-
-"""Timestamp for a source item, when one exists."""
-source_item_timestamp(::AbstractDataSourceItem) = nothing
-
-"""
-Where a source places an item that declares no collection path of its own.
-
-Applied by the engine after `entries`, where the source is legitimately in hand — the pipeline
-stages themselves stay pure functions of values. The default leaves such items at the root; a
-directory source places them under their directory relative to its root.
-"""
-default_collection_path(::AbstractDataSource, ::AbstractDataSourceItem) = AbstractCollection[]
-
-"""
-Let a source attach its own metadata to the levels of one item's collection path.
-
-The directory source attaches its `metadata.txt` entries to each named level. The default returns
-the path unchanged, so a source with nothing to add costs nothing.
-"""
-annotate_collection_path(::AbstractDataSource, path::AbstractVector) = path

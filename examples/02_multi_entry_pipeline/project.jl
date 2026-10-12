@@ -3,7 +3,7 @@ using DataBrowser
 using DataFrames: DataFrame
 using GLMakie: Axis, Figure, contents, lines!
 
-length(ARGS) == 1 || error("Usage: julia --project project.jl DATA_DIRECTORY")
+length(ARGS) == 1 || error("Usage: julia --project=examples project.jl DATA_DIRECTORY")
 
 project = define_project("Fatigue cycles")
 
@@ -22,11 +22,11 @@ function analyze_cycle(table::DataFrame, metadata::Dict)::Dict{Symbol,Any}
 end
 
 register_item!(project, :cycles;
-    # `detect` and `read` receive a source item, whatever kind of source produced it. Reach it
-    # through the contract — `label`, `source_item_path` — rather than any one source's fields.
+    # `detect` and `read` receive a source item. A directory source gives a `SourceFile`, whose
+    # `filepath` is the path to read.
     detect = source_item -> endswith(label(source_item), "_fatigue.csv"),
-    read = source_item -> CSV.read(source_item_path(source_item), DataFrame),
-    entries = (table::DataFrame, metadata::Dict) -> [
+    read = source_item -> CSV.read(source_item.filepath, DataFrame),
+    expand = (table::DataFrame, metadata::Dict) -> [
         (
             data=view(table, findall(==(cycle), table.cycle), :),
             metadata=Dict(:cycle => Int(cycle)),
@@ -35,7 +35,7 @@ register_item!(project, :cycles;
     ],
     id = (table, metadata::Dict) -> metadata[:cycle],
     label = (table, metadata::Dict) -> "Cycle $(metadata[:cycle])",
-    collection = (table, metadata::Dict) -> ["Fatigue"],
+    collection = (table, metadata::Dict) -> (measurement = "Fatigue",),
     process = clean_cycle,
     analyze = analyze_cycle,
 )

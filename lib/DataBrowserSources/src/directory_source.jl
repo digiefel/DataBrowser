@@ -3,7 +3,7 @@ using BetterFileWatching
 using CancellationTokens: CancellationToken, CancellationTokenSource, OperationCanceledException, cancel, get_token, is_cancellation_requested
 
 import DataBrowserAPI
-import DataBrowserAPI: annotate_collection_path, default_collection_path, reconstruct
+import DataBrowserAPI: collection, reconstruct
 using DataBrowserAPI:
     AbstractDataSource,
     AbstractDataSourceItem,
@@ -16,12 +16,7 @@ import DataBrowserAPI:
     label,
     metadata,
     open_source,
-    source_id,
-    source_item_noun,
-    source_item_path,
-    source_item_timestamp,
-    source_items,
-    source_label,
+    items,
     watch_source
 
 const DEFAULT_DIRECTORY_METADATA_FILE = "metadata.txt"
@@ -67,7 +62,13 @@ function DirectorySource(
     )
 end
 
-"""One physical source file discovered inside a directory source."""
+"""
+One file found in a directory source.
+
+`filepath` is the absolute path, `filename` the name with its extension, and `relative_path` the
+path below the source root, which is also the `id` and the `label`. `timestamp` is the time read
+from the file name, or `nothing`; when present it is also the `:timestamp` metadata of the file.
+"""
 struct SourceFile <: AbstractDataSourceItem
     filepath::String
     filename::String
@@ -81,17 +82,14 @@ end
 id(file::SourceFile)::String = file.relative_path
 label(file::SourceFile)::String = file.relative_path
 fingerprint(file::SourceFile)::FileFingerprint = file.fingerprint
-source_item_path(file::SourceFile)::String = file.filepath
-source_item_timestamp(file::SourceFile)::Union{DateTime,Nothing} = file.timestamp
 function metadata(file::SourceFile)::Dict
     values = Dict{Symbol,Any}(:filename => file.filename)
     file.timestamp === nothing || (values[:timestamp] = file.timestamp)
     return values
 end
 
-source_id(source::DirectorySource)::String = source.root_path
-source_label(source::DirectorySource)::String = basename(source.root_path)
-source_item_noun(::DirectorySource)::String = "source files"
+id(source::DirectorySource)::String = source.root_path
+label(source::DirectorySource)::String = basename(source.root_path)
 
 """Extract a source-item timestamp from the supported filename conventions."""
 function parse_timestamp(filename::AbstractString)::Union{DateTime,Nothing}
@@ -304,79 +302,32 @@ end
 """One collection level of a directory tree, identified by the directory's name."""
 struct DirectoryCollection <: DataBrowserAPI.AbstractCollection
     name::String
-    metadata::Dict{Symbol,Any}
 end
-
-DirectoryCollection(name::AbstractString) = DirectoryCollection(String(name), Dict{Symbol,Any}())
 
 id(level::DirectoryCollection)::String = level.name
 label(level::DirectoryCollection)::String = level.name
-metadata(level::DirectoryCollection)::Dict = level.metadata
-reconstruct(::Type{DirectoryCollection}, identity::AbstractString, metadata::Dict) =
-    DirectoryCollection(String(identity), Dict{Symbol,Any}(metadata))
+reconstruct(::Type{DirectoryCollection}, identity::AbstractString, ::Dict) =
+    DirectoryCollection(String(identity))
 
-"""Wrap a directory path with this source's `metadata.txt` entries on each level."""
-function _named_path(
+"""The items of a file go under the file's directories, relative to the root of the source."""
+function collection(file::SourceFile)::Vector{DataBrowserAPI.AbstractCollection}
+    # A file at the root has the directory "", which `splitpath` returns as one empty name.
+    return DataBrowserAPI.AbstractCollection[
+        DirectoryCollection(name) for name in splitpath(dirname(file.relative_path)) if !isempty(name)]
+end
+
+"""The `metadata.txt` entries of the directory that `collections` names from the top down."""
+function metadata(
     source::DirectorySource,
-    names::Vector{String},
-)::Vector{DataBrowserAPI.AbstractCollection}
+    collections::AbstractVector{<:DataBrowserAPI.AbstractCollection},
+)::Dict
+    names = String[id(level) for level in collections]
     return lock(source.metadata_lock) do
-        DataBrowserAPI.AbstractCollection[
-            DirectoryCollection(
-                name,
-                Dict{Symbol,Any}(own_collection_metadata(
-                    source.collection_metadata_entries,
-                    names[1:depth],
-                )),
-            )
-            for (depth, name) in pairs(names)
-        ]
+        own_collection_metadata(source.collection_metadata_entries, names)
     end
 end
 
-"""Place an item with no collection path of its own under its directory, relative to the root."""
-function default_collection_path(
-    source::DirectorySource,
-    file::SourceFile,
-)::Vector{DataBrowserAPI.AbstractCollection}
-    isabspath(source.root_path) || return DataBrowserAPI.AbstractCollection[]
-    relative_directory = dirname(relpath(file.filepath, source.root_path))
-    relative_directory == "." && return DataBrowserAPI.AbstractCollection[]
-    return _named_path(source, splitpath(relative_directory))
-end
-
-"""
-Merge this source's `metadata.txt` entries into one collection level.
-
-Any collection type works: a level that gains no entries is returned untouched, and one that does is
-rebuilt through its own `reconstruct` with the entries merged over its metadata.
-"""
-function _annotated_level(
-    source::DirectorySource,
-    segment::DataBrowserAPI.AbstractCollection,
-    names::Vector{String},
-)::DataBrowserAPI.AbstractCollection
-    entries = own_collection_metadata(source.collection_metadata_entries, names)
-    isempty(entries) && return segment
-    merged = merge(Dict{Symbol,Any}(DataBrowserAPI.metadata(segment)), Dict(entries))
-    return reconstruct(typeof(segment), DataBrowserAPI.id(segment), merged)
-end
-
-"""Attach `metadata.txt` entries to every level of one item's collection path."""
-function annotate_collection_path(
-    source::DirectorySource,
-    path::AbstractVector,
-)::Vector{DataBrowserAPI.AbstractCollection}
-    names = String[DataBrowserAPI.id(segment) for segment in path]
-    return lock(source.metadata_lock) do
-        DataBrowserAPI.AbstractCollection[
-            _annotated_level(source, segment, names[1:depth])
-            for (depth, segment) in pairs(path)
-        ]
-    end
-end
-
-function source_items(
+function items(
     source::DirectorySource;
     on_progress::Union{Nothing,Function}=nothing,
     on_item::Union{Nothing,Function}=nothing,

@@ -5,7 +5,7 @@ import TimerOutputs
 
 # Performance window: the MAIN_TIMER section tree (Timings), live throughput sparklines
 # (Throughput), and workspace pipeline counters (Workspace). For deep multi-task engine timing
-# use `@timed_dbg` + DataBrowserProfiling instead (docs/profiling.md).
+# use `@timed_dbg` + DataBrowserProfiling instead.
 
 """Append `v` to an ordered history ring, dropping the oldest sample past `PERF_HISTORY_CAP`."""
 @inline function _push_capped!(buf::Vector{Float32}, v::Real)::Nothing
@@ -98,7 +98,7 @@ function _render_timings_tab(state::BrowserState)::Nothing
         state.performance.reset_main_timer = true   # applied at frame top, outside any @timed section
     end
     ig.SameLine()
-    if ig.Button("Copy")
+    if ig.Button("$ICON_COPY Copy")
         # Copy the unicode tree — the paste target isn't limited to ImGui's ASCII-only font.
         ig.SetClipboardText(_timer_text(:unicode))
     end
@@ -180,9 +180,8 @@ function _render_workspace_tab!(workspace::Workspace.Workspace)::Nothing
     ig.Text(@sprintf("Cache write buffer: %d items / %d rows pending", staged.items, staged.rows))
     ig.Spacing()
 
-    index = workspace.index
-    ig.Text("Index: $(length(index.items)) items, $(length(index.collections.records)) collections")
-    ig.Text("Metadata held: $(length(index.item_metadata))")
+    memory = Workspace.workspace_memory_snapshot(workspace)
+    ig.Text("Index: $(memory.index_items) items, $(memory.index_collections) collections")
     return nothing
 end
 

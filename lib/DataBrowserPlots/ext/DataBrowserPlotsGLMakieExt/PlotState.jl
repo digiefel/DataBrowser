@@ -10,7 +10,9 @@ Base.@kwdef mutable struct PlotViewState
     item_ids::Vector{String} = String[]
     kind::Union{Nothing,Symbol} = nothing
     plot_kind::Union{Nothing,Type{<:PlotKind}} = nothing
-    figure::Union{Nothing,Figure} = nothing
+    figure::Any = nothing
+    # Whether the figure shows the values of the plot element under the mouse.
+    inspector::Bool = false
     last_key::Union{Nothing,Tuple} = nothing
     error::String = ""
     export_error::String = ""
@@ -22,6 +24,8 @@ Base.@kwdef mutable struct PlotState
     windows::Vector{PlotViewState} = PlotViewState[]
     kind_by_item::Dict{Symbol,DataType} = Dict{Symbol,DataType}()
     next_window_id::Int = 0
+    # Every figure of the browser uses the dark theme, or the light one.
+    dark::Bool = true
     runtime_warmed::Bool = false
     warmup_figure::Union{Nothing,Figure} = nothing
 end

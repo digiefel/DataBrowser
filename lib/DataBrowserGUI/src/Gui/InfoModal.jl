@@ -1,9 +1,7 @@
 import CImGui as ig
 import CImGui.CSyntax: @c
 
-using DataBrowserAPI:
-    kind_label,
-    label
+using DataBrowserAPI: kind_label, label
 import DataBrowserCore.Workspace
 
 """Render collection and item details for the visible workspace selection."""
@@ -32,9 +30,7 @@ function render_info_window(state::BrowserState)::Nothing
             sel_name = join(selected_path, "/")
             ig.Text("Location: $sel_name")
             ig.Separator()
-            collection_metadata_values = collection_metadata(
-                workspace.index.collections, collection_node.key)
-            merge!(collection_metadata_values, collection_node.analysis)
+            collection_metadata_values = Workspace.metadata(workspace, collection_node)
             if !isempty(collection_metadata_values)
                 ig.Text("Collection metadata")
                 for k in sort!(collect(keys(collection_metadata_values)); by=String)
@@ -52,23 +48,14 @@ function render_info_window(state::BrowserState)::Nothing
         ig.TableNextColumn()
         if length(selected_items) == 1
             m = selected_items[1]
-            # The delivered metadata dict (inherited ⊕ entries ⊕ computed layers), exactly what
+            # The delivered metadata dict (inherited ⊕ item ⊕ computed layers), exactly what
             # project callbacks and views receive.
-            delivered = Workspace.delivered_metadata(
-                workspace, m, workspace.index.collections)
-            ig.Text("Title: $(m.label)")
+            delivered = Workspace.metadata(workspace, m)
+            ig.Text("Title: $(label(workspace, m))")
             ig.Separator()
-            kind_text = kind_label(workspace.project, label(m.type))
+            kind_text = kind_label(workspace.project, label(Workspace.valuetype(workspace, m)))
             ig.BulletText("Type: $(kind_text)")
-            ig.BulletText("Timestamp: $(m.source_item_timestamp)")
-            source_ref = Workspace.source_item_id(workspace, m.source_item_key)
-            if m.source_item_path !== nothing
-                ig.BulletText("Source item:")
-                ig.SameLine()
-                ig.TextLinkOpenURL(source_ref, m.source_item_path)
-            else
-                ig.BulletText("Source item: $(source_ref)")
-            end
+            ig.BulletText("Source item: $(Workspace.source_item_id(workspace, m))")
             ig.Separator()
             if !isempty(delivered)
                 ig.Text("Metadata")
@@ -87,50 +74,6 @@ function render_info_window(state::BrowserState)::Nothing
         ig.EndTable()
     end
     ig.End()
-    return nothing
-end
-
-"""Tell the user when the current source did not provide collection parameters."""
-function render_collection_metadata_modal(state::BrowserState)::Nothing
-    # Dear ImGui cannot hold two sibling root modals open: their per-frame OpenPopup calls replace
-    # each other in the popup stack, leaving an invisible modal that swallows all input. Yield to
-    # the cache-rebuild modal and appear after it is dismissed.
-    state.cache_rebuild_modal && return nothing
-    workspace = state.workspace
-    workspace isa Workspace.Workspace || return nothing
-    # Reset dismissal when root path changes
-    current_root = workspace.cache.identity.source_id
-    if state.modal_root_path != current_root
-        state.modal_root_path = current_root
-        state.collection_metadata_modal = true
-    end
-    # always center
-    center = ig.ImGuiViewport_GetCenter(ig.GetMainViewport())
-    ig.SetNextWindowPos(center, ig.ImGuiCond_Always, (0.5, 0.5))
-
-    if state.collection_metadata_modal &&
-       all(record -> isempty(record.own_metadata) && isempty(record.analysis),
-           values(workspace.index.collections.records))
-        ig.OpenPopup("Collection Parameters Missing")
-    end
-
-    opened = state.collection_metadata_modal
-
-    if @c ig.BeginPopupModal("Collection Parameters Missing", &opened, ig.ImGuiWindowFlags_AlwaysAutoResize)
-        ig.Text("No collection parameters were provided by this source.")
-        ig.Separator()
-        ig.TextWrapped(
-            "The browser will still work, but collection-level fields such as area, thickness, " *
-            "or layout coordinates will be empty until the source supplies them.",
-        )
-        ig.Spacing()
-        if ig.Button("Got it")
-            opened = false
-            ig.CloseCurrentPopup()
-        end
-        ig.EndPopup()
-    end
-    state.collection_metadata_modal = opened
     return nothing
 end
 

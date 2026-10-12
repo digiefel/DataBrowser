@@ -1,31 +1,118 @@
-using DataBrowserAnnotations
 import CImGui as ig
 
 """Show the tag-loading failure without blocking the rest of the browser."""
 function _render_tag_state_error!(state::BrowserState)::Nothing
-    message = state.tag_state_error
-    isempty(message) && return nothing
+    (_tags_ready(state) || !(state.workspace isa Workspace.Workspace)) && return nothing
     ig.TextColored((1.0, 0.5, 0.5, 1.0), "tags error")
     if ig.BeginItemTooltip()
         ig.PushTextWrapPos(ig.GetFontSize() * 35.0)
-        ig.TextUnformatted(message)
+        ig.TextUnformatted(state.workspace.tags.error)
         ig.PopTextWrapPos()
         ig.EndTooltip()
     end
+    return nothing
 end
 
-"""Apply the dominant tag color and report whether the caller must pop it."""
+"""Apply the colour of the tag with the highest priority and report whether the caller must pop it."""
 function _push_tag_text_style!(
-    tag_state::DataBrowserAnnotations.Tags.TagState,
-    key::AbstractString,
-    ancestor_keys::Vector{String},
+    workspace::Workspace.Workspace,
+    key::Union{ItemKey,CollectionKey},
 )::Bool
-    effective_tags = DataBrowserAnnotations.Tags.effective(tag_state, key, ancestor_keys)
-    color = DataBrowserAnnotations.Tags.dominant_color(tag_state, effective_tags)
-    color === nothing && return false
-    red = Float32(color[1]) / 255f0
-    green = Float32(color[2]) / 255f0
-    blue = Float32(color[3]) / 255f0
+    found = tags(workspace, key)
+    isempty(found) && return false
+    red, green, blue = Float32.(first(found).color) ./ 255f0
     ig.PushStyleColor(ig.ImGuiCol_Text, (red, green, blue, 1.0f0))
     return true
+end
+
+"""
+Draw one button per tag above the collection tree, with the name of the tag. A click steps the tag
+through shown (no mark), hidden (a cross) and only (a check mark): hidden hides its rows, only
+hides the items without it.
+"""
+function _render_tag_visibility!(state::BrowserState)::Nothing
+    _tags_ready(state) || return nothing
+    defined = tags(state.workspace)
+    filter!(entry -> any(tag -> tag.name == first(entry), defined), state.tag_visibility)
+    for tag in defined
+        visibility = get(state.tag_visibility, tag.name, :shown)
+        red, green, blue = Float32.(tag.color) ./ 255f0
+        ig.PushStyleColor(ig.ImGuiCol_Button, (red, green, blue, visibility == :hidden ? 0.25f0 : 0.55f0))
+        # Trailing spaces leave room for the mark.
+        clicked = ig.SmallButton(visibility == :shown ? tag.name : "$(tag.name)   ##$(tag.name)")
+        ig.PopStyleColor()
+        if visibility != :shown
+            # The mark is drawn in a square at the right end of the button.
+            corner = ig.GetItemRectMax()
+            size = ig.GetFontSize() * 0.6f0
+            right, bottom = corner.x - size * 0.5f0, corner.y - (ig.GetItemRectSize().y - size) / 2
+            left, top = right - size, bottom - size
+            draw_list, color = ig.GetWindowDrawList(), ig.GetColorU32(ig.ImGuiCol_Text)
+            if visibility == :hidden
+                ig.AddLine(draw_list, ig.ImVec2(left, top), ig.ImVec2(right, bottom), color, 1.5f0)
+                ig.AddLine(draw_list, ig.ImVec2(left, bottom), ig.ImVec2(right, top), color, 1.5f0)
+            else
+                ig.AddLine(draw_list, ig.ImVec2(left, top + size * 0.55f0), ig.ImVec2(left + size * 0.35f0, bottom), color, 1.5f0)
+                ig.AddLine(draw_list, ig.ImVec2(left + size * 0.35f0, bottom), ig.ImVec2(right, top), color, 1.5f0)
+            end
+        end
+        if ig.BeginItemTooltip()
+            ig.TextUnformatted(
+                visibility == :shown ? "Rows with this tag are shown. Click to hide them." :
+                visibility == :hidden ? "Rows with this tag are hidden. Click to show only items with this tag." :
+                "Only items with this tag are shown. Click to show everything.")
+            ig.EndTooltip()
+        end
+        if clicked
+            next = visibility == :shown ? :hidden : visibility == :hidden ? :only : :shown
+            next == :shown ? delete!(state.tag_visibility, tag.name) : (state.tag_visibility[tag.name] = next)
+        end
+        ig.SameLine()
+    end
+    ig.NewLine()
+    return nothing
+end
+
+"""
+Draw the tags as entries of an open context menu, each in its colour, with a check mark when every
+key has the tag. A click puts the tag on every key, or takes it off when every key has it. A tag
+that comes from a collection above cannot be taken off here.
+"""
+function _render_tag_menu!(
+    state::BrowserState, keys::Vector{<:Union{ItemKey,CollectionKey}},
+)::Nothing
+    if !_tags_ready(state)
+        ig.TextDisabled("Fix tags.txt and rescan to edit")
+        return nothing
+    end
+    workspace = state.workspace::Workspace.Workspace
+    ig.Separator()
+    for tag in tags(workspace)
+        own = all(key -> tag in tags(workspace, key; inherited=false), keys)
+        from_above = !own && all(key -> tag in tags(workspace, key), keys) &&
+            !any(key -> tag in tags(workspace, key; inherited=false), keys)
+        red, green, blue = Float32.(tag.color) ./ 255f0
+        ig.PushStyleColor(ig.ImGuiCol_Text, (red, green, blue, 1.0f0))
+        # A tag from a collection above shows its check mark and takes no click.
+        clicked = ig.MenuItem(tag.name, C_NULL, own || from_above, !from_above)
+        ig.PopStyleColor()
+        if from_above && ig.BeginItemTooltip()
+            ig.TextUnformatted("From a collection above. Take it off that collection.")
+            ig.EndTooltip()
+        end
+        clicked && (own ? untag!(workspace, keys, tag) : tag!(workspace, keys, tag))
+    end
+    # TODO: choose the colour and the priority of a new tag here.
+    ig.SetNextItemWidth(max(ig.GetContentRegionAvail().x, ig.GetFontSize() * 10))
+    if ig.InputTextWithHint("##new_tag", "New tag", state.new_tag, length(state.new_tag),
+            ig.ImGuiInputTextFlags_EnterReturnsTrue)
+        name = strip(unsafe_string(pointer(state.new_tag)))
+        if !isempty(name)
+            any(tag -> tag.name == name, tags(workspace)) || tag!(workspace, Tag(name))
+            tag!(workspace, keys, name)
+            fill!(state.new_tag, 0x00)
+            ig.CloseCurrentPopup()
+        end
+    end
+    return nothing
 end

@@ -1,6 +1,6 @@
 ---
 name: databrowser-profiling
-description: Interactively profile DataBrowser to find where time goes (startup, a scan, interpret/process/cache work, a GUI action, a plot). Use whenever investigating DataBrowser performance in this repo — a slow operation, a hotspot, throughput or latency, or the timing impact of a change. Runs a live Revise session against the RuO2 project and reads TimerOutputs timing trees. Instrumentation, not a sampling profiler.
+description: Interactively profile DataBrowser to find where time goes (startup, a scan, read/process/cache work, a GUI action, a plot). Use whenever investigating DataBrowser performance in this repo — a slow operation, a hotspot, throughput or latency, or the timing impact of a change. Runs a live Revise session against the RuO2 project and reads TimerOutputs timing trees. Instrumentation, not a sampling profiler.
 ---
 
 # Profiling DataBrowser

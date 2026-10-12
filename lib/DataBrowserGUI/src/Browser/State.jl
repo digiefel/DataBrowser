@@ -1,13 +1,14 @@
-using DataBrowserAnnotations
 import CImGui as ig
 
 import DataBrowserCore.Workspace
+using DataBrowserAPI: MetadataDict
 using ..DataBrowserGUI: ItemTable
 
 """Saved tree controls from `databrowser.toml`."""
 Base.@kwdef struct PersistedTreeView
-    expanded::Vector{String} = String[]
-    selected::Vector{String} = String[]
+    # Each collection is saved as its path: the type name and id of each level from the top down.
+    expanded::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
+    selected::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
     filter::String = ""
 end
 
@@ -96,6 +97,46 @@ Base.@kwdef mutable struct PerformanceState
 end
 
 """
+What the tree panel worked out about the collection tree. It is kept from frame to frame and
+replaced when `key` changes: the key covers the workspace, the tree filter and the tags. It is also
+replaced when the workspace changed, at most once per `TREE_REFRESH_SECONDS`: reading it again
+costs time in proportion to the size of the tree, and a workspace at work changes in every frame.
+"""
+mutable struct TreeCache
+    key::UInt
+    # The generation of the workspace and the time when this was worked out.
+    generation::Int
+    built::Float64
+    # The collections directly below each collection, in display order.
+    children::Dict{Workspace.Catalogs.CollectionKey,Vector{Workspace.Catalogs.CollectionKey}}
+    has_visible_leaf::Dict{Workspace.Catalogs.CollectionKey,Bool}
+    subtree_matches::Dict{Workspace.Catalogs.CollectionKey,Bool}
+    # The leaf collections that the filter and the tags leave visible, in display order.
+    visible::Vector{Workspace.Catalogs.CollectionKey}
+    # The number of leaf collections, or -1 before the tree was walked.
+    leaves::Int
+    # The ids of the source items that are not read yet, each split at "/" and all sorted, so that
+    # the source items below one folder follow each other.
+    unread::Vector{Vector{String}}
+    # The path and the metadata of each collection that was drawn.
+    paths::Dict{Workspace.Catalogs.CollectionKey,Workspace.CollectionPath}
+    metadata::Dict{Workspace.Catalogs.CollectionKey,MetadataDict}
+end
+
+const TREE_REFRESH_SECONDS = 0.1
+
+"""
+The items of the selected collections in display order. Kept and replaced like [`TreeCache`](@ref);
+its key covers the workspace, the selected collections and the tags.
+"""
+struct ItemList
+    key::UInt
+    generation::Int
+    built::Float64
+    items::Vector{Workspace.Catalogs.ItemKey}
+end
+
+"""
 Runtime state owned by the browser.
 
 The workspace owns items, selection, cache state, data, and background work. This type owns
@@ -103,20 +144,25 @@ only controls, windows, local persistence, annotations, and rendering state.
 """
 Base.@kwdef mutable struct BrowserState
     workspace::Union{Nothing,Workspace.Workspace} = nothing
+    tree_cache::Union{Nothing,TreeCache} = nothing
+    item_list::Union{Nothing,ItemList} = nothing
     table_inspector::TableInspectorState = TableInspectorState()
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()
-    expanded_collection_ids::Vector{String} = String[]
+    # The path of each expanded collection.
+    expanded_collections::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
     tree_filter::String = ""
     item_filter::String = ""
     tree_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
     item_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
     reset_project_filters::Bool = false
-    scroll_to_collection_id::Union{Nothing,String} = nothing
+    scroll_to_collection::Union{Nothing,Workspace.CollectionPath} = nothing
     scroll_to_item_id::Union{Nothing,String} = nothing
-    show_bad::Bool = true
-    tag_state::Union{Nothing,DataBrowserAnnotations.Tags.TagState} = nothing
-    tag_state_error::String = ""
+    # How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,
+    # `:only` hides the items without it.
+    tag_visibility::Dict{String,Symbol} = Dict{String,Symbol}()
+    # The text typed in the "New tag" field of the tag menu.
+    new_tag::Vector{UInt8} = zeros(UInt8, 64)
     show_project_window::Bool = false
     show_performance_window::Bool = false
     show_imgui_metrics::Bool = false
@@ -131,13 +177,10 @@ Base.@kwdef mutable struct BrowserState
     show_implot_user_guide::Bool = false
     show_implot_demo::Bool = false
     implot_context::Ptr{ig.lib.ImPlotContext} = C_NULL
-    collection_metadata_modal::Bool = true
-    modal_root_path::String = ""
     loaded_source_id::String = ""
     cache_rebuild_modal::Bool = false
     cache_rebuild_error::String = ""
     cache_schema_prompted::Bool = false
-    shutdown_complete::Bool = false
     """Set by `close_browser!` so the render loop exits without a GLFW close click."""
     exit_requested::Bool = false
     extensions::Vector{GuiExtension} = GuiExtension[]

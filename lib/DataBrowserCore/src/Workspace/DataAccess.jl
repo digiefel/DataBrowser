@@ -1,54 +1,119 @@
 """
-Materialize processed items for selected records through the workspace work graph.
+    materialize_items(workspace, items) -> Vector{AbstractDataItem}
+    materialize_items(workspace)
 
-Processed payloads come from the same DuckDB cache in persistent and in-memory workspaces. Missing
-results promote the existing background job or create one whose interpreted-payload dependency
-uses the resident cache or the source fallback.
+The processed items for `items`, given as item keys or public ids, in the same order; or for the
+current selection, without the selected ids that the workspace has no item for. Each item comes in its latest version: the version of the outermost collection
+whose `process` changed it and whose result is current, or else its own processed data.
+
+An item that is not processed yet is processed now, ahead of background work, and the call waits
+for it. Analyze is requested for every delivered item, so that its metadata becomes complete. The
+collections above each item are requested too and the call does not wait for them: a later call
+delivers their versions once they are ready. A failed item throws its error.
+
+The data and the metadata of each delivered item belong together: when an item changes while it is
+loaded, it is loaded again.
 """
-function materialize_items(
-    workspace::Workspace,
-    records::Vector{ItemRecord},
-)::Vector{AbstractDataItem}
-    return request_processed_items(workspace, records)
-end
-
-"""Materialize processed items by stable workspace ID, preserving the requested order."""
-function materialize_items(
-    workspace::Workspace,
-    ids::AbstractVector{<:AbstractString},
-)::Vector{AbstractDataItem}
-    records = lock(workspace.publish_lock) do
-        records = ItemRecord[]
-        for id_value in ids
-            item_id = String(id_value)
-            haskey(workspace.index.items, item_id) || error(
-                "Cannot materialize item id '$item_id': no indexed item with that id exists in this workspace",
-            )
-            push!(records, workspace.index.items[item_id])
-        end
-        records
+function materialize_items(workspace::Workspace, items::Vector{ItemKey})::Vector{AbstractDataItem}
+    catalog = workspace.catalog
+    while true
+        seen = wait_processed(workspace, items)
+        delivered = versions(workspace, items)
+        revision(workspace, items) == seen && return delivered
     end
-    return materialize_items(workspace, records)
 end
 
-"""Materialize the workspace's current item selection."""
-materialize_items(workspace::Workspace)::Vector{AbstractDataItem} =
-    materialize_items(workspace, workspace.selection.item_ids)
-
 """
-Return processed item payloads for the requested records.
+Request `items` ahead of background work, wait until each is processed, and return their
+[`revision`](@ref). A failed item throws its error.
 """
-function read_item_data(
-    workspace::Workspace,
-    records::Vector{ItemRecord},
-)::Vector{Any}
-    return Any[item_data(item) for item in materialize_items(workspace, records)]
+function wait_processed(workspace::Workspace, items::Vector{ItemKey})::UInt
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        for item in setdiff(items, workspace.wanted)
+            request(catalog, item, ITEM_ANALYZE; priority=VIEWED_ITEM)
+            # The collections above the item are queued and not waited for.
+            for holder in ancestors(workspace, item), stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
+                Catalogs.status(catalog, holder, stage).absent || request(catalog, holder, stage; priority=VIEWED_COLLECTION)
+            end
+            push!(workspace.wanted, item)
+        end
+        for item in items
+            while !workspace.stopping && !settled(Catalogs.status(catalog, item, ITEM_PROCESS))
+                wait(catalog.changed)
+            end
+            status = Catalogs.status(catalog, item, ITEM_PROCESS)
+            status.validity == Catalogs.FRESH && continue
+            workspace.stopping && error("The workspace was closed")
+            item in catalog || error("An item was removed from the workspace while it was loaded")
+            # A stage that did not fail itself waits for the source item that failed.
+            failed = status.failed ? (item, ITEM_PROCESS) : (Catalogs.source(catalog, item), SOURCE_EXPAND)
+            error(get(workspace.errors, failed) do
+                get(workspace.errors, (first(failed), SOURCE_READ), "work failed")
+            end)
+        end
+        return revision(workspace, items)
+    end
 end
 
-"""Return processed item payloads by stable workspace ID."""
-read_item_data(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{Any} =
-    Any[item_data(item) for item in materialize_items(workspace, ids)]
+"""
+    read_first!(workspace, ids)
 
-"""Return processed payloads for the workspace's current item selection."""
-read_item_data(workspace::Workspace)::Vector{Any} =
-    Any[item_data(item) for item in materialize_items(workspace)]
+Read the source items with public ids `ids` ahead of background work, and ahead of the memory limit
+for expanded data. The call does not wait. Ids of source items that are read already, or that the
+workspace does not have, are ignored. See [`unread`](@ref).
+"""
+function read_first!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Nothing
+    catalog = workspace.catalog
+    @lock catalog.lock for id in ids
+        source = lookup(catalog, SourceKey, id)
+        source === nothing && continue
+        settled(Catalogs.status(catalog, source, SOURCE_EXPAND)) && continue
+        Catalogs.priority(catalog, source, SOURCE_EXPAND) >= VIEWED_ITEM ||
+            request(catalog, source, SOURCE_EXPAND; priority=VIEWED_ITEM)
+    end
+    return nothing
+end
+
+function materialize_items(
+    workspace::Workspace, ids::AbstractVector{<:AbstractString},
+)::Vector{AbstractDataItem}
+    found = [item(workspace, id) for id in ids]
+    missing = findfirst(isnothing, found)
+    missing === nothing || error(
+        "Cannot materialize item id '$(ids[missing])': the workspace has no item with that id")
+    return materialize_items(workspace, ItemKey[found...])
+end
+
+# The selection may name items that the workspace does not have: they are left out.
+materialize_items(workspace::Workspace)::Vector{AbstractDataItem} = materialize_items(
+    workspace, ItemKey[key for key in item.(Ref(workspace), workspace.selection.item_ids) if key !== nothing])
+
+"""
+    revision(workspace, items) -> UInt
+
+A number that changes when `materialize_items` would deliver different versions of `items`: an item
+was processed or analyzed again, or the `process` of a collection above one became current or
+stopped being so. A view keeps the number it drew with and draws again when it differs.
+"""
+function revision(workspace::Workspace, items::Vector{ItemKey})::UInt
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        seed = UInt(0)
+        for item in items, target in [(item, ITEM_PROCESS); (item, ITEM_ANALYZE); [(holder, COLLECTION_PROCESS) for holder in ancestors(workspace, item)]]
+            status = Catalogs.status(catalog, target...)
+            seed = hash((status.validity == Catalogs.FRESH, status.revision), seed)
+        end
+        return seed
+    end
+end
+
+"""
+    read_item_data(workspace, items) -> Vector{Any}
+    read_item_data(workspace)
+
+The data of the processed items for `items`, given as item keys or public ids, or for the current
+selection. See [`materialize_items`](@ref).
+"""
+read_item_data(workspace::Workspace, items...)::Vector{Any} =
+    Any[item_data(item) for item in materialize_items(workspace, items...)]

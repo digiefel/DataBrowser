@@ -156,37 +156,6 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
                 @test_throws Annotations.Tags.TagsParseError Annotations.Tags.load(dir)
             end
         end
-
-        @testset "effective inheritance" begin
-            state = Annotations.Tags.TagState(
-                Annotations.Tags.TagDef[],
-                Dict{String,Set{String}}(
-                    "ChipA" => Set(["bad"]),
-                    "ChipA/SiteVI/D1" => Set(["todo"]),
-                ),
-            )
-            eff = Annotations.Tags.effective(state, "ChipA/SiteVI/D1",
-                ["ChipA", "ChipA/SiteVI"])
-            @test eff == Set(["bad", "todo"])
-
-            eff_no_anc = Annotations.Tags.effective(state, "ChipA/SiteVI/D1", String[])
-            @test eff_no_anc == Set(["todo"])
-        end
-
-        @testset "dominant_color priority" begin
-            catalog = [
-                Annotations.Tags.TagDef("low", (0x10, 0x10, 0x10), 1),
-                Annotations.Tags.TagDef("hi", (0xff, 0x00, 0x00), 100),
-                Annotations.Tags.TagDef("mid", (0x80, 0x80, 0x80), 50),
-            ]
-            state = Annotations.Tags.TagState(catalog, Dict{String,Set{String}}())
-            @test Annotations.Tags.dominant_color(state, Set(["low", "hi", "mid"])) ==
-                (0xff, 0x00, 0x00)
-            @test Annotations.Tags.dominant_color(state, Set(["low", "mid"])) ==
-                (0x80, 0x80, 0x80)
-            @test Annotations.Tags.dominant_color(state, Set(["unknown"])) === nothing
-            @test Annotations.Tags.dominant_color(state, Set{String}()) === nothing
-        end
     end
 
     @testset "Notes" begin

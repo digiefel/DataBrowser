@@ -1,44 +1,33 @@
-"""GLMakie plot rendering as a GUI extension."""
+"""
+Plots of the selected items in the browser.
+
+This package holds what a project needs to register a plot. The plot windows are drawn with
+GLMakie, and are part of the browser once GLMakie is loaded: `using DataBrowser, GLMakie`.
+"""
 module DataBrowserPlots
 
-using GLMakie: Figure
-
-import DataBrowserAPI
-import DataBrowserAPI:
-    AbstractDataItem,
-    AbstractProject
-import DataBrowserAPI.ItemIndex: ItemRecord
+import DataBrowserAPI: AbstractDataItem, @timed_dbg
+import DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
-using DataBrowserAPI: @timed_dbg
-import DataBrowserGUI
-const Browser = DataBrowserGUI.Browser
 
 include("plots.jl")
 
-include("MakieIntegration.jl")
-using .MakieImguiIntegration
-
-include("PlotState.jl")
-include("PlotPanel.jl")
-include("TablePlotPanel.jl")
-include("PlotsExtension.jl")
-
-"""Materialize records and create the figure layout required by a visualizer."""
+"""Load the items of the given keys and create the figure layout required by a visualizer."""
 function setup_plot(
     workspace::Workspace.Workspace,
     plot_kind::Type{<:PlotKind},
-    records::Vector{ItemRecord},
-)::Figure
+    records::Vector{ItemKey},
+)
     return setup_plot(
         workspace, plot_kind, Workspace.materialize_items(workspace, records))
 end
 
-"""Materialize records and draw their items into an existing figure."""
+"""Load the items of the given keys and draw them into an existing figure."""
 function plot_data!(
     workspace::Workspace.Workspace,
     plot_kind::Type{<:PlotKind},
-    records::Vector{ItemRecord},
-    figure::Figure,
+    records::Vector{ItemKey},
+    figure,
 )::Nothing
     plot_data!(
         workspace, plot_kind, Workspace.materialize_items(workspace, records), figure)
@@ -49,33 +38,23 @@ function setup_plot(
     workspace::Workspace.Workspace,
     ::Type{RegisteredPlot{Kind,Label}},
     items::Vector{<:AbstractDataItem},
-)::Figure where {Kind,Label}
+) where {Kind,Label}
     recipe = _plot_recipes(workspace.project)[Kind][String(Label)]
-    return @timed_dbg "setup_plot" recipe.setup(workspace, items)::Figure
+    return @timed_dbg "setup_plot" recipe.setup(workspace, items)
 end
 
 function plot_data!(
     workspace::Workspace.Workspace,
     ::Type{RegisteredPlot{Kind,Label}},
     items::Vector{<:AbstractDataItem},
-    figure::Figure,
+    figure,
 )::Nothing where {Kind,Label}
     recipe = _plot_recipes(workspace.project)[Kind][String(Label)]
     @timed_dbg "draw_plot" recipe.draw(workspace, items, figure)
     return nothing
 end
 
-function __init__()
-    Browser.register_gui_extension!(PlotsExtension)
-end
-
-export PlotsExtension,
-    plots_extension,
-    PlotState,
-    PlotViewState,
-    PersistedPlotView,
-    PlotKind,
-    PlotRecipe,
+export PlotKind,
     RegisteredPlot,
     register_plot!,
     setup_plot,
@@ -83,7 +62,6 @@ export PlotsExtension,
     registered_plot_kinds,
     plot_kind_label,
     plot_kind_name,
-    plot_kind_from_name,
-    plot_kinds
+    plot_kind_from_name
 
 end

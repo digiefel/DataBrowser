@@ -7,9 +7,11 @@ using DataBrowserAPI:
     AbstractCollection,
     AbstractDataSourceItem,
     MetadataDict,
+    MetadataValue,
+    metadata_dict,
     PipelineStage,
     SOURCE_READ,
-    SOURCE_INTERPRET,
+    SOURCE_EXPAND,
     ITEM_PROCESS,
     ITEM_ANALYZE,
     COLLECTION_PROCESS,
@@ -17,10 +19,7 @@ using DataBrowserAPI:
     fingerprint,
     id,
     metadata,
-    source_id,
-    source_item_path,
-    source_item_timestamp,
-    source_label
+    label
 using DataBrowserAPI: @timed_dbg
 
 using DuckDB
@@ -28,19 +27,6 @@ using DBInterface
 import Tables
 using Serialization
 using Dates
-
-import DataBrowserAPI.ItemIndex:
-    CollectionIndex,
-    CollectionRecord,
-    ItemFailure,
-    ItemRecord,
-    MetadataValue,
-    SourceScan,
-    append_item!,
-    collection_path_keys,
-    emit_progress,
-    metadata_dict,
-    register_collection!
 
 include("build_metrics.jl")
 include("cache_buffer.jl")
@@ -69,6 +55,7 @@ export BuildMetrics,
     clear_cached_result_state!,
     close_cache_db!,
     delete_collection_records!,
+    delete_processed!,
     delete_collection_metadata!,
     delete_source_item!,
     delete_source_output!,
@@ -78,21 +65,26 @@ export BuildMetrics,
     project_cache_identity,
     query_items,
     read_payload,
+    replace_source_output!,
+    ItemOutput,
     record_cache_phase!,
     reset_build_metrics!,
     set_cache_memory_limit!,
+    default_expanded_data_limit,
+    release_item_payload!,
+    expanded_data_full,
     store_collection_metadata!,
-    store_collection_index!,
+    store_collection!,
     store_collection_process_result!,
-    store_interpreted!,
-    store_interpreted_data!,
+    store_item_payload!,
+    store_item_label!,
     store_item_metadata!,
     store_item_metadata_layer!,
+    store_item_stage_metadata!,
     store_processed!,
     store_result_failure!,
     store_source_identity!,
     store_source_read!,
-    store_source_result!,
     source_complete,
     cache_knows_source,
     edit_source_item_metadata!,
