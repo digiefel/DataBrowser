@@ -11,11 +11,14 @@ It shows `item_data` of each item whose data is a Tables.jl table. The columns a
 columns of all items, and a cell is empty where an item has no such column. With several items,
 each row has the tint of its item.
 
-The window passes on the rows the user selected, or the whole table when no row is selected.
+The window passes on the table as it shows it: the rows the user selected, or all rows when none is
+selected, with the columns it shows.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
-    # Setting: a first column names the item of each row.
+    # Setting: a first column names the item of each row. Offered when the table is built here
+    # from `several` items; a table that another window passes on is shown as it is.
     provenance_column::Bool = false
+    several::Bool = false
     table::Union{Nothing,ItemTable} = nothing
     # What the window passes on to other windows.
     output::Union{Nothing,ItemTable} = nothing
@@ -29,14 +32,13 @@ end
 label(::TableView)::String = "Table"
 
 # One item needs no column that names it.
-settings(view::TableView) =
-    view.table !== nothing && length(view.table.item_labels) > 1 ?
-    (provenance_column=Setting("Provenance column"),) : (;)
+settings(view::TableView) = view.several ? (provenance_column=Setting("Provenance column"),) : (;)
 
 output(view::TableView) = view.output
 
 function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
     view.table = view.output = table
+    view.several = false
     view.warnings = String[]
     view.grid = DataGridState()
     view.grid_id = "table"
@@ -44,8 +46,9 @@ function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
 end
 
 function prepare!(view::TableView, items::AbstractVector{<:AbstractDataItem}, ctx)::Nothing
-    table, warnings = merge_item_tables(items)
+    table, warnings = merge_item_tables(items; item_column=view.provenance_column)
     prepare!(view, table, ctx)
+    view.several = length(table.item_labels) > 1
     view.warnings = warnings
     types = unique(typeof.(items))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
@@ -92,18 +95,12 @@ function draw!(view::TableView, ctx)::Nothing
         end
     end
 
-    columns, cell = table.columns, table.getcell
-    if several && view.provenance_column
-        columns = vcat("_item_", columns)
-        cell = (row, col) ->
-            col == 1 ? table.item_labels[table.row_item[row]] : table.getcell(row, col - 1)
-    end
     render_data_grid!(
         view.grid_id,
         view.grid;
         n_rows=table.rows,
-        columns,
-        cell,
+        columns=table.columns,
+        cell=table.getcell,
         row_tint=several ? row -> _row_tint_for_item(table.row_item[row]) : _ -> nothing,
         on_selection_change=rows -> view.output = isempty(rows) ? table : table[sort!(rows)],
     )

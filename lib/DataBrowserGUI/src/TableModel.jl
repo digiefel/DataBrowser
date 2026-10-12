@@ -109,9 +109,12 @@ Pairs whose data does not satisfy `Tables.istable` are skipped with a warning, s
 item never hides its tabular siblings. Multiple items are merged by column union (missing columns
 render blank) with per-row provenance.
 
+With `item_column=true` and several items, the table has a first column `item` with the label of
+the item of each row.
+
 Returns `(table::ItemTable, warnings::Vector{String})`.
 """
-function merge_item_tables(pairs)::Tuple{ItemTable,Vector{String}}
+function merge_item_tables(pairs; item_column::Bool=false)::Tuple{ItemTable,Vector{String}}
     col_set = Set{String}()
     columns = String[]
     tables = Any[]
@@ -124,17 +127,33 @@ function merge_item_tables(pairs)::Tuple{ItemTable,Vector{String}}
         end
         _append_table!(col_set, columns, tables, labels, string(label), Tables.columns(table))
     end
-    return _item_table_from_tables(columns, tables, labels), warnings
+    data = _item_table_from_tables(columns, tables, labels)
+    item_column && length(labels) > 1 || return data, warnings
+    # TODO: a column of the data that is also called `item` is then in the table twice.
+    # TODO: columns for the metadata of the items, added in the same way.
+    item(row) = labels[data.row_item[row]]
+    table = ItemTable(
+        vcat("item", columns),
+        data.rows,
+        data.row_item,
+        labels,
+        (row, col) -> col == 1 ? item(row) : data.getcell(row, col - 1),
+        (row, col) -> col == 1 ? item(row) : data.getvalue(row, col - 1),
+    )
+    return table, warnings
 end
 
 """
-    merge_item_tables(items) -> (table, warnings)
+    merge_item_tables(items; item_column=false) -> (table, warnings)
 
 Build an `ItemTable` from the data of loaded items: `item_data` of each item, under the label of
 the item. An item whose data cannot be read is reported in `warnings` and skipped, like an item
 whose data is not a table.
 """
-function merge_item_tables(items::AbstractVector{<:AbstractDataItem})::Tuple{ItemTable,Vector{String}}
+function merge_item_tables(
+    items::AbstractVector{<:AbstractDataItem};
+    item_column::Bool=false,
+)::Tuple{ItemTable,Vector{String}}
     pairs = Tuple{String,Any}[]
     warnings = String[]
     for item in items
@@ -149,7 +168,7 @@ function merge_item_tables(items::AbstractVector{<:AbstractDataItem})::Tuple{Ite
         end
         push!(pairs, (item_label, data))
     end
-    table, merge_warnings = merge_item_tables(pairs)
+    table, merge_warnings = merge_item_tables(pairs; item_column)
     return table, append!(warnings, merge_warnings)
 end
 

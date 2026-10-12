@@ -17,12 +17,14 @@ that another window passes on.
 
 The window shows the figure and, to its right, the [`PlotDescription`](@ref) of the plot written
 as code: the roles, then one line for each layer. Every value is a menu.
+
+For several items, the column `item` names the item of each row. A table that another window passes
+on is plotted with the columns it has.
 """
 Base.@kwdef mutable struct BuilderView <: FigureView
     description::PlotDescription = PlotDescription(layers=[Layer(:lines)])
     inspect::Bool = false
-    # The data of the items as one table, and the columns the menus offer. With several items,
-    # `item` is one of them: it names the item of each row.
+    # The table the plot is for, and its columns, which the menus offer.
     table::Union{Nothing,ItemTable} = nothing
     columns::Vector{Symbol} = Symbol[]
     # The user changed the description since the figure was built.
@@ -45,29 +47,29 @@ function export_name(view::BuilderView)::String
 end
 
 prepare!(view::BuilderView, items::AbstractVector{<:AbstractDataItem}, ctx) =
-    prepare!(view, first(merge_item_tables(items)), ctx)
+    prepare!(view, first(merge_item_tables(items; item_column=true)), ctx)
 
 function prepare!(view::BuilderView, table::ItemTable, ctx)::Nothing
     view.figure_id = "plot_$(ctx.id)"
     view.table = table
-    view.columns = Symbol.(view.table.columns)
-    several = length(view.table.item_labels) > 1
-    # TODO: a column of the data that is also called `item` hides the item of each row.
-    several && !(:item in view.columns) && push!(view.columns, :item)
-    # Without columns the description stays as it is, for the items selected next.
-    isempty(view.columns) && return build!(view, ctx)
+    view.columns = Symbol.(table.columns)
+    # Without rows the description stays as it is, for the table given next.
+    table.rows == 0 && return build!(view, ctx)
 
-    # Keep the roles whose column the items have. The first two columns are on the axes until the
-    # user chooses others.
+    # Keep the roles whose column the table has. The first two columns of numbers are on the axes
+    # until the user chooses others.
     roles = view.description.roles
     filter!(role -> last(role) in view.columns, roles)
-    for (role, column) in zip((:x, :y), view.columns)
+    numbers = [column for (index, column) in enumerate(view.columns) if table.getvalue(1, index) isa Real]
+    for (role, column) in zip((:x, :y), numbers)
         any(taken -> first(taken) === role, roles) || push!(roles, role => column)
     end
-    # Without a group for each item, a line would run from the last row of one item to the first
-    # row of the next.
-    # TODO: this returns the color at each new selection, also after the user removed it.
-    several && !any(taken -> first(taken) === :color, roles) && push!(roles, :color => :item)
+    # With a column `item`, each item has its own color. Without a group for each item, a line runs
+    # from the last row of one item to the first row of the next.
+    # TODO: a role that groups the rows without giving them a color.
+    # TODO: this returns the color at each new table, also after the user removed it.
+    :item in view.columns && !any(taken -> first(taken) === :color, roles) &&
+        push!(roles, :color => :item)
     build!(view, ctx)
     return nothing
 end
@@ -87,9 +89,7 @@ function build!(view::BuilderView, ctx)::Nothing
         columns = Dict{Symbol,Vector{Any}}()
         for roles in (description.roles, (layer.roles for layer in description.layers)...), (_, name) in roles
             index = findfirst(==(String(name)), table.columns)
-            columns[name] = index === nothing ?
-                Any[table.item_labels[item] for item in table.row_item] :
-                Any[table.getvalue(row, index) for row in 1:table.rows]
+            columns[name] = Any[table.getvalue(row, index) for row in 1:table.rows]
         end
         view.figure = Makie.with_theme(plot_theme(view.dark)) do
             figure(description, columns)
@@ -137,10 +137,10 @@ function draw!(view::BuilderView, ctx)::Nothing
         ig.TextDisabled("=")
         ig.SameLine()
         chosen = current
-        preview = current === nothing ? "—" : String(current)
+        preview = current === nothing ? "nothing" : String(current)
         if ig.BeginCombo("##$role", preview, ig.ImGuiComboFlags_WidthFitPreview)
             # The axes need a column; the color can go without one.
-            role === :color && ig.Selectable("—", current === nothing) && (chosen = nothing)
+            role === :color && ig.Selectable("nothing", current === nothing) && (chosen = nothing)
             for column in view.columns
                 ig.Selectable(String(column), column === current) && (chosen = column)
             end
