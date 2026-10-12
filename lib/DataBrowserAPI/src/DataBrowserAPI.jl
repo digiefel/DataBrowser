@@ -1,8 +1,8 @@
 """
 Payload-agnostic project and item contracts for DataBrowser.
 
-The project contract, the typed pipeline stage contract, and the source and item contracts live
-here. The registration dialect lives in `DataBrowserRecipes`, plot registration and rendering in
+The project contract, the typed pipeline stage contract, the source and item contracts, and the
+visualizer contract live here. The registration dialect lives in `DataBrowserRecipes`, plot registration and rendering in
 `DataBrowserPlots`; both are ordinary clients of what this package declares.
 """
 module DataBrowserAPI
@@ -18,6 +18,7 @@ include("metadata_types.jl")
 include("source_contract.jl")
 include("item_contract.jl")
 include("stage_contract.jl")
+include("visualizer_contract.jl")
 include("timing_debug.jl")
 
 export AbstractProject,
@@ -25,6 +26,7 @@ export AbstractProject,
     AbstractDataSourceItem,
     AbstractDataItem,
     AbstractCollection,
+    AbstractVisualizer,
     open_source,
     close_source!,
     watch_source,
@@ -39,6 +41,8 @@ export AbstractProject,
     label,
     collection,
     metadata,
-    item_data
+    item_data,
+    prepare!,
+    draw!
 
 end

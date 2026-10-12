@@ -1,8 +1,7 @@
 import CImGui as ig
 
 import DataBrowserCore.Workspace
-using DataBrowserAPI: MetadataDict
-using ..DataBrowserGUI: ItemTable
+using DataBrowserAPI: AbstractVisualizer, MetadataDict
 
 """Saved tree controls from `databrowser.toml`."""
 Base.@kwdef struct PersistedTreeView
@@ -34,7 +33,7 @@ end
 """
 Transient selection and scroll state for a DataGrid widget.
 
-Owned by the consumer of the grid (e.g. TableInspectorState); passed by reference each frame.
+Owned by the consumer of the grid (e.g. `TableView`); passed by reference each frame.
 Column widths are persisted across restarts via the imgui.ini file, keyed by the grid `id`.
 Row mode uses `selected_rows`. Cell mode stores the opposite corners of one rectangular selection in
 `cell_anchor` and `cell_focus`. Use `scroll_to_row` to request a programmatic scroll on the next frame.
@@ -48,16 +47,44 @@ Base.@kwdef mutable struct DataGridState
     focused::Bool                        = false
 end
 
-"""State for the table-inspection window over selected item data."""
-Base.@kwdef mutable struct TableInspectorState
-    visible::Bool = false
-    inspector_table::Union{Nothing,ItemTable} = nothing
-    inspector_warnings::Vector{String} = String[]
-    inspector_key::Union{Nothing,Tuple} = nothing  # (item_ids..., show_provenance)
-    grid::DataGridState = DataGridState()
-    show_provenance_column::Bool = false
-    # current_kind drives the per-kind DataGrid table id so imgui.ini keys column widths per kind
-    current_kind::Union{Nothing,Symbol} = nothing
+"""
+Where the value of a window comes from. The header of the window names it after "from:".
+"""
+abstract type WindowInput end
+
+"""The items selected in the browser. The window follows the selection as it changes."""
+struct LiveSelection <: WindowInput end
+
+"""A fixed list of items, kept by their ids. The window keeps them when the selection changes."""
+struct FixedItems <: WindowInput
+    ids::Vector{String}
+end
+
+"""
+A window of the browser that shows a value. Its `input` says where the value comes from, and its
+`visualizer` shows the value. The two do not know each other: the window reads the input and hands
+the value to the visualizer.
+"""
+mutable struct Window
+    # Names the window for ImGui. Unique in the browser.
+    id::String
+    visualizer::AbstractVisualizer
+    input::WindowInput
+    # The value the input gave last, and what tells whether the input gives another value now.
+    # `stamp` is `nothing` until the visualizer is given the value.
+    value::Any
+    stamp::Any
+    # Why the window does not show the value; empty when it shows it.
+    error::String
+end
+
+"""
+What the browser tells a visualizer about its window in `draw!`.
+
+`id` names the window. It is unique in the browser and stays the same from frame to frame.
+"""
+struct DrawContext
+    id::String
 end
 
 """Newest-last cap for the throughput history ring buffers (~1 minute at the 0.25s sample rate)."""
@@ -146,7 +173,9 @@ Base.@kwdef mutable struct BrowserState
     workspace::Union{Nothing,Workspace.Workspace} = nothing
     tree_cache::Union{Nothing,TreeCache} = nothing
     item_list::Union{Nothing,ItemList} = nothing
-    table_inspector::TableInspectorState = TableInspectorState()
+    # The windows that show a value with a visualizer, and the number of the last one opened.
+    windows::Vector{Window} = Window[]
+    next_window::Int = 0
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()
     # The path of each expanded collection.

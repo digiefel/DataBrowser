@@ -1,6 +1,6 @@
 using Tables
 
-using DataBrowserAPI: item_data, label
+using DataBrowserAPI: AbstractDataItem, item_data, label
 using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 
@@ -129,6 +129,34 @@ function merge_item_tables(pairs)::Tuple{ItemTable,Vector{String}}
     return _item_table_from_tables(columns, tables, labels), warnings
 end
 
+"""
+    merge_item_tables(items) -> (table, warnings)
+
+Build an `ItemTable` from the data of loaded items: `item_data` of each item, under the label of
+the item. An item whose data cannot be read is reported in `warnings` and skipped, like an item
+whose data is not a table.
+"""
+function merge_item_tables(items::AbstractVector{<:AbstractDataItem})::Tuple{ItemTable,Vector{String}}
+    pairs = Tuple{String,Any}[]
+    warnings = String[]
+    for item in items
+        # TODO: a label that the project gives with `label(project, item)` is not used here.
+        item_label = label(item)
+        data = try
+            item_data(item)
+        catch err
+            @error "Failed to load item data for table" label=item_label exception=(err, catch_backtrace())
+            push!(warnings, "Item '$item_label': failed to load data; skipped.")
+            continue
+        end
+        push!(pairs, (item_label, data))
+    end
+    table, merge_warnings = merge_item_tables(pairs)
+    return table, append!(warnings, merge_warnings)
+end
+
+# TODO: remove with the Table Plot window, the last caller in the browser. A visualizer is given
+# loaded items and uses the method above.
 """
     materialize_item_table(workspace, items) -> (table, warnings)
 

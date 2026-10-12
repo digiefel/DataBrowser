@@ -11,6 +11,7 @@ import CImGui.CSyntax: @c
 const _IMGUI_INI_BYTES = Ref{Vector{UInt8}}(UInt8[])
 
 using DataBrowserAPI:
+    AbstractDataItem,
     label
 using DataBrowserCache: ProjectCacheIdentity
 import DataBrowserCore.Workspace
@@ -87,7 +88,14 @@ function render_menu_bar(state::BrowserState)::Nothing
             ig.EndMenu()
         end
         _render_cache_toolbar_button!(state)
-        _render_table_inspector_menu!(state)
+        if ig.BeginMenu("+ Window")
+            # Every visualizer that shows items. A window says so when its visualizer cannot show
+            # the items it is given.
+            for visualizer in visualizers(AbstractVector{<:AbstractDataItem})
+                ig.MenuItem(label(visualizer)) && open_window!(state, visualizer)
+            end
+            ig.EndMenu()
+        end
         if ig.BeginMenu("Debug")
             if ig.MenuItem("Performance Window", C_NULL, state.show_performance_window)
                 state.show_performance_window = !state.show_performance_window
@@ -585,8 +593,8 @@ function _run_browser(
                 @timed "info" begin
                     render_info_window(state)
                 end
-                @timed "table_inspector" begin
-                    render_table_inspector_window(state)
+                @timed "windows" begin
+                    render_windows!(state)
                 end
                 @timed "extensions" begin
                     for ext in state.extensions

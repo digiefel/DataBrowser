@@ -1,3 +1,6 @@
+# An extension draws its windows with the function a visualizer draws with.
+import DataBrowserAPI: draw!
+
 """Dispatch-based GUI extension surface for optional browser panels and menus."""
 abstract type GuiExtension end
 

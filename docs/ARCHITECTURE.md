@@ -48,7 +48,7 @@ flowchart TB
     end
 
     subgraph contracts["Contracts"]
-        api["<b>DataBrowserAPI</b><br/>AbstractProject, stage, source and item interfaces"]
+        api["<b>DataBrowserAPI</b><br/>AbstractProject, stage, source, item and visualizer interfaces"]
     end
 
     db --> recipes

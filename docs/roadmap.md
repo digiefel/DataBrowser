@@ -487,11 +487,19 @@ figure rather than an item: arrows, text, regions, fit labels, and other axis-re
 
 Make common inspection fast without requiring Makie or project-specific plot code. Expand the base
 GUI with lightweight visualizers, using ImPlot where it provides the right interaction and keeping
-the table inspector as a first-class view.
+the table as a first-class view.
 
-- [ ] Build the view host described in [plans/visualizers.md](plans/visualizers.md): views over a
-  live or fixed selection, a transform, and an `AbstractVisualizer`. Rebuild the Table Inspector,
-  Table Plot, and plot windows as visualizers.
+- [x] Define the visualizer contract in `DataBrowserAPI`: `AbstractVisualizer`, `prepare!` and
+  `draw!`. A browser window pairs one visualizer with one input, which is the selection or a fixed
+  list of items. Its header has a menu to change the visualizer and "Live", which makes the window
+  follow the selection. Its title names the items. The table is the first visualizer, and
+  "+ Window" opens it.
+- [ ] Make the registered plots and the table plot visualizers, so that every window that shows
+  items has the same header.
+- [ ] Save the windows with the view.
+- [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
+- [ ] Update [plans/visualizers.md](plans/visualizers.md), which still describes a zoomable canvas,
+  for windows, tabs and inputs.
 - [ ] Add a lightweight line/scatter visualizer for simple numeric tables and vectors.
 - [ ] Add concise scalar, metadata, and nested-value inspectors.
 - [ ] Let users open several independent visualizer windows over different live selections.
