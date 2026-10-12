@@ -5,8 +5,8 @@ using DataBrowserAPI: Setting, draw_header!, id, label, settings
 import DataBrowserCore.Workspace
 
 """
-Draw the header that every window has: a menu to change the visualizer, and "Live", which makes
-the window follow the selection.
+Draw the header that every window has: a menu to change the visualizer, a menu to change the
+input, and "Live", which makes the window follow the selection.
 """
 function _render_window_header!(state::BrowserState, window::Window)::Nothing
     if ig.BeginCombo("##visualizer", label(window.visualizer), ig.ImGuiComboFlags_WidthFitPreview)
@@ -17,16 +17,42 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
         ig.EndCombo()
     end
 
-    # TODO: a menu to choose the input, once an input can be something other than items.
+    ig.SameLine()
+    ig.AlignTextToFramePadding()
+    ig.TextDisabled("from")
+    ig.SameLine()
+    input = window.input
+    # TODO: two windows that show the same items with the same visualizer have the same name here.
+    # Let the user name a window.
+    name(other) = "$(label(other.visualizer)): $(title(state, other))"
+    preview = input isa WindowOutput ? name(source(input, state)) : "Selection"
+    # As wide as the name, up to a limit: the names of several items must not take the whole row.
+    ig.SetNextItemWidth(min(ig.CalcTextSize(preview).x + 2 * ig.GetFrameHeight(), 220.0f0))
+    if ig.BeginCombo("##input", preview)
+        ig.Selectable("Selection", !(input isa WindowOutput)) && input isa WindowOutput &&
+            input!(state, window, LiveSelection())
+        for other in state.windows
+            (other === window || follows(state, other, window)) && continue
+            current = input isa WindowOutput && input.window == other.id
+            ig.Selectable("$(name(other))###$(other.id)", current) && !current &&
+                input!(state, window, WindowOutput(other.id))
+        end
+        ig.EndCombo()
+    end
+    ig.SetItemTooltip("Where the window takes its value from: the selection, or another window.")
+
+    # TODO: "Live" for the output of another window: when off, keep the value the window has now.
+    window.input isa WindowOutput && return nothing
     ig.SameLine()
     live = window.input isa LiveSelection
     if @c ig.Checkbox("Live", &live)
         if live
-            window.input = LiveSelection()
+            input!(state, window, LiveSelection())
         else
             # Keep the items the window shows now.
             workspace = state.workspace::Workspace.Workspace
-            window.input = FixedItems([id(workspace, item) for item in itemkeys(window.input, state)])
+            ids = [id(workspace, item) for item in itemkeys(window.input, state)]
+            input!(state, window, FixedItems(ids))
         end
     end
     ig.SetItemTooltip("Follow the selection. When off, the window keeps the items it shows now.")

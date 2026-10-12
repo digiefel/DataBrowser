@@ -1,6 +1,6 @@
 include("smoke_project.jl")
+using DataBrowserGUI: Browser, ItemTable, merge_item_tables
 using DataBrowserGUI.Browser: TimerOutputs
-using DataBrowserGUI: merge_item_tables
 
 function wait_for(predicate, session; timeout=120)
     deadline = time() + timeout
@@ -52,6 +52,14 @@ function browser_workload(root, opening, started_ns)
             error("Collection processing did not reach the selected items")
         # The normal plot panel must invoke the registered drawing callback.
         wait_for(() -> counters.draws[] > 0, session)
+        # A window that takes its input from a table receives what the table passes on.
+        state = session.state
+        table, taker = lock(workspace.lifecycle_lock) do
+            table = Browser.open_window!(state, Browser.TableView())
+            table, Browser.open_window!(state, Browser.TableView(); input=Browser.WindowOutput(table.id))
+        end
+        wait_for(() -> taker.value isa ItemTable && taker.value === table.visualizer.output, session)
+        lock(() -> foreach(window -> Browser.close_window!(state, window), (taker, table)), workspace.lifecycle_lock)
         if opening == "reopen"
             all(count[] == 0 for count in values(counters.reads)) || error("Reopening reran source reads")
             counters.processes[] == counters.analyses[] == 0 || error("Reopening reran item callbacks")

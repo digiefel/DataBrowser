@@ -500,6 +500,12 @@ the table as a first-class view.
   detached plot windows. The browser opens one "Plot" window when it starts.
 - [x] Replace the "Table Plot" window with the plot builder below, so that every window that shows
   items has the same header.
+- [x] Let a window take its input from another window. A visualizer says what its window passes
+  on with `output`; without a method the window passes on its own value. The header has a menu,
+  after "from", to choose the selection or another window. The table passes on the selected rows,
+  and the table and the plot builder show a table that another window passes on.
+- [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
+  another window. Names for windows, so that the input menu can tell two tables apart.
 - [ ] Save the windows with the view, with the theme of the plots and the plot chosen for each
   type of item. Until then a browser that opens again has one "Plot" window that follows the
   selection.

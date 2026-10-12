@@ -152,3 +152,17 @@ function merge_item_tables(items::AbstractVector{<:AbstractDataItem})::Tuple{Ite
     table, merge_warnings = merge_item_tables(pairs)
     return table, append!(warnings, merge_warnings)
 end
+
+"""
+    table[rows]
+
+The rows `rows` of `table` as an `ItemTable`, in the order given.
+"""
+Base.getindex(table::ItemTable, rows::AbstractVector{Int})::ItemTable = ItemTable(
+    table.columns,
+    length(rows),
+    table.row_item[rows],
+    table.item_labels,
+    (row, col) -> table.getcell(rows[row], col),
+    (row, col) -> table.getvalue(rows[row], col),
+)

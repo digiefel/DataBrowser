@@ -12,7 +12,8 @@ const NO_TABLE = "Select items with table data to build a plot."
 const DESCRIPTION_WIDTH = 250.0f0
 
 """
-The plot builder: the user builds a plot of the table data of the items from menus.
+The plot builder: the user builds a plot from menus, for the table data of items or for a table
+that another window passes on.
 
 The window shows the figure and, to its right, the [`PlotDescription`](@ref) of the plot written
 as code: the roles, then one line for each layer. Every value is a menu.
@@ -43,9 +44,12 @@ function export_name(view::BuilderView)::String
     return "$(roles[:y])-over-$(roles[:x])"
 end
 
-function prepare!(view::BuilderView, items::AbstractVector{<:AbstractDataItem}, ctx)::Nothing
+prepare!(view::BuilderView, items::AbstractVector{<:AbstractDataItem}, ctx) =
+    prepare!(view, first(merge_item_tables(items)), ctx)
+
+function prepare!(view::BuilderView, table::ItemTable, ctx)::Nothing
     view.figure_id = "plot_$(ctx.id)"
-    view.table, _ = merge_item_tables(items)
+    view.table = table
     view.columns = Symbol.(view.table.columns)
     several = length(view.table.item_labels) > 1
     # TODO: a column of the data that is also called `item` hides the item of each row.

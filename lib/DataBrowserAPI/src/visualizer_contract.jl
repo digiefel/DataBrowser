@@ -14,6 +14,7 @@ It may also have:
 
 - a method `settings(visualizer::V)`, the settings the user may change;
 - a method `draw_header!(visualizer::V, ctx)`, for buttons in the header of the window;
+- a method `output(visualizer::V)`, the value the window passes on to other windows;
 - a method `Base.close(visualizer::V)`, to release what the visualizer holds outside Julia's
   memory, such as a figure on the graphics card. The browser calls it when the window closes or
   changes to another visualizer;
@@ -110,3 +111,18 @@ Draw what `prepare!` stored. The browser calls `draw!` in every frame in which t
 visible, inside the window and below its header, and only after `prepare!` succeeded.
 """
 function draw! end
+
+"""
+    output(visualizer)
+
+The value the window of `visualizer` passes on to a window that takes its input from it. For
+example, a table passes on the rows the user selected, and another window plots them.
+
+A visualizer without a method passes on the value it was given, and so does one that returns
+`nothing`.
+
+The browser reads the output in every frame, and hands it to the other window when it is another
+object than before. Keep the output in a field and return that field; replace the object when the
+output changes.
+"""
+output(::AbstractVisualizer) = nothing

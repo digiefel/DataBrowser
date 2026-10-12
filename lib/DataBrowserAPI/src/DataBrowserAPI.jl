@@ -46,6 +46,7 @@ export AbstractProject,
     prepare!,
     settings,
     draw_header!,
-    draw!
+    draw!,
+    output
 
 end

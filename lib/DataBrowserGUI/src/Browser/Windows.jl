@@ -3,7 +3,8 @@
 #
 # TODO: these are the actions a script will call (roadmap 0.6). They take the browser state for now.
 
-using DataBrowserAPI: AbstractVisualizer, id, label, prepare!, settings
+using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, id, label, prepare!, settings
+import DataBrowserAPI: output
 using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 
@@ -12,6 +13,53 @@ itemkeys(::LiveSelection, state::BrowserState)::Vector{ItemKey} =
     _project_visible_selection(state)[2]
 itemkeys(input::FixedItems, state::BrowserState)::Vector{ItemKey} =
     _items_for_ids(state, input.ids)
+itemkeys(input::WindowOutput, state::BrowserState)::Vector{ItemKey} =
+    itemkeys(source(input, state).input, state)
+
+"""The window `input` takes its value from."""
+source(input::WindowOutput, state::BrowserState)::Window =
+    only(window for window in state.windows if window.id == input.window)
+
+"""Whether `window` takes its value from `other`, directly or through other windows."""
+function follows(state::BrowserState, window::Window, other::Window)::Bool
+    input = window.input
+    while input isa WindowOutput
+        window = source(input, state)
+        window === other && return true
+        input = window.input
+    end
+    return false
+end
+
+"""
+    output(window)
+
+The value `window` passes on to a window that takes its input from it: the output of its
+visualizer, or the value of the window when the visualizer has none.
+"""
+output(window::Window) = something(output(window.visualizer), Some(window.value))
+
+# What tells whether `input` gives another value than before: another stamp means another value.
+function stamp(input::Union{LiveSelection,FixedItems}, state::BrowserState)
+    workspace = state.workspace::Workspace.Workspace
+    items = itemkeys(input, state)
+    return (
+        workspace.scan.epoch,
+        [id(workspace, item) for item in items],
+        Workspace.revision(workspace, items),
+    )
+end
+# A visualizer returns the same object until its output changes.
+stamp(input::WindowOutput, state::BrowserState) = objectid(output(source(input, state)))
+
+# The value `input` gives now. Loading items runs in the calling task and waits for items that are
+# not processed yet.
+function value(input::Union{LiveSelection,FixedItems}, state::BrowserState)
+    workspace = state.workspace::Workspace.Workspace
+    # Narrow the element type, so that `prepare!` methods can dispatch on the type of the items.
+    return identity.(Workspace.materialize_items(workspace, itemkeys(input, state)))
+end
+value(input::WindowOutput, state::BrowserState) = output(source(input, state))
 
 """
 The title of `window`: what it shows, not how. Up to three items are named by their labels, more
@@ -57,10 +105,32 @@ function open_window!(
     return window
 end
 
-"""Remove `window` from the browser."""
+"""
+Remove `window` from the browser. A window that took its value from `window` follows the selection
+again.
+"""
 function close_window!(state::BrowserState, window::Window)::Nothing
     close(window.visualizer)
     filter!(other -> other !== window, state.windows)
+    for other in state.windows
+        input = other.input
+        input isa WindowOutput && input.window == window.id && (other.input = LiveSelection())
+    end
+    return nothing
+end
+
+"""
+    input!(state, window, input)
+
+Take the value of `window` from another input.
+"""
+function input!(state::BrowserState, window::Window, input::WindowInput)::Nothing
+    if input isa WindowOutput
+        other = source(input, state)
+        (other === window || follows(state, other, window)) &&
+            error("A window cannot take its value from itself, directly or through other windows.")
+    end
+    window.input = input
     return nothing
 end
 
@@ -91,33 +161,27 @@ function setting!(window::Window, name::Symbol, value)::Nothing
 end
 
 """
-Bring `window` up to date: read its input and, when the input gives another value than before, load
-the value and hand it to the visualizer. A failure is kept in `window.error` for the window to show.
-
-Loading runs in the calling task and waits for items that are not processed yet.
+Bring `window` up to date: read its input and, when the input gives another value than before, hand
+the value to the visualizer. A failure is kept in `window.error` for the window to show.
 """
 function refresh!(state::BrowserState, window::Window)::Nothing
-    workspace = state.workspace::Workspace.Workspace
-    # TODO: both inputs name items. An input of another kind, such as the result of a function or
-    # what another window offers, needs its own stamp and value.
-    items = itemkeys(window.input, state)
-    stamp = (
-        workspace.scan.epoch,
-        [id(workspace, item) for item in items],
-        Workspace.revision(workspace, items),
-    )
-    stamp == window.stamp && return nothing
-    window.stamp = stamp
+    input = window.input
+    # The other window may not be visible. Its own drawing then does not bring it up to date.
+    input isa WindowOutput && refresh!(state, source(input, state))
+    current = stamp(input, state)
+    current == window.stamp && return nothing
+    window.stamp = current
     visualizer = window.visualizer
-    ctx = WindowContext(window.id, workspace)
+    ctx = WindowContext(window.id, state.workspace)
     try
-        # Narrow the element type, so that `prepare!` methods can dispatch on the type of the items.
-        window.value = identity.(Workspace.materialize_items(workspace, items))
+        window.value = value(input, state)
         if applicable(prepare!, visualizer, window.value, ctx)
             prepare!(visualizer, window.value, ctx)
             window.error = ""
         else
-            window.error = "$(label(visualizer)) cannot show these items. Choose another visualizer."
+            given = window.value isa AbstractVector{<:AbstractDataItem} ? "these items" :
+                "a value of type $(nameof(typeof(window.value)))"
+            window.error = "$(label(visualizer)) cannot show $given. Choose another visualizer."
         end
     catch err
         @error "Window: $(label(visualizer)) could not show its value" exception=(err, catch_backtrace())

@@ -48,7 +48,8 @@ Base.@kwdef mutable struct DataGridState
 end
 
 """
-Where the value of a window comes from. The header of the window names it after "from:".
+Where the value of a window comes from. The header of the window has a menu to choose it, after
+"from".
 """
 abstract type WindowInput end
 
@@ -58,6 +59,15 @@ struct LiveSelection <: WindowInput end
 """A fixed list of items, kept by their ids. The window keeps them when the selection changes."""
 struct FixedItems <: WindowInput
     ids::Vector{String}
+end
+
+"""
+The output of another window, named by the id of that window. The window follows the output as it
+changes. The output is what the visualizer of the other window returns from `output`, or the value
+of the other window.
+"""
+struct WindowOutput <: WindowInput
+    window::String
 end
 
 """

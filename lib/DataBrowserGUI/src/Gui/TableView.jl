@@ -1,6 +1,6 @@
 import CImGui as ig
 
-import DataBrowserAPI: draw!, label, prepare!, settings
+import DataBrowserAPI: draw!, label, output, prepare!, settings
 using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, Setting
 using ..DataBrowserGUI: ItemTable, merge_item_tables
 
@@ -10,11 +10,15 @@ The visualizer that shows the data of items as one table.
 It shows `item_data` of each item whose data is a Tables.jl table. The columns are the union of the
 columns of all items, and a cell is empty where an item has no such column. With several items,
 each row has the tint of its item.
+
+The window passes on the rows the user selected, or the whole table when no row is selected.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
     # Setting: a first column names the item of each row.
     provenance_column::Bool = false
     table::Union{Nothing,ItemTable} = nothing
+    # What the window passes on to other windows.
+    output::Union{Nothing,ItemTable} = nothing
     warnings::Vector{String} = String[]
     grid::DataGridState = DataGridState()
     # Names the grid for ImGui, which keeps the column widths under this name in imgui.ini: one
@@ -29,9 +33,20 @@ settings(view::TableView) =
     view.table !== nothing && length(view.table.item_labels) > 1 ?
     (provenance_column=Setting("Provenance column"),) : (;)
 
-function prepare!(view::TableView, items::AbstractVector{<:AbstractDataItem}, ctx)::Nothing
-    view.table, view.warnings = merge_item_tables(items)
+output(view::TableView) = view.output
+
+function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
+    view.table = view.output = table
+    view.warnings = String[]
     view.grid = DataGridState()
+    view.grid_id = "table"
+    return nothing
+end
+
+function prepare!(view::TableView, items::AbstractVector{<:AbstractDataItem}, ctx)::Nothing
+    table, warnings = merge_item_tables(items)
+    prepare!(view, table, ctx)
+    view.warnings = warnings
     types = unique(typeof.(items))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
     return nothing
@@ -90,6 +105,7 @@ function draw!(view::TableView, ctx)::Nothing
         columns,
         cell,
         row_tint=several ? row -> _row_tint_for_item(table.row_item[row]) : _ -> nothing,
+        on_selection_change=rows -> view.output = isempty(rows) ? table : table[sort!(rows)],
     )
     return nothing
 end
