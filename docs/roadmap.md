@@ -513,6 +513,8 @@ the table as a first-class view.
 - [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
 - [ ] Update [plans/visualizers.md](plans/visualizers.md), which still describes a zoomable canvas,
   for windows, tabs and inputs.
+- [ ] Tabs: a Julia file together with its windows, which the user, the browser and an agent all
+  work on ([plans/tabs.md](plans/tabs.md)). The plan is written; nothing of it is built.
 - [ ] Plot builder: a window in which the user builds a plot of a table from menus, and which a
   script can write as code. The plot is one description as plain data: roles that say which column
   is on which axis or gives the color, and a list of layers, each with a mark. The builder must be
