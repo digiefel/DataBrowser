@@ -638,6 +638,9 @@ canvas, is not part of the history.
 
 ### Internal
 
+<!-- TODO: which package holds the graph, the commands, the workspace file, and the history:
+DataBrowserCore, next to the workspace, or a new package that keeps JuliaSyntax out of Core. -->
+
 - **DataBrowserCore**: the pipeline gains view nodes, and the job graph changes as described in
   [How the browser runs a view](#how-the-browser-runs-a-view). Revise invalidation lives here.
 - **DataBrowserGUI** gains the canvas described above. The Table Inspector is rebuilt as a
