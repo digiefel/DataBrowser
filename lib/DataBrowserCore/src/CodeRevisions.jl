@@ -15,6 +15,7 @@ revision lists it under `untracked`. See `research_notes/code-change-detection/d
 module CodeRevisions
 
 using SHA: sha1, SHA1_CTX, update!, digest!
+import TOML
 using DataBrowserAPI: AbstractProject, AbstractDataSource
 
 export CodeRevision, code_revision
@@ -33,16 +34,15 @@ end
 # Which modules can change
 # ---------------------------------------------------------------------------
 
-const FROZEN_PATHS = [normpath(Sys.STDLIB); [normpath(joinpath(depot, "packages")) for depot in DEPOT_PATH]]
-
 # Answers per module; modules are never unloaded.
 const CHANGEABLE = IdDict{Module,Bool}()
 const LOCK = ReentrantLock()
 
 """
-Whether code in `mod` can change during a session: `Main` and the modules made in it, and packages
-loaded from a path outside the standard library and the package depots, such as `dev` packages.
-DataBrowser's own packages count as libraries.
+Whether code in `mod` can change during a session: `Main` and the modules made in it, and the
+packages that an environment of the load path develops from a local folder (`Pkg.develop`), or that
+an environment is itself. DataBrowser's own packages count as libraries, and so do packages that
+no environment lists, such as the one VS Code loads into the session.
 """
 function changeable(mod::Module)::Bool
     return @lock LOCK get!(CHANGEABLE, mod) do
@@ -50,10 +50,32 @@ function changeable(mod::Module)::Bool
         databrowser(root) && return false
         (root === Base || root === Core) && return false
         root === Main && return true
-        dir = pkgdir(root)
-        dir === nothing && return false
-        return !any(startswith(normpath(dir), frozen) for frozen in FROZEN_PATHS)
+        return Base.PkgId(root).uuid in developed()
     end
+end
+
+const DEVELOPED = Ref{Union{Nothing,Set{Base.UUID}}}(nothing)
+
+"""The packages that the environments of the load path develop from a local folder, or are."""
+function developed()::Set{Base.UUID}
+    known = @lock LOCK DEVELOPED[]
+    known === nothing || return known
+    found = Set{Base.UUID}()
+    for environment in Base.load_path()
+        project = Base.env_project_file(environment)
+        project isa String || continue
+        uuid = get(TOML.parsefile(project), "uuid", nothing)
+        uuid === nothing || push!(found, Base.UUID(uuid))
+        manifest = Base.project_file_manifest_path(project)
+        manifest === nothing && continue
+        for (_, entries) in get(TOML.parsefile(manifest), "deps", Dict())
+            for entry in entries
+                haskey(entry, "path") && push!(found, Base.UUID(entry["uuid"]))
+            end
+        end
+    end
+    @lock LOCK DEVELOPED[] = found
+    return found
 end
 
 # ---------------------------------------------------------------------------
@@ -249,16 +271,23 @@ end
 The revision of the code reachable from `roots`: methods, functions and closures, and types.
 A root method of a library, such as a default stage method that forwards to the project's method,
 is left out: the roots also name the project's methods that it forwards to.
+
+When the walk fails, the revision is `"not tracked"` and gives the reason.
 """
 function code_revision(roots::AbstractVector)::CodeRevision
     walk = Walk(Base.get_world_counter(), IdDict{Any,Nothing}(), Pair{String,String}[], String[])
-    for root in roots
-        root isa Method ? (changeable(root.module) && enter!(walk, root)) : visit!(walk, root)
+    try
+        for root in roots
+            root isa Method ? (changeable(root.module) && enter!(walk, root)) : visit!(walk, root)
+        end
+        parts, untracked = extensions(walk.world)
+        append!(walk.parts, parts)
+        append!(walk.untracked, untracked)
+    catch error
+        # The walk recurses deeply: its backtrace would be long and say nothing to the user.
+        return CodeRevision("not tracked", [], ["the code could not be followed: $(sprint(showerror, error))"])
     end
-    parts, untracked = extensions(walk.world)
-    append!(walk.parts, parts)
     push!(walk.parts, "Julia and package versions" => environment())
-    append!(walk.untracked, untracked)
     # Names are not unique: closures, for one, all have the same.
     unique!(sort!(walk.parts))
     return CodeRevision(bytes2hex(sha1(join(last.(walk.parts), '\n'))), walk.parts, sort!(unique!(walk.untracked)))
@@ -292,7 +321,13 @@ function visit!(walk::Walk, @nospecialize(x))::Nothing
             # TODO: a global that is reassigned, or constant data that is changed in place, changes
             # no method, so the check sees it only with the next definition.
             isconst(owner, x.name) || push!(walk.untracked, "reads the global $(owner).$(x.name)")
-            push!(walk.parts, "$(owner).$(x.name)" => value_hash(walk, value))
+            hash = try
+                value_hash(walk, value)
+            catch error
+                push!(walk.untracked, "could not read the value of $(owner).$(x.name): $(sprint(showerror, error))")
+                "unknown"
+            end
+            push!(walk.parts, "$(owner).$(x.name)" => hash)
         else
             visit!(walk, value)
         end
@@ -430,8 +465,13 @@ function contents!(walk::Walk, context, @nospecialize(x), seen::IdDict{Any,Nothi
     elseif x isa AbstractDict
         put(typeof(x))
         foreach(put, sort!([value_hash(walk, key) * value_hash(walk, value) for (key, value) in x]))
-    elseif x isa Union{AbstractArray,Tuple,AbstractSet}
-        put(string(typeof(x), x isa AbstractArray ? size(x) : length(x)))
+    elseif x isa AbstractArray
+        put(string(typeof(x), size(x)))
+        for i in eachindex(x)
+            isassigned(x, i) ? value_hash!(walk, context, x[i], seen, depth + 1) : put("<undef>")
+        end
+    elseif x isa Union{Tuple,AbstractSet}
+        put(string(typeof(x), length(x)))
         foreach(element -> value_hash!(walk, context, element, seen, depth + 1), x)
     else
         # Structs, named tuples, `Ref` and the boxes of captured variables: field by field.

@@ -172,8 +172,9 @@ used. Each stage has a code revision for each type it runs for: a content hash o
 reach from `stage_roots(project, stage, type)` (`DataBrowserCore.CodeRevisions`). The walk follows
 the names in lowered code, the methods of each function reached, closures and their captured values,
 constants, and every method that the project adds to a library function, such as `Base.show` for a
-project type. It skips Base, the standard library, registered packages and DataBrowser itself, and
-adds the Julia version and the Manifest instead. A Recipes project lists its registered callbacks
+project type. It follows only `Main` and packages developed from a local folder (`Pkg.develop`).
+It skips every other package, and DataBrowser itself, and adds the Julia version and the Manifest
+instead. When the walk fails, the stage still runs and its code counts as not tracked. A Recipes project lists its registered callbacks
 as roots.
 
 The first time a stage runs for a type, the worker records its revision, also in the cache. Twice a

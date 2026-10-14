@@ -236,19 +236,11 @@ struct StageCode
     revision::CodeRevision
 end
 
-"""
-The roots and the revision of the code that `stage` runs for `type` now. When the walk fails, the
-revision is marked as not tracked, so that the stage still runs.
-"""
+"""The roots and the revision of the code that `stage` runs for `type` now."""
 function StageCode(project::AbstractProject, stage::PipelineStage, type::Type)::StageCode
     world = Base.get_world_counter()
     roots = stage_roots(project, stage, type)
-    revision = try
-        code_revision(roots)
-    catch error
-        CodeRevision("not tracked", [], ["the code could not be followed: $(sprint(showerror, error))"])
-    end
-    return StageCode(roots, world, revision)
+    return StageCode(roots, world, code_revision(roots))
 end
 
 """

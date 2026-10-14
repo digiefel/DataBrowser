@@ -301,8 +301,10 @@ DataBrowserAPI.project_name(::HelperProject) = "helper"
 DataBrowserAPI.read(::HelperProject, source::EngineSource, item::EngineSourceItem) =
     DataBrowserAPI.read(TypedProject(), source, item)
 helper_scale() = 2
+# Slots that hold no value yet, as in a buffer allocated ahead of use.
+const HELPER_SLOTS = Vector{Any}(undef, 2)
 DataBrowserAPI.process(::HelperProject, i::EngineItem) =
-    EngineItem(id(i), (x=i.data.x .* helper_scale(),), metadata(i))
+    EngineItem(id(i), (x=i.data.x .* helper_scale(), slots=[length(HELPER_SLOTS)]), metadata(i))
 
 @testset "a function that a stage calls, changed after the workspace opens, replaces its results" begin
     ws = W.open_workspace(HelperProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
