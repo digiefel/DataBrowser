@@ -543,6 +543,12 @@ mutable struct CacheDB
     query_view_signature::Vector{Symbol}
 end
 
+# The cache files open in this process, with their database, or `nothing` while it opens. DuckDB's
+# file lock keeps other processes out, but not a second open in the same process: two databases on
+# one file both write its log, and the log then cannot be replayed.
+const OPEN_FILES = Dict{String,Union{Nothing,DuckDB.DB}}()
+const OPEN_FILES_LOCK = ReentrantLock()
+
 """Delete one generated cache file. Call only from an explicit rebuild path."""
 function _remove_cache_files!(path::AbstractString)::Nothing
     cache_path = String(path)
@@ -560,6 +566,9 @@ With `persistent=false`, use a private in-memory database, which moves data that
 limit to a temporary directory of its own. The supplied cache path is untouched, including when
 `rebuild=true`; closing discards all results.
 
+A cache file can be open only once in a Julia session: opening it again before
+[`close_cache_db!`](@ref) is an error.
+
 `expanded_data_limit` is the memory limit, in MiB, for the data that `expand` gave each item and
 that is kept until the `process` of the item has used it.
 """
@@ -573,11 +582,24 @@ function open_cache_db(
 )::CacheDB
     expanded_data_limit >= 1 ||
         throw(ArgumentError("the limit for expanded data must be at least 1 MiB"))
-    if persistent
-        mkpath(dirname(identity.cache_path))
-        rebuild && _remove_cache_files!(identity.cache_path)
+    path = abspath(identity.cache_path)
+    persistent && @lock OPEN_FILES_LOCK begin
+        haskey(OPEN_FILES, path) && error(
+            "The cache $path is already open in this Julia session, by another workspace of project " *
+            "\"$(identity.project_name)\". Close that workspace first.")
+        OPEN_FILES[path] = nothing
     end
-    db = DBInterface.connect(DuckDB.DB, persistent ? identity.cache_path : ":memory:")
+    db = try
+        if persistent
+            mkpath(dirname(path))
+            rebuild && _remove_cache_files!(path)
+        end
+        DBInterface.connect(DuckDB.DB, persistent ? path : ":memory:")
+    catch
+        persistent && @lock OPEN_FILES_LOCK delete!(OPEN_FILES, path)
+        rethrow()
+    end
+    persistent && @lock OPEN_FILES_LOCK OPEN_FILES[path] = db
     connection = DBInterface.connect(db)
     # Each store starts a task that writes to the database. When opening fails, the stores that
     # already started are closed.
@@ -668,6 +690,7 @@ function open_cache_db(
             end
         end
         DBInterface.close!(db)
+        persistent && @lock OPEN_FILES_LOCK delete!(OPEN_FILES, path)
         rethrow()
     end
 end
@@ -1340,6 +1363,10 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
         finally
             DBInterface.close!(connection)
             DBInterface.close!(cachedb.db)
+            @lock OPEN_FILES_LOCK begin
+                path = abspath(cachedb.identity.cache_path)
+                get(OPEN_FILES, path, nothing) === cachedb.db && delete!(OPEN_FILES, path)
+            end
         end
     catch error
         push!(failures, error)

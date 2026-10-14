@@ -172,3 +172,17 @@ end
         close_cache_db!(cache)
     end
 end
+
+@testset "a cache file opens only once in a session" begin
+    mktempdir() do dir
+        identity = ProjectCacheIdentity("test", "source", "source", joinpath(dir, "cache.duckdb"))
+        cache = open_cache_db(identity)
+        try
+            @test_throws ErrorException open_cache_db(identity)
+            @test_throws ErrorException open_cache_db(identity; rebuild=true)
+        finally
+            close_cache_db!(cache)
+        end
+        close_cache_db!(open_cache_db(identity))
+    end
+end
