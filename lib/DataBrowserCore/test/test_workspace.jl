@@ -347,6 +347,25 @@ end
     end
 end
 
+module ExportsScale; export shared_scale; shared_scale(x) = x .* 3; end
+module ReexportsScale; using ..ExportsScale: ExportsScale; const shared_scale = ExportsScale.shared_scale; export shared_scale; end
+using .ExportsScale, .ReexportsScale
+struct SharedNameProject <: AbstractProject end
+DataBrowserAPI.project_name(::SharedNameProject) = "shared name"
+DataBrowserAPI.read(::SharedNameProject, source::EngineSource, item::EngineSourceItem) =
+    DataBrowserAPI.read(TypedProject(), source, item)
+DataBrowserAPI.process(::SharedNameProject, i::EngineItem) = EngineItem(id(i), (x=shared_scale(i.data.x),), metadata(i))
+
+@testset "a stage may call a name that two modules export" begin
+    ws = W.open_workspace(SharedNameProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
+    try
+        settled(ws)
+        @test item_data(only(W.materialize_items(ws, ["only"]))).x == [3]
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
 struct LateCollection <: DataBrowserAPI.AbstractCollection end
 DataBrowserAPI.id(::LateCollection) = "late"
 DataBrowserAPI.reconstruct(::Type{LateCollection}, ::AbstractString, ::Dict) = LateCollection()

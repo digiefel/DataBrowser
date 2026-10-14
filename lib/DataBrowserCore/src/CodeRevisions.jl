@@ -281,8 +281,13 @@ function visit!(walk::Walk, @nospecialize(x))::Nothing
         walk.seen[x] = nothing
         isdefined(x.mod, x.name) || return nothing
         value = getglobal(x.mod, x.name)
-        # A name that a module imports, such as `stdout`, belongs to the module that defines it.
-        owner = Base.binding_module(x.mod, x.name)
+        # A name that a module imports, such as `stdout`, belongs to the module that defines it. A
+        # name that two modules export with the same value has no single owner.
+        owner = try
+            Base.binding_module(x.mod, x.name)
+        catch
+            x.mod
+        end
         if !(value isa Union{Function,Type,Module}) && changeable(owner)
             # TODO: a global that is reassigned, or constant data that is changed in place, changes
             # no method, so the check sees it only with the next definition.
