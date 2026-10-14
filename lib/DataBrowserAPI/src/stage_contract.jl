@@ -166,6 +166,44 @@ function has_stage(collection::AbstractCollection, stage::PipelineStage)::Bool
 end
 
 # ---------------------------------------------------------------------------
+# stage_roots
+# ---------------------------------------------------------------------------
+
+"""
+    stage_roots(project, stage, type) -> Vector
+
+The code that runs `stage` for values of `type`: a source item type for `SOURCE_READ`, which also
+covers `expand`; an item type for `ITEM_PROCESS` and `ITEM_ANALYZE`; a collection type for
+`COLLECTION_PROCESS` and `COLLECTION_ANALYZE`.
+
+A workspace asks again while it is open. When the answer changes, the results of `stage` for values
+of `type` are out of date and are computed again when they are needed. So a method defined or
+redefined after the workspace opened takes effect without reopening it.
+
+An answer lists methods, functions and types. The workspace follows what they call and use, so a
+changed helper function counts too, and an answer with the same code as before changes nothing.
+
+The default lists `type` and the methods of the stage that can apply; `ITEM_PROCESS` also lists
+the `label` methods, since labels are made again after processing. A project that keeps its stage
+code in values, such as callbacks stored in the project, adds a method that returns those values.
+"""
+function stage_roots(project::AbstractProject, stage::PipelineStage, type::Type)::Vector
+    P = typeof(project)
+    signatures =
+        stage == SOURCE_READ ? Any[
+            (read, Tuple{P,Any,type}), (read, Tuple{Any,type}),
+            (expand, Tuple{P,type,Any}), (expand, Tuple{type,Any})] :
+        stage == ITEM_PROCESS ? Any[
+            (process, Tuple{P,type}), (process, Tuple{type}), (label, Tuple{P,type}), (label, Tuple{type})] :
+        stage == ITEM_ANALYZE ? Any[(analyze, Tuple{P,type}), (analyze, Tuple{type})] :
+        stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE) ? Any[
+            (stage == COLLECTION_PROCESS ? process : analyze, Tuple{P,type,Any}),
+            (stage == COLLECTION_PROCESS ? process : analyze, Tuple{type,Any})] :
+        Any[]
+    return Any[type; [method for (callback, signature) in signatures for method in methods(callback, signature)]]
+end
+
+# ---------------------------------------------------------------------------
 # reconstruct
 # ---------------------------------------------------------------------------
 

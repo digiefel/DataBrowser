@@ -161,6 +161,27 @@ that depend on it; workers take jobs from the catalog and report their results t
 accessors (`items`, `children`, `label`, `metadata` and others) read the catalog, and the browser
 passes keys.
 
+Workers run project code in the latest world, so a method defined after the workspace opened is
+used. Each stage has a code revision for each type it runs for: a content hash of the code it can
+reach from `stage_roots(project, stage, type)` (`DataBrowserCore.CodeRevisions`). The walk follows
+the names in lowered code, the methods of each function reached, closures and their captured values,
+constants, and every method that the project adds to a library function, such as `Base.show` for a
+project type. It skips Base, the standard library, registered packages and DataBrowser itself, and
+adds the Julia version and the Manifest instead. A Recipes project lists its registered callbacks
+as roots.
+
+The first time a stage runs for a type, the worker records its revision, also in the cache. Twice a
+second the workspace compares the roots with the recorded ones; after a method definition, or when
+the roots differ, it computes the revision again. When the revision changed, the results of the stage
+for that type are invalidated: source items are read again, as if the source had changed them, and
+items and collections run the stage again. Collections ask `has_stage` again, so a collection stage
+defined later gets its jobs. The same code defined again, as when a script runs again, changes
+nothing. On reopening, a saved result counts only if the revision it was computed with is current.
+
+The revision does not see a mutable value changed in place. It warns about code it cannot follow: a
+non-constant global, a call through `eval`, `invokelatest` or a computed name, and a generated
+function (`research_notes/code-change-detection/design.md`).
+
 Jobs run in this order: what a view asks for, then source items, then the background work on items,
 then the background work on collections. The data that `expand` gives each item stays in memory
 until the `process` of the item has used it. When that data reaches half its memory limit

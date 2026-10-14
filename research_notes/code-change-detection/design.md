@@ -1,7 +1,9 @@
 # Candidate design: code revisions from a static walk (draft for review)
 
-Status: proposal after experiments A, B, C, the prior-art survey P and an integration review. Not
-agreed with the user. The adversarial review (scripts in `R-review/`) is folded in below.
+Status: implemented in DataBrowserCore (`CodeRevisions.jl`, `check_code!`), steps 1–5 below. Not
+done: polled value hashes for mutable globals, the tracing oracle (step 7), early cutoff. The
+measured cost on RuO2 is in `cost_core_ruo2.jl`: 67 ms for all 17 stage revisions after a
+definition.
 
 ## Decision
 

@@ -12,6 +12,7 @@ using CancellationTokens:
     is_cancellation_requested
 
 using ..Catalogs
+using ..CodeRevisions: CodeRevision, code_revision
 import ..Catalogs: Catalog, restore!, valuetype
 using ..Catalogs:
     CollectionKey,
@@ -82,6 +83,8 @@ using DataBrowserCache:
     store_collection_metadata!,
     store_collection!,
     store_collection_process_result!,
+    store_code_revision!,
+    code_revisions,
     store_item_payload!,
     release_item_payload!,
     expanded_data_full,
@@ -123,6 +126,7 @@ import DataBrowserAPI:
     metadata,
     process,
     has_stage,
+    stage_roots,
     read,
     reconstruct,
     open_source,
@@ -225,6 +229,20 @@ WorkspaceStatus() =
         WorkspaceStageCounts(), Pair{String,String}[])
 
 
+"""The code a stage runs for one type: see [`check_code!`](@ref)."""
+struct StageCode
+    roots::Vector
+    world::UInt
+    revision::CodeRevision
+end
+
+"""The roots and the revision of the code that `stage` runs for `type` now."""
+function StageCode(project::AbstractProject, stage::PipelineStage, type::Type)::StageCode
+    world = Base.get_world_counter()
+    roots = stage_roots(project, stage, type)
+    return StageCode(roots, world, code_revision(roots))
+end
+
 """
 One open project/source pair and all package-managed state belonging to it.
 
@@ -249,6 +267,13 @@ mutable struct Workspace{P<:AbstractProject}
     errors::Dict{Target,String}
     # Items that were delivered. Their analyze is requested, so their metadata becomes complete.
     wanted::Set{ItemKey}
+    # The code that each stage first ran with for each type: its roots, the world they were read
+    # in, and their revision. When the revision changes, the results of that stage for that type
+    # are out of date.
+    code::Dict{Tuple{PipelineStage,Type},StageCode}
+    # Source item types whose reading code changed. The scan reads their source items again, also
+    # those that the cache restored before the scan reported them.
+    outdated_reads::Set{Type}
     workers::Vector{Task}
     # Jobs that run now, and jobs that ended since the catalog was created.
     running::Int
@@ -364,6 +389,8 @@ function Workspace(
         Dict{CollectionKey,Dict{ItemKey,MetadataDict}}(),
         Dict{Target,String}(),
         Set{ItemKey}(),
+        Dict{Tuple{PipelineStage,Type},StageCode}(),
+        Set{Type}(),
         Task[],
         0,
         0,

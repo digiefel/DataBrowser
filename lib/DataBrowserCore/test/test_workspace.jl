@@ -248,6 +248,75 @@ DataBrowserAPI.read(::LateProject, source::EngineSource, item::EngineSourceItem)
     end
 end
 
+@testset "a method redefined after the workspace opens replaces its results" begin
+    ws = W.open_workspace(LateProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
+    processed() = item_data(only(W.materialize_items(ws, ["only"]))).x
+    try
+        settled(ws)
+        @test processed() == [10]
+        @eval DataBrowserAPI.process(::LateProject, i::EngineItem) =
+            EngineItem(id(i), (x=i.data.x .* 100,), metadata(i))
+        @test timedwait(() -> processed() == [100], 10) === :ok
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
+# Keeps its reading code in a value, as a project of registered callbacks does.
+mutable struct CallbackProject <: AbstractProject
+    count::Function
+end
+DataBrowserAPI.project_name(::CallbackProject) = "callback"
+const CALLBACK_READS = Threads.Atomic{Int}(0)
+function DataBrowserAPI.read(p::CallbackProject, ::EngineSource, s::EngineSourceItem)
+    Threads.atomic_add!(CALLBACK_READS, 1)
+    return p.count(s)
+end
+DataBrowserAPI.expand(::CallbackProject, ::EngineSourceItem, count) =
+    [EngineItem(string(n), (x=[n],), Dict()) for n in 1:count]
+DataBrowserAPI.stage_roots(p::CallbackProject, stage::DataBrowserAPI.PipelineStage, type::Type) =
+    stage == DataBrowserAPI.SOURCE_READ ? Any[p.count] : Any[]
+
+@testset "a callback replaced after the workspace opens reads the source again" begin
+    project = CallbackProject(_ -> 0)
+    ws = W.open_workspace(project, EngineSource("source", 1, false); cache=false)
+    try
+        settled(ws)
+        @test isempty(W.query_items(ws))
+        project.count = _ -> 2
+        @test timedwait(() -> length(W.query_items(ws)) == 2, 10) === :ok
+        settled(ws)
+        reads = CALLBACK_READS[]
+        # The same code again, as when a script runs again.
+        project.count = _ -> 2
+        sleep(2)
+        @test CALLBACK_READS[] == reads
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
+struct HelperProject <: AbstractProject end
+DataBrowserAPI.project_name(::HelperProject) = "helper"
+DataBrowserAPI.read(::HelperProject, source::EngineSource, item::EngineSourceItem) =
+    DataBrowserAPI.read(TypedProject(), source, item)
+helper_scale() = 2
+DataBrowserAPI.process(::HelperProject, i::EngineItem) =
+    EngineItem(id(i), (x=i.data.x .* helper_scale(),), metadata(i))
+
+@testset "a function that a stage calls, changed after the workspace opens, replaces its results" begin
+    ws = W.open_workspace(HelperProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
+    processed() = item_data(only(W.materialize_items(ws, ["only"]))).x
+    try
+        settled(ws)
+        @test processed() == [2]
+        @eval helper_scale() = 3
+        @test timedwait(() -> processed() == [3], 10) === :ok
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
 @testset "a read may return the item itself" begin
     ws = W.open_workspace(TypedProject(), EngineSource("source", 1, false); cache=false)
     try
@@ -272,6 +341,78 @@ end
                     W.close_workspace!(ws)
                 end
             end
+        finally
+            popfirst!(DEPOT_PATH)
+        end
+    end
+end
+
+struct LateCollection <: DataBrowserAPI.AbstractCollection end
+DataBrowserAPI.id(::LateCollection) = "late"
+DataBrowserAPI.reconstruct(::Type{LateCollection}, ::AbstractString, ::Dict) = LateCollection()
+struct LateCollectionProject <: AbstractProject end
+DataBrowserAPI.project_name(::LateCollectionProject) = "late collection"
+DataBrowserAPI.read(::LateCollectionProject, ::EngineSource, ::EngineSourceItem) = 2
+struct LateItem <: AbstractDataItem
+    key::String
+    data::Any
+end
+DataBrowserAPI.id(i::LateItem) = i.key
+DataBrowserAPI.item_data(i::LateItem) = i.data
+DataBrowserAPI.reconstruct(::Type{LateItem}, key::AbstractString, data, ::Dict) = LateItem(key, data)
+DataBrowserAPI.collection(::LateItem) = DataBrowserAPI.AbstractCollection[LateCollection()]
+DataBrowserAPI.expand(::LateCollectionProject, ::EngineSourceItem, count) = [LateItem(string(n), (x=[n],)) for n in 1:count]
+
+@testset "a collection stage defined after the workspace opens runs" begin
+    ws = W.open_workspace(LateCollectionProject(), EngineSource("source", 1, false); cache=false, background_processing=true)
+    try
+        settled(ws)
+        late = only(W.collections(ws))
+        @test !haskey(W.metadata(ws, late), :members)
+        @eval DataBrowserAPI.analyze(::LateCollectionProject, ::LateCollection, items::AbstractVector) =
+            Dict(:members => length(items))
+        @test timedwait(() -> get(W.metadata(ws, late), :members, 0) == 2, 10) === :ok
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
+const CLOSED_READS = Threads.Atomic{Int}(0)
+struct ClosedProject <: AbstractProject end
+DataBrowserAPI.project_name(::ClosedProject) = "closed"
+closed_count() = 1
+closed_scale() = 2
+function DataBrowserAPI.read(::ClosedProject, ::EngineSource, ::EngineSourceItem)
+    Threads.atomic_add!(CLOSED_READS, 1)
+    return closed_count()
+end
+DataBrowserAPI.expand(::ClosedProject, ::EngineSourceItem, count) =
+    [EngineItem(string(n), (x=[n],), Dict()) for n in 1:count]
+DataBrowserAPI.process(::ClosedProject, i::EngineItem) =
+    EngineItem(id(i), (x=i.data.x .* closed_scale(),), metadata(i))
+
+@testset "code changed while the workspace is closed replaces the saved results" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        function reopened(check)
+            ws = W.open_workspace(ClosedProject(), EngineSource("source", 1, false); background_processing=true)
+            try
+                settled(ws)
+                check(ws)
+            finally
+                W.close_workspace!(ws)
+            end
+        end
+        first_value(ws) = item_data(first(W.materialize_items(ws, ["1"]))).x
+        try
+            reopened(ws -> @test first_value(ws) == [2])
+            reads = CLOSED_READS[]
+            reopened(ws -> @test first_value(ws) == [2])
+            @test CLOSED_READS[] == reads
+            @eval closed_scale() = 3
+            reopened(ws -> @test first_value(ws) == [3])
+            @eval closed_count() = 2
+            reopened(ws -> @test W.query_items(ws) == ["1", "2"])
         finally
             popfirst!(DEPOT_PATH)
         end

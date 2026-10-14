@@ -42,3 +42,11 @@ end
         @test item_data(item).y == [2, 4]
     end
 end
+
+@testset "a registration changes the code that reads source items" begin
+    project = define_project("late")
+    roots() = stage_roots(project, DataBrowserAPI.SOURCE_READ, DataBrowserSources.SourceFile)
+    before = roots()
+    register_csv!(project)
+    @test !isequal(roots(), before)
+end

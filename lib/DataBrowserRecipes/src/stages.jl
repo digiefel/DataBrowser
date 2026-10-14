@@ -213,6 +213,29 @@ function process(
     return rewritten
 end
 
+"""
+The registered callbacks that run `stage`. Registering a name again replaces them, so an open
+workspace sees the change. Every registration's `detect` decides which `read` runs, so reading
+depends on all of them.
+"""
+function stage_roots(project::Project, stage::DataBrowserAPI.PipelineStage, type::Type)::Vector
+    # The methods that apply, as for any project: typed items and collections may have their own.
+    roots = invoke(stage_roots, Tuple{AbstractProject,DataBrowserAPI.PipelineStage,Type}, project, stage, type)
+    field = stage in (DataBrowserAPI.ITEM_PROCESS, DataBrowserAPI.COLLECTION_PROCESS) ? :process : :analyze
+    if stage == DataBrowserAPI.SOURCE_READ
+        append!(roots, getfield(recipe, name) for recipe in project.recipes
+            for name in (:detect, :read, :expand, :label, :collection, :id))
+    elseif stage in (DataBrowserAPI.ITEM_PROCESS, DataBrowserAPI.ITEM_ANALYZE)
+        recipe = type <: RegisteredDataItem ? _recipe(project, label(type)) : nothing
+        recipe === nothing || push!(roots, getfield(recipe, field))
+        # Labels are made again after processing.
+        recipe === nothing || stage != DataBrowserAPI.ITEM_PROCESS || push!(roots, recipe.label)
+    else
+        append!(roots, getfield(recipe, field) for recipe in values(project.collections))
+    end
+    return roots
+end
+
 """A collection stage is defined when any kind registered it, or the collection type has a method."""
 has_stage(project::Project, collection_value::AbstractCollection, stage::DataBrowserAPI.PipelineStage)::Bool =
     any(values(project.collections)) do recipe

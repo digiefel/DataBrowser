@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 30
+const PROJECT_CACHE_SCHEMA_VERSION = 31
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -431,6 +431,16 @@ end
 MemberChangesRow(row)::MemberChangesRow =
     MemberChangesRow(Int64(row.collection_key), String(row.changes_hex))
 
+"""The revision of the code that one stage ran for one type of item, collection or source item."""
+struct CodeRevisionRow
+    stage::Int8
+    type_hex::String
+    revision::String
+end
+
+CodeRevisionRow(row)::CodeRevisionRow =
+    CodeRevisionRow(Int8(row.stage), String(row.type_hex), String(row.revision))
+
 """The metadata that one stage of one item produced."""
 struct StageMetadataRow
     stage::Int8
@@ -513,6 +523,7 @@ mutable struct CacheDB
     result_states::RowStore{Tuple{Int8,String},CachedResultState}
     keyed_result_states::RowStore{Tuple{Int8,Int64},CachedKeyedResultState}
     member_changes::RowStore{Int64,MemberChangesRow}
+    code_revisions::RowStore{Tuple{Int8,String},CodeRevisionRow}
     stage_metadata::RowStore{Tuple{Int8,Int64},StageMetadataRow}
     payload::TabularFamilyStore
     source_reads::MemoryStore{Int64,Any}
@@ -605,6 +616,8 @@ function open_cache_db(
             db, "keyed_result_states", ("kind", "entity")))
         member_changes = started(
             RowStore{Int64,MemberChangesRow}(db, "member_changes", ("collection_key",)))
+        code_revisions = started(RowStore{Tuple{Int8,String},CodeRevisionRow}(
+            db, "code_revisions", ("stage", "type_hex")))
         stage_metadata = started(RowStore{Tuple{Int8,Int64},StageMetadataRow}(
             db, "item_stage_metadata", ("stage", "item_key")))
         payload = started(TabularFamilyStore(db; row_limit=CACHE_BUFFER_ROW_LIMIT))
@@ -631,6 +644,7 @@ function open_cache_db(
             result_states,
             keyed_result_states,
             member_changes,
+            code_revisions,
             stage_metadata,
             payload,
             MemoryStore{Int64,Any}(; capacity=256 * 1024^2, weight=Base.summarysize),
@@ -760,6 +774,8 @@ function ensure_schema!(connection)::Nothing
         CachedKeyedResultState, "keyed_result_states", (:kind, :entity)))
     DBInterface.execute(connection,
         create_table_sql(MemberChangesRow, "member_changes", (:collection_key,)))
+    DBInterface.execute(connection,
+        create_table_sql(CodeRevisionRow, "code_revisions", (:stage, :type_hex)))
     DBInterface.execute(connection,
         create_table_sql(StageMetadataRow, "item_stage_metadata", (:stage, :item_key)))
     DBInterface.execute(connection, """
@@ -1038,6 +1054,36 @@ function store_collection_metadata!(
 end
 
 """
+    store_code_revision!(cache, stage, type, revision)
+
+Record the revision of the code that `stage` runs for values of `type`. The results the cache keeps
+for that stage and type were computed with that code.
+"""
+function store_code_revision!(cache::CacheDB, stage::PipelineStage, type::Type, revision::AbstractString)::Nothing
+    type_hex = _serialize_type(type)
+    edit!(cache.code_revisions, (Int8(stage), type_hex), CodeRevisionRow(Int8(stage), type_hex, revision))
+    return nothing
+end
+
+"""
+    code_revisions(cache) -> Dict{Tuple{PipelineStage,Type},String}
+
+The revisions that [`store_code_revision!`](@ref) recorded. A type that no longer exists is left out.
+"""
+function code_revisions(cache::CacheDB)::Dict{Tuple{PipelineStage,Type},String}
+    revisions = Dict{Tuple{PipelineStage,Type},String}()
+    for row in values(read(cache.code_revisions))
+        type = try
+            _deserialize_type(row.type_hex)
+        catch
+            continue
+        end
+        revisions[(PipelineStage(row.stage), type)] = row.revision
+    end
+    return revisions
+end
+
+"""
 Record that the `process` of one collection finished, with what it changed in the metadata of its
 items, by item id. The payloads it changed are stored separately.
 """
@@ -1134,7 +1180,8 @@ function cache_pending_counts(cache::CacheDB)::NamedTuple{(:items, :rows),Tuple{
     buffers = (cache.source_items, cache.collections, cache.items, cache.source_item_metadata,
         cache.analyzed_item_metadata,
         cache.analyzed_collection_metadata, cache.failures, cache.result_states,
-        cache.keyed_result_states, cache.member_changes, cache.stage_metadata, cache.payload)
+        cache.keyed_result_states, cache.member_changes, cache.code_revisions, cache.stage_metadata,
+        cache.payload)
     # Every store is locked before any is read. No other code holds two of these locks.
     foreach(buffer -> lock(buffer.flush_condition), buffers)
     try
@@ -1278,7 +1325,7 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
          cachedb.analyzed_item_metadata,
          cachedb.analyzed_collection_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.member_changes,
-         cachedb.stage_metadata, cachedb.payload,
+         cachedb.code_revisions, cachedb.stage_metadata, cachedb.payload,
          cachedb.unprocessed, cachedb.source_reads)
         try
             close!(buffer)
@@ -1337,7 +1384,7 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
          cachedb.analyzed_item_metadata,
          cachedb.analyzed_collection_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.member_changes,
-         cachedb.stage_metadata, cachedb.payload,
+         cachedb.code_revisions, cachedb.stage_metadata, cachedb.payload,
          cachedb.unprocessed, cachedb.source_reads)
         clear!(buffer)
     end

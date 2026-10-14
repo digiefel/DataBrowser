@@ -41,6 +41,7 @@ function open_workspace(
             event -> publish_source_event!(workspace, event);
             cancel_token=get_token(workspace.cancel_source),
         )
+        track_task!(workspace, watch_code(workspace))
         # A workspace that is still open when Julia exits is closed, so the cache keeps its results.
         open_at_exit = WeakRef(workspace)
         atexit(() -> open_at_exit.value === nothing || close_workspace!(open_at_exit.value))
@@ -56,7 +57,8 @@ Rebuild `workspace` in place. The project cannot change. Omitted `source`, `cach
 `background_processing` and `expanded_data_limit` stay as they are. Omitted `source` is a `copy` of the current source so the
 closed source's watchers are not reused. `rebuild` is a one-shot cache action, not a stored setting.
 
-A failed rebuild leaves the workspace closed.
+A failed rebuild leaves the workspace closed. Changes to project code do not need a rebuild: an open
+workspace notices them (see [`check_code!`](@ref)).
 """
 function modify_workspace!(
     workspace::Workspace;
@@ -90,6 +92,7 @@ function modify_workspace!(
                 event -> publish_source_event!(workspace, event);
                 cancel_token=get_token(workspace.cancel_source),
             )
+            track_task!(workspace, watch_code(workspace))
         catch
             workspace.closed = true
             try
@@ -136,7 +139,8 @@ function _install_runtime!(
     workspace.catalog = Catalog(background_processing)
     foreach(empty!, (
         workspace.source_items, workspace.source_locks, workspace.collection_keys,
-        workspace.changes, workspace.errors, workspace.wanted))
+        workspace.changes, workspace.errors, workspace.wanted, workspace.code,
+        workspace.outdated_reads))
     workspace.next_collection_key = 1
     workspace.running = 0
     workspace.completed = 0
@@ -254,10 +258,25 @@ cache_key(workspace::Workspace, source::SourceKey)::Int64 =
 cache_key(workspace::Workspace, item::ItemKey)::Int64 =
     cache_key(workspace, Catalogs.source(workspace.catalog, item))
 
-"""The collection stages the project does not define for `value`. The catalog gives them no job."""
-undefined(workspace::Workspace, value::AbstractCollection)::Vector{PipelineStage} = PipelineStage[
-    stage for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
-    if !has_stage(workspace.project, value, stage)]
+"""
+The collection stages the project does not define for `value`. The catalog gives them no job. The
+caller holds the catalog lock.
+
+The code of both stages is recorded from here on, also for a stage that is not defined, so that
+[`check_code!`](@ref) asks again after a change: a stage defined later gets its jobs.
+"""
+function undefined(workspace::Workspace, value::AbstractCollection)::Vector{PipelineStage}
+    for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
+        target = (stage, typeof(value))
+        haskey(workspace.code, target) && continue
+        code = Base.invokelatest(StageCode, workspace.project, target...)
+        workspace.code[target] = code
+        store_code_revision!(workspace.cache.db, target..., code.revision.hash)
+    end
+    return PipelineStage[
+        stage for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
+        if !has_stage(workspace.project, value, stage)]
+end
 
 """
 Save the row of a collection to the cache, under a new cache key when it has none. The caller holds
@@ -468,6 +487,8 @@ function scan_source!(
                 end
                 publish_cache_state!(
                     workspace, scan_epoch, cached === nothing ? :missing : :ready, cached)
+                # Results saved with other code are out of date before anything uses them.
+                cached === nothing || Base.invokelatest(check_code!, workspace)
 
                 # Read previous fingerprints before discovery so new and changed source items can
                 # stream into the work queue during the walk.
@@ -496,13 +517,14 @@ function scan_source!(
                     push!(seen, id_value)
                     current_fingerprint = fingerprint(item)
                     current[id_value] = current_fingerprint
-                    @lock workspace.catalog.lock begin
+                    outdated = @lock workspace.catalog.lock begin
                         known = lookup(workspace.catalog, SourceKey, id_value)
                         known === nothing || get!(workspace.source_items, known, item)
+                        typeof(item) in workspace.outdated_reads
                     end
                     # A `nothing` fingerprint means the source cannot prove the item is unchanged,
                     # so it is always re-read.
-                    if !haskey(previous, id_value) || current_fingerprint === nothing ||
+                    if outdated || !haskey(previous, id_value) || current_fingerprint === nothing ||
                        !isequal(previous[id_value], current_fingerprint) ||
                        !source_complete(cachedb, source_item_key!(cachedb, id_value))
                         push!(pending_upserts[], item)
@@ -691,6 +713,16 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
         # A collection whose items were all left to the scan is empty.
         delete!(catalog, collection)
     end
+    # The saved results were computed with the code of the saved revisions. The next check compares
+    # them with the current code; a stage without a saved revision counts as changed.
+    saved = code_revisions(cache)
+    targets = union(keys(saved),
+        ((stage, item.type) for item in index.items for stage in (ITEM_PROCESS, ITEM_ANALYZE)),
+        ((stage, collection.type) for collection in index.collections
+            for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)))
+    for target in targets
+        get!(workspace.code, target, StageCode(Any[], UInt(0), CodeRevision(get(saved, target, ""), [], [])))
+    end
     forget_stale!(workspace)
     return nothing
 end
@@ -778,6 +810,96 @@ function publish_source_event!(
         ingest_source_changes!(workspace, changes, nothing)
         finish_publish!(workspace)
     end
+    return nothing
+end
+
+"""
+Check the project's code twice a second until the workspace stops: see [`check_code!`](@ref).
+"""
+function watch_code(workspace::Workspace)::Task
+    token = get_token(workspace.cancel_source)
+    return Threads.@spawn try
+        while true
+            try
+                # The latest world, so the check sees methods defined after the workspace opened.
+                Base.invokelatest(check_code!, workspace)
+            catch error
+                @error "Could not check the project code for changes" exception=(error, catch_backtrace()) maxlog=1
+            end
+            sleep(0.5, token)
+        end
+    catch error
+        error isa OperationCanceledException || rethrow()
+    end
+end
+
+"""
+Invalidate the results of each stage whose code changed, for the rows of the type that the code
+runs for. The workers record the [`StageCode`](@ref) of a stage and type the first time the stage
+runs for the type; the check compares it with the current code. The revision is computed again
+only when a method was defined since, or when [`stage_roots`](@ref) gives other roots.
+"""
+function check_code!(workspace::Workspace)::Nothing
+    catalog = workspace.catalog
+    known = @lock catalog.lock copy(workspace.code)
+    world = Base.get_world_counter()
+    current = Dict{Tuple{PipelineStage,Type},StageCode}()
+    for (target, code) in known
+        roots = stage_roots(workspace.project, target...)
+        code.world == world && isequal(code.roots, roots) && continue
+        current[target] = StageCode(roots, world, code_revision(roots))
+        warn_untracked(target, current[target], code)
+    end
+    isempty(current) && return nothing
+    @lock catalog.lock begin
+        is_cancellation_requested(get_token(workspace.cancel_source)) && return nothing
+        changed = Set(target for (target, code) in current
+            if code.revision.hash != workspace.code[target].revision.hash)
+        for target in changed
+            before, after = workspace.code[target].revision.parts, current[target].revision.parts
+            # A revision restored from the cache has no parts to compare.
+            @info("The code of a stage changed: its results are computed again",
+                stage=first(target), type=last(target),
+                changes=isempty(before) ? "since the cache was saved" : sort!(unique!(first.(symdiff(before, after)))))
+        end
+        merge!(workspace.code, current)
+        foreach(target -> store_code_revision!(workspace.cache.db, target..., current[target].revision.hash), changed)
+        isempty(changed) && return nothing
+        # A source item whose reading changed is read again, as if its source had changed it.
+        reads = Set{Type}(last(target) for target in changed if first(target) == SOURCE_READ)
+        union!(workspace.outdated_reads, reads)
+        sources = [item for item in values(workspace.source_items) if typeof(item) in reads]
+        isempty(sources) || ingest_source_changes!(workspace, SourceChanges(sources, String[]), nothing)
+        # A collection stage may be defined now, or no longer.
+        for key in keys(catalog, CollectionKey)
+            type = valuetype(catalog, key)
+            key != ROOT && ((COLLECTION_PROCESS, type) in changed || (COLLECTION_ANALYZE, type) in changed) || continue
+            absent = undefined(workspace, reconstruct(type, Catalogs.id(catalog, key), metadata(catalog, key, :collection)))
+            for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
+                old = Catalogs.status(catalog, key, stage)
+                old.absent == (stage in absent) || (catalog[key, stage] = Catalogs.StageStatus(old; absent=stage in absent))
+            end
+        end
+        Catalogs.invalidate!(catalog, Tuple{Any,PipelineStage}[
+            (key, stage) for K in (ItemKey, CollectionKey) for key in keys(catalog, K)
+            for stage in instances(PipelineStage)
+            if (stage, valuetype(catalog, key)) in changed])
+        forget_stale!(workspace)
+        finish_publish!(workspace)
+    end
+    return nothing
+end
+
+"""
+Warn when the code of a stage may change without the workspace noticing, once for each new reason.
+
+TODO: show this in the browser, next to the stage.
+"""
+function warn_untracked(target::Tuple{PipelineStage,Type}, code::StageCode, previous=nothing)::Nothing
+    reasons = setdiff(code.revision.untracked, previous === nothing ? String[] : previous.revision.untracked)
+    isempty(reasons) || @warn(
+        "Some code of a stage is not tracked: after changing it, reopen the workspace",
+        stage=first(target), type=last(target), reasons)
     return nothing
 end
 

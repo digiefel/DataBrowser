@@ -43,6 +43,22 @@ function work!(workspace::Workspace)::Nothing
             while job !== nothing
                 changed!(workspace)
                 try
+                    # The code the stage runs with, the first time it runs for its type, so that
+                    # `check_code!` notices any later change.
+                    target, known = @lock catalog.lock begin
+                        target = job.key isa SourceKey ?
+                            (SOURCE_READ, typeof(get(workspace.source_items, job.key, nothing))) :
+                            (job.stage, valuetype(catalog, job.key))
+                        target, haskey(workspace.code, target)
+                    end
+                    if !known
+                        code = Base.invokelatest(StageCode, workspace.project, target...)
+                        @lock catalog.lock if !haskey(workspace.code, target)
+                            warn_untracked(target, code)
+                            workspace.code[target] = code
+                            store_code_revision!(workspace.cache.db, target..., code.revision.hash)
+                        end
+                    end
                     # The latest world, so a worker runs project code defined after it started.
                     Base.invokelatest(run!, workspace, job)
                 catch error
