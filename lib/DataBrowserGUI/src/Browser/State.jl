@@ -233,6 +233,12 @@ struct BrowserSession
     state::BrowserState
 end
 
+# The state holds GPU handles, buffers and every window; printing only names what is open.
+Base.show(io::IO, state::BrowserState) = print(io, "BrowserState(", something(state.workspace, "no workspace"), ")")
+Base.show(io::IO, session::BrowserSession) = print(
+    io, "BrowserSession(", istaskdone(session.task) ? "closed" : "open", ", ",
+    something(session.state.workspace, "no workspace"), ")")
+
 """Call `shutdown!` on every extension instance."""
 function _shutdown_extensions!(state::BrowserState)::Nothing
     for ext in state.extensions
