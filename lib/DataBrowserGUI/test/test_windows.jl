@@ -1,7 +1,7 @@
 using Test, DataBrowserGUI
 import DataBrowserAPI
 using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, settings
-using DataBrowserGUI.Browser: BrowserState, TableView, ValueView, close_window!, open_window!, visualizers,
+using DataBrowserGUI.Browser: BrowserState, TableView, ValueView, LinePlotView, HistogramView, BarChartView, close_window!, open_window!, visualizers,
     transform!, transformed, transforms, code
 
 struct Trace <: AbstractDataItem end
@@ -59,4 +59,14 @@ late_scale(x) = 2x
     before = code(window)
     @eval late_scale(x) = 3x
     @test code(window) != before
+end
+
+@testset "numbers can be plotted" begin
+    offered(T) = [typeof(visualizer) for visualizer in visualizers(T)]
+    @test LinePlotView in offered(Vector{Float64}) && HistogramView in offered(Vector{Float64})
+    @test LinePlotView in offered(Pair{Vector{Float64},Vector{Int}})
+    @test LinePlotView in offered(Tuple{Vector{Float64},Vector{Int}})
+    @test LinePlotView ∉ offered(Vector{Trace}) && HistogramView ∉ offered(Vector{Trace})
+    @test BarChartView in offered(typeof((r_contact=1.5, r_sheet=2)))
+    @test BarChartView ∉ offered(typeof((name="a", r_sheet=2)))
 end

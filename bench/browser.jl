@@ -35,6 +35,11 @@ function check_items(ws, session, expected_peaks)
 end
 
 """Open the real browser, draw the known project, and exercise update/reopen behavior."""
+# Plots take numbers, which these functions give for the selected items.
+smoke_trace(items::AbstractVector) = item_data(first(items)).x => item_data(first(items)).y
+smoke_values(items::AbstractVector) = item_data(first(items)).y
+smoke_numbers(items::AbstractVector) = (items=length(items), half=length(items) / 2)
+
 function browser_workload(root, opening, started_ns)
     counters = ToyCounters()
     project = toy_project("BrowserSmoke", counters)
@@ -60,6 +65,21 @@ function browser_workload(root, opening, started_ns)
         end
         wait_for(() -> taker.value isa ItemTable && taker.value === table.visualizer.output, session)
         lock(() -> foreach(window -> Browser.close_window!(state, window), (taker, table)), workspace.lifecycle_lock)
+        # The plots drawn with ImPlot draw the numbers that a function of the project gives for the
+        # selection. An error while drawing stops the browser.
+        plots = lock(workspace.lifecycle_lock) do
+            map(((Browser.LinePlotView(), :smoke_trace), (Browser.HistogramView(), :smoke_values),
+                    (Browser.BarChartView(), :smoke_numbers))) do (view, name)
+                window = Browser.open_window!(state, view)
+                Browser.transform!(window, GlobalRef(@__MODULE__, name))
+                window
+            end
+        end
+        wait_for(() -> all(plot -> plot.value !== nothing && isempty(plot.error), plots), session)
+        drawn = TimerOutputs.ncalls(gui_timings(session)["frame_ui"])
+        wait_for(() -> TimerOutputs.ncalls(gui_timings(session)["frame_ui"]) >= drawn + 10, session)
+        istaskdone(session.task) && error("The browser stopped while drawing plots")
+        lock(() -> foreach(window -> Browser.close_window!(state, window), plots), workspace.lifecycle_lock)
         if opening == "reopen"
             all(count[] == 0 for count in values(counters.reads)) || error("Reopening reran source reads")
             counters.processes[] == counters.analyses[] == 0 || error("Reopening reran item callbacks")

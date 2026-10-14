@@ -115,6 +115,8 @@ that is not visible, for example behind another tab, is not brought up to date.
 """
 function render_windows!(state::BrowserState)::Nothing
     state.workspace isa Workspace.Workspace || return nothing
+    # The plots drawn with ImPlot need its context.
+    _init_implot_context!(state)
     for window in copy(state.windows)
         open = Ref(true)
         ig.SetNextWindowSize((900, 600), ig.ImGuiCond_FirstUseEver)
