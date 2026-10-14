@@ -3,6 +3,10 @@
 This document defines the state of one pipeline stage on one catalog row. Job
 queues and payload storage use this state; they do not replace it.
 
+The locations below describe the current rereadable-source implementation. Recovery/retention for
+non-repeatable sources is still open; see
+[Scientific workspace: analysis and acquisition](../scientific-workspace.md#source-contract-what-must-be-decided-early).
+
 ## Separate state
 
 One enum cannot describe every relevant fact. Keep these parts separate:
@@ -20,9 +24,9 @@ One enum cannot describe every relevant fact. Keep these parts separate:
   fixed by the stage (below), so one bit is enough.
 - **Revision:** the input revision a job read and an output represents.
 
-`fresh` means the required output exists and matches the current input
-revision. It does not mean that a job is running or that every requester can
-materialize the output in the form it needs.
+`fresh` means the recorded successful result matches the current input revision. Output availability
+is a separate fact: the payload may have been evicted, or a requester may need a reconstructed form.
+Freshness does not mean that a job is running or that every requester can materialize its input.
 
 ## Required rules
 
@@ -35,13 +39,16 @@ materialize the output in the form it needs.
   blocks dependent work until retry or invalidation. Persist the failure and its
   revision. Reopening reuses it when inputs match; reopening alone is not a retry.
   Changed inputs invalidate successful and failed outcomes by the same rule.
-- A persisted `fresh` stage is restored as fresh only when all required output
-  is present and its revision matches the saved completion and current inputs.
-  Output references must identify the revision they represent; presence at the
-  same node and stage is insufficient after an interrupted buffered write.
-  Missing or mismatched output downgrades the stage before pull schedules work.
-- Evicting output clears availability and leaves validity unchanged. A consumer
-  that needs evicted output reruns the stage that produces it.
+- A persisted successful outcome is reusable only when its recorded input/code revisions match.
+  Payload availability is checked separately against exact output references; presence at the
+  same node and stage is insufficient after an interrupted buffered write. Missing or mismatched
+  payload is not deliverable. It does not invalidate a retained downstream result merely because
+  an upstream payload was evicted. Coordinate outcome and payload publication as roadmap 0.2.2
+  requires.
+- Evicting output clears availability and leaves validity unchanged. A consumer needing that
+  payload follows the producer's recovery contract: load retained content, recompute repeatable
+  work, or report unavailable input. It must not silently repeat acquisition. Current source
+  fallback rereads missing input; that is not a general non-repeatable-source contract.
 - Retry clears the current failure and queues the same revision. Invalidation
   clears failures from older revisions.
 
@@ -71,8 +78,10 @@ text and rare; they live in a separate table under the same lock.
 | `process`, collection `process` | Payload tables, and metadata | DuckDB payload store; catalog columns |
 | `analyze`, collection `analyze` | Metadata | Catalog columns |
 
-A second availability bit is needed only if one stage's output can live in
-different places for different rows.
+Non-repeatable input retention and additional payload shapes will require revisiting these fixed
+locations. The status encoding is an implementation choice, not a promise that every source can
+recover an evicted value. Do not add new bits until the recovery/storage contract establishes what
+information requesters actually need.
 
 ## Decisions still needed
 

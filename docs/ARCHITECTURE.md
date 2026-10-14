@@ -1,5 +1,11 @@
 # DataBrowser Architecture
 
+This document describes the current implementation unless a section explicitly states a target.
+The broader product direction is in `docs/vision.md`; proposed contract evolution is in
+`docs/plans/scientific-workspace.md` (Scientific workspace: analysis and acquisition). In particular,
+production non-repeatable sources, multiple live sources in one workspace, and headless tab/view
+definitions are not implied by the current diagrams.
+
 ## What this is
 
 DataBrowser is a Julia working environment for data projects. It should be strictly
@@ -186,7 +192,9 @@ Jobs run in this order: what a view asks for, then source items, then the backgr
 then the background work on collections. The data that `expand` gives each item stays in memory
 until the `process` of the item has used it. When that data reaches half its memory limit
 (`expanded_data_limit` of `open_workspace`), items are processed before more source items are read, so that a
-source item is not read and expanded a second time. The `analyze` of an item runs right after its
+source item normally does not need a second read/expand while processing that batch. This pacing
+does not guarantee exactly-once source access: reconstruction can call `read` again after its input
+was evicted. The `analyze` of an item runs right after its
 `process`, in the same worker.
 
 The source items that are not read yet (`unread`) are in the collection tree of the browser from
@@ -220,7 +228,7 @@ It defines:
 
 The workspace owns:
 
-- the open source(s) and their identity
+- the open source and its identity (multiple sources are a target, not current workspace storage)
 - the catalog of source items, items and collections, filled as source jobs finish
 - selection identities
 - cache identity, freshness, storage, and repair

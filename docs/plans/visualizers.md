@@ -1,5 +1,19 @@
 # Visualizers
 
+## Status and related plans
+
+[Tabs](tabs.md) supersedes the canvas, planes, and single-workspace-file presentation/persistence
+proposal below. Those sections remain historical design context, not simultaneous requirements.
+The implemented visualizer contract is documented in
+[`visualizer_contract.jl`](../../lib/DataBrowserAPI/src/visualizer_contract.jl); several method
+signatures and output conventions in this plan are still proposals.
+
+[Scientific workspace: analysis and acquisition](scientific-workspace.md) records the shared
+execution, source recovery/retention, headless-result, and responsiveness requirements. Processing,
+analysis, and visualization edits update affected active results automatically. Displaying or
+refreshing those results does not repeat acquisition or other external effects. Source-specific
+controls can expose capabilities; ordinary data visualizers remain independent of source type.
+
 ## Goal
 
 Any value in a workspace should be viewable in many ways, and the ways should be easy to combine. A
@@ -238,7 +252,8 @@ For each view, the browser:
 5. shows any error from steps 2–4 inside the view;
 6. saves the view in the workspace file (see [Saving the workspace](#saving-the-workspace)).
 
-The record in step 3 is a `Payload`, internal to the browser:
+The proposed record in step 3 is a `Payload`, owned by workspace execution rather than browser
+rendering state. Its name and exact representation are not settled:
 
 ```julia
 struct Payload{T}
@@ -257,18 +272,25 @@ that equals the previous one does not propagate further, which also stops cycles
 value is ready, the view keeps showing the previous one, marked as not current. `prepare!` and
 `draw!` run on the GUI thread, because they may create graphics resources such as Makie figures.
 
-The pipeline therefore becomes more flexible, and the workspace's job graph changes. Today a job is
-identified by a fixed pipeline stage and one item or collection, and a job leaves the graph when it
-finishes. To hold views, the job graph must:
+The pipeline therefore becomes more flexible. Today the catalog retains fixed source/item/collection
+stages and their revisions after jobs finish; it does not yet execute arbitrary view transforms.
+To hold those computations, workspace execution must:
 
 1. accept jobs that are not pipeline stages: a function over a set of items and other views' outputs;
 2. remember what each result was computed from after its job finishes;
 3. run a job again when one of those inputs changes, including a revision of an item's data.
 
-A transform's result also becomes outdated when code it calls changes. The workspace uses Revise
-to redefine changed functions and to learn which project files changed. Until finer tracking
-exists, a change to any project file makes every transform recompute. The workspace's own processing
-needs the same invalidation, and both use one mechanism.
+A transform's result also becomes outdated when code it calls changes. The workspace's own
+processing already follows code changes with code revisions: a content hash of the code a stage can
+reach, recomputed after each method definition (`docs/ARCHITECTURE.md`). Transforms use the same
+mechanism, with the transform function as the root. Invalidation stays within replayable
+computation boundaries and preserves acquired input; it is not permission to reevaluate arbitrary
+tab scripts.
+
+Expensive I/O and CPU preparation must not run on the GUI frame path. `prepare!` currently combines
+CPU preparation and graphics-resource creation; its scheduling or decomposition needs an experiment.
+Graphics updates remain on the required thread. Common large-data views must reuse prepared data
+and rendering resources instead of rematerializing unchanged input on each interaction.
 
 ## DBPlots
 
@@ -525,6 +547,11 @@ DataBrowser reaches this in three tiers. Each tier falls back to the one before 
 
 ## Saving the workspace
 
+The single-file and canvas layout below is the earlier proposal. Tabs now owns the presentation and
+file-organization questions. The enduring requirement is shared, headless scientific definitions and
+result references: restoring them does not execute acquisitions, instrument commands, or exports.
+Recorded input is distinct from disposable derived cache even when both use the same storage layer.
+
 A **workspace file** saves the state of a running workspace: every plane, view, input, connection,
 transform, visualizer setting, and node position. It records intent, not pixels. Items and their
 data are not in it; they come again from the sources and the cache. Opening the file rebuilds every
@@ -613,6 +640,9 @@ canvas, is not part of the history.
 
 ## Open design work
 
+- **Shared execution and source contracts.** Resolve the foundational issues and proof sequence in
+  [Scientific workspace: analysis and acquisition](scientific-workspace.md) before assuming that
+  every missing input can be reread or every view result belongs to browser state.
 - **Settings as inputs.** Linking what views show, such as axis limits, needs inputs on the
   visualizer as well as on the transform, for example an `xlims` input on a line plot. This is
   explored last.

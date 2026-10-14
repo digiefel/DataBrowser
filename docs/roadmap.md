@@ -4,6 +4,20 @@ This roadmap / changelog follows releases of the main `DataBrowser` package.
 Checked items already exist on `main`; completed work links to the pull request or commit that
 introduced it.
 
+The product direction and its engineering review are recorded in
+[Scientific workspace: analysis and acquisition](plans/scientific-workspace.md). Acquisition,
+automatic live analysis, native visualization, and agent/API use share the existing package family.
+Streaming implementations can arrive later; recovery, retention, and source-independent data-access
+rules must guide the work already under way.
+
+The proposed dependency order for current work is: finish result publication/availability, expose
+shared headless analysis/view definitions, and
+build tabs/debugging and responsive visualizers. Streaming-source recovery and acquisition controls
+are later work behind the same data-access boundary, not prerequisites for those visualizers.
+Visualization measurements and one serious domain-package proof belong alongside that work. Version headings
+below remain the existing release organization, not a strict dependency order. Detailed APIs and
+production streaming scope remain open.
+
 ## 0.1.0 — Public API foundation
 
 Establish the package and data-engine foundation on which the interactive application can grow. The
@@ -63,7 +77,7 @@ workspace internals.
   `WorkspaceIndex`. Collection records expose a durable occurrence ID, compact internal key, and
   resolved label. Treat the browser tree as one projection of that index, not as the data model.
 - [x] Replace the monolithic typed `data_items` hook with the staged typed contract of
-  [typed-pipeline.md](typed-pipeline.md): explicit `read` and `entries` stages, item and collection
+  [stage contract](../lib/DataBrowserAPI/src/stage_contract.jl): explicit `read` and `entries` stages, item and collection
   `process`/`analyze`, project-aware stage forms with context-free defaults, and the source as an
   argument to `read` only. Give the stages distinct work/cache boundaries without a compatibility
   shim.
@@ -90,8 +104,10 @@ Decisions taken during the audit:
 
 - The memory-only cache backend (`MemoryCacheDB`, `AbstractCacheDB`) is removed. `cache=false`
   opens an in-memory DuckDB through the one remaining code path. Granular caching (per stage, per
-  kind), non-replayable streaming sources, and disk-budget control are payload *policies* consulted
-  by that one backend; they are designed when pipeline inspection (0.14.0) needs them, not before.
+  kind), non-replayable source retention, and disk-budget control are payload *policies* consulted
+  by that one backend. Establish recovery/retention requirements during 0.2.2/0.2.6; complete policy
+  controls, production streaming, and pipeline inspection can follow. Do not assume every missing
+  payload can be recovered by rerunning its producer.
 - `query_items(workspace, sql)` becomes internal until the query model of 0.5.0 replaces it.
 - Two timing systems stay, on purpose: `Browser.@timed` is always-on GUI frame diagnostics;
   `DataBrowserProfiling` is opt-in pipeline profiling.
@@ -268,17 +284,20 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] Use one `PipelineStage` for scheduling and cache results, ordered from source read through
   collection analyze. Source read and interpretation have independent outcomes.
 - [ ] Settle on one of `cache`/`cachedb`/`cache_db` during the interface changes.
-- [ ] Cache identity gains a project fingerprint. Vision §12 requires project definition + data +
-  parameters; today it is project *name* + source id, so editing project code reuses stale results.
-  Changed code must invalidate success and failure automatically. Investigate Revise integration
-  and a stable persisted code/environment fingerprint; begin conservatively at project scope.
-  Mismatch follows eager/requested recomputation policy, not a warning-only path.
+- [x] Track code/environment revisions in derived-result validity. Each stage records a code
+  revision per type, also in the cache; a changed revision invalidates only that stage's results,
+  while the workspace is open and on reopening (`docs/ARCHITECTURE.md`).
+- [ ] Notice code that code revisions cannot follow: values changed in place, non-constant globals,
+  `eval`/`invokelatest`. Show the "not tracked" warning in the browser, and check the walk against
+  a tracing run (`research_notes/code-change-detection/design.md`, step 7).
 - [ ] Define and test persistence at every expensive pipeline boundary (discovery, read, expand,
   item and collection process/analyze). A valid persisted stage satisfies downstream work without
   rerunning earlier user code.
 - [ ] Support expensive or non-repeatable sources (simulations, compressed inputs, streams) through
-  source-owned durable handles or persisted unprocessed outputs; add `replayable(::AbstractDataSource)`
-  when the first such source arrives.
+  durable handles or retained upstream output. Specify recovery, recording, and eviction independently
+  of source arrival mode; the exact API is open. Prove the contract with a non-repeatable producer
+  before production streaming. A process-code edit and a cache miss must not consume another
+  observation; retained boundaries determine whether read/expand edits can be recomputed.
 - [ ] Profile the DuckDB flush path at millions of rows and remove the dominant avoidable cost.
 - [ ] Document cache contracts in source docstrings and the generated public documentation.
 
@@ -286,6 +305,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 - [ ] Audit source fingerprinting and document exactly what each change token invalidates across
   live updates and workspace reopen.
+- [ ] Specify source identity and origin ownership for multiple sources, finite discovery versus
+  ongoing arrival, recoverability, and optional command capabilities. Keep ordinary data access
+  independent of source type; production transport and instrument implementations follow separately.
 - [x] Replace `default_collection_path(source, source_item)` with `collection(source_item)`, and
   `annotate_collection_path` with `metadata(source, collections)`, where `collections` are one
   collection's values from the top down. DirectorySource owns `metadata.txt` parsing and matching;
@@ -419,6 +441,12 @@ on it with a few verbs.
   interaction.
 - [ ] Make repeated project setup, workspace operations, and view changes idempotent where users
   naturally rerun code during development.
+- [ ] Store scientific view/transform/figure definitions and results independently of browser
+  windows. Create work headlessly, attach the GUI in the same process, and reopen saved work with
+  its code and available results. Restore definitions without repeating acquisitions or exports.
+- [ ] Define explicit execution of source commands and project procedures separately from automatic
+  refresh of affected processing, analysis, and visualization. Use public Julia functions; no new
+  user-facing execution vocabulary is required.
 - [ ] Expose progress, failures, cancellation, and results in forms usable by both interactive and
   programmatic callers.
 - [ ] Keep the REPL usable while workspaces and GUI windows remain open.
@@ -515,6 +543,13 @@ the table as a first-class view.
   for windows, tabs and inputs.
 - [ ] Tabs: a Julia file together with its windows, which the user, the browser and an agent all
   work on ([plans/tabs.md](plans/tabs.md)). The plan is written; nothing of it is built.
+- [ ] Resolve tab loading and external editing without rerunning arbitrary top-level effects.
+  Processing, analysis, and visualization edits still refresh affected active results automatically.
+- [ ] Move waiting I/O and expensive CPU preparation off the GUI frame path. Graphics-resource
+  updates stay on the required thread; pending work leaves unrelated windows usable.
+- [ ] Measure responsiveness on representative scientific projects through the existing benchmarks.
+  Separate loading, warm presentation, interaction, copies, and work repeated after display-only
+  edits. Choose workloads from actual use; illustrative dataset sizes are not product requirements.
 - [ ] Plot builder: a window in which the user builds a plot of a table from menus, and which a
   script can write as code. The plot is one description as plain data: roles that say which column
   is on which axis or gives the color, and a list of layers, each with a mark. The builder must be
@@ -576,6 +611,9 @@ payload they are given rather than learning special pipeline logic.
   collection-level result.
 - [ ] Show metadata added by analysis operations beside the corresponding data.
 - [ ] Reuse cached results and retain uncached intermediate values within explicit memory bounds.
+- [ ] Prototype scientific local-variable capture independently of pipeline-stage inspection. Expose
+  capture requests/results through the public API, identify invocation/input/code revisions, and
+  never repeat acquisition merely to populate a debug window.
 - [ ] Add the global GUI control and make the current inspectors and visualizers respond to the
   selected pipeline result without per-visualizer pipeline code.
 
@@ -625,6 +663,9 @@ Python API, CLI, project configuration, and visual tools are used together on re
   interfaces.
 - [ ] Validate first-party add-on packages can provide types, processing, visualizers, windows, and
   project scaffolding while project environments pin them normally.
+- [ ] Exercise at least one substantial scientific domain package before 1.0 to prove that the public
+  extension boundary supports a specialized application. Paid distribution and broad domain coverage
+  can follow; agents must be able to reuse the same operations and saved results.
 - [ ] Keep browse-while-building, warm reopen, item views, filtering, plotting, and figure editing
   responsive at realistic scales.
 - [ ] Complete user documentation for installation, project setup, GUI use, Julia, Python, and the
@@ -663,9 +704,21 @@ environment through Pkg when opened.
 
 ### GUI-authored workflows
 
-Save everything built in the browser as a workspace file: an ordinary Julia file holding the graph
-of views, from finding data to creating views, editing figures, and exporting results. See
+Extend the basic shared definitions, saved work, and tabs of 0.6/0.11 with richer graphical editing
+of analysis workflows. Basic agent/GUI interplay and reopenable work are earlier requirements.
+Full editing of arbitrary Julia programs is not promised; recognized expressions remain editable
+through both code and menus. See [plans/tabs.md](plans/tabs.md) and
 [plans/visualizers.md](plans/visualizers.md).
+
+### Production streaming and acquisition
+
+Build on the recovery/retention and source-capability contracts established during engine work.
+Implement bounded recording and arrival queues, lag/overflow reporting, snapshot/window collection
+semantics, multiple-source routing, and shared communication infrastructure for source packages.
+Separate per-connection ordering, timeout/cancellation, and observable failure handling from
+instrument-specific protocols and scientific measurement procedures. Acquisition controls use the
+same public operations as scripts and agents; ordinary data visualizers remain source-independent.
+The precise release scope is not assigned yet.
 
 ### First-party analysis add-ons
 

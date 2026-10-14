@@ -5,9 +5,10 @@ It defines vocabulary and long-term shape.
 
 ## 1. Purpose
 
-DataBrowser is a Julia-native toolkit for scientific data processing, visualization, inspection, and
-interactive analysis. It is for domain experts who use software as an instrument, not primarily for
-software engineers. It should make messy, heterogeneous scientific data easier to load, inspect,
+DataBrowser is a Julia-native working environment for scientific data acquisition, processing,
+visualization, inspection, and interactive analysis. It is for domain experts who use software as
+an instrument, not primarily for software engineers. It should make messy, heterogeneous scientific
+data easier to load, inspect,
 process, visualize, cache, automate, and package into reusable analysis workflows.
 
 The near-term product is a Julia package family with a GUI, REPL access, GLMakie-based
@@ -20,16 +21,32 @@ The core design goal is to preserve the freedom of arbitrary scientific code whi
 adding structure around the parts that benefit from it: workspace state, datasets, visualizers,
 pipelines, cache metadata, inspection, provenance, command execution, and packaging.
 
+Projects and domain packages define the science: file interpretation, instrument commands,
+measurement procedures, calculations, and useful views. The toolkit supplies the shared
+infrastructure, including reliable communication and source lifecycle, background work, storage,
+and interaction. Acquisition is part of the product direction; its complete source and
+communication contracts are not implemented yet.
+
+The engineering review [Scientific workspace: analysis and acquisition](plans/scientific-workspace.md)
+records the requirements, contradictions, current-code evidence, and proposed implementation order.
+It separates product requirements from open API and implementation choices.
+
 ## 2. Product Vision
 
 The toolkit should sit between a programming environment and an exploratory scientific application,
 closer to a powerful scientific instrument than to a data-science dashboard.
 
-A user should start with a directory of files, quickly inspect what is inside, load the data with
+A user should start with files, a workbook, images, a remote dataset, an acquisition source, or a
+combination of sources, quickly inspect what is available, load the data with
 minimal ceremony, visualize common structures immediately, and gradually add specialized analysis
 logic. A new user should get useful plots without writing custom setup and draw functions. An
 advanced user should be able to define custom loaders, processors, visualizers, UI panels, and
 complete domain-specific analysis packages.
+
+The intended combination is ordinary scientific programming as in MATLAB, visible dependencies
+and intermediate results as in Enso, direct visual exploration as in Tableau, and acquisition and
+instrument integration as in LabVIEW. These capabilities share projects, workspaces, sources,
+items, and public operations. They do not require a different data model for each interface.
 
 The system should support both exploratory and repeatable work. A user should be able to click around
 interactively, but also replay, script, inspect, export, and automate what happened. This matters for
@@ -39,6 +56,9 @@ The long-term product should make it natural to distribute open, modifiable anal
 packages may include loaders, processors, visualizers, custom UI components, examples, documentation,
 and templates. Commercial value can come from high-quality packaged analysis workflows while
 preserving the user's freedom to inspect and modify the underlying code.
+
+The common toolkit remains open source. Paid, source-accessible domain packages are a possible
+business model; licensing and distribution terms remain separate decisions.
 
 ## 3. Scope and Strategy
 
@@ -84,8 +104,19 @@ Julia-centered foundation that leaves those directions open.
   model, not a separate implementation.
 - **Non-blocking REPL.** Starting the browser must not consume the Julia session. The user keeps the
   same REPL to inspect data, run helpers, change project code, and drive the app.
-- **Live workspace.** Source files, project code, selections, and views can update without restarting
-  the app. Long work has visible progress and does not block unrelated interaction.
+- **Live workspace.** Edits to visualization, processing, and analysis code automatically update
+  affected active results without restarting the app or requiring a full rebuild. Reuse unaffected
+  work and retained input. Long work has visible progress and does not block unrelated interaction.
+- **Controlled external effects.** Refreshing analysis, opening a view, or restoring a workflow
+  does not repeat acquisition, instrument commands, or exports. Public functions and explicit
+  user or configured procedure/event triggers invoke those operations. Automatically scheduled
+  callbacks must be safe to repeat under their contract; arbitrary Julia code cannot be proven so.
+- **Source-independent data views.** Tables, plots, and inspectors consume requested values and
+  revisions through shared data access. Source setup, recording controls, and communication
+  status expose source capabilities; individual data visualizers do not implement acquisition.
+- **Responsive default views.** Common scientific values should be fast to explore without custom
+  acceleration code. Built-ins own bounded loading, reusable preparation, and appropriate rendering
+  reduction. Cold loading, warm presentation, and interaction latency are measured separately.
 - **Execution is separate from inspection.** Users run arbitrary analysis code, but the app makes it
   easy to stop, inspect, visualize, cache, compare, replay, and export intermediate and final data.
 - **Generic tools first.** Built-in visualizers cover common work (tables, X-vs-Y plots, overlays,
@@ -117,6 +148,10 @@ workspace does not delete the project file, data-source config, or cache.
 **Data source.** A configured origin the project opens: a directory, database query, instrument run,
 stream, or remote dataset. Data-source configuration is core project state. Editing it changes the
 project file, but it does not rewrite the Julia script that defines callbacks and plots.
+Sources may be streaming or non-streaming and may additionally accept commands. Source implementations
+and the engine handle arrival, recovery, retention, and access to their data. Downstream processing,
+analysis, and visualization do not need to know where that data came from. Multiple sources can
+contribute to one project; their identities and origins must remain distinguishable.
 
 **Package.** A distributable extension — reusable behavior with *no data attached* (loaders,
 processors, data types, visualizers, commands, UI windows, examples, docs, templates). A package is
@@ -127,16 +162,20 @@ packages (§11) are the main example.
 visualize: arrays, tables, nested structures, domain-specific measurements, file references,
 database-backed results, Makie objects, image-like or signal-like data, or opaque user-defined
 values. A logical browsable entry discovered from sources is an **item** (e.g. a single measurement),
-with stable identity, parameters, stats, and access to its data. The system need not understand every
-value fully, but it should identify it, track it in the index, summarize it, and expose actions.
+with stable identity, parameters, stats, and access to its data. One file or acquisition chunk may
+produce many items; one item may contain a large array or table. Its scientific granularity belongs
+to the project. The system need not understand every value fully, but it should identify it, track
+it in the index, summarize it, and expose actions.
 A **Core-supported data shape** is a type the toolkit understands out of the box: caching, summaries,
 and default visualizers work with no user code (tables today; vectors, arrays, and image-like values
 later). The shape *is* the payload's Julia type — there is no separate detection or declaration step,
 and shapes are not exclusive: every visualizer whose `prepare!` methods accept the payload is
 offered, so the same matrix opens as a grid, an image, or a heatmap depending on which visualizer the
 user opens.
-The app is type-agnostic in the failure direction too: a payload nothing matches simply is not cached
-and gets only the basic inspector, and a visualizer applied to data it cannot handle fails cleanly on
+Inspection, computation, persistence, and reconstruction are separate capabilities. A value may
+be inspectable without having a supported persistent encoding; a live connection is not a saved
+measurement. Unsupported recording must be reported rather than silently losing non-repeatable
+input. A visualizer applied to data it cannot handle fails cleanly on
 that view — the user can then register their own support. Shapes whose support needs heavy
 dependencies (audio codecs, for example) belong in extension packages even when generic, on the same
 host/extension pattern as the GUI itself.
@@ -157,7 +196,9 @@ plot that the plot visualizer offers for one type of item; they are a convenienc
 every visualizer follows. A **figure** is
 a composed visual artifact: visualizer outputs, layout, styling, annotations, and optional embedded
 data. A **workflow** is the persisted graph of views: selections, transforms, visualizers, fits,
-annotations, exports — intent, not pixels, saved as an ordinary Julia file, the workspace file.
+annotations, and export definitions — intent, not pixels, saved as ordinary Julia code in workspace
+or tab files. Opening saved work restores definitions and available results; it does not replay
+physical effects. Tabs organize source code and windows; they do not own a separate analysis engine.
 An **annotation** is user-authored metadata on an item
 (tags, notes, coordinates, spatial position); a **figure annotation** is a visual mark on a figure
 (arrow, region, fit label, text). A tag describes an item; an arrow describes a figure. These are
@@ -262,7 +303,7 @@ phasing.
 
 The registration API defines named or default pipelines over ordinary Julia data. It ships as
 `DataBrowserRecipes`, an ordinary package implemented purely as a client of the typed stage
-contract; the engine never learns it exists. `read` performs the per-source-item source read once.
+contract; the engine never learns it exists. `read` obtains the content of one source item.
 Its result is one data item unless the registration supplies `expand`, which splits the result into
 zero or several data items. Item construction supplies cheap
 sibling identity, labels, collection placement, and metadata at the same time data is split.
@@ -277,6 +318,11 @@ collections, empty metadata, identity processing, and source-backed storage.
 
 Project code stays close to natural scripts: identify data, load it, compute results, and define
 domain views. The workspace owns cache files, UI state, background jobs, and package lifecycle.
+
+Scheduled processing, analysis, and view transforms may run again as their inputs or code change.
+They must be safe to repeat under that contract. Source recovery and external commands have their
+own execution rules; a missing payload does not by itself authorize a new physical acquisition.
+The current engine's reread fallback must be extended before non-repeatable sources are supported.
 
 Callbacks need not be serializable. The system records what it can: callback name, package origin,
 signature or declared capability, input data, parameters, outputs, logs, errors, cache keys, and
@@ -315,7 +361,8 @@ composition, persistence, and background work.
 
 **Editable state.** A visualizer exposes editable state — selected x/y data, visible traces,
 normalization, offsets, filters, colormaps, axis scales, labels, annotations, linked selections,
-export options — which should be inspectable and eventually scriptable.
+export options — through the same public operations available to scripts and agents. Shared figure,
+selection, and analysis definitions cannot depend on an open browser; drawing remains frontend work.
 
 **Figures, live and self-contained.** A *live* figure references a workspace and one or more
 selections and updates when matching items, data, or project code change. A *self-contained* figure
@@ -330,6 +377,10 @@ process → create visualizer → map columns to axes → set collection axis an
 later as a representation of that model. Workflows support both concrete selections and live rules.
 A workflow records the whole session surface: if three visualizer windows are open, each with its own
 selection and state, replaying the workflow reopens all three.
+Restoring this surface restores definitions and retained results. It does not repeat instrument
+commands or other external effects. Local-variable capture for scientific debugging needs an
+explicit execution/capture mechanism in addition to pipeline-stage inspection; source lookup alone
+does not recover values from completed calls.
 
 Open design questions: whether a self-contained figure stores a data snapshot, only rendered marks, or
 both; how live figures degrade when the source project is unavailable; and whether figure annotations
@@ -350,6 +401,12 @@ summaries, running processors, creating visualizers, modifying visualizer state,
 exporting data, querying cache state, and showing logs. Commands are inspectable so an agent can
 discover what is possible. Agent readiness does not require the agent to operate the GUI: the GUI is
 for humans; the command/workspace model is for scripts and agents.
+
+An agent-created headless analysis must be attachable to the GUI, or reopenable from saved work,
+with its code, available intermediate results, and figure definitions visible. Establish this on
+the public Julia API first. MCP and CLI wrap those capabilities; they do not define a second
+workspace model or require browser automation. Reproducing missing results still requires retained
+input and compatible code/environment references.
 
 ## 10. Python Packaging
 
@@ -372,9 +429,11 @@ types, processing pipelines, visualizers, UI windows, templates, examples, and d
 depends on `DataBrowserAPI` (to register behavior), on `DataBrowserGUI` if it adds windows, and on
 `DataBrowserPlots` if it adds Makie-based visualizers.
 
-The base app makes these packages valuable by providing common infrastructure for file browsing,
-caching, data inspection, plotting, UI layout, export, command execution, logging, workspace state,
-and agent access. A good analysis package feels like a specialized app built on the general toolkit;
+The base app makes these packages valuable by providing common infrastructure for source access,
+communication workers and connection lifecycle, recording, caching, data inspection, plotting, UI
+layout, export, command execution, logging, workspace state, and agent access. Domain packages define
+instrument protocols and scientific procedures; they do not each rebuild the communication runtime.
+A good analysis package feels like a specialized app built on the general toolkit;
 users can install, inspect, modify, and compose it with other packages.
 
 An analysis package is **not** a project: it is reusable, data-free behavior. A user does XPS work by
@@ -384,12 +443,18 @@ keeping trust high.
 
 ## 12. Caching and Persistence
 
-**The cache belongs to the project, not the workspace.** Its identity is a function of the project's
-definitions + the data + the parameters, never a workspace instance and never merely "what the last
-scan saw." That is what lets it survive closing and reopening, and lets GUI, REPL, Python, and agent
-interfaces share the same work. Because a project's code can change while a workspace is live, the
-project definition carries a version/fingerprint, and cache identity = project-definition fingerprint
-+ data identity + parameters.
+**The cache belongs to the project, not the workspace.** A stable project identifies its storage.
+Each derived result is valid for particular input references, relevant code/environment revisions,
+and parameters. This lets results survive closing and reopening and lets GUI, REPL, Python, and agent
+interfaces share work. A code edit invalidates affected derived results, not the identity or only
+recorded copy of their source input. Conservative invalidation within a known stage boundary is a
+valid first implementation; selective reuse is the target.
+
+**Recorded input and derived cache have different retention rules.** Non-repeatable input must be
+retained when recording is promised, or explicitly reported as unavailable. Derived-result eviction
+must not silently cause another physical measurement. These policies may share storage machinery;
+they do not require unrelated cache backends. The retained boundary determines which later code
+edits can be recomputed. One source's ability to change over time does not establish its replayability.
 
 DuckDB is used where it fits — metadata, indexes, tabular summaries, cache catalogs, provenance
 records, queryable results — without forcing all scientific data into tables. It should be
@@ -408,11 +473,12 @@ thing the GUI observes and mutates through the same operations available to Juli
 
 | State | Owner | Persistence |
 |---|---|---|
-| Workspace state | Workspace object | Recomputed from source, cache, and source metadata. |
+| Workspace state | Workspace object | Restored from saved definitions, retained input/results, and source metadata; missing non-repeatable input is explicit. |
 | Data cache | Cache layer | DuckDB (+ side files) outside the source root; keyed by project. |
+| Recorded source input | Source/storage contract, coordinated by the workspace | Explicit recording/retention policy; never deleted by clearing derived results. |
 | GUI state | Browser window | Mostly transient; per-dataset state in `databrowser.toml`. App-wide prefs TBD with project-file persistence. |
-| Item annotations | Source root | Hand-editable tags, notes, coordinates, spatial positions. |
-| Workflow state | Workflow model | Saved workspace file, replayable from GUI or API. |
+| Item annotations | Project storage | Hand-editable tags, notes, coordinates, spatial positions; a remote source need not have a writable root. |
+| Workflow state | Workspace, saved through public operations | Julia/tab files and result references, usable from GUI or API. |
 | Figure state | Figure / workflow model | Produced from workflows or exported separately. |
 
 Normal project persistence is a small text project file plus generated cache. Export/archive
@@ -445,8 +511,9 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
 - **Rust.** Not a near-term plan. Possibly useful later for low-level components, packaging helpers,
   file watchers, binary protocols, or performance kernels. A full backend rewrite only makes sense if
   the Julia runtime became the main blocker.
-- **GPU acceleration.** Operator-based: built-in operations gain CPU, threaded, distributed, and GPU
-  implementations where appropriate. Could be interesting and high-risk/high-reward work.
+- **Broader computation acceleration.** Built-in operations may gain threaded, distributed, or GPU
+  implementations where appropriate. Responsive default visualization is already a core requirement;
+  it must not wait for acceleration of arbitrary project calculations.
 - **Editable figure bundles.** A strong long-term direction: a saved figure should contain more than
   pixels — figure state, data snapshots or enough data access information, visualizer identity,
   package versions, annotations, layout, and enough provenance to reopen and modify it.
@@ -468,8 +535,9 @@ The concrete, current split is [roadmap.md](roadmap.md). The longer product arc:
    Python-side loaders and processors; keep the interface high-level and coarse-grained.
 6. **Analysis packages.** Define the extension-package interface and build one or two serious domain
    packages (XPS, ellipsometry) as proof points.
-7. **Agent support.** Add an MCP layer over the same commands; prioritize inspection, command
-   discovery, data summaries, plot creation, exports, and reproducible execution.
+7. **Agent transport.** Add an MCP layer over the same commands; prioritize inspection, command
+   discovery, data summaries, plot creation, exports, and reproducible execution. Public API parity
+   and headless-to-GUI use are requirements of the earlier command and persistence work.
 8. **Packaging.** Produce a reliable bundled GUI app; evaluate PackageCompiler, app bundlers, and
    selective `juliac` use for smaller headless components.
 9. **Long-term protocol evaluation.** Once the command model is stable, evaluate an internal protocol,
@@ -480,7 +548,11 @@ The concrete, current split is [roadmap.md](roadmap.md). The longer product arc:
 - **Too generic to feel useful.** Countered by making the generic plotter genuinely good and building
   real analysis packages early.
 - **Arbitrary callbacks defeating inspection/caching/replay.** Countered with progressive metadata,
-  command logging, data summaries, and optional structure around callbacks.
+  command logging, data summaries, explicit repeatability/retention contracts, and optional structure
+  around callbacks. Logging cannot make an irreversible effect replayable.
+- **Premature source assumptions.** Establish identity, recovery, recording, and result-availability
+  requirements early. Defer complete streaming transports and instrument drivers, not the rules
+  that keep ordinary views independent of those implementations.
 - **Over-investing in language parity too early.** Julia stays the full-power extension language
   near-term; Python gets a high-quality wrapper; other languages wait for the command model and
   possible protocol to settle.

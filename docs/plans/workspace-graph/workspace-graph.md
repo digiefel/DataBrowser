@@ -7,6 +7,11 @@ compatibility with the current index, work graph, or cache ledger.
 This is the work-graph redesign of roadmap 0.2.3 and most of that release.
 Check items when the work actually does them.
 
+The catalog cutover is complete (see [Order of work](#order-of-work)); some target behavior and
+follow-up storage work below remain unimplemented. The section describing the former engine is
+historical context. Source recovery and shared view execution must also follow
+[Scientific workspace: analysis and acquisition](../scientific-workspace.md).
+
 Detailed plans:
 
 - [Node states](01-node-states.md): stage validity, running jobs, failures, revisions, and output
@@ -188,6 +193,9 @@ the loaded payload.
 
 A plot, inspector, or REPL call is a requester of `(key, stage)`, not a
 node in the catalog. The requester is what makes a path interactive.
+Future view transforms can have tracked workspace results without turning drawing windows into
+catalog rows. Their scientific inputs/results must exist headlessly; their presentation remains a
+requester. The precise extension of the current fixed-stage catalog is still open.
 
 ### Push, pull, jobs
 
@@ -343,7 +351,7 @@ Payloads stay in Cache, including the existing memory store of live Julia
 items if we still want it. The graph does not see it. Requesting a fresh
 process stage is a payload read; a miss falls through to pull.
 
-## What the code does today
+## Implementation before the catalog cutover
 
 The catalog and the jobs are already two objects, but freshness is a third,
 and creating work still has to look at all three.
