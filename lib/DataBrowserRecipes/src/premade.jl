@@ -23,13 +23,15 @@ _read_delimited(file::SourceFile, options::NamedTuple)::DataFrame =
     CSV.read(file.filepath, DataFrame; options...)
 
 """
-    register_csv!(project, [kind]; extensions, read_options, callbacks...) -> project
+    register_csv!(project, [kind]; extensions, read_options, label, callbacks...) -> project
 
 Register delimited text files as items, one item per file.
 
-`detect` matches by file extension (case-insensitively, `[".csv"]` by default) and `read` parses
-with CSV.jl into a `DataFrame`. Every other keyword is an ordinary `register_item!` callback and is
-forwarded untouched, so a premade recipe is a starting point rather than a different kind of thing:
+`detect` matches by file extension (case-insensitively, `[".csv"]` by default), `read` parses
+with CSV.jl into a `DataFrame`, and the default `label` is the filename, including its extension.
+Supply a `label=(data, metadata) -> ...` callback to customize it, or `label=nothing` to use the
+item ID. Every other keyword is an ordinary `register_item!` callback and is forwarded untouched,
+so a premade recipe is a starting point rather than a different kind of thing:
 
 ```julia
 register_csv!(project, :sweep;
@@ -50,6 +52,7 @@ function register_csv!(
     kind::Symbol;
     extensions::AbstractVector{<:AbstractString}=[".csv"],
     read_options::NamedTuple=NamedTuple(),
+    label=(_data, metadata) -> metadata[:filename],
     kwargs...,
 )::Project
     normalized = String[lowercase(extension) for extension in extensions]
@@ -58,6 +61,7 @@ function register_csv!(
         kind;
         detect=source_item -> _has_extension(source_item, normalized),
         read=source_item -> _read_delimited(source_item, read_options),
+        label=label,
         kwargs...,
     )
 end

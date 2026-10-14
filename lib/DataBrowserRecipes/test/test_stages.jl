@@ -40,6 +40,15 @@ end
         item = only(expand(project, file, read(project, source, file)))
         @test item_data(item).x == [1, 3]
         @test item_data(item).y == [2, 4]
+        @test label(project, item) == file.filename
+
+        register_csv!(project; label=(_, meta) -> splitext(meta[:filename])[1])
+        renamed = only(expand(project, file, read(project, source, file)))
+        @test label(project, renamed) == splitext(file.filename)[1]
+        @test id(renamed) == id(item)
+
+        register_csv!(project; label=nothing)
+        @test label(project, item) == id(item)
     end
 end
 
