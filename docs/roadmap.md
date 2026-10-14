@@ -10,9 +10,8 @@ automatic live analysis, native visualization, and agent/API use share the exist
 Streaming implementations can arrive later; recovery, retention, and source-independent data-access
 rules must guide the work already under way.
 
-The proposed dependency order for current work is: finish result publication/availability, expose
-shared headless analysis/view definitions, and
-build tabs/debugging and responsive visualizers. Streaming-source recovery and acquisition controls
+The proposed dependency order for current work is: expose shared headless analysis/view
+definitions, and build tabs/debugging and responsive visualizers. Streaming-source recovery and acquisition controls
 are later work behind the same data-access boundary, not prerequisites for those visualizers.
 Visualization measurements and one serious domain-package proof belong alongside that work. Version headings
 below remain the existing release organization, not a strict dependency order. Detailed APIs and
@@ -163,10 +162,9 @@ Decisions taken during the audit:
 - [ ] Give stage outputs exact publication references and preserve metadata by producing stage.
   Separate recorded outcome from payload availability. Reuse valid downstream results after
   upstream eviction; reconstruct resident and restored values with the same metadata.
-- [ ] Publish payloads, metadata and completion as one accepted update across all stages. Coordinate
-  buffered overlays and transactional flush, check revisions at acceptance, and validate output
-  publications on restore. Include metadata-only collection-process output; remove the split
-  stage-specific storage/completion calls.
+- [ ] Check two guarantees: a stage counts as done only after its data and metadata are stored, and
+  a result left half-stored by a crash is computed again on reopening. Views may show a mix of
+  older and newer stage outputs, marked as not final; storing all stages in one step is not needed.
 - [x] Replace one source's output through one Cache operation, `replace_source_output!`. Core
   supplies the earlier item ids and the new items; Cache deletes the earlier items with their
   results, stores the new ones and records the expand stage.
@@ -179,7 +177,7 @@ Decisions taken during the audit:
   that already started when opening fails; `close_cache_db!` reports every exception.
 
 Target interface for the remaining cache work: lifecycle/flush and storage diagnostics; bulk restore;
-exact-reference payload reads/checks; complete result writes; source identity, removal and output
+exact-reference payload reads/checks; source identity, removal and output
 replacement; and explicit invalidation supplied by Core. Core normalizes records and extracts
 payloads. Cache receives storage data, never a live workspace or user source object. Cache owns
 encoding, buffering and persistence, not dependency discovery or recomputation policy. Prepare
@@ -187,8 +185,7 @@ expensive encoding outside the workspace lock, then check the existing job revis
 prepared update during publication. Discovery, successful empty interpretation and deletion remain
 separate operations. Outcome validity and payload availability remain separate facts.
 
-The order is lifecycle cleanup, one backend, output references, coordinated result publication,
-then source replacement. Retain the existing index and scheduler interfaces. Source metadata belongs
+The order is lifecycle cleanup, one backend, output references, then source replacement. Retain the existing index and scheduler interfaces. Source metadata belongs
 to Sources; code fingerprinting belongs to cache identity. Validate storage changes with fixed
 workloads, completed disk writes, cache reads and process memory measurements.
 

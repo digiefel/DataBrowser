@@ -69,8 +69,8 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
             figure
         end,
         draw=function (_workspace, items, _figure)
-            all(item -> label(typeof(item)) === :trace && haskey(metadata(item), :peak), items) ||
-                error("plot did not receive analyzed trace items")
+            # A plot draws whatever results are latest; items may not be analyzed yet.
+            all(item -> label(typeof(item)) === :trace, items) || error("plot did not receive trace items")
             axis = content(_figure[1, 1])
             empty!(axis)
             for item in items
