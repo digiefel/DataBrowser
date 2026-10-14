@@ -201,14 +201,15 @@ DataBrowser's own functions are left out: the stage roots name the methods of th
 function extensions(world::UInt)
     known = @lock LOCK EXTENSIONS[]
     known !== nothing && first(known) == world && return last(known)
-    walk = Walk(world, IdDict{Any,Nothing}(), Pair{String,String}[], String[])
+    walk = Walk(world)
     Base.visit(Core.methodtable) do method
         changeable(method.module) || return
         library(method) || return
         # A replaced method stays in the table; keep only the methods of this world.
         live = Base._methods_by_ftype(method.sig, -1, world)
-        live !== nothing && any(match -> match.method === method, live) && enter!(walk, method)
+        live !== nothing && any(match -> match.method === method, live) && follow!(walk, method)
     end
+    finish!(walk)
     found = (walk.parts, walk.untracked)
     @lock LOCK EXTENSIONS[] = world => found
     return found
@@ -258,11 +259,57 @@ databrowser(mod::Module)::Bool = startswith(String(nameof(Base.moduleroot(mod)))
 # The walk
 # ---------------------------------------------------------------------------
 
-struct Walk
+"""
+A walk of the code reachable from some roots. It keeps what is still to follow in a list instead of
+recursing, so that its depth does not depend on how deep the code goes. Each step remembers the step
+that reached it: a step that fails names the way from a root to it.
+"""
+mutable struct Walk
     world::UInt
     seen::IdDict{Any,Nothing}
     parts::Vector{Pair{String,String}}
     untracked::Vector{String}
+    # Each a thing to follow and the index in `steps` of the step that reached it, 0 for a root.
+    pending::Vector{Tuple{Any,Int}}
+    steps::Vector{Tuple{Any,Int}}
+    step::Int
+end
+Walk(world::UInt) = Walk(world, IdDict{Any,Nothing}(), Pair{String,String}[], String[], [], [], 0)
+
+"""The methods of a callable type, to follow."""
+struct MethodsOf
+    F::Type
+end
+
+follow!(walk::Walk, @nospecialize(x))::Nothing = (push!(walk.pending, (x, walk.step)); nothing)
+
+"""Follow everything pending. A step that fails is left out, and the code is marked as not tracked."""
+function finish!(walk::Walk)::Nothing
+    while !isempty(walk.pending)
+        x, from = pop!(walk.pending)
+        push!(walk.steps, (x, from))
+        walk.step = length(walk.steps)
+        try
+            x isa Method ? enter!(walk, x) : x isa MethodsOf ? visit_methods!(walk, x.F) : visit!(walk, x)
+        catch error
+            push!(walk.untracked, "could not follow $(way(walk)): $(sprint(showerror, error))")
+            @debug "Could not follow code" exception=(error, catch_backtrace())
+        end
+    end
+    walk.step = 0
+    return nothing
+end
+
+"""The names on the way from a root to the current step, such as `Main.f → Main.TABLE`."""
+function way(walk::Walk)::String
+    names = String[]
+    i = walk.step
+    while i != 0
+        x, i = walk.steps[i]
+        x isa Method && push!(names, string(x.module, '.', x.name))
+        x isa GlobalRef && push!(names, string(x.mod, '.', x.name))
+    end
+    return join(reverse!(unique!(names)), " → ")
 end
 
 """
@@ -275,16 +322,16 @@ is left out: the roots also name the project's methods that it forwards to.
 When the walk fails, the revision is `"not tracked"` and gives the reason.
 """
 function code_revision(roots::AbstractVector)::CodeRevision
-    walk = Walk(Base.get_world_counter(), IdDict{Any,Nothing}(), Pair{String,String}[], String[])
+    walk = Walk(Base.get_world_counter())
     try
-        for root in roots
-            root isa Method ? (changeable(root.module) && enter!(walk, root)) : visit!(walk, root)
-        end
+        foreach(root -> !(root isa Method) || changeable(root.module) ? follow!(walk, root) : nothing, roots)
+        finish!(walk)
         parts, untracked = extensions(walk.world)
         append!(walk.parts, parts)
         append!(walk.untracked, untracked)
     catch error
-        # The walk recurses deeply: its backtrace would be long and say nothing to the user.
+        # Each step catches its own errors: this is an error of the walk itself.
+        @error "Could not follow the code of a stage" exception=(error, catch_backtrace()) maxlog=1
         return CodeRevision("not tracked", [], ["the code could not be followed: $(sprint(showerror, error))"])
     end
     push!(walk.parts, "Julia and package versions" => environment())
@@ -299,7 +346,7 @@ function enter!(walk::Walk, method::Method)::Nothing
     found = content(method)
     push!(walk.parts, found.name => found.hash)
     append!(walk.untracked, found.untracked)
-    foreach(name -> visit!(walk, name), found.names)
+    foreach(name -> follow!(walk, name), found.names)
     return nothing
 end
 
@@ -321,21 +368,15 @@ function visit!(walk::Walk, @nospecialize(x))::Nothing
             # TODO: a global that is reassigned, or constant data that is changed in place, changes
             # no method, so the check sees it only with the next definition.
             isconst(owner, x.name) || push!(walk.untracked, "reads the global $(owner).$(x.name)")
-            hash = try
-                value_hash(walk, value)
-            catch error
-                push!(walk.untracked, "could not read the value of $(owner).$(x.name): $(sprint(showerror, error))")
-                "unknown"
-            end
-            push!(walk.parts, "$(owner).$(x.name)" => hash)
+            push!(walk.parts, "$(owner).$(x.name)" => value_hash(walk, value))
         else
-            visit!(walk, value)
+            follow!(walk, value)
         end
     elseif x isa Type
         T = Base.unwrap_unionall(x)
         T isa DataType && visit_type!(walk, T)
     elseif x isa Function
-        visit_methods!(walk, typeof(x))
+        follow!(walk, MethodsOf(typeof(x)))
         # A closure carries the values it captured.
         if !Base.issingletontype(typeof(x)) && !haskey(walk.seen, x)
             walk.seen[x] = nothing
@@ -367,7 +408,7 @@ function visit_methods!(walk::Walk, @nospecialize(F::Type))::Nothing
         end
         @lock LOCK lists[F] = found
     end
-    foreach(method -> enter!(walk, method), found)
+    foreach(method -> follow!(walk, method), found)
     return nothing
 end
 
@@ -377,12 +418,12 @@ const TYPES = IdDict{DataType,Pair{String,String}}()
 function visit_type!(walk::Walk, T::DataType)::Nothing
     haskey(walk.seen, T) && return nothing
     walk.seen[T] = nothing
-    foreach(parameter -> visit!(walk, parameter), T.parameters)
+    foreach(parameter -> follow!(walk, parameter), T.parameters)
     # Constructors, also those that extend `Base` functions for this type.
-    visit_methods!(walk, Type{T})
+    follow!(walk, MethodsOf(Type{T}))
     # The methods of one function or closure. An abstract type, such as a field `::Function`, would
     # bring in every function: the value in the field is followed instead.
-    T <: Function && return isconcretetype(T) ? visit_methods!(walk, T) : nothing
+    T <: Function && return isconcretetype(T) ? follow!(walk, MethodsOf(T)) : nothing
     changeable(parentmodule(T)) || return nothing
     fields = isstructtype(T) && !isabstracttype(T) ? collect(zip(fieldnames(T), fieldtypes(T))) : []
     part = @lock LOCK get(TYPES, T, nothing)
@@ -392,8 +433,8 @@ function visit_type!(walk::Walk, T::DataType)::Nothing
         @lock LOCK TYPES[T] = part
     end
     push!(walk.parts, part)
-    visit!(walk, supertype(T))
-    foreach(((_, type),) -> visit!(walk, type), fields)
+    follow!(walk, supertype(T))
+    foreach(((_, type),) -> follow!(walk, type), fields)
     return nothing
 end
 
@@ -425,7 +466,7 @@ function value_hash!(walk::Walk, context, @nospecialize(x), seen::IdDict{Any,Not
         put("<deep>")
     elseif x isa Function || x isa Type
         put(normal(x isa Type ? x : typeof(x)))
-        x isa Type ? visit!(walk, x) : visit_methods!(walk, typeof(x))
+        follow!(walk, x isa Type ? x : MethodsOf(typeof(x)))
         if x isa Function && !Base.issingletontype(typeof(x))
             for i in 1:nfields(x)
                 isdefined(x, i) && value_hash!(walk, context, getfield(x, i), seen, depth + 1)

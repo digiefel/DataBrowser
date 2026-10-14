@@ -185,9 +185,10 @@ items and collections run the stage again. Collections ask `has_stage` again, so
 defined later gets its jobs. The same code defined again, as when a script runs again, changes
 nothing. On reopening, a saved result counts only if the revision it was computed with is current.
 
-The revision does not see a mutable value changed in place. It warns about code it cannot follow: a
-non-constant global, a call through `eval`, `invokelatest` or a computed name, and a generated
-function (`research_notes/code-change-detection/design.md`).
+The revision does not see a mutable value changed in place, nor a change to a macro: the functions
+that use a macro keep their old expansion until they are defined again. It warns about code it
+cannot follow: a non-constant global, a call through `eval`, `invokelatest` or a computed name, a
+generated function, and a value it cannot read; the warning names the way from the stage to it (`research_notes/code-change-detection/design.md`).
 
 Jobs run in this order: what a view asks for, then source items, then the background work on items,
 then the background work on collections. The data that `expand` gives each item stays in memory
