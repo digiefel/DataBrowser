@@ -3,9 +3,10 @@
 #
 # TODO: these are the actions a script will call (roadmap 0.6). They take the browser state for now.
 
-using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, id, label, prepare!, settings
+using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, id, item_data, label, metadata, prepare!, settings
 import DataBrowserAPI: output
 using DataBrowserCore.Catalogs: ItemKey
+using DataBrowserCore.CodeRevisions: code_revision
 import DataBrowserCore.Workspace
 
 """The items `input` names now, without those the workspace no longer has."""
@@ -100,7 +101,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, nothing, "")
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), nothing, nothing, "")
     push!(state.windows, window)
     return window
 end
@@ -135,6 +136,58 @@ function input!(state::BrowserState, window::Window, input::WindowInput)::Nothin
 end
 
 """
+    transforms() -> Vector{GlobalRef}
+
+The functions a window can pass its value through: those the project defines in `Main`, sorted by
+name.
+"""
+function transforms()::Vector{GlobalRef}
+    # TODO: also the functions of packages the project develops (`Pkg.develop`).
+    found = GlobalRef[]
+    for name in names(Main; all=true)
+        (startswith(String(name), '#') || name in (:eval, :include)) && continue
+        isdefinedglobal(Main, name) || continue
+        f = getglobal(Main, name)
+        f isa Function && !(f isa Type) && parentmodule(f) === Main && push!(found, GlobalRef(Main, name))
+    end
+    return sort!(found; by=ref -> ref.name)
+end
+
+"""
+    transform!(window, transform)
+
+Pass the value of `window` through the function named by `transform`, a `GlobalRef`, before the
+visualizer shows it; `nothing` shows the value unchanged.
+
+The function receives the value of the input. When the input gives items, it receives all of them
+at once if it has a method for them, `f(items)`, and otherwise is called once for each item with
+its data and metadata, `f(data, metadata)`, which gives a vector of the results.
+"""
+function transform!(window::Window, transform::Union{Nothing,GlobalRef})::Nothing
+    window.transform = transform
+    window.stamp = nothing
+    return nothing
+end
+
+# The value of the input passed through `f`, as `transform!` describes.
+function transformed(f, value)
+    value isa AbstractVector{<:AbstractDataItem} && !applicable(f, value) &&
+        return [f(item_data(item), metadata(item)) for item in value]
+    return f(value)
+end
+
+# The code revision of the transform of `window`. It is computed again only after a definition.
+function code(window::Window)::String
+    window.transform === nothing && return ""
+    world = Base.get_world_counter()
+    if first(window.code) != world
+        f = Base.invokelatest(getglobal, window.transform.mod, window.transform.name)
+        window.code = (world, code_revision(Any[f]).hash)
+    end
+    return last(window.code)
+end
+
+"""
     visualizer!(window, visualizer)
 
 Show the value of `window` with another visualizer.
@@ -161,20 +214,35 @@ function setting!(window::Window, name::Symbol, value)::Nothing
 end
 
 """
-Bring `window` up to date: read its input and, when the input gives another value than before, hand
-the value to the visualizer. A failure is kept in `window.error` for the window to show.
+Bring `window` up to date: read its input and, when the input gives another value than before or
+the code of its transform changed, pass the value through the transform and hand the result to the
+visualizer. A failure is kept in `window.error` for the window to show.
 """
 function refresh!(state::BrowserState, window::Window)::Nothing
     input = window.input
     # The other window may not be visible. Its own drawing then does not bring it up to date.
     input isa WindowOutput && refresh!(state, source(input, state))
-    current = stamp(input, state)
+    # TODO: the transform runs in the frame, as loading the items does. Run both in the background,
+    # and show the previous value as not final meanwhile.
+    current = (stamp(input, state), window.transform, code(window))
     current == window.stamp && return nothing
     window.stamp = current
     visualizer = window.visualizer
     ctx = WindowContext(window.id, state.workspace)
     try
         window.value = value(input, state)
+        transform = window.transform
+        if transform !== nothing
+            try
+                f = Base.invokelatest(getglobal, transform.mod, transform.name)
+                window.value = Base.invokelatest(transformed, f, window.value)
+            catch err
+                @error "Window: $(transform.name) failed" exception=(err, catch_backtrace())
+                summary = first(split(sprint(showerror, err), '\n'; limit=2))
+                window.error = "$(transform.name) failed: $summary. See the console for full details."
+                return nothing
+            end
+        end
         if applicable(prepare!, visualizer, window.value, ctx)
             prepare!(visualizer, window.value, ctx)
             window.error = ""

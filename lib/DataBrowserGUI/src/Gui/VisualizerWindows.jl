@@ -41,6 +41,20 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
     end
     ig.SetItemTooltip("Where the window takes its value from: the selection, or another window.")
 
+    ig.SameLine()
+    ig.AlignTextToFramePadding()
+    ig.TextDisabled("through")
+    ig.SameLine()
+    through = window.transform === nothing ? "nothing" : String(window.transform.name)
+    if ig.BeginCombo("##transform", through, ig.ImGuiComboFlags_WidthFitPreview)
+        ig.Selectable("nothing", window.transform === nothing) && transform!(window, nothing)
+        for ref in transforms()
+            ig.Selectable(String(ref.name), ref == window.transform) && transform!(window, ref)
+        end
+        ig.EndCombo()
+    end
+    ig.SetItemTooltip("A function of the project that the value passes through before it is shown.")
+
     # TODO: "Live" for the output of another window: when off, keep the value the window has now.
     window.input isa WindowOutput && return nothing
     ig.SameLine()

@@ -80,7 +80,12 @@ mutable struct Window
     id::String
     visualizer::AbstractVisualizer
     input::WindowInput
-    # The value the input gave last, and what tells whether the input gives another value now.
+    # The function the value of the input passes through before the visualizer, by name, so that a
+    # redefinition is used at once; `nothing` passes the value on unchanged.
+    transform::Union{Nothing,GlobalRef}
+    # The world and the code revision of the transform when they were last read.
+    code::Tuple{UInt,String}
+    # The value the window shows, and what tells whether the input gives another value now.
     # `stamp` is `nothing` until the visualizer is given the value.
     value::Any
     stamp::Any
