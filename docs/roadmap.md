@@ -565,7 +565,39 @@ the table as a first-class view.
     axes.
   - [ ] The functions a script writes a description with. Everything the builder does is one of
     them.
-- [ ] Add concise scalar, metadata, and nested-value inspectors.
+- [x] Let a window pass its value through a function of the project, chosen by name in the
+  header after "through". The function receives all items when it has a method for them, and
+  otherwise the data and metadata of each item. The window computes again when the function's code
+  changes. A "Value" visualizer shows any value as the REPL prints it.
+- [ ] Compute a window's value in the background, and show the previous value as not final.
+- [x] Plots drawn with ImPlot, which draw at once and compile nothing: "Line plot" of a vector, or
+  of `x => y` or `(x, y)`; "Histogram" of a vector; "Bar chart" of named numbers. Each visualizer
+  takes only the values of its own shape; a transform turns other values into that shape.
+- [ ] More ImPlot plots: scatter, a 2D histogram of two vectors, a heatmap of a matrix.
+- [ ] A great table:
+  - [ ] Numbers right-aligned, with the decimal points lined up in each column; one format per
+    column chosen from its values, with an exponent shared by the column when values span many
+    orders of magnitude.
+  - [ ] `missing`, `NaN` and `nothing` dimmed; booleans as checkmarks; dates in one fixed format.
+  - [ ] The element type under each column name.
+  - [ ] Long text cut with "…", and the full text on hover.
+  - [ ] Columns fitted to their content when the data changes.
+  - [ ] Hide and reorder columns; freeze the first column; an optional row-number column.
+  - [ ] Sort by a column, and by several with Shift-click.
+  - [ ] A search box that filters rows; later a filter for each column.
+  - [ ] A summary of a column on hover over its header: minimum, maximum, mean, number missing,
+    number of distinct values.
+  - [ ] Optional cell colors on a numeric column, from a color scale.
+  - [ ] A cell holding a vector shows its type and length; clicking it opens it in a new window.
+  - [ ] One row, such as a `NamedTuple`, shown as a table of names and values.
+  - [ ] Copy with the header row, or as CSV or Markdown; export to a CSV file.
+- [ ] More visualizers:
+  - [ ] Inspector: a tree that expands nested values (`NamedTuple`, `Dict`, structs, vectors).
+  - [ ] Metadata table: one row for each selected item, one column for each metadata key.
+  - [ ] Summary: one row for each column of a table, with type, minimum, maximum, mean and
+    number missing.
+  - [ ] Image: PNG and JPEG files.
+  - [ ] Text and Markdown, for strings and notes.
 - [ ] Let users open several independent visualizer windows over different live selections.
 - [ ] Register every built-in visualizer by defining its type, as any package does.
 
