@@ -43,7 +43,8 @@ function work!(workspace::Workspace)::Nothing
             while job !== nothing
                 changed!(workspace)
                 try
-                    run!(workspace, job)
+                    # The latest world, so a worker runs project code defined after it started.
+                    Base.invokelatest(run!, workspace, job)
                 catch error
                     # A job that already finished failed while it saved its result.
                     job.finished ?

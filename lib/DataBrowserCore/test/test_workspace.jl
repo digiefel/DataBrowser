@@ -231,6 +231,23 @@ end
     @test_throws ErrorException W.rebuild_cache!(ws)
 end
 
+struct LateProject <: AbstractProject end
+DataBrowserAPI.project_name(::LateProject) = "late"
+DataBrowserAPI.read(::LateProject, source::EngineSource, item::EngineSourceItem) =
+    DataBrowserAPI.read(TypedProject(), source, item)
+
+@testset "a method defined after the workspace opens is used" begin
+    ws = W.open_workspace(LateProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
+    try
+        settled(ws)
+        @eval DataBrowserAPI.process(::LateProject, i::EngineItem) =
+            EngineItem(id(i), (x=i.data.x .* 10,), metadata(i))
+        @test item_data(only(W.materialize_items(ws, ["only"]))).x == [10]
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
 @testset "a read may return the item itself" begin
     ws = W.open_workspace(TypedProject(), EngineSource("source", 1, false); cache=false)
     try
