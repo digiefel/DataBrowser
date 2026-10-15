@@ -79,6 +79,11 @@ properties for all of them:
 - A property that an item or collection does not have is empty, such as `data` for a collection.
   Items and collections can be selected together.
 
+In code, the selection is a `NamedTuple` of vectors, one vector for each property, which Tables.jl
+reads as a table. A property is a plain vector, such as `selection.chip`, and `Tables.rows(selection)`
+goes through the selected items one at a time without copying. The `data` vector reads an item's
+data only when the vector is indexed, so a large selection costs nothing until its data is used.
+
 The user's own data keeps its own form: the `data` of an item can be a table, a matrix, or any
 other value. In the browser's own wording, a selected thing is never called a row and a property is
 never called a column, since the user's data often has rows and columns of its own.
@@ -99,8 +104,15 @@ reaches a visualizer through a transform. Every value can be shown, at least as 
 ### Many values at once
 
 A visualizer that shows one value of a property, such as the `data` of one item, also shows that
-property for every selected item. The window arranges the values, and the user switches the
-arrangement with one menu, "show as":
+property for every selected item. The window's header names the property after "of", and offers
+only the properties the visualizer accepts. The default is `data`, so clicking an item shows its
+data. The window arranges the values, and the user switches the arrangement with one menu,
+"show as":
+
+```
+[Line plot ▾] of [data ▾]   show as [Overlay ▾]
+```
+
 
 ```
  Grid            One at a time          Overlay
@@ -115,6 +127,10 @@ arrangement with one menu, "show as":
 - **One at a time** draws one value and steps through the others.
 - **Overlay** draws all values in one place. It is offered only where the visualizer can draw
   several values together, such as lines.
+
+Only the properties of a selection are arranged. A value that a transform returns is one value, even
+a vector: the visualizer reads it by dispatch and by its own settings, for example a line plot draws
+a vector of `x => y` pairs as several lines.
 
 Settings that compare values, such as axis limits and color limits, are shared by all copies. Other
 properties can label, order, or color the copies, for example color by `chip`. One selected item is
@@ -646,13 +662,9 @@ canvas, is not part of the history.
 
 ## Open design work
 
-- **Collections in the table.** Whether a collection has a property that holds its own items, as a
-  table of the same kind, and whether the window marks which entries are collections.
-- **Choosing the property to show.** How the window offers a visualizer for one property of the
-  selection next to the visualizers for the whole table.
-- **Vectors from transforms.** Whether a vector returned by a transform is arranged like the values
-  of a property, labelled by position.
-- **The name of the table type** in code, and the functions that read it.
+- **Collections in the table.** What selecting a collection adds to the table besides its items:
+  the collection's own metadata and results, and in which properties. Until this is decided, a
+  selected collection gives the items below it.
 
 - **Shared execution and source contracts.** Resolve the foundational issues and proof sequence in
   [Scientific workspace: analysis and acquisition](scientific-workspace.md) before assuming that
