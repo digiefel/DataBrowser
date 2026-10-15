@@ -48,72 +48,78 @@ views are built on.
 
 ## How a view works
 
-A **view** is a window that shows a selection of items. It has three parts:
+A **view** is a window in the browser. It has three parts:
 
-1. a **selection**: the items the view shows;
-2. a **transform**: a function that turns those items into the value to show;
-3. a **visualizer**: the code that draws that value.
+1. an **input**: the selection in the tree, a fixed set of items, or the output of another view;
+2. a **transform**: an optional function, chosen by name, that turns the input's value into another
+   value;
+3. a **visualizer**: the code that draws the value.
 
-For example, a user selects three measurement cycles. They open a view with the table visualizer
-and see the cycles' data. They open a second view on the same selection with a line plot. They open
-a third with a histogram and the transform `[metadata(i)[:temperature] for i in items]`, and see
-the distribution of temperatures across the three cycles.
-
-```mermaid
-flowchart LR
-    sel["Selection<br/>live or fixed"] -->|items| tr["Transform<br/>default: the input unchanged"]
-    tr -->|any value| vis["Visualizer<br/>draws the value"]
+```
+ input ──► value ──through f (optional)──► value ──► visualizer
 ```
 
-### Selection
+### The value of a selection
 
-A selection is either **live** or **fixed**. A live selection follows the browser's current
-selection, or the output of another view the user connected it to (see
-[Interaction between views](#interaction-between-views)). A fixed selection stays the same until the
-user changes it. The browser handles both kinds. A visualizer does not know which kind its view has.
+A selection is a table. It has one entry for each selected item or collection, and the same
+properties for all of them:
+
+```
+ id   label   wafer  chip   device  data          fit
+ 17   IV_A    W1     C3     D2      300×2 table
+ 18   IV_B    W1     C3     D3      300×2 table
+ 4    C3      W1                                  (R_c=…, R_sh=…)
+ 5    C4      W1                                  (R_c=…, R_sh=…)
+```
+
+- `id` and `label` name each selected item or collection.
+- Each level of the collection tree is a property, named after the level, for example `wafer` and
+  `chip`.
+- Each metadata key is a property, and so is `data`.
+- A property that an item or collection does not have is empty, such as `data` for a collection.
+  Items and collections can be selected together.
+
+The user's own data keeps its own form: the `data` of an item can be a table, a matrix, or any
+other value. In the browser's own wording, a selected thing is never called a row and a property is
+never called a column, since the user's data often has rows and columns of its own.
 
 ### Transform
 
-A transform is plain Julia code that runs over the view's inputs and returns any value. Each input
-has a name, shown on its pin in the graph, and each name is a keyword argument of the transform:
-
-```julia
-# A view with the inputs `cycles` and `window`, as the browser runs its transform
-function (; cycles, window = (-Inf, Inf))
-    [fit_line(item_data(c), window) for c in cycles]
-end
-```
-
-The user edits the inputs graphically and the body as text (see
-[Code next to views](#code-next-to-views)). A new view has one input, `items`, and the body
-`items`: the visualizer receives the selected items themselves. An input that is not connected
-takes its default. A required input that is not connected gives Julia's own error in the view.
-
-A transform's body always lives in the graph, which is saved as a Julia file, the workspace file
-(see [Saving the workspace](#saving-the-workspace)). Opening a view and changing its
-transform needs no other file, and the body can still be edited in any editor. Reuse is calling a
-function: a body that grows becomes a call such as `fit_in_window(; cycles, window)` to a function
-in the project's own code. A transform never moves between places.
-
-A transform uses the same functions as any other code that reads items: `item_data(item)`,
-`metadata(item)`, `label(item)`, and any function the project defines. Viewing metadata needs no
-separate mechanism. A transform that collects metadata produces a value like any other, and any
-visualizer can show it. This relies on `metadata(item)` being the only source of an item's metadata.
-
-A transform is a computation over a set of items, like a collection `process` or `analyze`. It runs
-when a view needs it, over whatever items the view shows, and its result is not stored in the cache.
+A transform is a function of the project. It receives the value of the input as it is, and it
+returns any value: a table with more properties, a vector, one number. Work on each selected item is
+written by the user, for example with `map`. The window computes the value again when the selection
+changes or when the transform's code changes.
 
 ### Visualizer
 
-A visualizer receives the transform's result and draws it. It decides how to read the value by
-dispatch on the value's type. The same value can have several valid readings: a dictionary of named
-vectors is a table to the table visualizer and a set of labelled traces to a line plot. This is
-intended. The user chooses the reading by choosing the visualizer, or by changing the transform.
+A visualizer draws one kind of value, and dispatch decides which values it accepts: a line plot
+accepts a vector or a pair of vectors, a histogram a vector, the table any table. Any other value
+reaches a visualizer through a transform. Every value can be shown, at least as text.
 
-Every value must be viewable, for example by an inspector that accepts any value and shows its
-structure. Most visualizers accept only what they are written for, and only those that accept a
-value are offered for it. When a visualizer cannot draw a value it accepted, it fails, and the view
-shows the error.
+### Many values at once
+
+A visualizer that shows one value of a property, such as the `data` of one item, also shows that
+property for every selected item. The window arranges the values, and the user switches the
+arrangement with one menu, "show as":
+
+```
+ Grid            One at a time          Overlay
+ ┌───┬───┬───┐   ┌───────────┐          ┌───────────┐
+ │ V │ V │ V │   │     V     │          │  V, V, V  │
+ ├───┼───┼───┤   │           │          │  in one   │
+ │ V │ V │ V │   └───────────┘          │  place    │
+ └───┴───┴───┘   ◀ 4 of N ▶             └───────────┘
+```
+
+- **Grid** draws one copy of the visualizer for each value, labelled by its other properties.
+- **One at a time** draws one value and steps through the others.
+- **Overlay** draws all values in one place. It is offered only where the visualizer can draw
+  several values together, such as lines.
+
+Settings that compare values, such as axis limits and color limits, are shared by all copies. Other
+properties can label, order, or color the copies, for example color by `chip`. One selected item is
+an arrangement of one copy, so a function written for a selection keeps working when one item is
+selected.
 
 ## Who writes what
 
@@ -639,6 +645,14 @@ made becomes one step when the mouse is released. The camera, meaning position a
 canvas, is not part of the history.
 
 ## Open design work
+
+- **Collections in the table.** Whether a collection has a property that holds its own items, as a
+  table of the same kind, and whether the window marks which entries are collections.
+- **Choosing the property to show.** How the window offers a visualizer for one property of the
+  selection next to the visualizers for the whole table.
+- **Vectors from transforms.** Whether a vector returned by a transform is arranged like the values
+  of a property, labelled by position.
+- **The name of the table type** in code, and the functions that read it.
 
 - **Shared execution and source contracts.** Resolve the foundational issues and proof sequence in
   [Scientific workspace: analysis and acquisition](scientific-workspace.md) before assuming that
