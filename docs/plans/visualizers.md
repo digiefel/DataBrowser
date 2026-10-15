@@ -79,10 +79,12 @@ properties for all of them:
 - A property that an item or collection does not have is empty, such as `data` for a collection.
   Items and collections can be selected together.
 
-In code, the selection is a `NamedTuple` of vectors, one vector for each property, which Tables.jl
-reads as a table. A property is a plain vector, such as `selection.chip`, and `Tables.rows(selection)`
-goes through the selected items one at a time without copying. The `data` vector reads an item's
-data only when the vector is indexed, so a large selection costs nothing until its data is used.
+In code, `select(workspace, ids)` gives such a table, a `Selection`, and changes nothing. The
+workspace also has one shared selection: `select!(workspace, ids)` changes it, `selection(workspace)`
+reads it, and the browser follows it. A property is a plain vector, such as `selection.chip`, and
+`for x in selection` goes through the selected items with `x.chip`, `x.data`. An item's data is read
+only when it is used, so a large selection costs nothing until its data is used. A `Selection` is a
+Tables.jl table.
 
 The user's own data keeps its own form: the `data` of an item can be a table, a matrix, or any
 other value. In the browser's own wording, a selected thing is never called a row and a property is

@@ -429,11 +429,11 @@ on it with a few verbs.
 - [ ] Draw a registered plot with one call that takes its label and the items and returns the
   figure the GUI shows.
 - [ ] Save a figure as PDF through a CairoMakie extension of `DataBrowserPlots`.
-- [x] Build a tidy table of items with `DataFrame(workspace)` and `DataFrame(workspace, items)`,
-  through an extension that loads with DataFrames: one row per item, with the id, the label, the
-  item type, the collection, the tags, and one column per metadata field. `DataFrame(workspace,
-  collection)` gives the items in and below a collection.
-- [ ] Tidy table: one column per collection level.
+- [ ] `select(workspace, ids)` gives the items as a table, as described in
+  [plans/visualizers.md](plans/visualizers.md#the-value-of-a-selection), and changes nothing.
+  `select!(workspace, ids)` changes the workspace's one shared selection, and `selection(workspace)`
+  reads it. The browser follows the shared selection, so a REPL command changes what the browser
+  shows without a second command for the browser.
 - [ ] Move GUI actions onto those operations and keep GUI-only state limited to rendering and local
   interaction.
 - [ ] Make repeated project setup, workspace operations, and view changes idempotent where users
