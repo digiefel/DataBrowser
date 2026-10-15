@@ -1,6 +1,8 @@
 module Workspace
 
 using Printf
+import StructArrays, Tables
+using StructArrays: LazyRows, StructArray
 using DataBrowserAPI: @timed_dbg
 using DataBrowserSources
 using CancellationTokens:
@@ -443,6 +445,7 @@ include("Workspace/Tags.jl")
 include("Workspace/Operations.jl")
 include("Workspace/Status.jl")
 include("Workspace/DataAccess.jl")
+include("Workspace/Selection.jl")
 include("Workspace/Processing.jl")
 include("Workspace/MemoryDiagnostics.jl")
 
