@@ -77,7 +77,7 @@ end
 
 """Materialize exact public IDs; check data outside the timed call."""
 function materialize(ws, ids)
-    Workspace.select_items!(ws, ids)
+    Workspace.select!(ws, ids)
     return Workspace.materialize_items(ws, ids)
 end
 function validate_items(items, ids, rows)

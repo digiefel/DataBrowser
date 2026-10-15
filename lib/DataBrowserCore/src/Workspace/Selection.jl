@@ -112,3 +112,14 @@ function select(workspace::Workspace, items::Vector{ItemKey})::Selection
     columns = Tuple(identity.(properties[name]) for name in names)
     return Selection(StructArray(NamedTuple{(names..., :data)}((columns..., ItemData(workspace, items)))))
 end
+
+"""
+    selection(workspace) -> Selection
+
+The workspace's selection, which [`select!`](@ref) and the browser change, as a [`Selection`](@ref).
+Selected ids that the workspace has no item for are left out.
+"""
+function selection(workspace::Workspace)::Selection
+    ids = @lock workspace.lifecycle_lock copy(workspace.selection.item_ids)
+    return select(workspace, ItemKey[key for key in item.(Ref(workspace), ids) if key !== nothing])
+end

@@ -43,7 +43,7 @@ function _check_cache_error!(
     return nothing
 end
 
-"""Select and reveal every item produced by one source item."""
+"""Select every item produced by one source item. The browser reveals them, as for any `select!`."""
 function select_source_item!(
     state::BrowserState,
     source_item_id::AbstractString,
@@ -54,8 +54,7 @@ function select_source_item!(
         item for item in Workspace.items(workspace)
         if Workspace.source_item_id(workspace, item) == source_item_id]
     isempty(items) && return false
-    Workspace.select_items!(workspace, items)
-    _reveal_selected_items!(state)
+    Workspace.select!(workspace, items)
     return true
 end
 

@@ -21,10 +21,12 @@ end
 
 function check_items(ws, session, expected_peaks)
     ids = sort(query_items(ws))
-    select_items!(session, ids)
-    items = materialize_items(ws)
+    select!(ws, ids)
+    # The browser follows a selection made through the workspace.
+    wait_for(() -> session.state.selection_revision == ws.selection.revision, session)
+    items = materialize_items(ws, ids)
     sort([metadata(item)[:peak] for item in items]) == expected_peaks || error("Incorrect analysis results")
-    read_item_data(ws) == item_data.(items) || error("Selection did not deliver the selected payloads")
+    collect(selection(ws).data) == item_data.(items) || error("Selection did not deliver the selected payloads")
     table, warnings = merge_item_tables(items)
     isempty(warnings) || error("Table preparation skipped selected data")
     y = findfirst(==("y"), table.columns)

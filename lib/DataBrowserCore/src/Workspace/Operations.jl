@@ -173,26 +173,22 @@ function close_workspace!(workspace::Workspace)::Nothing
 end
 
 """
-    select_items!(workspace, items)
+    select!(workspace, ids)
 
-Replace the selection with `items`: item keys, public item ids, or data items whose ids are in the
-workspace. An empty list clears the selection.
+Make the items with the public `ids` the workspace's selection. A browser open on the workspace
+follows it, and reveals the items. An empty list clears the selection. [`selection`](@ref) reads it.
 """
-function select_items!(workspace::Workspace, items::AbstractVector)::Nothing
-    selected = String[
-        item isa ItemKey ? id(workspace, item) :
-        item isa AbstractString ? item :
-        item isa AbstractDataItem ? id(item) :
-        error("Cannot select a $(typeof(item)); pass item keys, item ids, or data items")
-        for item in items]
-    missing = filter(id -> item(workspace, id) === nothing, selected)
-    isempty(missing) || error(
-        "Cannot select $(length(missing)) item id(s) that are not in this workspace: " *
-        join(missing, ", "),
-    )
-    workspace.selection.item_ids = selected
+function select!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Nothing
+    unknown = filter(id -> item(workspace, id) === nothing, ids)
+    isempty(unknown) || error("The workspace has no item with the id(s) ", join(unknown, ", "))
+    @lock workspace.lifecycle_lock begin
+        workspace.selection.item_ids = collect(String, ids)
+        workspace.selection.revision += 1
+    end
     return nothing
 end
+select!(workspace::Workspace, items::AbstractVector{ItemKey})::Nothing =
+    select!(workspace, [id(workspace, item) for item in items])
 
 source_scan_running(workspace::Workspace)::Bool =
     workspace.scan.state in (:discovering, :canceling)

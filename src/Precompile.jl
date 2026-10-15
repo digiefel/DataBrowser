@@ -64,7 +64,8 @@ function _precompile_engine(
     _precompile_workspace(project) do workspace, items
         selected(workspace, items)
         Workspace.workspace_status(workspace)
-        select_items!(workspace, collect(Workspace.items(workspace)))
+        select!(workspace, collect(Workspace.items(workspace)))
+        selection(workspace)
         ids = Workspace.query_items(workspace)
         Cache.read_payload(workspace.cache.db, ids; stage=DataBrowserAPI.SOURCE_EXPAND)
         Cache.read_payload(workspace.cache.db, ids; stage=DataBrowserAPI.ITEM_PROCESS)
@@ -79,7 +80,7 @@ function _precompile_engine(
         try
             session = open_browser(workspace; wait=false, window_start=:hidden)
             wait_browser_ready(session)
-            select_items!(session, collect(Workspace.items(workspace)))
+            select!(workspace, collect(Workspace.items(workspace)))
             drawn = session.state.performance.frame
             while session.state.performance.frame < drawn + 30 && !istaskdone(session.task)
                 sleep(0.01)

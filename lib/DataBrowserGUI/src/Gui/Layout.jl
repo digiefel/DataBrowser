@@ -554,6 +554,11 @@ function _run_browser(
             if workspace isa Workspace.Workspace
                 _check_source_identity!(state, workspace)
                 _check_cache_error!(state, workspace)
+                # Reveal a selection made through the workspace, from the REPL or by an action.
+                if workspace.selection.revision != state.selection_revision
+                    state.selection_revision = workspace.selection.revision
+                    _reveal_selected_items!(state)
+                end
             end
             exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
                 return :imgui_exit_loop

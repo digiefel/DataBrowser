@@ -465,13 +465,13 @@ end
                 @test metadata(only(W.materialize_items(ws, ["1"])))[:total] == 4
                 @test project.reads == (cache ? 1 : 2)
                 seen = W.generation(ws)
-                W.select_items!(ws, ["1", "2"])
+                W.select!(ws, ["1", "2"])
                 W.modify_workspace!(ws; source=EngineSource("source", 1, false))
                 settled(ws)
                 @test W.generation(ws) != seen
                 @test W.query_items(ws) == ["1"]
                 # The item that the source still produces stays selected.
-                @test id.(W.materialize_items(ws)) == ["1"]
+                @test W.selection(ws).id == ["1"]
                 @test item_data(only(W.materialize_items(ws, ["1"]))).x == [2]
                 W.modify_workspace!(ws; source=EngineSource("source", 0, false))
                 settled(ws)

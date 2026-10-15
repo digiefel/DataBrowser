@@ -203,6 +203,8 @@ Base.@kwdef mutable struct BrowserState
     item_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
     reset_project_filters::Bool = false
     scroll_to_collection::Union{Nothing,Workspace.CollectionPath} = nothing
+    # The revision of the workspace selection the browser last revealed.
+    selection_revision::Int = 0
     scroll_to_item_id::Union{Nothing,String} = nothing
     # How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,
     # `:only` hides the items without it.

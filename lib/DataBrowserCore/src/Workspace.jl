@@ -159,10 +159,14 @@ What is selected in a workspace: items by public id, and each collection by its
 [`CollectionPath`](@ref) (the root is the empty path). Both stay the same when
 the workspace is closed and opened again, so a selection may name rows the workspace does not have
 yet or no longer has.
+
+`revision` rises with each [`select!`](@ref), so that a browser can tell a selection it did not
+make itself, and reveal it.
 """
 Base.@kwdef mutable struct WorkspaceSelection
     collections::Vector{Vector{Tuple{String,String}}} = Vector{Tuple{String,String}}[]
     item_ids::Vector{String} = String[]
+    revision::Int = 0
 end
 
 """
