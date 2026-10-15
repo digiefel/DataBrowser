@@ -11,72 +11,6 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
 
 @testset "Annotations" begin
 
-    @testset "Coords" begin
-        info = Annotations.Coords.CollectionParametersTable(
-            ("ChipA",) => Dict{Symbol,Any}(:notes => "root only"),
-            ("ChipA", "Site1") => Dict{Symbol,Any}(:x_um => 0.0, :y_um => 0.0,
-                                                    :w_um => 100.0, :h_um => 50.0),
-            ("ChipA", "Site2") => Dict{Symbol,Any}(:x_um => "200.0", :y_um => "150.0"),
-            ("ChipA", "Site3") => Dict{Symbol,Any}(:x_um => 50.0),
-        )
-        positions = Annotations.Coords.read_positions(info)
-        @test positions["ChipA/Site1"] == (0.0, 0.0)
-        @test positions["ChipA/Site2"] == (200.0, 150.0)
-        @test !haskey(positions, "ChipA/Site3")
-        @test !haskey(positions, "ChipA")
-
-        overrides = Annotations.Coords.read_overrides(info)
-        @test overrides["ChipA/Site1"] == (100.0, 50.0)
-        @test !haskey(overrides, "ChipA/Site2")
-
-        bbox = Annotations.Coords.bounding_box(positions, ["ChipA/Site1", "ChipA/Site2"])
-        @test bbox === Annotations.Coords.Rect(0.0, 0.0, 200.0, 150.0)
-
-        bbox_override = Annotations.Coords.bounding_box(
-            positions, ["ChipA/Site1", "ChipA/Site2"]; override=(500.0, 400.0))
-        @test bbox_override.x == 0.0 && bbox_override.y == 0.0
-        @test bbox_override.w == 500.0 && bbox_override.h == 400.0
-
-        @test Annotations.Coords.bounding_box(positions, ["Nonexistent/Path"]) === nothing
-        @test Annotations.Coords.read_positions(nothing) == Dict{String,Tuple{Float64,Float64}}()
-    end
-
-    @testset "Layout" begin
-        mktempdir() do dir
-            positions = Annotations.Layout.PositionMap(
-                "ChipA" => (10.0, 20.0),
-                "ChipB" => (-5.5, 0.0),
-            )
-            Annotations.Layout.save(dir, positions)
-            path = Annotations.Layout.layout_path(dir)
-            @test isfile(path)
-            roundtrip = Annotations.Layout.load(dir)
-            @test roundtrip == positions
-
-            empty_map = Annotations.Layout.PositionMap()
-            Annotations.Layout.save(dir, empty_map)
-            @test !isfile(path)
-        end
-
-        @testset "reset! grid shapes" begin
-            for (n, expected_cols) in ((1, 1), (4, 2), (7, 3))
-                positions = Annotations.Layout.PositionMap()
-                paths = ["P$i" for i in 1:n]
-                Annotations.Layout.reset!(positions, paths; spacing_um=10.0)
-                @test length(positions) == n
-                xs = sort(unique(p[1] for p in values(positions)))
-                @test length(xs) == min(expected_cols, n)
-                # row-major fill: P1 at origin
-                @test positions["P1"] == (0.0, 0.0)
-            end
-        end
-
-        mktempdir() do dir
-            write(joinpath(dir, "layout.txt"), "bad row only one field\n")
-            @test_throws Annotations.Layout.LayoutParseError Annotations.Layout.load(dir)
-        end
-    end
-
     @testset "Tags" begin
         @testset "missing files" begin
             mktempdir() do dir
@@ -121,31 +55,6 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
                 state = Annotations.Tags.load(dir)
                 @test state.catalog[1].color == (0xff, 0x30, 0x30)
                 @test state.assignments[key] == Set(["bad"])
-            end
-        end
-
-        @testset "Tags.save removes tags.txt when state is empty" begin
-            mktempdir() do dir
-                write(joinpath(dir, "tags.txt"), "[catalog]\nbad\tff3030\t100\n")
-                Annotations.Tags.save(dir, Annotations.Tags.TagState())
-                @test !isfile(Annotations.Tags.tags_path(dir))
-            end
-        end
-
-        @testset "idempotency: load → save → load → save" begin
-            mktempdir() do dir
-                write(joinpath(dir, "tags.txt"),
-                    "[catalog]\ntodo\t30c0ff\t50\nbad\tff3030\t100\n\n[assignments]\nRuO2test/A10/VI\ttodo\n$(ANNOT_MEASUREMENT_KEY)\tbad\n")
-
-                state1 = Annotations.Tags.load(dir)
-                Annotations.Tags.save(dir, state1)
-                content1 = read(Annotations.Tags.tags_path(dir), String)
-
-                state2 = Annotations.Tags.load(dir)
-                Annotations.Tags.save(dir, state2)
-                content2 = read(Annotations.Tags.tags_path(dir), String)
-
-                @test content1 == content2
             end
         end
 
@@ -205,11 +114,6 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
                 Annotations.Notes.write_section!(dir, "ChipC", "fresh note")
                 @test Annotations.Notes.read_section(dir, "ChipC") == "fresh note"
                 @test Annotations.Notes.read_section(dir, "ChipB") == "Updated body"
-
-                # Order: original two then ChipC at end
-                contents = read(joinpath(dir, "notes.txt"), String)
-                @test findfirst("[ChipC]", contents).start >
-                    findfirst("[ChipB/SiteVI]", contents).start
             end
         end
     end

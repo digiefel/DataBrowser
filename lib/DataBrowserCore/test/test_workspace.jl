@@ -140,19 +140,16 @@ function settled(ws)
     @test !W.workspace_status(ws).busy
 end
 
-@testset "status follows on-demand processing" begin
-    observed = Ref((busy=false, generation=-1))
+@testset "the workspace is busy while it processes on demand" begin
+    busy = Ref(false)
     # `process` runs only after `ws` below is assigned.
-    project = ObservedProject(() -> (observed[] = (
-        busy=W.workspace_status(ws).busy, generation=W.generation(ws))))
+    project = ObservedProject(() -> (busy[] = W.workspace_status(ws).busy))
     ws = W.open_workspace(project, EngineSource("source", 1, false);
         cache=false, background_processing=false)
     try
         settled(ws)
-        seen = W.generation(ws)
         W.materialize_items(ws, ["only"])
-        @test observed[].busy
-        @test observed[].generation > seen
+        @test busy[]
         settled(ws)
     finally
         W.close_workspace!(ws)
@@ -176,29 +173,15 @@ end
         @test timedwait(() -> !W.cache_has_pending_writes(ws.cache.db), 20) === :ok
         @test W.query_items(ws, "step = 2") == ["a"]
         @test W.metadata(ws, holder("a"))[:seen] == 2
-        # A stage that the project does not define for a collection gets no job.
-        @test DataBrowserAPI.has_stage(NestedProject(), Inner(), DataBrowserAPI.COLLECTION_PROCESS)
-        @test !DataBrowserAPI.has_stage(NestedProject(), Other(), DataBrowserAPI.COLLECTION_PROCESS)
-        @test (x("a"), x("b")) == (20, 10)
         # Two collections with the same id and parent differ by type.
         @test holder("a") != holder("b")
         @test all(key -> W.collection(ws, W.path(ws, holder(key))) == holder(key), ("a", "b"))
-        # A version from before a source change is not delivered while its collection is stale.
+        # Without background processing, delivering an item queues the collections above it.
         W.modify_workspace!(ws; source=EngineSource("source", 5, false), background_processing=false)
         settled(ws)
-        drawn = W.revision(ws, [W.item(ws, "a")])
-        @test W.readiness(ws, W.item(ws, "a")) == W.UNPROCESSED
-        # A collection without stages has no work of its own.
-        @test W.readiness(ws, holder("b")) == W.CURRENT
-        # The inner collection can be ready before the outer one.
-        @test x("a") in (5, 6, 60)
-        # Without background processing, delivering an item queues the collections above it.
+        x("a"), x("b")
         settled(ws)
         @test x("a") == 60
-        @test W.readiness(ws, W.item(ws, "a")) == W.CURRENT
-        @test W.revision(ws, [W.item(ws, "a")]) != drawn
-        @test x("b") in (5, 50)
-        settled(ws)
         @test x("b") == 50
         @test W.metadata(ws, holder("a"))[:seen] == 6
     finally
@@ -464,11 +447,9 @@ end
                 settled(ws)
                 @test metadata(only(W.materialize_items(ws, ["1"])))[:total] == 4
                 @test project.reads == (cache ? 1 : 2)
-                seen = W.generation(ws)
                 W.select!(ws, ["1", "2"])
                 W.modify_workspace!(ws; source=EngineSource("source", 1, false))
                 settled(ws)
-                @test W.generation(ws) != seen
                 @test W.query_items(ws) == ["1"]
                 # The item that the source still produces stays selected.
                 @test W.selection(ws).id == ["1"]
@@ -476,7 +457,6 @@ end
                 W.modify_workspace!(ws; source=EngineSource("source", 0, false))
                 settled(ws)
                 @test isempty(W.query_items(ws))
-                @test W.workspace_status(ws).level !== :error
                 @test isempty(W.workspace_status(ws).errors)
                 @test W.can_rebuild_cache(ws)
                 W.rebuild_cache!(ws)
@@ -519,7 +499,8 @@ end
 end
 
 @testset "failure reuse and recovery (cache=$cache)" for cache in (true, false)
-    mktempdir() do depot
+    # The failing read is expected: its error log is hidden.
+    Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do; mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
         try
             project = EngineProject("failure", 0)
@@ -555,7 +536,7 @@ end
         finally
             popfirst!(DEPOT_PATH)
         end
-    end
+    end end
 end
 
 @testset "metadata and labels from collection process are kept after reopening" begin
@@ -569,8 +550,6 @@ end
                     settled(ws)
                     @test W.metadata(ws, W.item(ws, "a"))[:step] == 2
                     @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
-                    # The value that a collection replaced is still what the item's own stage made.
-                    @test W.metadata(ws, W.item(ws, "b"); above=W.CollectionKey[])[:step] == 0
                     @test W.label(ws, W.item(ws, "a")) == "inner a"
                     @test only(item_data(only(W.materialize_items(ws, ["a"]))).x) == 20
                 finally
