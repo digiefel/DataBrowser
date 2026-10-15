@@ -35,24 +35,35 @@ Tables.istable(::Type{<:Selection}) = true
 Tables.columnaccess(::Type{<:Selection}) = true
 Tables.columns(selection::Selection) = StructArrays.components(getfield(selection, :table))
 
-counted(selection::Selection) = length(selection) == 1 ? "1 item" : "$(length(selection)) items"
-Base.show(io::IO, selection::Selection) = print(io, "Selection of ", counted(selection))
+Base.show(io::IO, selection::Selection) =
+    print(io, "Selection of ", length(selection), length(selection) == 1 ? " item" : " items")
 
-# A table of the properties other than `id` and `data`, as many items as fit; `data` is never read.
+# Printed like a data frame. `data` is never read to print it, and shows as "…".
+const TABLE_FORMAT = TextTableFormat(; @text__no_horizontal_lines, @text__no_vertical_lines,
+    horizontal_line_after_column_labels = true)
+
 function Base.show(io::IO, ::MIME"text/plain", selection::Selection)
-    names = collect(propertynames(selection))
-    print(io, counted(selection), "; properties ", join(names, ", "))
-    shown = filter(name -> name ∉ (:id, :data), names)
-    count = min(length(selection), max(displaysize(io)[1] - 5, 1))
-    cells = [[string(name) for name in shown]]
-    for index in 1:count
-        push!(cells, [first(sprint(print, getproperty(selection, name)[index]; context=io), 24) for name in shown])
+    columns = Tables.columns(selection)
+    names = collect(keys(columns))
+    shown = NamedTuple{Tuple(names)}(Tuple(name === :data ? fill("…", length(selection)) : columns[name] for name in names))
+    types = map(names) do name
+        name === :data && return ""
+        T = eltype(columns[name])
+        nonmissingtype(T) === T ? string(T) : string(nonmissingtype(T), "?")
     end
-    widths = [maximum(textwidth(line[column]) for line in cells) for column in eachindex(shown)]
-    for line in cells
-        print(io, "\n ", rstrip(join(rpad.(line, widths), "  ")))
-    end
-    count < length(selection) && print(io, "\n ⋮")
+    numbers = [name !== :data && nonmissingtype(eltype(columns[name])) <: Real for name in names]
+    pretty_table(io, shown;
+        alignment = [number ? :r : :l for number in numbers],
+        alignment_anchor_regex = [index => [r"\."] for index in findall(numbers)],
+        alignment_anchor_fallback = :r,
+        column_label_alignment = :l,
+        column_labels = [string.(names), types],
+        fit_table_in_display_horizontally = true,
+        fit_table_in_display_vertically = true,
+        new_line_at_end = false,
+        reserved_display_lines = 2,
+        table_format = TABLE_FORMAT,
+        vertical_crop_mode = :middle)
     return nothing
 end
 
