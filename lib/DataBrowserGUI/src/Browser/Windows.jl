@@ -3,7 +3,7 @@
 #
 # TODO: these are the actions a script will call (roadmap 0.6). They take the browser state for now.
 
-using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, id, item_data, label, metadata, prepare!, settings
+using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, id, label, prepare!, settings
 import DataBrowserAPI: output
 using DataBrowserCore.Catalogs: ItemKey
 using DataBrowserCore.CodeRevisions: code_revision
@@ -159,21 +159,13 @@ end
 Pass the value of `window` through the function named by `transform`, a `GlobalRef`, before the
 visualizer shows it; `nothing` shows the value unchanged.
 
-The function receives the value of the input. When the input gives items, it receives all of them
-at once if it has a method for them, `f(items)`, and otherwise is called once for each item with
-its data and metadata, `f(data, metadata)`, which gives a vector of the results.
+The function receives the value of the input as it is, for example all selected items, and returns
+the value to show.
 """
 function transform!(window::Window, transform::Union{Nothing,GlobalRef})::Nothing
     window.transform = transform
     window.stamp = nothing
     return nothing
-end
-
-# The value of the input passed through `f`, as `transform!` describes.
-function transformed(f, value)
-    value isa AbstractVector{<:AbstractDataItem} && !applicable(f, value) &&
-        return [f(item_data(item), metadata(item)) for item in value]
-    return f(value)
 end
 
 # The code revision of the transform of `window`. It is computed again only after a definition.
@@ -235,7 +227,7 @@ function refresh!(state::BrowserState, window::Window)::Nothing
         if transform !== nothing
             try
                 f = Base.invokelatest(getglobal, transform.mod, transform.name)
-                window.value = Base.invokelatest(transformed, f, window.value)
+                window.value = Base.invokelatest(f, window.value)
             catch err
                 @error "Window: $(transform.name) failed" exception=(err, catch_backtrace())
                 summary = first(split(sprint(showerror, err), '\n'; limit=2))

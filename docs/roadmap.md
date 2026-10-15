@@ -566,9 +566,8 @@ the table as a first-class view.
   - [ ] The functions a script writes a description with. Everything the builder does is one of
     them.
 - [x] Let a window pass its value through a function of the project, chosen by name in the
-  header after "through". The function receives all items when it has a method for them, and
-  otherwise the data and metadata of each item. The window computes again when the function's code
-  changes. A "Value" visualizer shows any value as the REPL prints it.
+  header after "through". The function receives the window's value as it is, for example all
+  selected items. The window computes again when the function's code changes. A "Value" visualizer shows any value as the REPL prints it.
 - [ ] Compute a window's value in the background, and show the previous value as not final.
 - [x] Plots drawn with ImPlot, which draw at once and compile nothing: "Line plot" of a vector, or
   of `x => y` or `(x, y)`; "Histogram" of a vector; "Bar chart" of named numbers. Each visualizer

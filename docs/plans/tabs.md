@@ -74,13 +74,12 @@ exist. `project` and `workspace` come from the entry code that opens the browser
        …
    end
 
-   try_fitter(data, metadata) = fitter(data.time, data.current)
+   try_fitter(selection) = [fitter(x.data.time, x.data.current) for x in selection]
    ```
 
 4. The user adds a result window and chooses `try_fitter` in its menu. Each time the user selects
-   an item, the browser calls `try_fitter` with the data and the metadata of that item, and the
-   window shows what it returns. `analyze` receives the same two arguments today, so a function
-   tried this way can be registered unchanged.
+   an item, the browser calls `try_fitter` with the selection, as described in
+   [Visualizers](visualizers.md#the-value-of-a-selection), and the window shows what it returns.
 5. The user changes the function and saves. The function runs again on the selected item.
 
 ```

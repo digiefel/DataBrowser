@@ -2,7 +2,7 @@ using Test, DataBrowserGUI
 import DataBrowserAPI
 using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, settings
 using DataBrowserGUI.Browser: BrowserState, TableView, ValueView, LinePlotView, HistogramView, BarChartView, close_window!, open_window!, visualizers,
-    transform!, transformed, transforms, code
+    transform!, transforms, code
 
 struct Trace <: AbstractDataItem end
 
@@ -40,15 +40,10 @@ end
     @test occursin("r_contact = 1.5", view.text)
 end
 
-DataBrowserAPI.metadata(::Trace) = Dict(:gap => 2)
-count_traces(items::AbstractVector{<:AbstractDataItem}) = length(items)
-gap_of(data, metadata) = metadata[:gap] * only(data.x)
+count_traces(items) = length(items)
 
-@testset "a transform receives all items, or each item's data and metadata" begin
-    names = [ref.name for ref in transforms()]
-    @test :count_traces in names && :gap_of in names
-    @test transformed(count_traces, [Trace(), Trace()]) == 2
-    @test transformed(gap_of, [Trace(), Trace()]) == [2, 2]
+@testset "the functions of the project are offered as transforms" begin
+    @test :count_traces in [ref.name for ref in transforms()]
 end
 
 late_scale(x) = 2x
