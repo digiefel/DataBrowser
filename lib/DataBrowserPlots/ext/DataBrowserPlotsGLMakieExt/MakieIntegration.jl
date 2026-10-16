@@ -178,9 +178,10 @@ function _draw_axis_popup!(axis::Makie.Axis)::Nothing
     return nothing
 end
 
-"""Display a figure without changing the visible ranges of its two-dimensional axes."""
-function _display_figure!(screen, figure)
-    limits = [(axis, axis.targetlimits[]) for axis in figure.content if axis isa Makie.Axis]
+"""Display a figure, optionally keeping the visible ranges after a layer edit."""
+function _display_figure!(screen, figure; preserve_zoom::Bool=false)
+    limits = preserve_zoom ?
+        [(axis, axis.targetlimits[]) for axis in figure.content if axis isa Makie.Axis] : []
     display(screen, figure)
     for (axis, range) in limits
         axis.targetlimits[] = range
@@ -192,12 +193,14 @@ end
 Render one Makie figure as an interactive CImGui image.
 
 Screens are reused by `title_id`; replacing the figure preserves the OpenGL context.
+Set `preserve_zoom` when the figure carries axis ranges from a layer edit.
 """
 function MakieFigure(
     title_id::String,
     figure::GLMakie.Figure;
     auto_resize_x::Bool=true,
     auto_resize_y::Bool=false,
+    preserve_zoom::Bool=false,
 )::Bool
     ig.PushID(title_id)
     id = title_id
@@ -212,7 +215,7 @@ function MakieFigure(
             old_figure = imf.figure
             scene = Makie.get_scene(figure)
             scene.events.window_open[] = true
-            _display_figure!(imf.screen, figure)
+            _display_figure!(imf.screen, figure; preserve_zoom)
             empty!(old_figure)
             imf.figure = figure
             @debug "replaced figure for " id
@@ -224,7 +227,7 @@ function MakieFigure(
         MAKIE_CONTEXT[id] = ImMakieFigure(figure, screen, false, gl.GLuint(0), (0, 0), nothing)
         scene = Makie.get_scene(figure)
         scene.events.window_open[] = true
-        _display_figure!(screen, figure)
+        _display_figure!(screen, figure; preserve_zoom)
         @debug "created context for " id
     end
 

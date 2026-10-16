@@ -105,6 +105,8 @@ function draw_header!(view::FigureView, ctx)::Nothing
     return nothing
 end
 
+embed_figure(view::FigureView) = embed(view.figure, view.figure_id)
+
 function draw!(view::FigureView, ctx)::Nothing
     # The figure was built before the theme changed.
     view.figure === nothing || view.dark == DARK[] || build!(view, ctx)
@@ -121,7 +123,7 @@ function draw!(view::FigureView, ctx)::Nothing
     end
     view.figure isa Figure && inspect!(view.figure, view.inspect)
     Browser.@timed "makie_fig" begin
-        embed(view.figure, view.figure_id)
+        embed_figure(view)
     end
     return nothing
 end

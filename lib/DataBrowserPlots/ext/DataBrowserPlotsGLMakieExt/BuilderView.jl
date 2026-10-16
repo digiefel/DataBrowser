@@ -33,6 +33,8 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     stale::Bool = false
     # The columns on the axes of the last successful figure.
     axis_columns::Union{Nothing,Tuple{Symbol,Symbol}} = nothing
+    # Only layer edits carry the previous visible range through display.
+    preserve_zoom::Bool = false
     figure::Any = nothing
     dark::Bool = true
     figure_id::String = ""
@@ -110,6 +112,7 @@ function build!(view::BuilderView, ctx; preserve_zoom::Bool=false)::Nothing
             # Change the visible range, not the automatic limits used by Ctrl-click reset.
             axis.targetlimits[] = limits
         end
+        view.preserve_zoom = limits !== nothing
         view.axis_columns = axis_columns
         view.message = ""
     catch err
@@ -121,6 +124,9 @@ function build!(view::BuilderView, ctx; preserve_zoom::Bool=false)::Nothing
     end
     return nothing
 end
+
+embed_figure(view::BuilderView) = MakieFigure(view.figure_id, view.figure;
+    auto_resize_x=true, auto_resize_y=true, preserve_zoom=view.preserve_zoom)
 
 function draw!(view::BuilderView, ctx)::Nothing
     if view.table === nothing || isempty(view.columns)
