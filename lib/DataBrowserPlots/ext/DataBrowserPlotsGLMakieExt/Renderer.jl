@@ -5,8 +5,29 @@ import Tables
 using DataBrowserPlots: Layer, PlotDescription
 import DataBrowserPlots: figure
 
+"""Draw an unweighted straight-line least-squares fit for one group of finite x/y pairs."""
+function linearfit!(axis, x, y; kwargs...)
+    length(x) >= 2 || throw(ArgumentError("A straight-line fit needs at least two finite points."))
+    center_x, center_y = sum(x) / length(x), sum(y) / length(y)
+    dx = x .- center_x
+    spread = sum(abs2, dx)
+    spread > 0 || throw(ArgumentError("A straight-line fit needs at least two distinct x values."))
+    isfinite(spread) || throw(ArgumentError("The fit overflowed. Rescale the data before fitting."))
+    slope = sum(dx .* (y .- center_y)) / spread
+    order = sortperm(x)
+    fitted = center_y .+ slope .* dx[order]
+    all(isfinite, fitted) || throw(ArgumentError("The fit is not finite. Rescale the data before fitting."))
+
+    # Keep a numeric color column aligned with the sorted x values.
+    attributes = (; kwargs...)
+    if haskey(attributes, :color) && attributes.color isa AbstractVector
+        attributes = merge(attributes, (; color=attributes.color[order]))
+    end
+    return lines!(axis, x[order], fitted; attributes...)
+end
+
 # The Makie function that draws each mark.
-const MARKS = Dict{Symbol,Function}(:points => scatter!, :lines => lines!)
+const MARKS = Dict{Symbol,Function}(:points => scatter!, :lines => lines!, :linearfit => linearfit!)
 
 # The table is not specialized on: its type differs with its columns, and the figure of a table with
 # other columns must not compile this function again.

@@ -560,6 +560,7 @@ the table as a first-class view.
   - [x] The builder as a visualizer, "Plot builder", for the table data of the items. The
     description is shown as code to the right of the figure, one argument on each line, and every
     value is a menu. With several items, the column `item` names the item of each row.
+  - [x] Straight-line least-squares fits as layers, using the same x/y roles and grouping.
   - [ ] Roles and fixed values of one layer, and a control that adds an argument.
   - [ ] Edit on the figure: axis labels and the legend are menus, and a right-click on a mark
     changes its layer.

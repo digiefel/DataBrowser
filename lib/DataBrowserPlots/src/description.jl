@@ -13,11 +13,14 @@
 
 One layer of a plot: one kind of mark, drawn for the rows of a table.
 
-- `mark` is `:points` or `:lines`.
+- `mark` is `:points`, `:lines`, or `:linearfit` (a straight-line least-squares fit).
 - `roles` says which column plays which role in this layer, as `role => column` pairs. It adds to
   the roles of the [`PlotDescription`](@ref) and replaces those with the same name.
 - `fixed` gives the marks of this layer one value for all rows, as `attribute => value` pairs, for
   example `:linewidth => 2`. The attributes are those of the Makie plot that draws the mark.
+
+`:linearfit` uses the finite x/y pairs in each group. It needs at least two points with distinct
+x values.
 """
 struct Layer
     mark::Symbol
