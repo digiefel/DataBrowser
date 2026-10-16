@@ -525,7 +525,7 @@ the table as a first-class view.
   header and gives the value to the visualizer again when the user changes one.
 - [x] Make the registered plots a visualizer. One "Plot" visualizer shows the plots a project
   registered; the plot is a setting in the header. It replaces "Plot Area", "Detach" and the
-  detached plot windows. The browser opens one "Plot" window when it starts.
+  detached plot windows. No visualizer windows open automatically; choose one from `+ Window`.
 - [x] Replace the "Table Plot" window with the plot builder below, so that every window that shows
   items has the same header.
 - [x] Let a window take its input from another window. A visualizer says what its window passes
@@ -536,8 +536,7 @@ the table as a first-class view.
 - [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
   another window. Names for windows, so that the input menu can tell two tables apart.
 - [ ] Save the windows with the view, with the theme of the plots and the plot chosen for each
-  type of item. Until then a browser that opens again has one "Plot" window that follows the
-  selection.
+  type of item. Until then, choose the windows from `+ Window` whenever the browser opens.
 - [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
 - [ ] Update [plans/visualizers.md](plans/visualizers.md), which still describes a zoomable canvas,
   for windows, tabs and inputs.

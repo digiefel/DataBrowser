@@ -9,18 +9,11 @@ using .MakieImguiIntegration: MakieFigure, destroy_figure!
 """
 The Makie plotting extension registered with the `DataBrowserGUI` shell.
 
-One instance per browser opens the first "Plot" window and warms GLMakie before the first visible
-plot.
+One instance per browser warms GLMakie before the first visible plot.
 """
 Base.@kwdef mutable struct PlotsExtension <: Browser.GuiExtension
     runtime_warmed::Bool = false
     warmup_figure::Union{Nothing,Figure} = nothing
-end
-
-# TODO: once the windows are saved with the view, open this window only when none was saved.
-function Browser.init!(::PlotsExtension, state::Browser.BrowserState)
-    Browser.open_window!(state, PlotView())
-    return nothing
 end
 
 Browser.is_ready(ext::PlotsExtension, ::Browser.BrowserState) = ext.runtime_warmed

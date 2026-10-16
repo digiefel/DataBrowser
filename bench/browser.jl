@@ -1,4 +1,5 @@
 include("smoke_project.jl")
+using DataBrowserPlots
 using DataBrowserGUI: Browser, ItemTable, merge_item_tables
 using DataBrowserGUI.Browser: TimerOutputs
 
@@ -51,6 +52,11 @@ function browser_workload(root, opening, started_ns)
         # The benchmark must not take keyboard focus from the person at the machine.
         session = open_browser(workspace; wait=false, window_start=:background)
         wait_browser_ready(session)
+        # This workload exercises a registered plot; startup opens no visualizer windows.
+        lock(workspace.lifecycle_lock) do
+            plots = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
+            Browser.open_window!(session.state, plots.PlotView())
+        end
         opening_s = (time_ns() - started_ns) / 1e9
         finish_work(workspace)
         items = check_items(workspace, session, [4.0, 6.0, 9.0])
