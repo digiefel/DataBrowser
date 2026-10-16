@@ -49,6 +49,9 @@ Register or replace one item pipeline. `read` is the only required callback. Reg
 callbacks receive ordinary project data and metadata dictionaries; DataBrowser owns item identity
 and storage records internally.
 
+Returned metadata may be a dictionary, named tuple, single pair, or any iterable accepted
+by `Dict`. Keys are converted to symbols and values must be supported metadata values.
+
 `collection(data, metadata)` places the item in the collection tree. It returns a named tuple that
 names each level from the top down, such as `(wafer = metadata[:wafer], device = metadata[:device])`.
 Without it, the item goes where its source item is: for a directory source, the file's directories.

@@ -10,6 +10,26 @@ end
 DataBrowserAPI.id(f::RecipeFile) = basename(f.filepath)
 DataBrowserAPI.label(f::RecipeFile) = basename(f.filepath)
 
+@testset "metadata accepts dictionary-compatible callback results" begin
+    for result in (Dict(:length => 5), (; length=5), :length => 5,
+        [:length => 5], (:length => 5,), (("length", 5),),
+        (key => value for (key, value) in ((:length, 5),)))
+        project = define_project("metadata")
+        register_item!(project; read=_ -> (data=[1], metadata=result),
+            expand=(data, _) -> [(; data, metadata=result)],
+            analyze=(_, _) -> result)
+        file = RecipeFile("trace.dat")
+        item = only(expand(project, file, read(project, RecipeSource(), file)))
+        @test metadata(item)[:length] == 5
+        @test analyze(project, item) == Dict(:length => 5)
+    end
+    convert_metadata = DataBrowserAPI.metadata_dict
+    @test isempty(convert_metadata((;)))
+    @test isempty(convert_metadata(Pair[]))
+    @test convert_metadata(("length" => Int32(5),))[:length] === Int64(5)
+    @test_throws ArgumentError convert_metadata((; length=match(r"\d+", "5")))
+end
+
 @testset "registered callbacks implement the type API" begin
     project = define_project("recipe")
     register_item!(project, :trace;

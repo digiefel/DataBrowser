@@ -28,7 +28,14 @@ function metadata_value(value)::MetadataValue
     ))
 end
 
-"""Convert a symbol-keyed dictionary into a validated [`MetadataDict`](@ref)."""
+"""
+Convert a dictionary, named tuple, pair, or iterable accepted by `Dict` into a
+validated [`MetadataDict`](@ref). Keys are converted to symbols; values must be
+supported by [`metadata_value`](@ref).
+"""
+metadata_dict(values)::MetadataDict = metadata_dict(Dict(values))
+metadata_dict(values::NamedTuple)::MetadataDict = metadata_dict(pairs(values))
+metadata_dict(value::Pair)::MetadataDict = metadata_dict((value,))
 metadata_dict(dict::MetadataDict)::MetadataDict = dict
 function metadata_dict(dict::AbstractDict)::MetadataDict
     out = MetadataDict()
