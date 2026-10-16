@@ -75,7 +75,7 @@ end
 """
 Render the whole MAIN_TIMER tree as text with no cropping. TimerOutputs (via PrettyTables) crops to
 the IO's `displaysize` otherwise; a huge one prints every section and full width. `linechars` is
-`:ascii` for ImGui's font, `:unicode` for the clipboard.
+`:ascii` for plain separators, `:unicode` for box-drawing characters.
 """
 _timer_text(linechars::Symbol)::String =
     sprint(io -> TimerOutputs.print_timer(
@@ -99,7 +99,6 @@ function _render_timings_tab(state::BrowserState)::Nothing
     end
     ig.SameLine()
     if ig.Button("$ICON_COPY Copy")
-        # Copy the unicode tree — the paste target isn't limited to ImGui's ASCII-only font.
         ig.SetClipboardText(_timer_text(:unicode))
     end
     ig.SameLine()
@@ -109,9 +108,10 @@ function _render_timings_tab(state::BrowserState)::Nothing
     if isempty(MAIN_TIMER.inner_timers)
         ig.TextDisabled("No sections recorded yet.")
     else
-        # Reuse TimerOutputs' own tree rendering. linechars=:ascii keeps it inside ImGui's ASCII-only
-        # font: rules, the share bars, and microseconds all come out ASCII.
-        ig.TextUnformatted(rstrip(_timer_text(:ascii)))
+        # Reuse TimerOutputs' own tree rendering.
+        with_font(:code) do
+            ig.TextUnformatted(rstrip(_timer_text(:ascii)))
+        end
     end
 
     gi = performance.gl_info

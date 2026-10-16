@@ -1,5 +1,13 @@
-"""CImGui browser shell and panels."""
+"""
+CImGui browser shell and panels.
+
+Browser controls use the interface font. GUI components can use [`with_font`](@ref) to draw table
+content, printed values, or code with the code font, and then return to the interface font.
+"""
 module DataBrowserGUI
+
+include("Fonts.jl")
+export with_font
 
 include("TableModel.jl")
 include("Browser.jl")

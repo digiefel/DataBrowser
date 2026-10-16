@@ -1,5 +1,8 @@
 module Browser
 
+using ..DataBrowserGUI: with_font, _load_fonts!, _CURRENT_FONTS
+import Base.ScopedValues
+
 include("Browser/timing.jl")
 include("Browser/Extensions.jl")
 include("Browser/State.jl")

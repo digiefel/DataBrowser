@@ -95,14 +95,16 @@ function draw!(view::TableView, ctx)::Nothing
         end
     end
 
-    render_data_grid!(
-        view.grid_id,
-        view.grid;
-        n_rows=table.rows,
-        columns=table.columns,
-        cell=table.getcell,
-        row_tint=several ? row -> _row_tint_for_item(table.row_item[row]) : _ -> nothing,
-        on_selection_change=rows -> view.output = isempty(rows) ? table : table[sort!(rows)],
-    )
+    with_font(:code) do
+        render_data_grid!(
+            view.grid_id,
+            view.grid;
+            n_rows=table.rows,
+            columns=table.columns,
+            cell=table.getcell,
+            row_tint=several ? row -> _row_tint_for_item(table.row_item[row]) : _ -> nothing,
+            on_selection_change=rows -> view.output = isempty(rows) ? table : table[sort!(rows)],
+        )
+    end
     return nothing
 end

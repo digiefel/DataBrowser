@@ -310,7 +310,6 @@ end
 
 # The Lucide icon font, version 1.52.0 (ISC licence, in `assets/lucide-LICENSE`). Its icons are
 # characters in the private-use range, so a string can hold text and icons together.
-const ICON_FONT = joinpath(pkgdir(@__MODULE__), "assets", "lucide.ttf")
 const ICON_PARTIAL = "\ue4b0"  # circle-dashed
 const ICON_FAILED = "\ue084"   # circle-x
 const ICON_COPY = "\ue09e"     # copy
@@ -324,16 +323,7 @@ function _init_browser_context!()
     io.ConfigFlags = unsafe_load(io.ConfigFlags) | ig.ImGuiConfigFlags_ViewportsEnable
     io.ConfigFlags = unsafe_load(io.ConfigFlags) | ig.ImGuiConfigFlags_NavEnableKeyboard
 
-    # Add the icons to the default text font.
-    fonts = unsafe_load(io.Fonts)
-    ig.AddFontDefault(fonts)
-    icons = ig.lib.ImFontConfig_ImFontConfig()
-    icons.MergeMode = true
-    # An icon fills its whole font size, while the capital letters of the 13-pixel text font are
-    # 9 pixels tall: the icons are loaded smaller and moved down to stand on the text baseline.
-    icons.GlyphOffset = ig.ImVec2(0.0f0, 1.0f0)
-    ig.AddFontFromFileTTF(fonts, ICON_FONT, 10.0f0, icons)
-    ig.lib.ImFontConfig_destroy(icons)
+    fonts = _load_fonts!()
 
     # Point imgui at a per-machine ini file so [Table] column widths persist across restarts.
     # The pointer must live for the whole process — _IMGUI_INI_BYTES holds the bytes.
@@ -345,7 +335,7 @@ function _init_browser_context!()
     io.IniFilename = Ptr{Cchar}(pointer(_IMGUI_INI_BYTES[]))
 
     ig.StyleColorsDark()
-    return ctx
+    return ctx, fonts
 end
 
 """
@@ -655,9 +645,11 @@ function open_browser(
     for ext in state.extensions
         init!(ext, state)
     end
-    ctx = _init_browser_context!()
+    ctx, fonts = _init_browser_context!()
     state.workspace = workspace
-    result = _run_browser(state, ctx; engine, spawn, wait, window_start=window_start)
+    result = ScopedValues.with(_CURRENT_FONTS => fonts) do
+        _run_browser(state, ctx; engine, spawn, wait, window_start=window_start)
+    end
     return wait ? result : BrowserSession(result::Task, state)
 end
 

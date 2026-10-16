@@ -21,6 +21,8 @@ function prepare!(view::ValueView, value, ctx)::Nothing
 end
 
 function draw!(view::ValueView, ctx)::Nothing
-    ig.TextUnformatted(view.text)
+    with_font(:code) do
+        ig.TextUnformatted(view.text)
+    end
     return nothing
 end
