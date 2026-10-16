@@ -343,6 +343,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 ### 0.2.10 Documentation
 
+- [ ] Review the remaining public docstrings: explain observable behavior, link shared types,
+  retain generic worked examples, and remove implementation details callers do not need.
+
 - [ ] `ARCHITECTURE.md` promises two diagrams per package and has them for Sources only. Add Core
   and Cache after Phases 1–2, GUI after Phase 4.
 - [ ] `docs/api.md`: the two tiers from Phase 3, one line per name.

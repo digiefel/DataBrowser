@@ -60,16 +60,27 @@ type; the GLMakie extension has the one for a Makie `Figure`.
 function embed end
 
 """
-    register_plot!(project, kind; label, setup, draw) -> project
+    register_plot!(project, kind; label, setup, draw)
 
-Register (or replace) one plot for an item kind. Registering needs no plot backend: the browser
-chooses how to show a plot from the type of the figure that `setup` returns.
+Add a plot definition for items of `kind`, shown in the browser as `label`.
 
-`setup(workspace, items)` builds and returns the figure; `draw(workspace, items, figure)` fills it
-in. `items` are the loaded, data-bearing items for the selection (`Vector{<:AbstractDataItem}`);
-each has already passed through `process(item)`, if registered, so neither callback resolves item
-data itself. A kind may have multiple plots; re-registering the same `label` for the same kind
-replaces that plot, which keeps REPL iteration stable.
+`setup(selection)` creates the figure, and `draw(selection, figure)` draws into it.
+Both receive a [`Selection`](@ref) containing the items to plot.
+
+This example draws one line per item, using the `x` and `y` columns of its data:
+
+```julia
+register_plot!(project, :series; label="X–Y",
+    setup = selection -> Figure(),
+    draw = function (selection, figure)
+        axis = Axis(figure[1, 1])
+        for entry in selection
+            lines!(axis, entry.data.x, entry.data.y; label=entry.label)
+        end
+    end)
+```
+
+Registering the same `kind` and `label` again replaces the existing plot definition.
 """
 function register_plot!(
     project::AbstractProject,
