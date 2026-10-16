@@ -20,6 +20,8 @@ as code: the roles, then one line for each layer. Every value is a menu.
 
 For several items, the column `item` names the item of each row. A table that another window passes
 on is plotted with the columns it has.
+
+Changing layers keeps the visible axis range. Choosing a different x or y column resets it.
 """
 Base.@kwdef mutable struct BuilderView <: FigureView
     description::PlotDescription = PlotDescription(layers=[Layer(:lines)])
@@ -29,6 +31,8 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     columns::Vector{Symbol} = Symbol[]
     # The user changed the description since the figure was built.
     stale::Bool = false
+    # The columns on the axes of the last successful figure.
+    axis_columns::Union{Nothing,Tuple{Symbol,Symbol}} = nothing
     figure::Any = nothing
     dark::Bool = true
     figure_id::String = ""
@@ -74,7 +78,7 @@ function prepare!(view::BuilderView, table::ItemTable, ctx)::Nothing
     return nothing
 end
 
-function build!(view::BuilderView, ctx)::Nothing
+function build!(view::BuilderView, ctx; preserve_zoom::Bool=false)::Nothing
     view.dark = DARK[]
     table = view.table
     description = view.description
@@ -82,6 +86,13 @@ function build!(view::BuilderView, ctx)::Nothing
         close(view)
         view.message = NO_TABLE
         return nothing
+    end
+    roles = Dict(description.roles)
+    axis_columns = (get(roles, :x, Symbol("")), get(roles, :y, Symbol("")))
+    limits = if preserve_zoom && view.figure !== nothing && view.axis_columns == axis_columns
+        only(content for content in view.figure.content if content isa Makie.Axis).targetlimits[]
+    else
+        nothing
     end
     try
         # Read only the columns that have a role.
@@ -94,6 +105,12 @@ function build!(view::BuilderView, ctx)::Nothing
         view.figure = Makie.with_theme(plot_theme(view.dark)) do
             figure(description, columns)
         end
+        if limits !== nothing
+            axis = only(content for content in view.figure.content if content isa Makie.Axis)
+            # Change the visible range, not the automatic limits used by Ctrl-click reset.
+            axis.targetlimits[] = limits
+        end
+        view.axis_columns = axis_columns
         view.message = ""
     catch err
         bt = catch_backtrace()
@@ -113,7 +130,7 @@ function draw!(view::BuilderView, ctx)::Nothing
     # Build before the figure is drawn: a figure must not be released in the frame that drew it.
     if view.stale
         view.stale = false
-        build!(view, ctx)
+        build!(view, ctx; preserve_zoom=true)
     end
 
     available = ig.GetContentRegionAvail()

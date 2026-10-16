@@ -178,6 +178,16 @@ function _draw_axis_popup!(axis::Makie.Axis)::Nothing
     return nothing
 end
 
+"""Display a figure without changing the visible ranges of its two-dimensional axes."""
+function _display_figure!(screen, figure)
+    limits = [(axis, axis.targetlimits[]) for axis in figure.content if axis isa Makie.Axis]
+    display(screen, figure)
+    for (axis, range) in limits
+        axis.targetlimits[] = range
+    end
+    return nothing
+end
+
 """
 Render one Makie figure as an interactive CImGui image.
 
@@ -202,7 +212,7 @@ function MakieFigure(
             old_figure = imf.figure
             scene = Makie.get_scene(figure)
             scene.events.window_open[] = true
-            display(imf.screen, figure)
+            _display_figure!(imf.screen, figure)
             empty!(old_figure)
             imf.figure = figure
             @debug "replaced figure for " id
@@ -214,7 +224,7 @@ function MakieFigure(
         MAKIE_CONTEXT[id] = ImMakieFigure(figure, screen, false, gl.GLuint(0), (0, 0), nothing)
         scene = Makie.get_scene(figure)
         scene.events.window_open[] = true
-        display(screen, figure)
+        _display_figure!(screen, figure)
         @debug "created context for " id
     end
 
