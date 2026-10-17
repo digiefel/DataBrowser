@@ -143,18 +143,102 @@ function _imgui_mouse_to_makie(
     return (Float64(pos.x - origin.x), Float64(image_size[2] - (pos.y - origin.y)))
 end
 
+"""Whether the data and explicit limits of an axis permit a real logarithmic scale."""
+function _log_scale_allowed(axis::Makie.Axis, index::Int)::Bool
+    links = index == 1 ? axis.xaxislinks : axis.yaxislinks
+    for linked in (axis, links...)
+        limits = Makie.getlimits(linked, index)
+        limits === nothing || all(>(0), limits) || return false
+    end
+    limits = Makie.convert_limit_attribute(axis.limits[])[index]
+    limits === nothing || all(x -> x === nothing || x > 0, limits) || return false
+    return true
+end
+
+"""Change a scale without leaving a failed observable update in the render loop."""
+function _set_axis_scale!(axis::Makie.Axis, index::Int, value)::Bool
+    value === log10 && !_log_scale_allowed(axis, index) && return false
+    scale = index == 1 ? axis.xscale : axis.yscale
+    previous, limits = scale[], axis.targetlimits[]
+    try
+        scale[] = value
+    catch error
+        bt = catch_backtrace()
+        scale[] = previous
+        axis.targetlimits[] = limits
+        @warn "Could not change axis scale to $value; the previous scale was restored."
+        @debug "Axis scale change failed" exception=(error, bt)
+        return false
+    end
+    return true
+end
+
+"""A signed logarithmic scale with a data-dependent transition and decade ticks."""
+struct AxisPseudolog10 <: Function
+    threshold::Float64
+end
+(s::AxisPseudolog10)(x) = sign(x) * log1p(abs(x) / s.threshold) / log(10)
+Makie.inverse_transform(s::AxisPseudolog10) = x -> sign(x) * s.threshold * expm1(abs(x) * log(10))
+Makie.defaultlimits(s::AxisPseudolog10) = (-s.threshold, s.threshold)
+Makie.defined_interval(::AxisPseudolog10) = Makie.defined_interval(identity)
+
+function Makie.get_ticks(::Makie.Automatic, scale::AxisPseudolog10, formatter, lo, hi)
+    crosses_zero = lo <= 0 <= hi
+    first_exponent = ceil(Int, log10(scale.threshold)) + Int(crosses_zero)
+    last_exponent = floor(Int, log10(max(abs(lo), abs(hi))))
+    decades = [10.0^k for k in first_exponent:last_exponent]
+    positive = filter(x -> lo <= x <= hi, decades)
+    negative = filter(x -> lo <= -x <= hi, decades)
+    if length(positive) + length(negative) < 2
+        return Makie.get_ticks(Makie.automatic, identity, formatter, lo, hi)
+    end
+    stride = max(1, cld(length(positive) + length(negative), 6))
+    ticks = sort!(vcat(-negative[end:-stride:1], crosses_zero ? [0.] : Float64[], positive[end:-stride:1]))
+    labels = formatter isa Makie.Automatic ? map(ticks) do value
+        iszero(value) ? Makie.rich("0") :
+            Makie.rich(value < 0 ? "−10" : "10", Makie.superscript(string(round(Int, log10(abs(value))))))
+    end : Makie.get_ticklabels(formatter, ticks)
+    return ticks, labels
+end
+
+"""Choose the pseudolog transition from the smallest finite, nonzero data magnitude."""
+function _axis_pseudolog10(axis::Makie.Axis, index::Int)
+    threshold = Inf
+    links = index == 1 ? axis.xaxislinks : axis.yaxislinks
+    for linked in (axis, links...)
+        Makie.for_each_atomic_plot(linked.scene) do plot
+            plot.visible[] && plot.space[] === :data || return
+            points = haskey(plot, :positions) ? plot.positions[] :
+                (minimum(Makie.data_limits(plot)), maximum(Makie.data_limits(plot)))
+            for point in points
+                value = abs(Float64(point[index]))
+                isfinite(value) && value > 0 && (threshold = min(threshold, value))
+            end
+        end
+    end
+    x₀ = isfinite(threshold) ? threshold : 1.0
+    return AxisPseudolog10(x₀)
+end
+
 """Render the scale choices for one Makie axis direction."""
-function _draw_axis_scale_buttons!(scale, index::Int)::Nothing
+function _draw_axis_scale_buttons!(axis::Makie.Axis, index::Int)::Nothing
+    scale = index == 1 ? axis.xscale : axis.yscale
     if ig.RadioButton("linear##$(index)", scale[] === identity)
-        scale[] = identity
+        _set_axis_scale!(axis, index, identity)
     end
     ig.SameLine()
-    if ig.RadioButton("pseudolog10##$(index)", scale[] === Makie.pseudolog10)
-        scale[] = Makie.pseudolog10
+    if ig.RadioButton("pseudolog10##$(index)", scale[] isa AxisPseudolog10)
+        _set_axis_scale!(axis, index, _axis_pseudolog10(axis, index))
     end
     ig.SameLine()
+    allowed = _log_scale_allowed(axis, index)
+    ig.BeginDisabled(!allowed)
     if ig.RadioButton("log10##$(index)", scale[] === log10)
-        scale[] = log10
+        _set_axis_scale!(axis, index, log10)
+    end
+    ig.EndDisabled()
+    if !allowed && ig.IsItemHovered(ig.ImGuiHoveredFlags_AllowWhenDisabled)
+        ig.SetTooltip("log10 requires positive data and limits. Use pseudolog10 for zero or negative values.")
     end
     return nothing
 end
@@ -167,11 +251,11 @@ function _draw_axis_popup!(axis::Makie.Axis)::Nothing
 
         ig.Text("X scale:")
         ig.SameLine()
-        _draw_axis_scale_buttons!(axis.xscale, 1)
+        _draw_axis_scale_buttons!(axis, 1)
 
         ig.Text("Y scale:")
         ig.SameLine()
-        _draw_axis_scale_buttons!(axis.yscale, 2)
+        _draw_axis_scale_buttons!(axis, 2)
 
         ig.EndPopup()
     end
