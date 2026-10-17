@@ -60,8 +60,15 @@ PlotDescription(; roles=Pair{Symbol,Symbol}[], layers=Layer[]) =
 
 """
     figure(description, table)
+    figure(specification, [scales]; options...)
 
-Draw `description` for `table` and return the figure. `table` is any Tables.jl table. A plot backend
-adds the method; the GLMakie extension has the one that returns a Makie `Figure`.
+Draw a plot and return its Makie `Figure`.
+
+For a `PlotDescription`, supply any Tables.jl `table` and load GLMakie.
+
+With AlgebraOfGraphics loaded, `specification` may be an AoG layer, a composition of layers, or
+processed layers. Optional scales and the `axis`, `figure`, `facet`, `legend`, and `colorbar`
+settings are passed to AoG's `draw`. Load a Makie backend such as GLMakie or CairoMakie to display
+or save the figure. This form works with ordinary Julia data and needs no workspace.
 """
 function figure end

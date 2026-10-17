@@ -1,7 +1,8 @@
 """
-Plots of the selected items in the browser.
+Plots of ordinary Julia data and selected items in the browser.
 
-This package holds what a project needs to register a plot. The plot windows are drawn with
+The `figure` function draws AlgebraOfGraphics declarations when AoG is loaded.
+This package also holds what a project needs to register a plot. The plot windows are drawn with
 GLMakie, and are part of the browser once GLMakie is loaded: `using DataBrowser, GLMakie`.
 """
 module DataBrowserPlots
@@ -12,6 +13,8 @@ using DataBrowserCore: Selection
 
 include("plots.jl")
 include("description.jl")
+
+export figure
 
 """Create the figure of a registered plot for `selection`."""
 function setup_plot(

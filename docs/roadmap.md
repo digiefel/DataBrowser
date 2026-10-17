@@ -549,6 +549,11 @@ the table as a first-class view.
 - [ ] Measure responsiveness on representative scientific projects through the existing benchmarks.
   Separate loading, warm presentation, interaction, copies, and work repeated after display-only
   edits. Choose workloads from actual use; illustrative dataset sizes are not product requirements.
+- [x] Accept AlgebraOfGraphics declarations through `DataBrowserPlots.figure` as an optional
+  integration. The [AoG example](../lib/DataBrowserPlots/examples/aog.jl) probes result-driven fitting;
+  preserving category identity in computed guide labels and GUI/code editing remain open.
+- [ ] Review the standalone graphics grammar, statistical results, shared attribute schemas, and
+  GUI/code editing proposal in [Graphics grammar and plot builder](plans/graphics-grammar.md).
 - [ ] Plot builder: a window in which the user builds a plot of a table from menus, and which a
   script can write as code. The plot is one description as plain data: roles that say which column
   is on which axis or gives the color, and a list of layers, each with a mark. The builder must be
