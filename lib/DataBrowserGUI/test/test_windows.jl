@@ -1,29 +1,17 @@
 using Test, DataBrowserGUI
 import DataBrowserAPI
-using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, settings
+using DataBrowserAPI: AbstractVisualizer
+using DataBrowserCore: Selection
 using DataBrowserGUI.Browser: BrowserState, TableView, ValueView, LinePlotView, HistogramView, BarChartView, close_window!, open_window!, visualizers,
     transform!, transforms, code
-
-struct Trace <: AbstractDataItem end
 
 mutable struct Counter <: AbstractVisualizer end
 DataBrowserAPI.prepare!(::Counter, ::Vector{Int}, ctx) = nothing
 
 @testset "a visualizer is offered for the values its prepare! methods accept" begin
     @test any(visualizer -> visualizer isa Counter, visualizers(Vector{Int}))
-    @test !any(visualizer -> visualizer isa Counter, visualizers(Vector{Trace}))
-    @test any(visualizer -> visualizer isa TableView, visualizers(Vector{Trace}))
-end
-
-DataBrowserAPI.label(::Trace) = "trace"
-DataBrowserAPI.item_data(::Trace) = (x=[1],)
-
-@testset "the table offers the provenance column only for several items" begin
-    several, one = TableView(), TableView()
-    DataBrowserAPI.prepare!(several, [Trace(), Trace()], nothing)
-    DataBrowserAPI.prepare!(one, [Trace()], nothing)
-    @test haskey(settings(several), :provenance_column)
-    @test isempty(settings(one))
+    @test !any(visualizer -> visualizer isa Counter, visualizers(Selection))
+    @test any(visualizer -> visualizer isa TableView, visualizers(Selection))
 end
 
 @testset "closing a window removes that window only" begin
@@ -61,7 +49,7 @@ end
     @test LinePlotView in offered(Vector{Float64}) && HistogramView in offered(Vector{Float64})
     @test LinePlotView in offered(Pair{Vector{Float64},Vector{Int}})
     @test LinePlotView in offered(Tuple{Vector{Float64},Vector{Int}})
-    @test LinePlotView ∉ offered(Vector{Trace}) && HistogramView ∉ offered(Vector{Trace})
+    @test LinePlotView ∉ offered(Selection) && HistogramView ∉ offered(Selection)
     @test BarChartView in offered(typeof((r_contact=1.5, r_sheet=2)))
     @test BarChartView ∉ offered(typeof((name="a", r_sheet=2)))
 end

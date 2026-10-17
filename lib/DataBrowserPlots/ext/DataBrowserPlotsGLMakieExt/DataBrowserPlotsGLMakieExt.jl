@@ -4,7 +4,6 @@ module DataBrowserPlotsGLMakieExt
 using GLMakie: Figure
 
 import DataBrowserAPI
-import DataBrowserAPI: AbstractDataItem
 import DataBrowserCore.Workspace
 using DataBrowserAPI: @timed_dbg
 import DataBrowserGUI

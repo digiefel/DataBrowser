@@ -1,7 +1,8 @@
 import CImGui as ig
 import GLMakie.Makie as Makie
 
-using DataBrowserAPI: AbstractDataItem, Setting
+using DataBrowserAPI: Setting
+using DataBrowserCore: Selection
 import DataBrowserAPI: draw!, prepare!, settings
 using DataBrowserGUI: ItemTable, merge_item_tables
 using DataBrowserPlots: Layer, PlotDescription, figure
@@ -12,7 +13,7 @@ const NO_TABLE = "Select items with table data to build a plot."
 const DESCRIPTION_WIDTH = 250.0f0
 
 """
-The plot builder: the user builds a plot from menus, for the table data of items or for a table
+The plot builder: the user builds a plot from menus, for the table data of a selection or for a table
 that another window passes on.
 
 The window shows the figure and, to its right, the [`PlotDescription`](@ref) of the plot written
@@ -52,8 +53,8 @@ function export_name(view::BuilderView)::String
     return "$(roles[:y])-over-$(roles[:x])"
 end
 
-prepare!(view::BuilderView, items::AbstractVector{<:AbstractDataItem}, ctx) =
-    prepare!(view, first(merge_item_tables(items; item_column=true)), ctx)
+prepare!(view::BuilderView, selection::Selection, ctx) =
+    prepare!(view, first(merge_item_tables(selection; item_column=true)), ctx)
 
 function prepare!(view::BuilderView, table::ItemTable, ctx)::Nothing
     view.figure_id = "plot_$(ctx.id)"

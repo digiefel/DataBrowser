@@ -1,15 +1,8 @@
 using InteractiveUtils: subtypes
 
-using DataBrowserAPI: AbstractDataItem, AbstractProject
+using DataBrowserAPI: AbstractProject
 
-"""
-One registered plot recipe for an item kind.
-
-`setup(workspace, items)` returns the figure handle; `draw(workspace, items, figure)` fills it.
-`items` are the loaded, data-bearing items for the selection (`Vector{<:AbstractDataItem}`);
-`process(item)`, if registered, already returned the item shape these callbacks receive. Neither
-callback resolves data itself.
-"""
+"""One plot registered for an item kind with [`register_plot!`](@ref)."""
 struct PlotRecipe
     kind::Symbol
     label::String

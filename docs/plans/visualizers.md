@@ -190,8 +190,8 @@ and the colours of tagged items. A visualizer that does not use them ignores `ct
 Methods of `prepare!` dispatch on the value's type, and the most specific method wins:
 
 ```julia
-# item_data of each item, shown with an item column
-prepare!(v::TableView, items::AbstractVector{<:AbstractDataItem}) = ...
+# the data of each item of a selection, shown with an item column
+prepare!(v::TableView, selection::Selection) = ...
 prepare!(v::TableView, x) = (v.columns = Tables.columns(x))     # throws for a non-table
 prepare!(v::LinePlot, y::AbstractVector{<:Real}) = ...           # one trace
 prepare!(v::LinePlot, traces::AbstractDict) = ...                # one labelled trace per entry

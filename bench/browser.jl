@@ -28,7 +28,7 @@ function check_items(ws, session, expected_peaks)
     items = materialize_items(ws, ids)
     sort([metadata(item)[:peak] for item in items]) == expected_peaks || error("Incorrect analysis results")
     collect(selection(ws).data) == item_data.(items) || error("Selection did not deliver the selected payloads")
-    table, warnings = merge_item_tables(items)
+    table, warnings = merge_item_tables(selection(ws))
     isempty(warnings) || error("Table preparation skipped selected data")
     y = findfirst(==("y"), table.columns)
     [table.getvalue(row, y) for row in 1:table.rows] ==
@@ -39,9 +39,9 @@ end
 
 """Open the real browser, draw the known project, and exercise update/reopen behavior."""
 # Plots take numbers, which these functions give for the selected items.
-smoke_trace(items::AbstractVector) = item_data(first(items)).x => item_data(first(items)).y
-smoke_values(items::AbstractVector) = item_data(first(items)).y
-smoke_numbers(items::AbstractVector) = (items=length(items), half=length(items) / 2)
+smoke_trace(selection) = first(selection).data.x => first(selection).data.y
+smoke_values(selection) = first(selection).data.y
+smoke_numbers(selection) = (items=length(selection), half=length(selection) / 2)
 
 function browser_workload(root, opening, started_ns)
     counters = ToyCounters()

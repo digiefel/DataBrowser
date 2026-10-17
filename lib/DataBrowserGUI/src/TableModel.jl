@@ -1,6 +1,7 @@
 using Tables
 
-using DataBrowserAPI: AbstractDataItem, item_data, label
+using DataBrowserAPI: item_data, items
+using DataBrowserCore: Selection
 
 """
 Table view over one or more items' Tables-compatible payloads.
@@ -144,21 +145,18 @@ function merge_item_tables(pairs; item_column::Bool=false)::Tuple{ItemTable,Vect
 end
 
 """
-    merge_item_tables(items; item_column=false) -> (table, warnings)
+    merge_item_tables(selection; item_column=false) -> (table, warnings)
 
-Build an `ItemTable` from the data of loaded items: `item_data` of each item, under the label of
-the item. An item whose data cannot be read is reported in `warnings` and skipped, like an item
-whose data is not a table.
+Build an `ItemTable` from the data of the items of a selection, each under its label. An item whose
+data cannot be read is reported in `warnings` and skipped, like an item whose data is not a table.
 """
 function merge_item_tables(
-    items::AbstractVector{<:AbstractDataItem};
+    selection::Selection;
     item_column::Bool=false,
 )::Tuple{ItemTable,Vector{String}}
     pairs = Tuple{String,Any}[]
     warnings = String[]
-    for item in items
-        # TODO: a label that the project gives with `label(project, item)` is not used here.
-        item_label = label(item)
+    for (item_label, item) in zip(selection.label, items(selection))
         data = try
             item_data(item)
         catch err

@@ -1,9 +1,10 @@
-using DataBrowserAPI: Setting, id, label
+using DataBrowserAPI: Setting, items, label
 import DataBrowserAPI: prepare!, settings
+using DataBrowserCore: Selection
 import DataBrowserCore.Workspace
 
 """
-Shows items of one type with a plot that the project registered for that type with
+Shows a selection of items of one type with a plot that the project registered for that type with
 `register_plot!`. The header of the window lists the plots registered for the items.
 """
 Base.@kwdef mutable struct PlotView <: FigureView
@@ -11,8 +12,8 @@ Base.@kwdef mutable struct PlotView <: FigureView
     plot::String = ""
     # Whether the figure shows the values of the plot element under the mouse.
     inspect::Bool = false
-    # The items, their type, and the labels of the plots registered for that type.
-    items::Vector{<:AbstractDataItem} = AbstractDataItem[]
+    # The selection, the type of its items, and the labels of the plots registered for that type.
+    selection::Union{Nothing,Selection} = nothing
     kind::Union{Nothing,Symbol} = nothing
     plots::Vector{String} = String[]
     # The plot chosen last for each type of item. A window that follows the selection returns to
@@ -40,14 +41,14 @@ function settings(view::PlotView)
 end
 
 function export_name(view::PlotView)::String
-    items = view.items
-    return length(items) == 1 ? "$(id(only(items)))-$(view.plot)" : "$(length(items))-items-$(view.plot)"
+    ids = view.selection.id
+    return length(ids) == 1 ? "$(only(ids))-$(view.plot)" : "$(length(ids))-items-$(view.plot)"
 end
 
-function prepare!(view::PlotView, items::AbstractVector{<:AbstractDataItem}, ctx)::Nothing
+function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
     view.figure_id = "plot_$(ctx.id)"
-    view.items = items
-    kinds = unique(label(typeof(item)) for item in items)
+    view.selection = selection
+    kinds = unique(label(typeof(item)) for item in items(selection))
     kind = length(kinds) == 1 ? only(kinds) : nothing
     kind === view.kind || (view.plot = kind === nothing ? "" : get(view.chosen, kind, ""))
     view.kind = kind
@@ -59,7 +60,7 @@ function prepare!(view::PlotView, items::AbstractVector{<:AbstractDataItem}, ctx
         close(view)
         view.plot = ""
         view.message =
-            isempty(items) ? "No item selected" :
+            isempty(selection) ? "No item selected" :
             kind === nothing ? "The items have different types. A plot shows items of one type." :
             "No plot is registered for $kind items."
         return nothing
@@ -75,12 +76,12 @@ end
 function build!(view::PlotView, ctx)::Nothing
     workspace = ctx.workspace::Workspace.Workspace
     plot = RegisteredPlot{view.kind,Symbol(view.plot)}
-    items = view.items
+    selection = view.selection::Selection
     view.dark = DARK[]
     try
         figure = Makie.with_theme(plot_theme(view.dark)) do
-            figure = Browser.@timed "plot_setup" (@timed_dbg setup_plot(workspace, plot, items))
-            Browser.@timed "plot_data" (@timed_dbg plot_data!(workspace, plot, items, figure))
+            figure = Browser.@timed "plot_setup" (@timed_dbg setup_plot(workspace, plot, selection))
+            Browser.@timed "plot_data" (@timed_dbg plot_data!(workspace, plot, selection, figure))
             figure
         end
         figure === nothing && error("The plot returned no figure.")
@@ -94,14 +95,14 @@ function build!(view::PlotView, ctx)::Nothing
         summary = first(split(sprint(showerror, err), '\n'; limit=2))
         view.message = "Plot failed: $summary. See the console for full details."
         item_context = join(
-            ("$(label(workspace.project, item)) ($(view.kind))\n  $(id(item))" for item in items),
+            ("$name ($(view.kind))\n  $item_id" for (name, item_id) in zip(selection.label, selection.id)),
             "\n",
         )
         @error(
             "Plot drawing failed\n" *
             "Source: $(label(workspace.source))\n" *
             "Plot: $(view.plot)\n" *
-            "Items: $(length(items))\n$item_context",
+            "Items: $(length(selection))\n$item_context",
             exception=(err, bt),
         )
     end

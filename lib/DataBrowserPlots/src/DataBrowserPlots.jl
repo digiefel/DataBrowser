@@ -6,52 +6,32 @@ GLMakie, and are part of the browser once GLMakie is loaded: `using DataBrowser,
 """
 module DataBrowserPlots
 
-import DataBrowserAPI: AbstractDataItem, @timed_dbg
-import DataBrowserCore.Catalogs: ItemKey
+import DataBrowserAPI: @timed_dbg
 import DataBrowserCore.Workspace
+using DataBrowserCore: Selection
 
 include("plots.jl")
 include("description.jl")
 
-"""Load the items of the given keys and create the figure layout required by a visualizer."""
-function setup_plot(
-    workspace::Workspace.Workspace,
-    plot_kind::Type{<:PlotKind},
-    records::Vector{ItemKey},
-)
-    return setup_plot(
-        workspace, plot_kind, Workspace.materialize_items(workspace, records))
-end
-
-"""Load the items of the given keys and draw them into an existing figure."""
-function plot_data!(
-    workspace::Workspace.Workspace,
-    plot_kind::Type{<:PlotKind},
-    records::Vector{ItemKey},
-    figure,
-)::Nothing
-    plot_data!(
-        workspace, plot_kind, Workspace.materialize_items(workspace, records), figure)
-    return nothing
-end
-
+"""Create the figure of a registered plot for `selection`."""
 function setup_plot(
     workspace::Workspace.Workspace,
     ::Type{RegisteredPlot{Kind,Label}},
-    items::Vector{<:AbstractDataItem},
+    selection::Selection,
 ) where {Kind,Label}
     recipe = _plot_recipes(workspace.project)[Kind][String(Label)]
-    return @timed_dbg "setup_plot" recipe.setup(workspace, items)
+    return @timed_dbg "setup_plot" recipe.setup(selection)
 end
 
+"""Draw `selection` into the figure of a registered plot."""
 function plot_data!(
     workspace::Workspace.Workspace,
     ::Type{RegisteredPlot{Kind,Label}},
-    items::Vector{<:AbstractDataItem},
+    selection::Selection,
     figure,
 )::Nothing where {Kind,Label}
     recipe = _plot_recipes(workspace.project)[Kind][String(Label)]
-    @timed_dbg "draw_plot" recipe.draw(workspace, items, figure)
+    @timed_dbg "draw_plot" recipe.draw(selection, figure)
     return nothing
 end
 

@@ -19,7 +19,7 @@ item: `selection.label`, `selection.data`. `for x in selection` goes through the
 `filter`, and indexing with several indices, give a `Selection` again. A `Selection` is a Tables.jl
 table, so `DataFrame(selection)` copies it into a data frame.
 """
-struct Selection{T} <: AbstractVector{T}
+struct Selection{T<:LazyRow} <: AbstractVector{T}
     # One vector for each property.
     table::StructArray
 end
@@ -122,4 +122,16 @@ Selected ids that the workspace has no item for are left out.
 function selection(workspace::Workspace)::Selection
     ids = @lock workspace.lifecycle_lock copy(workspace.selection.item_ids)
     return select(workspace, ItemKey[key for key in item.(Ref(workspace), ids) if key !== nothing])
+end
+
+"""
+    items(selection) -> Vector
+
+The items of `selection` as the project made them, in the same order: the objects whose
+`item_data` is `selection.data`.
+"""
+function items(selection::Selection)::Vector
+    data = selection.data::ItemData
+    # Narrow the element type, so that methods can dispatch on the type of the items.
+    return identity.(materialize_items(data.workspace, data.items))
 end

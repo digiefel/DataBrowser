@@ -63,18 +63,17 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
     )
     register_plot!(project, :trace;
         label="Toy",
-        setup=(_workspace, _items) -> begin
+        setup=_selection -> begin
             figure = Figure()
             Axis(figure[1, 1])
             figure
         end,
-        draw=function (_workspace, items, _figure)
+        draw=function (selection, figure)
             # A plot draws whatever results are latest; items may not be analyzed yet.
-            all(item -> label(typeof(item)) === :trace, items) || error("plot did not receive trace items")
-            axis = content(_figure[1, 1])
+            axis = content(figure[1, 1])
             empty!(axis)
-            for item in items
-                lines!(axis, item_data(item).x, item_data(item).y)
+            for entry in selection
+                lines!(axis, entry.data.x, entry.data.y)
             end
             Threads.atomic_add!(counters.draws, 1)
             return nothing

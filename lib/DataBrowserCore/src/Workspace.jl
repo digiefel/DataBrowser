@@ -3,7 +3,7 @@ module Workspace
 using Printf
 import StructArrays, Tables
 using PrettyTables: @text__no_horizontal_lines, @text__no_vertical_lines, TextTableFormat, pretty_table
-using StructArrays: LazyRows, StructArray
+using StructArrays: LazyRow, LazyRows, StructArray
 using DataBrowserAPI: @timed_dbg
 using DataBrowserSources
 using CancellationTokens:

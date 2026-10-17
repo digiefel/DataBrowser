@@ -3,7 +3,7 @@
 #
 # TODO: these are the actions a script will call (roadmap 0.6). They take the browser state for now.
 
-using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, id, label, prepare!, settings
+using DataBrowserAPI: AbstractVisualizer, id, label, prepare!, settings
 import DataBrowserAPI: output
 using DataBrowserCore.Catalogs: ItemKey
 using DataBrowserCore.CodeRevisions: code_revision
@@ -53,13 +53,10 @@ end
 # A visualizer returns the same object until its output changes.
 stamp(input::WindowOutput, state::BrowserState) = objectid(output(source(input, state)))
 
-# The value `input` gives now. Loading items runs in the calling task and waits for items that are
-# not processed yet.
-function value(input::Union{LiveSelection,FixedItems}, state::BrowserState)
-    workspace = state.workspace::Workspace.Workspace
-    # Narrow the element type, so that `prepare!` methods can dispatch on the type of the items.
-    return identity.(Workspace.materialize_items(workspace, itemkeys(input, state)))
-end
+# The value `input` gives now: the items as a `Selection`. This runs in the calling task and waits
+# for items that are not processed yet.
+value(input::Union{LiveSelection,FixedItems}, state::BrowserState) =
+    Workspace.select(state.workspace::Workspace.Workspace, itemkeys(input, state))
 value(input::WindowOutput, state::BrowserState) = output(source(input, state))
 
 """
@@ -85,7 +82,8 @@ function visualizers(T::Type)::Vector{AbstractVisualizer}
     types = Set{Type}()
     for method in methods(prepare!, Tuple{AbstractVisualizer,T,Any})
         V = Base.unwrap_unionall(method.sig).parameters[2]
-        isconcretetype(V) && push!(types, V)
+        # `methods` also lists methods that accept only some values of type `T`.
+        isconcretetype(V) && hasmethod(prepare!, Tuple{V,T,Any}) && push!(types, V)
     end
     return sort!(AbstractVisualizer[V() for V in types]; by=label)
 end
@@ -239,7 +237,7 @@ function refresh!(state::BrowserState, window::Window)::Nothing
             prepare!(visualizer, window.value, ctx)
             window.error = ""
         else
-            given = window.value isa AbstractVector{<:AbstractDataItem} ? "these items" :
+            given = window.value isa Workspace.Selection ? "a selection" :
                 "a value of type $(nameof(typeof(window.value)))"
             window.error = "$(label(visualizer)) cannot show $given. Choose another visualizer."
         end

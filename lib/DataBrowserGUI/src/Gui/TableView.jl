@@ -1,13 +1,14 @@
 import CImGui as ig
 
 import DataBrowserAPI: draw!, label, output, prepare!, settings
-using DataBrowserAPI: AbstractDataItem, AbstractVisualizer, Setting
+using DataBrowserAPI: AbstractVisualizer, Setting, items
+using DataBrowserCore: Selection
 using ..DataBrowserGUI: ItemTable, merge_item_tables
 
 """
-The visualizer that shows the data of items as one table.
+The visualizer that shows the data of the items of a selection as one table.
 
-It shows `item_data` of each item whose data is a Tables.jl table. The columns are the union of the
+It shows the data of each item that is a Tables.jl table. The columns are the union of the
 columns of all items, and a cell is empty where an item has no such column. With several items,
 each row has the tint of its item.
 
@@ -45,12 +46,13 @@ function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
     return nothing
 end
 
-function prepare!(view::TableView, items::AbstractVector{<:AbstractDataItem}, ctx)::Nothing
-    table, warnings = merge_item_tables(items; item_column=view.provenance_column)
+# TODO: show the selection itself, one entry per item, once "of" chooses its data (docs/plans/visualizers.md).
+function prepare!(view::TableView, selection::Selection, ctx)::Nothing
+    table, warnings = merge_item_tables(selection; item_column=view.provenance_column)
     prepare!(view, table, ctx)
     view.several = length(table.item_labels) > 1
     view.warnings = warnings
-    types = unique(typeof.(items))
+    types = unique(typeof.(items(selection)))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
     return nothing
 end

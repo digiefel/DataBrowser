@@ -18,7 +18,7 @@ using PrecompileTools: @compile_workload
 @compile_workload begin
     project = _precompile_project()
     register_plot!(project, :iv; label="I-V",
-        setup=function (_workspace, _items)
+        setup=function (_selection)
             figure = Figure()
             current = Axis(figure[1, 1]; ylabel="Current (A)", title="I-V")
             magnitude = Axis(figure[2, 1]; xlabel="Voltage (V)", ylabel="|Current| (A)")
@@ -27,13 +27,13 @@ using PrecompileTools: @compile_workload
         end,
         # The calls a plot of a project usually makes: linked axes, a color per item, solid and
         # dashed lines, markers, and a legend.
-        draw=function (_workspace, items, figure)
+        draw=function (selection, figure)
             current, magnitude = only(contents(figure[1, 1])), only(contents(figure[2, 1]))
-            colors = cgrad(:tab10, length(items); categorical=true)
-            for (index, item) in enumerate(items)
-                data = item_data(item)
+            colors = cgrad(:tab10, length(selection); categorical=true)
+            for (index, entry) in enumerate(selection)
+                data = entry.data
                 lines!(current, data.VoltageHigh_V, data.Current_A;
-                    color=colors[index], linewidth=2, label=label(item))
+                    color=colors[index], linewidth=2, label=entry.label)
                 scatter!(current, data.VoltageHigh_V, data.Current_A; color=colors[index], markersize=4)
                 lines!(magnitude, data.VoltageHigh_V, abs.(data.Current_A);
                     color=colors[index], linestyle=:dash)
@@ -43,7 +43,8 @@ using PrecompileTools: @compile_workload
         end)
     _precompile_engine(project; selected=function (workspace, items)
         plot_kind = only(registered_plot_kinds(project, :iv))
-        plot_data!(workspace, plot_kind, items, setup_plot(workspace, plot_kind, items))
+        selection = select(workspace, id.(items))
+        plot_data!(workspace, plot_kind, selection, setup_plot(workspace, plot_kind, selection))
     end)
 end
 

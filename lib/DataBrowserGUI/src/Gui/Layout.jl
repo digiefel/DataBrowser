@@ -11,7 +11,6 @@ import CImGui.CSyntax: @c
 const _IMGUI_INI_BYTES = Ref{Vector{UInt8}}(UInt8[])
 
 using DataBrowserAPI:
-    AbstractDataItem,
     label
 using DataBrowserCache: ProjectCacheIdentity
 import DataBrowserCore.Workspace
@@ -89,9 +88,9 @@ function render_menu_bar(state::BrowserState)::Nothing
         end
         _render_cache_toolbar_button!(state)
         if ig.BeginMenu("+ Window")
-            # Every visualizer that shows items. A window says so when its visualizer cannot show
-            # the items it is given.
-            for visualizer in visualizers(AbstractVector{<:AbstractDataItem})
+            # Every visualizer that shows a selection. A window says so when its visualizer cannot
+            # show the value it is given.
+            for visualizer in visualizers(Workspace.Selection)
                 ig.MenuItem(label(visualizer)) && open_window!(state, visualizer)
             end
             ig.EndMenu()
