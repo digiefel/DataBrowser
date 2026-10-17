@@ -3,6 +3,7 @@
 #
 # TODO: these are the actions a script will call (roadmap 0.6). They take the browser state for now.
 
+import DataBrowserAPI
 using DataBrowserAPI: AbstractVisualizer, id, label, prepare!, settings
 import DataBrowserAPI: output
 using DataBrowserCore.Catalogs: ItemKey
@@ -227,9 +228,8 @@ function refresh!(state::BrowserState, window::Window)::Nothing
                 f = Base.invokelatest(getglobal, transform.mod, transform.name)
                 window.value = Base.invokelatest(f, window.value)
             catch err
-                @error "Window: $(transform.name) failed" exception=(err, catch_backtrace())
-                summary = first(split(sprint(showerror, err), '\n'; limit=2))
-                window.error = "$(transform.name) failed: $summary. See the console for full details."
+                window.error, _ = DataBrowserAPI.report_error(
+                    "Window: $(transform.name) failed", err, catch_backtrace())
                 return nothing
             end
         end
@@ -242,9 +242,8 @@ function refresh!(state::BrowserState, window::Window)::Nothing
             window.error = "$(label(visualizer)) cannot show $given. Choose another visualizer."
         end
     catch err
-        @error "Window: $(label(visualizer)) could not show its value" exception=(err, catch_backtrace())
-        summary = first(split(sprint(showerror, err), '\n'; limit=2))
-        window.error = "$(label(visualizer)) failed: $summary. See the console for full details."
+        window.error, _ = DataBrowserAPI.report_error(
+            "Window: $(label(visualizer)) could not show its value", err, catch_backtrace())
     end
     return nothing
 end

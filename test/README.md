@@ -16,6 +16,10 @@ each package test process only that package's dependencies and `Test`.
   process-to-browser readiness, throughput, latency and memory. Faster execution must not fail a test.
 - Test failures do not prevent Git commits.
 
+Callback failures log a concise stacktrace at error level. Set
+`ENV["JULIA_DEBUG"] = "DataBrowserAPI"` to also log full exceptions and item details.
+Plot windows retain the full report under **Show details**.
+
 ## Commands
 
 ```sh

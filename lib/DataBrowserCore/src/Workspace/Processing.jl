@@ -103,7 +103,9 @@ function fail!(
         job isa Job{SourceKey} && remove_items!(workspace, job.key)
         failed!(workspace, job.key, stage, sprint(showerror, error))
     end
-    @error("A stage failed", id=id(catalog, job.key), stage, exception=(error, backtrace))
+    DataBrowserAPI.report_error(
+        "A stage failed\n  Source: $(DataBrowserAPI.source_description(workspace.source))\n" *
+        "  Item: $(id(catalog, job.key))\n  Stage: $stage", error, backtrace)
     return nothing
 end
 
@@ -195,7 +197,9 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             foreach(collection -> delete!(catalog, collection), reverse(placed))
             remove_items!(workspace, job.key)
             failed!(workspace, job.key, SOURCE_EXPAND, sprint(showerror, error))
-            @error("A stage failed", id=id(catalog, job.key), stage=SOURCE_EXPAND, exception=(error, catch_backtrace()))
+            DataBrowserAPI.report_error(
+                "A stage failed\n  Source: $(DataBrowserAPI.source_description(workspace.source))\n" *
+                "  Item: $(id(catalog, job.key))\n  Stage: SOURCE_EXPAND", error, catch_backtrace())
             return nothing
         end
         conflicts = replace_source_output!(cache, saved, previous, ItemOutput[

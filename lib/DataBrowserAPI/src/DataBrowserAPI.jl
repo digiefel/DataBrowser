@@ -20,6 +20,7 @@ include("item_contract.jl")
 include("stage_contract.jl")
 include("visualizer_contract.jl")
 include("timing_debug.jl")
+include("errors.jl")
 
 export AbstractProject,
     AbstractDataSource,

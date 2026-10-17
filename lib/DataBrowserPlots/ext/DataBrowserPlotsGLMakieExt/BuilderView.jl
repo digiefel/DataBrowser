@@ -40,6 +40,7 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     dark::Bool = true
     figure_id::String = ""
     message::String = NO_TABLE
+    error_details::String = ""
     export_error::String = ""
 end
 
@@ -88,6 +89,7 @@ function build!(view::BuilderView, ctx; preserve_zoom::Bool=false)::Nothing
     if table === nothing || table.rows == 0 || length(table.columns) < 2
         close(view)
         view.message = NO_TABLE
+        view.error_details = ""
         return nothing
     end
     roles = Dict(description.roles)
@@ -116,12 +118,12 @@ function build!(view::BuilderView, ctx; preserve_zoom::Bool=false)::Nothing
         view.preserve_zoom = limits !== nothing
         view.axis_columns = axis_columns
         view.message = ""
+        view.error_details = ""
     catch err
         bt = catch_backtrace()
         close(view)
-        summary = first(split(sprint(showerror, err), '\n'; limit=2))
-        view.message = "Plot failed: $summary. See the console for full details."
-        @error "Plot builder: drawing failed" description exception=(err, bt)
+        view.message, view.error_details = DataBrowserAPI.report_error(
+            "Plot builder: drawing failed", err, bt; details=repr(description))
     end
     return nothing
 end

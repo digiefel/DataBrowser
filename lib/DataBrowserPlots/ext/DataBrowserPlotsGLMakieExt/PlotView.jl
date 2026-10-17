@@ -27,6 +27,7 @@ Base.@kwdef mutable struct PlotView <: FigureView
     figure_id::String = ""
     # Why the window shows no figure, and why the last export failed.
     message::String = "No item selected"
+    error_details::String = ""
     export_error::String = ""
 end
 
@@ -57,6 +58,7 @@ function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
         [plot_kind_label(project, plot) for plot in registered_plot_kinds(project, kind)]
 
     if isempty(view.plots)
+        view.error_details = ""
         close(view)
         view.plot = ""
         view.message =
@@ -71,8 +73,7 @@ function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
     return nothing
 end
 
-# A failure is kept in `view.message`. The console receives the complete exception together with
-# the source, the plot and the items.
+# Keep the short report in the window and the full report behind "Show details".
 function build!(view::PlotView, ctx)::Nothing
     workspace = ctx.workspace::Workspace.Workspace
     plot = RegisteredPlot{view.kind,Symbol(view.plot)}
@@ -89,22 +90,18 @@ function build!(view::PlotView, ctx)::Nothing
             error("No loaded plot backend can show a $(typeof(figure))")
         view.figure = figure
         view.message = ""
+        view.error_details = ""
     catch err
         bt = catch_backtrace()
         close(view)
-        summary = first(split(sprint(showerror, err), '\n'; limit=2))
-        view.message = "Plot failed: $summary. See the console for full details."
-        item_context = join(
-            ("$name ($(view.kind))\n  $item_id" for (name, item_id) in zip(selection.label, selection.id)),
-            "\n",
-        )
-        @error(
-            "Plot drawing failed\n" *
-            "Source: $(label(workspace.source))\n" *
-            "Plot: $(view.plot)\n" *
-            "Items: $(length(selection))\n$item_context",
-            exception=(err, bt),
-        )
+        context = "Plot drawing failed\n" *
+            "  Source: $(DataBrowserAPI.source_description(workspace.source))\n" *
+            "  Plot: $(view.plot)\n" *
+            "  Items ($(length(selection))):\n" *
+            join(("    $name" for name in selection.label), "\n")
+        details = join(("$name ($(view.kind))\n  $item_id"
+            for (name, item_id) in zip(selection.label, selection.id)), "\n")
+        view.message, view.error_details = DataBrowserAPI.report_error(context, err, bt; details)
     end
     return nothing
 end

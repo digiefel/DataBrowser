@@ -30,6 +30,7 @@ A subtype has these fields:
 - `dark::Bool`: the theme `figure` was built with;
 - `figure_id::String`: names the figure for GLMakie. Set it from the id of the window in `prepare!`;
 - `message::String`: why the window shows no figure;
+- `error_details::String`: the full report for the last drawing error;
 - `export_error::String`: why the last export failed.
 
 And these methods:
@@ -114,6 +115,10 @@ function draw!(view::FigureView, ctx)::Nothing
     isempty(view.export_error) || ig.TextWrapped(view.export_error)
     if view.figure === nothing
         ig.TextWrapped(view.message)
+        if !isempty(view.error_details) && ig.CollapsingHeader("Show details")
+            ig.SmallButton("Copy details") && ig.SetClipboardText(view.error_details)
+            ig.TextUnformatted(view.error_details)
+        end
         return nothing
     end
     # The i key does what "Inspect" does, with the mouse over the window.
