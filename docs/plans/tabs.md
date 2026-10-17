@@ -146,7 +146,7 @@ A **debug point** shows a value that exists only inside a function, such as `seg
  «a plot window, input from the item tree»                      "PUND" plot ◀──────────┘
                                                                 the user tags here
  cold = query_items(workspace, "temperature_K < 100")
- measurements = DataFrame(workspace, items(workspace, Tag("good")))    table
+ measurements = select(workspace, items(workspace, Tag("good")))      table
  devices = combine(groupby(measurements, …), :Pr => maximum => …)      table
  samples = combine(groupby(devices, …), :Pr_max => mean => …)          table
  «a figure of samples: x, y, color, marker size»                       figure
@@ -235,7 +235,7 @@ Proposed, not yet agreed:
 - The table window, the registered plots (`register_plot!`) and the plot builder with the roles x,
   y and color.
 - Registrations, `query_items`, tags with `tags.txt`, and the table of items
-  `DataFrame(workspace, items)`.
+  `select(workspace, items)`.
 - One item tree with one selection for the whole browser, as a fixed panel.
 
 ## Changes to visualizers.md

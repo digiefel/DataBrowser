@@ -407,14 +407,10 @@ uuid = "c7d8e9f0-1a2b-3c4d-5e6f-708192a3b4c5"
 version = "0.1.0"
 
 [[deps.DataBrowserCore]]
-deps = ["CancellationTokens", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserSources", "Dates", "InteractiveUtils", "Printf", "Serialization", "TOML"]
+deps = ["CancellationTokens", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserSources", "Dates", "InteractiveUtils", "PrettyTables", "Printf", "SHA", "Serialization", "StructArrays", "TOML", "Tables"]
 path = "../lib/DataBrowserCore"
 uuid = "d1e2f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f6a"
 version = "0.1.0"
-weakdeps = ["DataFrames"]
-
-    [deps.DataBrowserCore.extensions]
-    DataBrowserCoreDataFramesExt = "DataFrames"
 
 [[deps.DataBrowserGUI]]
 deps = ["CImGui", "DataBrowserAPI", "DataBrowserCache", "DataBrowserCore", "GLFW", "ModernGL", "Printf", "TOML", "Tables", "TimerOutputs"]
@@ -427,10 +423,14 @@ deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserGUI", "GLFW",
 path = "../lib/DataBrowserPlots"
 uuid = "e2f3a4b5-c6d7-8e9f-0a1b-2c3d4e5f6a7b"
 version = "0.1.0"
-weakdeps = ["GLMakie"]
 
     [deps.DataBrowserPlots.extensions]
+    DataBrowserPlotsAlgebraOfGraphicsExt = "AlgebraOfGraphics"
     DataBrowserPlotsGLMakieExt = "GLMakie"
+
+    [deps.DataBrowserPlots.weakdeps]
+    AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
+    GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 
 [[deps.DataBrowserRecipes]]
 deps = ["CSV", "DataBrowserAPI", "DataBrowserSources", "DataFrames"]

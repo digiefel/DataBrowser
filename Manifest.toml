@@ -193,10 +193,6 @@ deps = ["CancellationTokens", "DataBrowserAPI", "DataBrowserAnnotations", "DataB
 path = "lib/DataBrowserCore"
 uuid = "d1e2f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f6a"
 version = "0.1.0"
-weakdeps = ["DataFrames"]
-
-    [deps.DataBrowserCore.extensions]
-    DataBrowserCoreDataFramesExt = "DataFrames"
 
 [[deps.DataBrowserGUI]]
 deps = ["CImGui", "DataBrowserAPI", "DataBrowserCache", "DataBrowserCore", "GLFW", "ModernGL", "Printf", "TOML", "Tables", "TimerOutputs"]
@@ -211,9 +207,11 @@ uuid = "e2f3a4b5-c6d7-8e9f-0a1b-2c3d4e5f6a7b"
 version = "0.1.0"
 
     [deps.DataBrowserPlots.extensions]
+    DataBrowserPlotsAlgebraOfGraphicsExt = "AlgebraOfGraphics"
     DataBrowserPlotsGLMakieExt = "GLMakie"
 
     [deps.DataBrowserPlots.weakdeps]
+    AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
     GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 
 [[deps.DataBrowserRecipes]]
