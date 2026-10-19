@@ -534,7 +534,8 @@ the table as a first-class view.
   builder show a table that another window passes on.
 - [x] "Export" in the header of every window calls `export!(visualizer, ctx)`. The default saves a
   picture of what the visualizer draws as PNG, without the title and header of the window.
-- [ ] Export a table as CSV, and a figure through CairoMakie as PNG, PDF or SVG.
+- [x] The table exports its rows as CSV, with the columns it shows.
+- [ ] A figure exports through CairoMakie as PNG, PDF or SVG.
 - [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
   another window. Names for windows, so that the input menu can tell two tables apart.
 - [ ] Save the windows with the view, with the theme of the plots and the plot chosen for each

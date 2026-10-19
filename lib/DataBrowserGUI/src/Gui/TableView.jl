@@ -1,6 +1,9 @@
 import CImGui as ig
 
-import DataBrowserAPI: draw!, label, output, prepare!, settings
+import CSV
+using NativeFileDialog: save_file
+
+import DataBrowserAPI: draw!, export!, label, output, prepare!, settings
 using DataBrowserAPI: AbstractVisualizer, Setting, items
 using DataBrowserCore: Selection
 using ..DataBrowserGUI: ItemTable, merge_item_tables
@@ -54,6 +57,19 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     view.warnings = warnings
     types = unique(typeof.(items(selection)))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
+    return nothing
+end
+
+# "Export" saves every row of the table, with the columns it shows, as CSV.
+function export!(view::TableView, ctx)::Nothing
+    table = view.table
+    table === nothing && error("the window shows no table")
+    path = save_file("$(label(view)).csv"; filterlist="csv")
+    isempty(path) && return nothing
+    isempty(splitext(path)[2]) && (path *= ".csv")
+    columns = (Symbol(name) => [table.getvalue(row, column) for row in 1:table.rows]
+               for (column, name) in enumerate(table.columns))
+    CSV.write(path, (; columns...))
     return nothing
 end
 
