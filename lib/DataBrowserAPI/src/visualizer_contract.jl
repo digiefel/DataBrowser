@@ -14,6 +14,8 @@ It may also have:
 
 - a method `settings(visualizer::V)`, the settings the user may change;
 - a method `draw_header!(visualizer::V, ctx)`, for buttons in the header of the window;
+- a method `export!(visualizer::V, ctx)`, for what "Export" in the header of the window does. The
+  default saves a picture of what `draw!` draws;
 - a method `output(visualizer::V)`, the value the window passes on to other windows;
 - a method `Base.close(visualizer::V)`, to release what the visualizer holds outside Julia's
   memory, such as a figure on the graphics card. The browser calls it when the window closes or
@@ -104,6 +106,21 @@ The browser calls `draw_header!` in every frame in which the window is visible. 
 one row.
 """
 draw_header!(::AbstractVisualizer, ctx) = nothing
+
+"""
+    export!(visualizer, ctx)
+
+Save what the window of `visualizer` shows. The browser calls `export!` when the user clicks
+"Export", which every window has in its header.
+
+The default asks for a file and saves there, as PNG, a picture of what [`draw!`](@ref) draws,
+without the title and the header of the window. A visualizer that can
+save its value better has its own method: a table saves CSV, a plot saves PDF or SVG. Most
+methods ask for a file, but `export!` may do anything that saves the value.
+
+`export!` may throw. The window then shows the error above its value.
+"""
+function export! end
 
 """
     draw!(visualizer, ctx)

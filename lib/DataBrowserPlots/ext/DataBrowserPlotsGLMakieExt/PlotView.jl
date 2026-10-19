@@ -28,7 +28,6 @@ Base.@kwdef mutable struct PlotView <: FigureView
     # Why the window shows no figure, and why the last export failed.
     message::String = "No item selected"
     error_details::String = ""
-    export_error::String = ""
 end
 
 DataBrowserAPI.label(::PlotView) = "Plot"

@@ -7,7 +7,7 @@ import DataBrowserGUI
 const Browser = DataBrowserGUI.Browser
 
 using DataBrowserAPI: AbstractVisualizer
-import DataBrowserAPI: draw!, draw_header!
+import DataBrowserAPI: draw!, draw_header!, export!
 using .MakieImguiIntegration: destroy_figure!, inspect!, plot_theme
 
 # Every figure of the browser uses the dark theme, or the light one. The theme button of any window
@@ -20,8 +20,8 @@ const THEME_BLEND_SECONDS = 0.25
 const PLOT_HELP_TEXT = "Export saves the figure.\nScroll zooms, drag zooms to a rectangle, right-drag pans, Ctrl-click resets limits.\nHold x or y to change that direction only.\nOn the ticks of one axis, scroll and drag change that axis only.\nInspect, or the i key, shows the values under the mouse."
 
 """
-A visualizer that shows one figure. Its window has the theme button, "Export" and the help button
-in its header, and "Inspect" for the values under the mouse.
+A visualizer that shows one figure. Its window has the theme button and the help button in its
+header, and "Inspect" for the values under the mouse. "Export" saves the figure.
 
 A subtype has these fields:
 
@@ -30,8 +30,7 @@ A subtype has these fields:
 - `dark::Bool`: the theme `figure` was built with;
 - `figure_id::String`: names the figure for GLMakie. Set it from the id of the window in `prepare!`;
 - `message::String`: why the window shows no figure;
-- `error_details::String`: the full report for the last drawing error;
-- `export_error::String`: why the last export failed.
+- `error_details::String`: the full report for the last drawing error.
 
 And these methods:
 
@@ -74,26 +73,6 @@ function draw_header!(view::FigureView, ctx)::Nothing
     ig.PopStyleColor(5)
     ig.SetItemTooltip(DARK[] ? "Switch to the light theme" : "Switch to the dark theme")
 
-    can_export = view.figure !== nothing
-    ig.SameLine()
-    !can_export && ig.BeginDisabled()
-    if ig.Button("Export") && can_export
-        path = save_file("$(export_name(view)).png"; filterlist="png,jpg,jpeg,svg,pdf")
-        if !isempty(path)
-            isempty(splitext(path)[2]) && (path *= ".png")
-            try
-                Makie.save(path, view.figure)
-                view.export_error = ""
-            catch err
-                bt = catch_backtrace()
-                summary = first(split(sprint(showerror, err), '\n'; limit=2))
-                view.export_error = "Export failed: $summary. See the console for full details."
-                @error("Plot export failed\nOutput: $path", exception=(err, bt))
-            end
-        end
-    end
-    !can_export && ig.EndDisabled()
-
     ig.SameLine()
     ig.Button("?") && ig.OpenPopup("plot_help")
     ig.SetItemTooltip("Help")
@@ -106,13 +85,21 @@ function draw_header!(view::FigureView, ctx)::Nothing
     return nothing
 end
 
+function export!(view::FigureView, ctx)::Nothing
+    view.figure === nothing && error("the window shows no figure")
+    path = save_file("$(export_name(view)).png"; filterlist="png,jpg,jpeg,svg,pdf")
+    isempty(path) && return nothing
+    isempty(splitext(path)[2]) && (path *= ".png")
+    Makie.save(path, view.figure)
+    return nothing
+end
+
 embed_figure(view::FigureView) = embed(view.figure, view.figure_id)
 
 function draw!(view::FigureView, ctx)::Nothing
     # The figure was built before the theme changed.
     view.figure === nothing || view.dark == DARK[] || build!(view, ctx)
 
-    isempty(view.export_error) || ig.TextWrapped(view.export_error)
     if view.figure === nothing
         ig.TextWrapped(view.message)
         if !isempty(view.error_details) && ig.CollapsingHeader("Show details")

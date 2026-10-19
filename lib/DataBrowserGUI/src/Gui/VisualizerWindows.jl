@@ -1,7 +1,7 @@
 import CImGui as ig
 import CImGui.CSyntax: @c
 
-using DataBrowserAPI: Setting, draw_header!, id, label, settings
+using DataBrowserAPI: Setting, draw_header!, export!, id, label, settings
 import DataBrowserCore.Workspace
 
 """
@@ -110,6 +110,25 @@ function _render_window_settings!(window::Window)::Nothing
 end
 
 """
+Draw "Export", which every window has, and save what the window shows when the user clicks it.
+"""
+function _render_export_button!(window::Window, ctx::WindowContext)::Nothing
+    clicked = ig.Button("Export")
+    ig.SetItemTooltip("Save what the window shows")
+    try
+        clicked && export!(window.visualizer, ctx)
+        # The picture of the window, when the default of `export!` asked for one in the last frame.
+        save_window_picture!(window.id)
+        clicked && (window.export_error = "")
+    catch err
+        summary = first(split(sprint(showerror, err), '\n'; limit=2))
+        window.export_error = "Export failed: $summary. See the console for full details."
+        @error("Export failed", exception=(err, catch_backtrace()))
+    end
+    return nothing
+end
+
+"""
 Draw every window that shows a value with a visualizer, and remove those the user closed. A window
 that is not visible, for example behind another tab, is not brought up to date.
 """
@@ -128,12 +147,16 @@ function render_windows!(state::BrowserState)::Nothing
             # must first be brought back to the state it had before the call.
             _render_window_header!(state, window)
             _render_window_settings!(window)
+            ig.SameLine()
+            _render_export_button!(window, ctx)
             # A group is one item of the row, also when the visualizer draws no button.
             ig.SameLine()
             ig.BeginGroup()
             draw_header!(window.visualizer, ctx)
             ig.EndGroup()
             ig.Separator()
+            isempty(window.export_error) || ig.TextWrapped(window.export_error)
+            measure_window_picture!(window.id)
             if isempty(window.error)
                 draw!(window.visualizer, ctx)
             else

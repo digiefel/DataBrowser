@@ -41,7 +41,6 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     figure_id::String = ""
     message::String = NO_TABLE
     error_details::String = ""
-    export_error::String = ""
 end
 
 DataBrowserAPI.label(::BuilderView) = "Plot builder"

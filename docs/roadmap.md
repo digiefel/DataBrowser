@@ -431,7 +431,6 @@ on it with a few verbs.
   field.
 - [ ] Draw a registered plot with one call that takes its label and the items and returns the
   figure the GUI shows.
-- [ ] Save a figure as PDF through a CairoMakie extension of `DataBrowserPlots`.
 - [ ] `select(workspace, ids)` gives the items as a table, as described in
   [plans/visualizers.md](plans/visualizers.md#the-value-of-a-selection), and changes nothing.
   `select!(workspace, ids)` changes the workspace's one shared selection, and `selection(workspace)`
@@ -533,6 +532,9 @@ the table as a first-class view.
   after "from", to choose the selection or another window. The table passes on what it shows: the
   selected rows, and the column `item` only when "Provenance column" is on. The table and the plot
   builder show a table that another window passes on.
+- [x] "Export" in the header of every window calls `export!(visualizer, ctx)`. The default saves a
+  picture of what the visualizer draws as PNG, without the title and header of the window.
+- [ ] Export a table as CSV, and a figure through CairoMakie as PNG, PDF or SVG.
 - [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
   another window. Names for windows, so that the input menu can tell two tables apart.
 - [ ] Save the windows with the view, with the theme of the plots and the plot chosen for each
@@ -597,7 +599,7 @@ the table as a first-class view.
   - [ ] Optional cell colors on a numeric column, from a color scale.
   - [ ] A cell holding a vector shows its type and length; clicking it opens it in a new window.
   - [ ] One row, such as a `NamedTuple`, shown as a table of names and values.
-  - [ ] Copy with the header row, or as CSV or Markdown; export to a CSV file.
+  - [ ] Copy with the header row, or as CSV or Markdown.
 - [ ] More visualizers:
   - [ ] Inspector: a tree that expands nested values (`NamedTuple`, `Dict`, structs, vectors).
   - [ ] Metadata table: one row for each selected item, one column for each metadata key.

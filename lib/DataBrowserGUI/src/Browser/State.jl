@@ -91,6 +91,8 @@ mutable struct Window
     stamp::Any
     # Why the window does not show the value; empty when it shows it.
     error::String
+    # Why the last "Export" failed; empty when it succeeded.
+    export_error::String
 end
 
 """
