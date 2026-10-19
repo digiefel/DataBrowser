@@ -555,6 +555,8 @@ the table as a first-class view.
 - [x] Accept AlgebraOfGraphics declarations through `DataBrowserPlots.figure` as an optional
   integration. The [AoG example](../lib/DataBrowserPlots/examples/aog.jl) probes result-driven fitting;
   preserving category identity in computed guide labels and GUI/code editing remain open.
+- [x] `@plot header begin ... end` declares one panel: a header that every layer shares, and one
+  layer per line. Named layers, whose results later lines use, remain open.
 - [ ] Review the standalone graphics grammar, statistical results, shared attribute schemas, and
   GUI/code editing proposal in [Graphics grammar and plot builder](plans/graphics-grammar.md).
 - [ ] Plot builder: a window in which the user builds a plot of a table from menus, and which a

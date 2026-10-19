@@ -1,7 +1,8 @@
 """
 Plots of ordinary Julia data and selected items in the browser.
 
-The `figure` function draws AlgebraOfGraphics declarations when AoG is loaded.
+The `figure` function draws AlgebraOfGraphics declarations when AoG is loaded, such as those written
+with `@plot`.
 This package also holds what a project needs to register a plot. The plot windows are drawn with
 GLMakie, and are part of the browser once GLMakie is loaded: `using DataBrowser, GLMakie`.
 """
@@ -13,8 +14,9 @@ using DataBrowserCore: Selection
 
 include("plots.jl")
 include("description.jl")
+include("declaration.jl")
 
-export figure
+export figure, @plot
 
 """Create the figure of a registered plot for `selection`."""
 function setup_plot(
