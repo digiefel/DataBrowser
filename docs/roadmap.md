@@ -535,7 +535,7 @@ the table as a first-class view.
 - [x] "Export" in the header of every window calls `export!(visualizer, ctx)`. The default saves a
   picture of what the visualizer draws as PNG, without the title and header of the window.
 - [x] The table exports its rows as CSV, with the columns it shows.
-- [ ] A figure exports through CairoMakie as PNG, PDF or SVG.
+- [x] A figure exports as PNG, PDF or SVG through CairoMakie when the session has loaded it.
 - [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
   another window. Names for windows, so that the input menu can tell two tables apart.
 - [ ] Save the windows with the view, with the theme of the plots and the plot chosen for each

@@ -21,7 +21,8 @@ const PLOT_HELP_TEXT = "Export saves the figure.\nScroll zooms, drag zooms to a 
 
 """
 A visualizer that shows one figure. Its window has the theme button and the help button in its
-header, and "Inspect" for the values under the mouse. "Export" saves the figure.
+header, and "Inspect" for the values under the mouse. "Export" saves the figure: as PNG, PDF or SVG
+when the session has loaded CairoMakie, and as PNG otherwise.
 
 A subtype has these fields:
 
@@ -85,12 +86,21 @@ function draw_header!(view::FigureView, ctx)::Nothing
     return nothing
 end
 
+const CAIROMAKIE = Base.PkgId(Base.UUID("13f3f980-e62b-5c42-98c6-ff1f3baf88f0"), "CairoMakie")
+
+# "Export" saves the figure with CairoMakie as PNG, PDF or SVG when the session has loaded CairoMakie,
+# and with GLMakie as PNG otherwise.
 function export!(view::FigureView, ctx)::Nothing
     view.figure === nothing && error("the window shows no figure")
-    path = save_file("$(export_name(view)).png"; filterlist="png,jpg,jpeg,svg,pdf")
+    cairomakie = get(Base.loaded_modules, CAIROMAKIE, nothing)
+    path = save_file("$(export_name(view)).png"; filterlist=cairomakie === nothing ? "png" : "png,pdf,svg")
     isempty(path) && return nothing
     isempty(splitext(path)[2]) && (path *= ".png")
-    Makie.save(path, view.figure)
+    if cairomakie === nothing
+        Makie.save(path, view.figure)
+    else
+        Makie.save(path, view.figure; backend=cairomakie)
+    end
     return nothing
 end
 
