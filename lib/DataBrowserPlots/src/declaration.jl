@@ -28,5 +28,6 @@ macro plot(header, block)
         Meta.isexpr(layer, :(=)) && error("@plot does not name layers yet: $layer")
     end
     isempty(layers) && return esc(header)
-    return esc(:($header * +($(layers...))))
+    # `a + b + c`, not `+(a, b, c)`: AoG adds two layers at a time and has no `+` of one layer.
+    return esc(:($header * $(foldl((a, b) -> :($a + $b), layers))))
 end

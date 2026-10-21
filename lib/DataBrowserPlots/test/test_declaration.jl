@@ -7,4 +7,7 @@ using DataBrowserPlots: @plot
             5
     end) == 2 * (3 + 4 * 5)
     @test @plot(2, begin end) == 2
+    @test @plot(2, begin
+        3
+    end) == 2 * 3
 end
