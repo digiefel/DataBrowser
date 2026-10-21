@@ -18,6 +18,22 @@ Base.@kwdef struct PersistedItemsView
 end
 
 """
+A saved window: its visualizer, by type name, where its value comes from, the function the value
+passes through, and the settings of the visualizer. ImGui keeps the place and size of the window in
+imgui.ini under `id`.
+"""
+Base.@kwdef struct PersistedWindow
+    id::String = ""
+    visualizer::String = ""
+    # "selection", "items" with the item ids in `ids`, or "window" with the id of the other window.
+    input::String = "selection"
+    ids::Vector{String} = String[]
+    # The name of a function in `Main`, or empty.
+    transform::String = ""
+    settings::Dict{String,Any} = Dict{String,Any}()
+end
+
+"""
 The browser state written inside one project directory.
 
 Only stable ids and text are persisted. Runtime objects, loaded data, figures, and background work
@@ -28,6 +44,7 @@ Base.@kwdef struct PersistedProjectView
     tree::PersistedTreeView = PersistedTreeView()
     items::PersistedItemsView = PersistedItemsView()
     extensions::Dict{String,Dict{String,Any}} = Dict{String,Dict{String,Any}}()
+    windows::Vector{PersistedWindow} = PersistedWindow[]
 end
 
 """

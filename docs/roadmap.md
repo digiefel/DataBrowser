@@ -538,8 +538,10 @@ the table as a first-class view.
 - [x] A figure exports as PNG, PDF or SVG through CairoMakie when the session has loaded it.
 - [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
   another window. Names for windows, so that the input menu can tell two tables apart.
-- [ ] Save the windows with the view, with the theme of the plots and the plot chosen for each
-  type of item. Until then, choose the windows from `+ Window` whenever the browser opens.
+- [x] Save the windows with the view in `databrowser.toml`: their visualizer, input, transform
+  and settings. The browser opens them again with the workspace; a window whose visualizer is not
+  loaded stays in the file until it is.
+- [ ] Save the theme of the plots and the plot chosen for each type of item.
 - [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
 - [ ] Update [plans/visualizers.md](plans/visualizers.md), which still describes a zoomable canvas,
   for windows, tabs and inputs.

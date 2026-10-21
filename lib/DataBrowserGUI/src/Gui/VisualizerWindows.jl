@@ -74,7 +74,7 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
 end
 
 # How the user changes one setting. The type of the field decides: a `Bool` is a checkmark and a
-# `String` is a menu. Each method draws the control and returns the value the user chose, which is
+# `String` is a menu, or a text field when the setting has no options. Each method draws the control and returns the value the user chose, which is
 # `current` when the user changed nothing.
 function _render_setting!(setting::Setting, current::Bool)::Bool
     chosen = current
@@ -84,6 +84,19 @@ end
 
 function _render_setting!(setting::Setting, current::String)::String
     chosen = current
+    # Without options, the user types the text, and the label shows while it is empty. ImGui keeps
+    # the text while the user types, and it becomes the setting at Enter.
+    if isempty(setting.options)
+        buffer = zeros(UInt8, max(sizeof(current) + 256, 1024))
+        copyto!(buffer, codeunits(current))
+        ig.SetNextItemWidth(ig.GetFontSize() * 12)
+        if ig.InputTextWithHint("##$(setting.label)", setting.label, buffer, length(buffer),
+                ig.ImGuiInputTextFlags_EnterReturnsTrue)
+            chosen = unsafe_string(pointer(buffer))
+        end
+        ig.SetItemTooltip(setting.label)
+        return chosen
+    end
     if ig.BeginCombo("##$(setting.label)", current, ig.ImGuiComboFlags_WidthFitPreview)
         for option in setting.options
             ig.Selectable(option, option == current) && (chosen = option)

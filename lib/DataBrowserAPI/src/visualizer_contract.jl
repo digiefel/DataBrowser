@@ -61,7 +61,7 @@ Describes one setting of a visualizer to the user. `label` names the setting in 
 The type of the visualizer's field decides how the user changes the setting:
 
 - a `Bool` field is a checkmark;
-- a `String` field is a menu of `options`.
+- a `String` field is a menu of `options`, or a text field when there are no options.
 
 `prepare` says whether the visualizer must take its value again when the setting changes. Pass
 `prepare=false` for a setting that only `draw!` reads.

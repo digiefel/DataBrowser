@@ -2,7 +2,8 @@ using Test, DataBrowserGUI
 import DataBrowserAPI
 using DataBrowserAPI: AbstractVisualizer
 using DataBrowserCore: Selection
-using DataBrowserGUI.Browser: BrowserState, TableView, ValueView, LinePlotView, HistogramView, BarChartView, close_window!, open_window!, visualizers,
+using DataBrowserGUI.Browser: BrowserState, PersistedProjectView, PersistedWindow, FixedItems, LiveSelection, WindowOutput,
+    _persisted_window, _save_project_view, _load_project_view, _restore_windows!, _waiting_windows, TableView, ValueView, LinePlotView, HistogramView, BarChartView, close_window!, open_window!, visualizers,
     transform!, transforms, code
 
 mutable struct Counter <: AbstractVisualizer end
@@ -52,4 +53,40 @@ end
     @test LinePlotView ∉ offered(Selection) && HistogramView ∉ offered(Selection)
     @test BarChartView in offered(typeof((r_contact=1.5, r_sheet=2)))
     @test BarChartView ∉ offered(typeof((name="a", r_sheet=2)))
+end
+
+Base.@kwdef mutable struct Scaled <: AbstractVisualizer
+    log::Bool = false
+end
+DataBrowserAPI.prepare!(::Scaled, ::Vector{Int}, ctx) = nothing
+DataBrowserAPI.settings(::Scaled) = (log=DataBrowserAPI.Setting("Log"),)
+
+@testset "windows are saved and opened again" begin
+    state = BrowserState()
+    open_window!(state, Counter())
+    scaled = open_window!(state, Scaled(log=true); input=FixedItems(["a", "b"]))
+    transform!(scaled, GlobalRef(Main, :late_scale))
+    open_window!(state, Counter(); input=WindowOutput(scaled.id))
+    mktempdir() do root
+        _save_project_view(root, PersistedProjectView(windows=_persisted_window.(state.windows)))
+        reopened = BrowserState()
+        _restore_windows!(reopened, _load_project_view(root).windows)
+        @test [w.id for w in reopened.windows] == [w.id for w in state.windows]
+        @test typeof.(getfield.(reopened.windows, :visualizer)) == [Counter, Scaled, Counter]
+        @test reopened.windows[2].visualizer.log
+        @test reopened.windows[1].input isa LiveSelection
+        @test reopened.windows[2].input.ids == ["a", "b"]
+        @test reopened.windows[2].transform == GlobalRef(Main, :late_scale)
+        @test reopened.windows[3].input.window == scaled.id
+        @test open_window!(reopened, Counter()).id ∉ [w.id for w in state.windows]
+    end
+end
+
+@testset "a saved window whose visualizer is not loaded stays saved" begin
+    waiting = PersistedWindow(id="window_7", visualizer="NotLoaded")
+    state = BrowserState(saved_project_view=PersistedProjectView(windows=[waiting]))
+    @test_logs (:warn,) _restore_windows!(state, [waiting])
+    @test isempty(state.windows)
+    @test _waiting_windows(state) == [waiting]
+    @test open_window!(state, Counter()).id != waiting.id
 end

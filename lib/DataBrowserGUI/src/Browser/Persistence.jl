@@ -1,6 +1,6 @@
 using TOML
 
-using DataBrowserAPI: project_name
+using DataBrowserAPI: AbstractVisualizer, prepare!, project_name, settings
 using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 
@@ -64,6 +64,11 @@ function _project_view_from_toml(
     )
 end
 
+function _project_view_from_toml(::Type{Dict{String,Any}}, value::Any)::Dict{String,Any}
+    value isa AbstractDict || error("Expected table, got $(typeof(value))")
+    return Dict{String,Any}(String(key) => item for (key, item) in value)
+end
+
 function _project_view_from_toml(::Type{T}, data::Any)::T where {T}
     data isa AbstractDict || error("Expected table for $T, got $(typeof(data))")
     defaults = T()
@@ -80,6 +85,7 @@ end
 
 _project_view_to_toml(value::AbstractString)::String = String(value)
 _project_view_to_toml(value::Bool)::Bool = value
+_project_view_to_toml(value::Real)::Real = value
 _project_view_to_toml(value::Tuple)::Vector = [_project_view_to_toml(item) for item in value]
 _project_view_to_toml(value::AbstractVector)::Vector = [_project_view_to_toml(item) for item in value]
 _project_view_to_toml(value::AbstractDict)::Dict{String,Any} =
@@ -141,7 +147,74 @@ function _project_view_from_browser(
             filter=state.item_filter,
         ),
         extensions=_persisted_extensions(state),
+        windows=[[_persisted_window(window) for window in state.windows]; _waiting_windows(state)],
     )
+end
+
+"""The saved windows whose visualizer is not loaded now. They stay in the file to open later."""
+_waiting_windows(state::BrowserState)::Vector{PersistedWindow} =
+    filter(window -> _visualizer_type(window.visualizer) === nothing, state.saved_project_view.windows)
+
+function _persisted_window(window::Window)::PersistedWindow
+    input = window.input
+    visualizer = window.visualizer
+    # A setting is saved as TOML text, number or boolean; a symbol as its text.
+    values = Dict{String,Any}()
+    for name in keys(settings(visualizer))
+        value = getproperty(visualizer, name)
+        value isa Symbol && (value = String(value))
+        value isa Union{AbstractString,Real} && (values[String(name)] = value)
+    end
+    return PersistedWindow(
+        id=window.id,
+        visualizer=String(nameof(typeof(visualizer))),
+        input=input isa FixedItems ? "items" : input isa WindowOutput ? "window" : "selection",
+        ids=input isa FixedItems ? copy(input.ids) : input isa WindowOutput ? [input.window] : String[],
+        transform=window.transform === nothing ? "" : String(window.transform.name),
+        settings=values,
+    )
+end
+
+"""The loaded visualizer type named `name`: one with a `prepare!` method, as the browser offers."""
+function _visualizer_type(name::AbstractString)::Union{Nothing,Type}
+    for method in methods(prepare!)
+        V = Base.unwrap_unionall(method.sig).parameters[2]
+        V isa DataType && V <: AbstractVisualizer && isconcretetype(V) && String(nameof(V)) == name &&
+            return V
+    end
+    return nothing
+end
+
+"""
+Open the saved windows again. A window whose visualizer is not loaded now is not opened, and stays
+in the file until the browser opens with its visualizer loaded.
+"""
+function _restore_windows!(state::BrowserState, saved::Vector{PersistedWindow})::Nothing
+    foreach(window -> close_window!(state, window), copy(state.windows))
+    for window in saved
+        V = _visualizer_type(window.visualizer)
+        if V === nothing
+            @warn "A saved window is not opened until a visualizer called $(window.visualizer) is loaded"
+            continue
+        end
+        values = Pair{Symbol,Any}[]
+        for (key, value) in window.settings
+            name = Symbol(key)
+            hasfield(V, name) || continue
+            push!(values, name => fieldtype(V, name) === Symbol ? Symbol(value) : value)
+        end
+        input = window.input == "items" ? FixedItems(copy(window.ids)) :
+            window.input == "window" ? WindowOutput(only(window.ids)) : LiveSelection()
+        opened = open_window!(state, V(; values...); input)
+        opened.id = window.id
+        isempty(window.transform) || transform!(opened, GlobalRef(Main, Symbol(window.transform)))
+    end
+    # New windows take ids after the saved ones, also those not opened, so ImGui does not give
+    # them a saved place.
+    numbers = [parse(Int, m.captures[1]) for m in
+        (match(r"^window_(\d+)$", window.id) for window in saved) if m !== nothing]
+    state.next_window = maximum(numbers; init=0)
+    return nothing
 end
 
 """Merge extension save views with any persisted ids not loaded this session."""
@@ -168,6 +241,7 @@ function _apply_project_view!(
     workspace.selection.item_ids = copy(view.items.selected)
     state.tree_filter = view.tree.filter
     state.item_filter = view.items.filter
+    _restore_windows!(state, view.windows)
 
     for ext in state.extensions
         id = extension_id(ext)
