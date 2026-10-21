@@ -1,0 +1,240 @@
+"""The plot builder window of the browser. Loaded when AlgebraOfGraphics and GLMakie are loaded."""
+module DataBrowserPlotsBuilderExt
+
+import AlgebraOfGraphics
+import CImGui as ig
+import GLMakie.Makie as Makie
+
+import DataBrowserAPI
+using DataBrowserAPI: Setting
+using DataBrowserCore: Selection
+import DataBrowserAPI: draw!, prepare!, settings
+using DataBrowserPlots: DataBrowserPlots, figure
+# Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
+const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
+using .GLMakieExt: DARK, FigureView
+using .GLMakieExt.MakieImguiIntegration: plot_theme
+import .GLMakieExt: build!, export_name
+
+# The part of the window height the code takes.
+# TODO: let the user drag the border between the figure and the code.
+const CODE_HEIGHT = 0.35f0
+# Free room after the code in the text buffer. The buffer grows before the code fills it.
+# TODO: ImGui's resize callback instead, which grows the buffer while the user types.
+const CODE_ROOM = 64 * 1024
+
+"""
+The plot builder: a plot written as code, drawn for the selection.
+
+The user names the plot in the window's header: the name `tlm` is the file `plots/tlm.jl`, and a
+name ending in `.jl` is a path. A new plot starts with code that draws the selection's columns. The
+code is shown under the figure and edited there or, once the plot has a name, in any other editor.
+Giving a name that has no file yet saves the code under it; a name that has a file opens it. It
+is ordinary Julia, and its last value is the plot: an AlgebraOfGraphics declaration such as one
+written with `@plot`, or a Makie figure. The file runs from the start in a module of its own, which
+uses AlgebraOfGraphics, Makie and DataBrowserPlots and has `selection` set to the selected items.
+Other packages are loaded with `using` in the file, and functions defined in the REPL are reached
+as `Main.name`.
+
+    @plot data(selection) * mapping(:gap_um, :R_ohm; color=:chip) begin
+        visual(Scatter)
+        linear()
+    end
+
+`selection` is a table with one row for each item, as [`select`](@ref) gives it. "Save" (or
+Ctrl+S in the code) writes the file and draws the plot again; without a name, "Draw" only draws. A change to the file from another
+editor is shown at once, unless the code in the window has changes that are not saved.
+
+TODO: a table of the rows of the items' data, for plots of curves.
+"""
+Base.@kwdef mutable struct BuilderView <: FigureView
+    # The name of the plot, which the user gives: the file `plots/<name>.jl`, or a path to a `.jl`
+    # file, relative to the directory Julia started in. Until then the code is in the window only.
+    file::String = ""
+    # The path the code was read from, or `nothing` before the first selection.
+    # TODO: ask before a change of file drops code that is not saved.
+    loaded::Union{Nothing,String} = nothing
+    # The code in the window, and the code as last read from or written to the file.
+    code::String = ""
+    saved::String = ""
+    # The code `first_code` gave, while the file does not exist.
+    first::String = ""
+    # The modification time of the file when it was last read or written.
+    mtime::Float64 = 0.0
+    # The text buffer ImGui edits.
+    buffer::Vector{UInt8} = zeros(UInt8, CODE_ROOM)
+    selection::Union{Nothing,Selection} = nothing
+    inspect::Bool = false
+    figure::Any = nothing
+    dark::Bool = true
+    figure_id::String = ""
+    message::String = "Select items to plot."
+    error_details::String = ""
+end
+
+DataBrowserAPI.label(::BuilderView) = "Plot builder"
+
+settings(::BuilderView) = (file=Setting("Plot name"), inspect=Setting("Inspect"; prepare=false))
+
+export_name(view::BuilderView) = isempty(view.file) ? "plot" : splitext(basename(view.file))[1]
+
+# The file of the code, or "" while the plot has no name.
+code_path(view::BuilderView)::String =
+    isempty(view.file) || endswith(view.file, ".jl") ? view.file : joinpath("plots", view.file * ".jl")
+
+# The first code of a new plot, which draws whatever columns the selection has: two columns of
+# numbers as points, one as a histogram, or else the number of items of each label.
+function first_code(selection::Selection)::String
+    numbers = [name for name in propertynames(selection)
+        if name ∉ (:id, :label, :data) && eltype(getproperty(selection, name)) <: Union{Missing,Real}]
+    header, layer = if length(numbers) >= 2
+        "mapping($(repr(numbers[1])), $(repr(numbers[2])))", "visual(Scatter)"
+    elseif length(numbers) == 1
+        "mapping($(repr(numbers[1])))", "histogram()"
+    else
+        "mapping(:label)", "frequency()"
+    end
+    return """
+        @plot data(selection) * $header begin
+            $layer
+        end
+        """
+end
+
+function set_code!(view::BuilderView, code::String)::Nothing
+    view.code = code
+    length(view.buffer) < sizeof(code) + CODE_ROOM ÷ 2 && (view.buffer = zeros(UInt8, sizeof(code) + CODE_ROOM))
+    fill!(view.buffer, 0x00)
+    copyto!(view.buffer, codeunits(code))
+    return nothing
+end
+
+# Read the file, or start it with `first_code` when it does not exist.
+function load_code!(view::BuilderView)::Nothing
+    path = code_path(view)
+    view.loaded = path
+    if isfile(path)
+        view.saved = read(path, String)
+        view.mtime = mtime(path)
+    else
+        view.saved = ""
+        view.mtime = 0.0
+    end
+    view.first = isempty(view.saved) && view.selection !== nothing ? first_code(view.selection) : ""
+    set_code!(view, isempty(view.first) ? view.saved : view.first)
+    return nothing
+end
+
+function save_code!(view::BuilderView)::Nothing
+    path = code_path(view)
+    mkpath(dirname(abspath(path)))
+    # Write the whole code first, so that a failed write leaves the file as it was.
+    temporary = path * ".saving"
+    write(temporary, view.code)
+    mv(temporary, path; force=true)
+    view.loaded = path
+    view.saved = view.code
+    view.mtime = mtime(path)
+    return nothing
+end
+
+function prepare!(view::BuilderView, selection::Selection, ctx)::Nothing
+    view.figure_id = "plot_$(ctx.id)"
+    view.selection = selection
+    path = code_path(view)
+    # Until it is edited, the first code follows the columns of the selection.
+    unedited = !isempty(view.first) && view.code == view.first && isempty(view.saved)
+    if view.loaded !== nothing && view.loaded != path && !isempty(path) && !isfile(path)
+        # A new name for the plot saves its code under that name.
+        save_code!(view)
+    elseif view.loaded != path || unedited
+        load_code!(view)
+    end
+    build!(view, ctx)
+    return nothing
+end
+
+# Run the code with `selection` set, and draw what it returns.
+function build!(view::BuilderView, ctx)::Nothing
+    view.dark = DARK[]
+    selection = view.selection
+    if selection === nothing || isempty(selection)
+        close(view)
+        view.message = "Select items to plot."
+        view.error_details = ""
+        return nothing
+    end
+    try
+        # A new module for each run, so that nothing from an earlier run of the file is left.
+        # TODO: modules are never freed; reuse one module per window if this grows.
+        mod = Module(Symbol(view.figure_id))
+        Core.eval(mod, :(const AlgebraOfGraphics = $AlgebraOfGraphics))
+        Core.eval(mod, :(const Makie = $Makie))
+        Core.eval(mod, :(const DataBrowserPlots = $DataBrowserPlots))
+        Core.eval(mod, :(using .AlgebraOfGraphics, .Makie, .DataBrowserPlots))
+        Core.eval(mod, :(selection = $selection))
+        plot = Base.invokelatest(include_string, mod, view.code, code_path(view))
+        view.figure = plot isa Makie.Figure ? plot :
+            Makie.with_theme(() -> figure(plot), plot_theme(view.dark))
+        view.message = ""
+        view.error_details = ""
+    catch err
+        bt = catch_backtrace()
+        close(view)
+        view.message, view.error_details = DataBrowserAPI.report_error(
+            "Plot builder: $(export_name(view)) failed", err, bt)
+    end
+    return nothing
+end
+
+function draw!(view::BuilderView, ctx)::Nothing
+    # The file changed in another editor, and the window has no edits that are not saved.
+    edited = view.code != view.saved && view.code != view.first
+    path = code_path(view)
+    if !isempty(path) && !edited && isfile(path) && mtime(path) != view.mtime
+        load_code!(view)
+        build!(view, ctx)
+    end
+
+    available = ig.GetContentRegionAvail()
+    code_height = round(available.y * CODE_HEIGHT)
+    ig.BeginChild("figure", (0.0f0, max(available.y - code_height, 1.0f0)), false)
+    invoke(draw!, Tuple{FigureView,Any}, view, ctx)
+    ig.EndChild()
+
+    ig.AlignTextToFramePadding()
+    if isempty(path)
+        # Without a name the code is only drawn; the name in the header gives it a file.
+        ig.TextDisabled("Name the plot in the header to save its code.")
+        ig.SameLine()
+        save = ig.SmallButton("Draw")
+        ig.SetItemTooltip("Draw the code (Ctrl+S in the code)")
+    else
+        ig.TextDisabled(path)
+        ig.SameLine()
+        view.code != view.saved ? ig.TextUnformatted("● not saved") : ig.TextDisabled("saved")
+        ig.SameLine()
+        save = ig.SmallButton("Save")
+        ig.SetItemTooltip("Write the code to the file and draw the plot again (Ctrl+S in the code)")
+    end
+    flags = ig.ImGuiInputTextFlags_AllowTabInput
+    if ig.InputTextMultiline("##code", view.buffer, length(view.buffer), (-1.0f0, -1.0f0), flags)
+        view.code = unsafe_string(pointer(view.buffer))
+        # Room for the next edits.
+        sizeof(view.code) > length(view.buffer) - CODE_ROOM ÷ 4 && set_code!(view, view.code)
+    end
+    save |= ig.IsItemActive() && ig.IsKeyChordPressed(ig.ImGuiMod_Ctrl | ig.ImGuiKey_S)
+    if save
+        try
+            isempty(path) || save_code!(view)
+        catch err
+            view.message, view.error_details = DataBrowserAPI.report_error(
+                "Plot builder: saving $path failed", err, catch_backtrace())
+            return nothing
+        end
+        build!(view, ctx)
+    end
+    return nothing
+end
+
+end

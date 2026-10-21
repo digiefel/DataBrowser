@@ -1,17 +1,17 @@
-# Julia 1.13.1; 10 threads; apple-m1; Darwin/aarch64
-# precompile: 2026-10-17T12:56:16.326; inputs 637295432b8ee36df1f621392b261dd371974e3160cd53fc39ac35cabf040d3b
-precompile_s                        34.6019
-# engine: 2026-10-17T12:58:16.622; inputs 5319f67a18f500158bb27d31909ee26defacb9fcafb73e3d77a4f30f5d0ae642
-cached_materialize_ms                9.4816
-concurrent_materialize_ms            8.5278
-index_us_per_item                   90.1080
-peak_rss_mib                      1227.5312
-read_mib_s                         496.9683
-reopen_ms                           56.3329
-write_mib_s                        177.8910
-# browser: 2026-10-17T12:59:12.829; inputs 97e88295b30e8668083aa13654eef4113c13b8e8831aaa7dd39184c8765b33bb
-browser_open_s                      36.5030
-browser_reopen_s                     8.2188
-frame_ui_ms                          0.6721
-import_s                             0.9992
-browser_peak_rss_mib              1114.0781
+# Julia 1.13.2; 10 threads; apple-m1; Darwin/aarch64
+# precompile: 2026-10-21T19:03:51.465; inputs 8bb2d020580627fb1900f0771968e752cdc4f9daf39e6d5557a1f0f6f2541643
+precompile_s                        32.4288
+# engine: 2026-10-21T19:05:02.541; inputs be218c90314d817bbe55ea74a790b7e75f78bd17b8338a7ba882702fb58a590b
+cached_materialize_ms                8.2575
+concurrent_materialize_ms            6.5187
+index_us_per_item                  110.8577
+peak_rss_mib                      1396.5469
+read_mib_s                         571.5619
+reopen_ms                           52.9408
+write_mib_s                        187.6301
+# browser: 2026-10-21T19:05:55.335; inputs ee4508bb5f72c00ec50950063079577461c1252b9c167cceae2c607587cde821
+browser_open_s                      34.3729
+browser_reopen_s                     8.9436
+frame_ui_ms                          0.5233
+import_s                             0.8792
+browser_peak_rss_mib              1405.3594

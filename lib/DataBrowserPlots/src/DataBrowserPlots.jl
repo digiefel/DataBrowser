@@ -13,7 +13,19 @@ import DataBrowserCore.Workspace
 using DataBrowserCore: Selection
 
 include("plots.jl")
-include("description.jl")
+
+"""
+    figure(specification, [scales]; options...)
+
+Draw an AlgebraOfGraphics declaration, such as one written with [`@plot`](@ref), and return its
+Makie `Figure`. `specification` may be an AoG layer, a composition of layers, or processed layers.
+Optional scales and the `axis`, `figure`, `facet`, `legend`, and `colorbar` settings are passed to
+AoG's `draw`.
+
+Load AlgebraOfGraphics, and a Makie backend such as GLMakie or CairoMakie to display or save the
+figure. This works with ordinary Julia data and needs no workspace.
+"""
+function figure end
 include("declaration.jl")
 
 export figure, @plot

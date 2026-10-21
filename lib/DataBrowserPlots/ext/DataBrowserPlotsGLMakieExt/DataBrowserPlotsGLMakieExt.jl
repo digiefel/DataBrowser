@@ -23,8 +23,6 @@ using .MakieImguiIntegration
 embed(figure::Figure, id::String) = MakieFigure(id, figure; auto_resize_x=true, auto_resize_y=true)
 include("FigureView.jl")
 include("PlotView.jl")
-include("Renderer.jl")
-include("BuilderView.jl")
 include("PlotsExtension.jl")
 
 function __init__()

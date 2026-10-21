@@ -561,25 +561,20 @@ the table as a first-class view.
   layer per line. Named layers, whose results later lines use, remain open.
 - [ ] Review the standalone graphics grammar, statistical results, shared attribute schemas, and
   GUI/code editing proposal in [Graphics grammar and plot builder](plans/graphics-grammar.md).
-- [ ] Plot builder: a window in which the user builds a plot of a table from menus, and which a
-  script can write as code. The plot is one description as plain data: roles that say which column
-  is on which axis or gives the color, and a list of layers, each with a mark. The builder must be
-  able to grow to everything AlgebraOfGraphics expresses.
-  - [x] The description (`PlotDescription`, `Layer`) and `figure(description, table)`, which draws
-    it for any Tables.jl table. Roles `x`, `y`, `color`; marks `points`, `lines`. A plot of a new
-    shape compiles no new code.
-  - [x] The builder as a visualizer, "Plot builder", for the table data of the items. The
-    description is shown as code to the right of the figure, one argument on each line, and every
-    value is a menu. With several items, the column `item` names the item of each row.
-  - [x] Straight-line least-squares fits as layers, using the same x/y roles and grouping.
-  - [ ] Roles and fixed values of one layer, and a control that adds an argument.
-  - [ ] Edit on the figure: axis labels and the legend are menus, and a right-click on a mark
-    changes its layer.
-  - [ ] Menus that filter their entries as the user types.
-  - [ ] More roles, marks and statistics, for example panels, histograms and fits; settings of the
-    axes.
-  - [ ] The functions a script writes a description with. Everything the builder does is one of
-    them.
+- [ ] Plot builder: a window that draws a plot written as code, for the selection. The user names
+  the plot in the header, and its code is the file `plots/<name>.jl`, shown under the figure and
+  edited there or in any other editor. It runs with `selection` set to the selected items, and its
+  last value is an AlgebraOfGraphics declaration, such as one written with `@plot`, or a Makie
+  figure. A new plot starts with code that draws the selection's columns. The browser offers the
+  builder when AlgebraOfGraphics is loaded.
+  - [x] Edit and save the code in the window; a saved file draws the plot again, and a change
+    from another editor is shown when the window has no unsaved code.
+  - [x] The file runs in a module of its own that uses AlgebraOfGraphics, Makie and
+    DataBrowserPlots; other packages are loaded with `using` in the file.
+  - [ ] A table of the rows of the items' data, for plots of curves.
+  - [ ] Inline controls on literal values, an inspector of the declaration, and fit results
+    ([plot-editor.md](plot-editor.md)).
+  - [ ] A draggable border between the figure and the code.
 - [x] Let a window pass its value through a function of the project, chosen by name in the
   header after "through". The function receives the window's value as it is, for example all
   selected items. The window computes again when the function's code changes. A "Value" visualizer shows any value as the REPL prints it.

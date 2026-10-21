@@ -24,7 +24,8 @@ coefficient in line width, text and a legend entry within the declaration.
 The fit helper is an experiment, not the planned public fitting API. Its current legend example
 includes the coefficient in the category value. A production implementation must preserve the
 category's identity and color when the coefficient changes. Source-preserving GUI/code editing
-and migration of the existing plot builder also remain to be implemented.
+also remains to be implemented. The browser's "Plot builder" window, offered when
+AlgebraOfGraphics is loaded, draws the `@plot` code of a file for the selected items.
 
 Run the example from the repository root:
 
@@ -33,8 +34,4 @@ include("lib/DataBrowserPlots/examples/aog.jl")
 fig = figure(AoGExample.fits(); legend=(position=:bottom,))
 ```
 
-The bench environment includes the dependencies. To compare latency, run the two modes of
-[`bench/aog.jl`](../../bench/aog.jl) in fresh processes as shown at the top of that file. It separates
-loading, first construction, first rendering, another graphic, and warm style/data updates. Package
-caches should be built first; record any run that rebuilds them separately. The
-[experiment report](../../bench/aog.md) records the initial measurements and remaining requirements.
+The bench environment includes the dependencies.
