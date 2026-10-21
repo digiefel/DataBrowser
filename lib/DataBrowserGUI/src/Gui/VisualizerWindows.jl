@@ -154,12 +154,14 @@ function render_windows!(state::BrowserState)::Nothing
         ig.SetNextWindowSize((900, 600), ig.ImGuiCond_FirstUseEver)
         # ImGui knows the window by the part after "###", so the title can change.
         if ig.Begin("$(title(state, window))###$(window.id)", open)
-            refresh!(state, window)
             ctx = WindowContext(window.id, state.workspace)
             # TODO: catch an error of `draw_header!` and `draw!` and show it in the window. ImGui
             # must first be brought back to the state it had before the call.
             _render_window_header!(state, window)
             _render_window_settings!(window)
+            # After the menus, which may change the visualizer, the input or a setting, so that
+            # the visualizer has its value before it draws in this frame.
+            refresh!(state, window)
             ig.SameLine()
             _render_export_button!(window, ctx)
             # A group is one item of the row, also when the visualizer draws no button.
