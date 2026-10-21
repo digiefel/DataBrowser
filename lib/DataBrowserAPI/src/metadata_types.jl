@@ -1,7 +1,7 @@
 """
 Typed metadata values stored in the item index and DuckDB cache.
 
-Scalars and homogeneous vectors only — the cache persists these as typed columns.
+Scalars and homogeneous vectors only (tuples are converted to vectors) — the cache persists these as typed columns.
 """
 const MetadataValue = Union{
     Bool, Int64, Float64, String, Symbol, Date, DateTime, Missing,
@@ -21,10 +21,12 @@ function metadata_value(value)::MetadataValue
     value isa AbstractVector{<:Integer} && return Int64.(value)
     value isa AbstractVector{<:AbstractFloat} && return Float64.(value)
     value isa AbstractVector{<:AbstractString} && return String.(value)
+    # A tuple such as (1000.0, 1000.0) is stored as a vector of its promoted element type.
+    value isa Tuple && return metadata_value([value...])
     throw(ArgumentError(
         "unsupported metadata value of type $(typeof(value)): $(repr(value)); " *
         "metadata must be scalars (Bool/Int64/Float64/String/Symbol/Date/DateTime/Missing) " *
-        "or homogeneous Bool/Int64/Float64/String vectors",
+        "or homogeneous Bool/Int64/Float64/String vectors or tuples",
     ))
 end
 

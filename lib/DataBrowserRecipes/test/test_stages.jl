@@ -27,6 +27,7 @@ DataBrowserAPI.label(f::RecipeFile) = basename(f.filepath)
     @test isempty(convert_metadata((;)))
     @test isempty(convert_metadata(Pair[]))
     @test convert_metadata(("length" => Int32(5),))[:length] === Int64(5)
+    @test convert_metadata((; area=(1000.0, 1000.0)))[:area] == [1000.0, 1000.0]
     @test_throws ArgumentError convert_metadata((; length=match(r"\d+", "5")))
 end
 
