@@ -18,3 +18,13 @@ resistance(gap; Rc, Rsh) = 2Rc + Rsh * gap
     texts = [only(p.text[]) for p in axis.scene.plots if p isa Makie.Text]
     @test sort(texts) == ["A: 300.0, 100.0", "B: 50.0, 100.0"]
 end
+
+@testset "a fit takes the rows of the header's own table" begin
+    rows = [(gap=g, R=2 * 300 + 100g) for g in (5.0, 10.0, 20.0)]
+    plot = @plot data(rows) * mapping(:gap, :R) begin
+        contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
+        mapping(contacts.x[end], contacts.y[end]) * visual(Makie.Text; text="$(round(contacts.Rc.value))")
+    end
+    axis = only(filter(c -> c isa Axis, figure(plot).content))
+    @test [only(p.text[]) for p in axis.scene.plots if p isa Makie.Text] == ["300.0"]
+end

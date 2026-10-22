@@ -65,7 +65,7 @@ into groups, and each group has its own fit. A line that uses the name is drawn 
 group, with the name set to that group's [`Fit`](@ref): `contacts.Rc` is a [`Parameter`](@ref),
 which prints as the estimate ± one standard error; `contacts.Chip` is the group's chip; and
 `contacts.x` and `contacts.y` are the drawn curve. `fit(...; xlim=(0, 25))` draws the curve over
-that range of x instead of over the fitted points. A fit needs a header that maps paths.
+that range of x instead of over the fitted points. With `data(table)` in the header, the fits take the rows of that table.
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
@@ -177,12 +177,12 @@ function declare(declaration)
     return :($Declaration($input -> $sum))
 end
 
-# The first `mapping(...)` call in an expression, or `nothing`.
-function mapping_call(expression)
-    Meta.isexpr(expression, :call) && expression.args[1] === :mapping && return expression
+# The first call of `name` in an expression, such as `mapping(...)`, or `nothing`.
+function find_call(expression, name::Symbol)
+    Meta.isexpr(expression, :call) && expression.args[1] === name && return expression
     expression isa Expr || return nothing
     for argument in expression.args
-        found = mapping_call(argument)
+        found = find_call(argument, name)
         found === nothing || return found
     end
     return nothing
@@ -214,14 +214,19 @@ uses(expression, name::Symbol) = expression === name ||
 # values are the points that each fit takes, and its named roles, such as `color=:Chip`, form the
 # groups: one fit for each group. A line that uses a fit's name is drawn once for each group, with
 # the name set to that group's `Fit`, and with the group's values in the header's named roles.
+# With `data(table)` in the header, the fits take the rows of that table.
 function declare_fits(header, lines)
-    has_data(header) && error("@plot fits the paths of the items; a header with `data(...)` is not supported yet")
-    # TODO: headers with `data(...)`; lines that use a fit and also a path; a fit inside a line's
-    # own mapping; fits that use other fits.
+    # TODO: lines that use a fit and also a path; a fit inside a line's own mapping; fits that use
+    # other fits.
+    own_data = has_data(header)
     input = gensym("input")
-    tabulated = tabulate(mapping_call(header), value -> per_item(value, input))
-    tabulated === nothing && error("@plot with a fit needs a header that maps paths, such as mapping(:x, :y)")
-    table, header_mapping = tabulated
+    if own_data
+        table, header_mapping = find_call(header, :data).args[2], find_call(header, :mapping)
+    else
+        tabulated = tabulate(find_call(header, :mapping), value -> per_item(value, input))
+        tabulated === nothing && error("@plot with a fit needs a header that maps paths, such as mapping(:x, :y)")
+        table, header_mapping = tabulated
+    end
     positional, named = call_arguments(header_mapping)
     length(positional) == 2 || error("A fit needs the header to map two positional values, x and y")
     x, y = column_name.(positional)
@@ -265,6 +270,7 @@ function declare_fits(header, lines)
 
     sums = map(drawn) do (own, line)
         fits = own !== nothing ? [own] : filter(name -> uses(line, name), names)
+        isempty(fits) && own_data && return :($header * $line)
         isempty(fits) &&
             return foldl((a, b) -> :($a + $b), map(layer -> declare_layer(layer, input), layers(:($header * $line))))
         length(fits) == 1 || error("A line of @plot uses one fit at most: $line")
@@ -277,7 +283,7 @@ function declare_fits(header, lines)
                 table, line = tabulated
                 group_columns = [Expr(:kw, column, :([getfield($used, :group)[$(QuoteNode(column))]])) for (_, column) in roles]
                 append!(table.args[2].args, group_columns)
-                call = mapping_call(line)
+                call = find_call(line, :mapping)
                 given = first.(call_arguments(call)[2])
                 append!(call.args, [Expr(:kw, role, QuoteNode(column)) for (role, column) in roles if role ∉ given])
                 line = :(data($table) * $line)
@@ -286,6 +292,10 @@ function declare_fits(header, lines)
         return :(foldl(+, map($used -> $line, $(groups[used]))))
     end
     sum = foldl((a, b) -> :($a + $b), sums)
+    own_data && return :(begin
+        $(computed...)
+        $sum
+    end)
     return :($Declaration($input -> begin
         $(computed...)
         $sum

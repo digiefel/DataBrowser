@@ -67,10 +67,12 @@ function solve_fit(curve, x::Vector{Float64}, y::Vector{Float64}, starts::NamedT
     return NamedTuple{names}(Tuple(Parameter.(solution.u, errors)))
 end
 
-# One fit for each group of rows of `table`: the rows with equal values in the `group` columns.
+# One fit for each group of `rows`, a Tables.jl table: the rows with equal values in the `group`
+# columns.
 # The curve is drawn over the fitted x values, or over `xlim`.
-function fit_groups(curve, starts::NamedTuple, table::NamedTuple, x::Symbol, y::Symbol,
+function fit_groups(curve, starts::NamedTuple, rows, x::Symbol, y::Symbol,
         group::Vector{Symbol}; xlim=nothing)::Vector{Fit}
+    table = Tables.columntable(rows)
     keys = [NamedTuple{Tuple(group)}(Tuple(table[g][row] for g in group)) for row in eachindex(table[x])]
     return map(unique(keys)) do key
         rows = [row for row in eachindex(keys) if keys[row] == key &&

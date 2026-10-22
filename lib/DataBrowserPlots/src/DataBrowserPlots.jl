@@ -14,6 +14,7 @@ using DataBrowserCore: Selection
 import ForwardDiff
 using LinearAlgebra: diag
 using NonlinearSolve: LevenbergMarquardt, NonlinearLeastSquaresProblem, SciMLBase, solve
+import Tables
 
 include("plots.jl")
 
