@@ -139,6 +139,9 @@ function select(workspace::Workspace, items::Vector{ItemKey})::Selection
         for holder in ancestors(workspace, item)
             name, value = Symbol(label(valuetype(workspace, holder))), label(workspace, holder)
             # Nested levels of one name, such as folders, join from the top down: "72b/L/bigTLM".
+            # TODO: the joining suits folders only; it joins unrelated levels of one name and skips
+            # the levels between them. Let each collection type give its own value, such as the
+            # folder's path relative to the source.
             above = haskey(properties, name) ? properties[name][index] : missing
             put!(name, index, ismissing(above) ? value : "$above/$value")
         end
