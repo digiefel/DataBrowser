@@ -9,6 +9,11 @@ using DataBrowserAPI: AbstractVisualizer, items
 using DataBrowserCore: Selection
 using ..DataBrowserGUI: ItemTable, _cell_text, merge_item_tables
 
+# How a column writes its numbers: with `decimals` digits after the point, and, when `engineering`,
+# each number as a number from 1 to 1000 followed by its power of ten, such as `e-6`, padded to
+# `exponent_width` characters so that the decimal points line up.
+const NumberFormat = @NamedTuple{decimals::Int, engineering::Bool, exponent_width::Int}
+
 """
 The visualizer that shows the data of the items of a selection as one table.
 
@@ -20,8 +25,9 @@ item to one row, which shows how many values the item has in each column. Hoveri
 that row shows the smallest and the largest number of the column.
 
 In a column of numbers, every number has the same number of decimals and the numbers are
-right-aligned, so that their decimal points line up. When the numbers are not whole, they are shown
-divided by a power of ten that the column's name shows, such as `×1e-6`.
+right-aligned, so that their decimal points line up. In a column with numbers smaller than 0.001 or
+larger than a million, each number is written with a power of ten of its own, a multiple of 3, such
+as `38.990e-9`.
 
 The window passes on the table as it shows it: the rows the user selected, or all rows when none is
 selected, with the columns it shows.
@@ -32,8 +38,8 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     item_column::Bool = false
     # The items that show one row, and the text and tooltip of each cell of that row.
     folded::Dict{Int,Vector{Tuple{String,String}}} = Dict{Int,Vector{Tuple{String,String}}}()
-    # For each column of numbers, the power of ten its numbers are divided by and their decimals.
-    formats::Vector{Union{Nothing,Tuple{Int,Int}}} = Union{Nothing,Tuple{Int,Int}}[]
+    # How each column writes its numbers; `nothing` for a column of other values.
+    formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
     # The row of `table` that each row on screen shows; a folded item shows its first row.
     shown::Vector{Int} = Int[]
     # What the window passes on to other windows.
@@ -112,8 +118,6 @@ function draw!(view::TableView, ctx)::Nothing
         text = _number_text(table.getvalue(shown[row], column), view.formats[column])
         return something(text, table.getcell(shown[row], column))
     end
-    columns = [format === nothing || format[1] == 0 ? name : "$name ×1e$(format[1])"
-               for (name, format) in zip(table.columns, view.formats)]
     # The row of a folded item stands for all of the item's rows.
     rows_of(row) = haskey(view.folded, item(row)) ? searchsorted(table.row_item, item(row)) : shown[row]
     function fold!(row, _)
@@ -138,7 +142,7 @@ function draw!(view::TableView, ctx)::Nothing
             view.grid_id,
             view.grid;
             n_rows=length(shown),
-            columns,
+            columns=table.columns,
             cell,
             align_right=column -> view.formats[column] !== nothing,
             muted=folded,
@@ -156,11 +160,20 @@ end
 
 _number(value) = value isa Real && !(value isa Bool)
 
-# The power of ten that the numbers of a column are divided by, a multiple of 3, and as many
-# decimals as its most precise number needs, at most as many as 6 digits of its largest number.
-# Whole numbers are not divided. `nothing` for a column that holds values other than numbers;
-# `missing` is no value.
-function _number_format(values)::Union{Nothing,Tuple{Int,Int}}
+# A number as a number from 1 to 1000 and a power of ten, a multiple of 3.
+# TODO: 999.9996 with 3 decimals is written 1000.000e-6 rather than 1.000e-3.
+function _engineering(number::Real)::Tuple{Float64,Int}
+    number == 0 && return (0.0, 0)
+    exponent = 3 * floor(Int, log10(abs(number)) / 3)
+    return (number / exp10(exponent), exponent)
+end
+
+_exponent_text(exponent::Int)::String = exponent == 0 ? "" : "e$exponent"
+
+# The format of a column, from its numbers: engineering when a number is smaller than 0.001 or
+# larger than a million, and as many decimals as the most precise number needs, at most 6, or 3 in
+# engineering. `nothing` for a column that holds values other than numbers; `missing` is no value.
+function _number_format(values)::Union{Nothing,NumberFormat}
     numbers = Real[]
     for value in values
         ismissing(value) && continue
@@ -168,17 +181,17 @@ function _number_format(values)::Union{Nothing,Tuple{Int,Int}}
         isfinite(value) && push!(numbers, value)
     end
     isempty(numbers) && return nothing
-    all(isinteger, numbers) && return (0, 0)
-    largest = maximum(abs, numbers)
-    exponent = 3 * floor(Int, log10(largest) / 3)
-    # The largest number keeps 6 digits at most; a smaller number may lose its last digits.
-    limit = 5 - floor(Int, log10(largest / exp10(exponent)))
-    decimals = maximum(numbers) do number
-        scaled = number / exp10(exponent)
-        something(findfirst(digits -> isapprox(round(scaled; digits), scaled; rtol=1e-9), 0:limit),
+    all(isinteger, numbers) && return (decimals=0, engineering=false, exponent_width=0)
+    sizes = [abs(number) for number in numbers if number != 0]
+    engineering = minimum(sizes) < 1e-3 || maximum(sizes) >= 1e6
+    shown = engineering ? first.(_engineering.(numbers)) : numbers
+    limit = engineering ? 3 : 6
+    decimals = maximum(shown) do number
+        something(findfirst(digits -> isapprox(round(number; digits), number; rtol=1e-9), 0:limit),
             limit + 1) - 1
     end
-    return (exponent, decimals)
+    exponent_width = engineering ? maximum(length ∘ _exponent_text ∘ last ∘ _engineering, numbers) : 0
+    return (; decimals, engineering, exponent_width)
 end
 
 # The text of a number in a column with the number format `format`, or `nothing` for a value that the
@@ -186,7 +199,9 @@ end
 function _number_text(value, format)::Union{Nothing,String}
     (format === nothing || !_number(value) || !isfinite(value)) && return nothing
     value isa Integer && return string(value)
-    return @sprintf("%.*f", format[2], value / exp10(format[1]))
+    format.engineering || return @sprintf("%.*f", format.decimals, value)
+    number, exponent = _engineering(value)
+    return @sprintf("%.*f", format.decimals, number) * rpad(_exponent_text(exponent), format.exponent_width)
 end
 
 # The text and the tooltip of one cell of a folded item, from the values of its rows. `missing`

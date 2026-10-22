@@ -591,7 +591,8 @@ the table as a first-class view.
 - [ ] More ImPlot plots: scatter, a 2D histogram of two vectors, a heatmap of a matrix.
 - [ ] A great table:
   - [x] Numbers right-aligned, with the decimal points lined up in each column; one format per
-    column chosen from its values, with a power of ten shared by the column and shown in its name.
+    column chosen from its values; in a column with very small or very large numbers, each number
+    with a power of ten of its own, a multiple of 3.
   - [ ] `missing`, `NaN` and `nothing` dimmed; booleans as checkmarks; dates in one fixed format.
   - [ ] The element type under each column name.
   - [ ] Long text cut with "…", and the full text on hover.
