@@ -211,7 +211,7 @@ function render_data_grid!(
             # ImGui draws the sort arrow, and the place of the column when sorting by several, at
             # the right edge of the header.
             place = state.sort === nothing ? nothing : findfirst(spec -> first(spec) == column, state.sort)
-            arrow = place === nothing ? 0.0f0 : floor(ig.GetFontSize() * 0.65f0 + style.FramePadding.x)
+            arrow = place === nothing ? 0.0f0 : floor(ig.GetFontSize() * 0.65f0)
             place === nothing || length(state.sort) == 1 ||
                 (arrow += style.ItemInnerSpacing.x + ig.CalcTextSize(string(place)).x)
             right = ig.GetItemRectMax().x - style.CellPadding.x - arrow
