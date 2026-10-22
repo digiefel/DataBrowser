@@ -574,10 +574,14 @@ the table as a first-class view.
   - [x] Names in `mapping` are paths into the selected items, such as `:device` and `:data.V`,
     and formulas of them run once per item; `@plot` needs no `data(...)`. `unnest` puts values
     of several items together in one table.
-  - [x] A line fits a curve and names the result, `name = fit(curve, starts)`: one `Group` for
-    each group of the header's named roles, with the parameters as metadata, the curve as data and
-    the fitted items as members. `data(name)` draws them as items. The workspace does not keep
-    them yet.
+  - [x] `fit(curve, starts) * visual(Lines; label="Rc = $(:Rc)")` fits a curve to the header's
+    points, once for each group of its categorical roles, and draws it on the header's axes and
+    roles; the label names each group's legend entry. `fit` gives one `Group` per group, with the
+    parameters as metadata, the curve as data and the fitted items as members; `name = fit(...)`
+    keeps them for later lines. The workspace does not keep them yet.
+  - [ ] The plot file's own grammar: `mapping`, `data`, `visual` and the statistics as our names,
+    without AlgebraOfGraphics in the plot file. Each statistic gives a value, drawn with `visual`,
+    such as `histogram(bins=20) * visual(Stairs)`.
   - [ ] Inline controls on literal values, an inspector of the declaration, and fit results
     ([plot-editor.md](plot-editor.md)).
   - [ ] A draggable border between the figure and the code.
