@@ -5,9 +5,9 @@ using Printf: @sprintf
 using NativeFileDialog: save_file
 
 import DataBrowserAPI: draw!, export!, label, output, prepare!
-using DataBrowserAPI: AbstractVisualizer, items
+using DataBrowserAPI: AbstractVisualizer, item_data, items
 using DataBrowserCore: Selection
-using ..DataBrowserGUI: ItemTable, _cell_text, merge_item_tables
+using ..DataBrowserGUI: ItemTable, _cell_text, _zoomable, merge_item_tables, value_table, zoom_value
 
 # How a column writes its numbers: with `decimals` digits after the point, and, when `engineering`,
 # each number as a number from 1 to 1000 followed by its power of ten, such as `e-6`, padded to
@@ -38,6 +38,11 @@ Right-clicking the header opens a filter: a Julia function, such as `≥(0)` or 
 which the table calls with each value of the column. The table shows the rows for which it returns
 `true`; a funnel at the right of the column's name marks the filter.
 
+A cell that holds a vector, a matrix, a table or a block of names is a link. Clicking it zooms into
+the cell: the window shows the value of the cell as a table, and the path above the table names the
+item and the cells it went through. The arrow goes back one step, and each name in the path goes back
+to it.
+
 Below the filter, the same menu lists the metadata of the items. A checked name is a column after
 `item`, with the value of each item in one cell beside its rows.
 
@@ -58,6 +63,12 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     selection::Union{Nothing,Selection} = nothing
     metadata_names::Vector{Symbol} = Symbol[]
     metadata::Vector{Symbol} = Symbol[]
+    # The cell the table shows the value of: the label of its item, and the steps from the item's
+    # data to the value. Each step is the row, within the item, and the path of a column; the row is
+    # 0 for a cell that holds one value for the whole item. No steps when the table shows the items.
+    # TODO: an item is found by its label, which another item may have too.
+    zoom_item::String = ""
+    zoom::Vector{Tuple{Int,Vector{String}}} = Tuple{Int,Vector{String}}[]
     # The paths of the blocks of names that show one column for each name.
     unfolded::Set{Vector{String}} = Set{Vector{String}}()
     # How each column writes its numbers; `nothing` for a column of other values.
@@ -117,7 +128,28 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     # The metadata the user picked stays picked when the selection changes, and shows when the items
     # have it.
     metadata = filter(in(names), view.metadata)
-    table, warnings = merge_item_tables(selection; item_column=true, metadata, view.unfolded)
+    # The value of the cell the table zooms into, found again in the data of the new selection. The
+    # zoom stops at the last step the data still has.
+    value = nothing
+    index = findfirst(==(view.zoom_item), selection.label)
+    if index === nothing
+        empty!(view.zoom)
+    elseif !isempty(view.zoom)
+        value = try
+            item_data(items(selection)[index])
+        catch
+            # `merge_item_tables` reports why the data cannot be read.
+            empty!(view.zoom)
+        end
+        for (step, (row, path)) in enumerate(view.zoom)
+            found = zoom_value(value, row, path)
+            found === nothing && (resize!(view.zoom, step - 1); break)
+            value = something(found)
+        end
+    end
+    table, warnings = isempty(view.zoom) ?
+        merge_item_tables(selection; item_column=true, metadata, view.unfolded) :
+        (value_table(view.zoom_item, value; view.unfolded), String[])
     prepare!(view, table, ctx)
     view.selection = selection
     view.metadata_names = names
@@ -125,6 +157,10 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     view.warnings = warnings
     types = unique(typeof.(items(selection)))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
+    # A zoomed table keeps column widths of its own.
+    for (_, path) in view.zoom
+        view.grid_id *= ">" * join(path, ".")
+    end
     return nothing
 end
 
@@ -142,6 +178,28 @@ function export!(view::TableView, ctx)::Nothing
 end
 
 function draw!(view::TableView, ctx)::Nothing
+    # The path from the items to the cell the table shows.
+    if !isempty(view.zoom) && view.selection !== nothing
+        steps = nothing
+        ig.ArrowButton("##back", ig.ImGuiDir_Left) && (steps = length(view.zoom) - 1)
+        ig.SameLine()
+        ig.TextLink(view.zoom_item) && (steps = 0)
+        for (step, (row, path)) in enumerate(view.zoom)
+            ig.SameLine()
+            ig.TextDisabled(">")
+            ig.SameLine()
+            name = join(path, ".") * (row == 0 ? "" : "[$row]")
+            if step == length(view.zoom)
+                ig.TextUnformatted(name)
+            else
+                ig.TextLink("$name##step_$step") && (steps = step)
+            end
+        end
+        if steps !== nothing
+            resize!(view.zoom, steps)
+            prepare!(view, view.selection, nothing)
+        end
+    end
     table = view.table::ItemTable
 
     for warning in view.warnings
@@ -172,6 +230,23 @@ function draw!(view::TableView, ctx)::Nothing
         _arrange!(view)
         view.grid.fit_columns = true
         return nothing
+    end
+    # The cells of the data that hold a table of their own; not those of the columns `item` and of
+    # the metadata.
+    function zoomable(row, column)
+        view.selection === nothing && return false
+        path = table.paths[column]
+        isempty(view.zoom) && length(path) == 1 &&
+            (view.item_column && path == ["item"] || Symbol(only(path)) in view.metadata) && return false
+        return !folded(row, column) && _zoomable(table.getvalue(shown[row], column))
+    end
+    zoomed = false
+    function zoom!(row, column)
+        isempty(view.zoom) && (view.zoom_item = table.item_labels[item(row)])
+        # The rows of an item follow each other in the table.
+        within = shown[row] - findfirst(==(item(row)), table.row_item) + 1
+        push!(view.zoom, (table.spans_item(shown[row], column) ? 0 : within, table.paths[column]))
+        zoomed = true
     end
     # Picking metadata and unfolding blocks change the columns, so the table is built again after
     # the grid is drawn.
@@ -227,6 +302,8 @@ function draw!(view::TableView, ctx)::Nothing
                 rebuild = true
             end,
             cell,
+            clickable=zoomable,
+            on_click=zoom!,
             align_right=column -> view.formats[column] !== nothing,
             muted=(row, column) -> folded(row, column) || column in table.groups,
             tooltip=(row, column) -> folded(row, column) ? last(view.folded_cells[item(row)][column]) : nothing,
@@ -243,10 +320,12 @@ function draw!(view::TableView, ctx)::Nothing
                 table[collect(Int, Iterators.flatten(rows_of.(sort(rows))))],
         )
     end
-    if rebuild
-        folded = view.folded
+    if zoomed
         prepare!(view, view.selection, nothing)
-        view.folded = folded
+    elseif rebuild
+        kept = view.folded
+        prepare!(view, view.selection, nothing)
+        view.folded = kept
         _arrange!(view)
     end
     return nothing

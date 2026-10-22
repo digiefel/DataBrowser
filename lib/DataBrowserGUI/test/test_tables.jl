@@ -1,5 +1,5 @@
 using Test, DataBrowserGUI
-using DataBrowserGUI: merge_item_tables
+using DataBrowserGUI: merge_item_tables, value_table, zoom_value
 using DataBrowserCore: Group, select
 
 # Items in memory, each with its data and metadata.
@@ -16,16 +16,29 @@ column(table, name) = [table.getvalue(row, findfirst(==(name), table.columns)) f
     @test table.item_labels[table.row_item] == ["A", "A", "B"]
 end
 
-@testset "row tables and values that are not tables" begin
+@testset "row tables, matrices and values that are not tables" begin
     table, _ = merge_item_tables(selection_of(
         ("rows", [(x=1, y=2), (x=3, y=4)], ()),
         ("matrix", [1 2; 3 4], ()),
+        ("text", "seven", ()),
         ("columns", (y=[5], z=[6]), ())))
-    @test table.item_labels[table.row_item] == ["rows", "rows", "matrix", "columns"]
-    @test isequal(column(table, "y"), [2, 4, missing, 5])
+    @test table.item_labels[table.row_item] == ["rows", "rows", "matrix", "matrix", "text", "columns"]
+    @test isequal(column(table, "y"), [2, 4, missing, missing, missing, 5])
+    @test isequal(column(table, "2"), [missing, missing, 2, 4, missing, missing])
     # A value that is not a table is one cell beside all of the item's rows.
-    @test column(table, "data")[3] == [1 2; 3 4]
-    @test table.spans_item(3, findfirst(==("data"), table.columns))
+    @test column(table, "data")[5] == "seven"
+    @test table.spans_item(5, findfirst(==("data"), table.columns))
+end
+
+@testset "zooming into a cell" begin
+    data = (iv=(V=[1, 2], trace=[[1, 2], [3, 4, 5]]), fit=(slope=2.0, map=[1 2; 3 4]))
+    @test something(zoom_value(data, 2, ["iv", "trace"])) == [3, 4, 5]
+    map = something(zoom_value(data, 0, ["fit", "map"]))
+    @test something(zoom_value(map, 2, ["1"])) == 3
+    @test zoom_value(data, 0, ["fit", "missing"]) === nothing
+    table = value_table("A", map)
+    @test table.columns == ["1", "2"]
+    @test column(table, "2") == [2, 4]
 end
 
 @testset "blocks of names fold to one column" begin

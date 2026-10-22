@@ -58,8 +58,8 @@ end
 #
 # A table gives one column for each of its columns, and its rows are the item's rows. A block of
 # names gives the columns of each of its values when it is the data itself or its path is in
-# `unfolded`, and is one column otherwise. Any other value is one column, and an item without a
-# table has one row.
+# `unfolded`, and is one column otherwise. Data that is a vector or a matrix gives its columns. Any
+# other value is one column, and an item without a table has one row.
 function _item_columns(data, unfolded::Set{Vector{String}})
     columns = Pair{Vector{String},Tuple{Any,Bool}}[]
     rows = nothing
@@ -73,6 +73,13 @@ function _item_columns(data, unfolded::Set{Vector{String}})
         elseif _is_block(value) && (isempty(path) || path in unfolded)
             for (name, part) in _parts(value)
                 add!([path; name], part)
+            end
+        elseif isempty(path) && value isa AbstractVecOrMat
+            # The data itself is a vector or a matrix: each of its columns is a column, named by
+            # its number.
+            rows = size(value, 1)
+            for column in axes(value, 2)
+                push!(columns, [string(column)] => (value[:, column], true))
             end
         else
             # TODO: only the first table of an item gives rows; a further table is one value.
@@ -131,7 +138,21 @@ function merge_item_tables(
     if item_column && length(labels) == 1
         popfirst!(only(item_columns))
     end
+    return _union_table(labels, item_columns, item_rows), warnings
+end
 
+"""
+    value_table(label, value; unfolded=Set()) -> ItemTable
+
+The table of `value`, shown as `merge_item_tables` shows the data of one item labelled `label`.
+"""
+function value_table(label::String, value; unfolded::Set{Vector{String}}=Set{Vector{String}}())::ItemTable
+    columns, rows = _item_columns(value, unfolded)
+    return _union_table([label], [columns], [rows])
+end
+
+# The table of several items, from the columns and the number of rows of each item.
+function _union_table(labels::Vector{String}, item_columns, item_rows::Vector{Int})::ItemTable
     # The union of the items' columns, in the order they first appear, and the value of each column
     # for each item.
     paths = Vector{String}[]
@@ -163,9 +184,29 @@ function merge_item_tables(
         cell = cells[row_item[row]][col]
         return cell === nothing || !last(cell)
     end
-    table = ItemTable([join(path, ".") for path in paths], paths, groups, length(row_item), row_item,
+    return ItemTable([join(path, ".") for path in paths], paths, groups, length(row_item), row_item,
         labels, getcell, getvalue, spans_item)
-    return table, warnings
+end
+
+# A value that the table can show as a table of its own: a vector, a matrix, a table or a block of
+# names.
+# TODO: structs, as for blocks of names.
+_zoomable(value) = value isa AbstractArray || _is_block(value) || Tables.istable(value)
+
+"""
+    zoom_value(value, row, path) -> Union{Nothing,Some}
+
+The value in the cell of the table of `value` at the column `path`, in row `row`, or in the one
+cell of the column when `row` is 0. `nothing` when the table has no such cell.
+"""
+function zoom_value(value, row::Int, path::Vector{String})::Union{Nothing,Some}
+    # The blocks of names that hold the column are unfolded.
+    columns, rows = _item_columns(value, Set(path[1:level] for level in 1:length(path)-1))
+    index = findfirst(column -> first(column) == path, columns)
+    index === nothing && return nothing
+    cell, per_row = last(columns[index])
+    per_row || return Some(cell)
+    return 1 <= row <= rows ? Some(cell[row]) : nothing
 end
 
 """

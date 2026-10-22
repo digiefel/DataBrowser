@@ -117,6 +117,9 @@ Arguments:
 - `columns`: ordered column header names
 - `cell`: `(row::Int, col::Int) -> String` callback for cell text
 - `cell_link`: optional `(row::Int, col::Int) -> Union{Nothing,String}` callback for clickable URLs
+- `clickable`: `(row::Int, col::Int) -> Bool`, whether the text of the cell is a link. No cell is a
+  link by default
+- `on_click`: called with `(row, col)` when the user clicks the link of a cell
 - `span`: `(row::Int, col::Int) -> Int`, the first row of the run of rows that one cell spans.
   Each row is its own cell by default
 - `frozen_columns`: how many columns on the left stay in place when the grid scrolls sideways
@@ -162,6 +165,8 @@ function render_data_grid!(
     columns::Vector{String},
     cell::Function,
     cell_link::Function = (_, _) -> nothing,
+    clickable::Function = (_, _) -> false,
+    on_click::Function = (_, _) -> nothing,
     span::Function = (row, _) -> row,
     frozen_columns::Int = 0,
     align_right::Function = _ -> false,
@@ -430,6 +435,8 @@ function render_data_grid!(
                 open && on_fold(row, column)
         elseif link !== nothing
             ig.TextLinkOpenURL(cell(row, column), link)
+        elseif clickable(row, column)
+            ig.TextLink("$(cell(row, column))##link_$column") && on_click(row, column)
         else
             text = cell(row, column)
             align_right(column) && ig.SetCursorPosX(ig.GetCursorPosX() +

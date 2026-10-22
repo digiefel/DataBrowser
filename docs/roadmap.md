@@ -611,7 +611,10 @@ the table as a first-class view.
   - [x] Nested values (`NamedTuple`, `Dict`) as groups of columns that unfold in place, with one
     header row for each level. Data that is not a table shows in one row.
   - [ ] Structs as groups of columns, once it is clear which types count.
-  - [ ] A value that does not fit a cell, such as a matrix, opens in a new window from its cell.
+  - [x] A cell that holds a vector, a matrix, a table or a block of names zooms in place: the window
+    shows the value as a table, under a path back to the items. Data that is a vector or a matrix
+    shows its columns.
+  - [ ] Right-clicking such a cell opens its value in a new window.
   - [x] A filter for each column, from a right-click on its header: a Julia function of the value.
   - [ ] For a column with one value for each item, a checkbox for each value, which writes the
     filter.
