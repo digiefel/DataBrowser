@@ -36,16 +36,16 @@ uses AlgebraOfGraphics, Makie and DataBrowserPlots and has `selection` set to th
 Other packages are loaded with `using` in the file, and functions defined in the REPL are reached
 as `Main.name`.
 
-    @plot data(selection) * mapping(:gap_um, :R_ohm; color=:chip) begin
+    @plot mapping(:data.V, :data.I; color=:device) begin
         visual(Scatter)
         linear()
     end
 
-`selection` is a table with one row for each item, as [`select`](@ref) gives it. "Save" (or
-Ctrl+S in the code) writes the file and draws the plot again; without a name, "Draw" only draws. A change to the file from another
-editor is shown at once, unless the code in the window has changes that are not saved.
-
-TODO: a table of the rows of the items' data, for plots of curves.
+The names in `mapping` are paths into the selected items, as [`@plot`](@ref) describes: `:device`
+is a metadata value of each item, `:data.V` a column of each item's data. `selection` is the
+selected items, as [`select`](@ref) gives them. "Save" (or Ctrl+S in the code) writes the file and
+draws the plot again; without a name, "Draw" only draws. A change to the file from another editor is
+shown at once, unless the code in the window has changes that are not saved.
 """
 Base.@kwdef mutable struct BuilderView <: FigureView
     # The name of the plot, which the user gives: the file `plots/<name>.jl`, or a path to a `.jl`
@@ -82,7 +82,7 @@ export_name(view::BuilderView) = isempty(view.file) ? "plot" : splitext(basename
 code_path(view::BuilderView)::String =
     isempty(view.file) || endswith(view.file, ".jl") ? view.file : joinpath("plots", view.file * ".jl")
 
-# The first code of a new plot, which draws whatever columns the selection has: two columns of
+# The first code of a new plot, which draws whatever metadata the selection has: two values of
 # numbers as points, one as a histogram, or else the number of items of each label.
 function first_code(selection::Selection)::String
     numbers = [name for name in propertynames(selection)
@@ -95,7 +95,7 @@ function first_code(selection::Selection)::String
         "mapping(:label)", "frequency()"
     end
     return """
-        @plot data(selection) * $header begin
+        @plot $header begin
             $layer
         end
         """
@@ -174,8 +174,10 @@ function build!(view::BuilderView, ctx)::Nothing
         Core.eval(mod, :(using .AlgebraOfGraphics, .Makie, .DataBrowserPlots))
         Core.eval(mod, :(selection = $selection))
         plot = Base.invokelatest(include_string, mod, view.code, code_path(view))
+        # A declaration of paths is drawn for the selection, any other for its own data.
+        input = plot isa DataBrowserPlots.Declaration ? (selection,) : ()
         view.figure = plot isa Makie.Figure ? plot :
-            Makie.with_theme(() -> figure(plot), plot_theme(view.dark))
+            Makie.with_theme(() -> figure(plot, input...), plot_theme(view.dark))
         view.message = ""
         view.error_details = ""
     catch err

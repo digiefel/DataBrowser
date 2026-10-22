@@ -39,3 +39,13 @@ end
         @test only(axis.scene.plots) isa Lines
     end
 end
+
+@testset "@plot without data draws the paths of the items it is given" begin
+    items = (device=["D1", "D2"], data=(V=[[0.0, 1.0], [0.0, 2.0]], I=[[0.0, 1.0], [0.0, 3.0]]))
+    curves = @plot mapping(:data.V, :data.I; color=:device) * visual(Lines)
+    @test figure(curves, items) isa Figure
+    peaks = @plot mapping(:device, maximum(:data.I)) begin
+        visual(Scatter)
+    end
+    @test figure(peaks, items) isa Figure
+end

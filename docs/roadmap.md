@@ -571,7 +571,9 @@ the table as a first-class view.
     from another editor is shown when the window has no unsaved code.
   - [x] The file runs in a module of its own that uses AlgebraOfGraphics, Makie and
     DataBrowserPlots; other packages are loaded with `using` in the file.
-  - [ ] A table of the rows of the items' data, for plots of curves.
+  - [x] Names in `mapping` are paths into the selected items, such as `:device` and `:data.V`,
+    and formulas of them run once per item; `@plot` needs no `data(...)`. `unnest` puts values
+    of several items together in one table.
   - [ ] Inline controls on literal values, an inspector of the declaration, and fit results
     ([plot-editor.md](plot-editor.md)).
   - [ ] A draggable border between the figure and the code.
