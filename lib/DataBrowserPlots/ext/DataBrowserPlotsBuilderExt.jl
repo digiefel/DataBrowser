@@ -46,7 +46,8 @@ The names in `mapping` are paths into the selected items, as [`@plot`](@ref) des
 is a metadata value of each item, `:data.V` a column of each item's data. `selection` is the
 selected items, as [`select`](@ref) gives them. "Save" (or Ctrl+S in the code) writes the file and
 draws the plot again; without a name, "Draw" only draws. A change to the file from another editor is
-shown at once, unless the code in the window has changes that are not saved.
+shown at once, unless the code in the window has changes that are not saved; then "Reload" in the
+window shows it.
 """
 Base.@kwdef mutable struct BuilderView <: FigureView
     # The name of the plot, which the user gives: the file `plots/<name>.jl`, or a path to a `.jl`
@@ -64,6 +65,9 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     mtime::Float64 = 0.0
     # The text buffer ImGui edits.
     buffer::Vector{UInt8} = zeros(UInt8, CODE_ROOM)
+    # Counts the reads of the file. It is part of the text box's ImGui id: a new id makes ImGui
+    # show the code just read, even while the user is typing in the box.
+    reads::Int = 0
     selection::Union{Nothing,Selection} = nothing
     inspect::Bool = false
     figure::Any = nothing
@@ -123,6 +127,7 @@ function load_code!(view::BuilderView)::Nothing
     end
     view.first = isempty(view.saved) && view.selection !== nothing ? first_code(view.selection) : ""
     set_code!(view, isempty(view.first) ? view.saved : view.first)
+    view.reads += 1
     return nothing
 end
 
@@ -203,12 +208,15 @@ function build!(view::BuilderView, ctx)::Nothing
 end
 
 function draw!(view::BuilderView, ctx)::Nothing
-    # The file changed in another editor, and the window has no edits that are not saved.
+    # A change of the file in another editor is shown at once, unless the window has edits that
+    # are not saved; then "Reload" shows it.
     edited = view.code != view.saved && view.code != view.first
     path = code_path(view)
-    if !isempty(path) && !edited && isfile(path) && mtime(path) != view.mtime
+    changed = !isempty(path) && isfile(path) && mtime(path) != view.mtime
+    if changed && !edited
         load_code!(view)
         build!(view, ctx)
+        changed = false
     end
 
     available = ig.GetContentRegionAvail()
@@ -230,10 +238,20 @@ function draw!(view::BuilderView, ctx)::Nothing
         view.code != view.saved ? ig.TextUnformatted("● not saved") : ig.TextDisabled("saved")
         ig.SameLine()
         save = ig.SmallButton("Save")
+        if changed
+            ig.SameLine()
+            ig.TextUnformatted("The file changed in another editor.")
+            ig.SameLine()
+            if ig.SmallButton("Reload")
+                load_code!(view)
+                build!(view, ctx)
+            end
+            ig.SetItemTooltip("Replace the code in the window with the code in the file")
+        end
         ig.SetItemTooltip("Write the code to the file and draw the plot again (Ctrl+S in the code)")
     end
     flags = ig.ImGuiInputTextFlags_AllowTabInput
-    if ig.InputTextMultiline("##code", view.buffer, length(view.buffer), (-1.0f0, -1.0f0), flags)
+    if ig.InputTextMultiline("##code$(view.reads)", view.buffer, length(view.buffer), (-1.0f0, -1.0f0), flags)
         view.code = unsafe_string(pointer(view.buffer))
         # Room for the next edits.
         sizeof(view.code) > length(view.buffer) - CODE_ROOM ÷ 4 && set_code!(view, view.code)
