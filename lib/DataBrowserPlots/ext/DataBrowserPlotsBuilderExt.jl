@@ -33,8 +33,9 @@ Giving a name that has no file yet saves the code under it; a name that has a fi
 is ordinary Julia, and its last value is the plot: an AlgebraOfGraphics declaration such as one
 written with `@plot`, or a Makie figure. The file runs from the start in a module of its own, which
 uses AlgebraOfGraphics, Makie and DataBrowserPlots and has `selection` set to the selected items.
-Other packages are loaded with `using` in the file, and functions defined in the REPL are reached
-as `Main.name`.
+Other packages are loaded with `using` in the file. Names defined in `Main`, such as the functions
+of the project script or the REPL, are reached by name; a name that the file defines takes their
+place.
 
     @plot mapping(:data.V, :data.I; color=:device) begin
         visual(Scatter)
@@ -172,6 +173,18 @@ function build!(view::BuilderView, ctx)::Nothing
         Core.eval(mod, :(const Makie = $Makie))
         Core.eval(mod, :(const DataBrowserPlots = $DataBrowserPlots))
         Core.eval(mod, :(using .AlgebraOfGraphics, .Makie, .DataBrowserPlots))
+        # The names defined in Main, such as the project's functions, are reached by name. They
+        # come through `using`, so a name that the file defines itself takes their place.
+        # TODO: a sandbox for plot code, for example the project's code in a module of its own.
+        shared = Module(:Main_names)
+        defined = [name for name in names(Main; all=true) if isdefinedglobal(Main, name) &&
+            !startswith(String(name), '#') && name ∉ (:eval, :include, :Base, :Core, :Main)]
+        for name in defined
+            Core.eval(shared, :(const $name = $(getglobal(Main, name))))
+        end
+        Core.eval(shared, Expr(:export, defined...))
+        Core.eval(mod, :(const Main_names = $shared))
+        Core.eval(mod, :(using .Main_names))
         Core.eval(mod, :(selection = $selection))
         plot = Base.invokelatest(include_string, mod, view.code, code_path(view))
         # A declaration of paths is drawn for the selection, any other for its own data.
