@@ -1,5 +1,6 @@
 using Test
 import DataBrowserAPI
+import Tables
 using DataBrowserAPI: AbstractProject, AbstractDataSource, AbstractDataSourceItem, AbstractDataItem, AbstractCollection
 import DataBrowserCore.Workspace as W
 
@@ -56,6 +57,13 @@ DataBrowserAPI.expand(::ChipsProject, ::ChipsFile, ::Nothing) = [
         @test on_c3 isa W.Selection && on_c3.label == ["IV_A"]
         @test only(on_c3.data).V == [0.0, 1.0]
         @test occursin("IV_B", sprint(show, MIME"text/plain"(), selection))
+
+        # The data is reached by path, and is not a column of the table.
+        @test selection.data.V == [[0.0, 1.0], [0.0, 2.0]]
+        @test on_c3.data.V == [[0.0, 1.0]]
+        @test :data ∉ Tables.columnnames(Tables.columns(selection))
+        @test_throws Exception selection.data.device[1]
+        @test_throws Exception Tables.columntable(selection.data)
     finally
         W.close_workspace!(workspace)
     end

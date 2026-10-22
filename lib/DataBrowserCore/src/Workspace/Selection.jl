@@ -1,20 +1,59 @@
-"""The data of each item, read from the cache only when the vector is indexed."""
+"""
+The data of each item, or a value inside it, read from the cache only when the vector is indexed.
+
+`selection.data` is the data of each item, as the project returned it. A property follows a path
+into it: `selection.data.V` is the column `V` of each item's table, or the field `V` of any other
+value, and `selection.data.fit.slope` goes one level further. It is not one table: the items' data
+are put together only when the values are named together.
+"""
 struct ItemData <: AbstractVector{Any}
     workspace::Workspace
     items::Vector{ItemKey}
+    # The names followed inside each item's data, from the outside in; empty for the data itself.
+    path::Vector{Symbol}
 end
-Base.size(data::ItemData) = size(data.items)
-Base.getindex(data::ItemData, index::Int) =
-    item_data(only(materialize_items(data.workspace, [data.items[index]])))
+ItemData(workspace::Workspace, items::Vector{ItemKey}) = ItemData(workspace, items, Symbol[])
+
+# The fields hold the workspace and the items; a property is a path into the data.
+Base.getproperty(data::ItemData, name::Symbol) =
+    ItemData(getfield(data, :workspace), getfield(data, :items), [getfield(data, :path); name])
+Base.size(data::ItemData) = size(getfield(data, :items))
+function Base.getindex(data::ItemData, index::Int)
+    workspace, key, path = getfield(data, :workspace), getfield(data, :items)[index], getfield(data, :path)
+    value = item_data(only(materialize_items(workspace, [key])))
+    for (depth, name) in enumerate(path)
+        # A column of a table, or a field of any other value.
+        if Tables.istable(value) && name in Tables.columnnames(Tables.columns(value))
+            value = Tables.getcolumn(Tables.columns(value), name)
+        elseif !Tables.istable(value) && hasproperty(value, name)
+            value = getproperty(value, name)
+        else
+            error("The data of item '$(id(workspace, key))' has no `$(join(path[1:depth], '.'))`")
+        end
+    end
+    return value
+end
 # Part of the items, still read only when indexed.
-Base.getindex(data::ItemData, index::AbstractVector) = ItemData(data.workspace, data.items[index])
+Base.getindex(data::ItemData, index::AbstractVector) =
+    ItemData(getfield(data, :workspace), getfield(data, :items)[index], getfield(data, :path))
+
+# Each item's data is a value of its own, so the items' data are not one table, and Tables.jl must
+# not read each item's data as a row.
+Tables.columns(::ItemData) =
+    error("The data of several items is not one table. Index it for the data of one item.")
+Tables.rows(::ItemData) =
+    error("The data of several items is not one table. Index it for the data of one item.")
 
 """
     Selection
 
-Items as a table, as [`select`](@ref) gives them. Each property is a vector with one value for each
-item: `selection.label`, `selection.data`. `for x in selection` goes through the items, with
-`x.label`, `x.data`. An item's data is read only when it is used.
+Items as a table, as [`select`](@ref) gives them, with one row for each item. Each column is a
+vector with one value for each item: `selection.label`, `selection.device`.
+
+`selection.data` is the data of each item, and `selection.data.V` follows a path into it: the column
+`V` of each item's table. It is not a column of the table, and each item's data is read only when
+it is used. `for x in selection` goes through the items, with `x.label` and `x.data`, the data of
+that item.
 
 `filter`, and indexing with several indices, give a `Selection` again. A `Selection` is a Tables.jl
 table, so `DataFrame(selection)` copies it into a data frame.
@@ -33,26 +72,26 @@ Base.propertynames(selection::Selection) = propertynames(StructArrays.components
 
 Tables.istable(::Type{<:Selection}) = true
 Tables.columnaccess(::Type{<:Selection}) = true
-Tables.columns(selection::Selection) = StructArrays.components(getfield(selection, :table))
+# `data` is reached as a property, not as a column: each item's data is a value of its own.
+Tables.columns(selection::Selection) =
+    Base.structdiff(StructArrays.components(getfield(selection, :table)), NamedTuple{(:data,)})
 
 Base.show(io::IO, selection::Selection) =
     print(io, "Selection of ", length(selection), length(selection) == 1 ? " item" : " items")
 
-# Printed like a data frame. `data` is never read to print it, and shows as "…".
+# Printed like a data frame, without reading the items' data.
 const TABLE_FORMAT = TextTableFormat(; @text__no_horizontal_lines, @text__no_vertical_lines,
     horizontal_line_after_column_labels = true)
 
 function Base.show(io::IO, ::MIME"text/plain", selection::Selection)
     columns = Tables.columns(selection)
     names = collect(keys(columns))
-    shown = NamedTuple{Tuple(names)}(Tuple(name === :data ? fill("…", length(selection)) : columns[name] for name in names))
     types = map(names) do name
-        name === :data && return ""
         T = eltype(columns[name])
         nonmissingtype(T) === T ? string(T) : string(nonmissingtype(T), "?")
     end
-    numbers = [name !== :data && nonmissingtype(eltype(columns[name])) <: Real for name in names]
-    pretty_table(io, shown;
+    numbers = [nonmissingtype(eltype(columns[name])) <: Real for name in names]
+    pretty_table(io, columns;
         alignment = [number ? :r : :l for number in numbers],
         alignment_anchor_regex = [index => [r"\."] for index in findall(numbers)],
         alignment_anchor_fallback = :r,
@@ -70,9 +109,10 @@ end
 """
     select(workspace, ids) -> Selection
 
-The items with the public `ids` as a [`Selection`](@ref): a table with one entry for each item. Its
-properties are `id`, `label`, one property for each level of the collection tree, named after the
-level, then each metadata key, then `data`. A property that an item does not have is `missing`.
+The items with the public `ids` as a [`Selection`](@ref): a table with one row for each item. Its
+columns are `id`, `label`, one column for each level of the collection tree, named after the level,
+then each metadata key. A value that an item does not have is `missing`. `selection.data` is the
+data of each item.
 
 `select` changes nothing: the workspace's own selection is [`select!`](@ref) and
 [`selection`](@ref). Items that are not processed yet are processed now, and the call waits for
@@ -133,5 +173,5 @@ The items of `selection` as the project made them, in the same order: the object
 function items(selection::Selection)::Vector
     data = selection.data::ItemData
     # Narrow the element type, so that methods can dispatch on the type of the items.
-    return identity.(materialize_items(data.workspace, data.items))
+    return identity.(materialize_items(getfield(data, :workspace), getfield(data, :items)))
 end
