@@ -12,6 +12,22 @@ figure(declaration::Declaration, input, args...; options...) =
     figure(Base.invokelatest(declaration.layers, input), args...; options...)
 
 """
+A plot whose legend entries have their own labels, as a `label` in the visual of a
+[`Statistic`](@ref) gives them. Draw it with `figure(plot)`.
+"""
+struct Labelled
+    layers::Any
+    # For each scale, such as `:Color`, its categories with their labels.
+    categories::Dict{Symbol,Vector{Pair{Any,Any}}}
+end
+
+# The label of each group's legend entry: `labels(selection)` gives one label for each group of a
+# statistic, as a `Selection`.
+struct EntryLabels
+    labels::Function
+end
+
+"""
     @plot declaration
     @plot header begin
         layer
@@ -50,40 +66,57 @@ With `data(table)`, the declaration is ordinary AlgebraOfGraphics over that tabl
 `mapping` are its columns. Draw it with `figure(declaration)`.
 
 A layer with its own `data(...)` is not multiplied by the header, whose values would add to its own.
-When that data is a vector of items, such as the groups of a fit, the names in its `mapping` are
-paths into those items, as for the items the plot is drawn for.
+When that data is a vector of items, the names in its `mapping` are paths into those items, as for
+the items the plot is drawn for.
 
-A line `name = value` defines `name` for the lines of the block, in order. `fit` fits a curve to
-the points of the header:
+`fit` fits a curve to the points of the header and draws it:
 
     resistance(gap; Rc, Rsh) = 2Rc + Rsh * gap
 
     @plot mapping(:gap, R(:data.V, :data.I); color=:Chip) begin
         visual(Scatter)
-        contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
-        data(contacts) * mapping(:data.x, :data.y; color=:Chip) * visual(Lines)
-        data(contacts) * mapping(last(:data.x), last(:data.y); text="Rc = \$(:Rc)" => verbatim) *
-            visual(Text)
+        fit(resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines; label="\$(:Chip): Rc = \$(:Rc) Ω")
     end
 
 The curve is a function of x with its parameters as keywords, and `fit` takes the curve and a
-starting value for each parameter. The header's two positional values are x and y, and its named
-roles, here `color=:Chip`, divide the points into groups. `fit` returns one `Group` for each:
-its metadata holds the group's values, such as `:Chip`, and each parameter, such as `:Rc`, a
-[`Parameter`](@ref) that prints as the estimate ± one standard error. Its data is the drawn curve,
-as columns `x` and `y`, and its members are the items whose points it fits.
-`fit(...; xlim=(0, 25))` draws the curve over that range of x instead of over the fitted points.
-With `data(table)` in the header, `fit` takes the rows of that table.
+starting value for each parameter. The header's two positional values are x and y, and its
+categorical named roles, here `color=:Chip`, divide the points into groups, with one fit each.
+`fit` gives a [`Statistic`](@ref): one `Group` for each group of points. Its metadata holds the
+group's values, such as `:Chip`, and each parameter, such as `:Rc`, a [`Parameter`](@ref) that
+prints as the estimate ± one standard error. Its data is the drawn curve, and its members are the
+items whose points it fits. `fit(...; xlim=(0, 25))` draws the curve over that range of x instead
+of over the fitted points. With `data(table)` in the header, `fit` takes the rows of that table.
+
+The visual draws the fit on the axes of the points and in the roles of its group, so the group's
+legend entry shows its points and its curve. Without a visual, a fit is drawn with `Lines`. A
+`label` in the visual names each group's legend entry, and its paths read the values of that
+group's fit.
+
+A line `name = value` gives a name to a value for the lines after it, such as a fit drawn twice:
+
+    contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
+    contacts * visual(Lines; label="Rc = \$(:Rc)")
+    contacts * visual(Scatter; markersize=4)
+
+A line that uses a name, or that calls `fit`, is not multiplied by the header: the fit already
+holds what the header maps.
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
     lines = filter(line -> !(line isa LineNumberNode), block.args)
     statements = filter(line -> Meta.isexpr(line, :(=)), lines)
-    drawn = [has_data(line) ? line : :($header * $line) for line in lines if !Meta.isexpr(line, :(=))]
+    names = Symbol[first(statement.args) for statement in statements]
+    # A line that draws a fit, or its own data, stands alone: the header's values would add to its own.
+    drawn = map(filter(line -> !Meta.isexpr(line, :(=)), lines)) do line
+        draws_fit = find_call(line, :fit) !== nothing || any(name -> uses(line, name), names)
+        draws_fit ? entry_labels(line) : has_data(line) ? line : :($header * $line)
+    end
     # `a + b + c`, not `+(a, b, c)`: AoG adds two layers at a time and has no `+` of one layer.
     declaration = isempty(drawn) ? header : foldl((a, b) -> :($a + $b), drawn)
     input = gensym("input")
-    isempty(statements) || pushfirst!(statements, :(fit = $(define_fit(header, input))))
+    if uses(block, :fit)
+        pushfirst!(statements, :(fit = $(define_fit(header, input))))
+    end
     return esc(declare(declaration, statements; input))
 end
 
@@ -228,12 +261,27 @@ function call_arguments(call)
     return positional, named
 end
 
-# The column a rewritten mapping value names: `:R` in `:R` and in `:R => "R (Ω)"`.
-column_name(value) = Meta.isexpr(value, :call) && value.args[1] === :(=>) ? column_name(value.args[2]) : value.value
-
 # `expression` with `call` replaced by `new`; the same object, not an equal one.
 replace_call(expression, call, new) = expression === call ? new :
     expression isa Expr ? Expr(expression.head, map(e -> replace_call(e, call, new), expression.args)...) : expression
+
+# The line with the `label` of its `visual` read for each group of a statistic, when the label
+# holds paths: `"Rc = \$(:Rc)"` gives one label for each group.
+function entry_labels(line)
+    call = find_call(line, :visual)
+    call === nothing && return line
+    _, named = call_arguments(call)
+    index = findfirst(((name, value),) -> name === :label && !isempty(paths(value)), named)
+    index === nothing && return line
+    selection = gensym("selection")
+    labels = :($EntryLabels($selection -> $(per_item(last(named[index]), selection))))
+    arguments = map(call.args) do a
+        Meta.isexpr(a, :kw) && a.args[1] === :label ? Expr(:kw, :label, labels) :
+        Meta.isexpr(a, :parameters) ? Expr(:parameters, (Meta.isexpr(b, :kw) && b.args[1] === :label ?
+            Expr(:kw, :label, labels) : b for b in a.args)...) : a
+    end
+    return replace_call(line, call, Expr(:call, arguments...))
+end
 
 uses(expression, name::Symbol) = expression === name ||
     expression isa Expr && any(e -> uses(e, name), expression.args)
@@ -247,17 +295,14 @@ function define_fit(header, input::Symbol)
     item = gensym("item")
     if has_data(header)
         table, rewritten = find_call(header, :data).args[2], call
-        members = :(())
+        members = :(NamedTuple())
     else
         table, rewritten = tabulate(call, value -> per_item(value, input))
         push!(table.args[2].args, Expr(:kw, item, :($input.id)))
         members = :((; members=$(Workspace.items)($input), item=$(QuoteNode(item))))
     end
     positional, named = call_arguments(rewritten)
-    length(positional) == 2 || return :((_...; _...) -> error("fit needs a header that maps two positional values, x and y"))
-    x, y = column_name.(positional)
-    # TODO: group only by categorical roles; a continuous color should not split the points.
-    group = [QuoteNode(column_name(value)) for (_, value) in named]
-    return :((curve, starts; options...) -> $fit_groups(curve, starts, $table, $(QuoteNode(x)), $(QuoteNode(y)),
-        Symbol[$(group...)]; $members..., options...))
+    roles = [:($(QuoteNode(role)) => $value) for (role, value) in named]
+    return :((curve, starts; options...) -> $fit_statistic(curve, starts, $table, Any[$(positional...)],
+        Pair{Symbol,Any}[$(roles...)]; $members..., options...))
 end

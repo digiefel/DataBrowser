@@ -62,3 +62,40 @@ function fit_groups(curve, starts::NamedTuple, rows, x::Symbol, y::Symbol, group
         return Group(name, Dict{Symbol,Any}(pairs(key)..., pairs(parameters)...), (x=curve_x, y=curve_y), fitted)
     end
 end
+
+"""
+The values a statistic computes from the points of a plot: one `Group` for each group of points,
+as [`@plot`](@ref)'s `fit` gives them. It is a vector of those groups.
+
+Multiply it by a `visual` to draw it: its data is drawn on the axes of the points, in the named
+roles of their groups, such as `color`, so that it shares their legend entries. Alone, it is drawn
+with its own visual, `Lines` for a fit. A `label` in the visual names each group's legend entry,
+and its paths read that group's values: `visual(Lines; label="Rc = \$(:Rc)")`.
+"""
+struct Statistic <: AbstractVector{Group}
+    groups::Vector{Group}
+    # The values the points mapped to x and y, as `mapping` takes them, such as `:gap => "gap (µm)"`.
+    positional::Vector{Any}
+    # The named roles that form the groups, such as `:color => :Chip`.
+    named::Vector{Pair{Symbol,Any}}
+    # The plot type it is drawn with when no visual is given, a name in Makie.
+    plottype::Symbol
+end
+Base.size(statistic::Statistic) = size(statistic.groups)
+Base.getindex(statistic::Statistic, index::Int) = statistic.groups[index]
+
+# The column a value of `mapping` names: `:R` in `:R`, in `:R => "R (Ω)"` and in `:R => f => "R"`.
+column(value) = value isa Pair ? column(first(value)) : value
+
+# Fit `curve` to the points of `table`, whose columns `positional` maps to x and y, once for each
+# group of the categorical roles in `named`. A role of numbers, such as a continuous color, does
+# not divide the points.
+function fit_statistic(curve, starts::NamedTuple, table, positional::Vector, named::Vector; options...)::Statistic
+    length(positional) == 2 || error("fit needs the points to map two positional values, x and y")
+    columns = Tables.columntable(table)
+    # TODO: a role given as a formula, such as `color=chip(:folder)`, keeps its group's value
+    # under the formula's text, so a label reads it as `:var"chip(:folder)"`.
+    roles = [role => value for (role, value) in named if !all(v -> v isa Number || ismissing(v), columns[column(value)])]
+    groups = fit_groups(curve, starts, columns, column.(positional)..., unique(Symbol[column(v) for (_, v) in roles]); options...)
+    return Statistic(groups, positional, roles, :Lines)
+end
