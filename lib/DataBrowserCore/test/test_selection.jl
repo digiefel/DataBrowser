@@ -35,10 +35,10 @@ DataBrowserAPI.id(sweep::Sweep) = sweep.name
 DataBrowserAPI.label(sweep::Sweep) = sweep.name
 DataBrowserAPI.item_data(sweep::Sweep) = sweep.data
 DataBrowserAPI.metadata(sweep::Sweep) = sweep.meta
-DataBrowserAPI.collection(sweep::Sweep) = AbstractCollection[Chip(sweep.chip)]
+DataBrowserAPI.collection(sweep::Sweep) = AbstractCollection[Chip(level) for level in split(sweep.chip, '/')]
 DataBrowserAPI.reconstruct(::Type{Sweep}, name::AbstractString, data, meta::Dict) = Sweep(name, "", data, meta)
 DataBrowserAPI.expand(::ChipsProject, ::ChipsFile, ::Nothing) = [
-    Sweep("IV_A", "C3", (V=[0.0, 1.0],), Dict(:device => "D2", :gap => 5.0)),
+    Sweep("IV_A", "C3/left", (V=[0.0, 1.0],), Dict(:device => "D2", :gap => 5.0)),
     Sweep("IV_B", "C4", (V=[0.0, 2.0],), Dict(:device => "D3")),
 ]
 
@@ -48,12 +48,13 @@ DataBrowserAPI.expand(::ChipsProject, ::ChipsFile, ::Nothing) = [
         W.wait_workspace_idle!(workspace; timeout=20)
         selection = W.select(workspace, ["IV_A", "IV_B"])
         @test selection.label == ["IV_A", "IV_B"]
-        @test selection.chip == ["C3", "C4"]
+        # Nested levels of one name share a column.
+        @test selection.chip == ["C3/left", "C4"]
         @test selection.device == ["D2", "D3"]
         @test isequal(selection.gap, [5.0, missing])
         @test [x.data.V for x in selection] == [[0.0, 1.0], [0.0, 2.0]]
 
-        on_c3 = filter(x -> x.chip == "C3", selection)
+        on_c3 = filter(x -> x.chip == "C3/left", selection)
         @test on_c3 isa W.Selection && on_c3.label == ["IV_A"]
         @test only(on_c3.data).V == [0.0, 1.0]
         @test occursin("IV_B", sprint(show, MIME"text/plain"(), selection))

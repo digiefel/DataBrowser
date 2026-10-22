@@ -19,7 +19,12 @@ id(collection::AbstractCollection)::String = error(
 """Human-readable label for one collection level."""
 label(collection::AbstractCollection)::String = string(collection)
 
-"""Display name for one collection type."""
+"""
+The name of a level of collections of type `T`, such as `:chip`: the name of its column in a
+selection, where each item has the label of its collection at that level. Nested levels of one name,
+such as folders, share one column and join from the top down: `"72b/L/bigTLM"`. The default is the
+name of the type.
+"""
 label(T::Type{<:AbstractCollection})::Symbol = nameof(T)
 """Return metadata supplied directly by one collection level."""
 metadata(::AbstractCollection)::Dict = Dict()

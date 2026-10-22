@@ -137,7 +137,10 @@ function select(workspace::Workspace, items::Vector{ItemKey})::Selection
     end
     for (index, item) in enumerate(items)
         for holder in ancestors(workspace, item)
-            put!(Symbol(label(valuetype(workspace, holder))), index, label(workspace, holder))
+            name, value = Symbol(label(valuetype(workspace, holder))), label(workspace, holder)
+            # Nested levels of one name, such as folders, join from the top down: "72b/L/bigTLM".
+            above = haskey(properties, name) ? properties[name][index] : missing
+            put!(name, index, ismissing(above) ? value : "$above/$value")
         end
     end
     # A metadata key never replaces a property named above.

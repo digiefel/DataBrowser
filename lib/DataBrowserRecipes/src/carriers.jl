@@ -98,5 +98,6 @@ end
 
 id(collection::NamedCollection)::String = collection.name
 label(collection::NamedCollection)::String = collection.name
+label(::Type{NamedCollection{Level}}) where {Level} = Level
 reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, ::Dict) where {Level} =
     NamedCollection{Level}(String(identity))

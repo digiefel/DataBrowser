@@ -306,6 +306,7 @@ end
 
 id(level::DirectoryCollection)::String = level.name
 label(level::DirectoryCollection)::String = level.name
+label(::Type{DirectoryCollection})::Symbol = :folder
 reconstruct(::Type{DirectoryCollection}, identity::AbstractString, ::Dict) =
     DirectoryCollection(String(identity))
 
