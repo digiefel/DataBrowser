@@ -120,6 +120,7 @@ Arguments:
 - `span`: `(row::Int, col::Int) -> Int`, the first row of the run of rows that one cell spans.
   Each row is its own cell by default
 - `frozen_columns`: how many columns on the left stay in place when the grid scrolls sideways
+- `align_right`: `(col::Int) -> Bool`, whether the text of the column's cells is right-aligned
 - `fold`: `(row::Int, col::Int) -> Union{Nothing,Bool}`, whether the cell starts with an arrow
   that folds something, open (`true`) or closed (`false`). No cell has an arrow by default
 - `on_fold`: called with `(row, col)` when the user clicks the arrow of a cell
@@ -127,8 +128,8 @@ Arguments:
 - `selection_mode`: `:rows` for multi-row selection or `:cells` for a spreadsheet rectangle
 - `height`: child height in pixels; 0.0f0 = fill available
 
-Column widths are persisted across restarts by ImGui via the ini file (keyed by `id`).
-On first appearance, `ImGuiTableFlags_SizingFixedFit` auto-sizes each column to its content.
+The grid fits its columns to the content of the rows on screen when `state.fit_columns` is set,
+which it is for a new state.
 
 Row mode: click = replace, Shift+click = extend range, Ctrl/Cmd+click = toggle,
 Ctrl/Cmd+A = select all, up/down = move (Shift extends), Escape = clear.
@@ -145,6 +146,7 @@ function render_data_grid!(
     cell_link::Function = (_, _) -> nothing,
     span::Function = (row, _) -> row,
     frozen_columns::Int = 0,
+    align_right::Function = _ -> false,
     fold::Function = (_, _) -> nothing,
     on_fold::Function = (_, _) -> nothing,
     on_selection_change::Function = identity,
@@ -179,6 +181,10 @@ function render_data_grid!(
         ig.TableSetupColumn(col, ig.ImGuiTableColumnFlags_WidthFixed, 0.0f0)
     end
     ig.TableHeadersRow()
+    if state.fit_columns
+        ig.TableSetColumnWidthAutoAll(ig.GetCurrentTable())
+        state.fit_columns = false
+    end
 
     # Keyboard navigation (only when the table window is hovered/focused)
     io = ig.GetIO()
@@ -300,7 +306,10 @@ function render_data_grid!(
         elseif link !== nothing
             ig.TextLinkOpenURL(cell(row, column), link)
         else
-            ig.TextUnformatted(cell(row, column))
+            text = cell(row, column)
+            align_right(column) && ig.SetCursorPosX(ig.GetCursorPosX() +
+                max(0.0f0, ig.GetContentRegionAvail().x - ig.CalcTextSize(text).x))
+            ig.TextUnformatted(text)
         end
         return nothing
     end

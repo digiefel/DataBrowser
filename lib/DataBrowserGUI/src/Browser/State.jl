@@ -51,8 +51,8 @@ end
 Transient selection and scroll state for a DataGrid widget.
 
 Owned by the consumer of the grid (e.g. `TableView`); passed by reference each frame.
-Column widths are persisted across restarts via the imgui.ini file, keyed by the grid `id`.
-Row mode uses `selected_rows`. Cell mode stores the opposite corners of one rectangular selection in
+The grid fits its columns to their content when it first draws, and again when `fit_columns` is set.
+Column widths the user sets are kept in the imgui.ini file, keyed by the grid `id`. Row mode uses `selected_rows`. Cell mode stores the opposite corners of one rectangular selection in
 `cell_anchor` and `cell_focus`. Use `scroll_to_row` to request a programmatic scroll on the next frame.
 """
 Base.@kwdef mutable struct DataGridState
@@ -62,6 +62,7 @@ Base.@kwdef mutable struct DataGridState
     cell_focus::Union{Nothing,Tuple{Int,Int}} = nothing
     dragging_cells::Bool                 = false
     focused::Bool                        = false
+    fit_columns::Bool                    = true
 end
 
 """

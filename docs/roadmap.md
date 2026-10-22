@@ -590,13 +590,12 @@ the table as a first-class view.
   takes only the values of its own shape; a transform turns other values into that shape.
 - [ ] More ImPlot plots: scatter, a 2D histogram of two vectors, a heatmap of a matrix.
 - [ ] A great table:
-  - [ ] Numbers right-aligned, with the decimal points lined up in each column; one format per
-    column chosen from its values, with an exponent shared by the column when values span many
-    orders of magnitude.
+  - [x] Numbers right-aligned, with the decimal points lined up in each column; one format per
+    column chosen from its values, with a power of ten shared by the column and shown in its name.
   - [ ] `missing`, `NaN` and `nothing` dimmed; booleans as checkmarks; dates in one fixed format.
   - [ ] The element type under each column name.
   - [ ] Long text cut with "…", and the full text on hover.
-  - [ ] Columns fitted to their content when the data changes.
+  - [x] Columns fitted to their content when the data changes.
   - [ ] Hide and reorder columns; freeze the first column; an optional row-number column.
   - [ ] Sort by a column, and by several with Shift-click.
   - [x] The items one after the other, with the label of each item in one cell beside all of its

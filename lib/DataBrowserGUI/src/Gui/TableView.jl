@@ -1,6 +1,7 @@
 import CImGui as ig
 
 import CSV
+using Printf: @sprintf
 using NativeFileDialog: save_file
 
 import DataBrowserAPI: draw!, export!, label, output, prepare!
@@ -18,6 +19,10 @@ its rows, and stays in place when the table scrolls sideways. The arrow beside t
 item to one row, which shows the smallest and the largest number of each column, or the value of a
 column that has only one.
 
+In a column of numbers, every number has the same number of decimals and the numbers are
+right-aligned, so that their decimal points line up. When the numbers are not whole, they are shown
+divided by a power of ten that the column's name shows, such as `×1e-6`.
+
 The window passes on the table as it shows it: the rows the user selected, or all rows when none is
 selected, with the columns it shows.
 """
@@ -27,6 +32,8 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     item_column::Bool = false
     # The items that show one row, and the text of each cell of that row.
     folded::Dict{Int,Vector{String}} = Dict{Int,Vector{String}}()
+    # For each column of numbers, the power of ten its numbers are divided by and their decimals.
+    formats::Vector{Union{Nothing,Tuple{Int,Int}}} = Union{Nothing,Tuple{Int,Int}}[]
     # The row of `table` that each row on screen shows; a folded item shows its first row.
     shown::Vector{Int} = Int[]
     # What the window passes on to other windows.
@@ -47,6 +54,9 @@ function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
     view.item_column = false
     view.folded = Dict{Int,Vector{String}}()
     view.shown = collect(1:table.rows)
+    # TODO: read each column once rather than each cell, for large tables.
+    view.formats = [_number_format(table.getvalue(row, column) for row in 1:table.rows)
+                    for column in eachindex(table.columns)]
     view.warnings = String[]
     view.grid = DataGridState()
     view.grid_id = "table"
@@ -96,8 +106,17 @@ function draw!(view::TableView, ctx)::Nothing
     item(row) = table.row_item[shown[row]]
     # The rows of each item follow each other, so the first row of an item is found by bisection.
     first_row(row) = searchsortedfirst(shown, shown[row]; by=row -> table.row_item[row])
-    cell(row, column) = haskey(view.folded, item(row)) && !(view.item_column && column == 1) ?
-        view.folded[item(row)][column] : table.getcell(shown[row], column)
+    function cell(row, column)
+        haskey(view.folded, item(row)) && !(view.item_column && column == 1) &&
+            return view.folded[item(row)][column]
+        value, format = table.getvalue(shown[row], column), view.formats[column]
+        (format === nothing || !_number(value) || !isfinite(value)) &&
+            return table.getcell(shown[row], column)
+        value isa Integer && return string(value)
+        return @sprintf("%.*f", format[2], value / exp10(format[1]))
+    end
+    columns = [format === nothing || format[1] == 0 ? name : "$name ×1e$(format[1])"
+               for (name, format) in zip(table.columns, view.formats)]
     # The row of a folded item stands for all of the item's rows.
     rows_of(row) = haskey(view.folded, item(row)) ? searchsorted(table.row_item, item(row)) : shown[row]
     function fold!(row, _)
@@ -113,6 +132,7 @@ function draw!(view::TableView, ctx)::Nothing
                       r == searchsortedfirst(table.row_item, table.row_item[r])]
         # The rows on screen change, so the selection is cleared.
         empty!(view.grid.selected_rows)
+        view.grid.fit_columns = true
         view.output = table
         return nothing
     end
@@ -121,8 +141,9 @@ function draw!(view::TableView, ctx)::Nothing
             view.grid_id,
             view.grid;
             n_rows=length(shown),
-            columns=table.columns,
+            columns,
             cell,
+            align_right=column -> view.formats[column] !== nothing,
             span=(row, column) -> view.item_column && column == 1 ? first_row(row) : row,
             frozen_columns=view.item_column ? 1 : 0,
             fold=(row, column) -> view.item_column && column == 1 ? !haskey(view.folded, item(row)) : nothing,
@@ -132,6 +153,32 @@ function draw!(view::TableView, ctx)::Nothing
         )
     end
     return nothing
+end
+
+_number(value) = value isa Real && !(value isa Bool)
+
+# The power of ten that the numbers of a column are divided by, a multiple of 3, and as many
+# decimals as its most precise number needs, at most as many as 6 digits of its largest number. Whole numbers are not divided. `nothing` for
+# a column that holds values other than numbers; `missing` is no value.
+function _number_format(values)::Union{Nothing,Tuple{Int,Int}}
+    numbers = Real[]
+    for value in values
+        ismissing(value) && continue
+        _number(value) || return nothing
+        isfinite(value) && push!(numbers, value)
+    end
+    isempty(numbers) && return nothing
+    all(isinteger, numbers) && return (0, 0)
+    largest = maximum(abs, numbers)
+    exponent = 3 * floor(Int, log10(largest) / 3)
+    # The largest number keeps 6 digits at most; a smaller number may lose its last digits.
+    limit = 5 - floor(Int, log10(largest / exp10(exponent)))
+    decimals = maximum(numbers) do number
+        scaled = number / exp10(exponent)
+        something(findfirst(digits -> isapprox(round(scaled; digits), scaled; rtol=1e-9), 0:limit),
+            limit + 1) - 1
+    end
+    return (exponent, decimals)
 end
 
 # The text of one cell of a folded item, from the values of its rows: the smallest and the largest
