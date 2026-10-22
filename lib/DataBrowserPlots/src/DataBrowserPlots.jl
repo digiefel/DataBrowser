@@ -11,6 +11,9 @@ module DataBrowserPlots
 import DataBrowserAPI: @timed_dbg
 import DataBrowserCore.Workspace
 using DataBrowserCore: Selection
+import ForwardDiff
+using LinearAlgebra: diag
+using NonlinearSolve: LevenbergMarquardt, NonlinearLeastSquaresProblem, SciMLBase, solve
 
 include("plots.jl")
 
@@ -26,6 +29,7 @@ Load AlgebraOfGraphics, and a Makie backend such as GLMakie or CairoMakie to dis
 figure. This works with ordinary Julia data and needs no workspace.
 """
 function figure end
+include("fitting.jl")
 include("declaration.jl")
 
 export figure, @plot

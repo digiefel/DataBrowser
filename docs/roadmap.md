@@ -574,6 +574,9 @@ the table as a first-class view.
   - [x] Names in `mapping` are paths into the selected items, such as `:device` and `:data.V`,
     and formulas of them run once per item; `@plot` needs no `data(...)`. `unnest` puts values
     of several items together in one table.
+  - [x] A line fits a curve and names the result, `name = fit(curve, starts)`, once for each
+    group of the header's named roles; lines that use the name draw its parameters and curve.
+    The result stays in the plot; the workspace does not keep it yet.
   - [ ] Inline controls on literal values, an inspector of the declaration, and fit results
     ([plot-editor.md](plot-editor.md)).
   - [ ] A draggable border between the figure and the code.
