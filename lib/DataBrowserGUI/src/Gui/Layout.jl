@@ -312,6 +312,7 @@ end
 const ICON_PARTIAL = "\ue4b0"  # circle-dashed
 const ICON_FAILED = "\ue084"   # circle-x
 const ICON_COPY = "\ue09e"     # copy
+const ICON_FILTER = "\ue0dc"   # funnel
 
 """Create the ImGui context with the docking/viewport configuration the browser needs."""
 function _init_browser_context!()

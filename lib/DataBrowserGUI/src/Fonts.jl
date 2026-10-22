@@ -66,5 +66,13 @@ function _load_fonts!()::_GUIFonts
     end
 
     code = CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-Regular.ttf"), 13.0f0)
+    merge = CImGui.lib.ImFontConfig_ImFontConfig()
+    try
+        merge.MergeMode = true
+        merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
+        CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
+    finally
+        CImGui.lib.ImFontConfig_destroy(merge)
+    end
     return _GUIFonts(interface, code)
 end

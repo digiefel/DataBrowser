@@ -24,6 +24,12 @@ its rows, and stays in place when the table scrolls sideways. The arrow beside t
 item to one row, which shows how many values the item has in each column. Hovering over a cell of
 that row shows the smallest and the largest number of the column.
 
+Clicking the header of a column sorts the rows by it, and Shift-click adds another column to sort by.
+Sorting may put the rows of an item apart. A folded item's row goes where its first row would go.
+Right-clicking the header opens a filter: a Julia function, such as `≥(0)` or `!in(["C2_3um"])`,
+which the table calls with each value of the column. The table shows the rows for which it returns
+`true`; a funnel at the right of the column's name marks the filter.
+
 In a column of numbers, every number has the same number of decimals and the numbers are
 right-aligned, so that their decimal points line up. In a column with numbers smaller than 0.001 or
 larger than a million, each number is written with a power of ten of its own, a multiple of 3, such
@@ -36,12 +42,25 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     table::Union{Nothing,ItemTable} = nothing
     # The table has a first column `item`, built here from several items.
     item_column::Bool = false
-    # The items that show one row, and the text and tooltip of each cell of that row.
-    folded::Dict{Int,Vector{Tuple{String,String}}} = Dict{Int,Vector{Tuple{String,String}}}()
     # How each column writes its numbers; `nothing` for a column of other values.
     formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
+    # The items that show one row.
+    folded::Set{Int} = Set{Int}()
+    # The columns to sort by, as `(column, ascending)` pairs.
+    sort::Vector{Tuple{Int,Bool}} = Tuple{Int,Bool}[]
+    # The filter of each column, by name, as the user typed it, and the error of a filter that
+    # could not be used.
+    filters::Dict{String,String} = Dict{String,String}()
+    filter_errors::Dict{String,String} = Dict{String,String}()
+    # The rows of `table` that pass the filters, sorted.
+    order::Vector{Int} = Int[]
     # The row of `table` that each row on screen shows; a folded item shows its first row.
     shown::Vector{Int} = Int[]
+    # For each row on screen, the first row on screen of the run of rows of the same item.
+    run_start::Vector{Int} = Int[]
+    # The rows of each folded item, and the text and tooltip of each cell of its row.
+    folded_rows::Dict{Int,Vector{Int}} = Dict{Int,Vector{Int}}()
+    folded_cells::Dict{Int,Vector{Tuple{String,String}}} = Dict{Int,Vector{Tuple{String,String}}}()
     # What the window passes on to other windows.
     output::Union{Nothing,ItemTable} = nothing
     warnings::Vector{String} = String[]
@@ -56,16 +75,18 @@ label(::TableView)::String = "Table"
 output(view::TableView) = view.output
 
 function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
-    view.table = view.output = table
+    view.table = table
     view.item_column = false
-    view.folded = Dict{Int,Vector{Tuple{String,String}}}()
-    view.shown = collect(1:table.rows)
     # TODO: read each column once rather than each cell, for large tables.
     view.formats = [_number_format(table.getvalue(row, column) for row in 1:table.rows)
                     for column in eachindex(table.columns)]
+    view.folded = Set{Int}()
     view.warnings = String[]
     view.grid = DataGridState()
     view.grid_id = "table"
+    # The filters stay, as long as the table has their columns; the grid sorts again in its first
+    # frame.
+    _arrange!(view)
     return nothing
 end
 
@@ -110,31 +131,41 @@ function draw!(view::TableView, ctx)::Nothing
 
     shown = view.shown
     item(row) = table.row_item[shown[row]]
-    # The rows of each item follow each other, so the first row of an item is found by bisection.
-    first_row(row) = searchsortedfirst(shown, shown[row]; by=row -> table.row_item[row])
-    folded(row, column) = haskey(view.folded, item(row)) && !(view.item_column && column == 1)
+    folded(row, column) = item(row) in view.folded && !(view.item_column && column == 1)
     function cell(row, column)
-        folded(row, column) && return first(view.folded[item(row)][column])
+        folded(row, column) && return first(view.folded_cells[item(row)][column])
         text = _number_text(table.getvalue(shown[row], column), view.formats[column])
         return something(text, table.getcell(shown[row], column))
     end
-    # The row of a folded item stands for all of the item's rows.
-    rows_of(row) = haskey(view.folded, item(row)) ? searchsorted(table.row_item, item(row)) : shown[row]
+    # The row of a folded item stands for all of the item's rows that pass the filters.
+    rows_of(row) = item(row) in view.folded ? view.folded_rows[item(row)] : shown[row]
     function fold!(row, _)
         i = item(row)
-        if haskey(view.folded, i)
-            delete!(view.folded, i)
-        else
-            rows = searchsorted(table.row_item, i)
-            view.folded[i] = [_folded_cell([table.getvalue(r, column) for r in rows], view.formats[column])
-                              for column in eachindex(table.columns)]
-        end
-        view.shown = [r for r in 1:table.rows if !haskey(view.folded, table.row_item[r]) ||
-                      r == searchsortedfirst(table.row_item, table.row_item[r])]
-        # The rows on screen change, so the selection is cleared.
-        empty!(view.grid.selected_rows)
+        i in view.folded ? delete!(view.folded, i) : push!(view.folded, i)
+        _arrange!(view)
         view.grid.fit_columns = true
-        view.output = table
+        return nothing
+    end
+    function filter_popup(column)
+        name = table.columns[column]
+        text = get(view.filters, name, "")
+        buffer = zeros(UInt8, sizeof(text) + 1024)
+        copyto!(buffer, codeunits(text))
+        ig.IsWindowAppearing() && ig.SetKeyboardFocusHere()
+        ig.SetNextItemWidth(ig.GetFontSize() * 20)
+        if ig.InputTextWithHint("##filter", "filter", buffer, length(buffer),
+                ig.ImGuiInputTextFlags_EnterReturnsTrue)
+            text = strip(unsafe_string(pointer(buffer)))
+            isempty(text) ? delete!(view.filters, name) : (view.filters[name] = text)
+            _arrange!(view)
+            view.grid.fit_columns = true
+            haskey(view.filter_errors, name) || ig.CloseCurrentPopup()
+        end
+        if haskey(view.filter_errors, name)
+            ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImVec4(0.9f0, 0.3f0, 0.3f0, 1.0f0)))
+            ig.TextUnformatted(view.filter_errors[name])
+            ig.PopStyleColor()
+        end
         return nothing
     end
     with_font(:code) do
@@ -146,17 +177,78 @@ function draw!(view::TableView, ctx)::Nothing
             cell,
             align_right=column -> view.formats[column] !== nothing,
             muted=folded,
-            tooltip=(row, column) -> folded(row, column) ? last(view.folded[item(row)][column]) : nothing,
-            span=(row, column) -> view.item_column && column == 1 ? first_row(row) : row,
+            tooltip=(row, column) -> folded(row, column) ? last(view.folded_cells[item(row)][column]) : nothing,
+            span=(row, column) -> view.item_column && column == 1 ? view.run_start[row] : row,
             frozen_columns=view.item_column ? 1 : 0,
-            fold=(row, column) -> view.item_column && column == 1 ? !haskey(view.folded, item(row)) : nothing,
+            fold=(row, column) -> view.item_column && column == 1 ? !(item(row) in view.folded) : nothing,
             on_fold=fold!,
-            on_selection_change=rows -> view.output = isempty(rows) ? table :
-                table[sort!(collect(Int, Iterators.flatten(rows_of.(rows))))],
+            on_sort=columns -> (view.sort = columns; _arrange!(view)),
+            header_icon=column -> haskey(view.filters, table.columns[column]) &&
+                !haskey(view.filter_errors, table.columns[column]) ? ICON_FILTER : "",
+            header_popup=filter_popup,
+            on_selection_change=rows -> view.output = isempty(rows) ? table[view.order] :
+                table[collect(Int, Iterators.flatten(rows_of.(sort(rows))))],
         )
     end
     return nothing
 end
+
+# Find the rows to show from the filters, the sort and the folded items, and pass them all on.
+function _arrange!(view::TableView)::Nothing
+    table = view.table::ItemTable
+    rows = collect(1:table.rows)
+    empty!(view.filter_errors)
+    for (name, text) in view.filters
+        column = findfirst(==(name), table.columns)
+        column === nothing && continue
+        try
+            f = Core.eval(Main, Meta.parse(text))
+            f isa Function || error("`$text` is not a function")
+            # The function was just defined, so it is called in the newest world.
+            filter!(row -> Base.invokelatest(f, table.getvalue(row, column)) === true, rows)
+        catch err
+            view.filter_errors[name] = sprint(showerror, err)
+        end
+    end
+    # Julia's sort keeps the order of equal values, so sorting by the last column first and by the
+    # first column last sorts by all of them.
+    for (column, ascending) in reverse(view.sort)
+        column <= length(table.columns) || continue
+        sort!(rows; by=row -> _sort_key(table.getvalue(row, column), ascending), rev=!ascending)
+    end
+    view.order = rows
+
+    view.shown = Int[]
+    view.folded_rows = Dict{Int,Vector{Int}}()
+    for row in rows
+        item = table.row_item[row]
+        if item in view.folded
+            haskey(view.folded_rows, item) || push!(view.shown, row)
+            push!(get!(Vector{Int}, view.folded_rows, item), row)
+        else
+            push!(view.shown, row)
+        end
+    end
+    view.folded_cells = Dict(item => [_folded_cell([table.getvalue(row, column) for row in item_rows],
+                                                   view.formats[column])
+                                      for column in eachindex(table.columns)]
+                             for (item, item_rows) in view.folded_rows)
+    view.run_start = collect(eachindex(view.shown))
+    for row in 2:length(view.shown)
+        table.row_item[view.shown[row]] == table.row_item[view.shown[row - 1]] &&
+            (view.run_start[row] = view.run_start[row - 1])
+    end
+
+    # The rows on screen change, so the selection is cleared.
+    empty!(view.grid.selected_rows)
+    view.output = table[rows]
+    return nothing
+end
+
+# Numbers sort before other values, which sort by their text; `missing` goes last.
+_sort_key(value, ascending::Bool) =
+    ismissing(value) ? (ascending ? 2 : -1, 0.0, "") :
+    _number(value) ? (0, value, "") : (1, 0.0, string(value))
 
 _number(value) = value isa Real && !(value isa Bool)
 

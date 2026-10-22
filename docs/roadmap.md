@@ -598,14 +598,17 @@ the table as a first-class view.
   - [ ] Long text cut with "…", and the full text on hover.
   - [x] Columns fitted to their content when the data changes.
   - [ ] Hide and reorder columns; freeze the first column; an optional row-number column.
-  - [ ] Sort by a column, and by several with Shift-click.
+  - [x] Sort by a column, and by several with Shift-click.
   - [x] The items one after the other, with the label of each item in one cell beside all of its
     rows. The label stays in place when the table scrolls sideways.
   - [x] Fold an item to one row that shows how many values it has in each column, with the
     smallest and the largest number on hover.
   - [ ] Metadata columns that the user picks, in one cell beside the rows of each item.
   - [ ] Nested values (structs, `NamedTuple`, `Dict`) as groups of columns that unfold in place.
-  - [ ] A search box that filters rows; later a filter for each column.
+  - [x] A filter for each column, from a right-click on its header: a Julia function of the value.
+  - [ ] For a column with one value for each item, a checkbox for each value, which writes the
+    filter.
+  - [ ] A search box that filters rows.
   - [ ] A summary of a column on hover over its header: minimum, maximum, mean, number missing,
     number of distinct values.
   - [ ] Optional cell colors on a numeric column, from a color scale.

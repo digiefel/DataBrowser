@@ -63,6 +63,8 @@ Base.@kwdef mutable struct DataGridState
     dragging_cells::Bool                 = false
     focused::Bool                        = false
     fit_columns::Bool                    = true
+    # The columns the grid was last sorted by, as `(column, ascending)` pairs.
+    sort::Union{Nothing,Vector{Tuple{Int,Bool}}} = nothing
 end
 
 """

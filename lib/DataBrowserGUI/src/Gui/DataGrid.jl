@@ -127,6 +127,13 @@ Arguments:
 - `fold`: `(row::Int, col::Int) -> Union{Nothing,Bool}`, whether the cell starts with an arrow
   that folds something, open (`true`) or closed (`false`). No cell has an arrow by default
 - `on_fold`: called with `(row, col)` when the user clicks the arrow of a cell
+- `on_sort`: called with the columns to sort by, as `(col, ascending)` pairs from the first to the
+  last, when they change. Clicking a header sorts by its column, and Shift-click adds the column.
+  The grid cannot be sorted without it
+- `header_icon`: `(col::Int) -> String`, an icon at the right edge of the header of the column,
+  left of the sort arrow. No header has an icon by default
+- `header_popup`: `(col::Int) -> Nothing`, draws the popup that right-clicking the header of the
+  column opens. The headers have no popup without it
 - `on_selection_change`: called with the new `Vector{Int}` whenever the selection changes
 - `selection_mode`: `:rows` for multi-row selection or `:cells` for a spreadsheet rectangle
 - `height`: child height in pixels; 0.0f0 = fill available
@@ -154,6 +161,9 @@ function render_data_grid!(
     tooltip::Function = (_, _) -> nothing,
     fold::Function = (_, _) -> nothing,
     on_fold::Function = (_, _) -> nothing,
+    on_sort::Union{Nothing,Function} = nothing,
+    header_icon::Function = _ -> "",
+    header_popup::Union{Nothing,Function} = nothing,
     on_selection_change::Function = identity,
     selection_mode::Symbol = :rows,
     height::Float32 = 0.0f0,
@@ -172,6 +182,8 @@ function render_data_grid!(
             ig.ImGuiTableFlags_ScrollX        |
             ig.ImGuiTableFlags_ScrollY        |
             ig.ImGuiTableFlags_SizingFixedFit
+    on_sort === nothing ||
+        (flags |= ig.ImGuiTableFlags_Sortable | ig.ImGuiTableFlags_SortMulti | ig.ImGuiTableFlags_SortTristate)
 
     if !ig.BeginTable("##datagrid_$id", n_cols, flags, (0.0f0, height))
         return nothing
@@ -185,7 +197,46 @@ function render_data_grid!(
     for col in columns
         ig.TableSetupColumn(col, ig.ImGuiTableColumnFlags_WidthFixed, 0.0f0)
     end
-    ig.TableHeadersRow()
+    ig.TableNextRow(ig.ImGuiTableRowFlags_Headers)
+    style = unsafe_load(ig.GetStyle())
+    for column in 1:n_cols
+        ig.TableSetColumnIndex(column - 1)
+        ig.PushID(column)
+        icon = header_icon(column)
+        # The text after "###" is the id of the header, so that its popup stays open when the
+        # icon changes. Two spaces after the name make room for the icon when the column fits
+        # its content.
+        ig.TableHeader("$(columns[column])$(isempty(icon) ? "" : "  ")###header")
+        if !isempty(icon)
+            # ImGui draws the sort arrow, and the place of the column when sorting by several, at
+            # the right edge of the header.
+            place = state.sort === nothing ? nothing : findfirst(spec -> first(spec) == column, state.sort)
+            arrow = place === nothing ? 0.0f0 : floor(ig.GetFontSize() * 0.65f0 + style.FramePadding.x)
+            place === nothing || length(state.sort) == 1 ||
+                (arrow += style.ItemInnerSpacing.x + ig.CalcTextSize(string(place)).x)
+            right = ig.GetItemRectMax().x - style.CellPadding.x - arrow
+            top = ig.GetItemRectMin().y + style.CellPadding.y
+            ig.AddText(ig.GetWindowDrawList(), ig.ImVec2(right - ig.CalcTextSize(icon).x, top),
+                ig.GetColorU32(ig.ImGuiCol_Text), icon)
+        end
+        if header_popup !== nothing && ig.BeginPopupContextItem()
+            header_popup(column)
+            ig.EndPopup()
+        end
+        ig.PopID()
+    end
+    if on_sort !== nothing
+        specs = ig.TableGetSortSpecs()
+        if specs != C_NULL
+            list = unsafe_load(specs)
+            sort = [(Int(spec.ColumnIndex) + 1, spec.SortDirection == ig.ImGuiSortDirection_Ascending)
+                    for spec in (unsafe_load(list.Specs, i) for i in 1:list.SpecsCount)]
+            if sort != state.sort
+                state.sort = sort
+                on_sort(sort)
+            end
+        end
+    end
     if state.fit_columns
         ig.TableSetColumnWidthAutoAll(ig.GetCurrentTable())
         state.fit_columns = false
