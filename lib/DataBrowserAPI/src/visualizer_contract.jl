@@ -81,7 +81,7 @@ Setting(label::AbstractString; options=String[], prepare::Bool=true) =
 The settings of `visualizer` that the user may change now. Each name is a field of the visualizer,
 and each value is a [`Setting`](@ref). A visualizer without a method has no settings.
 
-    settings(view::TableView) = (provenance_column=Setting("Provenance column"),)
+    settings(::LinePlotView) = (markers=Setting("Markers"; prepare=false),)
 
 The window draws the settings in its header, so `draw!` does not draw them. When the user changes
 one, the browser writes the field. It then calls [`prepare!`](@ref) again, unless the setting says

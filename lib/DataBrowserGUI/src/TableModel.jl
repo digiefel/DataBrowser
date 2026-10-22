@@ -12,8 +12,7 @@ Table view over one or more items' Tables-compatible payloads.
 typed value (`missing` when the row's item lacks that column). Consumers that compute — plotting,
 fitting, export — must read `getvalue`, never parse display text.
 
-When only one item is selected, `item_labels` has one entry and all `row_item` values are 1;
-the provenance chrome is suppressed at render time.
+When only one item is selected, `item_labels` has one entry and all `row_item` values are 1.
 """
 struct ItemTable
     columns::Vector{String}

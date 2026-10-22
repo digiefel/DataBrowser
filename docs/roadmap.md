@@ -530,7 +530,7 @@ the table as a first-class view.
 - [x] Let a window take its input from another window. A visualizer says what its window passes
   on with `output`; without a method the window passes on its own value. The header has a menu,
   after "from", to choose the selection or another window. The table passes on what it shows: the
-  selected rows, and the column `item` only when "Provenance column" is on. The table and the plot
+  selected rows, with the column `item` when it shows several items. The table and the plot
   builder show a table that another window passes on.
 - [x] "Export" in the header of every window calls `export!(visualizer, ctx)`. The default saves a
   picture of what the visualizer draws as PNG, without the title and header of the window.
@@ -598,6 +598,11 @@ the table as a first-class view.
   - [ ] Columns fitted to their content when the data changes.
   - [ ] Hide and reorder columns; freeze the first column; an optional row-number column.
   - [ ] Sort by a column, and by several with Shift-click.
+  - [x] The items one after the other, with the label of each item in one cell beside all of its
+    rows. The label stays in place when the table scrolls sideways.
+  - [ ] Fold an item to one row that shows the range of each column.
+  - [ ] Metadata columns that the user picks, in one cell beside the rows of each item.
+  - [ ] Nested values (structs, `NamedTuple`, `Dict`) as groups of columns that unfold in place.
   - [ ] A search box that filters rows; later a filter for each column.
   - [ ] A summary of a column on hover over its header: minimum, maximum, mean, number missing,
     number of distinct values.

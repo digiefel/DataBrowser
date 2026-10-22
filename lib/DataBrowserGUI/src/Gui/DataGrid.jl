@@ -117,7 +117,9 @@ Arguments:
 - `columns`: ordered column header names
 - `cell`: `(row::Int, col::Int) -> String` callback for cell text
 - `cell_link`: optional `(row::Int, col::Int) -> Union{Nothing,String}` callback for clickable URLs
-- `row_tint`: `(row::Int) -> Union{Nothing,UInt32}` for provenance colouring (ImGui packed color)
+- `span`: `(row::Int, col::Int) -> Int`, the first row of the run of rows that one cell spans.
+  Each row is its own cell by default
+- `frozen_columns`: how many columns on the left stay in place when the grid scrolls sideways
 - `on_selection_change`: called with the new `Vector{Int}` whenever the selection changes
 - `selection_mode`: `:rows` for multi-row selection or `:cells` for a spreadsheet rectangle
 - `height`: child height in pixels; 0.0f0 = fill available
@@ -138,7 +140,8 @@ function render_data_grid!(
     columns::Vector{String},
     cell::Function,
     cell_link::Function = (_, _) -> nothing,
-    row_tint::Function = _ -> nothing,
+    span::Function = (row, _) -> row,
+    frozen_columns::Int = 0,
     on_selection_change::Function = identity,
     selection_mode::Symbol = :rows,
     height::Float32 = 0.0f0,
@@ -149,8 +152,10 @@ function render_data_grid!(
     ))
     n_cols = length(columns)
 
+    # The grid draws the lines between rows itself, so that a cell can span several rows.
     flags = ig.ImGuiTableFlags_RowBg          |
-            ig.ImGuiTableFlags_Borders        |
+            ig.ImGuiTableFlags_BordersInnerV  |
+            ig.ImGuiTableFlags_BordersOuter   |
             ig.ImGuiTableFlags_Resizable      |
             ig.ImGuiTableFlags_ScrollX        |
             ig.ImGuiTableFlags_ScrollY        |
@@ -160,8 +165,8 @@ function render_data_grid!(
         return nothing
     end
 
-    # Sticky header (freeze first row)
-    ig.TableSetupScrollFreeze(0, 1)
+    # The header row and the frozen columns stay in place.
+    ig.TableSetupScrollFreeze(frozen_columns, 1)
 
     # Column headers — width 0 with SizingFixedFit = auto-fit on first appearance;
     # imgui.ini restores saved widths on subsequent opens.
@@ -265,6 +270,28 @@ function render_data_grid!(
     cell_bounds = _selected_cell_bounds(state, n_rows, n_cols)
     state.dragging_cells && !ig.IsMouseDown(ig.ImGuiMouseButton_Left) &&
         (state.dragging_cells = false)
+    # ImGui tables cannot merge cells. A cell that spans several rows shows its text in the first
+    # visible row of the span, has no line between its rows, and covers the stripes of the rows.
+    padding = unsafe_load(ig.GetStyle().CellPadding)
+    border = ig.GetColorU32(ig.ImGuiCol_TableBorderLight)
+    background = ig.GetColorU32(ig.ImGuiCol_WindowBg)
+    function draw_cell(row, column, position, first_visible)
+        first = span(row, column)
+        if first == row && row > 1
+            top = position.y - padding.y
+            right = ig.GetCursorScreenPos().x + ig.GetContentRegionAvail().x + padding.x
+            ig.AddLine(ig.GetWindowDrawList(), ig.ImVec2(position.x - padding.x, top),
+                ig.ImVec2(right, top), border)
+        end
+        if first != row || (row < n_rows && span(row + 1, column) == first)
+            ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, background)
+        end
+        (first == row || row == first_visible) || return nothing
+        link = cell_link(row, column)
+        link === nothing ? ig.TextUnformatted(cell(row, column)) :
+            ig.TextLinkOpenURL(cell(row, column), link)
+        return nothing
+    end
     clipper = ig.lib.ImGuiListClipper()
     try
         ig.Begin(clipper, n_rows, ig.GetTextLineHeightWithSpacing())
@@ -275,14 +302,9 @@ function render_data_grid!(
                 ig.PushID(row)
                 ig.TableNextRow()
 
-                # Row tint for provenance
-                tint = row_tint(row)
-                if tint !== nothing
-                    ig.TableSetBgColor(ig.ImGuiTableBgTarget_RowBg0, tint)
-                end
-
                 if selection_mode === :rows
                     ig.TableSetColumnIndex(0)
+                    position = ig.GetCursorScreenPos()
                     is_selected = row in selected_set
                     if ig.Selectable(
                         "##row_$row",
@@ -299,14 +321,10 @@ function render_data_grid!(
                         row_selection_changed = true
                     end
                     ig.SameLine()
-                    link = cell_link(row, 1)
-                    link === nothing ? ig.TextUnformatted(cell(row, 1)) :
-                        ig.TextLinkOpenURL(cell(row, 1), link)
+                    draw_cell(row, 1, position, start_idx)
                     for column in 2:n_cols
                         ig.TableSetColumnIndex(column - 1)
-                        link = cell_link(row, column)
-                        link === nothing ? ig.TextUnformatted(cell(row, column)) :
-                            ig.TextLinkOpenURL(cell(row, column), link)
+                        draw_cell(row, column, ig.GetCursorScreenPos(), start_idx)
                     end
                 else
                     for column in 1:n_cols
@@ -334,9 +352,7 @@ function render_data_grid!(
                             cell_bounds = _selected_cell_bounds(state, n_rows, n_cols)
                         end
                         ig.SetCursorScreenPos(position)
-                        link = cell_link(row, column)
-                        link === nothing ? ig.TextUnformatted(cell(row, column)) :
-                            ig.TextLinkOpenURL(cell(row, column), link)
+                        draw_cell(row, column, position, start_idx)
                     end
                 end
 
