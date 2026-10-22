@@ -207,6 +207,10 @@ end
 # The column a rewritten mapping value names: `:R` in `:R` and in `:R => "R (Ω)"`.
 column_name(value) = Meta.isexpr(value, :call) && value.args[1] === :(=>) ? column_name(value.args[2]) : value.value
 
+# The label a mapping value gives its axis: the text after `=>`, or the name of its column.
+axis_label(value) = Meta.isexpr(value, :call) && value.args[1] === :(=>) && value.args[3] isa String ?
+    value.args[3] : String(column_name(value))
+
 uses(expression, name::Symbol) = expression === name ||
     expression isa Expr && any(e -> uses(e, name), expression.args)
 
@@ -284,6 +288,13 @@ function declare_fits(header, lines)
                 group_columns = [Expr(:kw, column, :([getfield($used, :group)[$(QuoteNode(column))]])) for (_, column) in roles]
                 append!(table.args[2].args, group_columns)
                 call = find_call(line, :mapping)
+                # Positions without a label take the header's, so that the axes keep their titles.
+                indices = [i for i in 2:length(call.args) if !(Meta.isexpr(call.args[i], :kw) || Meta.isexpr(call.args[i], :parameters))]
+                for (position, index) in enumerate(indices[1:min(end, length(positional))])
+                    argument = call.args[index]
+                    Meta.isexpr(argument, :call) && argument.args[1] === :(=>) && continue
+                    call.args[index] = :($argument => $(axis_label(positional[position])))
+                end
                 given = first.(call_arguments(call)[2])
                 append!(call.args, [Expr(:kw, role, QuoteNode(column)) for (role, column) in roles if role ∉ given])
                 line = :(data($table) * $line)
