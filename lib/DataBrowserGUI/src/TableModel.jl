@@ -130,7 +130,6 @@ function merge_item_tables(pairs; item_column::Bool=false)::Tuple{ItemTable,Vect
     data = _item_table_from_tables(columns, tables, labels)
     item_column && length(labels) > 1 || return data, warnings
     # TODO: a column of the data that is also called `item` is then in the table twice.
-    # TODO: columns for the metadata of the items, added in the same way.
     item(row) = labels[data.row_item[row]]
     table = ItemTable(
         vcat("item", columns),
@@ -144,18 +143,24 @@ function merge_item_tables(pairs; item_column::Bool=false)::Tuple{ItemTable,Vect
 end
 
 """
-    merge_item_tables(selection; item_column=false) -> (table, warnings)
+    merge_item_tables(selection; item_column=false, metadata=Symbol[]) -> (table, warnings)
 
 Build an `ItemTable` from the data of the items of a selection, each under its label. An item whose
 data cannot be read is reported in `warnings` and skipped, like an item whose data is not a table.
+
+Each name in `metadata` is a column of the selection, such as `:device`, added after the column
+`item`, or first when there is none. Each row has the value of its item.
 """
 function merge_item_tables(
     selection::Selection;
     item_column::Bool=false,
+    metadata::Vector{Symbol}=Symbol[],
 )::Tuple{ItemTable,Vector{String}}
     pairs = Tuple{String,Any}[]
+    # The index in the selection of each item that has a table.
+    kept = Int[]
     warnings = String[]
-    for (item_label, item) in zip(selection.label, items(selection))
+    for (index, (item_label, item)) in enumerate(zip(selection.label, items(selection)))
         data = try
             item_data(item)
         catch err
@@ -164,9 +169,29 @@ function merge_item_tables(
             continue
         end
         push!(pairs, (item_label, data))
+        Tables.istable(data) && push!(kept, index)
     end
-    table, merge_warnings = merge_item_tables(pairs; item_column)
-    return table, append!(warnings, merge_warnings)
+    data, merge_warnings = merge_item_tables(pairs; item_column)
+    append!(warnings, merge_warnings)
+    isempty(metadata) && return data, warnings
+    # TODO: a metadata key that is also the name of a column of the data is then in the table twice.
+    start = item_column && length(data.item_labels) > 1 ? 2 : 1
+    added = length(metadata)
+    values = [getproperty(selection, name)[kept] for name in metadata]
+    is_metadata(col) = start <= col < start + added
+    value(row, col) = values[col - start + 1][data.row_item[row]]
+    data_column(col) = col < start ? col : col - added
+    table = ItemTable(
+        [data.columns[1:start-1]; string.(metadata); data.columns[start:end]],
+        data.rows,
+        data.row_item,
+        data.item_labels,
+        # Metadata shows as plain text, such as a date without `DateTime(...)` around it.
+        (row, col) -> !is_metadata(col) ? data.getcell(row, data_column(col)) :
+            ismissing(value(row, col)) ? "" : string(value(row, col)),
+        (row, col) -> is_metadata(col) ? value(row, col) : data.getvalue(row, data_column(col)),
+    )
+    return table, warnings
 end
 
 """

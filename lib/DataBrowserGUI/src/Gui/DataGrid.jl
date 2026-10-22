@@ -225,6 +225,15 @@ function render_data_grid!(
         end
         ig.PopID()
     end
+    if on_sort !== nothing && state.apply_sort
+        # Sorting by no column first clears the sort of every column.
+        ig.TableSetColumnSortDirection(0, ig.ImGuiSortDirection_None, false)
+        for (column, ascending) in something(state.sort, Tuple{Int,Bool}[])
+            ig.TableSetColumnSortDirection(column - 1,
+                ascending ? ig.ImGuiSortDirection_Ascending : ig.ImGuiSortDirection_Descending, true)
+        end
+        state.apply_sort = false
+    end
     if on_sort !== nothing
         specs = ig.TableGetSortSpecs()
         if specs != C_NULL

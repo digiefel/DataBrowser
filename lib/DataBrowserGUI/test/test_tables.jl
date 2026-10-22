@@ -27,3 +27,14 @@ end
     @test table.getvalue(2, x) == 3
     @test table.getvalue(1, z) === missing
 end
+
+@testset "metadata columns beside the items' rows" begin
+    using DataBrowserCore: Group, select
+    groups = [Group("a", Dict{Symbol,Any}(:gap => 2), (V=[1, 2],), []),
+              Group("opaque", Dict{Symbol,Any}(:gap => 3), nothing, []),
+              Group("b", Dict{Symbol,Any}(), (V=[3],), [])]
+    table, _ = merge_item_tables(select(groups); item_column=true, metadata=[:gap])
+    @test table.columns == ["item", "gap", "V"]
+    @test isequal([table.getvalue(row, 2) for row in 1:table.rows], [2, 2, missing])
+    @test [table.getvalue(row, 3) for row in 1:table.rows] == [1, 2, 3]
+end

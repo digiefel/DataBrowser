@@ -54,6 +54,7 @@ Owned by the consumer of the grid (e.g. `TableView`); passed by reference each f
 The grid fits its columns to their content when it first draws, and again when `fit_columns` is set.
 Column widths the user sets are kept in the imgui.ini file, keyed by the grid `id`. Row mode uses `selected_rows`. Cell mode stores the opposite corners of one rectangular selection in
 `cell_anchor` and `cell_focus`. Use `scroll_to_row` to request a programmatic scroll on the next frame.
+Set `sort` and `apply_sort` to sort the grid by those columns in the next frame.
 """
 Base.@kwdef mutable struct DataGridState
     selected_rows::Vector{Int}           = Int[]
@@ -65,6 +66,7 @@ Base.@kwdef mutable struct DataGridState
     fit_columns::Bool                    = true
     # The columns the grid was last sorted by, as `(column, ascending)` pairs.
     sort::Union{Nothing,Vector{Tuple{Int,Bool}}} = nothing
+    apply_sort::Bool                     = false
 end
 
 """

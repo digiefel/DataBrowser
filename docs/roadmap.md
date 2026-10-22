@@ -607,7 +607,7 @@ the table as a first-class view.
     rows. The label stays in place when the table scrolls sideways.
   - [x] Fold an item to one row that shows how many values it has in each column, with the
     smallest and the largest number on hover.
-  - [ ] Metadata columns that the user picks, in one cell beside the rows of each item.
+  - [x] Metadata columns that the user picks from the header's right-click menu, in one cell beside the rows of each item.
   - [ ] Nested values (structs, `NamedTuple`, `Dict`) as groups of columns that unfold in place.
   - [x] A filter for each column, from a right-click on its header: a Julia function of the value.
   - [ ] For a column with one value for each item, a checkbox for each value, which writes the

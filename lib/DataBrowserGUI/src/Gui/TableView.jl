@@ -30,6 +30,9 @@ Right-clicking the header opens a filter: a Julia function, such as `≥(0)` or 
 which the table calls with each value of the column. The table shows the rows for which it returns
 `true`; a funnel at the right of the column's name marks the filter.
 
+Below the filter, the same menu lists the metadata of the items. A checked name is a column after
+`item`, with the value of each item in one cell beside its rows.
+
 In a column of numbers, every number has the same number of decimals and the numbers are
 right-aligned, so that their decimal points line up. In a column with numbers smaller than 0.001 or
 larger than a million, each number is written with a power of ten of its own, a multiple of 3, such
@@ -42,12 +45,19 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     table::Union{Nothing,ItemTable} = nothing
     # The table has a first column `item`, built here from several items.
     item_column::Bool = false
+    # The selection the table was built from, the metadata it has, and the metadata the user picked
+    # as columns.
+    selection::Union{Nothing,Selection} = nothing
+    metadata_names::Vector{Symbol} = Symbol[]
+    metadata::Vector{Symbol} = Symbol[]
+    # How many columns, from the first, hold one value for each item: `item` and the metadata.
+    item_columns::Int = 0
     # How each column writes its numbers; `nothing` for a column of other values.
     formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
     # The items that show one row.
     folded::Set{Int} = Set{Int}()
-    # The columns to sort by, as `(column, ascending)` pairs.
-    sort::Vector{Tuple{Int,Bool}} = Tuple{Int,Bool}[]
+    # The columns to sort by, by name, as `(name, ascending)` pairs.
+    sort::Vector{Tuple{String,Bool}} = Tuple{String,Bool}[]
     # The filter of each column, by name, as the user typed it, and the error of a filter that
     # could not be used.
     filters::Dict{String,String} = Dict{String,String}()
@@ -77,6 +87,9 @@ output(view::TableView) = view.output
 function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
     view.table = table
     view.item_column = false
+    view.selection = nothing
+    view.metadata_names = Symbol[]
+    view.item_columns = 0
     # TODO: read each column once rather than each cell, for large tables.
     view.formats = [_number_format(table.getvalue(row, column) for row in 1:table.rows)
                     for column in eachindex(table.columns)]
@@ -84,18 +97,26 @@ function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
     view.warnings = String[]
     view.grid = DataGridState()
     view.grid_id = "table"
-    # The filters stay, as long as the table has their columns; the grid sorts again in its first
-    # frame.
+    # The sort and the filters stay, as long as the table has their columns.
+    view.grid.sort = [(findfirst(==(name), table.columns), ascending)
+                      for (name, ascending) in view.sort if name in table.columns]
+    view.grid.apply_sort = true
     _arrange!(view)
     return nothing
 end
 
-# TODO: metadata columns that the user picks, one cell beside the rows of
-# each item; nested values as column groups.
+# TODO: nested values as column groups.
 function prepare!(view::TableView, selection::Selection, ctx)::Nothing
-    table, warnings = merge_item_tables(selection; item_column=true)
+    names = [name for name in propertynames(selection) if !(name in (:label, :data))]
+    # The metadata the user picked stays picked when the selection changes, and shows when the items
+    # have it.
+    metadata = filter(in(names), view.metadata)
+    table, warnings = merge_item_tables(selection; item_column=true, metadata)
     prepare!(view, table, ctx)
+    view.selection = selection
+    view.metadata_names = names
     view.item_column = length(table.item_labels) > 1
+    view.item_columns = view.item_column + length(metadata)
     view.warnings = warnings
     types = unique(typeof.(items(selection)))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
@@ -131,7 +152,7 @@ function draw!(view::TableView, ctx)::Nothing
 
     shown = view.shown
     item(row) = table.row_item[shown[row]]
-    folded(row, column) = item(row) in view.folded && !(view.item_column && column == 1)
+    folded(row, column) = item(row) in view.folded && column > view.item_columns
     function cell(row, column)
         folded(row, column) && return first(view.folded_cells[item(row)][column])
         text = _number_text(table.getvalue(shown[row], column), view.formats[column])
@@ -146,6 +167,8 @@ function draw!(view::TableView, ctx)::Nothing
         view.grid.fit_columns = true
         return nothing
     end
+    # The metadata to show changes after the grid is drawn, as it changes the columns.
+    picked = view.metadata
     function filter_popup(column)
         name = table.columns[column]
         text = get(view.filters, name, "")
@@ -166,6 +189,16 @@ function draw!(view::TableView, ctx)::Nothing
             ig.TextUnformatted(view.filter_errors[name])
             ig.PopStyleColor()
         end
+        (view.selection === nothing || isempty(view.metadata_names)) && return nothing
+        ig.Separator()
+        ig.TextDisabled("Metadata")
+        for name in view.metadata_names
+            if ig.Checkbox(string(name), Ref(name in view.metadata))
+                picked = name in view.metadata ? filter(!=(name), view.metadata) : [view.metadata; name]
+                # The columns move, so the menu would stay open on another column.
+                ig.CloseCurrentPopup()
+            end
+        end
         return nothing
     end
     with_font(:code) do
@@ -178,17 +211,25 @@ function draw!(view::TableView, ctx)::Nothing
             align_right=column -> view.formats[column] !== nothing,
             muted=folded,
             tooltip=(row, column) -> folded(row, column) ? last(view.folded_cells[item(row)][column]) : nothing,
-            span=(row, column) -> view.item_column && column == 1 ? view.run_start[row] : row,
+            span=(row, column) -> column <= view.item_columns ? view.run_start[row] : row,
             frozen_columns=view.item_column ? 1 : 0,
             fold=(row, column) -> view.item_column && column == 1 ? !(item(row) in view.folded) : nothing,
             on_fold=fold!,
-            on_sort=columns -> (view.sort = columns; _arrange!(view)),
+            on_sort=columns -> (view.sort = [(table.columns[c], ascending) for (c, ascending) in columns];
+                                _arrange!(view)),
             header_icon=column -> haskey(view.filters, table.columns[column]) &&
                 !haskey(view.filter_errors, table.columns[column]) ? ICON_FILTER : "",
             header_popup=filter_popup,
             on_selection_change=rows -> view.output = isempty(rows) ? table[view.order] :
                 table[collect(Int, Iterators.flatten(rows_of.(sort(rows))))],
         )
+    end
+    if picked != view.metadata
+        view.metadata = picked
+        folded = view.folded
+        prepare!(view, view.selection, nothing)
+        view.folded = folded
+        _arrange!(view)
     end
     return nothing
 end
@@ -212,8 +253,9 @@ function _arrange!(view::TableView)::Nothing
     end
     # Julia's sort keeps the order of equal values, so sorting by the last column first and by the
     # first column last sorts by all of them.
-    for (column, ascending) in reverse(view.sort)
-        column <= length(table.columns) || continue
+    for (name, ascending) in reverse(view.sort)
+        column = findfirst(==(name), table.columns)
+        column === nothing && continue
         sort!(rows; by=row -> _sort_key(table.getvalue(row, column), ascending), rev=!ascending)
     end
     view.order = rows
