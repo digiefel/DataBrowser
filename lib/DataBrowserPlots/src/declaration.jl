@@ -12,6 +12,20 @@ figure(declaration::Declaration, input, args...; options...) =
     figure(Base.invokelatest(declaration.layers, input), args...; options...)
 
 """
+A plot together with the scales it is drawn with, as `@plot` gives it when the labels of a fit
+name the categories of the legend. Draw it with `figure(plot)`.
+"""
+struct WithScales
+    layers::Any
+    scales::Any
+end
+figure(plot::WithScales, args...; options...) = figure(plot.layers, plot.scales, args...; options...)
+
+# The scale of each named role whose categories a fit's labels can name.
+const ROLE_SCALES = Dict(:color => :Color, :marker => :Marker, :linestyle => :LineStyle,
+    :layout => :Layout, :col => :Col, :row => :Row)
+
+"""
     @plot declaration
     @plot header begin
         layer
@@ -65,7 +79,9 @@ into groups, and each group has its own fit. A line that uses the name is drawn 
 group, with the name set to that group's [`Fit`](@ref): `contacts.Rc` is a [`Parameter`](@ref),
 which prints as the estimate ± one standard error; `contacts.Chip` is the group's chip; and
 `contacts.x` and `contacts.y` are the drawn curve. `fit(...; xlim=(0, 25))` draws the curve over
-that range of x instead of over the fitted points. With `data(table)` in the header, the fits take the rows of that table.
+that range of x instead of over the fitted points. When the groups come from one column, the fit
+line's `label` names that group's legend entry, and the other lines that use the fit stay out of
+the legend. With `data(table)` in the header, the fits take the rows of that table.
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
@@ -211,6 +227,15 @@ column_name(value) = Meta.isexpr(value, :call) && value.args[1] === :(=>) ? colu
 axis_label(value) = Meta.isexpr(value, :call) && value.args[1] === :(=>) && value.args[3] isa String ?
     value.args[3] : String(column_name(value))
 
+# Remove the keyword `name` from a call, and return its value, or `nothing`.
+function remove_keyword!(call, name::Symbol)
+    for holder in [call; [a for a in call.args if Meta.isexpr(a, :parameters)]]
+        index = findfirst(a -> Meta.isexpr(a, :kw) && a.args[1] === name, holder.args)
+        index === nothing || return popat!(holder.args, index).args[2]
+    end
+    return nothing
+end
+
 uses(expression, name::Symbol) = expression === name ||
     expression isa Expr && any(e -> uses(e, name), expression.args)
 
@@ -239,6 +264,8 @@ function declare_fits(header, lines)
     group = Expr(:vect, (QuoteNode(column) for (_, column) in roles)...)
 
     rows = gensym("rows")
+    # For each fit whose labels name categories: the column, and its categories with their labels.
+    categories = Tuple{Symbol,Expr}[]
     names = Symbol[]
     # For each fit's name, the variable that holds its fits, one for each group.
     groups = Dict{Symbol,Symbol}()
@@ -259,6 +286,18 @@ function declare_fits(header, lines)
             push!(computed, :($(groups[name]) = $fit_groups($(Expr(:parameters, options...)),
                 $(arguments...), $rows, $(QuoteNode(x)), $(QuoteNode(y)), Symbol[$(group.args...)])))
             others = [f for (i, f) in enumerate(factors) if i != index]
+            # With one column of groups, the fit's `label` names that column's categories: one
+            # legend entry for each group, with its marker, its line and its fit.
+            columns = unique(last.(roles))
+            visual_call = isempty(others) ? nothing : find_call(others[end], :visual)
+            label = visual_call === nothing ? nothing : remove_keyword!(visual_call, :label)
+            if label !== nothing && length(columns) == 1 && any(role in keys(ROLE_SCALES) for (role, _) in roles)
+                column = only(columns)
+                push!(categories, (column, :(map($name -> getfield($name, :group)[$(QuoteNode(column))] => $label,
+                    $(groups[name])))))
+            elseif label !== nothing
+                push!(visual_call.args, Expr(:kw, :label, label))
+            end
             # The curve of each group, with the group's values in the header's named roles.
             curve = Expr(:tuple, Expr(:parameters,
                 Expr(:kw, x, :(getfield($name, :x))), Expr(:kw, y, :(getfield($name, :y))),
@@ -297,12 +336,23 @@ function declare_fits(header, lines)
                 end
                 given = first.(call_arguments(call)[2])
                 append!(call.args, [Expr(:kw, role, QuoteNode(column)) for (role, column) in roles if role ∉ given])
+                # The line labels the fit, so the group's legend entry shows the points and the fit.
+                visual_call = find_call(line, :visual)
+                if visual_call !== nothing && remove_keyword!(copy(visual_call), :legend) === nothing
+                    push!(visual_call.args, Expr(:kw, :legend, :((; visible=false))))
+                end
                 line = :(data($table) * $line)
             end
         end
         return :(foldl(+, map($used -> $line, $(groups[used]))))
     end
     sum = foldl((a, b) -> :($a + $b), sums)
+    if !isempty(categories)
+        # TODO: several fits that name the same column; the later one is used.
+        named = [Expr(:kw, ROLE_SCALES[role], :((; categories=$(categories[end][2]))))
+            for (role, column) in roles if column == categories[end][1] && haskey(ROLE_SCALES, role)]
+        sum = :($WithScales($sum, scales($(named...))))
+    end
     own_data && return :(begin
         $(computed...)
         $sum

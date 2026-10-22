@@ -14,9 +14,14 @@ resistance(gap; Rc, Rsh) = 2Rc + Rsh * gap
         mapping(contacts.x[end], contacts.y[end]) *
             visual(Makie.Text; text="$(contacts.Chip): $(round(contacts.Rc.value)), $(round(contacts.Rsh.value))")
     end
-    axis = only(filter(c -> c isa Axis, figure(plot, items).content))
+    drawn = figure(plot, items)
+    axis = only(filter(c -> c isa Axis, drawn.content))
     texts = [only(p.text[]) for p in axis.scene.plots if p isa Makie.Text]
     @test sort(texts) == ["A: 300.0, 100.0", "B: 50.0, 100.0"]
+    # The fit's label names each chip's legend entry.
+    legend = only(filter(c -> c isa Legend, drawn.content))
+    labels = [entry.label[] for (_, entries) in legend.entrygroups[] for entry in entries]
+    @test startswith.(labels, ["A: Rc = ", "B: Rc = "]) == [true, true]
 end
 
 @testset "a fit takes the rows of the header's own table" begin
