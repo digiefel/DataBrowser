@@ -17,8 +17,16 @@ const NumberFormat = @NamedTuple{decimals::Int, engineering::Bool, exponent_widt
 """
 The visualizer that shows the data of the items of a selection as one table.
 
-It shows the data of each item that is a Tables.jl table, one item after the other. The columns
-are the union of the columns of all items, and a cell is empty where an item has no such column.
+It shows the data of each item, one item after the other. The columns of an item's table, a
+Tables.jl table, hold one value for each row. Any other value, such as a matrix, is one cell beside
+all of the item's rows, and an item without a table has one row. The columns are the union of the
+columns of all items, and a cell is empty where an item has no such column.
+
+A block of names, such as a named tuple or a dictionary, is one column that shows how many names it
+has. The arrow in its header unfolds it into one column for each name, under a header row with the
+name of the block; the arrow in that row folds it again. When an item's data is itself a block of
+names, its names are the columns.
+
 With several items, the first column `item` holds the label of each item, in one cell beside all of
 its rows, and stays in place when the table scrolls sideways. The arrow beside the label folds the
 item to one row, which shows how many values the item has in each column. Hovering over a cell of
@@ -50,8 +58,8 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     selection::Union{Nothing,Selection} = nothing
     metadata_names::Vector{Symbol} = Symbol[]
     metadata::Vector{Symbol} = Symbol[]
-    # How many columns, from the first, hold one value for each item: `item` and the metadata.
-    item_columns::Int = 0
+    # The paths of the blocks of names that show one column for each name.
+    unfolded::Set{Vector{String}} = Set{Vector{String}}()
     # How each column writes its numbers; `nothing` for a column of other values.
     formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
     # The items that show one row.
@@ -89,7 +97,6 @@ function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
     view.item_column = false
     view.selection = nothing
     view.metadata_names = Symbol[]
-    view.item_columns = 0
     # TODO: read each column once rather than each cell, for large tables.
     view.formats = [_number_format(table.getvalue(row, column) for row in 1:table.rows)
                     for column in eachindex(table.columns)]
@@ -105,18 +112,16 @@ function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
     return nothing
 end
 
-# TODO: nested values as column groups.
 function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     names = [name for name in propertynames(selection) if !(name in (:label, :data))]
     # The metadata the user picked stays picked when the selection changes, and shows when the items
     # have it.
     metadata = filter(in(names), view.metadata)
-    table, warnings = merge_item_tables(selection; item_column=true, metadata)
+    table, warnings = merge_item_tables(selection; item_column=true, metadata, view.unfolded)
     prepare!(view, table, ctx)
     view.selection = selection
     view.metadata_names = names
     view.item_column = length(table.item_labels) > 1
-    view.item_columns = view.item_column + length(metadata)
     view.warnings = warnings
     types = unique(typeof.(items(selection)))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
@@ -152,7 +157,8 @@ function draw!(view::TableView, ctx)::Nothing
 
     shown = view.shown
     item(row) = table.row_item[shown[row]]
-    folded(row, column) = item(row) in view.folded && column > view.item_columns
+    # The cells of a folded item that hold one value for each row show how many values there are.
+    folded(row, column) = item(row) in view.folded && !table.spans_item(shown[row], column)
     function cell(row, column)
         folded(row, column) && return first(view.folded_cells[item(row)][column])
         text = _number_text(table.getvalue(shown[row], column), view.formats[column])
@@ -167,8 +173,9 @@ function draw!(view::TableView, ctx)::Nothing
         view.grid.fit_columns = true
         return nothing
     end
-    # The metadata to show changes after the grid is drawn, as it changes the columns.
-    picked = view.metadata
+    # Picking metadata and unfolding blocks change the columns, so the table is built again after
+    # the grid is drawn.
+    rebuild = false
     function filter_popup(column)
         name = table.columns[column]
         text = get(view.filters, name, "")
@@ -194,7 +201,8 @@ function draw!(view::TableView, ctx)::Nothing
         ig.TextDisabled("Metadata")
         for name in view.metadata_names
             if ig.Checkbox(string(name), Ref(name in view.metadata))
-                picked = name in view.metadata ? filter(!=(name), view.metadata) : [view.metadata; name]
+                name in view.metadata ? filter!(!=(name), view.metadata) : push!(view.metadata, name)
+                rebuild = true
                 # The columns move, so the menu would stay open on another column.
                 ig.CloseCurrentPopup()
             end
@@ -206,12 +214,23 @@ function draw!(view::TableView, ctx)::Nothing
             view.grid_id,
             view.grid;
             n_rows=length(shown),
-            columns=table.columns,
+            columns=last.(table.paths),
+            column_groups=column -> table.paths[column][1:end-1],
+            # An unfolded block has an open arrow above its columns; a table inside the data always
+            # shows its columns, and has no arrow.
+            header_fold=(column, level) -> level > length(table.paths[column]) - 1 ?
+                (column in table.groups ? false : nothing) :
+                (table.paths[column][1:level] in view.unfolded ? true : nothing),
+            on_header_fold=function (column, level)
+                path = table.paths[column][1:level]
+                path in view.unfolded ? delete!(view.unfolded, path) : push!(view.unfolded, path)
+                rebuild = true
+            end,
             cell,
             align_right=column -> view.formats[column] !== nothing,
-            muted=folded,
+            muted=(row, column) -> folded(row, column) || column in table.groups,
             tooltip=(row, column) -> folded(row, column) ? last(view.folded_cells[item(row)][column]) : nothing,
-            span=(row, column) -> column <= view.item_columns ? view.run_start[row] : row,
+            span=(row, column) -> table.spans_item(shown[row], column) ? view.run_start[row] : row,
             frozen_columns=view.item_column ? 1 : 0,
             fold=(row, column) -> view.item_column && column == 1 ? !(item(row) in view.folded) : nothing,
             on_fold=fold!,
@@ -224,8 +243,7 @@ function draw!(view::TableView, ctx)::Nothing
                 table[collect(Int, Iterators.flatten(rows_of.(sort(rows))))],
         )
     end
-    if picked != view.metadata
-        view.metadata = picked
+    if rebuild
         folded = view.folded
         prepare!(view, view.selection, nothing)
         view.folded = folded

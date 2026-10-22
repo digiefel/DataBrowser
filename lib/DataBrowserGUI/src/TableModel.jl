@@ -4,161 +4,109 @@ using DataBrowserAPI: item_data, items
 using DataBrowserCore: Selection
 
 """
-Table view over one or more items' Tables-compatible payloads.
+Table view over the data of one or more items.
 
-`columns` is the union of all item columns in stable order.
+`columns` is the union of all item columns in stable order. Each column has a path, `paths[col]`,
+which names it inside the item's data, from the outside in, such as `["fit", "slope"]`. Its name in
+`columns` is the path joined with dots. A column in `groups` holds a block of names, such as a named
+tuple, that is not split into columns.
+
 `row_item[r]` is the 1-based index into `item_labels` for row `r`.
 `getcell(row, col)` returns display text for any cell; `getvalue(row, col)` returns the raw
 typed value (`missing` when the row's item lacks that column). Consumers that compute — plotting,
-fitting, export — must read `getvalue`, never parse display text.
+fitting, export — must read `getvalue`, never parse display text. `spans_item(row, col)` tells
+whether the cell holds one value for the whole item, rather than one value for its row.
 
 When only one item is selected, `item_labels` has one entry and all `row_item` values are 1.
 """
 struct ItemTable
     columns::Vector{String}
+    paths::Vector{Vector{String}}
+    groups::Set{Int}
     rows::Int
     row_item::Vector{Int}
     item_labels::Vector{String}
-    getcell::Function   # (row::Int, col::Int) -> String
-    getvalue::Function  # (row::Int, col::Int) -> Any
+    getcell::Function    # (row::Int, col::Int) -> String
+    getvalue::Function   # (row::Int, col::Int) -> Any
+    spans_item::Function # (row::Int, col::Int) -> Bool
 end
+
+# A block of names: a value that the table shows as a group of columns, one for each name.
+# TODO: structs, such as a fit result of a project's own type, once it is clear which types count.
+_is_block(value) = value isa NamedTuple || value isa AbstractDict
+_parts(value::NamedTuple) = [string(name) => part for (name, part) in pairs(value)]
+_parts(value::AbstractDict) = sort!([string(key) => part for (key, part) in value]; by=first)
+
+# A table, whose columns hold one value for each row. A block of names is a table only when each of
+# its values is a vector, as Tables.jl reads a named tuple of vectors; Tables.jl would read a block of
+# named tuples as a list of rows.
+_is_table(value) = _is_block(value) ? !isempty(value) && all(part -> part isa AbstractVector, values(value)) :
+    Tables.istable(value)
 
 """Return display text for one table cell value."""
 function _cell_text(value::Any)::String
-    text = sprint(show, value)
+    _is_block(value) && return length(value) == 1 ? "1 field" : "$(length(value)) fields"
+    value isa AbstractArray && return summary(value)
+    # Plain text, such as a date without `DateTime(...)` around it.
+    text = sprint(print, value)
     return length(text) > 90 ? first(text, 87) * "..." : text
 end
 
-function _table_rowcount(table)::Int
-    rowcount = Tables.rowcount(table)
-    rowcount === nothing && return count(_ -> true, Tables.rows(table))
-    return rowcount
-end
-
-function _column_name_strings(table)::Vector{String}
-    return [string(name) for name in Tables.columnnames(table)]
-end
-
-function _append_table!(
-    col_set::Set{String},
-    columns::Vector{String},
-    tables::Vector,
-    labels::Vector{String},
-    label::AbstractString,
-    table,
-)::Nothing
-    for c in _column_name_strings(table)
-        if c ∉ col_set
-            push!(col_set, c)
-            push!(columns, c)
+# The columns of one item, as `path => (value, per_row)`, and the item's number of rows. With
+# `per_row`, the value is a vector with one entry for each row of the item; otherwise it is one
+# value for the whole item.
+#
+# A table gives one column for each of its columns, and its rows are the item's rows. A block of
+# names gives the columns of each of its values when it is the data itself or its path is in
+# `unfolded`, and is one column otherwise. Any other value is one column, and an item without a
+# table has one row.
+function _item_columns(data, unfolded::Set{Vector{String}})
+    columns = Pair{Vector{String},Tuple{Any,Bool}}[]
+    rows = nothing
+    function add!(path, value)
+        if rows === nothing && _is_table(value)
+            table = Tables.columns(value)
+            rows = Tables.rowcount(table)
+            for name in Tables.columnnames(table)
+                push!(columns, [path; string(name)] => (Tables.getcolumn(table, name), true))
+            end
+        elseif _is_block(value) && (isempty(path) || path in unfolded)
+            for (name, part) in _parts(value)
+                add!([path; name], part)
+            end
+        else
+            # TODO: only the first table of an item gives rows; a further table is one value.
+            push!(columns, (isempty(path) ? ["data"] : path) => (value, false))
         end
     end
-    push!(tables, table)
-    push!(labels, String(label))
-    return nothing
-end
-
-function _item_table_from_tables(
-    columns::Vector{String},
-    tables::Vector,
-    labels::Vector{String},
-)::ItemTable
-    isempty(tables) &&
-        return ItemTable(columns, 0, Int[], labels, (_, _) -> "", (_, _) -> missing)
-
-    row_item = Int[]
-    row_offsets = Int[]
-    for (i, table) in enumerate(tables)
-        for r in 1:_table_rowcount(table)
-            push!(row_item, i)
-            push!(row_offsets, r)
-        end
-    end
-
-    total_rows = length(row_item)
-    col_indices = [
-        Dict(c => j for (j, c) in enumerate(_column_name_strings(table)))
-        for table in tables
-    ]
-
-    function getcell(row::Int, col::Int)::String
-        item_i = row_item[row]
-        row_in_item = row_offsets[row]
-        table = tables[item_i]
-        col_name = columns[col]
-        ci = get(col_indices[item_i], col_name, nothing)
-        ci === nothing && return ""
-        column = Tables.getcolumn(table, ci)
-        return _cell_text(column[row_in_item])
-    end
-
-    function getvalue(row::Int, col::Int)::Any
-        item_i = row_item[row]
-        ci = get(col_indices[item_i], columns[col], nothing)
-        ci === nothing && return missing
-        return Tables.getcolumn(tables[item_i], ci)[row_offsets[row]]
-    end
-
-    return ItemTable(columns, total_rows, row_item, labels, getcell, getvalue)
+    add!(String[], data)
+    return columns, something(rows, 1)
 end
 
 """
-Build an `ItemTable` from a list of `(label, table)` pairs.
-
-Pairs whose data does not satisfy `Tables.istable` are skipped with a warning, so one non-tabular
-item never hides its tabular siblings. Multiple items are merged by column union (missing columns
-render blank) with per-row provenance.
-
-With `item_column=true` and several items, the table has a first column `item` with the label of
-the item of each row.
-
-Returns `(table::ItemTable, warnings::Vector{String})`.
-"""
-function merge_item_tables(pairs; item_column::Bool=false)::Tuple{ItemTable,Vector{String}}
-    col_set = Set{String}()
-    columns = String[]
-    tables = Any[]
-    labels = String[]
-    warnings = String[]
-    for (label, table) in pairs
-        if !Tables.istable(table)
-            push!(warnings, "Item '$(label)' has non-tabular data; skipped.")
-            continue
-        end
-        _append_table!(col_set, columns, tables, labels, string(label), Tables.columns(table))
-    end
-    data = _item_table_from_tables(columns, tables, labels)
-    item_column && length(labels) > 1 || return data, warnings
-    # TODO: a column of the data that is also called `item` is then in the table twice.
-    item(row) = labels[data.row_item[row]]
-    table = ItemTable(
-        vcat("item", columns),
-        data.rows,
-        data.row_item,
-        labels,
-        (row, col) -> col == 1 ? item(row) : data.getcell(row, col - 1),
-        (row, col) -> col == 1 ? item(row) : data.getvalue(row, col - 1),
-    )
-    return table, warnings
-end
-
-"""
-    merge_item_tables(selection; item_column=false, metadata=Symbol[]) -> (table, warnings)
+    merge_item_tables(selection; item_column=false, metadata=Symbol[], unfolded=Set()) -> (table, warnings)
 
 Build an `ItemTable` from the data of the items of a selection, each under its label. An item whose
-data cannot be read is reported in `warnings` and skipped, like an item whose data is not a table.
+data cannot be read is reported in `warnings` and skipped.
 
-Each name in `metadata` is a column of the selection, such as `:device`, added after the column
-`item`, or first when there is none. Each row has the value of its item.
+The columns of an item's table hold one value for each row. Any other value, such as a matrix, is one
+cell beside all of the item's rows, and an item without a table has one row. A block of names, such
+as a named tuple, is one column until its path is in `unfolded`; then each of its names is a column.
+When the item's data itself is a block of names, its names are the columns.
+
+With `item_column=true` and several items, the table has a first column `item` with the label of
+the item of each row. Each name in `metadata` is a column of the selection, such as `:device`, added
+after the column `item`, or first when there is none.
 """
 function merge_item_tables(
     selection::Selection;
     item_column::Bool=false,
     metadata::Vector{Symbol}=Symbol[],
+    unfolded::Set{Vector{String}}=Set{Vector{String}}(),
 )::Tuple{ItemTable,Vector{String}}
-    pairs = Tuple{String,Any}[]
-    # The index in the selection of each item that has a table.
-    kept = Int[]
+    labels = String[]
+    item_columns = Vector{Pair{Vector{String},Tuple{Any,Bool}}}[]
+    item_rows = Int[]
     warnings = String[]
     for (index, (item_label, item)) in enumerate(zip(selection.label, items(selection)))
         data = try
@@ -168,29 +116,55 @@ function merge_item_tables(
             push!(warnings, "Item '$item_label': failed to load data; skipped.")
             continue
         end
-        push!(pairs, (item_label, data))
-        Tables.istable(data) && push!(kept, index)
+        columns, rows = _item_columns(data, unfolded)
+        # TODO: a metadata key that is also the name of a column of the data is then in the table
+        # twice, and so is a column of the data called `item`.
+        leading = Pair{Vector{String},Tuple{Any,Bool}}[
+            [string(name)] => (getproperty(selection, name)[index], false) for name in metadata
+            if !ismissing(getproperty(selection, name)[index])]
+        item_column && pushfirst!(leading, ["item"] => (String(item_label), false))
+        push!(labels, String(item_label))
+        push!(item_columns, [leading; columns])
+        push!(item_rows, rows)
     end
-    data, merge_warnings = merge_item_tables(pairs; item_column)
-    append!(warnings, merge_warnings)
-    isempty(metadata) && return data, warnings
-    # TODO: a metadata key that is also the name of a column of the data is then in the table twice.
-    start = item_column && length(data.item_labels) > 1 ? 2 : 1
-    added = length(metadata)
-    values = [getproperty(selection, name)[kept] for name in metadata]
-    is_metadata(col) = start <= col < start + added
-    value(row, col) = values[col - start + 1][data.row_item[row]]
-    data_column(col) = col < start ? col : col - added
-    table = ItemTable(
-        [data.columns[1:start-1]; string.(metadata); data.columns[start:end]],
-        data.rows,
-        data.row_item,
-        data.item_labels,
-        # Metadata shows as plain text, such as a date without `DateTime(...)` around it.
-        (row, col) -> !is_metadata(col) ? data.getcell(row, data_column(col)) :
-            ismissing(value(row, col)) ? "" : string(value(row, col)),
-        (row, col) -> is_metadata(col) ? value(row, col) : data.getvalue(row, data_column(col)),
-    )
+    # A single item needs no column `item`.
+    if item_column && length(labels) == 1
+        popfirst!(only(item_columns))
+    end
+
+    # The union of the items' columns, in the order they first appear, and the value of each column
+    # for each item.
+    paths = Vector{String}[]
+    index = Dict{Vector{String},Int}()
+    for columns in item_columns, (path, _) in columns
+        haskey(index, path) || (push!(paths, path); index[path] = length(paths))
+    end
+    cells = [Vector{Union{Nothing,Tuple{Any,Bool}}}(nothing, length(paths)) for _ in item_columns]
+    for (item, columns) in enumerate(item_columns), (path, cell) in columns
+        cells[item][index[path]] = cell
+    end
+    groups = Set(col for columns in cells for (col, cell) in enumerate(columns)
+                 if cell !== nothing && !last(cell) && _is_block(first(cell)))
+
+    row_item = Int[]
+    row_offsets = Int[]
+    for (item, rows) in enumerate(item_rows), row in 1:rows
+        push!(row_item, item)
+        push!(row_offsets, row)
+    end
+    function getvalue(row::Int, col::Int)
+        cell = cells[row_item[row]][col]
+        cell === nothing && return missing
+        value, per_row = cell
+        return per_row ? value[row_offsets[row]] : value
+    end
+    getcell(row::Int, col::Int) = cells[row_item[row]][col] === nothing ? "" : _cell_text(getvalue(row, col))
+    function spans_item(row::Int, col::Int)
+        cell = cells[row_item[row]][col]
+        return cell === nothing || !last(cell)
+    end
+    table = ItemTable([join(path, ".") for path in paths], paths, groups, length(row_item), row_item,
+        labels, getcell, getvalue, spans_item)
     return table, warnings
 end
 
@@ -201,9 +175,12 @@ The rows `rows` of `table` as an `ItemTable`, in the order given.
 """
 Base.getindex(table::ItemTable, rows::AbstractVector{Int})::ItemTable = ItemTable(
     table.columns,
+    table.paths,
+    table.groups,
     length(rows),
     table.row_item[rows],
     table.item_labels,
     (row, col) -> table.getcell(rows[row], col),
     (row, col) -> table.getvalue(rows[row], col),
+    (row, col) -> table.spans_item(rows[row], col),
 )

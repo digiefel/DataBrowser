@@ -132,6 +132,14 @@ Arguments:
   The grid cannot be sorted without it
 - `header_icon`: `(col::Int) -> String`, an icon at the right edge of the header of the column,
   left of the sort arrow. No header has an icon by default
+- `column_groups`: `(col::Int) -> Vector{String}`, the names of the groups the column is in, from
+  the outside in. Neighbouring columns with the same names share one group, whose name is written
+  above them, on one header row for each level. No column is in a group by default
+- `header_fold`: `(col::Int, level::Int) -> Union{Nothing,Bool}`, whether a header starts with an
+  arrow that folds something, open (`true`) or closed (`false`): the header of the column's group
+  at that level, or the column's own header at the level below its groups. No header has an arrow
+  by default
+- `on_header_fold`: called with `(col, level)` when the user clicks the arrow of that header
 - `header_popup`: `(col::Int) -> Nothing`, draws the popup that right-clicking the header of the
   column opens. The headers have no popup without it
 - `on_selection_change`: called with the new `Vector{Int}` whenever the selection changes
@@ -163,6 +171,9 @@ function render_data_grid!(
     on_fold::Function = (_, _) -> nothing,
     on_sort::Union{Nothing,Function} = nothing,
     header_icon::Function = _ -> "",
+    column_groups::Function = _ -> String[],
+    header_fold::Function = (_, _) -> nothing,
+    on_header_fold::Function = (_, _) -> nothing,
     header_popup::Union{Nothing,Function} = nothing,
     on_selection_change::Function = identity,
     selection_mode::Symbol = :rows,
@@ -189,24 +200,67 @@ function render_data_grid!(
         return nothing
     end
 
-    # The header row and the frozen columns stay in place.
-    ig.TableSetupScrollFreeze(frozen_columns, 1)
+    # The header rows and the frozen columns stay in place.
+    levels = maximum(column -> length(column_groups(column)), 1:n_cols)
+    ig.TableSetupScrollFreeze(frozen_columns, levels + 1)
 
     # Column headers — width 0 with SizingFixedFit = auto-fit on first appearance;
     # imgui.ini restores saved widths on subsequent opens.
     for col in columns
         ig.TableSetupColumn(col, ig.ImGuiTableColumnFlags_WidthFixed, 0.0f0)
     end
-    ig.TableNextRow(ig.ImGuiTableRowFlags_Headers)
     style = unsafe_load(ig.GetStyle())
+    draw_list = ig.GetWindowDrawList()
+    # An arrow as ImGui draws it in a tree node, at the left of the text at `position`.
+    function draw_arrow(position, open)
+        ig.RenderArrow(draw_list, ig.ImVec2(position.x, position.y + ig.GetFontSize() * 0.15f0),
+            ig.GetColorU32(ig.ImGuiCol_Text), open ? ig.ImGuiDir_Down : ig.ImGuiDir_Right, 0.7f0)
+    end
+    arrow_width = ig.GetFontSize() + style.ItemInnerSpacing.x
+    # The rows of group names. Each column of a group writes the group's name from the left edge of
+    # the group's first column; each column shows only its own part, so the name reads across them.
+    for level in 1:levels
+        # The row is as high as a row of headers, also when it holds no button.
+        ig.TableNextRow(ig.ImGuiTableRowFlags_Headers, ig.TableGetHeaderRowHeight())
+        for column in 1:n_cols
+            ig.TableSetColumnIndex(column - 1)
+            ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, ig.GetColorU32(ig.ImGuiCol_TableHeaderBg))
+            groups = column_groups(column)
+            length(groups) >= level || continue
+            group = groups[1:level]
+            start = column
+            while start > 1 && length(column_groups(start - 1)) >= level &&
+                    column_groups(start - 1)[1:level] == group
+                start -= 1
+            end
+            position = ig.ImVec2(ig.TableGetCellBgRect(ig.GetCurrentTable(), start - 1).Min.x +
+                style.CellPadding.x, ig.GetCursorScreenPos().y)
+            header_open = header_fold(column, level)
+            header_open === nothing || draw_arrow(position, header_open)
+            ig.AddText(draw_list, ig.ImVec2(position.x + (header_open === nothing ? 0.0f0 : arrow_width), position.y),
+                ig.GetColorU32(ig.ImGuiCol_Text), groups[level])
+            header_open === nothing && continue
+            ig.PushID(column)
+            ig.PushID(level)
+            ig.InvisibleButton("##group", ig.ImVec2(max(1.0f0, ig.GetContentRegionAvail().x), ig.GetFontSize())) &&
+                on_header_fold(column, level)
+            ig.PopID()
+            ig.PopID()
+        end
+    end
+    ig.TableNextRow(ig.ImGuiTableRowFlags_Headers)
     for column in 1:n_cols
         ig.TableSetColumnIndex(column - 1)
         ig.PushID(column)
         icon = header_icon(column)
+        header_open = header_fold(column, length(column_groups(column)) + 1)
+        position = ig.GetCursorScreenPos()
+        # The arrow is a button of its own on top of the header, which sorts when clicked.
+        header_open === nothing || ig.SetNextItemAllowOverlap()
         # The text after "###" is the id of the header, so that its popup stays open when the
-        # icon changes. Two spaces after the name make room for the icon when the column fits
-        # its content.
-        ig.TableHeader("$(columns[column])$(isempty(icon) ? "" : "  ")###header")
+        # icon changes. Spaces before the name make room for the arrow, and two spaces after it
+        # make room for the icon when the column fits its content.
+        ig.TableHeader("$(header_open === nothing ? "" : " "^3)$(columns[column])$(isempty(icon) ? "" : "  ")###header")
         if !isempty(icon)
             # ImGui draws the sort arrow, and the place of the column when sorting by several, at
             # the right edge of the header.
@@ -222,6 +276,12 @@ function render_data_grid!(
         if header_popup !== nothing && ig.BeginPopupContextItem()
             header_popup(column)
             ig.EndPopup()
+        end
+        if header_open !== nothing
+            draw_arrow(position, header_open)
+            ig.SetCursorScreenPos(position)
+            ig.InvisibleButton("##fold", ig.ImVec2(arrow_width, ig.GetFontSize())) &&
+                on_header_fold(column, length(column_groups(column)) + 1)
         end
         ig.PopID()
     end

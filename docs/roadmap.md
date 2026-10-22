@@ -608,7 +608,10 @@ the table as a first-class view.
   - [x] Fold an item to one row that shows how many values it has in each column, with the
     smallest and the largest number on hover.
   - [x] Metadata columns that the user picks from the header's right-click menu, in one cell beside the rows of each item.
-  - [ ] Nested values (structs, `NamedTuple`, `Dict`) as groups of columns that unfold in place.
+  - [x] Nested values (`NamedTuple`, `Dict`) as groups of columns that unfold in place, with one
+    header row for each level. Data that is not a table shows in one row.
+  - [ ] Structs as groups of columns, once it is clear which types count.
+  - [ ] A value that does not fit a cell, such as a matrix, opens in a new window from its cell.
   - [x] A filter for each column, from a right-click on its header: a Julia function of the value.
   - [ ] For a column with one value for each item, a checkbox for each value, which writes the
     filter.
