@@ -600,7 +600,8 @@ the table as a first-class view.
   - [ ] Sort by a column, and by several with Shift-click.
   - [x] The items one after the other, with the label of each item in one cell beside all of its
     rows. The label stays in place when the table scrolls sideways.
-  - [x] Fold an item to one row that shows the range of each column.
+  - [x] Fold an item to one row that shows how many values it has in each column, with the
+    smallest and the largest number on hover.
   - [ ] Metadata columns that the user picks, in one cell beside the rows of each item.
   - [ ] Nested values (structs, `NamedTuple`, `Dict`) as groups of columns that unfold in place.
   - [ ] A search box that filters rows; later a filter for each column.

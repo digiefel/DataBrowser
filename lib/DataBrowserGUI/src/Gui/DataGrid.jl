@@ -121,6 +121,9 @@ Arguments:
   Each row is its own cell by default
 - `frozen_columns`: how many columns on the left stay in place when the grid scrolls sideways
 - `align_right`: `(col::Int) -> Bool`, whether the text of the column's cells is right-aligned
+- `muted`: `(row::Int, col::Int) -> Bool`, whether the text of the cell is dimmed
+- `tooltip`: `(row::Int, col::Int) -> Union{Nothing,String}`, the text shown on hover over the
+  text of the cell
 - `fold`: `(row::Int, col::Int) -> Union{Nothing,Bool}`, whether the cell starts with an arrow
   that folds something, open (`true`) or closed (`false`). No cell has an arrow by default
 - `on_fold`: called with `(row, col)` when the user clicks the arrow of a cell
@@ -147,6 +150,8 @@ function render_data_grid!(
     span::Function = (row, _) -> row,
     frozen_columns::Int = 0,
     align_right::Function = _ -> false,
+    muted::Function = (_, _) -> false,
+    tooltip::Function = (_, _) -> nothing,
     fold::Function = (_, _) -> nothing,
     on_fold::Function = (_, _) -> nothing,
     on_selection_change::Function = identity,
@@ -309,7 +314,15 @@ function render_data_grid!(
             text = cell(row, column)
             align_right(column) && ig.SetCursorPosX(ig.GetCursorPosX() +
                 max(0.0f0, ig.GetContentRegionAvail().x - ig.CalcTextSize(text).x))
+            muted(row, column) && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
             ig.TextUnformatted(text)
+            muted(row, column) && ig.PopStyleColor()
+            hint = tooltip(row, column)
+            if hint !== nothing && ig.IsItemHovered(ig.ImGuiHoveredFlags_AllowWhenOverlappedByItem)
+                ig.BeginTooltip()
+                ig.TextUnformatted(hint)
+                ig.EndTooltip()
+            end
         end
         return nothing
     end
