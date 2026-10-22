@@ -120,6 +120,9 @@ Arguments:
 - `span`: `(row::Int, col::Int) -> Int`, the first row of the run of rows that one cell spans.
   Each row is its own cell by default
 - `frozen_columns`: how many columns on the left stay in place when the grid scrolls sideways
+- `fold`: `(row::Int, col::Int) -> Union{Nothing,Bool}`, whether the cell starts with an arrow
+  that folds something, open (`true`) or closed (`false`). No cell has an arrow by default
+- `on_fold`: called with `(row, col)` when the user clicks the arrow of a cell
 - `on_selection_change`: called with the new `Vector{Int}` whenever the selection changes
 - `selection_mode`: `:rows` for multi-row selection or `:cells` for a spreadsheet rectangle
 - `height`: child height in pixels; 0.0f0 = fill available
@@ -142,6 +145,8 @@ function render_data_grid!(
     cell_link::Function = (_, _) -> nothing,
     span::Function = (row, _) -> row,
     frozen_columns::Int = 0,
+    fold::Function = (_, _) -> nothing,
+    on_fold::Function = (_, _) -> nothing,
     on_selection_change::Function = identity,
     selection_mode::Symbol = :rows,
     height::Float32 = 0.0f0,
@@ -287,9 +292,16 @@ function render_data_grid!(
             ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, background)
         end
         (first == row || row == first_visible) || return nothing
-        link = cell_link(row, column)
-        link === nothing ? ig.TextUnformatted(cell(row, column)) :
+        link, open = cell_link(row, column), fold(row, column)
+        if open !== nothing
+            ig.SetNextItemOpen(open)
+            ig.TreeNodeEx("$(cell(row, column))##fold_$column", ig.ImGuiTreeNodeFlags_NoTreePushOnOpen) !=
+                open && on_fold(row, column)
+        elseif link !== nothing
             ig.TextLinkOpenURL(cell(row, column), link)
+        else
+            ig.TextUnformatted(cell(row, column))
+        end
         return nothing
     end
     clipper = ig.lib.ImGuiListClipper()
