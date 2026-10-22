@@ -64,6 +64,12 @@ DataBrowserAPI.expand(::ChipsProject, ::ChipsFile, ::Nothing) = [
         @test :data ∉ Tables.columnnames(Tables.columns(selection))
         @test_throws Exception selection.data.device[1]
         @test_throws Exception Tables.columntable(selection.data)
+
+        # One row per entry of each item's data, with the item's values repeated.
+        rows = W.unnest(device=selection.device, V=selection.data.V)
+        @test rows == (device=["D2", "D2", "D3", "D3"], V=[0.0, 1.0, 0.0, 2.0])
+        @test W.unnest(device=selection.device, top=maximum.(selection.data.V)) ==
+              (device=["D2", "D3"], top=[1.0, 2.0])
     finally
         W.close_workspace!(workspace)
     end

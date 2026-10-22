@@ -175,3 +175,39 @@ function items(selection::Selection)::Vector
     # Narrow the element type, so that methods can dispatch on the type of the items.
     return identity.(materialize_items(getfield(data, :workspace), getfield(data, :items)))
 end
+
+"""
+    unnest(; name = values, ...) -> NamedTuple of vectors
+
+Put values of several items together in one table. Each keyword names a column, and each value has
+one entry per item, such as `selection.Device` or `selection.data.V`. The entries of one item
+broadcast together, as in a Julia expression: a column of the item's data gives one row per entry,
+and a single value, such as the item's device, is repeated on each of those rows.
+
+    unnest(Device = selection.Device, V = selection.data.V, I = selection.data.I)
+
+A formula is a broadcast over the items:
+
+    unnest(gap = selection.gap, R = resistance.(selection.data.V, selection.data.I))
+
+The result is a Tables.jl table, so `DataFrame(unnest(...))` copies it into a data frame.
+"""
+function unnest(; columns...)
+    names = keys(columns)
+    values = Tuple(Base.values(columns))
+    isempty(values) && return NamedTuple()
+    count = length(first(values))
+    all(value -> length(value) == count, values) ||
+        error("unnest: each value needs one entry per item; the lengths are $(map(length, values))")
+    collected = [Any[] for _ in names]
+    for index in 1:count
+        # TODO: each path into the data reads the item again; read it once per item.
+        rows = broadcast(tuple, (value[index] for value in values)...)
+        # Single values give one tuple, not an array of them.
+        for row in (rows isa Tuple ? (rows,) : rows), (column, entry) in zip(collected, row)
+            push!(column, entry)
+        end
+    end
+    # Narrow each column to the types of its entries.
+    return NamedTuple{Tuple(names)}(Tuple(identity.(column) for column in collected))
+end
