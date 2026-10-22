@@ -9,8 +9,9 @@ GLMakie, and are part of the browser once GLMakie is loaded: `using DataBrowser,
 module DataBrowserPlots
 
 import DataBrowserAPI: @timed_dbg
+using DataBrowserAPI: AbstractDataItem, id
 import DataBrowserCore.Workspace
-using DataBrowserCore: Selection
+using DataBrowserCore: Group, Selection
 import ForwardDiff
 using LinearAlgebra: diag
 using NonlinearSolve: LevenbergMarquardt, NonlinearLeastSquaresProblem, SciMLBase, solve

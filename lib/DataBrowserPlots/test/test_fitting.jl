@@ -1,35 +1,40 @@
-using Test, DataBrowserPlots, GLMakie, AlgebraOfGraphics
+using Test, DataBrowserAPI, DataBrowserCore, DataBrowserPlots, GLMakie, AlgebraOfGraphics
 
 resistance(gap; Rc, Rsh) = 2Rc + Rsh * gap
+estimate(parameter) = parameter.value
 
-@testset "a named fit line fits each group, and other lines draw its results" begin
+struct FitTestDevice <: AbstractDataItem
+    name::String
+    chip::String
+    gap::Float64
+    R::Float64
+end
+DataBrowserAPI.id(device::FitTestDevice) = device.name
+DataBrowserAPI.metadata(device::FitTestDevice) = Dict{Symbol,Any}(:Chip => device.chip, :gap => device.gap)
+DataBrowserAPI.item_data(device::FitTestDevice) = (R=[device.R],)
+
+texts(drawn) = sort([t for p in only(filter(c -> c isa Axis, drawn.content)).scene.plots if p isa Makie.Text for t in p.text[]])
+
+@testset "a fit gives a group for each chip, and lines draw the groups" begin
     # Two chips with exact lines: R = 2 * 300 + 100 * gap and R = 2 * 50 + 100 * gap.
-    gaps = [5.0, 10.0, 20.0]
-    items = (Chip=["A", "A", "A", "B", "B", "B"], gap=[gaps; gaps],
-        data=(R=vcat([[2 * 300 + 100g] for g in gaps], [[2 * 50 + 100g] for g in gaps]),))
+    devices = [FitTestDevice("$chip$gap", chip, gap, 2Rc + 100gap)
+        for (chip, Rc) in (("A", 300), ("B", 50)) for gap in (5.0, 10.0, 20.0)]
     plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
         visual(Scatter)
-        contacts = fit(resistance, (Rc=1.0, Rsh=1.0)) *
-            visual(Lines; label="$(contacts.Chip): Rc = $(contacts.Rc)")
-        mapping(contacts.x[end], contacts.y[end]) *
-            visual(Makie.Text; text="$(contacts.Chip): $(round(contacts.Rc.value)), $(round(contacts.Rsh.value))")
+        contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
+        data(contacts) * mapping(:data.x, :data.y; color=:Chip) * visual(Lines)
+        data(contacts) * mapping(last(:data.x), last(:data.y);
+            text=string(:Chip, ": ", round(estimate(:Rc))) => verbatim) * visual(Makie.Text)
     end
-    drawn = figure(plot, items)
-    axis = only(filter(c -> c isa Axis, drawn.content))
-    texts = [only(p.text[]) for p in axis.scene.plots if p isa Makie.Text]
-    @test sort(texts) == ["A: 300.0, 100.0", "B: 50.0, 100.0"]
-    # The fit's label names each chip's legend entry.
-    legend = only(filter(c -> c isa Legend, drawn.content))
-    labels = [entry.label[] for (_, entries) in legend.entrygroups[] for entry in entries]
-    @test startswith.(labels, ["A: Rc = ", "B: Rc = "]) == [true, true]
+    @test texts(figure(plot, select(devices))) == ["A: 300.0", "B: 50.0"]
 end
 
 @testset "a fit takes the rows of the header's own table" begin
     rows = [(gap=g, R=2 * 300 + 100g) for g in (5.0, 10.0, 20.0)]
     plot = @plot data(rows) * mapping(:gap, :R) begin
         contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
-        mapping(contacts.x[end], contacts.y[end]) * visual(Makie.Text; text="$(round(contacts.Rc.value))")
+        data(contacts) * mapping(last(:data.x), last(:data.y); text=string(round(estimate(:Rc))) => verbatim) *
+            visual(Makie.Text)
     end
-    axis = only(filter(c -> c isa Axis, figure(plot).content))
-    @test [only(p.text[]) for p in axis.scene.plots if p isa Makie.Text] == ["300.0"]
+    @test texts(figure(plot)) == ["300.0"]
 end

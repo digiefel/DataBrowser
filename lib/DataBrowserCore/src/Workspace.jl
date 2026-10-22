@@ -114,6 +114,7 @@ import DataBrowserAPI:
     AbstractDataSource,
     AbstractDataSourceItem,
     AbstractDataItem,
+    AbstractGroup,
     AbstractProject,
     SourceChanges,
     SourceError,

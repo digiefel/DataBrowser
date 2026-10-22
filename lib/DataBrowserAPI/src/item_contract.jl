@@ -85,6 +85,20 @@ This metadata is kept apart from `metadata(collection)`, the metadata of the col
 """
 metadata(::AbstractDataSource, ::AbstractVector{<:AbstractCollection})::Dict = Dict()
 
+"""
+An item made from other items, its [`members`](@ref). A group has its own data and metadata, as
+any item does: the members of a fit are the items whose points it fits, and its data is the curve.
+"""
+abstract type AbstractGroup <: AbstractDataItem end
+# TODO: groups replace collections; the workspace does not keep groups yet (plans/groupings.md).
+
+"""
+    members(group) -> AbstractVector{<:AbstractDataItem}
+
+The items `group` was made from.
+"""
+function members end
+
 """Return metadata supplied directly by a data item. The default is an empty `Dict`."""
 metadata(::AbstractDataItem)::Dict = Dict()
 

@@ -12,20 +12,6 @@ figure(declaration::Declaration, input, args...; options...) =
     figure(Base.invokelatest(declaration.layers, input), args...; options...)
 
 """
-A plot together with the scales it is drawn with, as `@plot` gives it when the labels of a fit
-name the categories of the legend. Draw it with `figure(plot)`.
-"""
-struct WithScales
-    layers::Any
-    scales::Any
-end
-figure(plot::WithScales, args...; options...) = figure(plot.layers, plot.scales, args...; options...)
-
-# The scale of each named role whose categories a fit's labels can name.
-const ROLE_SCALES = Dict(:color => :Color, :marker => :Marker, :linestyle => :LineStyle,
-    :layout => :Layout, :col => :Col, :row => :Row)
-
-"""
     @plot declaration
     @plot header begin
         layer
@@ -63,33 +49,42 @@ layers with `*` within a line; a line that continues on the next one ends with `
 With `data(table)`, the declaration is ordinary AlgebraOfGraphics over that table, and the names in
 `mapping` are its columns. Draw it with `figure(declaration)`.
 
-A line may fit a curve to the points of the header, and name the result:
+A layer with its own `data(...)` is not multiplied by the header, whose values would add to its own.
+When that data is a vector of items, such as the groups of a fit, the names in its `mapping` are
+paths into those items, as for the items the plot is drawn for.
+
+A line `name = value` defines `name` for the lines of the block, in order. `fit` fits a curve to
+the points of the header:
 
     resistance(gap; Rc, Rsh) = 2Rc + Rsh * gap
 
     @plot mapping(:gap, R(:data.V, :data.I); color=:Chip) begin
         visual(Scatter)
-        contacts = fit(resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines; label="Rc = \$(contacts.Rc)")
-        mapping(contacts.x[end], contacts.y[end]) * visual(Text; text="Rsh = \$(contacts.Rsh)")
+        contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
+        data(contacts) * mapping(:data.x, :data.y; color=:Chip) * visual(Lines)
+        data(contacts) * mapping(last(:data.x), last(:data.y); text="Rc = \$(:Rc)" => verbatim) *
+            visual(Text)
     end
 
 The curve is a function of x with its parameters as keywords, and `fit` takes the curve and a
-starting value for each parameter. The header's named roles, here `color=:Chip`, divide the points
-into groups, and each group has its own fit. A line that uses the name is drawn once for each
-group, with the name set to that group's [`Fit`](@ref): `contacts.Rc` is a [`Parameter`](@ref),
-which prints as the estimate ± one standard error; `contacts.Chip` is the group's chip; and
-`contacts.x` and `contacts.y` are the drawn curve. `fit(...; xlim=(0, 25))` draws the curve over
-that range of x instead of over the fitted points. When the groups come from one column, the fit
-line's `label` names that group's legend entry, and the other lines that use the fit stay out of
-the legend. With `data(table)` in the header, the fits take the rows of that table.
+starting value for each parameter. The header's two positional values are x and y, and its named
+roles, here `color=:Chip`, divide the points into groups. `fit` returns one `Group` for each:
+its metadata holds the group's values, such as `:Chip`, and each parameter, such as `:Rc`, a
+[`Parameter`](@ref) that prints as the estimate ± one standard error. Its data is the drawn curve,
+as columns `x` and `y`, and its members are the items whose points it fits.
+`fit(...; xlim=(0, 25))` draws the curve over that range of x instead of over the fitted points.
+With `data(table)` in the header, `fit` takes the rows of that table.
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
-    layers = filter(line -> !(line isa LineNumberNode), block.args)
-    any(layer -> Meta.isexpr(layer, :(=)), layers) && return esc(declare_fits(header, layers))
+    lines = filter(line -> !(line isa LineNumberNode), block.args)
+    statements = filter(line -> Meta.isexpr(line, :(=)), lines)
+    drawn = [has_data(line) ? line : :($header * $line) for line in lines if !Meta.isexpr(line, :(=))]
     # `a + b + c`, not `+(a, b, c)`: AoG adds two layers at a time and has no `+` of one layer.
-    declaration = isempty(layers) ? header : :($header * $(foldl((a, b) -> :($a + $b), layers)))
-    return esc(declare(declaration))
+    declaration = isempty(drawn) ? header : foldl((a, b) -> :($a + $b), drawn)
+    input = gensym("input")
+    isempty(statements) || pushfirst!(statements, :(fit = $(define_fit(header, input))))
+    return esc(declare(declaration, statements; input))
 end
 
 macro plot(declaration)
@@ -176,21 +171,34 @@ function tabulate(layer, column; chosen=value -> !isempty(paths(value)))
 end
 
 # One layer as a function of the input: each value its `mapping` names becomes a column of `unnest`
-# over the input, and the mapping names that column.
+# over the input, and the mapping names that column. With `data(value)`, the paths read `value`
+# when it is a vector of items, and the layer is left as it is for any other value.
 function declare_layer(layer, input::Symbol)
-    tabulated = tabulate(layer, value -> per_item(value, input))
-    tabulated === nothing && return layer
+    own = find_call(layer, :data)
+    if own === nothing
+        tabulated = tabulate(layer, value -> per_item(value, input))
+        tabulated === nothing && return layer
+        table, rewritten = tabulated
+        return :(data($table) * $rewritten)
+    end
+    value, items = gensym("data"), gensym("items")
+    tabulated = tabulate(layer, v -> per_item(v, items))
+    plain = replace_call(layer, own, :(data($value)))
+    tabulated === nothing && return plain
     table, rewritten = tabulated
-    return :(data($table) * $rewritten)
+    return :(let $value = $(own.args[2])
+        $value isa AbstractVector{<:$AbstractDataItem} ?
+            (let $items = $(Workspace.select)($value); $(replace_call(rewritten, find_call(rewritten, :data), :(data($table)))) end) :
+            $plain
+    end)
 end
 
-# Without `data(...)`, the declaration becomes a function of the input, with a table for each layer:
-# the values of one layer broadcast together, and the layers are drawn together.
-function declare(declaration)
-    (has_data(declaration) || isempty(paths(declaration))) && return declaration
-    input = gensym("input")
-    sum = foldl((a, b) -> :($a + $b), map(layer -> declare_layer(layer, input), layers(declaration)))
-    return :($Declaration($input -> $sum))
+# The layers of a declaration, each with its own table, after the `statements`, which define names
+# for them. The result is a function of the input when a layer or a statement reads it.
+function declare(declaration, statements=Expr[]; input::Symbol=gensym("input"))
+    drawn = foldl((a, b) -> :($a + $b), map(layer -> declare_layer(layer, input), layers(declaration)))
+    body = isempty(statements) ? drawn : Expr(:let, Expr(:block), Expr(:block, statements..., drawn))
+    return uses(body, input) ? :($Declaration($input -> $body)) : body
 end
 
 # The first call of `name` in an expression, such as `mapping(...)`, or `nothing`.
@@ -223,142 +231,33 @@ end
 # The column a rewritten mapping value names: `:R` in `:R` and in `:R => "R (Ω)"`.
 column_name(value) = Meta.isexpr(value, :call) && value.args[1] === :(=>) ? column_name(value.args[2]) : value.value
 
-# The label a mapping value gives its axis: the text after `=>`, or the name of its column.
-axis_label(value) = Meta.isexpr(value, :call) && value.args[1] === :(=>) && value.args[3] isa String ?
-    value.args[3] : String(column_name(value))
-
-# Remove the keyword `name` from a call, and return its value, or `nothing`.
-function remove_keyword!(call, name::Symbol)
-    for holder in [call; [a for a in call.args if Meta.isexpr(a, :parameters)]]
-        index = findfirst(a -> Meta.isexpr(a, :kw) && a.args[1] === name, holder.args)
-        index === nothing || return popat!(holder.args, index).args[2]
-    end
-    return nothing
-end
+# `expression` with `call` replaced by `new`; the same object, not an equal one.
+replace_call(expression, call, new) = expression === call ? new :
+    expression isa Expr ? Expr(expression.head, map(e -> replace_call(e, call, new), expression.args)...) : expression
 
 uses(expression, name::Symbol) = expression === name ||
     expression isa Expr && any(e -> uses(e, name), expression.args)
 
-# With named fit lines, `name = fit(curve, starts; xlim) * visual(...)`. The header's positional
-# values are the points that each fit takes, and its named roles, such as `color=:Chip`, form the
-# groups: one fit for each group. A line that uses a fit's name is drawn once for each group, with
-# the name set to that group's `Fit`, and with the group's values in the header's named roles.
-# With `data(table)` in the header, the fits take the rows of that table.
-function declare_fits(header, lines)
-    # TODO: lines that use a fit and also a path; a fit inside a line's own mapping; fits that use
-    # other fits.
-    own_data = has_data(header)
-    input = gensym("input")
-    if own_data
-        table, header_mapping = find_call(header, :data).args[2], find_call(header, :mapping)
+# `fit(curve, starts; options...)` over the points of the header: the header's positional values
+# are x and y, and its named roles form the groups. Without `data(...)` in the header, the points
+# are the items of the input.
+function define_fit(header, input::Symbol)
+    call = find_call(header, :mapping)
+    call === nothing && return :((_...; _...) -> error("fit needs a header that maps x and y, such as mapping(:x, :y)"))
+    item = gensym("item")
+    if has_data(header)
+        table, rewritten = find_call(header, :data).args[2], call
+        members = :(())
     else
-        tabulated = tabulate(find_call(header, :mapping), value -> per_item(value, input))
-        tabulated === nothing && error("@plot with a fit needs a header that maps paths, such as mapping(:x, :y)")
-        table, header_mapping = tabulated
+        table, rewritten = tabulate(call, value -> per_item(value, input))
+        push!(table.args[2].args, Expr(:kw, item, :($input.id)))
+        members = :((; members=$(Workspace.items)($input), item=$(QuoteNode(item))))
     end
-    positional, named = call_arguments(header_mapping)
-    length(positional) == 2 || error("A fit needs the header to map two positional values, x and y")
+    positional, named = call_arguments(rewritten)
+    length(positional) == 2 || return :((_...; _...) -> error("fit needs a header that maps two positional values, x and y"))
     x, y = column_name.(positional)
-    roles = [role => column_name(value) for (role, value) in named]
     # TODO: group only by categorical roles; a continuous color should not split the points.
-    group = Expr(:vect, (QuoteNode(column) for (_, column) in roles)...)
-
-    rows = gensym("rows")
-    # For each fit whose labels name categories: the column, and its categories with their labels.
-    categories = Tuple{Symbol,Expr}[]
-    names = Symbol[]
-    # For each fit's name, the variable that holds its fits, one for each group.
-    groups = Dict{Symbol,Symbol}()
-    computed = Expr[:($rows = $table)]
-    drawn = Any[]
-    for line in lines
-        if Meta.isexpr(line, :(=))
-            name, value = line.args
-            factors = Meta.isexpr(value, :call) && value.args[1] === :* ? value.args[2:end] : [value]
-            index = findfirst(f -> Meta.isexpr(f, :call) && f.args[1] === :fit, factors)
-            index === nothing && error("A named line of @plot is a fit, such as `$name = fit(curve, starts)`: $line")
-            call = factors[index]
-            arguments, options = call_arguments(call)
-            options = [Expr(:kw, option, value) for (option, value) in options]
-            length(arguments) == 2 || error("fit takes a curve and its starting values: `fit(curve, (a=1.0, b=1.0))`")
-            push!(names, name)
-            groups[name] = gensym("$(name)_groups")
-            push!(computed, :($(groups[name]) = $fit_groups($(Expr(:parameters, options...)),
-                $(arguments...), $rows, $(QuoteNode(x)), $(QuoteNode(y)), Symbol[$(group.args...)])))
-            others = [f for (i, f) in enumerate(factors) if i != index]
-            # With one column of groups, the fit's `label` names that column's categories: one
-            # legend entry for each group, with its marker, its line and its fit.
-            columns = unique(last.(roles))
-            visual_call = isempty(others) ? nothing : find_call(others[end], :visual)
-            label = visual_call === nothing ? nothing : remove_keyword!(visual_call, :label)
-            if label !== nothing && length(columns) == 1 && any(role in keys(ROLE_SCALES) for (role, _) in roles)
-                column = only(columns)
-                push!(categories, (column, :(map($name -> getfield($name, :group)[$(QuoteNode(column))] => $label,
-                    $(groups[name])))))
-            elseif label !== nothing
-                push!(visual_call.args, Expr(:kw, :label, label))
-            end
-            # The curve of each group, with the group's values in the header's named roles.
-            curve = Expr(:tuple, Expr(:parameters,
-                Expr(:kw, x, :(getfield($name, :x))), Expr(:kw, y, :(getfield($name, :y))),
-                (Expr(:kw, column, :(fill(getfield($name, :group)[$(QuoteNode(column))], length(getfield($name, :x)))))
-                    for (_, column) in roles)...))
-            layer = foldl((a, b) -> :($a * $b), [:(data($curve) * $header_mapping);
-                isempty(others) ? [:(visual(Lines))] : others])
-            push!(drawn, (name, layer))
-        else
-            push!(drawn, (nothing, line))
-        end
-    end
-
-    sums = map(drawn) do (own, line)
-        fits = own !== nothing ? [own] : filter(name -> uses(line, name), names)
-        isempty(fits) && own_data && return :($header * $line)
-        isempty(fits) &&
-            return foldl((a, b) -> :($a + $b), map(layer -> declare_layer(layer, input), layers(:($header * $line))))
-        length(fits) == 1 || error("A line of @plot uses one fit at most: $line")
-        used = only(fits)
-        if own === nothing
-            # The values that use the fit are a table with one row for each group, which also
-            # holds the group's values in the header's named roles.
-            tabulated = tabulate(line, value -> :([$value]); chosen=value -> uses(value, used))
-            if tabulated !== nothing
-                table, line = tabulated
-                group_columns = [Expr(:kw, column, :([getfield($used, :group)[$(QuoteNode(column))]])) for (_, column) in roles]
-                append!(table.args[2].args, group_columns)
-                call = find_call(line, :mapping)
-                # Positions without a label take the header's, so that the axes keep their titles.
-                indices = [i for i in 2:length(call.args) if !(Meta.isexpr(call.args[i], :kw) || Meta.isexpr(call.args[i], :parameters))]
-                for (position, index) in enumerate(indices[1:min(end, length(positional))])
-                    argument = call.args[index]
-                    Meta.isexpr(argument, :call) && argument.args[1] === :(=>) && continue
-                    call.args[index] = :($argument => $(axis_label(positional[position])))
-                end
-                given = first.(call_arguments(call)[2])
-                append!(call.args, [Expr(:kw, role, QuoteNode(column)) for (role, column) in roles if role ∉ given])
-                # The line labels the fit, so the group's legend entry shows the points and the fit.
-                visual_call = find_call(line, :visual)
-                if visual_call !== nothing && remove_keyword!(copy(visual_call), :legend) === nothing
-                    push!(visual_call.args, Expr(:kw, :legend, :((; visible=false))))
-                end
-                line = :(data($table) * $line)
-            end
-        end
-        return :(foldl(+, map($used -> $line, $(groups[used]))))
-    end
-    sum = foldl((a, b) -> :($a + $b), sums)
-    if !isempty(categories)
-        # TODO: several fits that name the same column; the later one is used.
-        named = [Expr(:kw, ROLE_SCALES[role], :((; categories=$(categories[end][2]))))
-            for (role, column) in roles if column == categories[end][1] && haskey(ROLE_SCALES, role)]
-        sum = :($WithScales($sum, scales($(named...))))
-    end
-    own_data && return :(begin
-        $(computed...)
-        $sum
-    end)
-    return :($Declaration($input -> begin
-        $(computed...)
-        $sum
-    end))
+    group = [QuoteNode(column_name(value)) for (_, value) in named]
+    return :((curve, starts; options...) -> $fit_groups(curve, starts, $table, $(QuoteNode(x)), $(QuoteNode(y)),
+        Symbol[$(group...)]; $members..., options...))
 end

@@ -1,4 +1,21 @@
 """
+    Group(id, metadata, data, members)
+
+A group made in code, such as a fit: its own `metadata` and `data`, and the items it was made from,
+its `members`.
+"""
+struct Group <: AbstractGroup
+    id::String
+    metadata::Dict{Symbol,Any}
+    data::Any
+    members::Vector{AbstractDataItem}
+end
+id(group::Group) = group.id
+metadata(group::Group) = group.metadata
+item_data(group::Group) = group.data
+DataBrowserAPI.members(group::Group) = group.members
+
+"""
 The data of each item, or a value inside it, read from the cache only when the vector is indexed.
 
 `selection.data` is the data of each item, as the project returned it. A property follows a path
@@ -7,20 +24,22 @@ value, and `selection.data.fit.slope` goes one level further. It is not one tabl
 are put together only when the values are named together.
 """
 struct ItemData <: AbstractVector{Any}
-    workspace::Workspace
-    items::Vector{ItemKey}
+    # `nothing` when the items are values in memory, not keys of the workspace's items.
+    workspace::Union{Workspace,Nothing}
+    items::Vector
     # The names followed inside each item's data, from the outside in; empty for the data itself.
     path::Vector{Symbol}
 end
-ItemData(workspace::Workspace, items::Vector{ItemKey}) = ItemData(workspace, items, Symbol[])
+ItemData(workspace, items::Vector) = ItemData(workspace, items, Symbol[])
 
 # The fields hold the workspace and the items; a property is a path into the data.
 Base.getproperty(data::ItemData, name::Symbol) =
     ItemData(getfield(data, :workspace), getfield(data, :items), [getfield(data, :path); name])
 Base.size(data::ItemData) = size(getfield(data, :items))
 function Base.getindex(data::ItemData, index::Int)
-    workspace, key, path = getfield(data, :workspace), getfield(data, :items)[index], getfield(data, :path)
-    value = item_data(only(materialize_items(workspace, [key])))
+    workspace, item, path = getfield(data, :workspace), getfield(data, :items)[index], getfield(data, :path)
+    item = workspace === nothing ? item : only(materialize_items(workspace, [item]))
+    value = item_data(item)
     for (depth, name) in enumerate(path)
         # A column of a table, or a field of any other value.
         if Tables.istable(value) && name in Tables.columnnames(Tables.columns(value))
@@ -28,7 +47,7 @@ function Base.getindex(data::ItemData, index::Int)
         elseif !Tables.istable(value) && hasproperty(value, name)
             value = getproperty(value, name)
         else
-            error("The data of item '$(id(workspace, key))' has no `$(join(path[1:depth], '.'))`")
+            error("The data of item '$(id(item))' has no `$(join(path[1:depth], '.'))`")
         end
     end
     return value
@@ -127,36 +146,56 @@ end
 
 function select(workspace::Workspace, items::Vector{ItemKey})::Selection
     wait_processed(workspace, items)
-    names = [:id, :label]
-    properties = Dict(:id => Any[id(workspace, item) for item in items],
-        :label => Any[label(workspace, item) for item in items])
-    # Each property is added the first time an item has it, so the order follows the items.
-    function put!(name::Symbol, index::Int, value)
-        haskey(properties, name) || (push!(names, name); properties[name] = Vector{Any}(missing, length(items)))
-        properties[name][index] = value
-    end
-    for (index, item) in enumerate(items)
+    levels = map(items) do item
+        joined = Pair{Symbol,String}[]
         for holder in ancestors(workspace, item)
             name, value = Symbol(label(valuetype(workspace, holder))), label(workspace, holder)
             # Nested levels of one name, such as folders, join from the top down: "72b/L/bigTLM".
             # TODO: the joining suits folders only; it joins unrelated levels of one name and skips
             # the levels between them. Let each collection type give its own value, such as the
             # folder's path relative to the source.
-            above = haskey(properties, name) ? properties[name][index] : missing
-            put!(name, index, ismissing(above) ? value : "$above/$value")
+            above = findfirst(level -> first(level) == name, joined)
+            above === nothing ? push!(joined, name => value) : (joined[above] = name => "$(last(joined[above]))/$value")
         end
+        joined
+    end
+    return Selection(ItemData(workspace, items), [id(workspace, item) for item in items],
+        [label(workspace, item) for item in items], [metadata(workspace, item) for item in items], levels)
+end
+
+"""
+    select(items) -> Selection
+
+Items that are values in memory, such as the groups of a fit, as a [`Selection`](@ref): a table
+with one row for each item. Its columns are `id`, `label`, then each metadata key, and
+`selection.data` is the data of each item.
+"""
+select(items::AbstractVector{<:AbstractDataItem})::Selection =
+    Selection(ItemData(nothing, collect(items)), id.(items), label.(items), metadata.(items))
+
+# The columns `id` and `label`, the tree levels, then each metadata key. A value that an item does
+# not have is `missing`.
+function Selection(data::ItemData, ids, labels, metadatas, levels=[Pair{Symbol,String}[] for _ in ids])
+    names = [:id, :label]
+    properties = Dict(:id => Any[ids...], :label => Any[labels...])
+    # Each property is added the first time an item has it, so the order follows the items.
+    function put!(name::Symbol, index::Int, value)
+        haskey(properties, name) || (push!(names, name); properties[name] = Vector{Any}(missing, length(ids)))
+        properties[name][index] = value
+    end
+    for (index, item_levels) in enumerate(levels), (name, value) in item_levels
+        put!(name, index, value)
     end
     # A metadata key never replaces a property named above.
     # TODO: show such a key under another name, once the user has a case for it.
     taken = Set([names; :data])
-    for (index, item) in enumerate(items)
-        values = metadata(workspace, item)
+    for (index, values) in enumerate(metadatas)
         for key in sort!(collect(keys(values)))
             key in taken || put!(key, index, values[key])
         end
     end
     columns = Tuple(identity.(properties[name]) for name in names)
-    return Selection(StructArray(NamedTuple{(names..., :data)}((columns..., ItemData(workspace, items)))))
+    return Selection(StructArray(NamedTuple{(names..., :data)}((columns..., data))))
 end
 
 """
@@ -178,8 +217,9 @@ The items of `selection` as the project made them, in the same order: the object
 """
 function items(selection::Selection)::Vector
     data = selection.data::ItemData
+    workspace, items = getfield(data, :workspace), getfield(data, :items)
     # Narrow the element type, so that methods can dispatch on the type of the items.
-    return identity.(materialize_items(getfield(data, :workspace), getfield(data, :items)))
+    return identity.(workspace === nothing ? items : materialize_items(workspace, items))
 end
 
 """
