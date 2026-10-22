@@ -24,8 +24,10 @@ item, and `:data.V` is the column `V` of each item's data.
 
     @plot mapping(:data.V, :data.I; color=:Device) * visual(Lines)
 
-The values of one item broadcast together, so this draws one point per row of each item's data,
-each with its item's device. A mapping may also be a formula of paths, computed once for each item:
+The values of one item in one layer broadcast together, so this draws one point per row of each
+item's data, each with its item's device. Each layer reads its own values, so a layer of one point
+per item can be drawn next to a layer of the items' rows. A mapping may also be a formula of paths,
+computed once for each item:
 
     @plot mapping(:gap, resistance(:data.V, :data.I)) * visual(Scatter)
 
@@ -111,27 +113,43 @@ function per_item(value, input::Symbol)
     return :(map(($(arguments...),) -> $(replaced(value)), $(map(reading, found)...)))
 end
 
-# Without `data(...)`, the declaration becomes a function of the input: each value a `mapping`
-# names becomes a column of `unnest` over the input, and the mapping names that column.
-# TODO: one table for all layers, so the values of every layer broadcast together. A layer of one
-# point per item next to a layer of the items' rows needs a table for each layer.
-function declare(declaration)
-    has_data(declaration) && return declaration
+# The layers of a declaration, each a product without `+`: `h * (a + b)` is `h * a` and `h * b`, as
+# AlgebraOfGraphics multiplies it out.
+function layers(expression)
+    Meta.isexpr(expression, :call) || return [expression]
+    operator, arguments = expression.args[1], expression.args[2:end]
+    operator === :+ && return reduce(vcat, map(layers, arguments))
+    operator === :* || return [expression]
+    return foldl((left, factor) -> [:($a * $b) for a in left for b in layers(factor)], arguments[2:end];
+        init=layers(arguments[1]))
+end
+
+# One layer as a function of the input: each value its `mapping` names becomes a column of `unnest`
+# over the input, and the mapping names that column.
+function declare_layer(layer, input::Symbol)
     values = Dict{String,Any}()
     order = String[]
-    map_mapped(declaration) do value
+    map_mapped(layer) do value
         text = source_text(value)
         haskey(values, text) || (values[text] = value; push!(order, text))
         return value
     end
-    isempty(order) && return declaration
+    isempty(order) && return layer
     # A path's column is named after its last part, unless another column has that name too.
     short(t) = path(values[t]) === nothing ? t : String(last(path(values[t])))
     names = Dict(t => Symbol(count(==(short(t)), map(short, order)) == 1 ? short(t) : lstrip(t, ':'))
         for t in order)
-    input = gensym("input")
     columns = [Expr(:kw, names[t], per_item(values[t], input)) for t in order]
-    rewritten = map_mapped(value -> QuoteNode(names[source_text(value)]), declaration)
+    rewritten = map_mapped(value -> QuoteNode(names[source_text(value)]), layer)
     table = Expr(:call, Workspace.unnest, Expr(:parameters, columns...))
-    return :($Declaration($input -> data($table) * $rewritten))
+    return :(data($table) * $rewritten)
+end
+
+# Without `data(...)`, the declaration becomes a function of the input, with a table for each layer:
+# the values of one layer broadcast together, and the layers are drawn together.
+function declare(declaration)
+    (has_data(declaration) || isempty(paths(declaration))) && return declaration
+    input = gensym("input")
+    sum = foldl((a, b) -> :($a + $b), map(layer -> declare_layer(layer, input), layers(declaration)))
+    return :($Declaration($input -> $sum))
 end

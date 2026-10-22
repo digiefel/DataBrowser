@@ -48,4 +48,8 @@ end
         visual(Scatter)
     end
     @test figure(peaks, items) isa Figure
+    # Each layer has its own table: one peak per item next to the rows of each item.
+    both = @plot mapping(:data.V, :data.I) * visual(Lines) + mapping(last(:data.V), maximum(:data.I)) * visual(Scatter)
+    axis = only(filter(c -> c isa Axis, figure(both, items).content))
+    @test length(only(filter(p -> p isa Scatter, axis.scene.plots))[1][]) == 2
 end
