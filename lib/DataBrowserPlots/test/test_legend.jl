@@ -34,6 +34,12 @@ end
         legend(merge = (:color, :linestyle), color = "$(:Chip) at $(:Site)")
     end
     @test sections(figure(plot; legend=(; position=:bottom)))[1][2][1] == "72b at L"
+    paired = lines([("72b", "L", 1.0), ("719a", "R", 3.0)])
+    plot = @plot data(paired) * mapping(:V, :I; color=:Chip, linestyle=:Site) begin
+        visual(Lines)
+        legend(merge = false)
+    end
+    @test sections(figure(plot)) == [("Chip", ["72b", "719a"]), ("Site", ["L", "R"])]
 end
 
 @testset "a legend text reads a value that no role maps, when the entry determines it" begin

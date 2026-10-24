@@ -22,7 +22,7 @@ function figure(
 )
     drawn = @timed_dbg "aog_draw" AoG.draw(drawable(specification), args...; legend=(; show=false), options...)
     get(legend, :show, true) || return drawn.figure
-    sections = legend_sections(drawn.grid, texts, get(legend, :merge, false))
+    sections = legend_sections(drawn.grid, texts, get(legend, :merge, nothing))
     isempty(sections) && return drawn.figure
     position = get(legend, :position, :right)
     settings = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
@@ -117,11 +117,12 @@ end
 combinations(section, groups) = unique([Tuple(values[aes] for aes in section)
     for (_, values) in groups if all(aes -> haskey(values, aes), section)])
 
-# The aesthetics of each legend section. Those that `merge` names share one; then sections join
-# while one of their aesthetics determines the others: while there are as many combinations of
-# their values as one of them has values.
+# The aesthetics of each legend section. With `merge = false`, each has its own. Otherwise those
+# that `merge` names share one; then sections join while one of their aesthetics determines the
+# others: while there are as many combinations of their values as one of them has values.
 function section_roles(order, groups, merge)
-    merged = merge === true ? role.(order) : merge === false ? Symbol[] : collect(merge)
+    merge === false && return [[aes] for aes in order]
+    merged = merge === true ? role.(order) : merge === nothing ? Symbol[] : collect(merge)
     for r in merged
         r in role.(order) || error("The legend merges $r, which no categorical role of the plot maps")
     end

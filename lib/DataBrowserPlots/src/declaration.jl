@@ -245,8 +245,9 @@ wafer, and `contacts.Rc` needs the fit's groups to come from roles of the entry'
 
 The other settings of a `legend` line are those of [`figure`](@ref)'s legend: `position`, `show`,
 `merge`, and those of Makie's `Legend`. `legend(merge = (:color, :linestyle))` puts those roles in
-one section, with one entry for each combination of their values that is drawn, and
-`legend(merge = true)` puts all roles in one.
+one section, with one entry for each combination of their values that is drawn,
+`legend(merge = true)` puts all roles in one, and `legend(merge = false)` gives each role a section
+of its own, also when one determines another.
 
 ## Theme
 
