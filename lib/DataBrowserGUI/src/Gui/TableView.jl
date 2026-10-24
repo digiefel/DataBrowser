@@ -107,6 +107,8 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     # values.
     built_formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
     formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
+    # The text of each cell of `table` drawn so far, by row of `table` and column.
+    texts::Dict{Tuple{Int,Int},String} = Dict{Tuple{Int,Int},String}()
     # The items that show only the row with their label.
     folded::Set{Int} = Set{Int}()
     # The columns to sort by, by name, as `(name, ascending)` pairs.
@@ -170,6 +172,7 @@ function _order!(view::TableView)::Nothing
         [findfirst(==(name), built.columns) for name in view.column_order if name in built.columns]
     view.table = table = built[1:built.rows, order]
     view.formats = view.built_formats[order]
+    empty!(view.texts)
     view.grid.sort = [(findfirst(==(name), table.columns), ascending)
                       for (name, ascending) in view.sort if name in table.columns]
     view.grid.selected_columns = [findfirst(==(name), table.columns) for name in selected if name in table.columns]
@@ -321,9 +324,17 @@ function draw!(view::TableView, ctx)::Nothing
     shown = view.shown
     grouped = view.item_column && view.group
     item(row) = table.row_item[shown[row]]
+    # The text of a cell is kept until the table changes: writing it at every frame costs memory for
+    # each cell in view.
+    texts = view.texts
     function cell(row, column)
+        key = (shown[row], column)
+        text = get(texts, key, nothing)
+        text === nothing || return text
+        # A table scrolled through from top to bottom keeps at most this many texts.
+        length(texts) >= 100_000 && empty!(texts)
         text = _number_text(table.getvalue(shown[row], column), view.formats[column])
-        return something(text, table.getcell(shown[row], column))
+        return texts[key] = something(text, table.getcell(shown[row], column))
     end
     # The cells of the data that hold a table of their own; not those of the columns `item` and of
     # the metadata.
