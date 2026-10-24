@@ -42,14 +42,11 @@ visualizer, or the value of the window when the visualizer has none.
 output(window::Window) = something(output(window.visualizer), Some(window.value))
 
 # What tells whether `input` gives another value than before: another stamp means another value.
+# Item keys are never reused, so their hash tells the items apart without building their ids.
 function stamp(input::Union{LiveSelection,FixedItems}, state::BrowserState)
     workspace = state.workspace::Workspace.Workspace
     items = itemkeys(input, state)
-    return (
-        workspace.scan.epoch,
-        [id(workspace, item) for item in items],
-        Workspace.revision(workspace, items),
-    )
+    return (workspace.scan.epoch, hash(items), Workspace.revision(workspace, items))
 end
 # A visualizer returns the same object until its output changes.
 stamp(input::WindowOutput, state::BrowserState) = objectid(output(source(input, state)))
