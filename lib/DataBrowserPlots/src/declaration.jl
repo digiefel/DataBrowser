@@ -163,6 +163,10 @@ drawn twice:
 The name holds the fit's result, which has its own data: a line that draws it keeps the
 result's mapping.
 
+[`@invisible`](@ref) before a line keeps the line in the plot without drawing it:
+
+    @invisible contacts * visual(Scatter; markersize=4)
+
 ## Scales and legend
 
 A `scales` line sets the scale of a role: the look of each value, the order of the values and
@@ -193,6 +197,8 @@ one section, with one entry for each combination of their values that is drawn, 
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
     lines = filter(line -> !(line isa LineNumberNode), block.args)
+    invisible = [Meta.isexpr(line, :macrocall) && line.args[1] === Symbol("@invisible") for line in lines]
+    lines = [hidden ? last(line.args) : line for (line, hidden) in zip(lines, invisible)]
     statements = filter(line -> Meta.isexpr(line, :(=)), lines)
     names = Symbol[first(statement.args) for statement in statements]
     settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend), lines)
@@ -201,10 +207,21 @@ macro plot(header, block)
     statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))
         for (name, value) in (statement.args for statement in statements)]
     uses(block, :fit) && pushfirst!(statements, :(fit = $Fit))
-    drawn = [:($inherit($header, $line)) for line in lines if !Meta.isexpr(line, :(=)) && !(line in settings)]
+    drawn = [:($inherit($header, $line)) for (line, hidden) in zip(lines, invisible)
+        if !hidden && !Meta.isexpr(line, :(=)) && !(line in settings)]
     # `a + b + c`, not `+(a, b, c)`: AoG adds two layers at a time and has no `+` of one layer.
     declaration = isempty(drawn) ? header : foldl((a, b) -> :($a + $b), drawn)
     return esc(declare(declaration, statements; input, settings=declare_settings(settings, header, names, input)))
+end
+
+"""
+    @invisible line
+
+Keeps a line of a [`@plot`](@ref) block in the plot without drawing it. Remove `@invisible` to draw
+the line again.
+"""
+macro invisible(line)
+    error("@invisible marks a line of a @plot block, such as `@invisible visual(Scatter)`")
 end
 
 macro plot(declaration)

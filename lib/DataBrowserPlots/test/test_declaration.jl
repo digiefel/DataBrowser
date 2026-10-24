@@ -12,3 +12,14 @@ plotted(drawn, type) = [p for p in only(filter(c -> c isa Axis, drawn.content)).
     @test length(plotted(drawn, Lines)) == 2
     @test last.(only(plotted(drawn, Scatter))[1][]) == [0.0, -1.0, 0.0, -1.0]
 end
+
+@testset "@invisible keeps a line without drawing it" begin
+    rows = [(V=v, I=v) for v in (0.0, 1.0)]
+    plot = @plot data(rows) * mapping(:V, :I) begin
+        visual(Lines)
+        @invisible visual(Scatter)
+    end
+    drawn = figure(plot)
+    @test length(plotted(drawn, Lines)) == 1
+    @test isempty(plotted(drawn, Scatter))
+end

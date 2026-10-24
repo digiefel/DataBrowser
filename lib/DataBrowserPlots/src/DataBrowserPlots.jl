@@ -40,7 +40,7 @@ function figure end
 include("fitting.jl")
 include("declaration.jl")
 
-export figure, @plot
+export figure, @plot, @invisible
 
 """Create the figure of a registered plot for `selection`."""
 function setup_plot(
