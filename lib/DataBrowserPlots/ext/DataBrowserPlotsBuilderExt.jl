@@ -330,6 +330,16 @@ end
 # The name of a value of a call, as the panel shows it: x, y and z for the positions of `mapping`.
 entry_name(name::Int) = name <= 3 ? ("x", "y", "z")[name] : string(name)
 entry_name(name::Symbol) = String(name)
+# The name of a value from the name the panel shows: a position for x, y and z.
+entry_key(name::String) = something(findfirst(==(name), ("x", "y", "z")), Symbol(name))
+
+# The names the "+" of a mapping offers: the next position, then the named mappings from `names`
+# that `present` lacks.
+# TODO: z, for the plot types that draw in three dimensions.
+function mapping_offers(present, names)::Vector{String}
+    positions = count(name -> name isa Int, present)
+    return [positions < 2 ? [entry_name(positions + 1)] : String[]; sort(String.(setdiff(names, present)))]
+end
 
 # The named mappings of the layout, which every plot type takes.
 const LAYOUT = [:layout, :row, :col, :group]
@@ -352,6 +362,17 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
     found = call === nothing ? nothing : findfirst(entry -> entry.name == name, call.entries)
     if found !== nothing
         edit!(code, call.entries[found].value, text)
+    elseif call !== nothing && name isa Int
+        # A position goes after the last position, or first, before the named values.
+        positions = filter(entry -> entry.name isa Int, call.entries)
+        if isempty(positions)
+            open = findnext('(', code.text, first(call.range))
+            next = findnext(!isspace, code.text, open + 1)
+            edit!(code, open+1:open, isempty(call.entries) || code.text[next] == ';' ? text : "$text, ")
+        else
+            after = last(positions[end].range)
+            edit!(code, after+1:after, ", $text")
+        end
     elseif call !== nothing && isempty(call.entries) && code.text[first(call.range)] == '('
         # An empty named tuple, `(;)`.
         edit!(code, call.range, "(; $name=$text)")
@@ -363,7 +384,7 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
         edit!(code, after+1:after, "$(named ? ", " : "; ")$name=$text")
     elseif target[1] === :mapping
         start = first(plot.lines[target[2]].range)
-        edit!(code, start:start-1, "mapping(; $name=$text) * ")
+        edit!(code, start:start-1, name isa Int ? "mapping($text) * " : "mapping(; $name=$text) * ")
     elseif target[1] === :visual
         stop = last(plot.lines[target[2]].range)
         edit!(code, stop+1:stop, " * visual(; $name=$text)")
@@ -399,31 +420,55 @@ function start_edit!(view::BuilderView, target, name, value::String)::Nothing
     return nothing
 end
 
-# The field of the value being written. Enter, or a click elsewhere, gives the text to write; Escape
-# gives up. Returns the text once the user is done, or `nothing`.
+# The field of the value being written, over the row and as large as its text, over the plot when
+# it needs to be. Enter, or a click elsewhere, gives the text to write; Ctrl-Enter starts a new
+# line; Escape gives up. Returns the text once the user is done, or `nothing`.
 function draw_field!(view::BuilderView)::Union{Nothing,String}
     edit = view.editing
+    style = unsafe_load(ig.GetStyle())
+    position = ig.GetCursorScreenPos()
+    width = ig.GetContentRegionAvail().x
+    # The row keeps its place under the field.
+    ig.Dummy((width, ig.GetFrameHeight()))
+    viewport = ig.GetWindowViewport()
+    right = unsafe_load(viewport.Pos).x + unsafe_load(viewport.Size).x - style.WindowPadding.x
+    size = with_font(() -> ig.CalcTextSize(unsafe_string(pointer(edit.buffer)) * "  "), :code)
+    ig.SetNextWindowPos(position)
+    ig.SetNextWindowSize((clamp(size.x + 2style.FramePadding.x, width, max(width, right - position.x)),
+        size.y + 2style.FramePadding.y + 4))
+    edit.focus && ig.SetNextWindowFocus()
+    ig.PushStyleVar(ig.ImGuiStyleVar_WindowPadding, (0.0f0, 0.0f0))
+    ig.PushStyleVar(ig.ImGuiStyleVar_WindowBorderSize, 0.0f0)
+    ig.Begin("##field", C_NULL, ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoSavedSettings |
+        ig.ImGuiWindowFlags_NoDocking | ig.ImGuiWindowFlags_NoMove)
+    ig.PopStyleVar(2)
     edit.focus && ig.SetKeyboardFocusHere()
     edit.focus = false
-    ig.SetNextItemWidth(-1.0f0)
-    flags = ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_AutoSelectAll
+    flags = ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_CtrlEnterForNewLine |
+        ig.ImGuiInputTextFlags_NoHorizontalScroll
     edit.problem === nothing || ig.PushStyleColor(ig.ImGuiCol_FrameBg, ig.GetColorU32(ig.ImVec4(0.45f0, 0.16f0, 0.16f0, 1.0f0)))
-    entered = with_font(() -> ig.InputText("##value", edit.buffer, length(edit.buffer), flags), :code)
+    # The field grows with its text, so it has no scroll bar.
+    ig.PushStyleVar(ig.ImGuiStyleVar_ScrollbarSize, 0.0f0)
+    entered = with_font(:code) do
+        ig.InputTextMultiline("##value", edit.buffer, length(edit.buffer), (-1.0f0, -1.0f0), flags)
+    end
+    ig.PopStyleVar()
     edit.problem === nothing || (ig.PopStyleColor(); ig.SetItemTooltip(edit.problem))
     done = entered || ig.IsItemDeactivatedAfterEdit()
-    if ig.IsKeyPressed(ig.ImGuiKey_Escape) || ig.IsItemDeactivated() && !done
+    escaped = ig.IsKeyPressed(ig.ImGuiKey_Escape) || ig.IsItemDeactivated() && !done
+    ig.End()
+    if escaped
         view.editing = nothing
     elseif done
         text = String(strip(unsafe_string(pointer(edit.buffer))))
         isempty(text) && (view.editing = nothing; return nothing)
-        # The text replaces one value of the code, so it must be one value: `1, 2` would become
-        # several.
-        expression, stop = Meta.parse(text, 1; raise=false)
-        edit.problem = Meta.isexpr(expression, (:error, :incomplete)) || stop <= ncodeunits(text) ?
-            "This is not one Julia value" :
-            Meta.isexpr(expression, :tuple) && !startswith(text, '(') ?
-            "Several values: write them in brackets, as [$text], or in parentheses" :
-            Meta.isexpr(expression, (:(=), :kw)) ? "Write only the value, without a name" : nothing
+        # Text that Julia cannot read is not written; Julia's message says why.
+        edit.problem = try
+            Meta.parse(text)
+            nothing
+        catch error
+            error isa Meta.ParseError ? error.msg : rethrow()
+        end
         edit.problem === nothing || (edit.focus = true; return nothing)
         view.editing = nothing
         return text
@@ -780,10 +825,13 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         sort!(rows; by=((entry, _),) -> entry.name isa Int ? (0, entry.name) : (1, 0))
         named_visual = [entry for entry in visual if entry.name isa Symbol]
 
+        type = plottype === nothing || !isdefined(Makie, Symbol(plottype)) ? nothing : getproperty(Makie, Symbol(plottype))
+        attributes = type isa Type && type <: Makie.AbstractPlot ? collect(Makie.attribute_names(type)) : Symbol[]
+        # The mappings the layer showed when it was last drawn; before, the settings of its plot type.
         # TODO: mappings of a named line, such as the groups of a fit.
-        offered = names === nothing ? String[] : String.(setdiff(names, [entry.name for (entry, _) in rows]))
+        offered = mapping_offers([entry.name for entry in own], something(names, union(attributes, LAYOUT)))
         name = heading!(view, "mapping", "mapping", offered; tooltip="Add a mapping to this layer")
-        name === nothing || start_edit!(view, (:mapping, index), Symbol(name), "")
+        name === nothing || start_edit!(view, (:mapping, index), entry_key(name), "")
         width = names_width([entry.name for (entry, _) in rows])
         for (entry, inherited) in rows
             skipped = inherited && names !== nothing && entry.name isa Symbol && !(entry.name in names)
@@ -792,9 +840,7 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         adding((:mapping, index), own) && offer(draw_entry!(view, (:mapping, index), view.editing.name, ""; name_width=width))
 
         ig.Dummy((0.0f0, 2.0f0))
-        type = plottype === nothing || !isdefined(Makie, Symbol(plottype)) ? nothing : getproperty(Makie, Symbol(plottype))
-        offered = type isa Type && type <: Makie.AbstractPlot ?
-            sort(String.(setdiff(collect(Makie.attribute_names(type)), [entry.name for entry in visual]))) : String[]
+        offered = sort(String.(setdiff(attributes, [entry.name for entry in visual])))
         name = heading!(view, "visual", "visual", offered; tooltip="Add a setting of the plot type")
         name === nothing || start_edit!(view, (:visual, index), Symbol(name), "")
         width = names_width([entry.name for entry in named_visual])
@@ -845,9 +891,10 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
 
     if plot.mapping !== nothing
         section("mapping") do
-            offered = known ? String.(setdiff(union(view.mappings..., LAYOUT), [entry.name for entry in header])) : String[]
+            names = known ? union(view.mappings..., LAYOUT) : LAYOUT
+            offered = mapping_offers([entry.name for entry in header], names)
             name = heading!(view, "mapping", "mapping", offered; tooltip="Add a mapping to every layer")
-            name === nothing || start_edit!(view, (:mapping, 0), Symbol(name), "")
+            name === nothing || start_edit!(view, (:mapping, 0), entry_key(name), "")
             width = names_width([entry.name for entry in header])
             for entry in header
                 offer(draw_entry!(view, (:mapping, 0), entry.name, text(entry.value); name_width=width, unused=unused(entry.name)))
