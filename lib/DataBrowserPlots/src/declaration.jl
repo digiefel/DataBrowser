@@ -543,9 +543,10 @@ function positions_named(expression)
         values = sort([(position(name)[2], name, value) for (name, value) in named
             if position(name) !== nothing && position(name)[1] == index])
         isempty(values) && continue
-        index <= length(slots) && slots[index] !== nothing && error("`mapping` has $(values[1][2]) twice: as a position and by name")
+        # A position written by place is the first value, such as y in `mapping(:gap, :R; y2=:R2)`.
+        index <= length(slots) && slots[index] !== nothing && pushfirst!(values, (1, :place, slots[index]))
         numbers = first.(values)
-        allunique(numbers) || error("`mapping` names the same position twice, such as y and y1")
+        allunique(numbers) || error("`mapping` has the same position twice, such as y and y1, or y by place and by name")
         index != 2 && length(values) > 1 && error("`mapping` takes several values of y, but not yet of $(("x", "y", "z")[index])")
         append!(slots, fill(nothing, max(0, index - length(slots))))
         slots[index] = length(values) == 1 ? values[1][3] : Expr(:vect, last.(values)...)

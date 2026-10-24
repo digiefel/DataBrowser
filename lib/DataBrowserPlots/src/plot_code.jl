@@ -130,6 +130,11 @@ end
 is_call(node::SyntaxNode, name::String) =
     kind(node) == K"call" && !isempty(children(node)) && sourcetext(children(node)[1]) == name
 
+# Where a value of `mapping` goes among the others: the positions, by place or named x, y and z,
+# first; then the further values of y, such as `y2`, in order; then the named mappings.
+mapping_order(name::Int) = (0, name)
+mapping_order(name::Symbol) = (found = match(r"^y(\d+)$", String(name)); found === nothing ? (2, 0) : (1, parse(Int, found[1])))
+
 # The factors of a product such as `data(t) * mapping(...) * visual(Lines)`, or the node itself.
 function factors(node::SyntaxNode)::Vector{SyntaxNode}
     product = kind(node) == K"call" && length(children(node)) >= 3 && sourcetext(children(node)[2]) == "*"
@@ -137,14 +142,15 @@ function factors(node::SyntaxNode)::Vector{SyntaxNode}
 end
 
 # The call of that name among the factors of a product, such as its `mapping(...)`. The positions
-# of `mapping` written by name, as in `mapping(; x=:gap)`, are read as positions.
+# of `mapping` written by name, as in `mapping(; x=:gap)` or `y1`, are read as positions.
 function factor_call(text::String, node::SyntaxNode, name::String)::Union{Nothing,CallCode}
     index = findfirst(factor -> is_call(factor, name), factors(node))
     index === nothing && return nothing
     call = call_code(text, factors(node)[index])
     name == "mapping" || return call
-    position(entry) = entry.name in (:x, :y, :z) ? EntryCode(findfirst(==(entry.name), (:x, :y, :z)), entry.value, entry.range) : entry
-    return CallCode(call.range, sort(map(position, call.entries); by=entry -> entry.name isa Int ? (0, entry.name) : (1, 0)))
+    index(entry) = findfirst(==(entry.name), (:x, :y, :z, :x1, :y1, :z1))
+    position(entry) = index(entry) === nothing ? entry : EntryCode(mod1(index(entry), 3), entry.value, entry.range)
+    return CallCode(call.range, sort(map(position, call.entries); by=entry -> mapping_order(entry.name)))
 end
 
 # The bytes of a node without the spaces and line breaks around it, which JuliaSyntax can count

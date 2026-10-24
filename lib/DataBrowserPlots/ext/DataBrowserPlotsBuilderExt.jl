@@ -11,7 +11,7 @@ using DataBrowserCore: Selection
 using DataBrowserGUI: CODE_COLORS, CodeFile, code_text, draw_code, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
 using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!, guarded_draw
 import DataBrowserAPI: draw!, prepare!, settings
-using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mappings
+using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mapping_order, mappings
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
 const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
 using .GLMakieExt: DARK, FigureView
@@ -385,6 +385,7 @@ function mapping_parts(text::String)::Vector{Tuple{Symbol,String}}
         text = String(strip(text[1:prevind(text, first(findlast("=>", text)))]))
     end
     column(e) = e isa QuoteNode && e.value isa Symbol ? String(e.value) :
+        Meta.isexpr(e, :call) && e.args == [:ydims] ? "ydims()" :
         Meta.isexpr(e, :.) && length(e.args) == 2 && e.args[2] isa QuoteNode && column(e.args[1]) !== nothing ?
         "$(column(e.args[1])).$(e.args[2].value)" : nothing
     name = column(expression)
@@ -399,11 +400,16 @@ entry_name(name::Symbol) = String(name)
 # The name of a value from the name the panel shows: a position for x, y and z.
 entry_key(name::String) = something(findfirst(==(name), ("x", "y", "z")), Symbol(name))
 
-# The names the "+" of a mapping offers: x and y, then the named mappings from `names`, that
-# `present` lacks.
+# The names the "+" of a mapping offers: x and y, then the y after the last one, such as `y2`, once
+# there is a y, then the named mappings from `names`, that `present` lacks.
 # TODO: z, for the plot types that draw in three dimensions.
-mapping_offers(present, names)::Vector{String} =
-    [entry_name.(setdiff([1, 2], present)); sort(String.(setdiff(names, present)))]
+function mapping_offers(present, names)::Vector{String}
+    ys = [name == 2 ? 1 : mapping_order(name)[2] for name in present if name == 2 || mapping_order(name)[1] == 1]
+    further = isempty(ys) ? String[] : ["y$(maximum(ys) + 1)"]
+    return [entry_name.(setdiff([1, 2], present)); further; sort(String.(setdiff(names, present)))]
+end
+# Whether a value of `mapping` is a position: x, y, z, or a further y such as `y2`.
+is_position(name) = mapping_order(name)[1] < 2
 
 # The named mappings of the layout, which every plot type takes.
 const LAYOUT = [:layout, :row, :col, :group]
@@ -895,11 +901,15 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
             view.picker = ListPicker()
             ig.OpenPopup("names")
         end
-        column = names_menu(view, columns(view))
+        # With several values of y, a named mapping can also show which of them a point shows.
+        calls = filter(!isnothing, [view.plot.mapping; [line.mapping for line in view.plot.lines]])
+        several = !is_position(name) && any(call -> any(entry -> mapping_order(entry.name)[1] == 1, call.entries), calls)
+        offered = several ? [columns(view); ListItem("ydims()"; section="y, y2, …")] : columns(view)
+        column = names_menu(view, offered)
         if column !== nothing
             # The column replaces the formula; the title after `=>` stays.
             title = parts === nothing ? nothing : findfirst(((kind, _),) -> kind === :title, parts)
-            text = ":$column" * (title === nothing ? "" : " => $(repr(parts[title][2]))")
+            text = (column == "ydims()" ? column : ":$column") * (title === nothing ? "" : " => $(repr(parts[title][2]))")
             change = () -> write_entry!(view.code, view.plot, target, name, text)
         end
     end
@@ -998,7 +1008,7 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         # then the named ones.
         own = entries(line.mapping)
         rows = [[(entry, true) for entry in entries(plot.mapping) if takes(line, entry.name)]; [(entry, false) for entry in own]]
-        sort!(rows; by=((entry, _),) -> entry.name isa Int ? (0, entry.name) : (1, 0))
+        sort!(rows; by=((entry, _),) -> mapping_order(entry.name))
         named_visual = [entry for entry in visual if entry.name isa Symbol]
 
         type = plottype === nothing || !isdefined(Makie, Symbol(plottype)) ? nothing : getproperty(Makie, Symbol(plottype))
@@ -1010,7 +1020,7 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         name === nothing || start_edit!(view, (:mapping, index), entry_key(name), ""; typed=false)
         width = names_width([entry.name for (entry, _) in rows])
         for (entry, inherited) in rows
-            skipped = inherited && names !== nothing && entry.name isa Symbol && !(entry.name in names)
+            skipped = inherited && names !== nothing && !is_position(entry.name) && !(entry.name in names)
             offer(draw_entry!(view, (:mapping, index), entry.name, text(entry.value); name_width=width, inherited, skipped))
         end
         adding((:mapping, index), own) && offer(draw_entry!(view, (:mapping, index), view.editing.name, ""; name_width=width))
@@ -1049,12 +1059,12 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
     # A line takes a mapping of the header that it does not set itself; a position of the line
     # replaces all of the header's positions.
     takes(line, name) = line.inherits && all(entry -> entry.name != name, entries(line.mapping)) &&
-        !(name isa Int && any(entry -> entry.name isa Int, entries(line.mapping)))
+        !(is_position(name) && any(entry -> is_position(entry.name), entries(line.mapping)))
     # The mappings each line can show, as the last drawing found them; a named line is not drawn.
     drawn_lines = [index for (index, line) in enumerate(plot.lines) if line.name === nothing]
     known = length(drawn_lines) == length(view.mappings)
     shown(index) = known && index in drawn_lines ? view.mappings[findfirst(==(index), drawn_lines)] : nothing
-    unused(name) = known && name isa Symbol && !any(drawn_lines) do index
+    unused(name) = known && !is_position(name) && !any(drawn_lines) do index
         line = plot.lines[index]
         line.invisible === nothing && takes(line, name) && name in shown(index)
     end
