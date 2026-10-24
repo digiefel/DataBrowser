@@ -10,21 +10,25 @@ struct FitTestDevice <: AbstractDataItem
     R::Float64
 end
 DataBrowserAPI.id(device::FitTestDevice) = device.name
-DataBrowserAPI.metadata(device::FitTestDevice) = Dict{Symbol,Any}(:Chip => device.chip, :gap => device.gap)
+DataBrowserAPI.metadata(device::FitTestDevice) =
+    Dict{Symbol,Any}(:Chip => device.chip, :Wafer => "W$(device.chip)", :gap => device.gap)
 DataBrowserAPI.item_data(device::FitTestDevice) = (R=[device.R],)
 
 axis(drawn) = only(filter(c -> c isa Axis, drawn.content))
 
-@testset "a fit draws one curve for each group, and its label names the group's legend entry" begin
+@testset "a fit draws one curve for each group, and the legend text reads each group's values" begin
     # Two chips with exact lines: R = 2 * 300 + 100 * gap and R = 2 * 50 + 100 * gap.
     devices = [FitTestDevice("$chip$gap", chip, gap, 2Rc + 100gap)
         for (chip, Rc) in (("A", 300), ("B", 50)) for gap in (5.0, 10.0, 20.0)]
     plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
         visual(Scatter)
-        fit(resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines; label="$(:Chip): $(round(estimate(:Rc)))")
+        contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
+        contacts * visual(Lines)
+        scales(color = (; categories = ["A" => "chip A", "B" => "chip B"]))
+        legend(color = "$(:Chip) on $(:Wafer): $(round(estimate(contacts.Rc)))")
     end
     legend = only(filter(c -> c isa Legend, figure(plot, select(devices)).content))
-    @test [entry.label[] for (_, entries) in legend.entrygroups[] for entry in entries] == ["A: 300.0", "B: 50.0"]
+    @test [entry.label[] for (_, entries) in legend.entrygroups[] for entry in entries] == ["chip A on WA: 300.0", "chip B on WB: 50.0"]
 end
 
 @testset "a named fit takes the rows of the header's own table" begin

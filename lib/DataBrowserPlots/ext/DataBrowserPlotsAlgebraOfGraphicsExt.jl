@@ -4,33 +4,168 @@ module DataBrowserPlotsAlgebraOfGraphicsExt
 import AlgebraOfGraphics as AoG
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure
-using DataBrowserPlots: EntryLabels, Labelled, Statistic, column
+using DataBrowserPlots: LegendEntry, Scaled, Statistic, column
 using DataBrowserAPI: item_data, metadata
-using DataBrowserCore: select
 
+# The legend is ours, not AoG's: roles share a section when one determines the others
+# (plans/graphics-grammar.md). `texts` are the texts of the entries in the section of a role.
 function figure(
     specification::Union{AoG.Layer, AoG.Layers, AoG.ProcessedLayer, AoG.ProcessedLayers},
     args...;
+    legend=(;),
+    texts::Vector{Pair{Symbol,Function}}=Pair{Symbol,Function}[],
     options...,
 )
-    return (@timed_dbg "aog_draw" AoG.draw(specification, args...; options...)).figure
+    drawn = @timed_dbg "aog_draw" AoG.draw(specification, args...; legend=(; show=false), options...)
+    get(legend, :show, true) || return drawn.figure
+    sections = legend_sections(drawn.grid, texts, get(legend, :merge, false))
+    isempty(sections) && return drawn.figure
+    position = get(legend, :position, :right)
+    settings = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
+    AoG.Makie.Legend(AoG.guides_position(drawn.figure, position), [s.samples for s in sections],
+        [s.texts for s in sections], [s.title for s in sections]; orientation=AoG.default_orientation(position), settings...)
+    return drawn.figure
 end
 
-# The scale of each named role whose categories a label can name.
-const ROLE_SCALES = Dict(:color => :Color, :marker => :Marker, :linestyle => :LineStyle,
-    :layout => :Layout, :col => :Col, :row => :Row)
+# The role of an aesthetic, as `mapping` names it: `:linestyle` for `AesLineStyle`.
+role(aes) = Symbol(lowercase(replace(string(nameof(aes)), r"^Aes" => "")))
 
-# The category a group's value gives in a role: the value after the role's transformation, as in
-# `:Chip => uppercase => "chip"`.
-category(value, raw) = !(value isa Pair) ? raw :
-    last(value) isa Function ? last(value)(raw) :
-    last(value) isa Pair && first(last(value)) isa Function ? first(last(value))(raw) : raw
+# The pieces of a plot, such as its scatter and its lines: the processed layers of one plot type and
+# one set of attributes.
+piece(p::AoG.ProcessedLayer) = (p.plottype, p.attributes)
+
+# The legend's sections, each as `(; samples, texts, title)`: the categorical scales' sections, then
+# one for each continuous scale, then one for the pieces with their own label.
+# TODO: legends of additional scales, such as `color=:Chip => scale(:other)`.
+function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge)
+    scales(kind) = [aes => scale for (aes, d) in pairs(AoG.legendable_scales(Val(kind),
+        kind === :categorical ? first(grid).categoricalscales : first(grid).continuousscales))
+        for (id, scale) in pairs(d) if id === nothing]
+    categorical, continuous = Dict(scales(:categorical)), scales(:continuous)
+    order = first.(scales(:categorical))
+    processed = mapreduce(entry -> entry.processedlayers, vcat, grid)
+    # Each drawn group: its piece, and the value of each categorical legend role it maps.
+    groups = map(processed) do p
+        mapping = AoG.aesthetic_mapping(p)
+        piece(p) => Dict(mapping[key] => value for (key, value) in pairs(p.primary)
+            if haskey(categorical, get(mapping, key, nothing)) && !haskey(p.scale_mapping, key))
+    end
+    for (r, _) in texts
+        r in role.(order) || error("The legend text is given for $r, which no categorical role of the plot maps")
+    end
+    # Each value's name in its scale, for every role: a text may read a role outside its section.
+    names = Dict(role(aes) => Dict{Any,String}(zip(AoG.datavalues(scale), string.(AoG.datalabels(scale))))
+        for (aes, scale) in categorical)
+    sections = map(section_roles(order, groups, merge)) do section
+        given = [text for (r, text) in texts if r in role.(section)]
+        length(given) <= 1 || error("The legend texts of $(join(role.(section), " and ")) name one section; give one")
+        categorical_section(section, categorical, groups, processed, names, isempty(given) ? nothing : only(given))
+    end
+    append!(sections, [continuous_section(aes, scale, processed) for (aes, scale) in continuous])
+    # A piece with its own `label`, as in `visual(Lines; label="model")`, has an entry of its own.
+    labelled = unique(piece, filter(p -> haskey(p.attributes, :label), processed))
+    labels = unique(p.attributes[:label] for p in labelled)
+    isempty(labels) || push!(sections, (; samples=[reduce(vcat, [AoG._legend_elements(p, AoG.MixedArguments())
+        for p in labelled if p.attributes[:label] == label]) for label in labels], texts=labels, title=nothing))
+    return sections
+end
+
+# The values of each drawn group in `section`, a vector of aesthetics: one tuple for each distinct
+# combination, from the groups that map all of them.
+combinations(section, groups) = unique([Tuple(values[aes] for aes in section)
+    for (_, values) in groups if all(aes -> haskey(values, aes), section)])
+
+# The aesthetics of each legend section. Those that `merge` names share one; then sections join
+# while one of their aesthetics determines the others: while there are as many combinations of
+# their values as one of them has values.
+function section_roles(order, groups, merge)
+    merged = merge === true ? role.(order) : merge === false ? Symbol[] : collect(merge)
+    for r in merged
+        r in role.(order) || error("The legend merges $r, which no categorical role of the plot maps")
+    end
+    sections = [[aes] for aes in order if !(length(merged) > 1 && role(aes) in merged)]
+    length(merged) > 1 && pushfirst!(sections, [aes for aes in order if role(aes) in merged])
+    function determined(section)
+        found = combinations(section, groups)
+        return !isempty(found) && length(found) == maximum(k -> length(unique(getindex.(found, k))), eachindex(section))
+    end
+    i = 1
+    while i <= length(sections)
+        j = findfirst(j -> j > i && determined([sections[i]; sections[j]]), eachindex(sections))
+        j === nothing ? (i += 1) : (append!(sections[i], sections[j]); deleteat!(sections, j))
+    end
+    return sections
+end
+
+# The section of categorical aesthetics: one entry for each combination of their values that is
+# drawn, in the order of the scales. Its text is `text(entry)`, or the values' names.
+function categorical_section(section, scales, groups, processed, names, text)
+    looks = [Dict(zip(AoG.datavalues(scales[aes]), AoG.plotvalues(scales[aes]))) for aes in section]
+    position(k, value) = findfirst(==(value), AoG.datavalues(scales[section[k]]))
+    found = sort(combinations(section, groups); by=c -> [position(k, v) for (k, v) in enumerate(c)])
+    samples = map(found) do combination
+        entry_samples(Dict(aes => looks[k][combination[k]] for (k, aes) in enumerate(section)),
+            Dict(zip(section, combination)), processed, groups)
+    end
+    texts = map(found) do combination
+        entry = LegendEntry(Dict(role(aes) => v for (aes, v) in zip(section, combination)), names)
+        text === nothing ? join((names[role(aes)][v] for (aes, v) in zip(section, combination)), ", ") : text(entry)
+    end
+    title = join(unique(string(AoG.getlabel(scales[aes])) for aes in section), ", ")
+    return (; samples, texts, title)
+end
+
+# The samples of one entry: one from each piece that drew a group with the entry's `values`, drawn
+# with the entry's `looks`, as `aesthetic => look`.
+function entry_samples(looks, values, processed, groups)
+    samples = AoG.LegendElement[]
+    for p in unique(piece, processed)
+        mapping = AoG.aesthetic_mapping(p)
+        attributes = AoG.MixedArguments()
+        for key in [collect(keys(p.primary)); collect(keys(p.named))]
+            aes = get(mapping, key, nothing)
+            haskey(looks, aes) && !haskey(p.scale_mapping, key) && insert!(attributes, key, looks[aes])
+        end
+        drew = any(groups) do (drawn_by, group)
+            drawn_by == piece(p) && all(aes -> !haskey(group, aes) || group[aes] == values[aes], keys(values))
+        end
+        isempty(attributes) || !drew || append!(samples, AoG._legend_elements(p, attributes))
+    end
+    return samples
+end
+
+# The section of a continuous scale, such as marker sizes: an entry for each of its ticks.
+function continuous_section(aes, scale, processed)
+    _, looks, labels = AoG.datavalues_plotvalues_datalabels(aes, scale)
+    samples = map(looks) do look
+        reduce(vcat, map(unique(piece, processed)) do p
+            mapping = AoG.aesthetic_mapping(p)
+            attributes = AoG.MixedArguments()
+            for key in keys(p.named)
+                get(mapping, key, nothing) === aes && insert!(attributes, key, look)
+            end
+            isempty(attributes) ? AoG.LegendElement[] : AoG._legend_elements(p, attributes)
+        end)
+    end
+    return (; samples, texts=string.(labels), title=string(AoG.getlabel(scale)))
+end
+
+# The scale of each role that `scales(...)` can set.
+const ROLE_SCALES = Dict(:x => :X, :y => :Y, :color => :Color, :marker => :Marker, :linestyle => :LineStyle,
+    :markersize => :MarkerSize, :linewidth => :LineWidth, :layout => :Layout, :col => :Col, :row => :Row)
+
+function figure(plot::Scaled, args...; options...)
+    for (r, _) in plot.scales
+        haskey(ROLE_SCALES, r) || error("scales sets the scale of a role such as color; $r is not one")
+    end
+    settings = AoG.scales(; (ROLE_SCALES[r] => value for (r, value) in plot.scales)...)
+    legend = (; plot.legend..., get(options, :legend, (;))...)
+    return figure(drawable(plot.layers), settings, args...; options..., texts=plot.texts, legend)
+end
 
 function Base.:*(statistic::Statistic, layer::AoG.Layer)
     layer.transformation isa AoG.Visual ||
         error("A fit is drawn with a visual, such as `contacts * visual(Lines)`")
-    attributes = layer.transformation.attributes
-    label = get(attributes, :label, nothing)
     # The curve of each group, on the columns of x and y, with the group's value in each role.
     x, y = column.(statistic.positional)
     # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
@@ -49,47 +184,16 @@ function Base.:*(statistic::Statistic, layer::AoG.Layer)
     end
     table = NamedTuple{Tuple(keys(columns))}(Tuple(identity.(values(columns))))
     mapping = AoG.mapping(statistic.positional...; (role => value for (role, value, _) in roles)...)
-    categories = Dict{Symbol,Vector{Pair{Any,Any}}}()
-    if label isa EntryLabels
-        named = [(role, value, c) for (role, value, c) in roles if haskey(ROLE_SCALES, role)]
-        length(unique(r -> r[3], named)) == 1 || error("A label names the legend entry of each group, so " *
-            "the groups must come from one column in a role such as `color`")
-        texts = label.labels(select(statistic.groups))
-        for (role, value, c) in named
-            categories[ROLE_SCALES[role]] = [category(value, metadata(group)[c]) => text
-                for (group, text) in zip(statistic.groups, texts)]
-        end
-        layer = AoG.visual(plottype; (k => v for (k, v) in pairs(attributes) if k !== :label)...)
-    end
-    return Labelled(AoG.data(table) * mapping * layer, categories)
+    return AoG.data(table) * mapping * layer
 end
 
 # A statistic without a visual is drawn with its own.
-labelled(statistic::Statistic) = statistic * AoG.visual(getproperty(AoG.Makie, statistic.plottype))
-labelled(plot::Labelled) = plot
-labelled(layers::AoG.AbstractAlgebraic) = Labelled(layers, Dict{Symbol,Vector{Pair{Any,Any}}}())
+drawable(statistic::Statistic) = statistic * AoG.visual(getproperty(AoG.Makie, statistic.plottype))
+drawable(layers) = layers
 
-# Several statistics may label one category: their labels join, one on each line.
-function Base.:+(a::Union{Labelled,Statistic}, b::Union{Labelled,Statistic,AoG.AbstractAlgebraic})
-    a, b = labelled(a), labelled(b)
-    categories = copy(a.categories)
-    for (scale, pairs) in b.categories
-        existing = copy(get(categories, scale, Pair{Any,Any}[]))
-        for (key, text) in pairs
-            index = findfirst(p -> first(p) == key, existing)
-            index === nothing ? push!(existing, key => text) : (existing[index] = key => "$(last(existing[index]))\n$text")
-        end
-        categories[scale] = existing
-    end
-    return Labelled(a.layers + b.layers, categories)
-end
-Base.:+(a::AoG.AbstractAlgebraic, b::Union{Labelled,Statistic}) = labelled(a) + b
+Base.:+(a::Statistic, b::Union{Statistic,AoG.AbstractAlgebraic}) = drawable(a) + drawable(b)
+Base.:+(a::AoG.AbstractAlgebraic, b::Statistic) = a + drawable(b)
 
-figure(statistic::Statistic, args...; options...) = figure(labelled(statistic), args...; options...)
-function figure(plot::Labelled, args...; options...)
-    isempty(plot.categories) && return figure(plot.layers, args...; options...)
-    scales = AoG.scales(; (scale => (; categories=pairs) for (scale, pairs) in plot.categories)...)
-    return figure(plot.layers, scales, args...; options...)
-end
+figure(statistic::Statistic, args...; options...) = figure(drawable(statistic), args...; options...)
 
 end

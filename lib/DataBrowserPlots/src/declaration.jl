@@ -12,19 +12,71 @@ figure(declaration::Declaration, input, args...; options...) =
     figure(Base.invokelatest(declaration.layers, input), args...; options...)
 
 """
-A plot whose legend entries have their own labels, as a `label` in the visual of a
-[`Statistic`](@ref) gives them. Draw it with `figure(plot)`.
+Layers with the plot's own scales and legend texts, as the `scales(...)` and `legend(...)` lines
+of [`@plot`](@ref) give them. Draw it with `figure(plot)`.
 """
-struct Labelled
+struct Scaled
     layers::Any
-    # For each scale, such as `:Color`, its categories with their labels.
-    categories::Dict{Symbol,Vector{Pair{Any,Any}}}
+    # Each role's scale settings, such as `:color => (; categories=["72b", "719a"])`.
+    scales::Vector{Pair{Symbol,Any}}
+    # The text of each entry in the section that holds a role: `:color => entry -> text`.
+    texts::Vector{Pair{Symbol,Function}}
+    # The legend's settings, such as `merge` and `position`.
+    legend::NamedTuple
 end
 
-# The label of each group's legend entry: `labels(selection)` gives one label for each group of a
-# statistic, as a `Selection`.
-struct EntryLabels
-    labels::Function
+# The roles whose values a legend explains, and whose section a legend text names.
+const LEGEND_ROLES = (:color, :marker, :linestyle, :markersize, :linewidth)
+
+"""
+One entry of a legend: the values of the roles in its section, as `role => value`, and the name of
+each value of each role in its scale, as `role => (value => name)`.
+"""
+struct LegendEntry
+    values::Dict{Symbol,Any}
+    names::Dict{Symbol,Dict{Any,String}}
+end
+
+describe(entry::LegendEntry) = join(("$role = $value" for (role, value) in entry.values), ", ")
+
+"""
+The values of the header that legend texts read: a table with a column for each of the header's
+roles and for each path a text reads, and the roles, as `role => value` of the header's mapping
+with each value naming its column.
+"""
+struct LegendRows
+    table::NamedTuple
+    roles::Vector{Pair{Symbol,Any}}
+end
+
+# The value of `name`, a column of the rows, that the entry determines: the one value of the rows
+# whose roles have the entry's values. A value of a role shows as its scale names it.
+function entry_text(entry::LegendEntry, rows::LegendRows, name::Symbol)::String
+    table = rows.table
+    shown = [role => value for (role, value) in rows.roles if column(value) === name]
+    value_in(row) = isempty(shown) ? table[name][row] : category(last(first(shown)), table[name][row])
+    entry_rows = filter(eachindex(table[name])) do row
+        all(((role, value),) -> !haskey(entry.values, role) || category(value, table[column(value)][row]) == entry.values[role],
+            rows.roles)
+    end
+    found = unique(value_in.(entry_rows))
+    length(found) == 1 || error("The legend entry $(describe(entry)) has $(length(found)) values of $name; " *
+        "its text can read only a value that the entry determines")
+    value = only(found)
+    names = isempty(shown) ? Dict{Any,String}() : get(entry.names, first(first(shown)), Dict{Any,String}())
+    return get(names, value, string(value))
+end
+
+# The metadata of the one group of `statistic` that the legend entry determines: the group whose
+# values in the entry's roles are the entry's values.
+function entry_values(statistic::Statistic, entry::LegendEntry)::NamedTuple
+    matches(group) = all(statistic.named) do (role, value)
+        !haskey(entry.values, role) || category(value, metadata(group)[column(value)]) == entry.values[role]
+    end
+    found = filter(matches, statistic.groups)
+    length(found) == 1 || error("The legend entry $(describe(entry)) matches $(length(found)) groups of a " *
+        "statistic; its text can read only a value that the entry determines")
+    return (; metadata(only(found))...)
 end
 
 """
@@ -75,7 +127,7 @@ the items the plot is drawn for.
 
     @plot mapping(:gap, R(:data.V, :data.I); color=:Chip) begin
         visual(Scatter)
-        fit(resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines; label="\$(:Chip): Rc = \$(:Rc) Ω")
+        fit(resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines)
     end
 
 The curve is a function of x with its parameters as keywords, and `fit` takes the curve and a
@@ -88,28 +140,54 @@ items whose points it fits. `fit(...; xlim=(0, 25))` draws the curve over that r
 of over the fitted points. With `data(table)` in the header, `fit` takes the rows of that table.
 
 The visual draws the fit on the axes of the points and in the roles of its group, so the group's
-legend entry shows its points and its curve. Without a visual, a fit is drawn with `Lines`. A
-`label` in the visual names each group's legend entry, and its paths read the values of that
-group's fit.
+legend entry shows its points and its curve. Without a visual, a fit is drawn with `Lines`.
 
-A line `name = value` gives a name to a value for the lines after it, such as a fit drawn twice:
+A line `name = value` gives a name to a value for the other lines, such as a fit drawn twice:
 
     contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
-    contacts * visual(Lines; label="Rc = \$(:Rc)")
+    contacts * visual(Lines)
     contacts * visual(Scatter; markersize=4)
 
 A line that uses a name, or that calls `fit`, is not multiplied by the header: the fit already
 holds what the header maps.
+
+## Scales and legend
+
+A `scales` line sets the scale of a role: the look of each value, the order of the values and
+their names, as AlgebraOfGraphics' `scales` takes them.
+
+    scales(color = (; categories = ["719a" => "Chip 719a", "72b" => "Chip 72b"]))
+
+The legend has a section for each role, such as `color`. Roles share a section when one of them
+determines the others, that is, when each of its values is drawn with the same values of the
+others: one entry then shows a chip's color and its site's line style. Each entry is named after
+its values, by their names in the scales.
+
+A `legend` line sets the text of each entry in the section that holds a role. A path in the text
+reads the header's value for the entry, as the header reads it: a metadata value of the entry's
+items, or a column of the header's data. A value that a role maps shows by its name in the scale.
+A name of the block reads the value of that statistic for the entry's group:
+
+    legend(color = "\$(:Chip) on \$(:Wafer): Rc = \$(contacts.Rc) Ω")
+
+The text reads only values that the entry determines: `:Wafer` needs each chip to be on one
+wafer, and `contacts.Rc` needs the fit's groups to come from roles of the entry's section.
+
+The other settings of a `legend` line are those of [`figure`](@ref)'s legend: `position`, `show`,
+`merge`, and those of Makie's `Legend`. `legend(merge = (:color, :linestyle))` puts those roles in
+one section, with one entry for each combination of their values that is drawn, and
+`legend(merge = true)` puts all roles in one.
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
     lines = filter(line -> !(line isa LineNumberNode), block.args)
     statements = filter(line -> Meta.isexpr(line, :(=)), lines)
     names = Symbol[first(statement.args) for statement in statements]
+    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend), lines)
     # A line that draws a fit, or its own data, stands alone: the header's values would add to its own.
-    drawn = map(filter(line -> !Meta.isexpr(line, :(=)), lines)) do line
+    drawn = map(filter(line -> !Meta.isexpr(line, :(=)) && !(line in settings), lines)) do line
         draws_fit = find_call(line, :fit) !== nothing || any(name -> uses(line, name), names)
-        draws_fit ? entry_labels(line) : has_data(line) ? line : :($header * $line)
+        draws_fit || has_data(line) ? line : :($header * $line)
     end
     # `a + b + c`, not `+(a, b, c)`: AoG adds two layers at a time and has no `+` of one layer.
     declaration = isempty(drawn) ? header : foldl((a, b) -> :($a + $b), drawn)
@@ -117,7 +195,7 @@ macro plot(header, block)
     if uses(block, :fit)
         pushfirst!(statements, :(fit = $(define_fit(header, input))))
     end
-    return esc(declare(declaration, statements; input))
+    return esc(declare(declaration, statements; input, settings=declare_settings(settings, header, names, input)))
 end
 
 macro plot(declaration)
@@ -134,8 +212,9 @@ function path(expression)::Union{Nothing,Vector{Symbol}}
     return nothing
 end
 
-# The paths in an expression, outermost first.
+# The paths in an expression, outermost first. The field of `x.name` is a name, not a path.
 paths(expression)::Vector{Vector{Symbol}} = path(expression) !== nothing ? [path(expression)] :
+    Meta.isexpr(expression, :., 2) && expression.args[2] isa QuoteNode ? paths(expression.args[1]) :
     expression isa Expr ? unique(reduce(vcat, map(paths, expression.args); init=Vector{Symbol}[])) : Vector{Symbol}[]
 
 has_data(expression) = Meta.isexpr(expression, :call) && expression.args[1] === :data ||
@@ -227,11 +306,72 @@ function declare_layer(layer, input::Symbol)
 end
 
 # The layers of a declaration, each with its own table, after the `statements`, which define names
-# for them. The result is a function of the input when a layer or a statement reads it.
-function declare(declaration, statements=Expr[]; input::Symbol=gensym("input"))
+# for them. The result is a function of the input when a layer or a statement reads it. `settings`
+# are the statements and the arguments of `Scaled` that the scales and legend lines give, or `nothing`.
+function declare(declaration, statements=Expr[]; input::Symbol=gensym("input"), settings=nothing)
     drawn = foldl((a, b) -> :($a + $b), map(layer -> declare_layer(layer, input), layers(declaration)))
+    if settings !== nothing
+        statements = [statements; settings.statements]
+        drawn = :($Scaled($drawn, $(settings.arguments...)))
+    end
     body = isempty(statements) ? drawn : Expr(:let, Expr(:block), Expr(:block, statements..., drawn))
     return uses(body, input) ? :($Declaration($input -> $body)) : body
+end
+
+# The `scales(...)` and `legend(...)` lines as the arguments of `Scaled` after its layers, and the
+# statements they need, or `nothing` if there are none. A legend text becomes a function of a
+# `LegendEntry`: a path reads the entry's value in the rows of the header, and a name of the block
+# reads that value for the entry's group.
+function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol)
+    isempty(settings) && return nothing
+    scales, templates, legend = Expr[], Pair{Symbol,Any}[], Expr[]
+    for line in settings, (key, value) in last(call_arguments(line))
+        line.args[1] === :scales ? push!(scales, :($(QuoteNode(key)) => $value)) :
+        key in LEGEND_ROLES ? push!(templates, key => value) : push!(legend, Expr(:kw, key, value))
+    end
+    # The paths the texts read, each as a column of the rows of the header.
+    read = Dict{String,Any}()
+    for (_, template) in templates
+        replace_reads(template, names; onpath=p -> (read[source_text(p)] = p), onname=identity)
+    end
+    statements, entry, rows = Expr[], gensym("entry"), gensym("rows")
+    if !isempty(read)
+        call = find_call(header, :mapping)
+        mapped = call === nothing ? Pair{Symbol,Any}[] : last(call_arguments(call))
+        reads = collect(values(read))
+        has_data(header) && any(p -> length(path(p)) > 1, reads) &&
+            error("A legend text of a plot of data(...) reads its columns by name, such as :Wafer")
+        table, rewritten = header_table(Expr(:call, :mapping,
+            Expr(:parameters, (Expr(:kw, role, value) for (role, value) in mapped)...), reads...), header, input)
+        columns, roles = call_arguments(rewritten)
+        column_of = Dict(source_text(p) => c for (p, c) in zip(reads, columns))
+        push!(statements, :($rows = $LegendRows($Tables.columntable($table),
+            Pair{Symbol,Any}[$((:($(QuoteNode(role)) => $value) for (role, value) in roles)...)])))
+    end
+    texts = map(templates) do (role, template)
+        text = replace_reads(template, names; onpath=p -> :($entry_text($entry, $rows, $(column_of[source_text(p)]))),
+            onname=name -> :($entry_values($name, $entry)))
+        :($(QuoteNode(role)) => ($entry -> string($text)))
+    end
+    return (; statements, arguments=(:(Pair{Symbol,Any}[$(scales...)]), :(Pair{Symbol,Function}[$(texts...)]),
+        Expr(:tuple, Expr(:parameters, legend...))))
+end
+
+# A legend text with each path `p` replaced by `onpath(p)` and each name of the block by
+# `onname(name)`. The field of `contacts.Rc` is a name, not a path.
+function replace_reads(template, names::Vector{Symbol}; onpath, onname)
+    replaced(e) = path(e) !== nothing ? onpath(e) :
+        e isa Symbol && e in names ? onname(e) :
+        Meta.isexpr(e, :., 2) && e.args[2] isa QuoteNode ? Expr(:., replaced(e.args[1]), e.args[2]) :
+        e isa Expr ? Expr(e.head, map(replaced, e.args)...) : e
+    return replaced(template)
+end
+
+# The table of the values that `call`, a mapping of the header, names, and `call` with each value
+# replaced by the name of its column: the header's own data, or the rows of each item of the input.
+function header_table(call, header, input::Symbol)
+    has_data(header) && return find_call(header, :data).args[2], call
+    return tabulate(call, value -> per_item(value, input))
 end
 
 # The first call of `name` in an expression, such as `mapping(...)`, or `nothing`.
@@ -265,24 +405,6 @@ end
 replace_call(expression, call, new) = expression === call ? new :
     expression isa Expr ? Expr(expression.head, map(e -> replace_call(e, call, new), expression.args)...) : expression
 
-# The line with the `label` of its `visual` read for each group of a statistic, when the label
-# holds paths: `"Rc = \$(:Rc)"` gives one label for each group.
-function entry_labels(line)
-    call = find_call(line, :visual)
-    call === nothing && return line
-    _, named = call_arguments(call)
-    index = findfirst(((name, value),) -> name === :label && !isempty(paths(value)), named)
-    index === nothing && return line
-    selection = gensym("selection")
-    labels = :($EntryLabels($selection -> $(per_item(last(named[index]), selection))))
-    arguments = map(call.args) do a
-        Meta.isexpr(a, :kw) && a.args[1] === :label ? Expr(:kw, :label, labels) :
-        Meta.isexpr(a, :parameters) ? Expr(:parameters, (Meta.isexpr(b, :kw) && b.args[1] === :label ?
-            Expr(:kw, :label, labels) : b for b in a.args)...) : a
-    end
-    return replace_call(line, call, Expr(:call, arguments...))
-end
-
 uses(expression, name::Symbol) = expression === name ||
     expression isa Expr && any(e -> uses(e, name), expression.args)
 
@@ -293,11 +415,10 @@ function define_fit(header, input::Symbol)
     call = find_call(header, :mapping)
     call === nothing && return :((_...; _...) -> error("fit needs a header that maps x and y, such as mapping(:x, :y)"))
     item = gensym("item")
+    table, rewritten = header_table(call, header, input)
     if has_data(header)
-        table, rewritten = find_call(header, :data).args[2], call
         members = :(NamedTuple())
     else
-        table, rewritten = tabulate(call, value -> per_item(value, input))
         push!(table.args[2].args, Expr(:kw, item, :($input.id)))
         members = :((; members=$(Workspace.items)($input), item=$(QuoteNode(item))))
     end

@@ -9,7 +9,7 @@ GLMakie, and are part of the browser once GLMakie is loaded: `using DataBrowser,
 module DataBrowserPlots
 
 import DataBrowserAPI: @timed_dbg
-using DataBrowserAPI: AbstractDataItem, id
+using DataBrowserAPI: AbstractDataItem, id, metadata
 import DataBrowserCore.Workspace
 using DataBrowserCore: Group, Selection
 import ForwardDiff
@@ -24,8 +24,14 @@ include("plots.jl")
 
 Draw an AlgebraOfGraphics declaration, such as one written with [`@plot`](@ref), and return its
 Makie `Figure`. `specification` may be an AoG layer, a composition of layers, or processed layers.
-Optional scales and the `axis`, `figure`, `facet`, `legend`, and `colorbar` settings are passed to
-AoG's `draw`.
+Optional scales and the `axis`, `figure`, `facet` and `colorbar` settings are passed to AoG's
+`draw`.
+
+The legend has a section for each categorical role, such as `color`; roles share a section when one
+of them determines the others. The `legend` settings are `position` (`:right`, `:left`, `:top` or
+`:bottom`), `show`, `merge`, and those of Makie's `Legend`. `merge = (:color, :linestyle)` puts
+those roles in one section, with one entry for each combination of their values that is drawn, and
+`merge = true` puts all roles in one.
 
 Load AlgebraOfGraphics, and a Makie backend such as GLMakie or CairoMakie to display or save the
 figure. This works with ordinary Julia data and needs no workspace.

@@ -69,8 +69,7 @@ as [`@plot`](@ref)'s `fit` gives them. It is a vector of those groups.
 
 Multiply it by a `visual` to draw it: its data is drawn on the axes of the points, in the named
 roles of their groups, such as `color`, so that it shares their legend entries. Alone, it is drawn
-with its own visual, `Lines` for a fit. A `label` in the visual names each group's legend entry,
-and its paths read that group's values: `visual(Lines; label="Rc = \$(:Rc)")`.
+with its own visual, `Lines` for a fit.
 """
 struct Statistic <: AbstractVector{Group}
     groups::Vector{Group}
@@ -86,6 +85,12 @@ Base.getindex(statistic::Statistic, index::Int) = statistic.groups[index]
 
 # The column a value of `mapping` names: `:R` in `:R`, in `:R => "R (Ω)"` and in `:R => f => "R"`.
 column(value) = value isa Pair ? column(first(value)) : value
+
+# The category a group's value gives in a role: the value after the role's transformation, as in
+# `:Chip => uppercase => "chip"`.
+category(value, raw) = !(value isa Pair) ? raw :
+    last(value) isa Function ? last(value)(raw) :
+    last(value) isa Pair && first(last(value)) isa Function ? first(last(value))(raw) : raw
 
 # Fit `curve` to the points of `table`, whose columns `positional` maps to x and y, once for each
 # group of the categorical roles in `named`. A role of numbers, such as a continuous color, does
