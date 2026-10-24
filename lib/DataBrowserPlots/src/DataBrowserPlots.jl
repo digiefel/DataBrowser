@@ -39,6 +39,7 @@ figure. This works with ordinary Julia data and needs no workspace.
 function figure end
 include("fitting.jl")
 include("declaration.jl")
+include("plot_code.jl")
 
 export figure, @plot, @invisible
 

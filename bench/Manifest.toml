@@ -544,7 +544,7 @@ uuid = "d1e2f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f6a"
 version = "0.1.0"
 
 [[deps.DataBrowserGUI]]
-deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserCache", "DataBrowserCore", "GLFW", "ModernGL", "NativeFileDialog", "Printf", "TOML", "Tables", "TimerOutputs", "Zlib_jll"]
+deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserCache", "DataBrowserCore", "GLFW", "JuliaSyntax", "ModernGL", "NativeFileDialog", "Printf", "TOML", "Tables", "TimerOutputs", "Zlib_jll"]
 path = "../lib/DataBrowserGUI"
 uuid = "f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"
 version = "0.1.0"
@@ -1385,6 +1385,12 @@ git-tree-sha1 = "c3d401f110454b4ea24a76be33f6ee0d7d385103"
 registries = "General"
 uuid = "aa1ae85d-cabe-5617-a682-6adf51b2e16a"
 version = "0.11.4"
+
+[[deps.JuliaSyntax]]
+git-tree-sha1 = "0d4b3dab95018bcf3925204475693d9f09dc45b8"
+registries = "General"
+uuid = "70703baa-626e-46a2-a12c-08ffd08c73b4"
+version = "1.0.2"
 
 [[deps.JuliaSyntaxHighlighting]]
 deps = ["StyledStrings"]

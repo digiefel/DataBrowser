@@ -1,3 +1,5 @@
+import JuliaSyntax
+
 """
     CodeFile(path)
 
@@ -7,6 +9,7 @@ the file, or `""` while the code has none.
 `code.text` is the code in the window, and `code.saved` the code as last read from or written to
 the file. [`load!`](@ref) reads the file, [`save!`](@ref) writes the code to it, and
 [`edit!`](@ref) replaces one part of the code and leaves the rest as the user wrote it.
+[`syntax`](@ref) gives the parts of the code with their place in it.
 [`isunsaved`](@ref) and [`ischanged_on_disk`](@ref) tell whether the window or the file has changes
 that the other does not have.
 """
@@ -74,3 +77,12 @@ Whether another editor changed the file since it was last read or written.
 """
 ischanged_on_disk(code::CodeFile)::Bool = !isempty(code.path) && isfile(code.path) && mtime(code.path) != code.mtime
 
+"""
+    syntax(code::CodeFile) -> JuliaSyntax.SyntaxNode
+
+The syntax tree of the code. Each node knows its bytes in the code, `JuliaSyntax.byte_range(node)`,
+which [`edit!`](@ref) takes. A part with an error, such as code the user is still typing, is a node
+of kind `error`, and the rest of the code is read as usual.
+"""
+syntax(code::CodeFile)::JuliaSyntax.SyntaxNode =
+    JuliaSyntax.parseall(JuliaSyntax.SyntaxNode, code.text; ignore_errors=true)
