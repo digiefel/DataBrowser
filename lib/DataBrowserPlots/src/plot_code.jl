@@ -123,10 +123,15 @@ function factors(node::SyntaxNode)::Vector{SyntaxNode}
     return product ? filter(factor -> sourcetext(factor) != "*", children(node)) : [node]
 end
 
-# The call of that name among the factors of a product, such as its `mapping(...)`.
+# The call of that name among the factors of a product, such as its `mapping(...)`. The positions
+# of `mapping` written by name, as in `mapping(; x=:gap)`, are read as positions.
 function factor_call(text::String, node::SyntaxNode, name::String)::Union{Nothing,CallCode}
     index = findfirst(factor -> is_call(factor, name), factors(node))
-    return index === nothing ? nothing : call_code(text, factors(node)[index])
+    index === nothing && return nothing
+    call = call_code(text, factors(node)[index])
+    name == "mapping" || return call
+    position(entry) = entry.name in (:x, :y, :z) ? EntryCode(findfirst(==(entry.name), (:x, :y, :z)), entry.value, entry.range) : entry
+    return CallCode(call.range, sort(map(position, call.entries); by=entry -> entry.name isa Int ? (0, entry.name) : (1, 0)))
 end
 
 # The bytes of a node without the spaces and line breaks around it, which JuliaSyntax can count

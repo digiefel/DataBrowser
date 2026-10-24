@@ -104,6 +104,10 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     # The named mappings each line of the block can show, as the last drawing found them.
     mappings::Vector{Vector{Symbol}} = Vector{Symbol}[]
     editing::Union{Nothing,EntryEdit} = nothing
+    # The bytes of a formula the text box of the code selects, after a click on it in the panel, and
+    # whether the text box takes the keyboard in the next frame.
+    showing::Union{Nothing,UnitRange{Int}} = nothing
+    focus_code::Bool = false
     # The type-ahead of the open menu of names.
     picker::ListPicker = ListPicker()
     # The part of the window width the panel takes; the user drags the border.
@@ -204,6 +208,20 @@ function prepare!(view::BuilderView, selection::Selection, ctx)::Nothing
     end
     build!(view, ctx)
     return nothing
+end
+
+# Called by ImGui in each frame the text box of the code is active: selects the formula the user
+# clicked in the panel, which ImGui then scrolls to.
+function select_code(data::Ptr{ig.lib.ImGuiInputTextCallbackData})::Cint
+    view = unsafe_pointer_to_objref(unsafe_load(data.UserData))::BuilderView
+    range = view.showing
+    if range !== nothing
+        unsafe_store!(data.SelectionStart, Cint(first(range) - 1))
+        unsafe_store!(data.SelectionEnd, Cint(last(range)))
+        unsafe_store!(data.CursorPos, Cint(last(range)))
+        view.showing = nothing
+    end
+    return Cint(0)
 end
 
 # Run the code with `selection` set, and draw what it returns.
@@ -315,8 +333,13 @@ function draw!(view::BuilderView, ctx)::Nothing
         end
         ig.SetItemTooltip("Write the code to the file and draw the plot again (Ctrl+S in the code)")
     end
-    flags = ig.ImGuiInputTextFlags_AllowTabInput
-    if ig.InputTextMultiline("##code$(view.reads)", view.buffer, length(view.buffer), (-1.0f0, -1.0f0), flags)
+    flags = ig.ImGuiInputTextFlags_AllowTabInput | ig.ImGuiInputTextFlags_CallbackAlways
+    view.focus_code && ig.SetKeyboardFocusHere()
+    view.focus_code = false
+    select = @cfunction(select_code, Cint, (Ptr{ig.lib.ImGuiInputTextCallbackData},))
+    edited = GC.@preserve view ig.InputTextMultiline("##code$(view.reads)", view.buffer, length(view.buffer),
+        (-1.0f0, -1.0f0), flags, select, pointer_from_objref(view))
+    if edited
         view.code.text = unsafe_string(pointer(view.buffer))
         # Room for the next edits.
         sizeof(view.code.text) > length(view.buffer) - CODE_ROOM ÷ 4 && set_code!(view, view.code.text)
@@ -327,19 +350,39 @@ function draw!(view::BuilderView, ctx)::Nothing
     return nothing
 end
 
+# How the panel shows the value of a mapping, as parts of a kind: a `:column` by its name, such as
+# `data.V` for `:data.V`, a number or a string as `:code`, any other formula as a `:formula` tag, and
+# the title after `=>` as a `:title`.
+# TODO: controls for the simple formulas, such as a choice of the columns `string` joins.
+function mapping_parts(text::String)::Vector{Tuple{Symbol,String}}
+    expression = Meta.parse(text; raise=false)
+    title = nothing
+    if Meta.isexpr(expression, :call) && length(expression.args) == 3 && expression.args[1] === :(=>) &&
+            expression.args[3] isa String
+        title = expression.args[3]
+        expression = expression.args[2]
+    end
+    column(e) = e isa QuoteNode && e.value isa Symbol ? String(e.value) :
+        Meta.isexpr(e, :.) && length(e.args) == 2 && e.args[2] isa QuoteNode && column(e.args[1]) !== nothing ?
+        "$(column(e.args[1])).$(e.args[2].value)" : nothing
+    name = column(expression)
+    parts = name !== nothing ? [(:column, name)] : expression isa Union{Number,String} ? [(:code, repr(expression))] :
+        [(:formula, "formula")]
+    title === nothing || push!(parts, (:title, title))
+    return parts
+end
+
 # The name of a value of a call, as the panel shows it: x, y and z for the positions of `mapping`.
 entry_name(name::Int) = name <= 3 ? ("x", "y", "z")[name] : string(name)
 entry_name(name::Symbol) = String(name)
 # The name of a value from the name the panel shows: a position for x, y and z.
 entry_key(name::String) = something(findfirst(==(name), ("x", "y", "z")), Symbol(name))
 
-# The names the "+" of a mapping offers: the next position, then the named mappings from `names`
-# that `present` lacks.
+# The names the "+" of a mapping offers: x and y, then the named mappings from `names`, that
+# `present` lacks.
 # TODO: z, for the plot types that draw in three dimensions.
-function mapping_offers(present, names)::Vector{String}
-    positions = count(name -> name isa Int, present)
-    return [positions < 2 ? [entry_name(positions + 1)] : String[]; sort(String.(setdiff(names, present)))]
-end
+mapping_offers(present, names)::Vector{String} =
+    [entry_name.(setdiff([1, 2], present)); sort(String.(setdiff(names, present)))]
 
 # The named mappings of the layout, which every plot type takes.
 const LAYOUT = [:layout, :row, :col, :group]
@@ -362,29 +405,18 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
     found = call === nothing ? nothing : findfirst(entry -> entry.name == name, call.entries)
     if found !== nothing
         edit!(code, call.entries[found].value, text)
-    elseif call !== nothing && name isa Int
-        # A position goes after the last position, or first, before the named values.
-        positions = filter(entry -> entry.name isa Int, call.entries)
-        if isempty(positions)
-            open = findnext('(', code.text, first(call.range))
-            next = findnext(!isspace, code.text, open + 1)
-            edit!(code, open+1:open, isempty(call.entries) || code.text[next] == ';' ? text : "$text, ")
-        else
-            after = last(positions[end].range)
-            edit!(code, after+1:after, ", $text")
-        end
     elseif call !== nothing && isempty(call.entries) && code.text[first(call.range)] == '('
         # An empty named tuple, `(;)`.
-        edit!(code, call.range, "(; $name=$text)")
+        edit!(code, call.range, "(; $(entry_name(name))=$text)")
     elseif call !== nothing
         # After the last value, so that a call over several lines, or with a comma after its last
         # value, stays as it is written.
         named = any(entry -> entry.name isa Symbol, call.entries)
         after = isempty(call.entries) ? last(call.range) - 1 : maximum(last(entry.range) for entry in call.entries)
-        edit!(code, after+1:after, "$(named ? ", " : "; ")$name=$text")
+        edit!(code, after+1:after, "$(named ? ", " : "; ")$(entry_name(name))=$text")
     elseif target[1] === :mapping
         start = first(plot.lines[target[2]].range)
-        edit!(code, start:start-1, name isa Int ? "mapping($text) * " : "mapping(; $name=$text) * ")
+        edit!(code, start:start-1, "mapping(; $(entry_name(name))=$text) * ")
     elseif target[1] === :visual
         stop = last(plot.lines[target[2]].range)
         edit!(code, stop+1:stop, " * visual(; $name=$text)")
@@ -633,7 +665,7 @@ end
 
 # A box that shows code and acts as a button, `width` wide: filled, or only framed when `dimmed`.
 # Returns whether it was clicked, whether it was hovered, and whether the code was cut short.
-function code_box(id::String, value::String, width::Float32; dimmed::Bool=false, glyph=nothing)
+function code_box(id::String, value::String, width::Float32; dimmed::Bool=false, glyph=nothing, parts=nothing)
     style = unsafe_load(ig.GetStyle())
     position = ig.GetCursorScreenPos()
     height = ig.GetFrameHeight()
@@ -660,11 +692,42 @@ function code_box(id::String, value::String, width::Float32; dimmed::Bool=false,
             draw_linestyle(draw_list, left, left + 20, middle, symbol, color)
         offset = name === :marker ? 16.0f0 : 26.0f0
     end
-    # A value written over several lines of code shows on one.
-    shown = replace(value, r"\s+" => " ")
-    clipped = with_font(:code) do
-        draw_code(draw_list, ig.ImVec2(left + offset, position.y + style.FramePadding.y), shown,
-            width - 2style.FramePadding.x - offset; alpha)
+    top = position.y + style.FramePadding.y
+    room = width - 2style.FramePadding.x - offset
+    if parts === nothing
+        # A value written over several lines of code shows on one.
+        shown = replace(value, r"\s+" => " ")
+        clipped = with_font(() -> draw_code(draw_list, ig.ImVec2(left + offset, top), shown, room; alpha), :code)
+    else
+        ig.PushClipRect((position.x, position.y), high, true)
+        x = left + offset
+        for (kind, text) in parts
+            if kind === :title
+                # A line between the value and its title.
+                x += 4
+                ig.AddLine(draw_list, (x, position.y + 4), (x, high[2] - 4), ig.GetColorU32(ig.ImGuiCol_Border))
+                x += 6
+                ig.AddText(draw_list, (x, top), ig.GetColorU32(ig.ImGuiCol_Text, alpha), text)
+                x += ig.CalcTextSize(text).x
+            elseif kind === :formula
+                with_font(:code) do
+                    size = ig.CalcTextSize(text)
+                    ig.AddRectFilled(draw_list, (x, top - 1), (x + size.x + 8, top + size.y + 1),
+                        ig.GetColorU32(code_color(:call, 0.18f0 * alpha)), 3.0f0)
+                    ig.AddText(draw_list, (x + 4, top), ig.GetColorU32(code_color(:call, alpha)), text)
+                    x += size.x + 8
+                end
+            else
+                with_font(:code) do
+                    color = kind === :column ? ig.GetColorU32(code_color(:symbol, alpha)) : nothing
+                    color === nothing ? draw_code(draw_list, ig.ImVec2(x, top), text, room; alpha) :
+                        ig.AddText(draw_list, (x, top), color, text)
+                    x += ig.CalcTextSize(text).x
+                end
+            end
+        end
+        ig.PopClipRect()
+        clipped = x > left + offset + room
     end
     return clicked, hovered, clipped
 end
@@ -677,7 +740,8 @@ end
 # that text. Returns the change of the code the user asked for, as a function of no arguments, or
 # `nothing`.
 function draw_entry!(view::BuilderView, target, name, value::String; name_width::Float32, inherited::Bool=false,
-        unused::Bool=false, skipped::Bool=false, removable::Bool=!inherited, info=nothing)::Union{Nothing,Function}
+        unused::Bool=false, skipped::Bool=false, removable::Bool=!inherited, info=nothing,
+        range=nothing)::Union{Nothing,Function}
     change = nothing
     ig.PushID("$target/$name")
     ig.AlignTextToFramePadding()
@@ -708,8 +772,10 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         style = unsafe_load(ig.GetStyle())
         symbol = target[1] === :visual && name in (:marker, :linestyle) ? written_symbol(value) : nothing
         dimmed = inherited || unused || skipped
+        parts = target[1] === :mapping && !isempty(value) ? mapping_parts(value) : nothing
+        formula = parts !== nothing && any(((kind, _),) -> kind === :formula, parts)
         clicked, hovered, clipped = code_box("value", value, max(ig.GetContentRegionAvail().x, 24.0f0);
-            dimmed, glyph=symbol === nothing ? nothing : (name, symbol))
+            dimmed, glyph=symbol === nothing ? nothing : (name, symbol), parts)
         low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
         if skipped
             middle = round((low.y + high.y) / 2)
@@ -719,14 +785,21 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         status = skipped ? "The plot type of this layer does not show $(entry_name(name))" :
             unused ? "No drawn layer shows $(entry_name(name))" :
             inherited ? "From the plot's mapping; click to give this layer its own" : nothing
-        if hovered && (clipped || occursin('\n', value) || status !== nothing)
+        whole = clipped || formula || occursin('\n', value)
+        if hovered && (whole || status !== nothing)
             ig.BeginTooltip()
-            (clipped || occursin('\n', value)) && with_font(() -> code_text(value), :code)
+            whole && with_font(() -> code_text(value), :code)
             status === nothing || ig.TextDisabled(status)
             ig.EndTooltip()
         end
         choices = symbol === nothing ? nothing : name === :marker ? MARKERS : LINESTYLES
-        clicked && (choices === nothing ? start_edit!(view, target, name, value) : ig.OpenPopup("choices"))
+        # A formula is edited in the code, where a click on it selects it.
+        if clicked && formula && range !== nothing
+            view.showing = range
+            view.focus_code = true
+        elseif clicked
+            choices === nothing ? start_edit!(view, target, name, value) : ig.OpenPopup("choices")
+        end
         if choices !== nothing && ig.BeginPopup("choices")
             for choice in choices
                 position = ig.GetCursorScreenPos()
@@ -835,7 +908,8 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         width = names_width([entry.name for (entry, _) in rows])
         for (entry, inherited) in rows
             skipped = inherited && names !== nothing && entry.name isa Symbol && !(entry.name in names)
-            offer(draw_entry!(view, (:mapping, index), entry.name, text(entry.value); name_width=width, inherited, skipped))
+            offer(draw_entry!(view, (:mapping, index), entry.name, text(entry.value); name_width=width, inherited, skipped,
+                range=entry.value))
         end
         adding((:mapping, index), own) && offer(draw_entry!(view, (:mapping, index), view.editing.name, ""; name_width=width))
 
@@ -897,7 +971,8 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
             name === nothing || start_edit!(view, (:mapping, 0), entry_key(name), "")
             width = names_width([entry.name for entry in header])
             for entry in header
-                offer(draw_entry!(view, (:mapping, 0), entry.name, text(entry.value); name_width=width, unused=unused(entry.name)))
+                offer(draw_entry!(view, (:mapping, 0), entry.name, text(entry.value); name_width=width,
+                    unused=unused(entry.name), range=entry.value))
             end
             adding((:mapping, 0), header) && offer(draw_entry!(view, (:mapping, 0), view.editing.name, ""; name_width=width))
         end

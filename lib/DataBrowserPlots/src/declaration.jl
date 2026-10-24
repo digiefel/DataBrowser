@@ -235,6 +235,7 @@ one section, with one entry for each combination of their values that is drawn, 
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
+    header, block = positions_named(header), positions_named(block)
     lines = filter(line -> !(line isa LineNumberNode), block.args)
     invisible = [Meta.isexpr(line, :macrocall) && line.args[1] === Symbol("@invisible") for line in lines]
     lines = [hidden ? last(line.args) : line for (line, hidden) in zip(lines, invisible)]
@@ -271,7 +272,7 @@ end
 
 macro plot(declaration)
     input = gensym("input")
-    return esc(declare(declare_layers(declaration, input); input))
+    return esc(declare(declare_layers(positions_named(declaration), input); input))
 end
 
 # The path a value names, such as `[:data, :V]` for `:data.V`, or `nothing`.
@@ -477,6 +478,28 @@ function call_arguments(call)
         end
     end
     return positional, named
+end
+
+# The expression with each `mapping` that names its positions, such as `mapping(; x=:gap, y=:R)`,
+# written with positions, `mapping(:gap, :R)`, as AlgebraOfGraphics takes them.
+# TODO: `y` alone, such as for a histogram along the vertical axis.
+function positions_named(expression)
+    expression isa Expr || return expression
+    expression = Expr(expression.head, map(positions_named, expression.args)...)
+    Meta.isexpr(expression, :call) && expression.args[1] === :mapping || return expression
+    positional, named = call_arguments(expression)
+    any(((name, _),) -> name in (:x, :y, :z), named) || return expression
+    slots = Any[positional...]
+    for (index, name) in enumerate((:x, :y, :z)), (other, value) in named
+        other === name || continue
+        index <= length(slots) && slots[index] !== nothing && error("`mapping` has $name twice: as a position and by name")
+        append!(slots, fill(nothing, max(0, index - length(slots))))
+        slots[index] = value
+    end
+    gap = findfirst(isnothing, slots)
+    gap === nothing || error("`mapping` has $((:x, :y, :z)[findlast(!isnothing, slots)]) without $((:x, :y, :z)[gap])")
+    rest = [Expr(:kw, name, value) for (name, value) in named if !(name in (:x, :y, :z))]
+    return Expr(:call, :mapping, Expr(:parameters, rest...), slots...)
 end
 
 # `expression` with `call` replaced by `new`; the same object, not an equal one.

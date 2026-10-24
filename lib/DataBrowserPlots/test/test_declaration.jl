@@ -54,7 +54,8 @@ end
 
 @testset "the limits of a scale remove the values outside them before the analyses run" begin
     rows = (x=[1.0, 1, 2, 2], y=[1.0, 10, 2, 20])
-    plot = @plot data(rows) * mapping(:x, :y) begin
+    # The positions by name, as the plot builder writes them.
+    plot = @plot data(rows) * mapping(; x=:x, y=:y) begin
         expectation() * visual(Lines)
         scales(y = (; limits = (0, 15)))
     end
