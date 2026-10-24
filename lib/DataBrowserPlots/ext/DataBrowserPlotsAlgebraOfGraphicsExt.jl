@@ -4,7 +4,7 @@ module DataBrowserPlotsAlgebraOfGraphicsExt
 import AlgebraOfGraphics as AoG
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, resolve
-using DataBrowserPlots: Fit, LegendEntry, Scaled, Statistic, column, fit_statistic
+using DataBrowserPlots: Fit, LegendEntry, PlotLines, Scaled, Statistic, column, fit_statistic
 using DataBrowserAPI: item_data, metadata
 
 # The legend is ours, not AoG's: roles share a section when one determines the others
@@ -25,6 +25,28 @@ function figure(
     AoG.Makie.Legend(AoG.guides_position(drawn.figure, position), [s.samples for s in sections],
         [s.texts for s in sections], [s.title for s in sections]; orientation=AoG.default_orientation(position), settings...)
     return drawn.figure
+end
+
+# Each line processed on its own, so that a role the line takes from the header is left out of the
+# layers whose plot type cannot show it, such as `markersize` of `Lines`. Its values still divide the
+# line's points into groups, as other roles' values do.
+function figure(plot::PlotLines, args...; options...)
+    settings = !isempty(args) && first(args) isa AoG.Scales ? first(args) : AoG.scales()
+    transforms = AoG.axis_transforms_from_scales(settings)
+    processed = AoG.ProcessedLayer[]
+    for line in plot.lines
+        line.drawn || continue
+        for p in AoG.ProcessedLayers(drawable(line.layers), transforms).layers
+            shown = AoG.aesthetic_mapping(p)
+            skipped = [key for key in line.shared if !haskey(shown, key) && AoG.hardcoded_mapping(key) === nothing]
+            primary, named, labels = copy(p.primary), copy(p.named), copy(p.labels)
+            for key in skipped, values in (primary, named, labels)
+                haskey(values, key) && delete!(values, key)
+            end
+            push!(processed, AoG.ProcessedLayer(p; primary, named, labels))
+        end
+    end
+    return figure(AoG.ProcessedLayers(processed), args...; options...)
 end
 
 # The role of an aesthetic, as `mapping` names it: `:linestyle` for `AesLineStyle`.

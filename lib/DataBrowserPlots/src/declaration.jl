@@ -16,6 +16,23 @@ function resolve end
 figure(declaration::Declaration, input, args...; options...) =
     figure(Base.invokelatest(declaration.layers, input), args...; options...)
 
+# A line of a `@plot` block: its layers, the named roles that it takes from the header, and whether
+# it is drawn, which `@invisible` turns off.
+struct PlotLine
+    layers::Any
+    shared::Vector{Symbol}
+    drawn::Bool
+end
+
+"""
+The lines of a `@plot` block, each with layers of its own. A role that a line takes from the
+header is left out of the layers that cannot show it, such as `markersize` of a `Lines` layer. Draw
+them with `figure(lines)`.
+"""
+struct PlotLines
+    lines::Vector{PlotLine}
+end
+
 """
 Layers with the plot's own scales and legend texts, as the `scales(...)` and `legend(...)` lines
 of [`@plot`](@ref) give them. Draw it with `figure(plot)`.
@@ -119,8 +136,10 @@ drawn in order.
 
 A line takes the header's mapping and changes it with its own: its positions, such as `:gap, :R2`,
 replace the header's; its named roles, such as `marker`, add to the header's or replace them; and a
-role set to `nothing` is removed. Write a layer with `*` within a line; a line that continues on the
-next one ends with `*`.
+role set to `nothing` is removed. A role of the header that the line's plot type cannot show, such as
+`markersize` for `Lines`, is left out of that line, while its values still divide the line's points
+into groups. A role of the line's own mapping that its plot type cannot show is an error. Write a
+layer with `*` within a line; a line that continues on the next one ends with `*`.
 
 With `data(table)`, the declaration is ordinary AlgebraOfGraphics over that table, and the names in
 `mapping` are its columns. Draw it with `figure(declaration)`.
@@ -207,11 +226,17 @@ macro plot(header, block)
     statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))
         for (name, value) in (statement.args for statement in statements)]
     uses(block, :fit) && pushfirst!(statements, :(fit = $Fit))
-    drawn = [:($inherit($header, $line)) for (line, hidden) in zip(lines, invisible)
-        if !hidden && !Meta.isexpr(line, :(=)) && !(line in settings)]
-    # `a + b + c`, not `+(a, b, c)`: AoG adds two layers at a time and has no `+` of one layer.
-    declaration = isempty(drawn) ? header : foldl((a, b) -> :($a + $b), drawn)
-    return esc(declare(declaration, statements; input, settings=declare_settings(settings, header, names, input)))
+    # Each line that is a layer, with the named roles it takes from the header: those its own
+    # mapping does not set.
+    call = find_call(header, :mapping)
+    header_roles = call === nothing ? Symbol[] : first.(last(call_arguments(call)))
+    own_roles(line) = (own = find_call(line, :mapping); own === nothing ? Symbol[] : first.(last(call_arguments(own))))
+    drawn = map(filter(((line, _),) -> !Meta.isexpr(line, :(=)) && !(line in settings), collect(zip(lines, invisible)))) do (line, hidden)
+        shared = QuoteNode.(setdiff(header_roles, own_roles(line)))
+        :($PlotLine($(declare_layers(:($inherit($header, $line)), input)), Symbol[$(shared...)], $(!hidden)))
+    end
+    declared = isempty(drawn) ? declare_layers(header, input) : :($PlotLines([$(drawn...)]))
+    return esc(declare(declared, statements; input, settings=declare_settings(settings, header, names, input)))
 end
 
 """
@@ -225,7 +250,8 @@ macro invisible(line)
 end
 
 macro plot(declaration)
-    return esc(declare(declaration))
+    input = gensym("input")
+    return esc(declare(declare_layers(declaration, input); input))
 end
 
 # The path a value names, such as `[:data, :V]` for `:data.V`, or `nothing`.
@@ -338,11 +364,10 @@ end
 declare_layers(expression, input::Symbol) =
     foldl((a, b) -> :($a + $b), map(layer -> declare_layer(layer, input), layers(expression)))
 
-# The layers of a declaration, each with its own table, after the `statements`, which define names
-# for them. The result is a function of the input when a layer or a statement reads it. `settings`
-# are the statements and the arguments of `Scaled` that the scales and legend lines give, or `nothing`.
-function declare(declaration, statements=Expr[]; input::Symbol=gensym("input"), settings=nothing)
-    drawn = declare_layers(declaration, input)
+# The declared layers, `drawn`, after the `statements`, which define names for them. The result is
+# a function of the input when a layer or a statement reads it. `settings` are the statements and
+# the arguments of `Scaled` that the scales and legend lines give, or `nothing`.
+function declare(drawn, statements=Expr[]; input::Symbol, settings=nothing)
     if settings !== nothing
         statements = [statements; settings.statements]
         drawn = :($Scaled($drawn, $(settings.arguments...)))
