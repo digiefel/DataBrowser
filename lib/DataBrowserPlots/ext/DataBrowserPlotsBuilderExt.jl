@@ -47,6 +47,20 @@ const SCALE_INFO = Dict(
     :scale => "The scale function applies before the analyses run, and can change their results.",
     :limits => "The values outside the limits are removed before the analyses run, and can change their results.",
 )
+# Makie's themes, as `theme(...)` names them: `:dark` for `theme_dark`.
+const THEMES = [:light, :dark, :black, :minimal, :ggplot2, :latexfonts]
+# The figure-wide settings of a theme that the menu of `theme` offers, and its groups.
+const THEME_SETTINGS = [:backgroundcolor, :textcolor, :font, :fontsize, :figure_padding, :rowgap, :colgap,
+    :palette, :colormap, :linecolor, :linestyle, :linewidth, :marker, :markercolor, :markersize,
+    :markerstrokecolor, :markerstrokewidth, :patchcolor, :patchstrokecolor, :patchstrokewidth]
+const THEME_GROUPS = [:Axis, :Legend, :Colorbar, Symbol.(PLOT_TYPES)...]
+# The settings of a group that change what the plot shows, not how it looks, which the menus of a
+# theme leave out: `scales` and `visual` set them. `:plots` are those of every plot type.
+const NOT_STYLE = Dict(
+    :Axis => [:xlabel, :ylabel, :title, :subtitle, :xscale, :yscale, :limits, :xreversed, :yreversed,
+        :xticks, :yticks, :xtickformat, :ytickformat],
+    :Hist => [:bins, :normalization], :Density => [:bandwidth], :BarPlot => [:direction],
+    :plots => [:colorrange, :colorscale])
 # A value the user is writing in the panel: the call it goes in (see `target_call`), its name, its
 # text, whether the field takes the keyboard in the next frame, and why its text was refused.
 mutable struct EntryEdit
@@ -398,13 +412,15 @@ const LAYOUT = [:layout, :row, :col, :group]
 
 # The call that holds the values of a target: `(:mapping, 0)` the header's mapping, `(:mapping, i)`
 # and `(:visual, i)` those of line `i`, `(:scales, 0)` the `scales(...)` line, `(:scale, k)` the
-# settings of its `k`th scale, and `(:legend, 0)` the `legend(...)` line. `nothing` when the code
-# has no such call yet.
+# settings of its `k`th scale, `(:legend, 0)` the `legend(...)` line, `(:theme, 0)` the `theme(...)`
+# line and `(:group, k)` the settings of its `k`th value. `nothing` when the code has no such call yet.
 function target_call(plot::PlotCode, (kind, index)::Tuple{Symbol,Int})::Union{Nothing,CallCode}
     kind === :mapping && return index == 0 ? plot.mapping : plot.lines[index].mapping
     kind === :visual && return plot.lines[index].visual
     kind === :scales && return plot.scales
     kind === :legend && return plot.legend
+    kind === :theme && return plot.theme
+    kind === :group && return plot.theme_groups[index]
     return plot.scale_settings[index]
 end
 
@@ -416,6 +432,11 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
     found = call === nothing ? nothing : findfirst(entry -> entry.name == name, call.entries)
     if found !== nothing
         edit!(code, call.entries[found].value, text)
+    elseif call !== nothing && name isa Int
+        # A position, such as the theme of `theme(...)`, goes first.
+        opening = findnext('(', code.text, first(call.range))
+        next = findnext(!isspace, code.text, opening + 1)
+        edit!(code, opening+1:opening, code.text[next] in (';', ')') ? text : "$text, ")
     elseif call !== nothing && isempty(call.entries) && code.text[first(call.range)] == '('
         # An empty named tuple, `(;)`.
         edit!(code, call.range, "(; $(entry_name(name))=$text)")
@@ -432,7 +453,7 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
         stop = last(plot.lines[target[2]].range)
         edit!(code, stop+1:stop, " * visual(; $name=$text)")
     else
-        edit!(code, plot.ending+1:plot.ending, "\n$(plot.indent)$(target[1])($name=$text)")
+        edit!(code, plot.ending+1:plot.ending, "\n$(plot.indent)$(target[1])($(name isa Int ? text : "$name=$text"))")
     end
     return nothing
 end
@@ -747,12 +768,12 @@ end
 # code. A click on the value edits it; a marker or a line style of `visual` opens a menu of them,
 # each drawn as it looks. The value is only framed when it is `inherited` from the header or
 # `unused` by every drawn layer, and struck through when the line's plot type `skipped` it. While
-# the mouse is on the row of a `removable` value, a cross before its name removes it. `info` adds an info button with
+# the mouse is on the row of a `removable` value, a cross before its name removes it. `label` is the name shown. `info` adds an info button with
 # that text. Returns the change of the code the user asked for, as a function of no arguments, or
 # `nothing`.
 function draw_entry!(view::BuilderView, target, name, value::String; name_width::Float32, inherited::Bool=false,
         unused::Bool=false, skipped::Bool=false, removable::Bool=!inherited, info=nothing,
-        range=nothing)::Union{Nothing,Function}
+        range=nothing, label::String=entry_name(name))::Union{Nothing,Function}
     change = nothing
     ig.PushID("$target/$name")
     ig.AlignTextToFramePadding()
@@ -768,7 +789,7 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     end
     ig.SetCursorScreenPos((row.x + gutter, ig.GetCursorScreenPos().y))
     start = ig.GetCursorPosX()
-    with_font(() -> ig.TextDisabled(entry_name(name)), :code)
+    with_font(() -> ig.TextDisabled(label), :code)
     if info !== nothing
         ig.SameLine(0.0f0, 2.0f0)
         ig.TextDisabled(ICON_INFO)
@@ -787,7 +808,8 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         # The values written as a symbol that the panel offers in a menu.
         choices = target[1] === :visual && name === :marker ? MARKERS :
             target[1] === :visual && name === :linestyle ? LINESTYLES :
-            target[1] === :legend && name === :position ? LEGEND_POSITIONS : nothing
+            target[1] === :legend && name === :position ? LEGEND_POSITIONS :
+            target[1] === :theme && name == 1 ? THEMES : nothing
         symbol = choices === nothing ? nothing : written_symbol(value)
         drawn = symbol !== nothing && name in (:marker, :linestyle)
         dimmed = inherited || unused || skipped
@@ -1067,6 +1089,56 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                     info=get(LEGEND_INFO, setting.name, nothing)))
             end
             adding((:legend, 0), settings) && offer(draw_entry!(view, (:legend, 0), view.editing.name, ""; name_width=width))
+        end
+        section("theme") do
+            values = entries(plot.theme)
+            present = [entry.name for entry in values]
+            # Makie's themes by their function names, then the figure-wide settings, then the groups.
+            offered = [(1 in present ? String[] : ["theme_$t" for t in THEMES]); String.(setdiff(THEME_SETTINGS, present));
+                String.(setdiff(THEME_GROUPS, present))]
+            name = heading!(view, "theme", "theme", offered; tooltip="Add a setting of the theme")
+            if name !== nothing && startswith(name, "theme_")
+                push!(changes, () -> write_entry!(view.code, plot, (:theme, 0), 1, ":$(name[7:end])"))
+            elseif name !== nothing && Symbol(name) in THEME_GROUPS
+                push!(changes, () -> write_entry!(view.code, plot, (:theme, 0), Symbol(name), "(;)"))
+            elseif name !== nothing
+                start_edit!(view, (:theme, 0), Symbol(name), "")
+            end
+            width = names_width([entry.name for entry in values if entry.name isa Symbol])
+            for (k, value) in enumerate(values)
+                ig.PushID(k)
+                group = plot.theme_groups[k]
+                if value.name isa Int
+                    offer(draw_entry!(view, (:theme, 0), value.name, text(value.value); name_width=width, label=""))
+                elseif group === nothing
+                    offer(draw_entry!(view, (:theme, 0), value.name, text(value.value); name_width=width))
+                else
+                    # A group, such as `Axis = (; ...)`: its name with a "+" for its settings and,
+                    # under the mouse, a cross, then its settings.
+                    row = ig.GetCursorScreenPos()
+                    row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
+                    type = isdefined(Makie, value.name) ? getproperty(Makie, value.name) : nothing
+                    names = type isa Type ? collect(Makie.attribute_names(type)) : Symbol[]
+                    names = setdiff(names, get(NOT_STYLE, value.name, Symbol[]), NOT_STYLE[:plots], [entry.name for entry in group.entries])
+                    name = heading!(view, "group", String(value.name), sort(String.(names)); role=:plain,
+                        tooltip="Add a setting of every $(value.name)")
+                    name === nothing || start_edit!(view, (:group, k), Symbol(name), "")
+                    if ig.IsMouseHoveringRect(row, row_end)
+                        ig.SameLine(ig.GetWindowWidth() - unsafe_load(ig.GetStyle()).WindowPadding.x - 2ig.GetFrameHeight() - 4)
+                        icon_button(ICON_X, "Remove $(value.name)"; danger=true) &&
+                            push!(changes, () -> remove_entry!(view.code, plot.theme, value.name))
+                    end
+                    ig.Indent(8.0f0)
+                    inner = names_width([entry.name for entry in group.entries])
+                    for setting in group.entries
+                        offer(draw_entry!(view, (:group, k), setting.name, text(setting.value); name_width=inner))
+                    end
+                    adding((:group, k), group.entries) && offer(draw_entry!(view, (:group, k), view.editing.name, ""; name_width=inner))
+                    ig.Unindent(8.0f0)
+                end
+                ig.PopID()
+            end
+            adding((:theme, 0), values) && offer(draw_entry!(view, (:theme, 0), view.editing.name, ""; name_width=width))
         end
     end
     ig.PopStyleVar()
