@@ -606,13 +606,17 @@ the table as a first-class view.
   - [ ] The element type under each column name.
   - [ ] Long text cut with "…", and the full text on hover.
   - [x] Columns fitted to their content when the data changes.
-  - [ ] Hide and reorder columns; freeze the first column; an optional row-number column.
+  - [x] Hide columns, from the "Data" list in the top line of the window or the header's menu.
+  - [ ] Reorder columns; freeze the first column; an optional row-number column.
   - [x] Sort by a column, and by several with Shift-click.
   - [x] The items one after the other, with the label of each item in one cell beside all of its
     rows. The label stays in place when the table scrolls sideways.
   - [x] Fold an item to one row that shows how many values it has in each column, with the
     smallest and the largest number on hover.
-  - [x] Metadata columns that the user picks from the header's right-click menu, in one cell beside the rows of each item.
+  - [x] Metadata columns that the user picks from the "Metadata" list in the top line of the window,
+    in one cell beside the rows of each item.
+  - [x] Every list of names to pick from narrows to the names that match what the user types, and
+    takes the arrow keys and Enter. The same list will pick plot types.
   - [x] Nested values (`NamedTuple`, `Dict`) as groups of columns that unfold in place, with one
     header row for each level. Data that is not a table shows in one row.
   - [ ] Structs as groups of columns, once it is clear which types count.

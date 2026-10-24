@@ -145,8 +145,10 @@ Arguments:
   at that level, or the column's own header at the level below its groups. No header has an arrow
   by default
 - `on_header_fold`: called with `(col, level)` when the user clicks the arrow of that header
-- `header_popup`: `(col::Int) -> Nothing`, draws the popup that right-clicking the header of the
-  column opens. The headers have no popup without it
+- `header_popup`: `(col::Int) -> Nothing`, draws the top of the menu that right-clicking the header
+  of the column opens. Below it, the menu always has "Size column to fit" and "Size all columns to
+  fit"
+- `hidden`: `(col::Int) -> Bool`, whether the column is hidden. No column is hidden by default
 - `on_selection_change`: called with the new `Vector{Int}` whenever the selection changes
 - `selection_mode`: `:rows` for multi-row selection or `:cells` for a spreadsheet rectangle
 - `height`: child height in pixels; 0.0f0 = fill available
@@ -183,6 +185,7 @@ function render_data_grid!(
     header_fold::Function = (_, _) -> nothing,
     on_header_fold::Function = (_, _) -> nothing,
     header_popup::Union{Nothing,Function} = nothing,
+    hidden::Function = _ -> false,
     on_selection_change::Function = identity,
     selection_mode::Symbol = :rows,
     height::Float32 = 0.0f0,
@@ -198,6 +201,7 @@ function render_data_grid!(
             ig.ImGuiTableFlags_BordersInnerV  |
             ig.ImGuiTableFlags_BordersOuter   |
             ig.ImGuiTableFlags_Resizable      |
+            ig.ImGuiTableFlags_Hideable       |
             ig.ImGuiTableFlags_ScrollX        |
             ig.ImGuiTableFlags_ScrollY        |
             ig.ImGuiTableFlags_SizingFixedFit
@@ -217,6 +221,11 @@ function render_data_grid!(
     for col in columns
         ig.TableSetupColumn(col, ig.ImGuiTableColumnFlags_WidthFixed, 0.0f0)
     end
+    # A hidden column keeps its width, and shows again with it.
+    for column in 1:n_cols
+        ig.TableSetColumnEnabled(column - 1, !hidden(column))
+    end
+    grid_table = ig.GetCurrentTable()
     style = unsafe_load(ig.GetStyle())
     draw_list = ig.GetWindowDrawList()
     # An arrow as ImGui draws it in a tree node, at the left of the text at `position`.
@@ -281,8 +290,13 @@ function render_data_grid!(
             ig.AddText(ig.GetWindowDrawList(), ig.ImVec2(right - ig.CalcTextSize(icon).x, top),
                 ig.GetColorU32(ig.ImGuiCol_Text), icon)
         end
-        if header_popup !== nothing && ig.BeginPopupContextItem()
-            header_popup(column)
+        if ig.BeginPopupContextItem()
+            if header_popup !== nothing
+                header_popup(column)
+                ig.Separator()
+            end
+            ig.MenuItem("Size column to fit") && ig.TableSetColumnWidthAutoSingle(grid_table, column - 1)
+            ig.MenuItem("Size all columns to fit") && ig.TableSetColumnWidthAutoAll(grid_table)
             ig.EndPopup()
         end
         if header_open !== nothing

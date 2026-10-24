@@ -62,3 +62,18 @@ end
     @test isequal(column(table, "gap"), [2, 2, 3, missing])
     @test isequal(column(table, "V"), [1, 2, missing, 3])
 end
+
+@testset "a table cut to some rows and columns" begin
+    table, _ = merge_item_tables(selection_of(("A", (x=[1, 2], y=[3, 4], z=[5, 6]), ())))
+    cut = table[[2], [3, 1]]
+    @test cut.columns == ["z", "x"]
+    @test cut.getvalue(1, 1) == 6 && cut.getvalue(1, 2) == 2
+end
+
+@testset "a list narrows to the names that have the typed letters in order" begin
+    match = DataBrowserGUI.Browser._fuzzy_match
+    @test match("wf", "width_finger") == [1, 7]
+    @test match("WF", "wafer") !== nothing
+    @test match("fw", "width_finger") === nothing
+    @test match("", "wafer") == Int[]
+end

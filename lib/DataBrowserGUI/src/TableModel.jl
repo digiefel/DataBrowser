@@ -225,3 +225,20 @@ Base.getindex(table::ItemTable, rows::AbstractVector{Int})::ItemTable = ItemTabl
     (row, col) -> table.getvalue(rows[row], col),
     (row, col) -> table.spans_item(rows[row], col),
 )
+
+"""
+    table[rows, columns]
+
+The rows `rows` and the columns `columns` of `table` as an `ItemTable`, in the order given.
+"""
+Base.getindex(table::ItemTable, rows::AbstractVector{Int}, columns::AbstractVector{Int})::ItemTable = ItemTable(
+    table.columns[columns],
+    table.paths[columns],
+    Set(place for (place, column) in enumerate(columns) if column in table.groups),
+    length(rows),
+    table.row_item[rows],
+    table.item_labels,
+    (row, col) -> table.getcell(rows[row], columns[col]),
+    (row, col) -> table.getvalue(rows[row], columns[col]),
+    (row, col) -> table.spans_item(rows[row], columns[col]),
+)

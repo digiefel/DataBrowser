@@ -4,7 +4,7 @@ import CSV
 using Printf: @sprintf
 using NativeFileDialog: save_file
 
-import DataBrowserAPI: draw!, export!, label, output, prepare!
+import DataBrowserAPI: draw!, draw_header!, export!, label, output, prepare!
 using DataBrowserAPI: AbstractVisualizer, item_data, items
 using DataBrowserCore: Selection
 using ..DataBrowserGUI: ItemTable, _cell_text, _zoomable, merge_item_tables, value_table, zoom_value
@@ -34,17 +34,20 @@ that row shows the smallest and the largest number of the column.
 
 Clicking the header of a column sorts the rows by it, and Shift-click adds another column to sort by.
 Sorting may put the rows of an item apart. A folded item's row goes where its first row would go.
-Right-clicking the header opens a filter: a Julia function, such as `≥(0)` or `!in(["C2_3um"])`,
-which the table calls with each value of the column. The table shows the rows for which it returns
-`true`; a funnel at the right of the column's name marks the filter.
+Right-clicking the header opens a menu. Its field takes a filter: a Julia function, such as `≥(0)`
+or `!in(["C2_3um"])`, which the table calls with each value of the column. The table shows the rows
+for which it returns `true`; a funnel at the right of the column's name marks the filter. The menu
+also hides the column, and fits the width of the columns to their content.
+
+"Data", in the top line of the window, lists the columns of the data: a checked name is a column the
+table shows. "Metadata" lists the metadata of the items: a checked name is a column after `item`,
+with the value of each item in one cell beside its rows. Typing in a list narrows it to the names
+that have the typed letters in the same order, such as `wf` for `width_finger`.
 
 A cell that holds a vector, a matrix, a table or a block of names is a link. Clicking it zooms into
 the cell: the window shows the value of the cell as a table, and the path above the table names the
 item and the cells it went through. The arrow goes back one step, and each name in the path goes back
 to it. Right-clicking the cell opens a new window that shows the same items, zoomed into the cell.
-
-Below the filter, the same menu lists the metadata of the items. A checked name is a column after
-`item`, with the value of each item in one cell beside its rows.
 
 In a column of numbers, every number has the same number of decimals and the numbers are
 right-aligned, so that their decimal points line up. In a column with numbers smaller than 0.001 or
@@ -63,6 +66,10 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     selection::Union{Nothing,Selection} = nothing
     metadata_names::Vector{Symbol} = Symbol[]
     metadata::Vector{Symbol} = Symbol[]
+    # The columns of the data the user hid, by name.
+    hidden::Set{String} = Set{String}()
+    data_picker::ListPicker = ListPicker()
+    metadata_picker::ListPicker = ListPicker()
     # The cell the table shows the value of: the label of its item, and the steps from the item's
     # data to the value. Each step is the row, within the item, and the path of a column; the row is
     # 0 for a cell that holds one value for the whole item. No steps when the table shows the items.
@@ -171,9 +178,37 @@ function export!(view::TableView, ctx)::Nothing
     path = save_file("$(label(view)).csv"; filterlist="csv")
     isempty(path) && return nothing
     isempty(splitext(path)[2]) && (path *= ".csv")
-    columns = (Symbol(name) => [table.getvalue(row, column) for row in 1:table.rows]
-               for (column, name) in enumerate(table.columns))
+    columns = (Symbol(table.columns[column]) => [table.getvalue(row, column) for row in 1:table.rows]
+               for column in _shown_columns(view))
     CSV.write(path, (; columns...))
+    return nothing
+end
+
+# The lists of the columns of the data and of the metadata, in the top line of the window.
+function draw_header!(view::TableView, ctx)::Nothing
+    table = view.table
+    table === nothing && return nothing
+    flags = ig.ImGuiComboFlags_WidthFitPreview | ig.ImGuiComboFlags_HeightLargest
+    names = [table.columns[column] for column in eachindex(table.columns) if _data_column(view, column)]
+    if ig.BeginCombo("##data", "Data", flags)
+        toggled = render_list_picker!(view.data_picker, names, [!(name in view.hidden) for name in names])
+        if toggled !== nothing
+            name = names[toggled]
+            name in view.hidden ? delete!(view.hidden, name) : push!(view.hidden, name)
+            _arrange!(view)
+        end
+        ig.EndCombo()
+    end
+    ig.SetItemTooltip("The columns of the data that the table shows")
+    (view.selection === nothing || !isempty(view.zoom) || isempty(view.metadata_names)) && return nothing
+    ig.SameLine()
+    if ig.BeginCombo("##metadata", "Metadata", flags)
+        toggled = render_list_picker!(view.metadata_picker, string.(view.metadata_names),
+            [name in view.metadata for name in view.metadata_names])
+        toggled === nothing || _pick_metadata!(view, view.metadata_names[toggled])
+        ig.EndCombo()
+    end
+    ig.SetItemTooltip("The metadata that the table shows as columns")
     return nothing
 end
 
@@ -234,10 +269,7 @@ function draw!(view::TableView, ctx)::Nothing
     # The cells of the data that hold a table of their own; not those of the columns `item` and of
     # the metadata.
     function zoomable(row, column)
-        view.selection === nothing && return false
-        path = table.paths[column]
-        isempty(view.zoom) && length(path) == 1 &&
-            (view.item_column && path == ["item"] || Symbol(only(path)) in view.metadata) && return false
+        (view.selection === nothing || !_data_column(view, column)) && return false
         return !folded(row, column) && _zoomable(table.getvalue(shown[row], column))
     end
     # The step from the table to the value of a cell.
@@ -260,7 +292,7 @@ function draw!(view::TableView, ctx)::Nothing
         ctx.open_window(TableView(; zoom_item, zoom=[view.zoom; [zoom_step(row, column)]]))
         return nothing
     end
-    # Picking metadata and unfolding blocks change the columns, so the table is built again after
+    # Hiding metadata and unfolding blocks change the columns, so the table is built again after
     # the grid is drawn.
     rebuild = false
     function filter_popup(column)
@@ -283,16 +315,14 @@ function draw!(view::TableView, ctx)::Nothing
             ig.TextUnformatted(view.filter_errors[name])
             ig.PopStyleColor()
         end
-        (view.selection === nothing || isempty(view.metadata_names)) && return nothing
-        ig.Separator()
-        ig.TextDisabled("Metadata")
-        for name in view.metadata_names
-            if ig.Checkbox(string(name), Ref(name in view.metadata))
-                name in view.metadata ? filter!(!=(name), view.metadata) : push!(view.metadata, name)
-                rebuild = true
-                # The columns move, so the menu would stay open on another column.
-                ig.CloseCurrentPopup()
-            end
+        view.item_column && column == 1 && return nothing
+        ig.MenuItem("Hide column") || return nothing
+        if _data_column(view, column)
+            push!(view.hidden, name)
+            _arrange!(view)
+        else
+            filter!(!=(Symbol(name)), view.metadata)
+            rebuild = true
         end
         return nothing
     end
@@ -329,20 +359,45 @@ function draw!(view::TableView, ctx)::Nothing
             header_icon=column -> haskey(view.filters, table.columns[column]) &&
                 !haskey(view.filter_errors, table.columns[column]) ? ICON_FILTER : "",
             header_popup=filter_popup,
-            on_selection_change=rows -> view.output = isempty(rows) ? table[view.order] :
-                table[collect(Int, Iterators.flatten(rows_of.(sort(rows))))],
+            hidden=column -> table.columns[column] in view.hidden,
+            on_selection_change=rows -> view.output = isempty(rows) ? table[view.order, _shown_columns(view)] :
+                table[collect(Int, Iterators.flatten(rows_of.(sort(rows)))), _shown_columns(view)],
         )
     end
     if zoomed
         prepare!(view, view.selection, nothing)
     elseif rebuild
-        kept = view.folded
-        prepare!(view, view.selection, nothing)
-        view.folded = kept
-        _arrange!(view)
+        _rebuild!(view)
     end
     return nothing
 end
+
+# Show or hide the metadata `name` as a column.
+function _pick_metadata!(view::TableView, name::Symbol)::Nothing
+    name in view.metadata ? filter!(!=(name), view.metadata) : push!(view.metadata, name)
+    _rebuild!(view)
+    return nothing
+end
+
+# Build the table again from the selection, for new columns, and keep the items folded.
+function _rebuild!(view::TableView)::Nothing
+    kept = view.folded
+    prepare!(view, view.selection, nothing)
+    view.folded = kept
+    _arrange!(view)
+    return nothing
+end
+
+# Whether a column holds the data of the items, rather than their labels or their metadata.
+function _data_column(view::TableView, column::Int)::Bool
+    path = (view.table::ItemTable).paths[column]
+    (!isempty(view.zoom) || length(path) != 1) && return true
+    return !(view.item_column && path == ["item"] || Symbol(only(path)) in view.metadata)
+end
+
+# The columns the table shows: all but those the user hid.
+_shown_columns(view::TableView)::Vector{Int} =
+    [column for (column, name) in enumerate((view.table::ItemTable).columns) if !(name in view.hidden)]
 
 # Find the rows to show from the filters, the sort and the folded items, and pass them all on.
 function _arrange!(view::TableView)::Nothing
@@ -393,7 +448,7 @@ function _arrange!(view::TableView)::Nothing
 
     # The rows on screen change, so the selection is cleared.
     empty!(view.grid.selected_rows)
-    view.output = table[rows]
+    view.output = table[rows, _shown_columns(view)]
     return nothing
 end
 
