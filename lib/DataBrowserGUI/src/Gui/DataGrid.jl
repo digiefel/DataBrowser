@@ -512,8 +512,8 @@ function render_data_grid!(
                 state.scroll_to_row = next_focus[1]
             end
             if ctrl_held && ig.IsKeyPressed(ig.ImGuiKey_C)
-                text = selected_cell_text(state, n_rows, n_cols, cell)
-                isempty(text) || ig.SetClipboardText(text)
+                copied = selected_cell_text(state, n_rows, n_cols, cell)
+                isempty(copied) || ig.SetClipboardText(copied)
             end
         end
     end
@@ -539,6 +539,8 @@ function render_data_grid!(
     body_top = Ref(-Inf32)
     # The row's selection, which spans all columns, is in the first column the grid shows.
     first_column = something(findfirst(column -> !hidden(column), 1:n_cols), 1)
+    # The functions below give their variables names that the grid does not use: a variable that a
+    # function shares with the grid and assigns is boxed, and allocates at every frame.
     # A band across the whole row, with its arrow and its text at the left edge of the grid, in the
     # color `color`. `top` is the top of the row's text.
     function paint_band(row, text, color, top)
@@ -575,7 +577,8 @@ function render_data_grid!(
     # changed the selection, and the color of the row if it is a band.
     function select_row(row)
         is_selected = row in selected_set
-        clicked = ig.Selectable("##row_$row", is_selected,
+        # The id of the row is pushed before.
+        clicked = ig.Selectable("##row", is_selected,
             ig.ImGuiSelectableFlags_SpanAllColumns | ig.ImGuiSelectableFlags_AllowOverlap,
             (0.0f0, ig.GetTextLineHeightWithSpacing()))
         clicked && _update_multi_selection!(
@@ -629,8 +632,8 @@ function render_data_grid!(
         # first row, which it measures.
         clip_top = max(ig.GetClipRectMin(ig.GetWindowDrawList()).y, body_top[])
         row_top = position.y - padding.y
-        height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
-        (row_top + height > clip_top && (first == row || row_top <= clip_top)) || return nothing
+        full_height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
+        (row_top + full_height > clip_top && (first == row || row_top <= clip_top)) || return nothing
         top = ig.GetCursorScreenPos().y
         if first != row || (row < n_rows && span(row + 1, column) == first)
             last_row = row
@@ -660,7 +663,7 @@ function render_data_grid!(
                 end
             end
         else
-            text = cell(row, column)
+            text = cell(row, column)::String
             left = ig.GetCursorScreenPos().x
             widest = unsafe_load(reach).x
             align_right(column) && ig.SetCursorPosX(ig.GetCursorPosX() +
@@ -724,9 +727,9 @@ function render_data_grid!(
                     ig.TableSetColumnIndex(first_column - 1)
                     position = ig.GetCursorScreenPos()
                     row_top = position.y - padding.y
-                    height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
+                    full_height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
                     # The clipper draws the rows from the top down, after a first row it measures.
-                    if pinned == -1 && row_top + height > ig.GetClipRectMin(ig.GetWindowDrawList()).y
+                    if pinned == -1 && row_top + full_height > ig.GetClipRectMin(ig.GetWindowDrawList()).y
                         view_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y
                         view_bottom = ig.GetClipRectMax(ig.GetWindowDrawList()).y
                         pinned = band_of(row)
@@ -736,7 +739,7 @@ function render_data_grid!(
                             pushed = row < n_rows && band(row + 1) !== nothing
                             pinned_x = position.x
                             pinned_top = (pushed ? row_top : view_top) + padding.y
-                            body_top[] = pinned_top - padding.y + height
+                            body_top[] = pinned_top - padding.y + full_height
                         end
                     end
                     text = band(row)
@@ -767,7 +770,7 @@ function render_data_grid!(
                     end
                     # The band at the top comes with the last row in view, after the rows below it.
                     if pinned > 0 && !pinned_added && (row == n_rows ||
-                            row_top + height >= ig.GetClipRectMax(ig.GetWindowDrawList()).y)
+                            row_top + full_height >= ig.GetClipRectMax(ig.GetWindowDrawList()).y)
                         pinned_added = true
                         ig.TableSetColumnIndex(first_column - 1)
                         back = ig.GetCursorScreenPos()
