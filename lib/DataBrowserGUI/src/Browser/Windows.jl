@@ -105,7 +105,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), nothing, nothing, "", "")
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), nothing, nothing, "", "", "")
     push!(state.windows, window)
     return window
 end

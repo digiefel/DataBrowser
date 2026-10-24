@@ -118,6 +118,8 @@ mutable struct Window
     error::String
     # Why the last "Export" failed; empty when it succeeded.
     export_error::String
+    # Why the visualizer failed to draw in the last frame; empty when it drew.
+    draw_error::String
 end
 
 """

@@ -155,28 +155,31 @@ function render_windows!(state::BrowserState)::Nothing
         # ImGui knows the window by the part after "###", so the title can change.
         if ig.Begin("$(title(state, window))###$(window.id)", open)
             ctx = WindowContext(state, window)
-            # TODO: catch an error of `draw_header!` and `draw!` and show it in the window. ImGui
-            # must first be brought back to the state it had before the call.
-            _render_window_header!(state, window)
-            _render_window_settings!(window)
-            # After the menus, which may change the visualizer, the input or a setting, so that
-            # the visualizer has its value before it draws in this frame.
-            refresh!(state, window)
-            ig.SameLine()
-            _render_export_button!(window, ctx)
-            # A group is one item of the row, also when the visualizer draws no button.
-            ig.SameLine()
-            ig.BeginGroup()
-            draw_header!(window.visualizer, ctx)
-            ig.EndGroup()
-            ig.Separator()
-            isempty(window.export_error) || ig.TextWrapped(window.export_error)
-            measure_window_picture!(window.id)
-            if isempty(window.error)
-                draw!(window.visualizer, ctx)
-            else
-                ig.TextWrapped(window.error)
+            # An error of the visualizer, or of the code it runs, leaves the rest of the window and
+            # the browser working; the window shows the error where the drawing stopped.
+            window.draw_error = guarded_draw("Window: $(label(window.visualizer)) failed to draw", window.draw_error) do
+                _render_window_header!(state, window)
+                _render_window_settings!(window)
+                # After the menus, which may change the visualizer, the input or a setting, so that
+                # the visualizer has its value before it draws in this frame.
+                refresh!(state, window)
+                ig.SameLine()
+                _render_export_button!(window, ctx)
+                # A group is one item of the row, also when the visualizer draws no button.
+                ig.SameLine()
+                ig.BeginGroup()
+                draw_header!(window.visualizer, ctx)
+                ig.EndGroup()
+                ig.Separator()
+                isempty(window.export_error) || ig.TextWrapped(window.export_error)
+                measure_window_picture!(window.id)
+                if isempty(window.error)
+                    draw!(window.visualizer, ctx)
+                else
+                    ig.TextWrapped(window.error)
+                end
             end
+            isempty(window.draw_error) || ig.TextWrapped(window.draw_error)
         end
         ig.End()
         open[] || close_window!(state, window)

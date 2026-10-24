@@ -9,7 +9,7 @@ import DataBrowserAPI
 using DataBrowserAPI: Setting
 using DataBrowserCore: Selection
 using DataBrowserGUI: CODE_COLORS, CodeFile, code_text, draw_code, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
-using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!
+using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!, guarded_draw
 import DataBrowserAPI: draw!, prepare!, settings
 using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mappings
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
@@ -154,6 +154,9 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     figure_id::String = ""
     message::String = "Select items to plot."
     error_details::String = ""
+    # Why the panel, or the figure, failed to draw in the last frame; empty when it drew.
+    panel_error::String = ""
+    figure_error::String = ""
 end
 
 DataBrowserAPI.label(::BuilderView) = "Plot builder"
@@ -316,7 +319,9 @@ function draw!(view::BuilderView, ctx)::Nothing
 
     available = ig.GetContentRegionAvail()
     ig.BeginChild("panel", (round(available.x * view.panel_width), 0.0f0), ig.ImGuiChildFlags_Borders)
-    draw_panel!(view, ctx)
+    # A failure of the panel, or of the figure, leaves the code below editable, to fix it.
+    view.panel_error = guarded_draw(() -> draw_panel!(view, ctx), "Plot builder: the panel failed to draw", view.panel_error)
+    isempty(view.panel_error) || ig.TextWrapped(view.panel_error)
     ig.EndChild()
     # The border between the panel and the figure, which the user drags.
     ig.SameLine(0.0f0, 0.0f0)
@@ -336,7 +341,9 @@ function draw!(view::BuilderView, ctx)::Nothing
     available = ig.GetContentRegionAvail()
     code_height = round(available.y * CODE_HEIGHT)
     ig.BeginChild("figure", (0.0f0, max(available.y - code_height, 1.0f0)), false)
-    invoke(draw!, Tuple{FigureView,Any}, view, ctx)
+    view.figure_error = guarded_draw(() -> invoke(draw!, Tuple{FigureView,Any}, view, ctx),
+        "Plot builder: the figure failed to draw", view.figure_error)
+    isempty(view.figure_error) || ig.TextWrapped(view.figure_error)
     ig.EndChild()
 
     ig.AlignTextToFramePadding()
