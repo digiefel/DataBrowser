@@ -55,12 +55,13 @@ end
 end
 
 @testset "metadata columns beside the items' rows" begin
+    # The metadata comes first, also when the first item lacks it.
     table, _ = merge_item_tables(selection_of(
-        ("a", (V=[1, 2],), (gap=2,)), ("opaque", nothing, (gap=3,)), ("b", (V=[3],), ()));
+        ("b", (V=[3],), ()), ("a", (V=[1, 2],), (gap=2,)), ("opaque", nothing, (gap=3,)));
         item_column=true, metadata=[:gap])
     @test table.columns == ["item", "gap", "V", "data"]
-    @test isequal(column(table, "gap"), [2, 2, 3, missing])
-    @test isequal(column(table, "V"), [1, 2, missing, 3])
+    @test isequal(column(table, "gap"), [missing, 2, 2, 3])
+    @test isequal(column(table, "V"), [3, 1, 2, missing])
 end
 
 @testset "a table cut to some rows and columns" begin

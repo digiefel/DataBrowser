@@ -138,7 +138,9 @@ function merge_item_tables(
     if item_column && length(labels) == 1
         popfirst!(only(item_columns))
     end
-    return _union_table(labels, item_columns, item_rows), warnings
+    # The column `item` and the metadata come first, also when the first item lacks some metadata.
+    first_paths = [item_column ? [["item"]] : Vector{String}[]; [[string(name)] for name in metadata]]
+    return _union_table(labels, item_columns, item_rows, first_paths), warnings
 end
 
 """
@@ -151,12 +153,18 @@ function value_table(label::String, value; unfolded::Set{Vector{String}}=Set{Vec
     return _union_table([label], [columns], [rows])
 end
 
-# The table of several items, from the columns and the number of rows of each item.
-function _union_table(labels::Vector{String}, item_columns, item_rows::Vector{Int})::ItemTable
+# The table of several items, from the columns and the number of rows of each item. The columns
+# of `first_paths` that an item has come first, in their order.
+function _union_table(labels::Vector{String}, item_columns, item_rows::Vector{Int},
+        first_paths::Vector{Vector{String}}=Vector{String}[])::ItemTable
     # The union of the items' columns, in the order they first appear, and the value of each column
     # for each item.
     paths = Vector{String}[]
     index = Dict{Vector{String},Int}()
+    found = Set(path for columns in item_columns for (path, _) in columns)
+    for path in first_paths
+        path in found && (push!(paths, path); index[path] = length(paths))
+    end
     for columns in item_columns, (path, _) in columns
         haskey(index, path) || (push!(paths, path); index[path] = length(paths))
     end
