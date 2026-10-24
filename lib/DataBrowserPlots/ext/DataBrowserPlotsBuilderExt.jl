@@ -1126,7 +1126,7 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 (1 in present ? ListItem[] : [ListItem(":$t"; section="Makie themes", icon=ICON_THEME) for t in THEMES]);
                 [ListItem(name; section="Figure", icon=setting_icon(name)) for name in String.(setdiff(THEME_SETTINGS, present))];
                 [ListItem(name; section="Blocks", icon=ICON_BLOCK) for name in String.(setdiff(THEME_BLOCKS, present))];
-                [ListItem(name; section="Plot types", icon=ICON_PLOT) for name in setdiff(PLOT_TYPES, String.(present))]]
+                [ListItem(name; section="Plot types", icon=ICON_PLOT) for name in setdiff(PLOT_TYPES, [String(name) for name in present if name isa Symbol])]]
             name = heading!(view, "theme", "theme", offered; tooltip="Add a setting of the theme")
             if name !== nothing && startswith(name, ':')
                 push!(changes, () -> write_entry!(view.code, plot, (:theme, 0), 1, name))
