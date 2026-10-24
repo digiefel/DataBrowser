@@ -546,7 +546,7 @@ end
 function _data_column(view::TableView, column::Int)::Bool
     path = (view.table::ItemTable).paths[column]
     (!isempty(view.zoom) || length(path) != 1) && return true
-    return !(view.item_column && path == ["item"] || Symbol(only(path)) in view.metadata)
+    return !(view.item_column && only(path) == "item" || Symbol(only(path)) in view.metadata)
 end
 
 # The columns the table shows: all but those the user hid.
