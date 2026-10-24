@@ -149,8 +149,11 @@ function _render_hierarchy_tree_panel(
 
     has_root_items = workspace isa Workspace.Workspace &&
         !isempty(Workspace.items(workspace, ROOT))
-    if workspace isa Workspace.Workspace &&
-       (!isempty(Workspace.collections(workspace)) || has_root_items || !isempty(unread))
+    # The top-level collections, kept with the tree: listing every collection at each frame to see
+    # whether there is one costs memory in proportion to the collections.
+    roots = workspace isa Workspace.Workspace ?
+        get!(() -> Workspace.children(workspace, ROOT), cache.children, ROOT) : CollectionKey[]
+    if workspace isa Workspace.Workspace && (!isempty(roots) || has_root_items || !isempty(unread))
         has_visible_leaf_cache = cache.has_visible_leaf
         subtree_matches_cache = cache.subtree_matches
 
@@ -218,7 +221,6 @@ function _render_hierarchy_tree_panel(
             return total
         end
 
-        roots = child_records(ROOT)
         root_visible = has_root_items &&
             ig.ImGuiTextFilter_PassFilter(filter_tree, label(workspace, ROOT), C_NULL)
         @timed "hierarchy_prep" begin
