@@ -144,15 +144,12 @@ function call_code(text::String, node::SyntaxNode)::Union{Nothing,CallCode}
     arguments = kind(node) == K"call" ? children(node)[2:end] : children(node)
     entries = EntryCode[]
     entry(name, argument, value) = push!(entries, EntryCode(name, trimmed(text, value), trimmed(text, argument)))
-    named(argument) = entry(Symbol(sourcetext(children(argument)[1])), argument, children(argument)[2])
+    # A value without a name, even after `;` where Julia refuses it, is read as the next position.
+    read(argument) = kind(argument) == K"=" ?
+        entry(Symbol(sourcetext(children(argument)[1])), argument, children(argument)[2]) :
+        entry(count(e -> e.name isa Int, entries) + 1, argument, argument)
     for argument in arguments
-        if kind(argument) == K"parameters"
-            foreach(named, children(argument))
-        elseif kind(argument) == K"="
-            named(argument)
-        else
-            entry(count(e -> e.name isa Int, entries) + 1, argument, argument)
-        end
+        kind(argument) == K"parameters" ? foreach(read, children(argument)) : read(argument)
     end
     # Positions come first, as `mapping` takes them.
     return CallCode(byte_range(node), sort(entries; by=e -> e.name isa Symbol))
