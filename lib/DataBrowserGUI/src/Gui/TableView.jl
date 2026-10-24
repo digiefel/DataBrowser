@@ -34,7 +34,10 @@ that row shows the smallest and the largest number of the column. "Expand all" a
 in the menu of the header `item`, unfold and fold all items. Space folds the items of the selected
 rows, or unfolds them when they are all folded; Cmd-A selects all rows.
 
-Clicking the header of a column sorts the rows by it, and Shift-click adds another column to sort by.
+Clicking the header of a column selects the column, and Shift-click selects the columns up to it.
+The arrow at the right of the column's name, which shows when the mouse is over the header, sorts
+the rows by the column: ascending, then descending, then not at all. Shift-click on the arrow adds
+another column to sort by.
 Sorting may put the rows of an item apart. A folded item's row goes where its first row would go.
 Right-clicking the header opens a menu. Its field takes a filter: a Julia function, such as `≥(0)`
 or `!in(["C2_3um"])`, which the table calls with each value of the column. The table shows the rows
@@ -127,7 +130,6 @@ function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
     # The sort and the filters stay, as long as the table has their columns.
     view.grid.sort = [(findfirst(==(name), table.columns), ascending)
                       for (name, ascending) in view.sort if name in table.columns]
-    view.grid.apply_sort = true
     _arrange!(view)
     return nothing
 end
@@ -364,6 +366,7 @@ function draw!(view::TableView, ctx)::Nothing
                 !haskey(view.filter_errors, table.columns[column]) ? ICON_FILTER : "",
             header_popup=filter_popup,
             hidden=column -> table.columns[column] in view.hidden,
+            # TODO: pass on the selected columns, `view.grid.selected_columns`, too.
             on_selection_change=_ -> _pass_on!(view),
         )
     end

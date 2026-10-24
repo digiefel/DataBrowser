@@ -608,7 +608,9 @@ the table as a first-class view.
   - [x] Columns fitted to their content when the data changes.
   - [x] Hide columns, from the "Columns" list in the top line of the window or the header's menu.
   - [ ] Reorder columns; freeze the first column; an optional row-number column.
-  - [x] Sort by a column, and by several with Shift-click.
+  - [x] Sort by a column with the arrow in its header, and by several with Shift-click.
+  - [x] Select columns by clicking their headers, with Shift-click and Cmd-click as for rows.
+  - [ ] Pass on the selected columns.
   - [x] The items one after the other, with the label of each item in one cell beside all of its
     rows. The label stays in place when the table scrolls sideways.
   - [x] Fold an item to one row that shows how many values it has in each column, with the

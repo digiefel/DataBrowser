@@ -133,8 +133,10 @@ Arguments:
   that folds something, open (`true`) or closed (`false`). No cell has an arrow by default
 - `on_fold`: called with `(row, col)` when the user clicks the arrow of a cell
 - `on_sort`: called with the columns to sort by, as `(col, ascending)` pairs from the first to the
-  last, when they change. Clicking a header sorts by its column, and Shift-click adds the column.
-  The grid cannot be sorted without it
+  last, when the user changes them. The arrow at the right edge of a header, which shows when the
+  column is sorted or the mouse is over the header, sorts by the column: ascending, then descending,
+  then not at all. Shift-click adds the column to the columns to sort by. The grid has no arrows
+  without it
 - `header_icon`: `(col::Int) -> String`, an icon at the right edge of the header of the column,
   left of the sort arrow. No header has an icon by default
 - `column_groups`: `(col::Int) -> Vector{String}`, the names of the groups the column is in, from
@@ -158,6 +160,9 @@ which it is for a new state.
 
 Row mode: click = replace, Shift+click = extend range, Ctrl/Cmd+click = toggle,
 Ctrl/Cmd+A = select all, up/down = move (Shift extends), Escape = clear.
+
+Clicking the header of a column selects the column, in `state.selected_columns`, with the same
+Shift and Ctrl/Cmd clicks as rows. Escape clears it too.
 
 Cell mode: click or drag selects a rectangular range, Shift+click/arrows extend it,
 Ctrl/Cmd+A selects the grid, Ctrl/Cmd+C copies TSV, and Escape clears it.
@@ -205,8 +210,6 @@ function render_data_grid!(
             ig.ImGuiTableFlags_ScrollX        |
             ig.ImGuiTableFlags_ScrollY        |
             ig.ImGuiTableFlags_SizingFixedFit
-    on_sort === nothing ||
-        (flags |= ig.ImGuiTableFlags_Sortable | ig.ImGuiTableFlags_SortMulti | ig.ImGuiTableFlags_SortTristate)
 
     if !ig.BeginTable("##datagrid_$id", n_cols, flags, (0.0f0, height))
         return nothing
@@ -266,30 +269,38 @@ function render_data_grid!(
         end
     end
     ig.TableNextRow(ig.ImGuiTableRowFlags_Headers)
+    io = ig.GetIO()
+    shown_columns = [column for column in 1:n_cols if !hidden(column)]
     for column in 1:n_cols
         ig.TableSetColumnIndex(column - 1)
         ig.PushID(column)
         icon = header_icon(column)
         header_open = header_fold(column, length(column_groups(column)) + 1)
+        place = findfirst(spec -> first(spec) == column, state.sort)
+        # The place of the column among the columns to sort by, written before its arrow when
+        # sorting by several.
+        number = place === nothing || length(state.sort) == 1 ? "" : string(place)
         position = ig.GetCursorScreenPos()
-        # The arrow is a button of its own on top of the header, which sorts when clicked.
-        header_open === nothing || ig.SetNextItemAllowOverlap()
+        column in state.selected_columns &&
+            ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, ig.GetColorU32(ig.ImGuiCol_Header))
+        # The arrows are buttons of their own on top of the header.
+        ig.SetNextItemAllowOverlap()
         # The text after "###" is the id of the header, so that its popup stays open when the
-        # icon changes. Spaces before the name make room for the arrow, and two spaces after it
-        # make room for the icon when the column fits its content.
-        ig.TableHeader("$(header_open === nothing ? "" : " "^3)$(columns[column])$(isempty(icon) ? "" : "  ")###header")
-        if !isempty(icon)
-            # ImGui draws the sort arrow, and the place of the column when sorting by several, at
-            # the right edge of the header.
-            place = state.sort === nothing ? nothing : findfirst(spec -> first(spec) == column, state.sort)
-            arrow = place === nothing ? 0.0f0 : floor(ig.GetFontSize() * 0.65f0)
-            place === nothing || length(state.sort) == 1 ||
-                (arrow += style.ItemInnerSpacing.x + ig.CalcTextSize(string(place)).x)
-            right = ig.GetItemRectMax().x - style.CellPadding.x - arrow
-            top = ig.GetItemRectMin().y + style.CellPadding.y
-            ig.AddText(ig.GetWindowDrawList(), ig.ImVec2(right - ig.CalcTextSize(icon).x, top),
-                ig.GetColorU32(ig.ImGuiCol_Text), icon)
+        # text changes. Spaces before the name make room for the fold arrow, and spaces after it
+        # make room for the sort arrow and the icon when the column fits its content. ImGui would
+        # cut a long name at the edge of the column, so the grid writes the name itself, below.
+        room = (on_sort === nothing ? 0 : 2 + (isempty(number) ? 0 : length(number) + 1)) + (isempty(icon) ? 0 : 2)
+        ig.PushStyleColor(ig.ImGuiCol_Text, 0x00000000)
+        ig.TableHeader("$(header_open === nothing ? "" : " "^3)$(columns[column])$(" "^room)###header")
+        ig.PopStyleColor()
+        if ig.IsItemClicked()
+            _update_multi_selection!(state.selected_columns, column, shown_columns,
+                unsafe_load(io.KeyShift), unsafe_load(io.KeyCtrl))
         end
+        header_min, header_max = ig.GetItemRectMin(), ig.GetItemRectMax()
+        hovered = ig.IsMouseHoveringRect(header_min, header_max) && ig.IsWindowHovered()
+        top = header_min.y + style.CellPadding.y
+        right = header_max.x - style.CellPadding.x
         if ig.BeginPopupContextItem()
             if header_popup !== nothing
                 header_popup(column)
@@ -299,6 +310,48 @@ function render_data_grid!(
             ig.MenuItem("Size all columns to fit") && ig.TableSetColumnWidthAutoAll(grid_table)
             ig.EndPopup()
         end
+        if on_sort !== nothing
+            # The arrow as ImGui draws it in a sorted header, after the place of the column.
+            arrow = floor(ig.GetFontSize() * 0.65f0)
+            left = right - arrow - (isempty(number) ? 0.0f0 : ig.CalcTextSize(number).x + style.ItemInnerSpacing.x)
+            if place !== nothing || hovered
+                isempty(number) || ig.AddText(draw_list, ig.ImVec2(left, top),
+                    ig.GetColorU32(ig.ImGuiCol_Text, 0.7f0), number)
+                ascending = place === nothing || last(state.sort[place])
+                ig.RenderArrow(draw_list, ig.ImVec2(right - arrow, top),
+                    ig.GetColorU32(place === nothing ? ig.ImGuiCol_TextDisabled : ig.ImGuiCol_Text),
+                    ascending ? ig.ImGuiDir_Up : ig.ImGuiDir_Down, 0.65f0)
+            end
+            ig.SetCursorScreenPos(ig.ImVec2(left, top))
+            if ig.InvisibleButton("##sort", ig.ImVec2(right - left, ig.GetFontSize()))
+                # Ascending, then descending, then not sorted.
+                ascending = place === nothing ? true : last(state.sort[place]) ? false : nothing
+                if unsafe_load(io.KeyShift)
+                    sort = copy(state.sort)
+                    if ascending === nothing
+                        deleteat!(sort, place)
+                    elseif place === nothing
+                        push!(sort, (column, ascending))
+                    else
+                        sort[place] = (column, ascending)
+                    end
+                else
+                    sort = ascending === nothing ? Tuple{Int,Bool}[] : [(column, ascending)]
+                end
+                state.sort = sort
+                on_sort(sort)
+            end
+            right = left - style.ItemInnerSpacing.x
+        end
+        if !isempty(icon)
+            right -= ig.CalcTextSize(icon).x
+            ig.AddText(draw_list, ig.ImVec2(right, top), ig.GetColorU32(ig.ImGuiCol_Text), icon)
+            right -= style.ItemInnerSpacing.x
+        end
+        # The name, cut with "..." before the arrow and the icon.
+        left = position.x + (header_open === nothing ? 0.0f0 : ig.CalcTextSize(" "^3).x)
+        ig.RenderTextEllipsis(draw_list, ig.ImVec2(left, position.y),
+            ig.ImVec2(right, position.y + ig.GetFontSize()), right, columns[column], C_NULL, C_NULL)
         if header_open !== nothing
             draw_arrow(position, header_open)
             ig.SetCursorScreenPos(position)
@@ -307,34 +360,12 @@ function render_data_grid!(
         end
         ig.PopID()
     end
-    if on_sort !== nothing && state.apply_sort
-        # Sorting by no column first clears the sort of every column.
-        ig.TableSetColumnSortDirection(0, ig.ImGuiSortDirection_None, false)
-        for (column, ascending) in something(state.sort, Tuple{Int,Bool}[])
-            ig.TableSetColumnSortDirection(column - 1,
-                ascending ? ig.ImGuiSortDirection_Ascending : ig.ImGuiSortDirection_Descending, true)
-        end
-        state.apply_sort = false
-    end
-    if on_sort !== nothing
-        specs = ig.TableGetSortSpecs()
-        if specs != C_NULL
-            list = unsafe_load(specs)
-            sort = [(Int(spec.ColumnIndex) + 1, spec.SortDirection == ig.ImGuiSortDirection_Ascending)
-                    for spec in (unsafe_load(list.Specs, i) for i in 1:list.SpecsCount)]
-            if sort != state.sort
-                state.sort = sort
-                on_sort(sort)
-            end
-        end
-    end
     if state.fit_columns
         ig.TableSetColumnWidthAutoAll(ig.GetCurrentTable())
         state.fit_columns = false
     end
 
     # Keyboard navigation (only when the table window is hovered/focused)
-    io = ig.GetIO()
     # A scrolling table owns an internal child window. Query that child directly so several grids
     # in one parent window do not all react to the same keyboard shortcut.
     window_focused = ig.IsWindowFocused()
@@ -360,6 +391,7 @@ function render_data_grid!(
         end
 
         if ig.IsKeyPressed(ig.ImGuiKey_Escape)
+            empty!(state.selected_columns)
             if selection_mode === :rows && !isempty(selected)
                 empty!(state.selected_rows)
                 row_selection_changed = true
@@ -433,6 +465,8 @@ function render_data_grid!(
     padding = unsafe_load(ig.GetStyle().CellPadding)
     border = ig.GetColorU32(ig.ImGuiCol_TableBorderLight)
     background = ig.GetColorU32(ig.ImGuiCol_WindowBg)
+    selected_columns = Set(state.selected_columns)
+    selected_column = ig.GetColorU32(ig.ImGuiCol_Header)
     function draw_cell(row, column, position, first_visible, last_visible, row_height)
         first = span(row, column)
         if first == row && row > 1
@@ -444,6 +478,7 @@ function render_data_grid!(
         if first != row || (row < n_rows && span(row + 1, column) == first)
             ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, background)
         end
+        column in selected_columns && ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, selected_column)
         (first == row || row == first_visible) || return nothing
         # The text of a cell that spans several rows stays at the top of the rows on screen, below
         # the header, until the end of the span pushes it up.
@@ -465,9 +500,14 @@ function render_data_grid!(
         moved && ig.SetCursorScreenPos(ig.ImVec2(ig.GetCursorScreenPos().x, top))
         link, open = cell_link(row, column), fold(row, column)
         if open !== nothing
-            ig.SetNextItemOpen(open)
-            ig.TreeNodeEx("$(cell(row, column))##fold_$column", ig.ImGuiTreeNodeFlags_NoTreePushOnOpen) !=
-                open && on_fold(row, column)
+            # The arrow is a button of its own, out of ImGui's keyboard navigation; a click on the
+            # text selects, as anywhere else in the row.
+            draw_arrow(ig.GetCursorScreenPos(), open)
+            ig.PushItemFlag(ig.ImGuiItemFlags_NoNav, true)
+            ig.InvisibleButton("##fold_$column", ig.ImVec2(arrow_width, ig.GetFontSize())) && on_fold(row, column)
+            ig.PopItemFlag()
+            ig.SameLine(0.0f0, 0.0f0)
+            ig.TextUnformatted(cell(row, column))
         elseif link !== nothing
             ig.TextLinkOpenURL(cell(row, column), link)
         elseif clickable(row, column)
