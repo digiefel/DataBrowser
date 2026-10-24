@@ -31,7 +31,7 @@ DataBrowserPlotsGLMakieExt = "GLMakie"
 
 [compat]
 AlgebraOfGraphics = "0.13"
-CImGui = "8.0"
+CImGui = "10.1"
 CairoMakie = "0.15"
 ForwardDiff = "1"
 GLFW = "3.4.4"

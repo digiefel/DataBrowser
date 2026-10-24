@@ -575,7 +575,8 @@ function _render_selection_toolbar!(
         ig.ImGuiMod_Ctrl | ig.ImGuiKey_F,
         ig.ImGuiInputFlags_Tooltip
     )
-    ig.ImGuiTextFilter_Draw(filter_obj, filter_id, -1)
+    ig.SetNextItemWidth(-1)
+    ig.ImGuiTextFilter_Draw(filter_obj, filter_id)
     if ig.IsKeyPressed(ig.ImGuiKey_A) && ig.IsWindowFocused()
         io = ig.GetIO()
         unsafe_load(io.KeyCtrl) && on_select_all!()

@@ -20,9 +20,9 @@ Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 Zlib_jll = "83775a58-1f1d-513f-b197-d71354ab007a"
 
 [compat]
-CSV = "0.10"
+CSV = "1"
 Tables = "1"
-CImGui = "8.0"
+CImGui = "10.1"
 GLFW = "3.4.4"
 JuliaSyntax = "1"
 ModernGL = "1.1.8"

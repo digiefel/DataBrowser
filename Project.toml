@@ -51,7 +51,7 @@ DataBrowserGLMakieExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "Moder
 
 [compat]
 BetterFileWatching = "1.0.0"
-CImGui = "8.0"
+CImGui = "10.1"
 CancellationTokens = "2.3.0"
 DBInterface = "2.6.1"
 DuckDB = "1.5.2"
