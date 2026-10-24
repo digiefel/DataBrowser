@@ -30,9 +30,9 @@ names, its names are the columns.
 With several items, the first column `item` holds the label of each item, in one cell beside all of
 its rows, and stays in place when the table scrolls sideways. The arrow beside the label folds the
 item to one row, which shows how many values the item has in each column. Hovering over a cell of
-that row shows the smallest and the largest number of the column. The menu of the header `item`
-folds or unfolds all items. Space folds the items of the selected rows, or unfolds them when they
-are all folded, and Option-Space does the same for all items.
+that row shows the smallest and the largest number of the column. "Expand all" and "Collapse all",
+in the menu of the header `item`, unfold and fold all items. Space folds the items of the selected
+rows, or unfolds them when they are all folded; Cmd-A selects all rows.
 
 Clicking the header of a column sorts the rows by it, and Shift-click adds another column to sort by.
 Sorting may put the rows of an item apart. A folded item's row goes where its first row would go.
@@ -316,8 +316,8 @@ function draw!(view::TableView, ctx)::Nothing
             ig.PopStyleColor()
         end
         if view.item_column && column == 1
-            ig.MenuItem("Fold all items") && _fold!(view, eachindex(table.item_labels), true)
-            ig.MenuItem("Unfold all items") && _fold!(view, eachindex(table.item_labels), false)
+            ig.MenuItem("Expand all") && _fold!(view, eachindex(table.item_labels), false)
+            ig.MenuItem("Collapse all") && _fold!(view, eachindex(table.item_labels), true)
             return nothing
         end
         ig.MenuItem("Hide column") || return nothing
@@ -367,12 +367,10 @@ function draw!(view::TableView, ctx)::Nothing
             on_selection_change=_ -> _pass_on!(view),
         )
     end
-    # Space folds the items of the selected rows, or unfolds them when they are all folded;
-    # Option-Space does the same for all items.
+    # Space folds the items of the selected rows, or unfolds them when they are all folded.
     if view.item_column && ig.IsWindowFocused(ig.ImGuiFocusedFlags_ChildWindows) &&
             ig.IsKeyPressed(ig.ImGuiKey_Space, false)
-        items = unsafe_load(ig.GetIO().KeyAlt) ? Set(eachindex(table.item_labels)) :
-            Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows)
+        items = Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows)
         isempty(items) || _fold!(view, items, !issubset(items, view.folded))
     end
     if zoomed

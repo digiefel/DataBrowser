@@ -612,8 +612,8 @@ the table as a first-class view.
   - [x] The items one after the other, with the label of each item in one cell beside all of its
     rows. The label stays in place when the table scrolls sideways.
   - [x] Fold an item to one row that shows how many values it has in each column, with the
-    smallest and the largest number on hover. Fold all items from the menu of the header `item`,
-    and the items of the selected rows with Space.
+    smallest and the largest number on hover. "Expand all" and "Collapse all" in the menu of the
+    header `item`; Space folds the items of the selected rows.
   - [x] Metadata columns that the user picks from the "Metadata" list in the top line of the window,
     in one cell beside the rows of each item.
   - [x] Every list of names to pick from narrows to the names that match what the user types, and
