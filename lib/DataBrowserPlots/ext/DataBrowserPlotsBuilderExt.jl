@@ -18,8 +18,6 @@ using .GLMakieExt: DARK, FigureView
 using .GLMakieExt.MakieImguiIntegration: plot_theme
 import .GLMakieExt: build!, export_name
 
-# The width of the names of the values in the panel, such as `color` or `marker`.
-const NAME_WIDTH = 92.0f0
 # Icons of the Lucide font that DataBrowserGUI loads with the interface font.
 const ICON_EYE = "\ue0ba"
 const ICON_EYE_OFF = "\ue0bb"
@@ -41,13 +39,11 @@ const SCALE_INFO = Dict(
     :scale => "The scale function applies before the analyses run, and can change their results.",
     :limits => "The values outside the limits are removed before the analyses run, and can change their results.",
 )
-# A value the user is writing in the panel: the call it goes in (see `target_call`), its name, and
-# whether the user writes the value or its text after `=>`; the text, and whether the field takes
-# the keyboard in the next frame.
+# A value the user is writing in the panel: the call it goes in (see `target_call`), its name, its
+# text, and whether the field takes the keyboard in the next frame.
 mutable struct EntryEdit
     target::Tuple{Symbol,Int}
     name::Union{Int,Symbol}
-    part::Symbol
     buffer::Vector{UInt8}
     focus::Bool
 end
@@ -67,7 +63,8 @@ code is shown under the figure and edited there or, once the plot has a name, in
 The panel at the left shows the parts of `@plot` as the code names them: its `mapping`, its layers
 with the `mapping` and `visual` of each, and its `scales`. A click on a value edits it, and Enter
 writes it into the code; a marker or a line style is picked from a menu that draws them. The "+"
-buttons add a value, a layer or a scale, offering only what the plot can use, and "×" removes one.
+at the end of a title adds a value, a layer or a scale, offering only what the plot can use; "×",
+shown while the mouse is on a value, a layer or a scale, removes it.
 The eye button hides a layer, writing [`@invisible`](@ref) before its line, and draws it again.
 The border between the panel and the figure can be dragged.
 Giving a name that has no file yet saves the code under it; a name that has a file opens it. It
@@ -344,15 +341,14 @@ function target_call(plot::PlotCode, (kind, index)::Tuple{Symbol,Int})::Union{No
     return plot.scale_settings[index]
 end
 
-# Write a value into the code: in place of its old value or of its text after `=>`, or after the
-# call's last value. A line without its own mapping or visual gets one, and a plot without
-# `scales(...)` gets that line at the end of its block.
-function write_entry!(code::CodeFile, plot::PlotCode, target, name, part::Symbol, text::String)::Nothing
+# Write a value into the code: in place of its old value, or after the call's last value. A line
+# without its own mapping or visual gets one, and a plot without `scales(...)` gets that line at the
+# end of its block.
+function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String)::Nothing
     call = target_call(plot, target)
     found = call === nothing ? nothing : findfirst(entry -> entry.name == name, call.entries)
     if found !== nothing
-        entry = call.entries[found]
-        edit!(code, part === :label ? entry.label : entry.value, text)
+        edit!(code, call.entries[found].value, text)
     elseif call !== nothing && isempty(call.entries) && code.text[first(call.range)] == '('
         # An empty named tuple, `(;)`.
         edit!(code, call.range, "(; $name=$text)")
@@ -393,10 +389,10 @@ function remove_line!(code::CodeFile, line)::Nothing
     return nothing
 end
 
-function start_edit!(view::BuilderView, target, name, part::Symbol, value::String)::Nothing
+function start_edit!(view::BuilderView, target, name, value::String)::Nothing
     buffer = zeros(UInt8, max(1024, 2sizeof(value)))
     copyto!(buffer, codeunits(value))
-    view.editing = EntryEdit(target, name, part, buffer, true)
+    view.editing = EntryEdit(target, name, buffer, true)
     return nothing
 end
 
@@ -422,59 +418,80 @@ end
 
 code_color(role::Symbol, alpha::Float32=1.0f0) = ig.ImVec4(getfield(CODE_COLORS, role)..., alpha)
 
-# A title in the panel: the name of a call of the code, in its color.
-heading(title::String) = with_font(() -> ig.TextColored(code_color(:call), title), :code)
+# The width of a column of the names of values, such as `color` or `markersize`.
+names_width(names) = with_font(() -> maximum(name -> ig.CalcTextSize(entry_name(name)).x, names; init=0.0f0), :code) +
+    2unsafe_load(ig.GetStyle()).ItemSpacing.x
 
-# A box of the panel with a title, around what `f` draws.
-function section(f, id::String, title::String; code::Bool=true)
-    ig.PushStyleColor(ig.ImGuiCol_ChildBg, ig.GetColorU32(ig.ImVec4(1.0f0, 1.0f0, 1.0f0, 0.035f0)))
-    ig.BeginChild(id, (0.0f0, 0.0f0), ig.ImGuiChildFlags_Borders | ig.ImGuiChildFlags_AutoResizeY)
-    ig.PopStyleColor()
-    code ? heading(title) : ig.TextUnformatted(title)
-    f()
-    ig.EndChild()
-    ig.Spacing()
-    return nothing
-end
-
-# A button with a cross at the right end of the row. Returns whether it was clicked.
-function remove_button(tooltip::String)::Bool
-    size = ig.GetFrameHeight()
-    ig.SameLine(ig.GetWindowWidth() - unsafe_load(ig.GetStyle()).WindowPadding.x - size)
+# A button that shows only its icon until the mouse is on it. `danger` makes it red then.
+function icon_button(icon::String, tooltip::String; danger::Bool=false)::Bool
     ig.PushStyleColor(ig.ImGuiCol_Button, ig.GetColorU32(ig.ImGuiCol_Button, 0.0f0))
-    ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, ig.GetColorU32(ig.ImVec4(0.8f0, 0.3f0, 0.3f0, 0.6f0)))
-    ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
-    clicked = ig.Button(ICON_X, (size, size))
-    ig.PopStyleColor(3)
+    danger && ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, ig.GetColorU32(ig.ImVec4(0.75f0, 0.28f0, 0.28f0, 0.8f0)))
+    clicked = ig.SmallButton(icon)
+    ig.PopStyleColor(danger ? 2 : 1)
     ig.SetItemTooltip(tooltip)
     return clicked
 end
 
-# A "+" button with a menu of `offered` names, which a long menu filters as the user types.
-# Returns the name the user picked, or `nothing`.
-function draw_add!(view::BuilderView, id::String, label::String, offered::Vector{String})::Union{Nothing,String}
-    isempty(offered) && return nothing
-    ig.PushID(id)
+# Moves to the right end of the row, where an item `width` wide fits, unless the row is full.
+function to_right_end(width::Float32)::Nothing
+    style = unsafe_load(ig.GetStyle())
+    after = ig.GetItemRectMax().x - ig.GetWindowPos().x + style.ItemSpacing.x
+    ig.SameLine(max(ig.GetWindowWidth() - style.WindowPadding.x - width, after))
+    return nothing
+end
+
+# A menu of `names` under the last item, which a long menu filters as the user types. Returns the
+# name the user picked, or `nothing`.
+function names_menu(view::BuilderView, names::Vector{String})::Union{Nothing,String}
     picked = nothing
-    ig.PushStyleColor(ig.ImGuiCol_Button, ig.GetColorU32(ig.ImGuiCol_Button, 0.5f0))
-    if ig.SmallButton("$ICON_PLUS $label")
-        view.picker = ListPicker()
-        ig.OpenPopup("names")
-    end
-    ig.PopStyleColor()
     if ig.BeginPopup("names")
-        if length(offered) > 10
-            index = render_list_picker!(view.picker, offered, falses(length(offered)))
-            index === nothing || (picked = offered[index]; ig.CloseCurrentPopup())
+        if length(names) > 10
+            index = render_list_picker!(view.picker, names, falses(length(names)))
+            index === nothing || (picked = names[index]; ig.CloseCurrentPopup())
         else
-            for name in offered
+            for name in names
                 with_font(() -> ig.Selectable(name), :code) && (picked = name)
             end
         end
         ig.EndPopup()
     end
+    return picked
+end
+
+# A title of the panel with a "+" at the right end of its row that offers `offered` names. The title
+# is code in the color of `role`, such as `:call` for `mapping`, or `:plain`; `:interface` writes it
+# as other text. Returns the name the user picked, or `nothing`.
+function heading!(view::BuilderView, id::String, title::String, offered::Vector{String};
+        role::Symbol=:call, tooltip::String="Add")::Union{Nothing,String}
+    ig.PushID(id)
+    ig.AlignTextToFramePadding()
+    if role === :interface
+        ig.TextUnformatted(title)
+    else
+        with_font(() -> role === :plain ? ig.TextUnformatted(title) : ig.TextColored(code_color(role), title), :code)
+    end
+    picked = nothing
+    if !isempty(offered)
+        to_right_end(ig.GetFrameHeight())
+        if icon_button(ICON_PLUS, tooltip)
+            view.picker = ListPicker()
+            ig.OpenPopup("names")
+        end
+        picked = names_menu(view, offered)
+    end
     ig.PopID()
     return picked
+end
+
+# A box of the panel around what `f` draws.
+function section(f, id::String)
+    ig.PushStyleColor(ig.ImGuiCol_ChildBg, ig.GetColorU32(ig.ImVec4(1.0f0, 1.0f0, 1.0f0, 0.03f0)))
+    ig.BeginChild(id, (0.0f0, 0.0f0), ig.ImGuiChildFlags_Borders | ig.ImGuiChildFlags_AutoResizeY)
+    ig.PopStyleColor()
+    f()
+    ig.EndChild()
+    ig.Dummy((0.0f0, 2.0f0))
+    return nothing
 end
 
 # The marker or line style that a value writes, such as `:dash`, or `nothing` for other code.
@@ -560,6 +577,7 @@ function code_box(id::String, value::String, width::Float32; dimmed::Bool=false,
     style = unsafe_load(ig.GetStyle())
     position = ig.GetCursorScreenPos()
     height = ig.GetFrameHeight()
+    ig.SetNextItemAllowOverlap()
     clicked = ig.InvisibleButton(id, (width, height))
     hovered = ig.IsItemHovered()
     draw_list = ig.GetWindowDrawList()
@@ -591,42 +609,38 @@ function code_box(id::String, value::String, width::Float32; dimmed::Bool=false,
     return clicked, hovered, clipped
 end
 
-# A row of the panel: the name of a value and its value, colored as code. A click on the value edits
-# it; a marker or a line style of `visual` opens a menu of them, each drawn as it looks. The value is
-# only framed when it is `inherited` from the header or `unused` by every drawn layer, and struck
-# through when the line's plot type `skipped` it. `info` adds an info button with that text, and
-# `label` the text after `=>`. Returns the change of the code the user asked for, as a function of
-# no arguments, or `nothing`.
-function draw_entry!(view::BuilderView, target, name, value::String; label=nothing, inherited::Bool=false,
+# A row of the panel: the name of a value, in a column `name_width` wide, and its value, colored as
+# code. A click on the value edits it; a marker or a line style of `visual` opens a menu of them,
+# each drawn as it looks. The value is only framed when it is `inherited` from the header or
+# `unused` by every drawn layer, and struck through when the line's plot type `skipped` it. While
+# the mouse is on a `removable` value, a cross at its end removes it. `info` adds an info button with
+# that text. Returns the change of the code the user asked for, as a function of no arguments, or
+# `nothing`.
+function draw_entry!(view::BuilderView, target, name, value::String; name_width::Float32, inherited::Bool=false,
         unused::Bool=false, skipped::Bool=false, removable::Bool=!inherited, info=nothing)::Union{Nothing,Function}
     change = nothing
     ig.PushID("$target/$name")
     ig.AlignTextToFramePadding()
-    # The values start at the same place in rows with the same indent.
     start = ig.GetCursorPosX()
     with_font(() -> ig.TextDisabled(entry_name(name)), :code)
     if info !== nothing
-        ig.SameLine()
+        ig.SameLine(0.0f0, 2.0f0)
         ig.TextDisabled(ICON_INFO)
         ig.SetItemTooltip(info)
     end
-    ig.SameLine(start + NAME_WIDTH)
+    ig.SameLine(start + name_width)
     edit = view.editing
     if edit !== nothing && edit.target == target && edit.name == name
         text = draw_field!(view)
-        text === nothing || (change = () -> write_entry!(view.code, view.plot, target, name, edit.part, text))
+        text === nothing || (change = () -> write_entry!(view.code, view.plot, target, name, text))
     else
         style = unsafe_load(ig.GetStyle())
-        label_width = label === nothing ? 0.0f0 :
-            with_font(() -> ig.CalcTextSize(label).x, :code) + 2style.FramePadding.x + style.ItemSpacing.x
-        # Every row keeps the room of the cross, so that values end at the same place.
-        remove_width = ig.GetFrameHeight() + style.ItemSpacing.x
-        width = max(ig.GetContentRegionAvail().x - label_width - remove_width, 24.0f0)
         symbol = target[1] === :visual && name in (:marker, :linestyle) ? written_symbol(value) : nothing
         dimmed = inherited || unused || skipped
-        clicked, hovered, clipped = code_box("value", value, width; dimmed, glyph=symbol === nothing ? nothing : (name, symbol))
+        clicked, hovered, clipped = code_box("value", value, max(ig.GetContentRegionAvail().x, 24.0f0);
+            dimmed, glyph=symbol === nothing ? nothing : (name, symbol))
+        low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
         if skipped
-            low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
             middle = round((low.y + high.y) / 2)
             ig.AddLine(ig.GetWindowDrawList(), (low.x + style.FramePadding.x, middle),
                 (high.x - style.FramePadding.x, middle), ig.GetColorU32(ig.ImGuiCol_TextDisabled))
@@ -641,7 +655,7 @@ function draw_entry!(view::BuilderView, target, name, value::String; label=nothi
             ig.EndTooltip()
         end
         choices = symbol === nothing ? nothing : name === :marker ? MARKERS : LINESTYLES
-        clicked && (choices === nothing ? start_edit!(view, target, name, :value, value) : ig.OpenPopup("choices"))
+        clicked && (choices === nothing ? start_edit!(view, target, name, value) : ig.OpenPopup("choices"))
         if choices !== nothing && ig.BeginPopup("choices")
             for choice in choices
                 position = ig.GetCursorScreenPos()
@@ -650,28 +664,29 @@ function draw_entry!(view::BuilderView, target, name, value::String; label=nothi
                 color = ig.GetColorU32(ig.ImGuiCol_Text)
                 name === :marker ? draw_marker(ig.GetWindowDrawList(), (position.x + 8, middle), 5.0f0, choice, color) :
                     draw_linestyle(ig.GetWindowDrawList(), position.x, position.x + 22, middle, choice, color)
-                picked && (change = () -> write_entry!(view.code, view.plot, target, name, :value, ":$choice"))
+                picked && (change = () -> write_entry!(view.code, view.plot, target, name, ":$choice"))
             end
             ig.EndPopup()
         end
-        if label !== nothing
-            ig.SameLine()
-            clicked, hovered, _ = code_box("label", label, label_width - style.ItemSpacing.x; dimmed)
-            hovered && ig.SetTooltip("The name of $(entry_name(name)) in the legend, the text after =>")
-            clicked && start_edit!(view, target, name, :label, label)
-        end
-        if removable && remove_button("Remove $(entry_name(name))")
-            change = () -> remove_entry!(view.code, target_call(view.plot, target), name)
+        # The cross, over the end of the value while the mouse is on it.
+        if removable && ig.IsMouseHoveringRect(low, high)
+            size = ig.GetFrameHeight()
+            ig.SetCursorScreenPos((high.x - size, low.y))
+            ig.PushStyleColor(ig.ImGuiCol_Button, ig.GetColorU32(ig.ImGuiCol_FrameBgHovered))
+            ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, ig.GetColorU32(ig.ImVec4(0.75f0, 0.28f0, 0.28f0, 0.8f0)))
+            ig.Button(ICON_X, (size, size)) && (change = () -> remove_entry!(view.code, target_call(view.plot, target), name))
+            ig.PopStyleColor(2)
+            ig.SetItemTooltip("Remove $(entry_name(name))")
         end
     end
     ig.PopID()
     return change
 end
 
-# A layer: its eye, its plot type, the names of its analyses and a picture of its marker and line,
-# and, when open, its `mapping` and `visual`. `takes(line, name)` tells whether the line takes a
-# mapping from the header, and `names` are the mappings it can show, or `nothing` when unknown.
-# Returns the changes of the code the user asked for.
+# A layer, as a card: a band with its eye, its plot type, the names of its analyses and a picture of
+# its marker and line, and under it, when open, its `mapping` and `visual`. `takes(line, name)`
+# tells whether the line takes a mapping from the header, and `names` are the mappings it can show,
+# or `nothing` when unknown. Returns the changes of the code the user asked for.
 function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Function}
     plot = view.plot
     line = plot.lines[index]
@@ -681,17 +696,29 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
     offer(change) = change === nothing || push!(changes, change)
     adding(target, present) = (edit = view.editing; edit !== nothing && edit.target == target &&
         all(entry -> entry.name != edit.name, present))
+    style = unsafe_load(ig.GetStyle())
 
+    # The band, drawn under the items of its row.
+    band = ig.GetCursorScreenPos()
+    band_end = (band.x + ig.GetContentRegionAvail().x, band.y + ig.GetFrameHeight())
+    ig.AddRectFilled(ig.GetWindowDrawList(), band, band_end, ig.GetColorU32(ig.ImGuiCol_Header, 0.45f0), style.FrameRounding)
+    # What does not fit in the band is cut off.
+    ig.PushClipRect(band, band_end, true)
     hidden = line.invisible !== nothing
     alpha = hidden ? 0.45f0 : 1.0f0
-    if ig.SmallButton(hidden ? ICON_EYE_OFF : ICON_EYE)
+    ig.AlignTextToFramePadding()
+    if icon_button(hidden ? ICON_EYE_OFF : ICON_EYE, hidden ? "Draw the layer" : "Hide the layer, keeping its line")
         # `@invisible` keeps the line in the plot without drawing it.
         start = first(line.range)
         push!(changes, hidden ? () -> edit!(view.code, line.invisible, "") : () -> edit!(view.code, start:start-1, "@invisible "))
     end
-    ig.SetItemTooltip(hidden ? "Draw the layer" : "Hide the layer, keeping its line")
-    ig.SameLine()
-    opened = ig.TreeNodeEx("##layer", ig.ImGuiTreeNodeFlags_SpanAvailWidth | ig.ImGuiTreeNodeFlags_AllowOverlap | ig.ImGuiTreeNodeFlags_DefaultOpen)
+    ig.SameLine(0.0f0, 2.0f0)
+    flags = ig.ImGuiTreeNodeFlags_SpanAvailWidth | ig.ImGuiTreeNodeFlags_AllowOverlap |
+        ig.ImGuiTreeNodeFlags_DefaultOpen | ig.ImGuiTreeNodeFlags_NoTreePushOnOpen
+    ig.PushStyleColor(ig.ImGuiCol_HeaderHovered, ig.GetColorU32(ig.ImGuiCol_HeaderHovered, 0.3f0))
+    ig.PushStyleColor(ig.ImGuiCol_HeaderActive, ig.GetColorU32(ig.ImGuiCol_HeaderActive, 0.3f0))
+    opened = ig.TreeNodeEx("##layer", flags)
+    ig.PopStyleColor(2)
     visual = entries(line.visual)
     value(name) = (found = findfirst(entry -> entry.name == name, visual); found === nothing ? nothing : text(visual[found].value))
     plottype = value(1)
@@ -699,6 +726,8 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         ig.SameLine()
         with_font(() -> ig.TextDisabled("$(line.name) ="), :code)
     end
+    ig.SameLine()
+    draw_sample(plottype, written_symbol(something(value(:marker), "")), written_symbol(something(value(:linestyle), "")), alpha)
     if plottype !== nothing
         ig.SameLine()
         ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_Text, alpha))
@@ -709,43 +738,48 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         ig.SameLine()
         draw_tag(analysis, alpha)
     end
-    ig.SameLine()
-    draw_sample(plottype, written_symbol(something(value(:marker), "")), written_symbol(something(value(:linestyle), "")), alpha)
-    remove_button("Remove the layer") && push!(changes, () -> remove_line!(view.code, line))
+    if ig.IsMouseHoveringRect(band, band_end)
+        to_right_end(ig.GetFrameHeight())
+        icon_button(ICON_X, "Remove the layer"; danger=true) && push!(changes, () -> remove_line!(view.code, line))
+    end
+    ig.PopClipRect()
 
     if opened
-        heading("mapping")
+        ig.Indent(style.FramePadding.x + 4)
         # The line's own mappings, and those it takes from the header: positions first, in order,
         # then the named ones.
         own = entries(line.mapping)
         rows = [[(entry, true) for entry in entries(plot.mapping) if takes(line, entry.name)]; [(entry, false) for entry in own]]
         sort!(rows; by=((entry, _),) -> entry.name isa Int ? (0, entry.name) : (1, 0))
+        named_visual = [entry for entry in visual if entry.name isa Symbol]
+
+        # TODO: mappings of a named line, such as the groups of a fit.
+        offered = names === nothing ? String[] : String.(setdiff(names, [entry.name for (entry, _) in rows]))
+        name = heading!(view, "mapping", "mapping", offered; tooltip="Add a mapping to this layer")
+        name === nothing || start_edit!(view, (:mapping, index), Symbol(name), "")
+        width = names_width([entry.name for (entry, _) in rows])
         for (entry, inherited) in rows
             skipped = inherited && names !== nothing && entry.name isa Symbol && !(entry.name in names)
-            offer(draw_entry!(view, (:mapping, index), entry.name, text(entry.value);
-                label=entry.label === nothing ? nothing : text(entry.label), inherited, skipped))
+            offer(draw_entry!(view, (:mapping, index), entry.name, text(entry.value); name_width=width, inherited, skipped))
         end
-        adding((:mapping, index), own) && offer(draw_entry!(view, (:mapping, index), view.editing.name, ""))
-        # TODO: mappings of a named line, such as the groups of a fit.
-        if names !== nothing
-            offered = String.(setdiff(names, [entry.name for (entry, _) in rows]))
-            name = draw_add!(view, "add mapping", "mapping", offered)
-            name === nothing || start_edit!(view, (:mapping, index), Symbol(name), :value, "")
-        end
+        adding((:mapping, index), own) && offer(draw_entry!(view, (:mapping, index), view.editing.name, ""; name_width=width))
 
-        heading("visual")
-        for entry in visual
-            entry.name isa Symbol && offer(draw_entry!(view, (:visual, index), entry.name, text(entry.value)))
-        end
-        adding((:visual, index), visual) && offer(draw_entry!(view, (:visual, index), view.editing.name, ""))
+        ig.Dummy((0.0f0, 2.0f0))
         type = plottype === nothing || !isdefined(Makie, Symbol(plottype)) ? nothing : getproperty(Makie, Symbol(plottype))
-        if type isa Type && type <: Makie.AbstractPlot
-            offered = sort(String.(setdiff(collect(Makie.attribute_names(type)), [entry.name for entry in visual])))
-            name = draw_add!(view, "add visual", "setting", offered)
-            name === nothing || start_edit!(view, (:visual, index), Symbol(name), :value, "")
+        offered = type isa Type && type <: Makie.AbstractPlot ?
+            sort(String.(setdiff(collect(Makie.attribute_names(type)), [entry.name for entry in visual]))) : String[]
+        name = heading!(view, "visual", "visual", offered; tooltip="Add a setting of the plot type")
+        name === nothing || start_edit!(view, (:visual, index), Symbol(name), "")
+        width = names_width([entry.name for entry in named_visual])
+        for entry in named_visual
+            offer(draw_entry!(view, (:visual, index), entry.name, text(entry.value); name_width=width))
         end
-        ig.TreePop()
+        adding((:visual, index), visual) && offer(draw_entry!(view, (:visual, index), view.editing.name, ""; name_width=width))
+        ig.Unindent(style.FramePadding.x + 4)
     end
+    # The frame of the card, around its band and what is under it.
+    bottom = ig.GetCursorScreenPos().y
+    opened && ig.AddRect(ig.GetWindowDrawList(), band, (band_end[1], bottom), ig.GetColorU32(ig.ImGuiCol_Header, 0.6f0), style.FrameRounding)
     return changes
 end
 
@@ -780,67 +814,76 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
     offer(change) = change === nothing || push!(changes, change)
     adding(target, present) = (edit = view.editing; edit !== nothing && edit.target == target &&
         all(entry -> entry.name != edit.name, present))
+    ig.PushStyleVar(ig.ImGuiStyleVar_ItemSpacing, (6.0f0, 4.0f0))
 
     if plot.mapping !== nothing
-        section("mapping", "mapping") do
+        section("mapping") do
+            offered = known ? String.(setdiff(union(view.mappings..., LAYOUT), [entry.name for entry in header])) : String[]
+            name = heading!(view, "mapping", "mapping", offered; tooltip="Add a mapping to every layer")
+            name === nothing || start_edit!(view, (:mapping, 0), Symbol(name), "")
+            width = names_width([entry.name for entry in header])
             for entry in header
-                offer(draw_entry!(view, (:mapping, 0), entry.name, text(entry.value);
-                    label=entry.label === nothing ? nothing : text(entry.label), unused=unused(entry.name)))
+                offer(draw_entry!(view, (:mapping, 0), entry.name, text(entry.value); name_width=width, unused=unused(entry.name)))
             end
-            adding((:mapping, 0), header) && offer(draw_entry!(view, (:mapping, 0), view.editing.name, ""))
-            if known
-                offered = String.(setdiff(union(view.mappings..., LAYOUT), [entry.name for entry in header]))
-                name = draw_add!(view, "add", "mapping", offered)
-                name === nothing || start_edit!(view, (:mapping, 0), Symbol(name), :value, "")
-            end
+            adding((:mapping, 0), header) && offer(draw_entry!(view, (:mapping, 0), view.editing.name, ""; name_width=width))
         end
     end
 
-    section("layers", "Layers"; code=false) do
+    section("layers") do
+        stop = isempty(plot.lines) ? plot.ending : last(plot.lines[end].range)
+        type = heading!(view, "layers", "Layers", stop === nothing ? String[] : PLOT_TYPES; role=:interface, tooltip="Add a layer")
+        type === nothing || push!(changes, () -> edit!(view.code, stop+1:stop, "\n$(plot.indent)visual($type)"))
         for index in eachindex(plot.lines)
             ig.PushID(index)
+            index > 1 && ig.Dummy((0.0f0, 4.0f0))
             append!(changes, draw_layer!(view, index, takes, shown(index)))
             ig.PopID()
         end
-        stop = isempty(plot.lines) ? plot.ending : last(plot.lines[end].range)
-        type = stop === nothing ? nothing : draw_add!(view, "add", "layer", PLOT_TYPES)
-        type === nothing || push!(changes, () -> edit!(view.code, stop+1:stop, "\n$(plot.indent)visual($type)"))
     end
 
     if plot.ending !== nothing
-        section("scales", "scales") do
+        section("scales") do
             scales = entries(plot.scales)
-            for (k, scale) in enumerate(scales)
-                ig.PushID(k)
-                ig.AlignTextToFramePadding()
-                with_font(() -> ig.TextUnformatted(entry_name(scale.name)), :code)
-                remove_button("Remove the scale of $(entry_name(scale.name))") &&
-                    push!(changes, () -> remove_entry!(view.code, plot.scales, scale.name))
-                settings = plot.scale_settings[k]
-                ig.Indent()
-                if settings === nothing
-                    # A scale written as other code than a named tuple is edited as code.
-                    offer(draw_entry!(view, (:scales, 0), scale.name, text(scale.value); removable=false))
-                else
-                    for setting in settings.entries
-                        offer(draw_entry!(view, (:scale, k), setting.name, text(setting.value);
-                            info=get(SCALE_INFO, setting.name, nothing)))
-                    end
-                    adding((:scale, k), settings.entries) && offer(draw_entry!(view, (:scale, k), view.editing.name, ""))
-                    offered = String.(setdiff(SCALE_SETTINGS, [entry.name for entry in settings.entries]))
-                    name = draw_add!(view, "add", "setting", offered)
-                    name === nothing || start_edit!(view, (:scale, k), Symbol(name), :value, "")
-                end
-                ig.Unindent()
-                ig.PopID()
-            end
             # The scales of the mappings the plot has, which `scales` can set.
             used = [entry_name(entry.name) for call in [plot.mapping; [line.mapping for line in plot.lines]] for entry in entries(call)]
             offered = filter(name -> name in used && !any(scale -> entry_name(scale.name) == name, scales), String.(SCALED))
-            name = draw_add!(view, "add scale", "scale", offered)
-            name === nothing || push!(changes, () -> write_entry!(view.code, plot, (:scales, 0), Symbol(name), :value, "(;)"))
+            name = heading!(view, "scales", "scales", offered; tooltip="Add the scale of a mapping")
+            name === nothing || push!(changes, () -> write_entry!(view.code, plot, (:scales, 0), Symbol(name), "(;)"))
+            # The names of the settings of every scale and, after some, an info button.
+            present_names = [entry.name for settings in plot.scale_settings if settings !== nothing for entry in settings.entries]
+            width = names_width(present_names) + ig.CalcTextSize(ICON_INFO).x + 2
+            for (k, scale) in enumerate(scales)
+                ig.PushID(k)
+                settings = plot.scale_settings[k]
+                present = settings === nothing ? EntryCode[] : settings.entries
+                # The scale's name, with a "+" for its settings and, under the mouse, a cross.
+                row = ig.GetCursorScreenPos()
+                row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
+                offered = settings === nothing ? String[] : String.(setdiff(SCALE_SETTINGS, [entry.name for entry in present]))
+                name = heading!(view, "scale", entry_name(scale.name), offered; role=:plain, tooltip="Add a setting of this scale")
+                name === nothing || start_edit!(view, (:scale, k), Symbol(name), "")
+                if ig.IsMouseHoveringRect(row, row_end)
+                    ig.SameLine(ig.GetWindowWidth() - unsafe_load(ig.GetStyle()).WindowPadding.x - 2ig.GetFrameHeight() - 4)
+                    icon_button(ICON_X, "Remove the scale of $(entry_name(scale.name))"; danger=true) &&
+                        push!(changes, () -> remove_entry!(view.code, plot.scales, scale.name))
+                end
+                ig.Indent(8.0f0)
+                if settings === nothing
+                    # A scale written as other code than a named tuple is edited as code.
+                    offer(draw_entry!(view, (:scales, 0), scale.name, text(scale.value); name_width=width, removable=false))
+                else
+                    for setting in present
+                        offer(draw_entry!(view, (:scale, k), setting.name, text(setting.value); name_width=width,
+                            info=get(SCALE_INFO, setting.name, nothing)))
+                    end
+                    adding((:scale, k), present) && offer(draw_entry!(view, (:scale, k), view.editing.name, ""; name_width=width))
+                end
+                ig.Unindent(8.0f0)
+                ig.PopID()
+            end
         end
     end
+    ig.PopStyleVar()
 
     if !isempty(changes)
         first(changes)()

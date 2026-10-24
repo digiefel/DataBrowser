@@ -1,14 +1,12 @@
 using DataBrowserGUI: CodeFile, JuliaSyntax, syntax
 using .JuliaSyntax: SyntaxNode, byte_range, children, kind, sourcetext, @K_str
 
-# A value given to a call, such as `color = :Chip => "Chip"` of `mapping(...)`: its name, a
-# position (1 for the first value) or a symbol, and its bytes in the code.
+# A value given to a call, such as `color = :Chip` of `mapping(...)`: its name, a position (1 for
+# the first value) or a symbol, and its bytes in the code.
 struct EntryCode
     name::Union{Int,Symbol}
-    # The bytes of the value, without the text after `=>` when it has one.
+    # The bytes of the value.
     value::UnitRange{Int}
-    # The bytes of the text after `=>`, as in `:Chip => "Chip"`, or `nothing`.
-    label::Union{Nothing,UnitRange{Int}}
     # The bytes of the whole value with its name, as in `color = :Chip`.
     range::UnitRange{Int}
 end
@@ -145,13 +143,7 @@ function call_code(text::String, node::SyntaxNode)::Union{Nothing,CallCode}
     kind(node) in (K"call", K"tuple") || return nothing
     arguments = kind(node) == K"call" ? children(node)[2:end] : children(node)
     entries = EntryCode[]
-    function entry(name, argument, value)
-        # The text after `=>`, as in `:Chip => "Chip"`.
-        labelled = kind(value) == K"call" && length(children(value)) == 3 && sourcetext(children(value)[2]) == "=>" &&
-            kind(children(value)[3]) == K"string"
-        range = trimmed(text, labelled ? children(value)[1] : value)
-        push!(entries, EntryCode(name, range, labelled ? trimmed(text, children(value)[3]) : nothing, trimmed(text, argument)))
-    end
+    entry(name, argument, value) = push!(entries, EntryCode(name, trimmed(text, value), trimmed(text, argument)))
     named(argument) = entry(Symbol(sourcetext(children(argument)[1])), argument, children(argument)[2])
     for argument in arguments
         if kind(argument) == K"parameters"
