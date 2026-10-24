@@ -46,6 +46,10 @@ function with_font(f::Function, role::Symbol)
     end
 end
 
+# The private-use range of Unicode, where the Lucide font has its icons. JuliaMono has glyphs of
+# its own there, which it leaves to the icons. ImGui reads the ranges while the fonts are in use.
+const _ICON_RANGE = CImGui.lib.ImWchar[0xe000, 0xf8ff, 0]
+
 """Load the bundled fonts into the current ImGui context."""
 function _load_fonts!()::_GUIFonts
     assets = joinpath(pkgdir(@__MODULE__), "assets")
@@ -57,7 +61,9 @@ function _load_fonts!()::_GUIFonts
     merge = CImGui.lib.ImFontConfig_ImFontConfig()
     try
         merge.MergeMode = true
+        merge.GlyphExcludeRanges = pointer(_ICON_RANGE)
         CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-Regular.ttf"), 13.0f0, merge)
+        merge.GlyphExcludeRanges = C_NULL
         # Icons fill their font size; load them smaller and move them onto the text baseline.
         merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
         CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
@@ -65,7 +71,13 @@ function _load_fonts!()::_GUIFonts
         CImGui.lib.ImFontConfig_destroy(merge)
     end
 
-    code = CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-Regular.ttf"), 13.0f0)
+    config = CImGui.lib.ImFontConfig_ImFontConfig()
+    code = try
+        config.GlyphExcludeRanges = pointer(_ICON_RANGE)
+        CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-Regular.ttf"), 13.0f0, config)
+    finally
+        CImGui.lib.ImFontConfig_destroy(config)
+    end
     merge = CImGui.lib.ImFontConfig_ImFontConfig()
     try
         merge.MergeMode = true
