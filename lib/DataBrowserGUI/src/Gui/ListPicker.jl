@@ -69,10 +69,11 @@ function render_list_picker!(picker::ListPicker, names::Vector{String},
     else
         # TODO: rank the names that match, for example those with the letters next to each other first.
         line = ig.GetTextLineHeightWithSpacing()
-        ig.BeginChild("##names", ig.ImVec2(width, min(length(matches), 12) * line))
         # The arrow keys move through the list here, not ImGui's keyboard navigation, which would
-        # take the keys away from the field.
+        # take the keys away from the field: neither the names nor the list take the keyboard. A
+        # list with a scroll bar is itself an item that ImGui's navigation would move to.
         ig.PushItemFlag(ig.ImGuiItemFlags_NoNav, true)
+        ig.BeginChild("##names", ig.ImVec2(width, min(length(matches), 12) * line))
         draw_list = ig.GetWindowDrawList()
         for (place, (index, letters)) in enumerate(matches)
             position = ig.GetCursorScreenPos()
@@ -94,8 +95,8 @@ function render_list_picker!(picker::ListPicker, names::Vector{String},
                 x += ig.CalcTextSize(string(letter)).x
             end
         end
-        ig.PopItemFlag()
         ig.EndChild()
+        ig.PopItemFlag()
     end
     return toggled
 end
