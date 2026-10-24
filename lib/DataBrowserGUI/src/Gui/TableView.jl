@@ -359,20 +359,22 @@ function draw!(view::TableView, ctx)::Nothing
     function row_menu(row, column)
         if view.label_row[row]
             items = unique(item(selected) for selected in sort(view.grid.selected_rows))
-            length(items) > 1 && ig.TextDisabled("Apply to $(length(items)) items")
+            # With several items, each menu item says how many it acts on.
+            count = length(items) > 1 ? " $(length(items)) items" : ""
             fold = !issubset(items, view.folded)
-            ig.MenuItem(fold ? "Fold" : "Unfold") && (change = () -> _fold!(view, items, fold))
+            ig.MenuItem((fold ? "Fold" : "Unfold") * count) && (change = () -> _fold!(view, items, fold))
             ig.MenuItem("Expand all") && (change = () -> _fold!(view, eachindex(table.item_labels), false))
             ig.MenuItem("Collapse all") && (change = () -> _fold!(view, eachindex(table.item_labels), true))
             ig.Separator()
-            ig.MenuItem(length(items) > 1 ? "Copy names" : "Copy name") &&
+            ig.MenuItem(length(items) > 1 ? "Copy $(length(items)) names" : "Copy name") &&
                 ig.SetClipboardText(join(table.item_labels[items], '\n'))
             ig.Separator()
             ig.MenuItem("Group by item", C_NULL, true) && (change = () -> _group!(view, false))
         else
             column >= 1 && ig.MenuItem("Copy cell") &&
                 ig.SetClipboardText(_copy_text(table.getvalue(shown[row], column)))
-            ig.MenuItem(length(view.grid.selected_rows) > 1 ? "Copy rows" : "Copy row") &&
+            rows = (view.output::ItemTable).rows
+            ig.MenuItem(rows > 1 ? "Copy $rows rows" : "Copy row") &&
                 ig.SetClipboardText(_copy_text(view.output::ItemTable))
             if column >= 1 && zoomable(row, column)
                 ig.Separator()
