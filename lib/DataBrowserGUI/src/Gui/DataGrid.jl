@@ -533,7 +533,7 @@ function render_data_grid!(
         end
         return nothing
     end
-    function draw_cell(row, column, position, first_visible, last_visible, row_height)
+    function draw_cell(row, column, position, last_visible, row_height)
         # The line at the right of the cell, below the lines between the rows.
         ig.TablePushBackgroundChannel()
         right = ig.TableGetCellBgRect(grid_table, column - 1).Max.x
@@ -551,9 +551,14 @@ function render_data_grid!(
             ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, background)
         end
         column in selected_columns && ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, selected_column)
-        (first == row || row == first_visible) || return nothing
         # The text of a cell that spans several rows stays at the top of the rows on screen, below
-        # the header, until the end of the span pushes it up.
+        # the header, until the end of the span pushes it up. Only the first row of the cell and the
+        # row at the top of the view write it: the clipper also draws rows out of view, such as the
+        # first row, which it measures.
+        clip_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y
+        row_top = position.y - padding.y
+        height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
+        (row_top + height > clip_top && (first == row || row_top <= clip_top)) || return nothing
         top = ig.GetCursorScreenPos().y
         if first != row || (row < n_rows && span(row + 1, column) == first)
             last_row = row
@@ -670,11 +675,11 @@ function render_data_grid!(
                         draw_band(row, text, color, position.y)
                     else
                         ig.SameLine()
-                        draw_cell(row, first_column, position, start_idx, end_idx, row_height)
+                        draw_cell(row, first_column, position, end_idx, row_height)
                         for column in 1:n_cols
                             (column == first_column || hidden(column)) && continue
                             ig.TableSetColumnIndex(column - 1)
-                            draw_cell(row, column, ig.GetCursorScreenPos(), start_idx, end_idx, row_height)
+                            draw_cell(row, column, ig.GetCursorScreenPos(), end_idx, row_height)
                         end
                     end
                 else
@@ -703,7 +708,7 @@ function render_data_grid!(
                             cell_bounds = _selected_cell_bounds(state, n_rows, n_cols)
                         end
                         ig.SetCursorScreenPos(position)
-                        draw_cell(row, column, position, start_idx, end_idx, row_height)
+                        draw_cell(row, column, position, end_idx, row_height)
                     end
                 end
 
