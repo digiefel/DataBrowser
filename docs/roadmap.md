@@ -615,7 +615,7 @@ the table as a first-class view.
   - [x] The items one after the other, each under a row with its label, which stays in place when
     the table scrolls sideways.
   - [x] Fold an item to the row with its label. "Expand all" and "Collapse all" in the menu of that
-    row; Space folds the items of the selected rows.
+    row; Enter folds the items whose rows with their labels are selected.
   - [ ] The row with the label of the item stays at the top while the item's rows scroll.
   - [ ] A folded item shows how many values it has, in a way still to find.
   - [x] Metadata columns that the user picks from the "Metadata" list in the top line of the window,

@@ -30,8 +30,8 @@ names, its names are the columns.
 With several items, a row with the label of each item comes before the item's rows, and its text
 stays in place when the table scrolls sideways. Selecting that row selects all of the item's rows.
 The arrow beside the label folds the item to that row. "Expand all" and "Collapse all", in the menu
-that right-clicking the row opens, unfold and fold all items. Space folds the items of the selected
-rows, or unfolds them when they are all folded; Cmd-A selects all rows.
+that right-clicking the row opens, unfold and fold all items. Enter folds the items whose rows with
+their labels are selected, or unfolds them when they are all folded; Cmd-A selects all rows.
 
 Clicking the header of a column selects the column, and Shift-click selects the columns up to it.
 The arrow at the right of the column's name, which shows when the mouse is over the header, sorts
@@ -374,10 +374,11 @@ function draw!(view::TableView, ctx)::Nothing
             on_selection_change=_ -> _pass_on!(view),
         )
     end
-    # Space folds the items of the selected rows, or unfolds them when they are all folded.
+    # Enter folds the items whose selected rows include the row with their label, or unfolds them
+    # when they are all folded.
     if view.item_column && ig.IsWindowFocused(ig.ImGuiFocusedFlags_ChildWindows) &&
-            ig.IsKeyPressed(ig.ImGuiKey_Space, false)
-        items = Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows)
+            (ig.IsKeyPressed(ig.ImGuiKey_Enter, false) || ig.IsKeyPressed(ig.ImGuiKey_KeypadEnter, false))
+        items = Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows if view.label_row[row])
         isempty(items) || _fold!(view, items, !issubset(items, view.folded))
     end
     change === nothing || change()
@@ -389,14 +390,14 @@ function draw!(view::TableView, ctx)::Nothing
     return nothing
 end
 
-# Fold `items`, or unfold them. The rows of the items that were selected stay selected.
+# Fold `items`, or unfold them. The selected rows that are still on screen stay selected.
 function _fold!(view::TableView, items, fold::Bool)::Nothing
-    table = view.table::ItemTable
-    selected = Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows)
+    # A row on screen is a row of `table`, or the row with the label of the item that holds it.
+    selected = Set((view.shown[row], view.label_row[row]) for row in view.grid.selected_rows)
     fold ? union!(view.folded, items) : setdiff!(view.folded, items)
     _arrange!(view)
     view.grid.fit_columns = true
-    view.grid.selected_rows = [row for row in eachindex(view.shown) if table.row_item[view.shown[row]] in selected]
+    view.grid.selected_rows = [row for row in eachindex(view.shown) if (view.shown[row], view.label_row[row]) in selected]
     _pass_on!(view)
     return nothing
 end

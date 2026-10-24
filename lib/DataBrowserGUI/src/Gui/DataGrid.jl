@@ -374,12 +374,19 @@ function render_data_grid!(
         state.fit_columns = false
     end
 
-    # Keyboard navigation (only when the table window is hovered/focused)
-    # A scrolling table owns an internal child window. Query that child directly so several grids
-    # in one parent window do not all react to the same keyboard shortcut.
+    # Keyboard navigation, only when the grid has the keyboard focus. A scrolling table owns an
+    # internal child window. Query that child directly so several grids in one parent window do not
+    # all react to the same keyboard shortcut.
     window_focused = ig.IsWindowFocused()
-    window_hovered = ig.IsWindowHovered()
-    active = window_focused || window_hovered
+    active = window_focused
+    # The grid takes the keys it moves through its rows with from ImGui's keyboard navigation, which
+    # would move through the rows and the links too, scroll on its own, and press a row with Space.
+    if window_focused
+        for key in (ig.ImGuiKey_UpArrow, ig.ImGuiKey_DownArrow, ig.ImGuiKey_Space,
+                    ig.ImGuiKey_Enter, ig.ImGuiKey_KeypadEnter)
+            ig.SetKeyOwner(key, ig.GetID("##datagrid_keys"))
+        end
+    end
 
     row_selection_changed = false
     selected = state.selected_rows
@@ -453,15 +460,6 @@ function render_data_grid!(
     end
 
     state.focused = window_focused
-
-    # Programmatic scroll to row
-    if state.scroll_to_row !== nothing
-        target_row = state.scroll_to_row
-        if 1 <= target_row <= n_rows
-            ig.SetScrollY(Float32((target_row - 1) * ig.GetTextLineHeightWithSpacing()))
-        end
-        state.scroll_to_row = nothing
-    end
 
     # Virtualized rows via ImGuiListClipper
     selected = state.selected_rows
@@ -585,7 +583,11 @@ function render_data_grid!(
     end
     clipper = ig.lib.ImGuiListClipper()
     try
-        ig.Begin(clipper, n_rows, ig.GetTextLineHeightWithSpacing())
+        # The clipper measures the height of a row from the first one.
+        ig.Begin(clipper, n_rows, -1.0f0)
+        # The row to scroll to is drawn even when it is out of view.
+        target = state.scroll_to_row
+        target !== nothing && 1 <= target <= n_rows && ig.IncludeItemByIndex(clipper, target - 1)
         while ig.Step(clipper)
             start_idx = Int(unsafe_load(clipper.DisplayStart)) + 1
             end_idx   = Int(unsafe_load(clipper.DisplayEnd))
@@ -593,6 +595,19 @@ function render_data_grid!(
             for row in start_idx:end_idx
                 ig.PushID(row)
                 ig.TableNextRow()
+                if row == target
+                    # The grid scrolls only as far as the row needs to be in view, below the headers.
+                    ig.TableSetColumnIndex(first_column - 1)
+                    top = ig.GetCursorScreenPos().y - padding.y
+                    bottom = top + max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
+                    visible_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y
+                    visible_bottom = ig.GetClipRectMax(ig.GetWindowDrawList()).y
+                    if top < visible_top
+                        ig.SetScrollY(ig.GetScrollY() - (visible_top - top))
+                    elseif bottom > visible_bottom
+                        ig.SetScrollY(ig.GetScrollY() + (bottom - visible_bottom))
+                    end
+                end
 
                 if selection_mode === :rows
                     ig.TableSetColumnIndex(first_column - 1)
@@ -667,6 +682,7 @@ function render_data_grid!(
     finally
         ig.Destroy(clipper)
     end
+    state.scroll_to_row = nothing
 
     ig.EndTable()
 
