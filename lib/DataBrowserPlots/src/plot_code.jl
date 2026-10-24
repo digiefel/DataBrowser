@@ -39,7 +39,7 @@ end
 
 """
 The parts of the last `@plot` of some code, each with its bytes in the code: the mapping of the
-header, the lines that are layers, and the last `scales(...)` line. The plot builder reads them to
+header, the lines that are layers, and the last `scales(...)` and `legend(...)` lines. The plot builder reads them to
 show the plot's mappings, layers and scales, and changes the code at those bytes.
 """
 struct PlotCode
@@ -48,6 +48,7 @@ struct PlotCode
     scales::Union{Nothing,CallCode}
     # The settings of each scale of `scales`, such as `(; label = "V")` for `y`, in its order.
     scale_settings::Vector{Union{Nothing,CallCode}}
+    legend::Union{Nothing,CallCode}
     # The last byte of the block, after which a new line goes, and the indent of its lines; `nothing`
     # when `@plot` has no block.
     ending::Union{Nothing,Int}
@@ -64,13 +65,13 @@ function Base.tryparse(::Type{PlotCode}, code::CodeFile)::Union{Nothing,PlotCode
     plot === nothing && return nothing
     text = code.text
     arguments = children(plot)[2:end]
-    isempty(arguments) && return PlotCode(nothing, LineCode[], nothing, [], nothing, "")
+    isempty(arguments) && return PlotCode(nothing, LineCode[], nothing, [], nothing, nothing, "")
     header_mapping = factor_call(text, arguments[1], "mapping")
     block = length(arguments) >= 2 && kind(arguments[2]) == K"block" ? arguments[2] : nothing
     statements = block === nothing ? SyntaxNode[] : children(block)
     lines = LineCode[]
     names = Symbol[]
-    scales = nothing
+    scales = legend = nothing
     settings = Union{Nothing,CallCode}[]
     for line in statements
         hidden = kind(line) == K"macrocall" && sourcetext(children(line)[1]) == "invisible" && length(children(line)) == 2
@@ -84,6 +85,7 @@ function Base.tryparse(::Type{PlotCode}, code::CodeFile)::Union{Nothing,PlotCode
             arguments = reduce(vcat, (kind(a) == K"parameters" ? children(a) : [a] for a in children(line)[2:end]); init=SyntaxNode[])
             settings = Union{Nothing,CallCode}[kind(a) == K"=" ? call_code(text, children(a)[2]) : nothing for a in arguments]
         end
+        is_call(line, "legend") && (legend = call_code(text, line))
         (is_call(line, "scales") || is_call(line, "legend")) && continue
         named = kind(line) == K"=" && kind(children(line)[1]) == K"Identifier"
         value = named ? children(line)[2] : line
@@ -100,7 +102,7 @@ function Base.tryparse(::Type{PlotCode}, code::CodeFile)::Union{Nothing,PlotCode
     ending = isempty(statements) ? nothing : last(byte_range(statements[end]))
     first_line = isempty(statements) ? nothing : first(byte_range(statements[1]))
     indent = first_line === nothing ? "    " : text[something(findprev('\n', text, first_line), 0)+1:first_line-1]
-    return PlotCode(header_mapping, lines, scales, settings, ending, indent)
+    return PlotCode(header_mapping, lines, scales, settings, legend, ending, indent)
 end
 
 # The last `@plot` call in the tree, or `nothing`.

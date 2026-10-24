@@ -147,7 +147,9 @@ function categorical_section(section, scales, groups, processed, names, text)
     end
     texts = map(found) do combination
         entry = LegendEntry(Dict(role(aes) => v for (aes, v) in zip(section, combination)), names)
-        text === nothing ? join((names[role(aes)][v] for (aes, v) in zip(section, combination)), ", ") : text(entry)
+        text === nothing ? join((names[role(aes)][v] for (aes, v) in zip(section, combination)), ", ") :
+            # The text was defined by code the browser ran after this drawing started.
+            Base.invokelatest(text, entry)
     end
     title = join(unique(string(AoG.getlabel(scales[aes])) for aes in section), ", ")
     return (; samples, texts, title)

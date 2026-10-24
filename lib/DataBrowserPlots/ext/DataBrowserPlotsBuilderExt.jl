@@ -37,6 +37,11 @@ const SCALED = [:x, :y, :color, :marker, :linestyle, :markersize, :linewidth, :l
 # The settings the menu of a scale offers.
 const SCALE_SETTINGS = [:label, :scale, :limits, :reversed, :ticks, :tickformat]
 # What the settings of a scale change, shown by the info button beside them.
+const LEGEND_INFO = Dict(
+    :merge => "The mappings that share a section, such as (:color, :linestyle), or true for all of them.",
+)
+# The places of the legend that `position` takes.
+const LEGEND_POSITIONS = [:right, :left, :top, :bottom]
 const SCALE_INFO = Dict(
     :scale => "The scale function applies before the analyses run, and can change their results.",
     :limits => "The values outside the limits are removed before the analyses run, and can change their results.",
@@ -388,18 +393,20 @@ mapping_offers(present, names)::Vector{String} =
 const LAYOUT = [:layout, :row, :col, :group]
 
 # The call that holds the values of a target: `(:mapping, 0)` the header's mapping, `(:mapping, i)`
-# and `(:visual, i)` those of line `i`, `(:scales, 0)` the `scales(...)` line, and `(:scale, k)` the
-# settings of its `k`th scale. `nothing` when the code has no such call yet.
+# and `(:visual, i)` those of line `i`, `(:scales, 0)` the `scales(...)` line, `(:scale, k)` the
+# settings of its `k`th scale, and `(:legend, 0)` the `legend(...)` line. `nothing` when the code
+# has no such call yet.
 function target_call(plot::PlotCode, (kind, index)::Tuple{Symbol,Int})::Union{Nothing,CallCode}
     kind === :mapping && return index == 0 ? plot.mapping : plot.lines[index].mapping
     kind === :visual && return plot.lines[index].visual
     kind === :scales && return plot.scales
+    kind === :legend && return plot.legend
     return plot.scale_settings[index]
 end
 
 # Write a value into the code: in place of its old value, or after the call's last value. A line
-# without its own mapping or visual gets one, and a plot without `scales(...)` gets that line at the
-# end of its block.
+# without its own mapping or visual gets one, and a plot without `scales(...)` or `legend(...)` gets
+# that line at the end of its block.
 function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String)::Nothing
     call = target_call(plot, target)
     found = call === nothing ? nothing : findfirst(entry -> entry.name == name, call.entries)
@@ -421,7 +428,7 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
         stop = last(plot.lines[target[2]].range)
         edit!(code, stop+1:stop, " * visual(; $name=$text)")
     else
-        edit!(code, plot.ending+1:plot.ending, "\n$(plot.indent)scales($name=$text)")
+        edit!(code, plot.ending+1:plot.ending, "\n$(plot.indent)$(target[1])($name=$text)")
     end
     return nothing
 end
@@ -768,14 +775,22 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     if edit !== nothing && edit.target == target && edit.name == name
         text = draw_field!(view)
         text === nothing || (change = () -> write_entry!(view.code, view.plot, target, name, text))
+    elseif value in ("true", "false")
+        checked = Ref(value == "true")
+        ig.Checkbox("##value", checked) && (change = () -> write_entry!(view.code, view.plot, target, name, string(checked[])))
     else
         style = unsafe_load(ig.GetStyle())
-        symbol = target[1] === :visual && name in (:marker, :linestyle) ? written_symbol(value) : nothing
+        # The values written as a symbol that the panel offers in a menu.
+        choices = target[1] === :visual && name === :marker ? MARKERS :
+            target[1] === :visual && name === :linestyle ? LINESTYLES :
+            target[1] === :legend && name === :position ? LEGEND_POSITIONS : nothing
+        symbol = choices === nothing ? nothing : written_symbol(value)
+        drawn = symbol !== nothing && name in (:marker, :linestyle)
         dimmed = inherited || unused || skipped
         parts = target[1] === :mapping && !isempty(value) ? mapping_parts(value) : nothing
         formula = parts !== nothing && any(((kind, _),) -> kind === :formula, parts)
         clicked, hovered, clipped = code_box("value", value, max(ig.GetContentRegionAvail().x, 24.0f0);
-            dimmed, glyph=symbol === nothing ? nothing : (name, symbol), parts)
+            dimmed, glyph=drawn ? (name, symbol) : nothing, parts)
         low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
         if skipped
             middle = round((low.y + high.y) / 2)
@@ -792,7 +807,7 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
             status === nothing || ig.TextDisabled(status)
             ig.EndTooltip()
         end
-        choices = symbol === nothing ? nothing : name === :marker ? MARKERS : LINESTYLES
+        symbol === nothing && (choices = nothing)
         # A formula is edited in the code, where a click on it selects it.
         if clicked && formula && range !== nothing
             view.showing = range
@@ -803,11 +818,11 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         if choices !== nothing && ig.BeginPopup("choices")
             for choice in choices
                 position = ig.GetCursorScreenPos()
-                picked = with_font(() -> ig.Selectable("      :$choice", choice === symbol), :code)
+                picked = with_font(() -> ig.Selectable(drawn ? "      :$choice" : ":$choice", choice === symbol), :code)
                 middle = position.y + ig.GetTextLineHeight() / 2
                 color = ig.GetColorU32(ig.ImGuiCol_Text)
-                name === :marker ? draw_marker(ig.GetWindowDrawList(), (position.x + 8, middle), 5.0f0, choice, color) :
-                    draw_linestyle(ig.GetWindowDrawList(), position.x, position.x + 22, middle, choice, color)
+                drawn && (name === :marker ? draw_marker(ig.GetWindowDrawList(), (position.x + 8, middle), 5.0f0, choice, color) :
+                    draw_linestyle(ig.GetWindowDrawList(), position.x, position.x + 22, middle, choice, color))
                 picked && (change = () -> write_entry!(view.code, view.plot, target, name, ":$choice"))
             end
             ig.EndPopup()
@@ -1030,6 +1045,24 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 ig.Unindent(8.0f0)
                 ig.PopID()
             end
+        end
+        section("legend") do
+            settings = entries(plot.legend)
+            # The texts of the entries of the mappings the plot has, then the settings of `figure`'s
+            # legend, then those of Makie's `Legend`.
+            used = unique(entry.name for call in [plot.mapping; [line.mapping for line in plot.lines]]
+                for entry in entries(call) if entry.name isa Symbol && !(entry.name in LAYOUT))
+            present = [entry.name for entry in settings]
+            offered = [String.(setdiff(used, present)); String.(setdiff([:show, :position, :merge], present));
+                sort(String.(setdiff(collect(Makie.attribute_names(Makie.Legend)), present)))]
+            name = heading!(view, "legend", "legend", offered; tooltip="Add a setting of the legend")
+            name === nothing || start_edit!(view, (:legend, 0), Symbol(name), "")
+            width = names_width(present)
+            for setting in settings
+                offer(draw_entry!(view, (:legend, 0), setting.name, text(setting.value); name_width=width,
+                    info=get(LEGEND_INFO, setting.name, nothing)))
+            end
+            adding((:legend, 0), settings) && offer(draw_entry!(view, (:legend, 0), view.editing.name, ""; name_width=width))
         end
     end
     ig.PopStyleVar()
