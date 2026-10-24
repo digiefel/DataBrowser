@@ -93,11 +93,20 @@ stopped being so. A view keeps the number it drew with and draws again when it d
 """
 function revision(workspace::Workspace, items::Vector{ItemKey})::UInt
     catalog = workspace.catalog
+    function add(seed::UInt, key, stage)::UInt
+        status = Catalogs.status(catalog, key, stage)
+        return hash((status.validity == Catalogs.FRESH, status.revision), seed)
+    end
+    # Views call this at every frame: it walks the collections above each item without building lists.
     @lock catalog.lock begin
         seed = UInt(0)
-        for item in items, target in [(item, ITEM_PROCESS); (item, ITEM_ANALYZE); [(holder, COLLECTION_PROCESS) for holder in ancestors(workspace, item)]]
-            status = Catalogs.status(catalog, target...)
-            seed = hash((status.validity == Catalogs.FRESH, status.revision), seed)
+        for item in items
+            seed = add(add(seed, item, ITEM_PROCESS), item, ITEM_ANALYZE)
+            holder = Catalogs.collection(catalog, item)
+            while holder != ROOT
+                seed = add(seed, holder, COLLECTION_PROCESS)
+                holder = parent(catalog, holder)
+            end
         end
         return seed
     end
