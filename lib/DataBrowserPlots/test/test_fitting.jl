@@ -51,3 +51,19 @@ end
     curve = only(p for p in axis(figure(plot, select(devices))).scene.plots if p isa Lines)[1][]
     @test first(curve) ≈ Point2f(5, 850)
 end
+
+average(values) = sum(values) / length(values)
+half_range(values) = (maximum(values) - minimum(values)) / 2
+
+@testset "an aggregate draws the first function's value at each x, and Errorbars the second's" begin
+    devices = [FitTestDevice("$chip$gap$R", chip, gap, R) for chip in ("A", "B") for gap in (5.0, 10.0) for R in (1.0, 3.0)]
+    plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
+        spread = aggregate(average, half_range)
+        spread * visual(Scatter)
+        spread * visual(Errorbars)
+    end
+    drawn = figure(plot, select(devices))
+    plots(type) = [p for p in axis(drawn).scene.plots if p isa type]
+    @test sort(Tuple.(reduce(vcat, [p[1][] for p in plots(Scatter)]))) == [(5.0, 2.0), (5.0, 2.0), (10.0, 2.0), (10.0, 2.0)]
+    @test length(plots(Errorbars)) == 2
+end

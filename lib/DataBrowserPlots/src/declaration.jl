@@ -200,6 +200,22 @@ of over the fitted points. With `data(table)` in the header, `fit` takes the row
 The visual draws the fit on the axes of the points and in the roles of its group, so the group's
 legend entry shows its points and its curve. Without a visual, a fit is drawn with `Lines`.
 
+`aggregate` applies functions to the y values of the points that share x and their groups, such as
+the measurements of several devices at each gap:
+
+    @plot mapping(:gap, R(:data.V, :data.I); color=:Chip) begin
+        spread = aggregate(mean, std)
+        spread * visual(ScatterLines)
+        spread * visual(Errorbars)
+    end
+
+`aggregate` gives a [`Result`](@ref) with one `Group` for each x and group of points. Its metadata
+holds the x and the roles' values, the value of each function under its name, such as `:mean`, and
+the `count` of the points; its members are the items whose points it takes. A visual draws the
+first function's value at each x, and `Errorbars` also draws the second's as the length of the bar
+on each side. Without a visual, an aggregate is drawn with `Scatter`. The functions take the values
+as the line maps them, before the scale's function, such as `log10`.
+
 A line `name = value` gives a name to the value of the line for the other lines, such as a fit
 drawn twice:
 
@@ -281,6 +297,7 @@ macro plot(header, block)
     statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))
         for (name, value) in (statement.args for statement in statements)]
     uses(block, :fit) && pushfirst!(statements, :(fit = $Fit))
+    uses(block, :aggregate) && pushfirst!(statements, :(aggregate = $Aggregate))
     # Each line that is a layer, with the named roles it takes from the header: those its own
     # mapping does not set.
     call = find_call(header, :mapping)

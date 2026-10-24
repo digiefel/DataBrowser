@@ -103,7 +103,7 @@ item_ids(_) = (;)
 
 # The fit's result over the points of a layer: `table`, whose columns `positional` and `named`
 # map. Its groups' members are the items of `source` whose rows they fit.
-function fit_result(fit::Fit, table, positional::Vector, named::Vector, source)::Result
+function Result(fit::Fit, table, positional::Vector, named::Vector, source)::Result
     columns = Tables.columntable(table)
     members = haskey(columns, ITEM) ? (; members=Workspace.items(source), item=ITEM) : (;)
     return fit_result(fit.curve, fit.starts, columns, positional, named; members..., fit.options...)

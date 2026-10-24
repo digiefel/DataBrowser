@@ -6,9 +6,10 @@ using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, resolve
-using DataBrowserPlots: @plot, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Result, column, fit_result
+using DataBrowserPlots: @plot, Aggregate, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Result, category, column
 using DataBrowserAPI: item_data, metadata
 using DataBrowserCore: Group, select
+using DataBrowserPlots: Tables
 using PrecompileTools: @setup_workload, @compile_workload
 
 # The legend is ours, not AoG's: roles share a section when one determines the others
@@ -310,25 +311,32 @@ end
 
 function Base.:*(result::Result, layer::AoG.Layer)
     layer.transformation isa AoG.Visual ||
-        error("A fit is drawn with a visual, such as `contacts * visual(Lines)`")
-    # The curve of each group, on the columns of x and y, with the group's value in each role.
-    x, y = column.(result.positional)
-    # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
+        error("A result is drawn with a visual, such as `contacts * visual(Lines)`")
+    # The data of each group, its first column as x and its second as y, with the group's value in
+    # each role. `Errorbars` draws its third column too, as the error of y, such as an aggregate's
+    # `std`.
+    # TODO: Band and Rangebars, between y minus and plus the error.
     plottype = layer.transformation.plottype
+    data = item_data(first(result.groups))
+    third = plottype <: AoG.Makie.Errorbars && length(data) >= 3 ? [keys(data)[3]] : Symbol[]
+    positional = [result.positional; third]
+    # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
     shown = hasmethod(AoG.aesthetic_mapping, Tuple{Type{plottype},Int}) ?
-        keys(AoG.aesthetic_mapping(plottype, length(result.positional))) : keys(Dict(result.named))
+        keys(AoG.aesthetic_mapping(plottype, length(positional))) : keys(Dict(result.named))
     roles = [(role, value, column(value)) for (role, value) in result.named if role in shown]
-    columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [x; y; [c for (_, _, c) in roles]])
+    drawn = [column.(result.positional); third]
+    columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [drawn; [c for (_, _, c) in roles]])
     for group in result.groups
-        curve = item_data(group)
-        append!(columns[x], curve.x)
-        append!(columns[y], curve.y)
+        values = item_data(group)
+        for (name, value) in zip(drawn, values)
+            append!(columns[name], value)
+        end
         for (_, _, c) in unique(r -> r[3], roles)
-            append!(columns[c], fill(metadata(group)[c], length(curve.x)))
+            append!(columns[c], fill(metadata(group)[c], length(first(values))))
         end
     end
     table = NamedTuple{Tuple(keys(columns))}(Tuple(identity.(values(columns))))
-    mapping = AoG.mapping(result.positional...; (role => value for (role, value, _) in roles)...)
+    mapping = AoG.mapping(positional...; (role => value for (role, value, _) in roles)...)
     return AoG.data(table) * mapping * layer
 end
 
@@ -345,29 +353,60 @@ function inherit(header::AoG.Layer, line::AoG.Layer)
     return AoG.Layer(AoG.:⨟(header.transformation, line.transformation), header.data, positional, named)
 end
 inherit(header::AoG.Layer, line::AoG.Layers) = AoG.Layers([inherit(header, layer) for layer in line.layers])
-inherit(header::AoG.Layer, line::Fit) = inherit(header, AoG.transformation(line))
+inherit(header::AoG.Layer, line::Union{Fit,Aggregate}) = inherit(header, AoG.transformation(line))
 inherit(header::AoG.Layer, line::Result) = drawable(line)
 
-# A fit is a step of a layer, as AoG's analyses are: `mapping(...) * fit(...) * visual(Lines)`.
-Base.:*(layer::AoG.AbstractAlgebraic, fit::Fit) = layer * AoG.transformation(fit)
-Base.:*(fit::Fit, layer::AoG.AbstractAlgebraic) = AoG.transformation(fit) * layer
+# A fit or an aggregate is a step of a layer, as AoG's analyses are: `mapping(...) * fit(...) *
+# visual(Lines)`.
+Base.:*(layer::AoG.AbstractAlgebraic, step::Union{Fit,Aggregate}) = layer * AoG.transformation(step)
+Base.:*(step::Union{Fit,Aggregate}, layer::AoG.AbstractAlgebraic) = AoG.transformation(step) * layer
 
 # The steps of a layer's transformation, in the order they apply.
 steps(transformation::ComposedFunction) = [steps(transformation.inner); steps(transformation.outer)]
 steps(transformation) = transformation === identity ? Any[] : Any[transformation]
 
-# A layer whose first step is a fit: the fit's result over the layer's points, drawn by the steps
-# after it. `items` are the items whose ids the points' table holds. Other layers stay as they are.
+# A layer whose first step is a fit or an aggregate: its result over the layer's points, drawn by the
+# steps after it. `items` are the items whose ids the points' table holds. A layer with several
+# values of y draws them as one y. Other layers stay as they are.
 function resolve(layer::AoG.Layer, items)
+    if layer.data isa AoG.Columns
+        named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
+        table, positional, named = one_y(layer.data.columns, layer.positional, named)
+        stacked = AoG.mapping(positional...; named...)
+        layer = AoG.Layer(layer.transformation, AoG.Columns(table), stacked.positional, stacked.named)
+    end
     found = steps(layer.transformation)
-    any(step -> step isa Fit, found) || return layer
-    first(found) isa Fit && count(step -> step isa Fit, found) == 1 ||
-        error("A fit takes the points of its line before any visual, as in `fit(...) * visual(Lines)`")
-    layer.data isa AoG.Columns || error("A fit needs points: a mapping of x and y, such as mapping(:x, :y)")
+    computes(step) = step isa Union{Fit,Aggregate}
+    any(computes, found) || return layer
+    computes(first(found)) && count(computes, found) == 1 ||
+        error("A fit or an aggregate takes the points of its line before any visual, as in `fit(...) * visual(Lines)`")
+    layer.data isa AoG.Columns || error("A fit or an aggregate needs points: a mapping of x and y, such as mapping(:x, :y)")
     named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
-    result = fit_result(first(found), layer.data.columns, layer.positional, named, items)
+    result = Result(first(found), layer.data.columns, layer.positional, named, items)
     after = found[2:end]
     return isempty(after) ? result : result * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
+end
+# The points of a layer with several values of y, as `y` and `y2` give, as points of one y: a row
+# for each point and each value, with the value in the column `y` and its title in the column
+# `ydims`, which the roles that `ydims()` maps take, in the order of the values and without a title
+# in the legend. A layer with one y stays as it is.
+# TODO: a column of the data named `y` or `ydims`.
+function one_y(table, positional::Vector, named::Vector)
+    length(positional) == 2 && positional[2] isa AbstractVector || return table, positional, named
+    columns = Tables.columntable(table)
+    ys = positional[2]
+    # The title after `=>`, as in `:I => "V > 0"` and `:I => abs => "V < 0"`, or the column's name.
+    title(value) = !(value isa Pair) ? string(column(value)) : last(value) isa AbstractString ? last(value) :
+        last(value) isa Pair && last(last(value)) isa AbstractString ? last(last(value)) : string(column(value))
+    repeated = [name => reduce(vcat, [columns[name] for _ in ys]) for name in keys(columns)]
+    count = length(first(columns))
+    # Each value after its transformation, as in `:I => abs => "V < 0"`.
+    stacked = (; repeated..., y=reduce(vcat, [category.(Ref(v), columns[column(v)]) for v in ys]),
+        ydims=reduce(vcat, [fill(title(v), count) for v in ys]))
+    order = AoG.sorter(unique(title.(ys))...)
+    named = [role => (column(value) isa AoG.DimsSelector ? :ydims => order => "" : value) for (role, value) in named]
+    # TODO: a label of y from the values' own labels.
+    return stacked, [positional[1], :y => ""], named
 end
 resolve(layers::AoG.Layers, items) = foldl(+, (resolve(layer, items) for layer in layers.layers))
 
