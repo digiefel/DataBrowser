@@ -7,6 +7,11 @@ struct Declaration
     layers::Function
 end
 
+# A line of a plot as a layer of the header, `inherit(header, line)`, and a layer with its fit done
+# over its points, `resolve(layer, items)`. The AlgebraOfGraphics extension defines them.
+function inherit end
+function resolve end
+
 # The latest world: code that the browser runs defines the declaration after the caller started.
 figure(declaration::Declaration, input, args...; options...) =
     figure(Base.invokelatest(declaration.layers, input), args...; options...)
@@ -103,25 +108,28 @@ Draw it with [`figure`](@ref)`(declaration, selection)`; in the browser's plot b
 draws it for the selected items. Symbols elsewhere in a formula, such as `get(x, :key, 0)`, are
 read as paths too.
 
-With a header and a block, each line of the block is a layer: each line is multiplied by the
-header, and the lines are added, in order.
+With a header and a block, each line of the block is a layer of the header, and the layers are
+drawn in order.
 
-    @plot mapping(:gap, :R; color=:chip) begin
+    @plot mapping(:gap, :R; color=:Chip) begin
         visual(Scatter; markersize=6)
-        linear(; interval=nothing) * subvisual(:prediction; linewidth=2)
+        mapping(; marker=:Site) * visual(Scatter)
+        mapping(:gap, :R2; color=nothing) * visual(Lines)
     end
 
-is `mapping(...) * (visual(Scatter; markersize=6) + linear(...) * subvisual(...))`. Write the
-layers with `*` within a line; a line that continues on the next one ends with `*`.
+A line takes the header's mapping and changes it with its own: its positions, such as `:gap, :R2`,
+replace the header's; its named roles, such as `marker`, add to the header's or replace them; and a
+role set to `nothing` is removed. Write a layer with `*` within a line; a line that continues on the
+next one ends with `*`.
 
 With `data(table)`, the declaration is ordinary AlgebraOfGraphics over that table, and the names in
 `mapping` are its columns. Draw it with `figure(declaration)`.
 
-A layer with its own `data(...)` is not multiplied by the header, whose values would add to its own.
+A layer with its own `data(...)` keeps its own mapping: the header's names belong to other data.
 When that data is a vector of items, the names in its `mapping` are paths into those items, as for
 the items the plot is drawn for.
 
-`fit` fits a curve to the points of the header and draws it:
+`fit` fits a curve to the points of its line and draws it:
 
     resistance(gap; Rc, Rsh) = 2Rc + Rsh * gap
 
@@ -131,25 +139,29 @@ the items the plot is drawn for.
     end
 
 The curve is a function of x with its parameters as keywords, and `fit` takes the curve and a
-starting value for each parameter. The header's two positional values are x and y, and its
-categorical named roles, here `color=:Chip`, divide the points into groups, with one fit each.
+starting value for each parameter. The line's two positional values are x and y, and its
+categorical named roles, here `color=:Chip`, divide the points into groups, with one fit each. The
+line changes the points as any line does: `mapping(; color=nothing) * fit(...)` fits all of them
+at once.
 `fit` gives a [`Statistic`](@ref): one `Group` for each group of points. Its metadata holds the
 group's values, such as `:Chip`, and each parameter, such as `:Rc`, a [`Parameter`](@ref) that
 prints as the estimate ± one standard error. Its data is the drawn curve, and its members are the
 items whose points it fits. `fit(...; xlim=(0, 25))` draws the curve over that range of x instead
 of over the fitted points. With `data(table)` in the header, `fit` takes the rows of that table.
+`fit` comes before the visual in its line: the visual draws the result.
 
 The visual draws the fit on the axes of the points and in the roles of its group, so the group's
 legend entry shows its points and its curve. Without a visual, a fit is drawn with `Lines`.
 
-A line `name = value` gives a name to a value for the other lines, such as a fit drawn twice:
+A line `name = value` gives a name to the value of the line for the other lines, such as a fit
+drawn twice:
 
     contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
     contacts * visual(Lines)
     contacts * visual(Scatter; markersize=4)
 
-A line that uses a name, or that calls `fit`, is not multiplied by the header: the fit already
-holds what the header maps.
+The name holds the fit's result, which has its own data: a line that draws it keeps the
+result's mapping.
 
 ## Scales and legend
 
@@ -184,17 +196,14 @@ macro plot(header, block)
     statements = filter(line -> Meta.isexpr(line, :(=)), lines)
     names = Symbol[first(statement.args) for statement in statements]
     settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend), lines)
-    # A line that draws a fit, or its own data, stands alone: the header's values would add to its own.
-    drawn = map(filter(line -> !Meta.isexpr(line, :(=)) && !(line in settings), lines)) do line
-        draws_fit = find_call(line, :fit) !== nothing || any(name -> uses(line, name), names)
-        draws_fit || has_data(line) ? line : :($header * $line)
-    end
+    input = gensym("input")
+    # Each line, named or drawn, is a layer of the header; a name holds its line's value.
+    statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))
+        for (name, value) in (statement.args for statement in statements)]
+    uses(block, :fit) && pushfirst!(statements, :(fit = $Fit))
+    drawn = [:($inherit($header, $line)) for line in lines if !Meta.isexpr(line, :(=)) && !(line in settings)]
     # `a + b + c`, not `+(a, b, c)`: AoG adds two layers at a time and has no `+` of one layer.
     declaration = isempty(drawn) ? header : foldl((a, b) -> :($a + $b), drawn)
-    input = gensym("input")
-    if uses(block, :fit)
-        pushfirst!(statements, :(fit = $(define_fit(header, input))))
-    end
     return esc(declare(declaration, statements; input, settings=declare_settings(settings, header, names, input)))
 end
 
@@ -284,32 +293,39 @@ end
 
 # One layer as a function of the input: each value its `mapping` names becomes a column of `unnest`
 # over the input, and the mapping names that column. With `data(value)`, the paths read `value`
-# when it is a vector of items, and the layer is left as it is for any other value.
+# when it is a vector of items, and the layer is left as it is for any other value. A fit in the
+# layer is done over its points (`resolve`), which know their items by the `ITEM` column.
 function declare_layer(layer, input::Symbol)
+    with_items(table, items) = Expr(table.head, table.args[1], Expr(:parameters, table.args[2].args..., :($item_ids($items)...)))
     own = find_call(layer, :data)
     if own === nothing
         tabulated = tabulate(layer, value -> per_item(value, input))
-        tabulated === nothing && return layer
+        tabulated === nothing && return :($resolve($layer, nothing))
         table, rewritten = tabulated
-        return :(data($table) * $rewritten)
+        return :($resolve(data($(with_items(table, input))) * $rewritten, $input))
     end
     value, items = gensym("data"), gensym("items")
     tabulated = tabulate(layer, v -> per_item(v, items))
+    tabulated === nothing && return :($resolve($layer, nothing))
     plain = replace_call(layer, own, :(data($value)))
-    tabulated === nothing && return plain
     table, rewritten = tabulated
+    of_items = replace_call(rewritten, find_call(rewritten, :data), :(data($(with_items(table, items)))))
     return :(let $value = $(own.args[2])
         $value isa AbstractVector{<:$AbstractDataItem} ?
-            (let $items = $(Workspace.select)($value); $(replace_call(rewritten, find_call(rewritten, :data), :(data($table)))) end) :
-            $plain
+            (let $items = $(Workspace.select)($value); $resolve($of_items, $items) end) :
+            $resolve($plain, nothing)
     end)
 end
+
+# The declared layers of `expression`, added.
+declare_layers(expression, input::Symbol) =
+    foldl((a, b) -> :($a + $b), map(layer -> declare_layer(layer, input), layers(expression)))
 
 # The layers of a declaration, each with its own table, after the `statements`, which define names
 # for them. The result is a function of the input when a layer or a statement reads it. `settings`
 # are the statements and the arguments of `Scaled` that the scales and legend lines give, or `nothing`.
 function declare(declaration, statements=Expr[]; input::Symbol=gensym("input"), settings=nothing)
-    drawn = foldl((a, b) -> :($a + $b), map(layer -> declare_layer(layer, input), layers(declaration)))
+    drawn = declare_layers(declaration, input)
     if settings !== nothing
         statements = [statements; settings.statements]
         drawn = :($Scaled($drawn, $(settings.arguments...)))
@@ -407,23 +423,3 @@ replace_call(expression, call, new) = expression === call ? new :
 
 uses(expression, name::Symbol) = expression === name ||
     expression isa Expr && any(e -> uses(e, name), expression.args)
-
-# `fit(curve, starts; options...)` over the points of the header: the header's positional values
-# are x and y, and its named roles form the groups. Without `data(...)` in the header, the points
-# are the items of the input.
-function define_fit(header, input::Symbol)
-    call = find_call(header, :mapping)
-    call === nothing && return :((_...; _...) -> error("fit needs a header that maps x and y, such as mapping(:x, :y)"))
-    item = gensym("item")
-    table, rewritten = header_table(call, header, input)
-    if has_data(header)
-        members = :(NamedTuple())
-    else
-        push!(table.args[2].args, Expr(:kw, item, :($input.id)))
-        members = :((; members=$(Workspace.items)($input), item=$(QuoteNode(item))))
-    end
-    positional, named = call_arguments(rewritten)
-    roles = [:($(QuoteNode(role)) => $value) for (role, value) in named]
-    return :((curve, starts; options...) -> $fit_statistic(curve, starts, $table, Any[$(positional...)],
-        Pair{Symbol,Any}[$(roles...)]; $members..., options...))
-end

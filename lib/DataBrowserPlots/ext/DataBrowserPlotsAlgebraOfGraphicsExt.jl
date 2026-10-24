@@ -3,8 +3,8 @@ module DataBrowserPlotsAlgebraOfGraphicsExt
 
 import AlgebraOfGraphics as AoG
 using DataBrowserAPI: @timed_dbg
-import DataBrowserPlots: figure
-using DataBrowserPlots: LegendEntry, Scaled, Statistic, column
+import DataBrowserPlots: figure, inherit, resolve
+using DataBrowserPlots: Fit, LegendEntry, Scaled, Statistic, column, fit_statistic
 using DataBrowserAPI: item_data, metadata
 
 # The legend is ours, not AoG's: roles share a section when one determines the others
@@ -186,6 +186,42 @@ function Base.:*(statistic::Statistic, layer::AoG.Layer)
     mapping = AoG.mapping(statistic.positional...; (role => value for (role, value, _) in roles)...)
     return AoG.data(table) * mapping * layer
 end
+
+# A line of a plot as a layer of the header: its positions replace the header's, its named roles add
+# to the header's or replace them, and a role set to `nothing` is removed. A line with its own data,
+# such as a fit's result, keeps its own mapping.
+function inherit(header::AoG.Layer, line::AoG.Layer)
+    line.data === nothing || return line
+    positional = isempty(line.positional) ? header.positional : line.positional
+    named = filter(!isnothing, merge(header.named, line.named))
+    return AoG.Layer(AoG.:⨟(header.transformation, line.transformation), header.data, positional, named)
+end
+inherit(header::AoG.Layer, line::AoG.Layers) = AoG.Layers([inherit(header, layer) for layer in line.layers])
+inherit(header::AoG.Layer, line::Fit) = inherit(header, AoG.transformation(line))
+inherit(header::AoG.Layer, line::Statistic) = drawable(line)
+
+# A fit is a step of a layer, as AoG's analyses are: `mapping(...) * fit(...) * visual(Lines)`.
+Base.:*(layer::AoG.AbstractAlgebraic, fit::Fit) = layer * AoG.transformation(fit)
+Base.:*(fit::Fit, layer::AoG.AbstractAlgebraic) = AoG.transformation(fit) * layer
+
+# The steps of a layer's transformation, in the order they apply.
+steps(transformation::ComposedFunction) = [steps(transformation.inner); steps(transformation.outer)]
+steps(transformation) = transformation === identity ? Any[] : Any[transformation]
+
+# A layer whose first step is a fit: the fit's result over the layer's points, drawn by the steps
+# after it. `items` are the items whose ids the points' table holds. Other layers stay as they are.
+function resolve(layer::AoG.Layer, items)
+    found = steps(layer.transformation)
+    any(step -> step isa Fit, found) || return layer
+    first(found) isa Fit && count(step -> step isa Fit, found) == 1 ||
+        error("A fit takes the points of its line before any visual, as in `fit(...) * visual(Lines)`")
+    layer.data isa AoG.Columns || error("A fit needs points: a mapping of x and y, such as mapping(:x, :y)")
+    named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
+    statistic = fit_statistic(first(found), layer.data.columns, layer.positional, named, items)
+    after = found[2:end]
+    return isempty(after) ? statistic : statistic * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
+end
+resolve(layers::AoG.Layers, items) = foldl(+, (resolve(layer, items) for layer in layers.layers))
 
 # A statistic without a visual is drawn with its own.
 drawable(statistic::Statistic) = statistic * AoG.visual(getproperty(AoG.Makie, statistic.plottype))

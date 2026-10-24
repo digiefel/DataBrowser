@@ -83,6 +83,32 @@ end
 Base.size(statistic::Statistic) = size(statistic.groups)
 Base.getindex(statistic::Statistic, index::Int) = statistic.groups[index]
 
+"""
+A curve to fit to the points of a layer, as `fit(curve, starts; options...)` in [`@plot`](@ref)
+writes it. The fit is done when the layer has its points, and gives a [`Statistic`](@ref).
+"""
+struct Fit
+    curve::Any
+    starts::NamedTuple
+    options::NamedTuple
+end
+Fit(curve, starts::NamedTuple; options...) = Fit(curve, starts, NamedTuple(options))
+
+# The column of a layer's table that holds the id of each row's item.
+const ITEM = Symbol("#item")
+
+# The `ITEM` column of the tables of the items of a selection, as keywords of `unnest`.
+item_ids(selection::Selection) = NamedTuple{(ITEM,)}((selection.id,))
+item_ids(_) = (;)
+
+# The fit's result over the points of a layer: `table`, whose columns `positional` and `named`
+# map. Its groups' members are the items of `source` whose rows they fit.
+function fit_statistic(fit::Fit, table, positional::Vector, named::Vector, source)::Statistic
+    columns = Tables.columntable(table)
+    members = haskey(columns, ITEM) ? (; members=Workspace.items(source), item=ITEM) : (;)
+    return fit_statistic(fit.curve, fit.starts, columns, positional, named; members..., fit.options...)
+end
+
 # The column a value of `mapping` names: `:R` in `:R`, in `:R => "R (Ω)"` and in `:R => f => "R"`.
 column(value) = value isa Pair ? column(first(value)) : value
 

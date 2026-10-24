@@ -40,3 +40,14 @@ end
     curve = only(p for p in axis(figure(plot)).scene.plots if p isa Lines)[1][]
     @test first(curve) ≈ Point2f(5, 1100)
 end
+
+@testset "a fit line changes the points as any line does" begin
+    devices = [FitTestDevice("$chip$gap", chip, gap, 2Rc + 100gap)
+        for (chip, Rc) in (("A", 300), ("B", 50)) for gap in (5.0, 10.0, 20.0)]
+    # Without color, the two chips are one group: Rc is their mean, 175.
+    plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
+        mapping(; color=nothing) * fit(resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines)
+    end
+    curve = only(p for p in axis(figure(plot, select(devices))).scene.plots if p isa Lines)[1][]
+    @test first(curve) ≈ Point2f(5, 850)
+end
