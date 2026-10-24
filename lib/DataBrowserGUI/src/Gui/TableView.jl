@@ -7,7 +7,7 @@ using NativeFileDialog: save_file
 import DataBrowserAPI: draw!, draw_header!, export!, label, output, prepare!
 using DataBrowserAPI: AbstractVisualizer, item_data, items
 using DataBrowserCore: Selection
-using ..DataBrowserGUI: ItemTable, _cell_text, _zoomable, merge_item_tables, value_table, zoom_value
+using ..DataBrowserGUI: ItemTable, _zoomable, merge_item_tables, value_table, zoom_value
 
 # How a column writes its numbers: with `decimals` digits after the point, and, when `engineering`,
 # each number as a number from 1 to 1000 followed by its power of ten, such as `e-6`, padded to
@@ -27,27 +27,25 @@ has. The arrow in its header unfolds it into one column for each name, under a h
 name of the block; the arrow in that row folds it again. When an item's data is itself a block of
 names, its names are the columns.
 
-With several items, the first column `item` holds the label of each item, in one cell beside all of
-its rows, and stays in place when the table scrolls sideways. The arrow beside the label folds the
-item to one row, which shows how many values the item has in each column. Hovering over a cell of
-that row shows the smallest and the largest number of the column. "Expand all" and "Collapse all",
-in the menu of the header `item`, unfold and fold all items. Space folds the items of the selected
+With several items, a row with the label of each item comes before the item's rows, and its text
+stays in place when the table scrolls sideways. Selecting that row selects all of the item's rows.
+The arrow beside the label folds the item to that row. "Expand all" and "Collapse all", in the menu
+that right-clicking the row opens, unfold and fold all items. Space folds the items of the selected
 rows, or unfolds them when they are all folded; Cmd-A selects all rows.
 
 Clicking the header of a column selects the column, and Shift-click selects the columns up to it.
 The arrow at the right of the column's name, which shows when the mouse is over the header, sorts
-the rows by the column: ascending, then descending, then not at all. Shift-click on the arrow adds
-another column to sort by.
-Sorting may put the rows of an item apart. A folded item's row goes where its first row would go.
+the rows of each item by the column: ascending, then descending, then not at all. Shift-click on the
+arrow adds another column to sort by.
 Right-clicking the header opens a menu. Its field takes a filter: a Julia function, such as `≥(0)`
 or `!in(["C2_3um"])`, which the table calls with each value of the column. The table shows the rows
 for which it returns `true`; a funnel at the right of the column's name marks the filter. The menu
 also hides the column, and fits the width of the columns to their content.
 
 "Columns", in the top line of the window, lists the columns of the data: a checked name is a column
-the table shows. "Metadata" lists the metadata of the items: a checked name is a column after
-`item`, with the value of each item in one cell beside its rows. Typing in a list narrows it to the names
-that have the typed letters in the same order, such as `wf` for `width_finger`.
+the table shows. "Metadata" lists the metadata of the items: a checked name is a column, first in
+the table, with the value of each item in one cell beside its rows. Typing in a list narrows it to
+the names that have the typed letters in the same order, such as `wf` for `width_finger`.
 
 A cell that holds a vector, a matrix, a table or a block of names is a link. Clicking it zooms into
 the cell: the window shows the value of the cell as a table, and the path above the table names the
@@ -60,11 +58,13 @@ larger than a million, each number is written with a power of ten of its own, a 
 as `38.990e-9`.
 
 The window passes on the table as it shows it: the rows the user selected, or all rows when none is
-selected, with the columns it shows.
+selected, with the columns it shows. With several items, it also passes on the column `item`, with
+the label of the item of each row.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
     table::Union{Nothing,ItemTable} = nothing
-    # The table has a first column `item`, built here from several items.
+    # The table has a first column `item`, built here from several items, which the table shows as
+    # a row with the label of each item before the item's rows.
     item_column::Bool = false
     # The selection the table was built from, the metadata it has, and the metadata the user picked
     # as columns.
@@ -85,7 +85,7 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     unfolded::Set{Vector{String}} = Set{Vector{String}}()
     # How each column writes its numbers; `nothing` for a column of other values.
     formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
-    # The items that show one row.
+    # The items that show only the row with their label.
     folded::Set{Int} = Set{Int}()
     # The columns to sort by, by name, as `(name, ascending)` pairs.
     sort::Vector{Tuple{String,Bool}} = Tuple{String,Bool}[]
@@ -95,13 +95,14 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     filter_errors::Dict{String,String} = Dict{String,String}()
     # The rows of `table` that pass the filters, sorted.
     order::Vector{Int} = Int[]
-    # The row of `table` that each row on screen shows; a folded item shows its first row.
+    # The row of `table` that each row on screen shows, and whether it is the row with the label of
+    # the item, which holds the item's first row.
     shown::Vector{Int} = Int[]
-    # For each row on screen, the first row on screen of the run of rows of the same item.
+    label_row::Vector{Bool} = Bool[]
+    # For each row on screen, the first row on screen of the rows of the same item.
     run_start::Vector{Int} = Int[]
-    # The rows of each folded item, and the text and tooltip of each cell of its row.
-    folded_rows::Dict{Int,Vector{Int}} = Dict{Int,Vector{Int}}()
-    folded_cells::Dict{Int,Vector{Tuple{String,String}}} = Dict{Int,Vector{Tuple{String,String}}}()
+    # The rows of each item, in the order of `order`.
+    item_rows::Dict{Int,Vector{Int}} = Dict{Int,Vector{Int}}()
     # What the window passes on to other windows.
     output::Union{Nothing,ItemTable} = nothing
     warnings::Vector{String} = String[]
@@ -115,9 +116,12 @@ label(::TableView)::String = "Table"
 
 output(view::TableView) = view.output
 
-function prepare!(view::TableView, table::ItemTable, ctx)::Nothing
+prepare!(view::TableView, table::ItemTable, ctx)::Nothing = _show!(view, table, false)
+
+# Show `table`, whose first column `item` holds the labels of several items when `item_column`.
+function _show!(view::TableView, table::ItemTable, item_column::Bool)::Nothing
     view.table = table
-    view.item_column = false
+    view.item_column = item_column
     view.selection = nothing
     view.metadata_names = Symbol[]
     # TODO: read each column once rather than each cell, for large tables.
@@ -161,10 +165,9 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     table, warnings = isempty(view.zoom) ?
         merge_item_tables(selection; item_column=true, metadata, view.unfolded) :
         (value_table(view.zoom_item, value; view.unfolded), String[])
-    prepare!(view, table, ctx)
+    _show!(view, table, length(table.item_labels) > 1)
     view.selection = selection
     view.metadata_names = names
-    view.item_column = length(table.item_labels) > 1
     view.warnings = warnings
     types = unique(typeof.(items(selection)))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
@@ -261,10 +264,7 @@ function draw!(view::TableView, ctx)::Nothing
 
     shown = view.shown
     item(row) = table.row_item[shown[row]]
-    # The cells of a folded item that hold one value for each row show how many values there are.
-    folded(row, column) = item(row) in view.folded && !table.spans_item(shown[row], column)
     function cell(row, column)
-        folded(row, column) && return first(view.folded_cells[item(row)][column])
         text = _number_text(table.getvalue(shown[row], column), view.formats[column])
         return something(text, table.getcell(shown[row], column))
     end
@@ -272,7 +272,7 @@ function draw!(view::TableView, ctx)::Nothing
     # the metadata.
     function zoomable(row, column)
         (view.selection === nothing || !_data_column(view, column)) && return false
-        return !folded(row, column) && _zoomable(table.getvalue(shown[row], column))
+        return _zoomable(table.getvalue(shown[row], column))
     end
     # The step from the table to the value of a cell.
     function zoom_step(row, column)
@@ -318,11 +318,6 @@ function draw!(view::TableView, ctx)::Nothing
             ig.TextUnformatted(view.filter_errors[name])
             ig.PopStyleColor()
         end
-        if view.item_column && column == 1
-            ig.MenuItem("Expand all") && (change = () -> _fold!(view, eachindex(table.item_labels), false))
-            ig.MenuItem("Collapse all") && (change = () -> _fold!(view, eachindex(table.item_labels), true))
-            return nothing
-        end
         ig.MenuItem("Hide column") || return nothing
         if _data_column(view, column)
             push!(view.hidden, name)
@@ -355,21 +350,26 @@ function draw!(view::TableView, ctx)::Nothing
             on_click=zoom!,
             link_popup=open_zoomed,
             align_right=column -> view.formats[column] !== nothing,
-            muted=(row, column) -> folded(row, column) || column in table.groups,
-            tooltip=(row, column) -> folded(row, column) ? last(view.folded_cells[item(row)][column]) : nothing,
+            muted=(_, column) -> column in table.groups,
             span=(row, column) -> table.spans_item(shown[row], column) ? view.run_start[row] : row,
-            frozen_columns=view.item_column ? 1 : 0,
-            fold=(row, column) -> view.item_column && column == 1 ? !(item(row) in view.folded) : nothing,
-            on_fold=function (row, _)
+            # TODO: the row with the label of an item stays at the top while the item's rows scroll.
+            band=row -> view.label_row[row] ? table.item_labels[item(row)] : nothing,
+            fold=row -> view.label_row[row] ? !(item(row) in view.folded) : nothing,
+            on_fold=function (row)
                 folding = item(row)
                 change = () -> _fold!(view, [folding], !(folding in view.folded))
+            end,
+            band_popup=function (_)
+                ig.MenuItem("Expand all") && (change = () -> _fold!(view, eachindex(table.item_labels), false))
+                ig.MenuItem("Collapse all") && (change = () -> _fold!(view, eachindex(table.item_labels), true))
             end,
             on_sort=columns -> (view.sort = [(table.columns[c], ascending) for (c, ascending) in columns];
                                 change = () -> _arrange!(view)),
             header_icon=column -> haskey(view.filters, table.columns[column]) &&
                 !haskey(view.filter_errors, table.columns[column]) ? ICON_FILTER : "",
             header_popup=filter_popup,
-            hidden=column -> table.columns[column] in view.hidden,
+            # The rows with the labels of the items show the column `item`.
+            hidden=column -> table.columns[column] in view.hidden || view.item_column && column == 1,
             # TODO: pass on the selected columns, `view.grid.selected_columns`, too.
             on_selection_change=_ -> _pass_on!(view),
         )
@@ -401,15 +401,16 @@ function _fold!(view::TableView, items, fold::Bool)::Nothing
     return nothing
 end
 
-# Pass on the rows the user selected, or all rows when none is selected. The row of a folded item
-# stands for all of the item's rows that pass the filters.
+# Pass on the rows the user selected, or all rows when none is selected. The row with the label of
+# an item stands for all of the item's rows that pass the filters.
 function _pass_on!(view::TableView)::Nothing
     table = view.table::ItemTable
     rows = Int[]
     for row in sort(view.grid.selected_rows)
-        item = table.row_item[view.shown[row]]
-        item in view.folded ? append!(rows, view.folded_rows[item]) : push!(rows, view.shown[row])
+        view.label_row[row] ? append!(rows, view.item_rows[table.row_item[view.shown[row]]]) :
+            push!(rows, view.shown[row])
     end
+    unique!(rows)
     view.output = table[isempty(view.grid.selected_rows) ? view.order : rows, _shown_columns(view)]
     return nothing
 end
@@ -465,27 +466,29 @@ function _arrange!(view::TableView)::Nothing
         column === nothing && continue
         sort!(rows; by=row -> _sort_key(table.getvalue(row, column), ascending), rev=!ascending)
     end
+    # The rows of each item stay together, under the row with the item's label.
+    view.item_column && sort!(rows; by=row -> table.row_item[row])
     view.order = rows
 
     view.shown = Int[]
-    view.folded_rows = Dict{Int,Vector{Int}}()
+    view.label_row = Bool[]
+    view.run_start = Int[]
+    view.item_rows = Dict{Int,Vector{Int}}()
     for row in rows
         item = table.row_item[row]
-        if item in view.folded
-            haskey(view.folded_rows, item) || push!(view.shown, row)
-            push!(get!(Vector{Int}, view.folded_rows, item), row)
-        else
+        new_item = !haskey(view.item_rows, item)
+        push!(get!(Vector{Int}, view.item_rows, item), row)
+        if view.item_column && new_item
             push!(view.shown, row)
+            push!(view.label_row, true)
+            push!(view.run_start, length(view.shown))
         end
-    end
-    view.folded_cells = Dict(item => [_folded_cell([table.getvalue(row, column) for row in item_rows],
-                                                   view.formats[column])
-                                      for column in eachindex(table.columns)]
-                             for (item, item_rows) in view.folded_rows)
-    view.run_start = collect(eachindex(view.shown))
-    for row in 2:length(view.shown)
-        table.row_item[view.shown[row]] == table.row_item[view.shown[row - 1]] &&
-            (view.run_start[row] = view.run_start[row - 1])
+        view.item_column && item in view.folded && continue
+        # A row below a row of the same item, other than the row with its label, continues its run.
+        continues = !isempty(view.shown) && !last(view.label_row) && table.row_item[last(view.shown)] == item
+        push!(view.run_start, continues ? last(view.run_start) : length(view.shown) + 1)
+        push!(view.shown, row)
+        push!(view.label_row, false)
     end
 
     # The rows on screen change, so the selection is cleared.
@@ -545,17 +548,3 @@ function _number_text(value, format)::Union{Nothing,String}
     return @sprintf("%.*f", format.decimals, number) * rpad(_exponent_text(exponent), format.exponent_width)
 end
 
-# The text and the tooltip of one cell of a folded item, from the values of its rows. `missing`
-# stands for a column the item does not have.
-function _folded_cell(values::Vector, format)::Tuple{String,String}
-    present = filter(!ismissing, values)
-    isempty(present) && return ("", "")
-    count = length(present) == 1 ? "1 value" : "$(length(present)) values"
-    if format !== nothing
-        low, high = (something(_number_text(x, format), _cell_text(x)) for x in extrema(present))
-        width = max(length(low), length(high))
-        return (count, "$count\nsmallest  $(lpad(low, width))\nlargest   $(lpad(high, width))")
-    end
-    different = length(unique(present))
-    return (count, different == 1 ? "$count, all the same" : "$count, $different different")
-end

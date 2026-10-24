@@ -608,14 +608,16 @@ the table as a first-class view.
   - [x] Columns fitted to their content when the data changes.
   - [x] Hide columns, from the "Columns" list in the top line of the window or the header's menu.
   - [ ] Reorder columns; freeze the first column; an optional row-number column.
-  - [x] Sort by a column with the arrow in its header, and by several with Shift-click.
+  - [x] Sort by a column with the arrow in its header, and by several with Shift-click. With several
+    items, the rows of each item are sorted, under the row with its label.
   - [x] Select columns by clicking their headers, with Shift-click and Cmd-click as for rows.
   - [ ] Pass on the selected columns.
-  - [x] The items one after the other, with the label of each item in one cell beside all of its
-    rows. The label stays in place when the table scrolls sideways.
-  - [x] Fold an item to one row that shows how many values it has in each column, with the
-    smallest and the largest number on hover. "Expand all" and "Collapse all" in the menu of the
-    header `item`; Space folds the items of the selected rows.
+  - [x] The items one after the other, each under a row with its label, which stays in place when
+    the table scrolls sideways.
+  - [x] Fold an item to the row with its label. "Expand all" and "Collapse all" in the menu of that
+    row; Space folds the items of the selected rows.
+  - [ ] The row with the label of the item stays at the top while the item's rows scroll.
+  - [ ] A folded item shows how many values it has, in a way still to find.
   - [x] Metadata columns that the user picks from the "Metadata" list in the top line of the window,
     in one cell beside the rows of each item.
   - [x] Every list of names to pick from narrows to the names that match what the user types, and

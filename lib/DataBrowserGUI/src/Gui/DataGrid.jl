@@ -129,9 +129,14 @@ Arguments:
 - `muted`: `(row::Int, col::Int) -> Bool`, whether the text of the cell is dimmed
 - `tooltip`: `(row::Int, col::Int) -> Union{Nothing,String}`, the text shown on hover over the
   text of the cell
-- `fold`: `(row::Int, col::Int) -> Union{Nothing,Bool}`, whether the cell starts with an arrow
-  that folds something, open (`true`) or closed (`false`). No cell has an arrow by default
-- `on_fold`: called with `(row, col)` when the user clicks the arrow of a cell
+- `band`: `(row::Int) -> Union{Nothing,String}`, the text of a row that is a band: one text across
+  all columns, which stays at the left edge when the grid scrolls sideways, in place of the cells
+  of the row. In row mode only. No row is a band by default
+- `fold`: `(row::Int) -> Union{Nothing,Bool}`, whether a band starts with an arrow that folds
+  something, open (`true`) or closed (`false`). No band has an arrow by default
+- `on_fold`: called with `row` when the user clicks the arrow of a band
+- `band_popup`: `(row::Int) -> Nothing`, draws the menu that right-clicking a band opens. The bands
+  have no menu without it
 - `on_sort`: called with the columns to sort by, as `(col, ascending)` pairs from the first to the
   last, when the user changes them. The arrow at the right edge of a header, which shows when the
   column is sorted or the mouse is over the header, sorts by the column: ascending, then descending,
@@ -182,8 +187,10 @@ function render_data_grid!(
     align_right::Function = _ -> false,
     muted::Function = (_, _) -> false,
     tooltip::Function = (_, _) -> nothing,
-    fold::Function = (_, _) -> nothing,
-    on_fold::Function = (_, _) -> nothing,
+    band::Function = _ -> nothing,
+    fold::Function = _ -> nothing,
+    on_fold::Function = _ -> nothing,
+    band_popup::Union{Nothing,Function} = nothing,
     on_sort::Union{Nothing,Function} = nothing,
     header_icon::Function = _ -> "",
     column_groups::Function = _ -> String[],
@@ -201,9 +208,11 @@ function render_data_grid!(
     ))
     n_cols = length(columns)
 
-    # The grid draws the lines between rows itself, so that a cell can span several rows.
+    # The grid draws the lines between rows itself, so that a cell can span several rows, and the
+    # lines between the columns below the headers, so that a band has none.
     flags = ig.ImGuiTableFlags_RowBg          |
             ig.ImGuiTableFlags_BordersInnerV  |
+            ig.ImGuiTableFlags_NoBordersInBody |
             ig.ImGuiTableFlags_BordersOuter   |
             ig.ImGuiTableFlags_Resizable      |
             ig.ImGuiTableFlags_Hideable       |
@@ -467,7 +476,49 @@ function render_data_grid!(
     background = ig.GetColorU32(ig.ImGuiCol_WindowBg)
     selected_columns = Set(state.selected_columns)
     selected_column = ig.GetColorU32(ig.ImGuiCol_Header)
+    # Between the color of the headers and that of the rows, so that a band is not taken for a header.
+    band_color = ig.GetColorU32(ig.ImGuiCol_TableHeaderBg, 0.5f0)
+    # The row's selection, which spans all columns, is in the first column the grid shows.
+    first_column = something(findfirst(column -> !hidden(column), 1:n_cols), 1)
+    # A band across the whole row, with its arrow and its text at the left edge of the grid, in the
+    # color `color`. `top` is the top of the row's text.
+    function draw_band(row, text, color, top)
+        # Items in the background channel may be anywhere in the grid, not only in their column. The
+        # band covers the lines between the columns, which ImGui draws below this channel.
+        ig.TablePushBackgroundChannel()
+        left = ig.GetWindowPos().x + padding.x
+        ig.AddRectFilled(ig.GetWindowDrawList(), ig.ImVec2(ig.GetWindowPos().x, top - padding.y),
+            ig.ImVec2(ig.GetWindowPos().x + ig.GetWindowWidth(), top + ig.GetTextLineHeightWithSpacing() + padding.y),
+            color)
+        row > 1 && ig.AddLine(ig.GetWindowDrawList(), ig.ImVec2(ig.GetWindowPos().x, top - padding.y),
+            ig.ImVec2(ig.GetWindowPos().x + ig.GetWindowWidth(), top - padding.y), border)
+        open = fold(row)
+        if open !== nothing
+            draw_arrow(ig.ImVec2(left, top), open)
+            ig.SetCursorScreenPos(ig.ImVec2(left, top))
+            # Out of ImGui's keyboard navigation; a click on the text selects, as anywhere else in
+            # the row.
+            ig.PushItemFlag(ig.ImGuiItemFlags_NoNav, true)
+            # The button takes no room: the row stays as high as its selection.
+            reach = Ptr{ig.ImVec2}(ig.GetCurrentWindow().DC +
+                fieldoffset(ig.lib.ImGuiWindowTempData, Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
+            kept = unsafe_load(reach)
+            ig.InvisibleButton("##fold", ig.ImVec2(arrow_width, ig.GetFontSize())) && on_fold(row)
+            unsafe_store!(reach, kept)
+            ig.PopItemFlag()
+            left += arrow_width
+        end
+        ig.AddText(ig.GetWindowDrawList(), ig.ImVec2(left, top), ig.GetColorU32(ig.ImGuiCol_Text), text)
+        ig.TablePopBackgroundChannel()
+        return nothing
+    end
     function draw_cell(row, column, position, first_visible, last_visible, row_height)
+        # The line at the right of the cell, below the lines between the rows.
+        ig.TablePushBackgroundChannel()
+        right = ig.TableGetCellBgRect(grid_table, column - 1).Max.x
+        ig.AddLine(ig.GetWindowDrawList(), ig.ImVec2(right, position.y - padding.y),
+            ig.ImVec2(right, position.y - padding.y + row_height), border)
+        ig.TablePopBackgroundChannel()
         first = span(row, column)
         if first == row && row > 1
             top = position.y - padding.y
@@ -498,17 +549,8 @@ function render_data_grid!(
             fieldoffset(ig.lib.ImGuiWindowTempData, Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
         content_bottom = unsafe_load(reach).y
         moved && ig.SetCursorScreenPos(ig.ImVec2(ig.GetCursorScreenPos().x, top))
-        link, open = cell_link(row, column), fold(row, column)
-        if open !== nothing
-            # The arrow is a button of its own, out of ImGui's keyboard navigation; a click on the
-            # text selects, as anywhere else in the row.
-            draw_arrow(ig.GetCursorScreenPos(), open)
-            ig.PushItemFlag(ig.ImGuiItemFlags_NoNav, true)
-            ig.InvisibleButton("##fold_$column", ig.ImVec2(arrow_width, ig.GetFontSize())) && on_fold(row, column)
-            ig.PopItemFlag()
-            ig.SameLine(0.0f0, 0.0f0)
-            ig.TextUnformatted(cell(row, column))
-        elseif link !== nothing
+        link = cell_link(row, column)
+        if link !== nothing
             ig.TextLinkOpenURL(cell(row, column), link)
         elseif clickable(row, column)
             ig.TextLink("$(cell(row, column))##link_$column") && on_click(row, column)
@@ -553,7 +595,7 @@ function render_data_grid!(
                 ig.TableNextRow()
 
                 if selection_mode === :rows
-                    ig.TableSetColumnIndex(0)
+                    ig.TableSetColumnIndex(first_column - 1)
                     position = ig.GetCursorScreenPos()
                     is_selected = row in selected_set
                     if ig.Selectable(
@@ -570,11 +612,24 @@ function render_data_grid!(
                         selected_set = Set(state.selected_rows)
                         row_selection_changed = true
                     end
-                    ig.SameLine()
-                    draw_cell(row, 1, position, start_idx, end_idx, row_height)
-                    for column in 2:n_cols
-                        ig.TableSetColumnIndex(column - 1)
-                        draw_cell(row, column, ig.GetCursorScreenPos(), start_idx, end_idx, row_height)
+                    text = band(row)
+                    if text !== nothing
+                        # The band covers the highlight of the row's selection, so it draws it itself.
+                        color = is_selected ? ig.GetColorU32(ig.ImGuiCol_Header) :
+                            ig.IsItemHovered() ? ig.GetColorU32(ig.ImGuiCol_HeaderHovered) : band_color
+                        if band_popup !== nothing && ig.BeginPopupContextItem("##band_popup")
+                            band_popup(row)
+                            ig.EndPopup()
+                        end
+                        draw_band(row, text, color, position.y)
+                    else
+                        ig.SameLine()
+                        draw_cell(row, first_column, position, start_idx, end_idx, row_height)
+                        for column in 1:n_cols
+                            (column == first_column || hidden(column)) && continue
+                            ig.TableSetColumnIndex(column - 1)
+                            draw_cell(row, column, ig.GetCursorScreenPos(), start_idx, end_idx, row_height)
+                        end
                     end
                 else
                     for column in 1:n_cols
