@@ -42,6 +42,17 @@ end
     @test sections(figure(plot)) == [("Chip", ["72b", "719a"]), ("Site", ["L", "R"])]
 end
 
+@testset "styles written in the visuals of layers are a manual scale with a legend section" begin
+    rows = [(V=v, I=v / R, J=-v / R, Chip=c) for (c, R) in (("72b", 1.0), ("719a", 3.0)) for v in (1.0, 2.0)]
+    plot = @plot data(rows) * mapping(:V; color=:Chip) begin
+        mapping(; y=:I) * visual(ScatterLines; marker=:utriangle, linestyle=:solid)
+        mapping(; y=:J) * visual(ScatterLines; marker=:dtriangle, linestyle=:dash)
+        scales(marker=(; categories=[:utriangle => "V > 0", :dtriangle => "V < 0"], label="Bias"),
+            linestyle=(; categories=[:solid => "V > 0", :dash => "V < 0"]))
+    end
+    @test sections(figure(plot)) == [("Chip", ["72b", "719a"]), ("Bias", ["V > 0", "V < 0"])]
+end
+
 @testset "a legend text reads a value that no role maps, when the entry determines it" begin
     rows = [(V=v, I=v / R, Chip=c, Wafer=w) for (c, w, R) in (("72b", "W1", 1.0), ("719a", "W2", 3.0)) for v in (0.0, 1.0)]
     plot = @plot data(rows) * mapping(:V, :I; color=:Chip) begin

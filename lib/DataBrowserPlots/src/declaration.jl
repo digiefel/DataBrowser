@@ -233,6 +233,13 @@ its values, by their names in the scales. A section's title is the `label` of it
 empty one, as in `scales(color = (; label = ""))`, leaves the section without a title, and
 `legend(titlevisible = false)` leaves every section without one.
 
+A style that each layer's `visual` writes, such as `marker = :utriangle` in one layer and
+`:dtriangle` in another, is a manual scale when no `mapping` maps its role: its categories are the
+values written, each drawn as itself, and its legend section is that of a mapped role. Its scale
+names them, with the written values as categories:
+
+    scales(marker = (; categories = [:utriangle => "V > 0", :dtriangle => "V < 0"], label = "Bias"))
+
 A `legend` line sets the text of each entry in the section that holds a role. A path in the text
 reads the header's value for the entry, as the header reads it: a metadata value of the entry's
 items, or a column of the header's data. A value that a role maps shows by its name in the scale.
