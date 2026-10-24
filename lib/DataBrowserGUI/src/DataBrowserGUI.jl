@@ -12,6 +12,8 @@ export with_font
 include("CodeFile.jl")
 export CodeFile
 
+include("CodeText.jl")
+
 include("TableModel.jl")
 include("Browser.jl")
 
