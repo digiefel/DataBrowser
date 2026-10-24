@@ -136,6 +136,12 @@ mapping. A `y` without `x` draws its values against the vertical axis: `mapping(
 visual(Hist)` is a histogram whose bars grow to the right, unless the `visual` sets `direction`. A
 line with only `y` takes the header's `x`.
 
+A mapping can draw several values on the vertical axis: `y2`, `y3` and so on are drawn as well as
+`y`, which can also be named `y1`. `ydims()` maps which of them a point shows, and each title after
+`=>` names one of them in the legend:
+
+    mapping(; x=:gap, y=:Rp => "V > 0", y2=:Rm => "V < 0", marker=ydims(), linestyle=ydims())
+
 The values of one item in one layer broadcast together, so this draws one point per row of each
 item's data, each with its item's device. Each layer reads its own values, so a layer of one point
 per item can be drawn next to a layer of the items' rows. A mapping may also be a formula of paths,
@@ -329,8 +335,10 @@ source_text(value) = string(value)
 function map_mapped(f, expression; chosen=value -> !isempty(paths(value)))
     expression isa Expr || return expression
     if Meta.isexpr(expression, :call) && expression.args[1] === :mapping
+        # A list of values, as `y` and `y2` give, has each of them.
         mapped(value) = Meta.isexpr(value, :call) && value.args[1] === :(=>) ?
             Expr(:call, :(=>), mapped(value.args[2]), value.args[3:end]...) :
+            Meta.isexpr(value, :vect) ? Expr(:vect, map(mapped, value.args)...) :
             chosen(value) ? f(value) : value
         argument(a) = Meta.isexpr(a, :kw) ? Expr(:kw, a.args[1], mapped(a.args[2])) :
             Meta.isexpr(a, :parameters) ? Expr(:parameters, map(argument, a.args)...) : mapped(a)
@@ -515,22 +523,37 @@ end
 # The expression with each `mapping` that names its positions, such as `mapping(; x=:gap, y=:R)`,
 # written with positions, `mapping(:gap, :R)`, as AlgebraOfGraphics takes them. A `y` without `x`
 # keeps `nothing` as its `x`: a line takes the header's `x` there, and drawing reads it as `y` alone.
+# `y2`, `y3` and so on add values to `y`, which `y1` also names: the position is then their list,
+# `[y, y2]`, and `ydims()` maps which of them a point comes from, as AlgebraOfGraphics' `dims(1)`.
+# TODO: several values of `x`, paired with those of `y` or with each of them.
 function positions_named(expression)
     expression isa Expr || return expression
     expression = Expr(expression.head, map(positions_named, expression.args)...)
     Meta.isexpr(expression, :call) && expression.args[1] === :mapping || return expression
     positional, named = call_arguments(expression)
-    any(((name, _),) -> name in (:x, :y, :z), named) || return expression
+    # The position and the number of a named position, such as `(2, 3)` for `y3`, or `nothing`.
+    function position(name::Symbol)
+        found = match(r"^([xyz])(\d*)$", String(name))
+        found === nothing && return nothing
+        return findfirst(==(found[1]), ("x", "y", "z")), isempty(found[2]) ? 1 : parse(Int, found[2])
+    end
+    any(((name, _),) -> position(name) !== nothing, named) || return expression
     slots = Any[positional...]
-    for (index, name) in enumerate((:x, :y, :z)), (other, value) in named
-        other === name || continue
-        index <= length(slots) && slots[index] !== nothing && error("`mapping` has $name twice: as a position and by name")
+    for index in 1:3
+        values = sort([(position(name)[2], name, value) for (name, value) in named
+            if position(name) !== nothing && position(name)[1] == index])
+        isempty(values) && continue
+        index <= length(slots) && slots[index] !== nothing && error("`mapping` has $(values[1][2]) twice: as a position and by name")
+        numbers = first.(values)
+        allunique(numbers) || error("`mapping` names the same position twice, such as y and y1")
+        index != 2 && length(values) > 1 && error("`mapping` takes several values of y, but not yet of $(("x", "y", "z")[index])")
         append!(slots, fill(nothing, max(0, index - length(slots))))
-        slots[index] = value
+        slots[index] = length(values) == 1 ? values[1][3] : Expr(:vect, last.(values)...)
     end
     gap = findfirst(isnothing, slots[2:end])
     gap === nothing || error("`mapping` has z without y")
-    rest = [Expr(:kw, name, value) for (name, value) in named if !(name in (:x, :y, :z))]
+    ydims(e) = Meta.isexpr(e, :call) && e.args == [:ydims] ? :(dims(1)) : e isa Expr ? Expr(e.head, map(ydims, e.args)...) : e
+    rest = [Expr(:kw, name, ydims(value)) for (name, value) in named if position(name) === nothing]
     return Expr(:call, :mapping, Expr(:parameters, rest...), slots...)
 end
 

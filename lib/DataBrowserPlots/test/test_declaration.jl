@@ -24,6 +24,9 @@ end
 
     both = @plot mapping(:data.V, :data.I) * visual(Lines) + mapping(last(:data.V), maximum(:data.I)) * visual(Scatter)
     @test Tuple.(only(plotted(figure(both, items), Scatter))[1][]) == [(1.0, 1.0), (2.0, 3.0)]
+
+    series = @plot mapping(; x=:device, y=maximum(:data.I), y2=-maximum(:data.I), marker=ydims()) * visual(Scatter)
+    @test sort(last.(reduce(vcat, [p[1][] for p in plotted(figure(series, items), Scatter)]))) == [-3.0, -1.0, 1.0, 3.0]
 end
 
 @testset "@invisible keeps a line without drawing it" begin
