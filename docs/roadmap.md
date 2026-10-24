@@ -606,7 +606,7 @@ the table as a first-class view.
   - [ ] The element type under each column name.
   - [ ] Long text cut with "…", and the full text on hover.
   - [x] Columns fitted to their content when the data changes.
-  - [x] Hide columns, from the "Data" list in the top line of the window or the header's menu.
+  - [x] Hide columns, from the "Columns" list in the top line of the window or the header's menu.
   - [ ] Reorder columns; freeze the first column; an optional row-number column.
   - [x] Sort by a column, and by several with Shift-click.
   - [x] The items one after the other, with the label of each item in one cell beside all of its

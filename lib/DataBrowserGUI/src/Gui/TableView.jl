@@ -39,9 +39,9 @@ or `!in(["C2_3um"])`, which the table calls with each value of the column. The t
 for which it returns `true`; a funnel at the right of the column's name marks the filter. The menu
 also hides the column, and fits the width of the columns to their content.
 
-"Data", in the top line of the window, lists the columns of the data: a checked name is a column the
-table shows. "Metadata" lists the metadata of the items: a checked name is a column after `item`,
-with the value of each item in one cell beside its rows. Typing in a list narrows it to the names
+"Columns", in the top line of the window, lists the columns of the data: a checked name is a column
+the table shows. "Metadata" lists the metadata of the items: a checked name is a column after
+`item`, with the value of each item in one cell beside its rows. Typing in a list narrows it to the names
 that have the typed letters in the same order, such as `wf` for `width_finger`.
 
 A cell that holds a vector, a matrix, a table or a block of names is a link. Clicking it zooms into
@@ -188,27 +188,34 @@ end
 function draw_header!(view::TableView, ctx)::Nothing
     table = view.table
     table === nothing && return nothing
-    flags = ig.ImGuiComboFlags_WidthFitPreview | ig.ImGuiComboFlags_HeightLargest
+    # Each button opens its list below it.
+    function open_list(label, id, tooltip)
+        clicked = ig.Button(label)
+        ig.SetItemTooltip(tooltip)
+        if clicked
+            ig.SetNextWindowPos(ig.ImVec2(ig.GetItemRectMin().x, ig.GetItemRectMax().y))
+            ig.OpenPopup(id)
+        end
+        return ig.BeginPopup(id)
+    end
     names = [table.columns[column] for column in eachindex(table.columns) if _data_column(view, column)]
-    if ig.BeginCombo("##data", "Data", flags)
+    if open_list("$ICON_COLUMNS Columns", "##columns", "The columns of the data that the table shows")
         toggled = render_list_picker!(view.data_picker, names, [!(name in view.hidden) for name in names])
         if toggled !== nothing
             name = names[toggled]
             name in view.hidden ? delete!(view.hidden, name) : push!(view.hidden, name)
             _arrange!(view)
         end
-        ig.EndCombo()
+        ig.EndPopup()
     end
-    ig.SetItemTooltip("The columns of the data that the table shows")
     (view.selection === nothing || !isempty(view.zoom) || isempty(view.metadata_names)) && return nothing
     ig.SameLine()
-    if ig.BeginCombo("##metadata", "Metadata", flags)
+    if open_list("$ICON_TAG Metadata", "##metadata", "The metadata that the table shows as columns")
         toggled = render_list_picker!(view.metadata_picker, string.(view.metadata_names),
             [name in view.metadata for name in view.metadata_names])
         toggled === nothing || _pick_metadata!(view, view.metadata_names[toggled])
-        ig.EndCombo()
+        ig.EndPopup()
     end
-    ig.SetItemTooltip("The metadata that the table shows as columns")
     return nothing
 end
 
