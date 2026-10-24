@@ -291,22 +291,27 @@ collection above it; or for a collection, from its `process` and its `analyze`.
 """
 function readiness(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Readiness
     catalog = workspace.catalog
+    # Whether one stage is not done, and then whether it failed and whether it is queued or runs.
+    function flags(row, stage)::NTuple{3,Bool}
+        status = Catalogs.status(catalog, row, stage)
+        (status.absent || status.validity == Catalogs.FRESH) && return (false, false, false)
+        return (true, status.failed || status.blocked, status.running || Catalogs.priority(catalog, row, stage) > 0)
+    end
+    # Rows of the browser ask at every frame: the stages are visited without building lists.
     @lock catalog.lock begin
         # The first stage gives the row its own data.
-        stages = key isa ItemKey ?
-            Target[(key, ITEM_PROCESS); (key, ITEM_ANALYZE);
-                [(holder, COLLECTION_PROCESS) for holder in ancestors(workspace, key)]] :
-            Target[(key, COLLECTION_PROCESS), (key, COLLECTION_ANALYZE)]
-        pending = Target[
-            stage for stage in stages
-            if !Catalogs.status(catalog, stage...).absent &&
-                Catalogs.status(catalog, stage...).validity != Catalogs.FRESH]
-        isempty(pending) && return CURRENT
-        any(stage -> (status = Catalogs.status(catalog, stage...); status.failed || status.blocked), pending) &&
-            return FAILED
-        any(stage -> Catalogs.status(catalog, stage...).running || Catalogs.priority(catalog, stage...) > 0, pending) &&
-            return WORKING
-        return first(stages) in pending ? UNPROCESSED : PARTIAL
+        first_flags = flags(key, key isa ItemKey ? ITEM_PROCESS : COLLECTION_PROCESS)
+        all_flags = first_flags .| flags(key, key isa ItemKey ? ITEM_ANALYZE : COLLECTION_ANALYZE)
+        holder = key isa ItemKey ? Catalogs.collection(catalog, key) : ROOT
+        while holder != ROOT
+            all_flags = all_flags .| flags(holder, COLLECTION_PROCESS)
+            holder = parent(catalog, holder)
+        end
+        pending, failed, working = all_flags
+        pending || return CURRENT
+        failed && return FAILED
+        working && return WORKING
+        return first(first_flags) ? UNPROCESSED : PARTIAL
     end
 end
 
