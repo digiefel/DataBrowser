@@ -24,6 +24,8 @@ const ICON_EYE_OFF = "\ue0bb"
 const ICON_INFO = "\ue0f9"
 const ICON_PLUS = "\ue13d"
 const ICON_X = "\ue1b2"
+const ICON_CHEVRON_DOWN = "\ue06d"
+const ICON_CHEVRON_RIGHT = "\ue06f"
 # The values the menus of `marker` and `linestyle` offer, each drawn as it looks.
 const MARKERS = [:circle, :rect, :diamond, :utriangle, :dtriangle, :ltriangle, :rtriangle, :cross,
     :xcross, :pentagon, :hexagon]
@@ -613,7 +615,7 @@ end
 # code. A click on the value edits it; a marker or a line style of `visual` opens a menu of them,
 # each drawn as it looks. The value is only framed when it is `inherited` from the header or
 # `unused` by every drawn layer, and struck through when the line's plot type `skipped` it. While
-# the mouse is on a `removable` value, a cross at its end removes it. `info` adds an info button with
+# the mouse is on the row of a `removable` value, a cross before its name removes it. `info` adds an info button with
 # that text. Returns the change of the code the user asked for, as a function of no arguments, or
 # `nothing`.
 function draw_entry!(view::BuilderView, target, name, value::String; name_width::Float32, inherited::Bool=false,
@@ -621,6 +623,17 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     change = nothing
     ig.PushID("$target/$name")
     ig.AlignTextToFramePadding()
+    # The room of the cross, which every row keeps so that the names line up.
+    row = ig.GetCursorScreenPos()
+    gutter = ig.CalcTextSize(ICON_X).x + 6
+    if removable && ig.IsMouseHoveringRect(row, (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight()))
+        ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (2.0f0, unsafe_load(ig.GetStyle()).FramePadding.y))
+        icon_button(ICON_X, "Remove $(entry_name(name))"; danger=true) &&
+            (change = () -> remove_entry!(view.code, target_call(view.plot, target), name))
+        ig.PopStyleVar()
+        ig.SameLine(0.0f0, 0.0f0)
+    end
+    ig.SetCursorScreenPos((row.x + gutter, ig.GetCursorScreenPos().y))
     start = ig.GetCursorPosX()
     with_font(() -> ig.TextDisabled(entry_name(name)), :code)
     if info !== nothing
@@ -668,22 +681,12 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
             end
             ig.EndPopup()
         end
-        # The cross, over the end of the value while the mouse is on it.
-        if removable && ig.IsMouseHoveringRect(low, high)
-            size = ig.GetFrameHeight()
-            ig.SetCursorScreenPos((high.x - size, low.y))
-            ig.PushStyleColor(ig.ImGuiCol_Button, ig.GetColorU32(ig.ImGuiCol_FrameBgHovered))
-            ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, ig.GetColorU32(ig.ImVec4(0.75f0, 0.28f0, 0.28f0, 0.8f0)))
-            ig.Button(ICON_X, (size, size)) && (change = () -> remove_entry!(view.code, target_call(view.plot, target), name))
-            ig.PopStyleColor(2)
-            ig.SetItemTooltip("Remove $(entry_name(name))")
-        end
     end
     ig.PopID()
     return change
 end
 
-# A layer, as a card: a band with its eye, its plot type, the names of its analyses and a picture of
+# A layer, as a card: a band with a button that folds it, its eye, its plot type, the names of its analyses and a picture of
 # its marker and line, and under it, when open, its `mapping` and `visual`. `takes(line, name)`
 # tells whether the line takes a mapping from the header, and `names` are the mappings it can show,
 # or `nothing` when unknown. Returns the changes of the code the user asked for.
@@ -698,51 +701,62 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         all(entry -> entry.name != edit.name, present))
     style = unsafe_load(ig.GetStyle())
 
-    # The band, drawn under the items of its row.
+    # The band's items go on the upper of two layers of the draw list; the band goes under them once
+    # their height is known.
+    draw_list = ig.GetWindowDrawList()
+    ig.ChannelsSplit(draw_list, 2)
+    ig.ChannelsSetCurrent(draw_list, 1)
     band = ig.GetCursorScreenPos()
-    band_end = (band.x + ig.GetContentRegionAvail().x, band.y + ig.GetFrameHeight())
-    ig.AddRectFilled(ig.GetWindowDrawList(), band, band_end, ig.GetColorU32(ig.ImGuiCol_Header, 0.45f0), style.FrameRounding)
-    # What does not fit in the band is cut off.
-    ig.PushClipRect(band, band_end, true)
+    right = band.x + ig.GetContentRegionAvail().x
+    ig.PushStyleVar(ig.ImGuiStyleVar_ItemSpacing, (4.0f0, 2.0f0))
+    ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (3.0f0, style.FramePadding.y))
     hidden = line.invisible !== nothing
     alpha = hidden ? 0.45f0 : 1.0f0
     ig.AlignTextToFramePadding()
+    # Whether the layer shows its `mapping` and `visual`, which ImGui keeps from frame to frame.
+    storage, key = ig.GetStateStorage(), ig.GetID("open")
+    opened = ig.GetBool(storage, key, true)
+    icon_button(opened ? ICON_CHEVRON_DOWN : ICON_CHEVRON_RIGHT, opened ? "Fold the layer" : "Unfold the layer") &&
+        ig.SetBool(storage, key, !opened)
+    ig.SameLine()
     if icon_button(hidden ? ICON_EYE_OFF : ICON_EYE, hidden ? "Draw the layer" : "Hide the layer, keeping its line")
         # `@invisible` keeps the line in the plot without drawing it.
         start = first(line.range)
         push!(changes, hidden ? () -> edit!(view.code, line.invisible, "") : () -> edit!(view.code, start:start-1, "@invisible "))
     end
-    ig.SameLine(0.0f0, 2.0f0)
-    flags = ig.ImGuiTreeNodeFlags_SpanAvailWidth | ig.ImGuiTreeNodeFlags_AllowOverlap |
-        ig.ImGuiTreeNodeFlags_DefaultOpen | ig.ImGuiTreeNodeFlags_NoTreePushOnOpen
-    ig.PushStyleColor(ig.ImGuiCol_HeaderHovered, ig.GetColorU32(ig.ImGuiCol_HeaderHovered, 0.3f0))
-    ig.PushStyleColor(ig.ImGuiCol_HeaderActive, ig.GetColorU32(ig.ImGuiCol_HeaderActive, 0.3f0))
-    opened = ig.TreeNodeEx("##layer", flags)
-    ig.PopStyleColor(2)
     visual = entries(line.visual)
     value(name) = (found = findfirst(entry -> entry.name == name, visual); found === nothing ? nothing : text(visual[found].value))
     plottype = value(1)
+    ig.SameLine()
+    sample_x = ig.GetCursorPosX()
+    draw_sample(plottype, written_symbol(something(value(:marker), "")), written_symbol(something(value(:linestyle), "")), alpha)
     if line.name !== nothing
         ig.SameLine()
         with_font(() -> ig.TextDisabled("$(line.name) ="), :code)
     end
-    ig.SameLine()
-    draw_sample(plottype, written_symbol(something(value(:marker), "")), written_symbol(something(value(:linestyle), "")), alpha)
     if plottype !== nothing
         ig.SameLine()
         ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_Text, alpha))
         ig.TextUnformatted(plottype)
         ig.PopStyleColor()
     end
+    # The tags, on more rows under the picture when they do not fit before the room of the cross.
     for analysis in line.analyses
-        ig.SameLine()
+        width = with_font(() -> ig.CalcTextSize(analysis).x, :code) + 8
+        ig.GetItemRectMax().x + 4 + width > right - ig.GetFrameHeight() ? ig.SetCursorPosX(sample_x) : ig.SameLine()
         draw_tag(analysis, alpha)
     end
+    ig.PopStyleVar(2)
+    band_end = (right, ig.GetItemRectMax().y)
     if ig.IsMouseHoveringRect(band, band_end)
-        to_right_end(ig.GetFrameHeight())
+        after = ig.GetCursorScreenPos()
+        ig.SetCursorScreenPos((right - ig.GetFrameHeight(), band.y))
         icon_button(ICON_X, "Remove the layer"; danger=true) && push!(changes, () -> remove_line!(view.code, line))
+        ig.SetCursorScreenPos(after)
     end
-    ig.PopClipRect()
+    ig.ChannelsSetCurrent(draw_list, 0)
+    ig.AddRectFilled(draw_list, band, band_end, ig.GetColorU32(ig.ImGuiCol_Header, 0.45f0), style.FrameRounding)
+    ig.ChannelsMerge(draw_list)
 
     if opened
         ig.Indent(style.FramePadding.x + 4)
