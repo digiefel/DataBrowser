@@ -478,11 +478,17 @@ function render_data_grid!(
             end
         else
             text = cell(row, column)
+            left = ig.GetCursorScreenPos().x
+            widest = unsafe_load(reach).x
             align_right(column) && ig.SetCursorPosX(ig.GetCursorPosX() +
                 max(0.0f0, ig.GetContentRegionAvail().x - ig.CalcTextSize(text).x))
             muted(row, column) && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
             ig.TextUnformatted(text)
             muted(row, column) && ig.PopStyleColor()
+            # ImGui fits a column to the rightmost point its items reach, which is the right edge
+            # for right-aligned text: the cell reaches only as far as its text would from the left.
+            align_right(column) && unsafe_store!(reach,
+                ig.ImVec2(max(widest, left + ig.CalcTextSize(text).x), unsafe_load(reach).y))
             hint = tooltip(row, column)
             if hint !== nothing && ig.IsItemHovered(ig.ImGuiHoveredFlags_AllowWhenOverlappedByItem)
                 ig.BeginTooltip()
