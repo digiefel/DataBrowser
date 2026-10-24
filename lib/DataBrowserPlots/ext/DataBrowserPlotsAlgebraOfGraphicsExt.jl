@@ -275,54 +275,6 @@ limited(layers::AoG.Layers, step) = AoG.Layers([limited(layer, step) for layer i
 limited(plot::PlotLines, step) =
     PlotLines([PlotLine(limited(drawable(line.layers), step), line.shared, line.drawn) for line in plot.lines])
 
-# A style that the `visual` of each layer writes, such as `marker=:utriangle` in one and `:dtriangle`
-# in another, is a manual scale when no layer maps its role: its categories are the values written,
-# and each draws as itself. Its legend then shows as that of a mapped role.
-# TODO: a layer that does not write the style draws with Makie's own, and has no entry.
-const MANUAL_ROLES = (:color, :marker, :linestyle)
-
-all_layers(layer::AoG.Layer) = [layer]
-all_layers(layers::AoG.Layers) = layers.layers
-all_layers(plot::PlotLines) = reduce(vcat, [all_layers(line.layers) for line in plot.lines if line.drawn]; init=AoG.Layer[])
-# A fit, or a statistic without its layer, writes no style.
-all_layers(_) = AoG.Layer[]
-
-# The value of `role` that the last `visual` of `layer` writes, or `nothing`.
-function written_style(layer::AoG.Layer, role::Symbol)
-    visuals = filter(step -> step isa AoG.Visual && haskey(step.attributes, role), steps(layer.transformation))
-    return isempty(visuals) ? nothing : last(visuals).attributes[role]
-end
-
-# The manual scales of `layers`, as each role's values in the order they are written.
-function manual_scales(layers)::Dict{Symbol,Vector{Any}}
-    found = Dict{Symbol,Vector{Any}}()
-    for role in MANUAL_ROLES
-        any(layer -> haskey(layer.named, role), all_layers(layers)) && continue
-        values = unique(filter(!isnothing, [written_style(layer, role) for layer in all_layers(layers)]))
-        length(values) >= 2 && (found[role] = values)
-    end
-    return found
-end
-
-# `layers` with each style of `manual` mapped, as `mapping(marker = direct(:utriangle))`, instead
-# of written in a `visual`.
-function with_manual(layer::AoG.Layer, manual)
-    written = [role => written_style(layer, role) for role in keys(manual)]
-    filter!(((_, value),) -> value !== nothing, written)
-    isempty(written) && return layer
-    unwritten = map(steps(layer.transformation)) do step
-        step isa AoG.Visual || return step
-        AoG.Visual(step.plottype, AoG.filterkeys(key -> !(key in first.(written)), step.attributes), step.target)
-    end
-    transformation = foldl((inner, step) -> step ∘ inner, unwritten; init=identity)
-    return AoG.Layer(transformation, layer.data, layer.positional, layer.named) *
-        AoG.mapping(; (role => AoG.direct(value) for (role, value) in written)...)
-end
-with_manual(layers::AoG.Layers, manual) = AoG.Layers([with_manual(layer, manual) for layer in layers.layers])
-with_manual(other, manual) = other
-with_manual(plot::PlotLines, manual) =
-    PlotLines([PlotLine(with_manual(line.layers, manual), line.shared, line.drawn) for line in plot.lines])
-
 function figure(plot::Scaled, args...; options...)
     for (r, _) in plot.scales
         haskey(ROLE_SCALES, r) || error("scales sets the scale of a role such as color; $r is not one")
@@ -338,20 +290,8 @@ function figure(plot::Scaled, args...; options...)
         return r => Base.structdiff(value, NamedTuple{(:limits, :reversed)})
     end
     any(!isnothing, limits) && push!(axis, :limits => Tuple(limits))
-    scales = Pair{Symbol,Any}[scales...]
-    layers = any(!isnothing, limits) ? limited(drawable(plot.layers), WithinLimits(limits)) : drawable(plot.layers)
-    # The categories of a manual scale are those its `scales` names, or else the values written; each
-    # draws as itself.
-    manual = manual_scales(layers)
-    for (role, values) in manual
-        given = something(findfirst(((r, _),) -> r === role, scales), 0)
-        setting = given == 0 ? (;) : scales[given][2]
-        categories = get(setting, :categories, values)
-        setting = (; setting..., categories, palette=[c isa Pair ? first(c) : c for c in categories])
-        given == 0 ? push!(scales, role => setting) : (scales[given] = role => setting)
-    end
-    layers = with_manual(layers, manual)
     settings = AoG.scales(; (ROLE_SCALES[r] => value for (r, value) in scales)...)
+    layers = any(!isnothing, limits) ? limited(drawable(plot.layers), WithinLimits(limits)) : drawable(plot.layers)
     legend = (; plot.legend..., get(options, :legend, (;))...)
     draw() = figure(layers, settings, args...; options..., axis=(; axis..., get(options, :axis, (;))...),
         texts=plot.texts, legend)
