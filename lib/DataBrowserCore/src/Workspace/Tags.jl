@@ -10,19 +10,19 @@ tag_root(source::AbstractDataSource)::String =
 
 function WorkspaceTags(source::AbstractDataSource)::WorkspaceTags
     root = tag_root(source)
-    isempty(root) && return WorkspaceTags(TagState(), "", 0)
+    isempty(root) && return WorkspaceTags(TagState(), "")
     state = try
         Tags.load(root)
     catch error
         error isa Union{Tags.TagsParseError,Base.IOError} || rethrow()
-        return WorkspaceTags(TagState(), sprint(showerror, error), 0)
+        return WorkspaceTags(TagState(), sprint(showerror, error))
     end
     # A name that the file assigns without defining it becomes a tag with the default properties.
     assigned = Set{String}()
     foreach(names -> union!(assigned, names), values(state.assignments))
     defined = Set(tag.name for tag in state.catalog)
     append!(state.catalog, Tag.(sort!(collect(setdiff(assigned, defined)))))
-    return WorkspaceTags(state, "", 0)
+    return WorkspaceTags(state, "")
 end
 
 """
@@ -45,6 +45,17 @@ function tags(
 )::Vector{Tag}
     assignments = workspace.tags.state.assignments
     isempty(assignments) && return Tag[]
+    # Views ask at every frame for the tags of each row they draw. Finding the inherited ones
+    # builds the path of every collection above; they are kept until the tags or the rows change.
+    known = workspace.tags
+    stamp = (known.revision, generation(workspace))
+    if inherited
+        found = @lock known.lock begin
+            known.resolved_at == stamp || (empty!(known.resolved); known.resolved_at = stamp)
+            get(known.resolved, key, nothing)
+        end
+        found === nothing || return copy(found)
+    end
     names = Set{String}()
     if inherited
         path = ""
@@ -54,8 +65,11 @@ function tags(
         end
     end
     union!(names, get(assignments, tag_key(workspace, key), ()))
-    isempty(names) && return Tag[]
-    return sort!(filter(tag -> tag.name in names, workspace.tags.state.catalog); by=tag -> -tag.priority)
+    found = isempty(names) ? Tag[] :
+        sort!(filter(tag -> tag.name in names, workspace.tags.state.catalog); by=tag -> -tag.priority)
+    # Computed outside the lock: the catalog takes its own lock, which a view may already hold.
+    inherited && @lock known.lock (known.resolved_at == stamp && (known.resolved[key] = found))
+    return copy(found)
 end
 
 """

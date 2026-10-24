@@ -175,12 +175,21 @@ The tags of a workspace: the content of `tags.txt` in the source root.
 
 `error` says why the file could not be read; tags cannot change while it is set. `revision`
 increases with every change, for views that keep what they computed from the tags.
+
+`resolved` keeps the tags of each item and collection that [`tags`](@ref) was asked for, with
+the tags inherited from above, while `resolved_at` (the revision and the workspace generation)
+stays the same.
 """
 mutable struct WorkspaceTags
     state::TagState
     error::String
     revision::Int
+    resolved::Dict{Union{ItemKey,CollectionKey},Vector{Tag}}
+    resolved_at::Tuple{Int,Int}
+    lock::ReentrantLock
 end
+WorkspaceTags(state::TagState, error::String) =
+    WorkspaceTags(state, error, 0, Dict{Union{ItemKey,CollectionKey},Vector{Tag}}(), (-1, -1), ReentrantLock())
 
 """
 Loaded cache state for one workspace.
