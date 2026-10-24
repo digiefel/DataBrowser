@@ -501,8 +501,9 @@ function draw_field!(view::BuilderView)::Union{Nothing,String}
     right = unsafe_load(viewport.Pos).x + unsafe_load(viewport.Size).x - style.WindowPadding.x
     size = with_font(() -> ig.CalcTextSize(unsafe_string(pointer(edit.buffer)) * "  "), :code)
     ig.SetNextWindowPos(position)
+    # Two points more than the text, or ImGui scrolls the field up and down to keep the cursor in view.
     ig.SetNextWindowSize((clamp(size.x + 2style.FramePadding.x, width, max(width, right - position.x)),
-        size.y + 2style.FramePadding.y))
+        size.y + 2style.FramePadding.y + 2))
     edit.focus && ig.SetNextWindowFocus()
     ig.PushStyleVar(ig.ImGuiStyleVar_WindowPadding, (0.0f0, 0.0f0))
     ig.PushStyleVar(ig.ImGuiStyleVar_WindowBorderSize, 0.0f0)
