@@ -295,8 +295,10 @@ function draw!(view::TableView, ctx)::Nothing
         return nothing
     end
     # Hiding metadata and unfolding blocks change the columns, so the table is built again after
-    # the grid is drawn.
+    # the grid is drawn. Filters, sorting and folding change the rows, which the grid reads as they
+    # are while it draws them: `change` arranges them after the grid is drawn.
     rebuild = false
+    change = nothing
     function filter_popup(column)
         name = table.columns[column]
         text = get(view.filters, name, "")
@@ -308,8 +310,7 @@ function draw!(view::TableView, ctx)::Nothing
                 ig.ImGuiInputTextFlags_EnterReturnsTrue)
             text = strip(unsafe_string(pointer(buffer)))
             isempty(text) ? delete!(view.filters, name) : (view.filters[name] = text)
-            _arrange!(view)
-            view.grid.fit_columns = true
+            change = () -> (_arrange!(view); view.grid.fit_columns = true)
             haskey(view.filter_errors, name) || ig.CloseCurrentPopup()
         end
         if haskey(view.filter_errors, name)
@@ -318,14 +319,14 @@ function draw!(view::TableView, ctx)::Nothing
             ig.PopStyleColor()
         end
         if view.item_column && column == 1
-            ig.MenuItem("Expand all") && _fold!(view, eachindex(table.item_labels), false)
-            ig.MenuItem("Collapse all") && _fold!(view, eachindex(table.item_labels), true)
+            ig.MenuItem("Expand all") && (change = () -> _fold!(view, eachindex(table.item_labels), false))
+            ig.MenuItem("Collapse all") && (change = () -> _fold!(view, eachindex(table.item_labels), true))
             return nothing
         end
         ig.MenuItem("Hide column") || return nothing
         if _data_column(view, column)
             push!(view.hidden, name)
-            _arrange!(view)
+            change = () -> _arrange!(view)
         else
             filter!(!=(Symbol(name)), view.metadata)
             rebuild = true
@@ -359,9 +360,12 @@ function draw!(view::TableView, ctx)::Nothing
             span=(row, column) -> table.spans_item(shown[row], column) ? view.run_start[row] : row,
             frozen_columns=view.item_column ? 1 : 0,
             fold=(row, column) -> view.item_column && column == 1 ? !(item(row) in view.folded) : nothing,
-            on_fold=(row, _) -> _fold!(view, [item(row)], !(item(row) in view.folded)),
+            on_fold=function (row, _)
+                folding = item(row)
+                change = () -> _fold!(view, [folding], !(folding in view.folded))
+            end,
             on_sort=columns -> (view.sort = [(table.columns[c], ascending) for (c, ascending) in columns];
-                                _arrange!(view)),
+                                change = () -> _arrange!(view)),
             header_icon=column -> haskey(view.filters, table.columns[column]) &&
                 !haskey(view.filter_errors, table.columns[column]) ? ICON_FILTER : "",
             header_popup=filter_popup,
@@ -376,6 +380,7 @@ function draw!(view::TableView, ctx)::Nothing
         items = Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows)
         isempty(items) || _fold!(view, items, !issubset(items, view.folded))
     end
+    change === nothing || change()
     if zoomed
         prepare!(view, view.selection, nothing)
     elseif rebuild
