@@ -120,8 +120,9 @@ Arguments:
 - `clickable`: `(row::Int, col::Int) -> Bool`, whether the text of the cell is a link. No cell is a
   link by default
 - `on_click`: called with `(row, col)` when the user clicks the link of a cell
-- `link_popup`: `(row::Int, col::Int) -> Nothing`, draws the popup that right-clicking the link of
-  a cell opens. The links have no popup without it
+- `row_popup`: `(row::Int, col::Int) -> Nothing`, draws the menu that right-clicking a row opens,
+  in row mode. `col` is the column of the cell the user right-clicked, or 0 for a band. Right-clicking
+  a row that is not selected selects it first. The rows have no menu without it
 - `span`: `(row::Int, col::Int) -> Int`, the first row of the run of rows that one cell spans.
   Each row is its own cell by default
 - `frozen_columns`: how many columns on the left stay in place when the grid scrolls sideways
@@ -135,13 +136,12 @@ Arguments:
 - `fold`: `(row::Int) -> Union{Nothing,Bool}`, whether a band starts with an arrow that folds
   something, open (`true`) or closed (`false`). No band has an arrow by default
 - `on_fold`: called with `row` when the user clicks the arrow of a band
-- `band_popup`: `(row::Int) -> Nothing`, draws the menu that right-clicking a band opens. The bands
-  have no menu without it
 - `on_sort`: called with the columns to sort by, as `(col, ascending)` pairs from the first to the
   last, when the user changes them. The arrow at the right edge of a header, which shows when the
   column is sorted or the mouse is over the header, sorts by the column: ascending, then descending,
-  then not at all. Shift-click adds the column to the columns to sort by. The grid has no arrows
-  without it
+  then not at all. Shift-click adds the column to the columns to sort by. The header's menu also
+  has "Sort ascending" and "Sort descending", which sort by the column alone, and "Clear sort" when
+  the column is sorted. The grid has no arrows without it
 - `header_icon`: `(col::Int) -> String`, an icon at the right edge of the header of the column,
   left of the sort arrow. No header has an icon by default
 - `column_groups`: `(col::Int) -> Vector{String}`, the names of the groups the column is in, from
@@ -153,8 +153,8 @@ Arguments:
   by default
 - `on_header_fold`: called with `(col, level)` when the user clicks the arrow of that header
 - `header_popup`: `(col::Int) -> Nothing`, draws the top of the menu that right-clicking the header
-  of the column opens. Below it, the menu always has "Size column to fit" and "Size all columns to
-  fit"
+  of the column opens. Below it, the menu has the sort items of `on_sort`, and always "Size column
+  to fit" and "Size all columns to fit"
 - `hidden`: `(col::Int) -> Bool`, whether the column is hidden. No column is hidden by default
 - `on_selection_change`: called with the new `Vector{Int}` whenever the selection changes
 - `selection_mode`: `:rows` for multi-row selection or `:cells` for a spreadsheet rectangle
@@ -181,7 +181,7 @@ function render_data_grid!(
     cell_link::Function = (_, _) -> nothing,
     clickable::Function = (_, _) -> false,
     on_click::Function = (_, _) -> nothing,
-    link_popup::Union{Nothing,Function} = nothing,
+    row_popup::Union{Nothing,Function} = nothing,
     span::Function = (row, _) -> row,
     frozen_columns::Int = 0,
     align_right::Function = _ -> false,
@@ -190,7 +190,6 @@ function render_data_grid!(
     band::Function = _ -> nothing,
     fold::Function = _ -> nothing,
     on_fold::Function = _ -> nothing,
-    band_popup::Union{Nothing,Function} = nothing,
     on_sort::Union{Nothing,Function} = nothing,
     header_icon::Function = _ -> "",
     column_groups::Function = _ -> String[],
@@ -313,6 +312,18 @@ function render_data_grid!(
         if ig.BeginPopupContextItem()
             if header_popup !== nothing
                 header_popup(column)
+                ig.Separator()
+            end
+            if on_sort !== nothing
+                # Sorting from the menu sorts by this column only; "Clear sort" stops sorting by it.
+                sort = nothing
+                ig.MenuItem("Sort ascending", C_NULL, (column, true) in state.sort) && (sort = [(column, true)])
+                ig.MenuItem("Sort descending", C_NULL, (column, false) in state.sort) && (sort = [(column, false)])
+                place === nothing || !ig.MenuItem("Clear sort") || (sort = deleteat!(copy(state.sort), place))
+                if sort !== nothing
+                    state.sort = sort
+                    on_sort(sort)
+                end
                 ig.Separator()
             end
             ig.MenuItem("Size column to fit") && ig.TableSetColumnWidthAutoSingle(grid_table, column - 1)
@@ -510,6 +521,18 @@ function render_data_grid!(
         ig.TablePopBackgroundChannel()
         return nothing
     end
+    # Right-clicking a row that is not selected selects it, before its menu opens.
+    function right_click(row, column)
+        state.menu_column = column
+        if !(row in selected_set)
+            # In place, so that the loop over the rows keeps reading the set directly.
+            state.selected_rows = [row]
+            empty!(selected_set)
+            push!(selected_set, row)
+            on_selection_change(copy(state.selected_rows))
+        end
+        return nothing
+    end
     function draw_cell(row, column, position, first_visible, last_visible, row_height)
         # The line at the right of the cell, below the lines between the rows.
         ig.TablePushBackgroundChannel()
@@ -552,9 +575,13 @@ function render_data_grid!(
             ig.TextLinkOpenURL(cell(row, column), link)
         elseif clickable(row, column)
             ig.TextLink("$(cell(row, column))##link_$column") && on_click(row, column)
-            if link_popup !== nothing && ig.BeginPopupContextItem("##link_popup_$column")
-                link_popup(row, column)
-                ig.EndPopup()
+            # The link takes the mouse from the row, so it opens the row's menu itself.
+            if selection_mode === :rows && row_popup !== nothing
+                ig.IsItemClicked(ig.ImGuiMouseButton_Right) && right_click(row, column)
+                if ig.BeginPopupContextItem("##link_popup_$column")
+                    row_popup(row, state.menu_column)
+                    ig.EndPopup()
+                end
             end
         else
             text = cell(row, column)
@@ -628,14 +655,18 @@ function render_data_grid!(
                         row_selection_changed = true
                     end
                     text = band(row)
-                    if text !== nothing
-                        # The band covers the highlight of the row's selection, so it draws it itself.
-                        color = is_selected ? ig.GetColorU32(ig.ImGuiCol_Header) :
-                            ig.IsItemHovered() ? ig.GetColorU32(ig.ImGuiCol_HeaderHovered) : band_color
-                        if band_popup !== nothing && ig.BeginPopupContextItem("##band_popup")
-                            band_popup(row)
+                    # The band covers the highlight of the row's selection, so it draws it itself.
+                    color = is_selected ? ig.GetColorU32(ig.ImGuiCol_Header) :
+                        ig.IsItemHovered() ? ig.GetColorU32(ig.ImGuiCol_HeaderHovered) : band_color
+                    if row_popup !== nothing
+                        ig.IsItemClicked(ig.ImGuiMouseButton_Right) &&
+                            right_click(row, text === nothing ? Int(ig.TableGetHoveredColumn()) + 1 : 0)
+                        if ig.BeginPopupContextItem("##row_popup")
+                            row_popup(row, state.menu_column)
                             ig.EndPopup()
                         end
+                    end
+                    if text !== nothing
                         draw_band(row, text, color, position.y)
                     else
                         ig.SameLine()

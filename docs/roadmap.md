@@ -618,8 +618,9 @@ the table as a first-class view.
     row; Enter folds the items whose rows with their labels are selected.
   - [x] "Group by item", a checkbox in the top line of the window and in the menus, switches between
     the rows under the labels of their items and a column `item`, which sorts with all rows.
-  - [ ] Right-click menus: copy cells, rows and names; sort from the header; show the item in the
-    tree; open an item in a new window. Later: keep only a cell's value, or exclude it.
+  - [x] Right-click menus: copy cells, rows and the labels of items; fold items; sort from the
+    header. Right-clicking a row that is not selected selects it first.
+  - [ ] Show an item in the tree, and open it in a new window, from the menu of its row.
   - [ ] The row with the label of the item stays at the top while the item's rows scroll.
   - [ ] A folded item shows how many values it has, in a way still to find.
   - [x] Metadata columns that the user picks from the "Metadata" list in the top line of the window,

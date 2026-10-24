@@ -31,9 +31,10 @@ names, its names are the columns.
 With several items, "Group by item", in the top line of the window, is checked at first: the rows
 of each item follow each other, under a row with the item's label, whose text stays in place when
 the table scrolls sideways. Selecting that row selects all of the item's rows. The arrow beside the
-label folds the item to that row. "Expand all" and "Collapse all", in the menu that right-clicking
-the row opens, unfold and fold all items. Enter folds the items whose rows with their labels are
-selected, or unfolds them when they are all folded; Cmd-A selects all rows. When "Group by item" is
+label folds the item to that row. Enter folds the items whose rows with their labels are selected,
+or unfolds them when they are all folded; Cmd-A selects all rows. Right-clicking the row opens a
+menu that acts on the items of the selected rows: it folds or unfolds them, and copies their labels.
+"Expand all" and "Collapse all", in the same menu, unfold and fold all items. When "Group by item" is
 unchecked, the first column, `item`, shows the label of the item of each row instead. The menus of
 the rows with the labels and of the headers check and uncheck "Group by item" too.
 
@@ -45,7 +46,12 @@ order. Shift-click on the arrow adds another column to sort by.
 Right-clicking the header opens a menu. Its field takes a filter: a Julia function, such as `≥(0)`
 or `!in(["C2_3um"])`, which the table calls with each value of the column. The table shows the rows
 for which it returns `true`; a funnel at the right of the column's name marks the filter. The menu
-also hides the column, and fits the width of the columns to their content.
+also hides the column, sorts by the column alone, ascending or descending, stops sorting by it, and
+fits the width of the columns to their content.
+
+Right-clicking a row of data opens a menu that copies the value of the cell, as Julia prints it, or
+the selected rows, with a tab between the cells and a line for each row. Right-clicking a row that
+is not selected selects it first.
 
 "Columns", in the top line of the window, lists the columns of the data: a checked name is a column
 the table shows. "Metadata" lists the metadata of the items: a checked name is a column, first in
@@ -55,7 +61,7 @@ the names that have the typed letters in the same order, such as `wf` for `width
 A cell that holds a vector, a matrix, a table or a block of names is a link. Clicking it zooms into
 the cell: the window shows the value of the cell as a table, and the path above the table names the
 item and the cells it went through. The arrow goes back one step, and each name in the path goes back
-to it. Right-clicking the cell opens a new window that shows the same items, zoomed into the cell.
+to it. The menu of the cell also opens a new window that shows the same items, zoomed into the cell.
 
 In a column of numbers, every number has the same number of decimals and the numbers are
 right-aligned, so that their decimal points line up. In a column with numbers smaller than 0.001 or
@@ -348,6 +354,33 @@ function draw!(view::TableView, ctx)::Nothing
         end
         return nothing
     end
+    # The menu of a row with an item's label acts on the items of the selected rows, which include
+    # the row; the menu of a cell acts on the cell and on the selected rows.
+    function row_menu(row, column)
+        if view.label_row[row]
+            items = unique(item(selected) for selected in sort(view.grid.selected_rows))
+            length(items) > 1 && ig.TextDisabled("Apply to $(length(items)) items")
+            fold = !issubset(items, view.folded)
+            ig.MenuItem(fold ? "Fold" : "Unfold") && (change = () -> _fold!(view, items, fold))
+            ig.MenuItem("Expand all") && (change = () -> _fold!(view, eachindex(table.item_labels), false))
+            ig.MenuItem("Collapse all") && (change = () -> _fold!(view, eachindex(table.item_labels), true))
+            ig.Separator()
+            ig.MenuItem(length(items) > 1 ? "Copy names" : "Copy name") &&
+                ig.SetClipboardText(join(table.item_labels[items], '\n'))
+            ig.Separator()
+            ig.MenuItem("Group by item", C_NULL, true) && (change = () -> _group!(view, false))
+        else
+            column >= 1 && ig.MenuItem("Copy cell") &&
+                ig.SetClipboardText(_copy_text(table.getvalue(shown[row], column)))
+            ig.MenuItem(length(view.grid.selected_rows) > 1 ? "Copy rows" : "Copy row") &&
+                ig.SetClipboardText(_copy_text(view.output::ItemTable))
+            if column >= 1 && zoomable(row, column)
+                ig.Separator()
+                open_zoomed(row, column)
+            end
+        end
+        return nothing
+    end
     with_font(:code) do
         render_data_grid!(
             view.grid_id,
@@ -368,7 +401,7 @@ function draw!(view::TableView, ctx)::Nothing
             cell,
             clickable=zoomable,
             on_click=zoom!,
-            link_popup=open_zoomed,
+            row_popup=row_menu,
             align_right=column -> view.formats[column] !== nothing,
             muted=(_, column) -> column in table.groups,
             span=(row, column) -> table.spans_item(shown[row], column) ? view.run_start[row] : row,
@@ -378,12 +411,6 @@ function draw!(view::TableView, ctx)::Nothing
             on_fold=function (row)
                 folding = item(row)
                 change = () -> _fold!(view, [folding], !(folding in view.folded))
-            end,
-            band_popup=function (_)
-                ig.MenuItem("Expand all") && (change = () -> _fold!(view, eachindex(table.item_labels), false))
-                ig.MenuItem("Collapse all") && (change = () -> _fold!(view, eachindex(table.item_labels), true))
-                ig.Separator()
-                ig.MenuItem("Group by item", C_NULL, true) && (change = () -> _group!(view, false))
             end,
             on_sort=columns -> (view.sort = [(table.columns[c], ascending) for (c, ascending) in columns];
                                 change = () -> _arrange!(view)),
@@ -528,6 +555,14 @@ function _arrange!(view::TableView)::Nothing
     _pass_on!(view)
     return nothing
 end
+
+# A value as text to copy: as Julia prints it, and empty for `missing`.
+_copy_text(value)::String = ismissing(value) ? "" : sprint(print, value)
+
+# The rows of a table as text to copy, one line for each row, with a tab between the cells.
+_copy_text(table::ItemTable)::String = join(
+    (join((_clipboard_field(_copy_text(table.getvalue(row, column))) for column in eachindex(table.columns)), '\t')
+     for row in 1:table.rows), '\n')
 
 # Numbers sort before other values, which sort by their text; `missing` goes last.
 _sort_key(value, ascending::Bool) =

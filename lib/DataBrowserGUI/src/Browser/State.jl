@@ -68,6 +68,8 @@ Base.@kwdef mutable struct DataGridState
     selected_columns::Vector{Int}        = Int[]
     # The columns the rows are sorted by, as `(column, ascending)` pairs from the first to the last.
     sort::Vector{Tuple{Int,Bool}}        = Tuple{Int,Bool}[]
+    # The column of the cell whose row's menu is open; 0 for a band.
+    menu_column::Int                     = 0
 end
 
 """
