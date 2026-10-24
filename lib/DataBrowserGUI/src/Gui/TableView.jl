@@ -30,7 +30,9 @@ names, its names are the columns.
 With several items, the first column `item` holds the label of each item, in one cell beside all of
 its rows, and stays in place when the table scrolls sideways. The arrow beside the label folds the
 item to one row, which shows how many values the item has in each column. Hovering over a cell of
-that row shows the smallest and the largest number of the column.
+that row shows the smallest and the largest number of the column. The menu of the header `item`
+folds or unfolds all items. Space folds the items of the selected rows, or unfolds them when they
+are all folded, and Option-Space does the same for all items.
 
 Clicking the header of a column sorts the rows by it, and Shift-click adds another column to sort by.
 Sorting may put the rows of an item apart. A folded item's row goes where its first row would go.
@@ -264,15 +266,6 @@ function draw!(view::TableView, ctx)::Nothing
         text = _number_text(table.getvalue(shown[row], column), view.formats[column])
         return something(text, table.getcell(shown[row], column))
     end
-    # The row of a folded item stands for all of the item's rows that pass the filters.
-    rows_of(row) = item(row) in view.folded ? view.folded_rows[item(row)] : shown[row]
-    function fold!(row, _)
-        i = item(row)
-        i in view.folded ? delete!(view.folded, i) : push!(view.folded, i)
-        _arrange!(view)
-        view.grid.fit_columns = true
-        return nothing
-    end
     # The cells of the data that hold a table of their own; not those of the columns `item` and of
     # the metadata.
     function zoomable(row, column)
@@ -322,7 +315,11 @@ function draw!(view::TableView, ctx)::Nothing
             ig.TextUnformatted(view.filter_errors[name])
             ig.PopStyleColor()
         end
-        view.item_column && column == 1 && return nothing
+        if view.item_column && column == 1
+            ig.MenuItem("Fold all items") && _fold!(view, eachindex(table.item_labels), true)
+            ig.MenuItem("Unfold all items") && _fold!(view, eachindex(table.item_labels), false)
+            return nothing
+        end
         ig.MenuItem("Hide column") || return nothing
         if _data_column(view, column)
             push!(view.hidden, name)
@@ -360,22 +357,54 @@ function draw!(view::TableView, ctx)::Nothing
             span=(row, column) -> table.spans_item(shown[row], column) ? view.run_start[row] : row,
             frozen_columns=view.item_column ? 1 : 0,
             fold=(row, column) -> view.item_column && column == 1 ? !(item(row) in view.folded) : nothing,
-            on_fold=fold!,
+            on_fold=(row, _) -> _fold!(view, [item(row)], !(item(row) in view.folded)),
             on_sort=columns -> (view.sort = [(table.columns[c], ascending) for (c, ascending) in columns];
                                 _arrange!(view)),
             header_icon=column -> haskey(view.filters, table.columns[column]) &&
                 !haskey(view.filter_errors, table.columns[column]) ? ICON_FILTER : "",
             header_popup=filter_popup,
             hidden=column -> table.columns[column] in view.hidden,
-            on_selection_change=rows -> view.output = isempty(rows) ? table[view.order, _shown_columns(view)] :
-                table[collect(Int, Iterators.flatten(rows_of.(sort(rows)))), _shown_columns(view)],
+            on_selection_change=_ -> _pass_on!(view),
         )
+    end
+    # Space folds the items of the selected rows, or unfolds them when they are all folded;
+    # Option-Space does the same for all items.
+    if view.item_column && ig.IsWindowFocused(ig.ImGuiFocusedFlags_ChildWindows) &&
+            ig.IsKeyPressed(ig.ImGuiKey_Space, false)
+        items = unsafe_load(ig.GetIO().KeyAlt) ? Set(eachindex(table.item_labels)) :
+            Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows)
+        isempty(items) || _fold!(view, items, !issubset(items, view.folded))
     end
     if zoomed
         prepare!(view, view.selection, nothing)
     elseif rebuild
         _rebuild!(view)
     end
+    return nothing
+end
+
+# Fold `items`, or unfold them. The rows of the items that were selected stay selected.
+function _fold!(view::TableView, items, fold::Bool)::Nothing
+    table = view.table::ItemTable
+    selected = Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows)
+    fold ? union!(view.folded, items) : setdiff!(view.folded, items)
+    _arrange!(view)
+    view.grid.fit_columns = true
+    view.grid.selected_rows = [row for row in eachindex(view.shown) if table.row_item[view.shown[row]] in selected]
+    _pass_on!(view)
+    return nothing
+end
+
+# Pass on the rows the user selected, or all rows when none is selected. The row of a folded item
+# stands for all of the item's rows that pass the filters.
+function _pass_on!(view::TableView)::Nothing
+    table = view.table::ItemTable
+    rows = Int[]
+    for row in sort(view.grid.selected_rows)
+        item = table.row_item[view.shown[row]]
+        item in view.folded ? append!(rows, view.folded_rows[item]) : push!(rows, view.shown[row])
+    end
+    view.output = table[isempty(view.grid.selected_rows) ? view.order : rows, _shown_columns(view)]
     return nothing
 end
 
@@ -455,7 +484,7 @@ function _arrange!(view::TableView)::Nothing
 
     # The rows on screen change, so the selection is cleared.
     empty!(view.grid.selected_rows)
-    view.output = table[rows, _shown_columns(view)]
+    _pass_on!(view)
     return nothing
 end
 
