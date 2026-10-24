@@ -6,7 +6,7 @@ using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, resolve
-using DataBrowserPlots: @plot, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Statistic, column, fit_statistic
+using DataBrowserPlots: @plot, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Result, column, fit_result
 using DataBrowserAPI: item_data, metadata
 using DataBrowserCore: Group, select
 using PrecompileTools: @setup_workload, @compile_workload
@@ -308,18 +308,18 @@ function makie_theme(theme::PlotTheme)::AoG.Makie.Theme
     return merge(AoG.Makie.Theme(; pairs(theme.settings)...), base)
 end
 
-function Base.:*(statistic::Statistic, layer::AoG.Layer)
+function Base.:*(result::Result, layer::AoG.Layer)
     layer.transformation isa AoG.Visual ||
         error("A fit is drawn with a visual, such as `contacts * visual(Lines)`")
     # The curve of each group, on the columns of x and y, with the group's value in each role.
-    x, y = column.(statistic.positional)
+    x, y = column.(result.positional)
     # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
     plottype = layer.transformation.plottype
     shown = hasmethod(AoG.aesthetic_mapping, Tuple{Type{plottype},Int}) ?
-        keys(AoG.aesthetic_mapping(plottype, length(statistic.positional))) : keys(Dict(statistic.named))
-    roles = [(role, value, column(value)) for (role, value) in statistic.named if role in shown]
+        keys(AoG.aesthetic_mapping(plottype, length(result.positional))) : keys(Dict(result.named))
+    roles = [(role, value, column(value)) for (role, value) in result.named if role in shown]
     columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [x; y; [c for (_, _, c) in roles]])
-    for group in statistic.groups
+    for group in result.groups
         curve = item_data(group)
         append!(columns[x], curve.x)
         append!(columns[y], curve.y)
@@ -328,7 +328,7 @@ function Base.:*(statistic::Statistic, layer::AoG.Layer)
         end
     end
     table = NamedTuple{Tuple(keys(columns))}(Tuple(identity.(values(columns))))
-    mapping = AoG.mapping(statistic.positional...; (role => value for (role, value, _) in roles)...)
+    mapping = AoG.mapping(result.positional...; (role => value for (role, value, _) in roles)...)
     return AoG.data(table) * mapping * layer
 end
 
@@ -346,7 +346,7 @@ function inherit(header::AoG.Layer, line::AoG.Layer)
 end
 inherit(header::AoG.Layer, line::AoG.Layers) = AoG.Layers([inherit(header, layer) for layer in line.layers])
 inherit(header::AoG.Layer, line::Fit) = inherit(header, AoG.transformation(line))
-inherit(header::AoG.Layer, line::Statistic) = drawable(line)
+inherit(header::AoG.Layer, line::Result) = drawable(line)
 
 # A fit is a step of a layer, as AoG's analyses are: `mapping(...) * fit(...) * visual(Lines)`.
 Base.:*(layer::AoG.AbstractAlgebraic, fit::Fit) = layer * AoG.transformation(fit)
@@ -365,14 +365,14 @@ function resolve(layer::AoG.Layer, items)
         error("A fit takes the points of its line before any visual, as in `fit(...) * visual(Lines)`")
     layer.data isa AoG.Columns || error("A fit needs points: a mapping of x and y, such as mapping(:x, :y)")
     named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
-    statistic = fit_statistic(first(found), layer.data.columns, layer.positional, named, items)
+    result = fit_result(first(found), layer.data.columns, layer.positional, named, items)
     after = found[2:end]
-    return isempty(after) ? statistic : statistic * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
+    return isempty(after) ? result : result * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
 end
 resolve(layers::AoG.Layers, items) = foldl(+, (resolve(layer, items) for layer in layers.layers))
 
-# A statistic without a visual is drawn with its own.
-drawable(statistic::Statistic) = statistic * AoG.visual(getproperty(AoG.Makie, statistic.plottype))
+# A result without a visual is drawn with its own.
+drawable(result::Result) = result * AoG.visual(getproperty(AoG.Makie, result.plottype))
 # A layer with `y` and no `x`, as in `mapping(; y=:gap) * visual(Hist)`, draws its values against
 # the vertical axis: a plot type with a `direction` setting, such as `Hist`, `BarPlot` or `Density`,
 # turns to it unless a `visual` sets `direction` already, and other plot types draw the values
@@ -389,10 +389,10 @@ end
 drawable(layers::AoG.Layers) = AoG.Layers(map(drawable, layers.layers))
 drawable(layers) = layers
 
-Base.:+(a::Statistic, b::Union{Statistic,AoG.AbstractAlgebraic}) = drawable(a) + drawable(b)
-Base.:+(a::AoG.AbstractAlgebraic, b::Statistic) = a + drawable(b)
+Base.:+(a::Result, b::Union{Result,AoG.AbstractAlgebraic}) = drawable(a) + drawable(b)
+Base.:+(a::AoG.AbstractAlgebraic, b::Result) = a + drawable(b)
 
-figure(statistic::Statistic, args...; options...) = figure(drawable(statistic), args...; options...)
+figure(result::Result, args...; options...) = figure(drawable(result), args...; options...)
 
 _precompile_line(x; offset, slope) = offset + slope * x
 

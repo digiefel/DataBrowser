@@ -106,15 +106,15 @@ function entry_text(entry::LegendEntry, rows::LegendRows, name::Symbol)::String
     return get(names, value, string(value))
 end
 
-# The metadata of the one group of `statistic` that the legend entry determines: the group whose
+# The metadata of the one group of `result` that the legend entry determines: the group whose
 # values in the entry's roles are the entry's values.
-function entry_values(statistic::Statistic, entry::LegendEntry)::NamedTuple
-    matches(group) = all(statistic.named) do (role, value)
+function entry_values(result::Result, entry::LegendEntry)::NamedTuple
+    matches(group) = all(result.named) do (role, value)
         !haskey(entry.values, role) || category(value, metadata(group)[column(value)]) == entry.values[role]
     end
-    found = filter(matches, statistic.groups)
+    found = filter(matches, result.groups)
     length(found) == 1 || error("The legend entry $(describe(entry)) matches $(length(found)) groups of a " *
-        "statistic; its text can read only a value that the entry determines")
+        "result; its text can read only a value that the entry determines")
     return (; metadata(only(found))...)
 end
 
@@ -190,7 +190,7 @@ starting value for each parameter. The line's two positional values are x and y,
 categorical named roles, here `color=:Chip`, divide the points into groups, with one fit each. The
 line changes the points as any line does: `mapping(; color=nothing) * fit(...)` fits all of them
 at once.
-`fit` gives a [`Statistic`](@ref): one `Group` for each group of points. Its metadata holds the
+`fit` gives a [`Result`](@ref): one `Group` for each group of points. Its metadata holds the
 group's values, such as `:Chip`, and each parameter, such as `:Rc`, a [`Parameter`](@ref) that
 prints as the estimate ± one standard error. Its data is the drawn curve, and its members are the
 items whose points it fits. `fit(...; xlim=(0, 25))` draws the curve over that range of x instead
@@ -242,7 +242,7 @@ empty one, as in `scales(color = (; label = ""))`, leaves the section without a 
 A `legend` line sets the text of each entry in the section that holds a role. A path in the text
 reads the header's value for the entry, as the header reads it: a metadata value of the entry's
 items, or a column of the header's data. A value that a role maps shows by its name in the scale.
-A name of the block reads the value of that statistic for the entry's group:
+A name of the block reads the value of that result for the entry's group:
 
     legend(color = "\$(:Chip) on \$(:Wafer): Rc = \$(contacts.Rc) Ω")
 

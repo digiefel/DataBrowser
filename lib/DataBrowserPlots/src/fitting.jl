@@ -64,14 +64,14 @@ function fit_groups(curve, starts::NamedTuple, rows, x::Symbol, y::Symbol, group
 end
 
 """
-The values a statistic computes from the points of a plot: one `Group` for each group of points,
-as [`@plot`](@ref)'s `fit` gives them. It is a vector of those groups.
+What a line of [`@plot`](@ref) computes from its points, such as the curves and parameters of
+`fit`: one `Group` for each group of points. It is a vector of those groups.
 
 Multiply it by a `visual` to draw it: its data is drawn on the axes of the points, in the named
 roles of their groups, such as `color`, so that it shares their legend entries. Alone, it is drawn
 with its own visual, `Lines` for a fit.
 """
-struct Statistic <: AbstractVector{Group}
+struct Result <: AbstractVector{Group}
     groups::Vector{Group}
     # The values the points mapped to x and y, as `mapping` takes them, such as `:gap => "gap (µm)"`.
     positional::Vector{Any}
@@ -80,12 +80,12 @@ struct Statistic <: AbstractVector{Group}
     # The plot type it is drawn with when no visual is given, a name in Makie.
     plottype::Symbol
 end
-Base.size(statistic::Statistic) = size(statistic.groups)
-Base.getindex(statistic::Statistic, index::Int) = statistic.groups[index]
+Base.size(result::Result) = size(result.groups)
+Base.getindex(result::Result, index::Int) = result.groups[index]
 
 """
 A curve to fit to the points of a layer, as `fit(curve, starts; options...)` in [`@plot`](@ref)
-writes it. The fit is done when the layer has its points, and gives a [`Statistic`](@ref).
+writes it. The fit is done when the layer has its points, and gives a [`Result`](@ref).
 """
 struct Fit
     curve::Any
@@ -103,10 +103,10 @@ item_ids(_) = (;)
 
 # The fit's result over the points of a layer: `table`, whose columns `positional` and `named`
 # map. Its groups' members are the items of `source` whose rows they fit.
-function fit_statistic(fit::Fit, table, positional::Vector, named::Vector, source)::Statistic
+function fit_result(fit::Fit, table, positional::Vector, named::Vector, source)::Result
     columns = Tables.columntable(table)
     members = haskey(columns, ITEM) ? (; members=Workspace.items(source), item=ITEM) : (;)
-    return fit_statistic(fit.curve, fit.starts, columns, positional, named; members..., fit.options...)
+    return fit_result(fit.curve, fit.starts, columns, positional, named; members..., fit.options...)
 end
 
 # The column a value of `mapping` names: `:R` in `:R`, in `:R => "R (Ω)"` and in `:R => f => "R"`.
@@ -121,12 +121,12 @@ category(value, raw) = !(value isa Pair) ? raw :
 # Fit `curve` to the points of `table`, whose columns `positional` maps to x and y, once for each
 # group of the categorical roles in `named`. A role of numbers, such as a continuous color, does
 # not divide the points.
-function fit_statistic(curve, starts::NamedTuple, table, positional::Vector, named::Vector; options...)::Statistic
+function fit_result(curve, starts::NamedTuple, table, positional::Vector, named::Vector; options...)::Result
     length(positional) == 2 || error("fit needs the points to map two positional values, x and y")
     columns = Tables.columntable(table)
     # TODO: a role given as a formula, such as `color=chip(:folder)`, keeps its group's value
     # under the formula's text, so a label reads it as `:var"chip(:folder)"`.
     roles = [role => value for (role, value) in named if !all(v -> v isa Number || ismissing(v), columns[column(value)])]
     groups = fit_groups(curve, starts, columns, column.(positional)..., unique(Symbol[column(v) for (_, v) in roles]); options...)
-    return Statistic(groups, positional, roles, :Lines)
+    return Result(groups, positional, roles, :Lines)
 end
