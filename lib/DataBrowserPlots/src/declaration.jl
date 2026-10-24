@@ -123,6 +123,9 @@ item, and `:data.V` is the column `V` of each item's data.
 
     @plot mapping(:data.V, :data.I; color=:Device) * visual(Lines)
 
+The positions can also be named: `mapping(; x=:data.V, y=:data.I, color=:Device)` is the same
+mapping.
+
 The values of one item in one layer broadcast together, so this draws one point per row of each
 item's data, each with its item's device. Each layer reads its own values, so a layer of one point
 per item can be drawn next to a layer of the items' rows. A mapping may also be a formula of paths,
