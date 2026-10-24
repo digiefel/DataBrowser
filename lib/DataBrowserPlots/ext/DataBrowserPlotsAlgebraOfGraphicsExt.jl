@@ -26,8 +26,12 @@ function figure(
     isempty(sections) && return drawn.figure
     position = get(legend, :position, :right)
     settings = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
+    # Makie keeps a row for an empty title, and shows the titles of sections despite `titlevisible`;
+    # only a title of `nothing` takes no room.
+    shown = get(legend, :titlevisible, true)
+    titles = [shown && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
     AoG.Makie.Legend(AoG.guides_position(drawn.figure, position), [s.samples for s in sections],
-        [s.texts for s in sections], [s.title for s in sections]; orientation=AoG.default_orientation(position), settings...)
+        [s.texts for s in sections], titles; orientation=AoG.default_orientation(position), settings...)
     return drawn.figure
 end
 

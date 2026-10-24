@@ -229,7 +229,9 @@ The scales of `x` and `y` set their axes:
 The legend has a section for each role, such as `color`. Roles share a section when one of them
 determines the others, that is, when each of its values is drawn with the same values of the
 others: one entry then shows a chip's color and its site's line style. Each entry is named after
-its values, by their names in the scales.
+its values, by their names in the scales. A section's title is the `label` of its role's scale; an
+empty one, as in `scales(color = (; label = ""))`, leaves the section without a title, and
+`legend(titlevisible = false)` leaves every section without one.
 
 A `legend` line sets the text of each entry in the section that holds a role. A path in the text
 reads the header's value for the entry, as the header reads it: a metadata value of the entry's
