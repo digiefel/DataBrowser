@@ -82,13 +82,20 @@ selected tests and benchmarks; it only forces clean compilation with the `precom
 
 Clean compilation runs when package code or its resolved dependencies change. The runner removes
 the compiled code of the DataBrowser packages from its dedicated depot and precompiles them again,
-together with the umbrella. `precompile_s` is the time this takes. Dependencies such as Makie keep
-their compiled code between runs: recompiling them took about 220 s in each full verification and
+together with the umbrella, GLMakie and AlgebraOfGraphics. It then loads the complete plotting
+stack to finish preparing extensions. `precompile_s` includes both steps, so compare it only with
+runs using this command. Dependencies such as Makie keep their compiled code between runs:
+recompiling them took about 220 s in each full verification and
 measured nothing about DataBrowser. When a resolved dependency changes, Julia recompiles it during
 that run, and `precompile_s` of that run includes it. Installed package sources and binary
 artifacts are shared, and Julia's bundled resources remain available. Subsequent tests and
 benchmarks use the compiled cache. Test-only and documentation edits do not trigger clean
 compilation.
+
+The plotting extension compiles representative grouped table plots, item-selection plots, fits and
+legends by building figures without opening a window. This moves compilation from first use into
+package preparation; it increases preparation time and does not eliminate compilation of user
+callbacks or every combination of plot options.
 
 All runner workloads use `bench/results/depot`; Julia builds missing compiled caches there normally.
 Package/file tests and benchmark-only runs never request clean compilation. Use those while editing. Run full

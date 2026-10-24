@@ -132,8 +132,9 @@ function check(args=ARGS)
     records = isfile(RECORD_FILE) ? TOML.parsefile(RECORD_FILE) : Dict{String,Any}()
     depot = measurement_depot()
     if full || precompile_only
-        command = julia_command(["-e", "using Pkg; Pkg.precompile($(repr(vcat(PACKAGES, ["DataBrowser"]))); strict=true)"]; depot)
-        code = fingerprint(vcat(PACKAGES, ["DataBrowser"]), command)
+        names = vcat(PACKAGES, ["DataBrowser", "GLMakie", "AlgebraOfGraphics"])
+        command = julia_command(["-e", "using Pkg; Pkg.precompile($(repr(names)); strict=true); using DataBrowser, GLMakie, AlgebraOfGraphics"]; depot)
+        code = fingerprint(names, command)
         checked(records, "precompile", code; force=force && precompile_only) do
             # Remove the compiled code of the DataBrowser packages only, in this runner-owned
             # depot. A dependency keeps its compiled code, which Julia rebuilds by itself when
@@ -143,7 +144,7 @@ function check(args=ARGS)
                 startswith(name, "DataBrowser") && rm(joinpath(compiled, name); recursive=true)
             end
             seconds = @elapsed run(command)
-            fingerprint(vcat(PACKAGES, ["DataBrowser"]), command) == code || error("Package code changed during precompilation")
+            fingerprint(names, command) == code || error("Package code changed during precompilation")
             # Development measurements may include automatic compilation during import.
             # Measure again with the newly completed compiled cache, including on a later run.
             delete!(records, "engine")

@@ -2,10 +2,14 @@
 module DataBrowserPlotsAlgebraOfGraphicsExt
 
 import AlgebraOfGraphics as AoG
+using AlgebraOfGraphics: data, mapping, visual
+using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, resolve
-using DataBrowserPlots: Fit, LegendEntry, PlotLines, Scaled, Statistic, column, fit_statistic
+using DataBrowserPlots: @plot, Fit, LegendEntry, PlotLines, Scaled, Statistic, column, fit_statistic
 using DataBrowserAPI: item_data, metadata
+using DataBrowserCore: Group, select
+using PrecompileTools: @setup_workload, @compile_workload
 
 # The legend is ours, not AoG's: roles share a section when one determines the others
 # (plans/graphics-grammar.md). `texts` are the texts of the entries in the section of a role.
@@ -265,5 +269,30 @@ Base.:+(a::Statistic, b::Union{Statistic,AoG.AbstractAlgebraic}) = drawable(a) +
 Base.:+(a::AoG.AbstractAlgebraic, b::Statistic) = a + drawable(b)
 
 figure(statistic::Statistic, args...; options...) = figure(drawable(statistic), args...; options...)
+
+_precompile_line(x; offset, slope) = offset + slope * x
+
+@setup_workload begin
+    rows = [(x=x, y=2x + offset, chip=chip)
+        for (chip, offset) in (("A", 1.0), ("B", 3.0)) for x in (1.0, 2.0, 3.0)]
+    items = select([Group("$chip$x", Dict{Symbol,Any}(:chip => chip, :x => x), (y=[2x + offset],), [])
+        for (chip, offset) in (("A", 1.0), ("B", 3.0)) for x in (1.0, 2.0, 3.0)])
+    @compile_workload begin
+        # Build figures without a window, so this also runs without a graphics backend.
+        ordinary = @plot data(rows) * mapping(:x, :y; color=:chip) begin
+            visual(Scatter)
+            visual(Lines)
+            legend(color = "chip $(:chip)")
+        end
+        figure(ordinary)
+        fitted_plot = @plot mapping(:x, only(:data.y); color=:chip) begin
+            visual(Scatter)
+            fitted = fit(_precompile_line, (offset=0.0, slope=1.0))
+            fitted * visual(Lines)
+            legend(color = "$(:chip): $(fitted.offset)")
+        end
+        figure(fitted_plot, items)
+    end
+end
 
 end
