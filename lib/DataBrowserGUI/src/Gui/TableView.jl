@@ -220,7 +220,8 @@ function draw_header!(view::TableView, ctx)::Nothing
     end
     names = [table.columns[column] for column in eachindex(table.columns) if _data_column(view, column)]
     if open_list("$ICON_COLUMNS Columns", "##columns", "The columns of the data that the table shows")
-        toggled = render_list_picker!(view.data_picker, names, [!(name in view.hidden) for name in names])
+        toggled = render_list_picker!(view.data_picker,
+            [ListItem(name; checked=!(name in view.hidden)) for name in names])
         if toggled !== nothing
             name = names[toggled]
             name in view.hidden ? delete!(view.hidden, name) : push!(view.hidden, name)
@@ -231,8 +232,8 @@ function draw_header!(view::TableView, ctx)::Nothing
     if view.selection !== nothing && isempty(view.zoom) && !isempty(view.metadata_names)
         ig.SameLine()
         if open_list("$ICON_TAG Metadata", "##metadata", "The metadata that the table shows as columns")
-            toggled = render_list_picker!(view.metadata_picker, string.(view.metadata_names),
-                [name in view.metadata for name in view.metadata_names])
+            toggled = render_list_picker!(view.metadata_picker,
+                [ListItem(string(name); checked=name in view.metadata) for name in view.metadata_names])
             toggled === nothing || _pick_metadata!(view, view.metadata_names[toggled])
             ig.EndPopup()
         end

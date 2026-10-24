@@ -1,40 +1,58 @@
 import CImGui as ig
 
 """
-What a list picker keeps from one frame to the next: the text the user typed, and the name the
+What a list picker keeps from one frame to the next: the text the user typed, and the item the
 arrow keys are on.
 
-A list picker is a field with a list of names below it, each with a checkmark, drawn in a popup by
-[`render_list_picker!`](@ref). Typing in the field narrows the list to the names that have the typed
-letters in the same order, not necessarily next to each other: `wf` finds `width_finger`. A click
-checks or unchecks a name. The up and down arrow keys move a highlight through the list, which
-starts on the first name that matches as soon as the user types, and Enter checks or unchecks the
-highlighted name. Escape closes the popup.
+A list picker is a field with a list of [`ListItem`](@ref)s below it, drawn in a popup by
+[`render_list_picker!`](@ref). Typing in the field narrows the list to the items whose names have
+the typed letters in the same order, not necessarily next to each other: `wf` finds `width_finger`.
+A click picks an item. The up and down arrow keys move a highlight through the list, which starts on
+the first item that matches as soon as the user types, and Enter picks the highlighted item. Escape
+closes the popup.
 """
 Base.@kwdef mutable struct ListPicker
     query::String = ""
-    # The place of the name the arrow keys are on, among the names that match the query; 0 before
+    # The place of the item the arrow keys are on, among the items that match the query; 0 before
     # the user types or presses an arrow key, and after a click.
     cursor::Int = 0
 end
 
 """
-    render_list_picker!(picker::ListPicker, names::Vector{String}, checked::AbstractVector{Bool})
+    ListItem(name; section="", icon="", color=nothing, checked=nothing)
 
-Draw the picker in the current popup, with a checkmark beside each name of `names` for which
-`checked` is `true`. Return the index in `names` of the name the user checked or unchecked in this
-frame, or `nothing`.
+One item of a list picker: its `name`, which the typed letters match, and how it looks.
+
+- `section`: the heading the item is listed under. Items with the same section follow each other in
+  the list; a heading shows where the section changes.
+- `icon`: a glyph of the icon font drawn before the name.
+- `color`: the color of the name, an `ImVec4`; the text color when `nothing`.
+- `checked`: `true` or `false` draws a checkbox before the item, checked or not; `nothing` draws none.
 """
-function render_list_picker!(picker::ListPicker, names::Vector{String},
-        checked::AbstractVector{Bool})::Union{Nothing,Int}
+Base.@kwdef struct ListItem
+    name::String
+    section::String = ""
+    icon::String = ""
+    color::Union{Nothing,ig.ImVec4} = nothing
+    checked::Union{Nothing,Bool} = nothing
+end
+ListItem(name::String; options...) = ListItem(; name, options...)
+
+"""
+    render_list_picker!(picker::ListPicker, items::Vector{ListItem})
+
+Draw the picker in the current popup. Return the index in `items` of the item the user picked in
+this frame, or `nothing`.
+"""
+function render_list_picker!(picker::ListPicker, items::Vector{ListItem})::Union{Nothing,Int}
     if ig.IsKeyPressed(ig.ImGuiKey_Escape)
         ig.CloseCurrentPopup()
         return nothing
     end
-    # The names that match, each with the places of the letters that match.
+    # The items that match, each with the places of the letters that match.
     matches = Tuple{Int,Vector{Int}}[]
-    for (index, name) in enumerate(names)
-        letters = _fuzzy_match(picker.query, name)
+    for (index, item) in enumerate(items)
+        letters = _fuzzy_match(picker.query, item.name)
         letters === nothing || push!(matches, (index, letters))
     end
     moved = ig.IsKeyPressed(ig.ImGuiKey_DownArrow) || ig.IsKeyPressed(ig.ImGuiKey_UpArrow)
@@ -44,9 +62,12 @@ function render_list_picker!(picker::ListPicker, names::Vector{String},
 
     style = unsafe_load(ig.GetStyle())
     box = ig.GetFontSize()
+    # The room before the name: a checkbox, an icon, or both.
+    before(item) = (item.checked === nothing ? 0.0f0 : box + style.ItemInnerSpacing.x) +
+        (isempty(item.icon) ? 0.0f0 : ig.CalcTextSize(item.icon).x + style.ItemInnerSpacing.x)
     width = max(ig.GetFontSize() * 14,
-        maximum(name -> ig.CalcTextSize(name).x, names; init=0.0f0) + box + 2 * style.ItemInnerSpacing.x)
-    toggled = nothing
+        maximum(item -> before(item) + ig.CalcTextSize(item.name).x, items; init=0.0f0) + style.ItemInnerSpacing.x)
+    picked = nothing
 
     buffer = zeros(UInt8, sizeof(picker.query) + 256)
     copyto!(buffer, codeunits(picker.query))
@@ -54,7 +75,7 @@ function render_list_picker!(picker::ListPicker, names::Vector{String},
     ig.SetNextItemWidth(width)
     if ig.InputTextWithHint("##query", "type to filter", buffer, length(buffer),
             ig.ImGuiInputTextFlags_EnterReturnsTrue)
-        picker.cursor == 0 || (toggled = first(matches[picker.cursor]))
+        picker.cursor == 0 || (picked = first(matches[picker.cursor]))
         # Enter ends the typing, so the field takes the keys again.
         ig.SetKeyboardFocusHere(-1)
     end
@@ -69,36 +90,51 @@ function render_list_picker!(picker::ListPicker, names::Vector{String},
     else
         # TODO: rank the names that match, for example those with the letters next to each other first.
         line = ig.GetTextLineHeightWithSpacing()
+        headings = length(unique(items[index].section for (index, _) in matches if !isempty(items[index].section)))
         # The arrow keys move through the list here, not ImGui's keyboard navigation, which would
         # take the keys away from the field: neither the names nor the list take the keyboard. A
         # list with a scroll bar is itself an item that ImGui's navigation would move to.
         ig.PushItemFlag(ig.ImGuiItemFlags_NoNav, true)
-        ig.BeginChild("##names", ig.ImVec2(width, min(length(matches), 12) * line))
+        ig.BeginChild("##names", ig.ImVec2(width, min(length(matches) + headings, 14) * line))
         draw_list = ig.GetWindowDrawList()
+        section = ""
         for (place, (index, letters)) in enumerate(matches)
+            item = items[index]
+            if item.section != section
+                section = item.section
+                isempty(section) || ig.SeparatorText(section)
+            end
             position = ig.GetCursorScreenPos()
             if ig.Selectable("##name_$index", place == picker.cursor, ig.ImGuiSelectableFlags_NoAutoClosePopups)
-                toggled = index
+                picked = index
                 picker.cursor = 0
             end
             moved && place == picker.cursor && ig.SetScrollHereY()
-            ig.RenderFrame(position, ig.ImVec2(position.x + box, position.y + box),
-                ig.GetColorU32(ig.ImGuiCol_FrameBg), true, style.FrameRounding)
-            pad = max(1.0f0, floor(box / 6))
-            checked[index] && ig.RenderCheckMark(draw_list, ig.ImVec2(position.x + pad, position.y + pad),
-                ig.GetColorU32(ig.ImGuiCol_CheckMark), box - 2 * pad)
+            x = position.x
+            if item.checked !== nothing
+                ig.RenderFrame(position, ig.ImVec2(x + box, position.y + box),
+                    ig.GetColorU32(ig.ImGuiCol_FrameBg), true, style.FrameRounding)
+                pad = max(1.0f0, floor(box / 6))
+                item.checked && ig.RenderCheckMark(draw_list, ig.ImVec2(x + pad, position.y + pad),
+                    ig.GetColorU32(ig.ImGuiCol_CheckMark), box - 2 * pad)
+                x += box + style.ItemInnerSpacing.x
+            end
+            if !isempty(item.icon)
+                ig.AddText(draw_list, ig.ImVec2(x, position.y), ig.GetColorU32(ig.ImGuiCol_TextDisabled), item.icon)
+                x += ig.CalcTextSize(item.icon).x + style.ItemInnerSpacing.x
+            end
             # The name, letter by letter, with the letters that match in the color of the checkmark.
-            x = position.x + box + style.ItemInnerSpacing.x
-            for (at, letter) in pairs(names[index])
-                color = at in letters ? ig.ImGuiCol_CheckMark : ig.ImGuiCol_Text
-                ig.AddText(draw_list, ig.ImVec2(x, position.y), ig.GetColorU32(color), string(letter))
+            text = item.color === nothing ? ig.GetColorU32(ig.ImGuiCol_Text) : ig.GetColorU32(item.color)
+            for (at, letter) in pairs(item.name)
+                color = at in letters ? ig.GetColorU32(ig.ImGuiCol_CheckMark) : text
+                ig.AddText(draw_list, ig.ImVec2(x, position.y), color, string(letter))
                 x += ig.CalcTextSize(string(letter)).x
             end
         end
         ig.EndChild()
         ig.PopItemFlag()
     end
-    return toggled
+    return picked
 end
 
 # The places in `name` of the letters of `query`, found in the same order and ignoring case, or
