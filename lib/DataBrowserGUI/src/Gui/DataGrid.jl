@@ -419,7 +419,7 @@ function render_data_grid!(
     padding = unsafe_load(ig.GetStyle().CellPadding)
     border = ig.GetColorU32(ig.ImGuiCol_TableBorderLight)
     background = ig.GetColorU32(ig.ImGuiCol_WindowBg)
-    function draw_cell(row, column, position, first_visible)
+    function draw_cell(row, column, position, first_visible, last_visible, row_height)
         first = span(row, column)
         if first == row && row > 1
             top = position.y - padding.y
@@ -431,6 +431,24 @@ function render_data_grid!(
             ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, background)
         end
         (first == row || row == first_visible) || return nothing
+        # The text of a cell that spans several rows stays at the top of the rows on screen, below
+        # the header, until the end of the span pushes it up.
+        top = ig.GetCursorScreenPos().y
+        if first != row || (row < n_rows && span(row + 1, column) == first)
+            last_row = row
+            while last_row < last_visible && span(last_row + 1, column) == first
+                last_row += 1
+            end
+            visible_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y + padding.y
+            top = max(top, visible_top)
+            last_row < last_visible && (top = min(top, position.y + (last_row - row) * row_height))
+        end
+        moved = top != ig.GetCursorScreenPos().y
+        # The row keeps its height: ImGui measures it from the lowest point the cell's items reach.
+        reach = Ptr{ig.ImVec2}(ig.GetCurrentWindow().DC +
+            fieldoffset(ig.lib.ImGuiWindowTempData, Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
+        content_bottom = unsafe_load(reach).y
+        moved && ig.SetCursorScreenPos(ig.ImVec2(ig.GetCursorScreenPos().x, top))
         link, open = cell_link(row, column), fold(row, column)
         if open !== nothing
             ig.SetNextItemOpen(open)
@@ -458,6 +476,9 @@ function render_data_grid!(
                 ig.EndTooltip()
             end
         end
+        if moved
+            unsafe_store!(reach, ig.ImVec2(unsafe_load(reach).x, content_bottom))
+        end
         return nothing
     end
     clipper = ig.lib.ImGuiListClipper()
@@ -466,6 +487,7 @@ function render_data_grid!(
         while ig.Step(clipper)
             start_idx = Int(unsafe_load(clipper.DisplayStart)) + 1
             end_idx   = Int(unsafe_load(clipper.DisplayEnd))
+            row_height = unsafe_load(clipper.ItemsHeight)
             for row in start_idx:end_idx
                 ig.PushID(row)
                 ig.TableNextRow()
@@ -489,10 +511,10 @@ function render_data_grid!(
                         row_selection_changed = true
                     end
                     ig.SameLine()
-                    draw_cell(row, 1, position, start_idx)
+                    draw_cell(row, 1, position, start_idx, end_idx, row_height)
                     for column in 2:n_cols
                         ig.TableSetColumnIndex(column - 1)
-                        draw_cell(row, column, ig.GetCursorScreenPos(), start_idx)
+                        draw_cell(row, column, ig.GetCursorScreenPos(), start_idx, end_idx, row_height)
                     end
                 else
                     for column in 1:n_cols
@@ -520,7 +542,7 @@ function render_data_grid!(
                             cell_bounds = _selected_cell_bounds(state, n_rows, n_cols)
                         end
                         ig.SetCursorScreenPos(position)
-                        draw_cell(row, column, position, start_idx)
+                        draw_cell(row, column, position, start_idx, end_idx, row_height)
                     end
                 end
 
