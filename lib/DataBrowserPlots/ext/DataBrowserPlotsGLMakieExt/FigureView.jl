@@ -38,11 +38,15 @@ And these methods:
 - `build!(view, ctx)`: build `view.figure` in the theme `DARK[]` and record the theme in
   `view.dark`. On failure, call `close(view)` and set `view.message`;
 - `export_name(view)`: the file name "Export" proposes, without its extension.
+
+A subtype whose figures set their own theme defines `theme_button(view) = false` to leave out the
+theme button.
 """
 abstract type FigureView <: AbstractVisualizer end
 
 function build! end
 function export_name end
+theme_button(::FigureView) = true
 
 function Base.close(view::FigureView)::Nothing
     destroy_figure!(view.figure_id)
@@ -51,30 +55,31 @@ function Base.close(view::FigureView)::Nothing
 end
 
 function draw_header!(view::FigureView, ctx)::Nothing
-    # The theme button looks like the theme in use: dark with a light frame, or light with a dark
-    # frame. After a click its colors blend from one to the other. `blend` is 0 for dark and 1
-    # for light, and ImGui keeps it between frames.
-    storage, blend_id = ig.GetStateStorage(), ig.GetID("theme_blend")
-    blend = ig.GetFloat(storage, blend_id, DARK[] ? 0.0f0 : 1.0f0)
-    step = unsafe_load(ig.GetIO().DeltaTime) / THEME_BLEND_SECONDS
-    blend = DARK[] ? max(blend - step, 0.0f0) : min(blend + step, 1.0f0)
-    ig.SetFloat(storage, blend_id, blend)
-    fill = ntuple(i -> Float32((0.1, 0.1, 0.1, 1.0)[i] * (1 - blend) + blend), 4)
-    # The frame and the text switch at the middle of the blend, so they stay readable.
-    frame = blend < 0.5 ? (0.9f0, 0.9f0, 0.9f0, 1.0f0) : (0.1f0, 0.1f0, 0.1f0, 1.0f0)
-    hovered_fill = ntuple(i -> 0.85f0 * fill[i] + 0.15f0 * frame[i], 4)
-    ig.PushStyleColor(ig.ImGuiCol_Button, fill)
-    ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, hovered_fill)
-    ig.PushStyleColor(ig.ImGuiCol_ButtonActive, hovered_fill)
-    ig.PushStyleColor(ig.ImGuiCol_Text, frame)
-    ig.PushStyleColor(ig.ImGuiCol_Border, frame)
-    ig.PushStyleVar(ig.ImGuiStyleVar_FrameBorderSize, 1.0f0)
-    ig.Button((blend < 0.5 ? "Dark" : "Light") * "###theme") && (DARK[] = !DARK[])
-    ig.PopStyleVar()
-    ig.PopStyleColor(5)
-    ig.SetItemTooltip(DARK[] ? "Switch to the light theme" : "Switch to the dark theme")
-
-    ig.SameLine()
+    if theme_button(view)
+        # The theme button looks like the theme in use: dark with a light frame, or light with a dark
+        # frame. After a click its colors blend from one to the other. `blend` is 0 for dark and 1
+        # for light, and ImGui keeps it between frames.
+        storage, blend_id = ig.GetStateStorage(), ig.GetID("theme_blend")
+        blend = ig.GetFloat(storage, blend_id, DARK[] ? 0.0f0 : 1.0f0)
+        step = unsafe_load(ig.GetIO().DeltaTime) / THEME_BLEND_SECONDS
+        blend = DARK[] ? max(blend - step, 0.0f0) : min(blend + step, 1.0f0)
+        ig.SetFloat(storage, blend_id, blend)
+        fill = ntuple(i -> Float32((0.1, 0.1, 0.1, 1.0)[i] * (1 - blend) + blend), 4)
+        # The frame and the text switch at the middle of the blend, so they stay readable.
+        frame = blend < 0.5 ? (0.9f0, 0.9f0, 0.9f0, 1.0f0) : (0.1f0, 0.1f0, 0.1f0, 1.0f0)
+        hovered_fill = ntuple(i -> 0.85f0 * fill[i] + 0.15f0 * frame[i], 4)
+        ig.PushStyleColor(ig.ImGuiCol_Button, fill)
+        ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, hovered_fill)
+        ig.PushStyleColor(ig.ImGuiCol_ButtonActive, hovered_fill)
+        ig.PushStyleColor(ig.ImGuiCol_Text, frame)
+        ig.PushStyleColor(ig.ImGuiCol_Border, frame)
+        ig.PushStyleVar(ig.ImGuiStyleVar_FrameBorderSize, 1.0f0)
+        ig.Button((blend < 0.5 ? "Dark" : "Light") * "###theme") && (DARK[] = !DARK[])
+        ig.PopStyleVar()
+        ig.PopStyleColor(5)
+        ig.SetItemTooltip(DARK[] ? "Switch to the light theme" : "Switch to the dark theme")
+        ig.SameLine()
+    end
     ig.Button("?") && ig.OpenPopup("plot_help")
     ig.SetItemTooltip("Help")
     if ig.BeginPopup("plot_help")

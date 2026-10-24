@@ -15,6 +15,7 @@ using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure,
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
 const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
 using .GLMakieExt: DARK, FigureView
+import .GLMakieExt: theme_button
 using .GLMakieExt.MakieImguiIntegration: plot_theme
 import .GLMakieExt: build!, export_name
 
@@ -228,6 +229,9 @@ function select_code(data::Ptr{ig.lib.ImGuiInputTextCallbackData})::Cint
     end
     return Cint(0)
 end
+
+# The plot's `theme(...)` line sets its theme; without one, it has the theme of the other windows.
+theme_button(::BuilderView) = false
 
 # Run the code with `selection` set, and draw what it returns.
 function build!(view::BuilderView, ctx)::Nothing

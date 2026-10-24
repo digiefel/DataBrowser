@@ -62,4 +62,10 @@ end
     @test last.(only(plotted(figure(plot), Lines))[1][]) ≈ [5.5, 2.0]
     # A `y` without `x` turns a histogram.
     @test only(plotted(figure(@plot data(rows) * mapping(; y=:y) * visual(Hist)), Hist)).direction[] == :x
+    # A theme line sets the look.
+    themed = figure(@plot data(rows) * mapping(:x, :y) begin
+        visual(Scatter)
+        theme(:light; Axis = (; xgridvisible = false))
+    end)
+    @test !only(filter(c -> c isa Axis, themed.content)).xgridvisible[]
 end

@@ -42,9 +42,16 @@ struct PlotLines
     lines::Vector{PlotLine}
 end
 
+# The `theme(...)` line of a plot: one of Makie's themes by name, such as `:dark` for `theme_dark`,
+# or `nothing` for the theme in use, and the settings that change it.
+struct PlotTheme
+    base::Union{Nothing,Symbol}
+    settings::NamedTuple
+end
+
 """
-Layers with the plot's own scales and legend texts, as the `scales(...)` and `legend(...)` lines
-of [`@plot`](@ref) give them. Draw it with `figure(plot)`.
+Layers with the plot's own scales, legend texts and theme, as the `scales(...)`, `legend(...)` and
+`theme(...)` lines of [`@plot`](@ref) give them. Draw it with `figure(plot)`.
 """
 struct Scaled
     layers::Any
@@ -54,6 +61,7 @@ struct Scaled
     texts::Vector{Pair{Symbol,Function}}
     # The legend's settings, such as `merge` and `position`.
     legend::NamedTuple
+    theme::Union{Nothing,PlotTheme}
 end
 
 # The roles whose values a legend explains, and whose section a legend text names.
@@ -237,6 +245,18 @@ The other settings of a `legend` line are those of [`figure`](@ref)'s legend: `p
 `merge`, and those of Makie's `Legend`. `legend(merge = (:color, :linestyle))` puts those roles in
 one section, with one entry for each combination of their values that is drawn, and
 `legend(merge = true)` puts all roles in one.
+
+## Theme
+
+A `theme` line sets the look of the plot: one of Makie's themes, such as `:dark` for `theme_dark`,
+changed by Makie's theme settings. Settings for the whole figure come first, then a group for each
+of Makie's blocks or plot types:
+
+    theme(:dark; fontsize = 14, Axis = (; xgridvisible = false), Scatter = (; markersize = 10))
+
+Without a name, the settings change the theme in use. The theme is for how the plot looks: the
+labels, scales, limits and ticks of the axes belong in `scales`, and settings such as the bins of
+`Hist` in `visual`.
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
@@ -246,7 +266,7 @@ macro plot(header, block)
     lines = [hidden ? last(line.args) : line for (line, hidden) in zip(lines, invisible)]
     statements = filter(line -> Meta.isexpr(line, :(=)), lines)
     names = Symbol[first(statement.args) for statement in statements]
-    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend), lines)
+    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme), lines)
     input = gensym("input")
     # Each line, named or drawn, is a layer of the header; a name holds its line's value.
     statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))
@@ -402,14 +422,18 @@ function declare(drawn, statements=Expr[]; input::Symbol, settings=nothing)
     return uses(body, input) ? :($Declaration($input -> $body)) : body
 end
 
-# The `scales(...)` and `legend(...)` lines as the arguments of `Scaled` after its layers, and the
+# The `scales(...)`, `legend(...)` and `theme(...)` lines as the arguments of `Scaled` after its layers, and the
 # statements they need, or `nothing` if there are none. A legend text becomes a function of a
 # `LegendEntry`: a path reads the entry's value in the rows of the header, and a name of the block
 # reads that value for the entry's group.
 function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol)
     isempty(settings) && return nothing
-    scales, templates, legend = Expr[], Pair{Symbol,Any}[], Expr[]
-    for line in settings, (key, value) in last(call_arguments(line))
+    scales, templates, legend, theme = Expr[], Pair{Symbol,Any}[], Expr[], nothing
+    for line in filter(line -> line.args[1] === :theme, settings)
+        base, named = call_arguments(line)
+        theme = :($PlotTheme($(isempty(base) ? nothing : only(base)), $(Expr(:tuple, Expr(:parameters, (Expr(:kw, k, v) for (k, v) in named)...)))))
+    end
+    for line in filter(line -> line.args[1] !== :theme, settings), (key, value) in last(call_arguments(line))
         line.args[1] === :scales ? push!(scales, :($(QuoteNode(key)) => $value)) :
         key in LEGEND_ROLES ? push!(templates, key => value) : push!(legend, Expr(:kw, key, value))
     end
@@ -438,7 +462,7 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
         :($(QuoteNode(role)) => ($entry -> string($text)))
     end
     return (; statements, arguments=(:(Pair{Symbol,Any}[$(scales...)]), :(Pair{Symbol,Function}[$(texts...)]),
-        Expr(:tuple, Expr(:parameters, legend...))))
+        Expr(:tuple, Expr(:parameters, legend...)), theme))
 end
 
 # A legend text with each path `p` replaced by `onpath(p)` and each name of the block by

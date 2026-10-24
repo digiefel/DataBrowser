@@ -6,7 +6,7 @@ using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, resolve
-using DataBrowserPlots: @plot, Fit, LegendEntry, PlotLine, PlotLines, Scaled, Statistic, column, fit_statistic
+using DataBrowserPlots: @plot, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Statistic, column, fit_statistic
 using DataBrowserAPI: item_data, metadata
 using DataBrowserCore: Group, select
 using PrecompileTools: @setup_workload, @compile_workload
@@ -242,8 +242,18 @@ function figure(plot::Scaled, args...; options...)
     settings = AoG.scales(; (ROLE_SCALES[r] => value for (r, value) in scales)...)
     layers = any(!isnothing, limits) ? limited(drawable(plot.layers), WithinLimits(limits)) : drawable(plot.layers)
     legend = (; plot.legend..., get(options, :legend, (;))...)
-    return figure(layers, settings, args...; options..., axis=(; axis..., get(options, :axis, (;))...),
+    draw() = figure(layers, settings, args...; options..., axis=(; axis..., get(options, :axis, (;))...),
         texts=plot.texts, legend)
+    return plot.theme === nothing ? draw() : AoG.Makie.with_theme(draw, makie_theme(plot.theme))
+end
+
+# A theme from elsewhere, such as Makie's own, can also change what the plot shows, such as the bins
+# of `Hist`.
+# TODO: show that where it matters.
+function makie_theme(theme::PlotTheme)::AoG.Makie.Theme
+    base = theme.base === nothing ? AoG.Makie.current_default_theme() :
+        getproperty(AoG.Makie, Symbol(:theme_, theme.base))()
+    return merge(AoG.Makie.Theme(; pairs(theme.settings)...), base)
 end
 
 function Base.:*(statistic::Statistic, layer::AoG.Layer)
