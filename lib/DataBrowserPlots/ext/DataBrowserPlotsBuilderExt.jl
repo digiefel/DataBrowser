@@ -8,6 +8,7 @@ import GLMakie.Makie as Makie
 import DataBrowserAPI
 using DataBrowserAPI: Setting
 using DataBrowserCore: Selection
+using DataBrowserGUI: CodeFile, ischanged_on_disk, isunsaved, load!, save!
 import DataBrowserAPI: draw!, prepare!, settings
 using DataBrowserPlots: DataBrowserPlots, figure
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
@@ -56,13 +57,9 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     # The path the code was read from, or `nothing` before the first selection.
     # TODO: ask before a change of file drops code that is not saved.
     loaded::Union{Nothing,String} = nothing
-    # The code in the window, and the code as last read from or written to the file.
-    code::String = ""
-    saved::String = ""
+    code::CodeFile = CodeFile()
     # The code `first_code` gave, while the file does not exist.
     first::String = ""
-    # The modification time of the file when it was last read or written.
-    mtime::Float64 = 0.0
     # The text buffer ImGui edits.
     buffer::Vector{UInt8} = zeros(UInt8, CODE_ROOM)
     # Counts the reads of the file. It is part of the text box's ImGui id: a new id makes ImGui
@@ -107,7 +104,7 @@ function first_code(selection::Selection)::String
 end
 
 function set_code!(view::BuilderView, code::String)::Nothing
-    view.code = code
+    view.code.text = code
     length(view.buffer) < sizeof(code) + CODE_ROOM ÷ 2 && (view.buffer = zeros(UInt8, sizeof(code) + CODE_ROOM))
     fill!(view.buffer, 0x00)
     copyto!(view.buffer, codeunits(code))
@@ -116,31 +113,17 @@ end
 
 # Read the file, or start it with `first_code` when it does not exist.
 function load_code!(view::BuilderView)::Nothing
-    path = code_path(view)
-    view.loaded = path
-    if isfile(path)
-        view.saved = read(path, String)
-        view.mtime = mtime(path)
-    else
-        view.saved = ""
-        view.mtime = 0.0
-    end
-    view.first = isempty(view.saved) && view.selection !== nothing ? first_code(view.selection) : ""
-    set_code!(view, isempty(view.first) ? view.saved : view.first)
+    view.code.path = view.loaded = code_path(view)
+    load!(view.code)
+    view.first = isempty(view.code.saved) && view.selection !== nothing ? first_code(view.selection) : ""
+    set_code!(view, isempty(view.first) ? view.code.saved : view.first)
     view.reads += 1
     return nothing
 end
 
 function save_code!(view::BuilderView)::Nothing
-    path = code_path(view)
-    mkpath(dirname(abspath(path)))
-    # Write the whole code first, so that a failed write leaves the file as it was.
-    temporary = path * ".saving"
-    write(temporary, view.code)
-    mv(temporary, path; force=true)
-    view.loaded = path
-    view.saved = view.code
-    view.mtime = mtime(path)
+    view.code.path = view.loaded = code_path(view)
+    save!(view.code)
     return nothing
 end
 
@@ -149,7 +132,7 @@ function prepare!(view::BuilderView, selection::Selection, ctx)::Nothing
     view.selection = selection
     path = code_path(view)
     # Until it is edited, the first code follows the columns of the selection.
-    unedited = !isempty(view.first) && view.code == view.first && isempty(view.saved)
+    unedited = !isempty(view.first) && view.code.text == view.first && isempty(view.code.saved)
     if view.loaded !== nothing && view.loaded != path && !isempty(path) && !isfile(path)
         # A new name for the plot saves its code under that name.
         save_code!(view)
@@ -191,7 +174,7 @@ function build!(view::BuilderView, ctx)::Nothing
         Core.eval(mod, :(const Main_names = $shared))
         Core.eval(mod, :(using .Main_names))
         Core.eval(mod, :(selection = $selection))
-        plot = Base.invokelatest(include_string, mod, view.code, code_path(view))
+        plot = Base.invokelatest(include_string, mod, view.code.text, code_path(view))
         # A declaration of paths is drawn for the selection, any other for its own data.
         input = plot isa DataBrowserPlots.Declaration ? (selection,) : ()
         view.figure = plot isa Makie.Figure ? plot :
@@ -210,9 +193,9 @@ end
 function draw!(view::BuilderView, ctx)::Nothing
     # A change of the file in another editor is shown at once, unless the window has edits that
     # are not saved; then "Reload" shows it.
-    edited = view.code != view.saved && view.code != view.first
+    edited = isunsaved(view.code) && view.code.text != view.first
     path = code_path(view)
-    changed = !isempty(path) && isfile(path) && mtime(path) != view.mtime
+    changed = ischanged_on_disk(view.code)
     if changed && !edited
         load_code!(view)
         build!(view, ctx)
@@ -235,7 +218,7 @@ function draw!(view::BuilderView, ctx)::Nothing
     else
         ig.TextDisabled(path)
         ig.SameLine()
-        view.code != view.saved ? ig.TextUnformatted("● not saved") : ig.TextDisabled("saved")
+        isunsaved(view.code) ? ig.TextUnformatted("● not saved") : ig.TextDisabled("saved")
         ig.SameLine()
         save = ig.SmallButton("Save")
         if changed
@@ -252,9 +235,9 @@ function draw!(view::BuilderView, ctx)::Nothing
     end
     flags = ig.ImGuiInputTextFlags_AllowTabInput
     if ig.InputTextMultiline("##code$(view.reads)", view.buffer, length(view.buffer), (-1.0f0, -1.0f0), flags)
-        view.code = unsafe_string(pointer(view.buffer))
+        view.code.text = unsafe_string(pointer(view.buffer))
         # Room for the next edits.
-        sizeof(view.code) > length(view.buffer) - CODE_ROOM ÷ 4 && set_code!(view, view.code)
+        sizeof(view.code.text) > length(view.buffer) - CODE_ROOM ÷ 4 && set_code!(view, view.code.text)
     end
     save |= ig.IsItemActive() && ig.IsKeyChordPressed(ig.ImGuiMod_Ctrl | ig.ImGuiKey_S)
     if save

@@ -12,13 +12,13 @@ using DataBrowserCore.Workspace.StructArrays: StructArray
 
     numbers = Selection(StructArray((; id=["a", "b"], label=["a", "b"], gap=[1.0, 2.0], R=[3.0, 5.0])))
     DataBrowserAPI.prepare!(view, numbers, (; id="window"))
-    @test occursin("mapping(:gap, :R)", view.code)
+    @test occursin("mapping(:gap, :R)", view.code.text)
     @test view.figure isa Figure
 
     mktempdir() do directory
         view.file = joinpath(directory, "plot.jl")
         DataBrowserAPI.prepare!(view, numbers, (; id="window"))
-        @test read(view.file, String) == view.code
+        @test read(view.file, String) == view.code.text
     end
 end
 

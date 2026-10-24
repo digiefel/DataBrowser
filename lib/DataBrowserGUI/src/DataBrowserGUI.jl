@@ -9,6 +9,9 @@ module DataBrowserGUI
 include("Fonts.jl")
 export with_font
 
+include("CodeFile.jl")
+export CodeFile
+
 include("TableModel.jl")
 include("Browser.jl")
 
