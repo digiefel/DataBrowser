@@ -8,6 +8,8 @@ each package test process only that package's dependencies and `Test`.
 - Each package owns its tests and fixtures, using only its declared dependencies and `Test`.
 - Tests check public behavior and fundamental invariants. Missing interfaces belong in concise TODOs,
   not test-only workarounds. On the other hand, benchmarks may read internal counters for measurements.
+- Exercise user operations and check returned values or saved files. Do not construct scheduler jobs,
+  alter private GUI state, or force reloads to make a test pass. GUI controls wait for a public API.
 - Pkg handles dependency resolution and compilation. The runner selects work and records results;
   it must remain simpler than the system being measured.
 - Reuse unchanged successful workloads and compiled code during development. Full verification
@@ -44,20 +46,35 @@ julia --project=bench --threads=auto test/runtests.jl precompile --force
 
 | Package selector | Test files and behavior |
 | --- | --- |
-| `Annotations` | `test_annotations.jl`: coordinates, layouts, tag/note persistence and inheritance. |
+| `Annotations` | `test_annotations.jl`: tag/note files, persistence and inheritance. |
 | `Sources` | `test_directory.jl`: discovery, exclusions, recursion and change fingerprints. |
 | `Recipes` | `test_stages.jl`: registration through typed stages and CSV loading. |
 | `Cache` | `test_persistence.jl`: payload replacement/deletion across reopen; cached `nothing`. |
-| `Core` | `test_workspace.jl`: reconstruction, metadata precedence, reuse, invalidation, failures and status during on-demand processing. `test_catalog.jl`: catalog rows keep their keys across source jobs; removal, membership, progress, the job queue, requests and metadata; a collection is identified by its parent, type and id, and a change to its metadata reaches every item below it. |
-| `GUI` | `test_tables.jl`: heterogeneous table values and provenance. `test_code_file.jl`: an edit keeps the rest of the code; changes by another editor are noticed. `test_clipboard.jl`: clipboard interchange preserves cell boundaries and quoting. `test_windows.jl`: a visualizer is offered for the values it accepts. |
-| `Plots` | `test_view.jl`: live and fixed plot selections survive view persistence. `test_plot_code.jl`: the roles and lines of `@plot` are found in the code. `test_gestures.jl`: axes that share a cell of a figure zoom together. |
+| `Core` | `test_workspace.jl`: reconstruction, collections, reopening, code changes, failure recovery, tags and status during on-demand processing. `test_selection.jl`: selection, filtering and table access. `test_source_updates.jl`: actual directory-file edits, collection metadata changes, removal/recreation and recovery from reader/processor failures. |
+| `GUI` | `test_tables.jl`: prepared table values, columns and provenance. `test_code_file.jl`: editing, saving and noticing changes by another editor. Neither file claims to exercise GUI controls. |
+| `Plots` | `test_declaration.jl`, `test_fitting.jl`, `test_legend.jl`: ordinary plot declarations, plotted values, grouped fits and legend content. |
 | `Profiling` | `test_timings.jl`: concurrent instrumentation, snapshots and lifecycle. |
+
+### Coverage gaps
+
+- TODO: test window creation, transforms, reopening, table selection/copy, plot-file recovery,
+  editor controls and axis gestures when public GUI operations exist. No tests simulate these by
+  calling private window helpers or changing fields that force an update.
+- TODO: exercise cancellation of requests and changes during collection processing through supported
+  workspace operations. Exact scheduler queues and job counts are not application contracts.
+- TODO: test recovery from a missing stored payload when public storage/workspace operations can
+  reproduce it. Core tests do not reach into the workspace's cache to delete individual rows.
+- TODO: cover live recipe registration changes in an application workflow. A different list of
+  tracked functions alone does not establish that results update.
+- TODO: measure memory-limit spilling with a workload that checks recovered values. The old stress
+  case allocated 150 MiB but only established that two payloads were nonempty.
 
 ## What runs again
 
 The runner stores successful input fingerprints in ignored `bench/results/checks.toml`. A package
-fingerprint includes its source, tests, fixtures, resolved dependency closure and local dependency
-source contents. Julia version, CPU, thread count, project preferences and the execution command
+fingerprint includes its source, tests, fixtures, test-target dependencies, resolved dependency
+closure, available extension triggers and local dependency source contents and assets. The umbrella's
+precompile fixtures also participate. Julia version, CPU, thread count, project preferences and the execution command
 also participate. Runner edits that leave the command unchanged do not invalidate package tests.
 Changing a dependency's tests alone does not invalidate its consumers. Failed runs are not recorded.
 An unchanged suite is reported as a reused result, not as a newly executed test. `--force` reruns
@@ -90,8 +107,12 @@ numerical analysis or parsing is profiled. Measurements are medians of three run
 `MB_BENCH_REPEATS` controls repetitions.
 
 The browser smoke project has three items in two collections. It exercises directory discovery,
-registered item/collection stages, a real Makie plot, selection, saved-cache reuse, source/metadata
+registered item/collection stages, workspace selection, saved-cache reuse, source/metadata
 updates and live addition/removal. Expected values and callback counts check correctness. It opens
 actual windows and requires a working graphics session; unavailable graphics or renderer errors
-fail the workload. Browser startup is measured once per opening and includes script setup; readiness
-is observed on the next render-loop iteration after presentation, plus up to 10 ms polling delay.
+fail the workload. It uses public browser lifecycle operations, without creating or configuring
+visualizer windows through internal state. Browser startup is measured once per opening and includes
+script setup; readiness is observed on the next render-loop iteration after presentation, plus up to
+10 ms polling delay. `import_s` includes DataBrowser, GLMakie and AlgebraOfGraphics. The browser and
+import measurements therefore have a different workload from snapshots that opened plots through
+private helpers and timed only `using DataBrowser`; compare measurements within the same workload.

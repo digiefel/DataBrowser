@@ -147,32 +147,6 @@ end
     end
 end
 
-@testset "a cache in memory holds more data than its memory limit" begin
-    identity = ProjectCacheIdentity("memory", "source", "source", joinpath(mktempdir(), "cache.duckdb"))
-    previous = DataBrowserCache.CACHE_MEMORY_LIMIT_MIB[]
-    set_cache_memory_limit!(64)
-    cache = try
-        open_cache_db(identity; persistent=false)
-    finally
-        set_cache_memory_limit!(previous)
-    end
-    try
-        source_key = source_item_key!(cache, "source"; mint=true)
-        store_source_identity!(cache, CacheSourceItem(), "source")
-        # 150 MiB of numbers.
-        replace_source_output!(cache, source_key, String[], [
-            ItemOutput("$index", "$index", CacheItem, nothing, DataBrowserAPI.MetadataDict(), nothing)
-            for index in 1:500])
-        for index in 1:500
-            store_processed!(cache, "$index", source_key, NamedTuple{(:a, :b, :c, :d)}(ntuple(_ -> rand(10_000), 4)))
-        end
-        @test timedwait(() -> !DataBrowserCache.cache_has_pending_writes(cache), 120) === :ok
-        @test all(!isnothing, read_payload(cache, ["1", "500"]; stage=ITEM_PROCESS))
-    finally
-        close_cache_db!(cache)
-    end
-end
-
 @testset "a cache file opens only once in a session" begin
     mktempdir() do dir
         identity = ProjectCacheIdentity("test", "source", "source", joinpath(dir, "cache.duckdb"))

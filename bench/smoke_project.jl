@@ -1,5 +1,4 @@
 using DataBrowser
-using GLMakie: Figure, Axis, lines!, content
 using TOML
 
 const PUBLIC_FIXTURE = joinpath(@__DIR__, "..", "test", "fixtures", "public_api")
@@ -12,14 +11,13 @@ struct ToyCounters
     analyses::Threads.Atomic{Int}
     collection_processes::Threads.Atomic{Int}
     collection_analyses::Threads.Atomic{Int}
-    draws::Threads.Atomic{Int}
 end
 
 ToyCounters() = ToyCounters(
     Dict(name => Threads.Atomic{Int}(0) for name in
         ("a.dbitem", "b.dbitem", "extra.dbitem")),
     Threads.Atomic{Int}(0), Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
-    Threads.Atomic{Int}(0), Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
+    Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
 )
 
 function toy_project(name::AbstractString, counters::ToyCounters)::Project
@@ -59,24 +57,6 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
         analyze=function (items, _metadata)
             Threads.atomic_add!(counters.collection_analyses, 1)
             return Dict{Symbol,Any}(:members => length(items))
-        end,
-    )
-    register_plot!(project, :trace;
-        label="Toy",
-        setup=_selection -> begin
-            figure = Figure()
-            Axis(figure[1, 1])
-            figure
-        end,
-        draw=function (selection, figure)
-            # A plot draws whatever results are latest; items may not be analyzed yet.
-            axis = content(figure[1, 1])
-            empty!(axis)
-            for entry in selection
-                lines!(axis, entry.data.x, entry.data.y)
-            end
-            Threads.atomic_add!(counters.draws, 1)
-            return nothing
         end,
     )
     return project

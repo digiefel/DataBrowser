@@ -36,17 +36,38 @@ function fingerprint(names, command; tests=false, workload=nothing)
         info = dependencies[uuid]
         println(io, uuid, info.version, info.tree_hash)
         if info.is_tracking_path
-            for name in ("Project.toml", "src", "ext", "deps", "LocalPreferences.toml")
+            for name in ("Project.toml", "src", "ext", "deps", "assets", "LocalPreferences.toml")
                 hash_files(io, joinpath(info.source, name))
             end
+            info.name == "DataBrowser" && hash_files(io, joinpath(info.source, "test", "fixtures", "TASE"))
         end
         for dependency in sort(collect(values(info.dependencies)); by=string)
             visit(dependency)
         end
+        project_file = joinpath(info.source, "Project.toml")
+        if isfile(project_file)
+            project = TOML.parsefile(project_file)
+            extensions = get(project, "extensions", Dict())
+            for extension in sort(collect(keys(extensions)))
+                trigger = extensions[extension]
+                triggers = trigger isa String ? [trigger] : trigger
+                all(name -> haskey(byname, name), triggers) || continue
+                for name in sort(triggers)
+                    visit(byname[name])
+                end
+            end
+        end
     end
     for name in sort(names)
         visit(byname[name])
-        tests && hash_files(io, joinpath(dependencies[byname[name]].source, "test"))
+        if tests
+            source = dependencies[byname[name]].source
+            hash_files(io, joinpath(source, "test"))
+            project = TOML.parsefile(joinpath(source, "Project.toml"))
+            for dependency in sort(get(get(project, "targets", Dict()), "test", String[]))
+                visit(byname[dependency])
+            end
+        end
     end
     if workload !== nothing
         for file in workload

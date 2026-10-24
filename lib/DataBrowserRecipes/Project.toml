@@ -15,7 +15,8 @@ DataFrames = "1"
 julia = "1.13"
 
 [extras]
+CancellationTokens = "2e8d271d-f2e2-407b-a864-17eb2156783e"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["CancellationTokens", "Test"]

@@ -1,6 +1,6 @@
 include("smoke_project.jl")
 using DataBrowserPlots
-using DataBrowserGUI: Browser, ItemTable, merge_item_tables
+using DataBrowserGUI: merge_item_tables
 using DataBrowserGUI.Browser: TimerOutputs
 
 function wait_for(predicate, session; timeout=120)
@@ -20,11 +20,9 @@ function finish_work(ws)
         error("Workspace did not complete successfully: $status")
 end
 
-function check_items(ws, session, expected_peaks)
+function check_items(ws, expected_peaks)
     ids = sort(query_items(ws))
     select!(ws, ids)
-    # The browser follows a selection made through the workspace.
-    wait_for(() -> session.state.selection_revision == ws.selection.revision, session)
     items = materialize_items(ws, ids)
     sort([metadata(item)[:peak] for item in items]) == expected_peaks || error("Incorrect analysis results")
     collect(selection(ws).data) == item_data.(items) || error("Selection did not deliver the selected payloads")
@@ -37,12 +35,7 @@ function check_items(ws, session, expected_peaks)
     return items
 end
 
-"""Open the real browser, draw the known project, and exercise update/reopen behavior."""
-# Plots take numbers, which these functions give for the selected items.
-smoke_trace(selection) = first(selection).data.x => first(selection).data.y
-smoke_values(selection) = first(selection).data.y
-smoke_numbers(selection) = (items=length(selection), half=length(selection) / 2)
-
+"""Measure real browser readiness and exercise workspace updates and saved-cache reuse."""
 function browser_workload(root, opening, started_ns)
     counters = ToyCounters()
     project = toy_project("BrowserSmoke", counters)
@@ -52,42 +45,12 @@ function browser_workload(root, opening, started_ns)
         # The benchmark must not take keyboard focus from the person at the machine.
         session = open_browser(workspace; wait=false, window_start=:background)
         wait_browser_ready(session)
-        # This workload exercises a registered plot; startup opens no visualizer windows.
-        lock(workspace.lifecycle_lock) do
-            plots = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
-            Browser.open_window!(session.state, plots.PlotView())
-        end
         opening_s = (time_ns() - started_ns) / 1e9
         finish_work(workspace)
-        items = check_items(workspace, session, [4.0, 6.0, 9.0])
+        items = check_items(workspace, [4.0, 6.0, 9.0])
         # "runs" holds every item and is the outermost collection, so its version is the latest.
         [first(item_data(item).members) for item in items] == [3, 3, 3] ||
             error("Collection processing did not reach the selected items")
-        # The normal plot panel must invoke the registered drawing callback.
-        wait_for(() -> counters.draws[] > 0, session)
-        # A window that takes its input from a table receives what the table passes on.
-        state = session.state
-        table, taker = lock(workspace.lifecycle_lock) do
-            table = Browser.open_window!(state, Browser.TableView())
-            table, Browser.open_window!(state, Browser.TableView(); input=Browser.WindowOutput(table.id))
-        end
-        wait_for(() -> taker.value isa ItemTable && taker.value === table.visualizer.output, session)
-        lock(() -> foreach(window -> Browser.close_window!(state, window), (taker, table)), workspace.lifecycle_lock)
-        # The plots drawn with ImPlot draw the numbers that a function of the project gives for the
-        # selection. An error while drawing stops the browser.
-        plots = lock(workspace.lifecycle_lock) do
-            map(((Browser.LinePlotView(), :smoke_trace), (Browser.HistogramView(), :smoke_values),
-                    (Browser.BarChartView(), :smoke_numbers))) do (view, name)
-                window = Browser.open_window!(state, view)
-                Browser.transform!(window, GlobalRef(@__MODULE__, name))
-                window
-            end
-        end
-        wait_for(() -> all(plot -> plot.value !== nothing && isempty(plot.error), plots), session)
-        drawn = TimerOutputs.ncalls(gui_timings(session)["frame_ui"])
-        wait_for(() -> TimerOutputs.ncalls(gui_timings(session)["frame_ui"]) >= drawn + 10, session)
-        istaskdone(session.task) && error("The browser stopped while drawing plots")
-        lock(() -> foreach(window -> Browser.close_window!(state, window), plots), workspace.lifecycle_lock)
         if opening == "reopen"
             all(count[] == 0 for count in values(counters.reads)) || error("Reopening reran source reads")
             counters.processes[] == counters.analyses[] == 0 || error("Reopening reran item callbacks")
@@ -105,24 +68,24 @@ function browser_workload(root, opening, started_ns)
             cp(joinpath(PUBLIC_VARIANTS, "a_changed.dbitem"), joinpath(root, "a.dbitem"); force=true)
             wait_for(() -> counters.reads["a.dbitem"][] == 1, session)
             finish_work(workspace)
-            check_items(workspace, session, [9.0, 40.0, 42.0])
+            check_items(workspace, [9.0, 40.0, 42.0])
             reads_before = Dict(name => count[] for (name, count) in counters.reads)
             processed_before = counters.processes[]
             cp(joinpath(PUBLIC_VARIANTS, "metadata_changed.txt"), joinpath(root, "metadata.txt"); force=true)
             wait_for(() -> counters.processes[] >= processed_before + 2, session)
             finish_work(workspace)
-            check_items(workspace, session, [9.0, 80.0, 84.0])
+            check_items(workspace, [9.0, 80.0, 84.0])
             Dict(name => count[] for (name, count) in counters.reads) == reads_before ||
                 error("Metadata updates reread unchanged source files")
             extra = joinpath(root, "extra.dbitem")
             cp(joinpath(PUBLIC_VARIANTS, "extra.dbitem"), extra)
             wait_for(() -> length(query_items(workspace)) == 4, session)
             finish_work(workspace)
-            check_items(workspace, session, [9.0, 20.0, 80.0, 84.0])
+            check_items(workspace, [9.0, 20.0, 80.0, 84.0])
             rm(extra)
             wait_for(() -> length(query_items(workspace)) == 3, session)
             finish_work(workspace)
-            check_items(workspace, session, [9.0, 80.0, 84.0])
+            check_items(workspace, [9.0, 80.0, 84.0])
         end
         return Dict("browser_$(opening)_s" => opening_s, "frame_ui_ms" => frame_ms)
     finally

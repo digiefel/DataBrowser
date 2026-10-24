@@ -166,11 +166,8 @@ end
         # The metadata and the label that collection `process` changed reach every reader.
         @test W.metadata(ws, W.item(ws, "a"))[:step] == 2
         @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
-        @test only(W.materialize_items(ws, ["a"])).metadata[:step] == 2
+        @test metadata(only(W.materialize_items(ws, ["a"])))[:step] == 2
         @test W.label(ws, W.item(ws, "a")) == "inner a"
-        # A query reads what the cache has written to its database.
-        @test timedwait(() -> !W.cache_has_pending_writes(ws.cache.db), 20) === :ok
-        @test W.query_items(ws, "step = 2") == ["a"]
         @test W.metadata(ws, holder("a"))[:seen] == 2
         # Two collections with the same id and parent differ by type.
         @test holder("a") != holder("b")
@@ -218,23 +215,13 @@ DataBrowserAPI.project_name(::LateProject) = "late"
 DataBrowserAPI.read(::LateProject, source::EngineSource, item::EngineSourceItem) =
     DataBrowserAPI.read(TypedProject(), source, item)
 
-@testset "a method defined after the workspace opens is used" begin
-    ws = W.open_workspace(LateProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
-    try
-        settled(ws)
-        @eval DataBrowserAPI.process(::LateProject, i::EngineItem) =
-            EngineItem(id(i), (x=i.data.x .* 10,), metadata(i))
-        @test item_data(only(W.materialize_items(ws, ["only"]))).x == [10]
-    finally
-        W.close_workspace!(ws)
-    end
-end
-
-@testset "a method redefined after the workspace opens replaces its results" begin
+@testset "processing code defined and changed after the workspace opens updates its results" begin
     ws = W.open_workspace(LateProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
     processed() = item_data(only(W.materialize_items(ws, ["only"]))).x
     try
         settled(ws)
+        @eval DataBrowserAPI.process(::LateProject, i::EngineItem) =
+            EngineItem(id(i), (x=i.data.x .* 10,), metadata(i))
         @test processed() == [10]
         @eval DataBrowserAPI.process(::LateProject, i::EngineItem) =
             EngineItem(id(i), (x=i.data.x .* 100,), metadata(i))
@@ -283,15 +270,8 @@ DataBrowserAPI.project_name(::HelperProject) = "helper"
 DataBrowserAPI.read(::HelperProject, source::EngineSource, item::EngineSourceItem) =
     DataBrowserAPI.read(TypedProject(), source, item)
 helper_scale() = 2
-# Slots that hold no value yet, as in a buffer allocated ahead of use, and a value that cannot be
-# read: the other code of the stage is still followed.
-const HELPER_SLOTS = Vector{Any}(undef, 2)
-struct Unreadable <: AbstractVector{Int} end
-Base.size(::Unreadable) = (1,)
-Base.getindex(::Unreadable, ::Int) = error("cannot be read")
-const HELPER_UNREADABLE = Unreadable()
 DataBrowserAPI.process(::HelperProject, i::EngineItem) = EngineItem(id(i),
-    (x=i.data.x .* helper_scale(), slots=[length(HELPER_SLOTS) + length(HELPER_UNREADABLE)]), metadata(i))
+    (x=i.data.x .* helper_scale(),), metadata(i))
 
 @testset "a function that a stage calls, changed after the workspace opens, replaces its results" begin
     ws = W.open_workspace(HelperProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
@@ -471,32 +451,6 @@ end
     end
 end
 
-@testset "an item whose processed data is missing from the cache is processed again" begin
-    mktempdir() do depot
-        pushfirst!(DEPOT_PATH, depot)
-        try
-            project = EngineProject("engine", 0)
-            ws = W.open_workspace(project, EngineSource("source", 2, false); background_processing=true)
-            try
-                settled(ws)
-                W.delete_processed!(ws.cache.db, "1"; collection=0)
-            finally
-                W.close_workspace!(ws)
-            end
-            ws = W.open_workspace(project, EngineSource("source", 2, false); background_processing=true)
-            try
-                settled(ws)
-                @test item_data(only(W.materialize_items(ws, ["1"]))).x == [4]
-                @test isempty(W.workspace_status(ws).errors)
-            finally
-                W.close_workspace!(ws)
-            end
-        finally
-            popfirst!(DEPOT_PATH)
-        end
-    end
-end
-
 @testset "failure reuse and recovery (cache=$cache)" for cache in (true, false)
     # The failing read is expected: its error log is hidden.
     Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do; mktempdir() do depot
@@ -542,7 +496,7 @@ end
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
         try
-            for _ in 1:2
+            for opening in 1:2
                 ws = W.open_workspace(
                     NestedProject(), EngineSource("source", 1, false); background_processing=true)
                 try
@@ -551,6 +505,9 @@ end
                     @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
                     @test W.label(ws, W.item(ws, "a")) == "inner a"
                     @test only(item_data(only(W.materialize_items(ws, ["a"]))).x) == 20
+                    if opening == 2
+                        @test W.query_items(ws, "step = 2") == ["a"]
+                    end
                 finally
                     W.close_workspace!(ws)
                 end

@@ -69,11 +69,3 @@ end
     @test cut.columns == ["z", "x"]
     @test cut.getvalue(1, 1) == 6 && cut.getvalue(1, 2) == 2
 end
-
-@testset "a list narrows to the names that have the typed letters in order" begin
-    match = DataBrowserGUI.Browser._fuzzy_match
-    @test match("wf", "width_finger") == [1, 7]
-    @test match("WF", "wafer") !== nothing
-    @test match("fw", "width_finger") === nothing
-    @test match("", "wafer") == Int[]
-end

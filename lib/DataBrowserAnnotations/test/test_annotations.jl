@@ -68,7 +68,7 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
     end
 
     @testset "Notes" begin
-        @testset "round-trip with bracketed body content" begin
+        @testset "reading notes preserves bracketed body content" begin
             fixture = joinpath(ANNOT_FIXTURES, "notes_basic")
             chipB = Annotations.Notes.read_section(fixture, "ChipB")
             @test occursin("Oxygen flow", chipB)

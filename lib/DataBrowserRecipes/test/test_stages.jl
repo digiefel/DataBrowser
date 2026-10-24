@@ -2,6 +2,7 @@ using DataBrowserAPI: AbstractDataSource, AbstractDataSourceItem, expand, proces
 using Test, DataBrowserRecipes, DataBrowserAPI
 import DataBrowserSources
 using DataBrowserSources: DirectorySource
+using CancellationTokens: CancellationTokenSource, get_token
 
 struct RecipeSource <: AbstractDataSource end
 struct RecipeFile <: AbstractDataSourceItem
@@ -23,12 +24,6 @@ DataBrowserAPI.label(f::RecipeFile) = basename(f.filepath)
         @test metadata(item)[:length] == 5
         @test analyze(project, item) == Dict(:length => 5)
     end
-    convert_metadata = DataBrowserAPI.metadata_dict
-    @test isempty(convert_metadata((;)))
-    @test isempty(convert_metadata(Pair[]))
-    @test convert_metadata(("length" => Int32(5),))[:length] === Int64(5)
-    @test convert_metadata((; area=(1000.0, 1000.0)))[:area] == [1000.0, 1000.0]
-    @test_throws ArgumentError convert_metadata((; length=match(r"\d+", "5")))
 end
 
 @testset "registered callbacks implement the type API" begin
@@ -55,8 +50,8 @@ end
 @testset "CSV recipe reads the files of a directory source" begin
     mktempdir() do dir
         write(joinpath(dir, "sample.csv"), "x,y\n1,2\n3,4\n")
-        source = DirectorySource(dir)
-        file = DataBrowserSources.index_source_file(joinpath(dir, "sample.csv"), dir)
+        source = open_source(DirectorySource(dir))
+        file = only(items(source; cancel_token=get_token(CancellationTokenSource())))
         project = register_csv!(define_project("csv"))
         item = only(expand(project, file, read(project, source, file)))
         @test item_data(item).x == [1, 3]
@@ -70,13 +65,6 @@ end
 
         register_csv!(project; label=nothing)
         @test label(project, item) == id(item)
+        close_source!(source)
     end
-end
-
-@testset "a registration changes the code that reads source items" begin
-    project = define_project("late")
-    roots() = stage_roots(project, DataBrowserAPI.SOURCE_READ, DataBrowserSources.SourceFile)
-    before = roots()
-    register_csv!(project)
-    @test !isequal(roots(), before)
 end

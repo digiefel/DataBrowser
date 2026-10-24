@@ -1,7 +1,12 @@
 using TOML, Statistics
 
 workload, output = ARGS[1:2]
-import_s = @elapsed @eval using DataBrowser
+import_s = @elapsed begin
+    @eval using DataBrowser
+    if workload == "browser"
+        @eval using GLMakie, AlgebraOfGraphics
+    end
+end
 
 if workload == "engine"
     include("workloads.jl")
