@@ -9,7 +9,7 @@ import DataBrowserAPI
 using DataBrowserAPI: Setting
 using DataBrowserCore: Selection
 using DataBrowserGUI: CODE_COLORS, CodeFile, code_text, draw_code, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
-using DataBrowserGUI.Browser: ListPicker, render_list_picker!
+using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!
 import DataBrowserAPI: draw!, prepare!, settings
 using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mappings
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
@@ -26,6 +26,12 @@ const ICON_PLUS = "\ue13d"
 const ICON_X = "\ue1b2"
 const ICON_CHEVRON_DOWN = "\ue06d"
 const ICON_CHEVRON_RIGHT = "\ue06f"
+const ICON_THEME = "\ue59f"    # swatch-book
+const ICON_PALETTE = "\ue1dd"  # palette
+const ICON_TEXT = "\ue3d9"     # case-sensitive
+const ICON_SETTING = "\ue29a"  # sliders-horizontal
+const ICON_BLOCK = "\ue471"    # layout-panel-top
+const ICON_PLOT = "\ue48a"     # chart-scatter
 # The values the menus of `marker` and `linestyle` offer, each drawn as it looks.
 const MARKERS = [:circle, :rect, :diamond, :utriangle, :dtriangle, :ltriangle, :rtriangle, :cross,
     :xcross, :pentagon, :hexagon]
@@ -50,11 +56,12 @@ const SCALE_INFO = Dict(
 const DEFAULT_THEME = Makie.Theme()
 # Makie's themes, as `theme(...)` names them: `:default` for Makie's default, `:dark` for `theme_dark`.
 const THEMES = [:default, :light, :dark, :black, :minimal, :ggplot2, :latexfonts]
-# The figure-wide settings of a theme that the menu of `theme` offers, and its groups.
+# The figure-wide settings of a theme that the menu of `theme` offers, and the blocks it has groups
+# for; it also has a group for each plot type.
 const THEME_SETTINGS = [:backgroundcolor, :textcolor, :font, :fontsize, :figure_padding, :rowgap, :colgap,
     :palette, :colormap, :linecolor, :linestyle, :linewidth, :marker, :markercolor, :markersize,
     :markerstrokecolor, :markerstrokewidth, :patchcolor, :patchstrokecolor, :patchstrokewidth]
-const THEME_GROUPS = [:Axis, :Legend, :Colorbar, Symbol.(PLOT_TYPES)...]
+const THEME_BLOCKS = [:Axis, :Legend, :Colorbar]
 # The settings of a group that change what the plot shows, not how it looks, which the menus of a
 # theme leave out: `scales` and `visual` set them. `:plots` are those of every plot type.
 const NOT_STYLE = Dict(
@@ -569,17 +576,19 @@ function to_right_end(width::Float32)::Nothing
     return nothing
 end
 
-# A menu of `names` under the last item, which a long menu filters as the user types. Returns the
-# name the user picked, or `nothing`.
-function names_menu(view::BuilderView, names::Vector{String})::Union{Nothing,String}
+# A menu of `names`, each a name or a `ListItem`, under the last item, which a long menu filters as
+# the user types. Returns the name the user picked, or `nothing`.
+function names_menu(view::BuilderView, names::AbstractVector)::Union{Nothing,String}
     picked = nothing
     if ig.BeginPopup("names")
-        if length(names) > 10
-            index = render_list_picker!(view.picker, names, falses(length(names)))
-            index === nothing || (picked = names[index]; ig.CloseCurrentPopup())
+        items = [name isa ListItem ? name : ListItem(name) for name in names]
+        if length(items) > 10
+            index = render_list_picker!(view.picker, items)
+            index === nothing || (picked = items[index].name; ig.CloseCurrentPopup())
         else
-            for name in names
-                with_font(() -> ig.Selectable(name), :code) && (picked = name)
+            for item in items
+                with_font(() -> ig.Selectable(isempty(item.icon) ? item.name : "$(item.icon) $(item.name)"), :code) &&
+                    (picked = item.name)
             end
         end
         ig.EndPopup()
@@ -590,7 +599,7 @@ end
 # A title of the panel with a "+" at the right end of its row that offers `offered` names. The title
 # is code in the color of `role`, such as `:call` for `mapping`, or `:plain`; `:interface` writes it
 # as other text. Returns the name the user picked, or `nothing`.
-function heading!(view::BuilderView, id::String, title::String, offered::Vector{String};
+function heading!(view::BuilderView, id::String, title::String, offered::AbstractVector;
         role::Symbol=:call, tooltip::String="Add")::Union{Nothing,String}
     ig.PushID(id)
     ig.AlignTextToFramePadding()
@@ -1111,12 +1120,17 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
             values = entries(plot.theme)
             present = [entry.name for entry in values]
             # Makie's themes as the code names them, then the figure-wide settings, then the groups.
-            offered = [(1 in present ? String[] : [":$t" for t in THEMES]); String.(setdiff(THEME_SETTINGS, present));
-                String.(setdiff(THEME_GROUPS, present))]
+            setting_icon(name) = occursin("color", name) || name in ("palette", "colormap") ? ICON_PALETTE :
+                occursin("font", name) ? ICON_TEXT : ICON_SETTING
+            offered = [
+                (1 in present ? ListItem[] : [ListItem(":$t"; section="Makie themes", icon=ICON_THEME) for t in THEMES]);
+                [ListItem(name; section="Figure", icon=setting_icon(name)) for name in String.(setdiff(THEME_SETTINGS, present))];
+                [ListItem(name; section="Blocks", icon=ICON_BLOCK) for name in String.(setdiff(THEME_BLOCKS, present))];
+                [ListItem(name; section="Plot types", icon=ICON_PLOT) for name in setdiff(PLOT_TYPES, String.(present))]]
             name = heading!(view, "theme", "theme", offered; tooltip="Add a setting of the theme")
             if name !== nothing && startswith(name, ':')
                 push!(changes, () -> write_entry!(view.code, plot, (:theme, 0), 1, name))
-            elseif name !== nothing && Symbol(name) in THEME_GROUPS
+            elseif name !== nothing && (Symbol(name) in THEME_BLOCKS || name in PLOT_TYPES)
                 push!(changes, () -> write_entry!(view.code, plot, (:theme, 0), Symbol(name), "(;)"))
             elseif name !== nothing
                 start_edit!(view, (:theme, 0), Symbol(name), "")
