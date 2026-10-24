@@ -252,8 +252,14 @@ function _apply_project_view!(
     return nothing
 end
 
-"""Write project-local state only when its serialized value changed."""
-function _save_project_view_if_changed!(state::BrowserState)::Nothing
+"""
+Write project-local state only when its serialized value changed. The frames compare it twice a
+second at most; `every=0` compares it now, as when the browser closes.
+"""
+function _save_project_view_if_changed!(state::BrowserState; every::Real=0.5)::Nothing
+    # Building and serializing the view at every frame allocates in proportion to the selection.
+    time() - state.project_view_checked < every && return nothing
+    state.project_view_checked = time()
     view = _project_view_from_browser(state)
     view === nothing && return nothing
     _project_view_to_toml(state.saved_project_view) ==

@@ -243,6 +243,8 @@ Base.@kwdef mutable struct BrowserState
     next_window::Int = 0
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()
+    # When the browser last compared its view with `saved_project_view`, as `time()`.
+    project_view_checked::Float64 = 0.0
     # The path of each expanded collection.
     expanded_collections::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
     tree_filter::String = ""

@@ -518,7 +518,7 @@ function _run_browser(
             foreach(window -> close(window.visualizer), state.windows)
             _shutdown_extensions!(state)
             _shutdown_implot_context!(state)
-            _save_project_view_if_changed!(state)
+            _save_project_view_if_changed!(state; every=0)
             GLFW.HideWindow(ig.current_window())
             window_start == :normal && _leave_foreground_app()
             # macOS takes the window off the screen while the process handles window events, and
