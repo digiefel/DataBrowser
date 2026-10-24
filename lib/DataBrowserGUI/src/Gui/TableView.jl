@@ -1,4 +1,5 @@
 import CImGui as ig
+import CImGui.CSyntax: @c
 
 import CSV
 using Printf: @sprintf
@@ -27,16 +28,20 @@ has. The arrow in its header unfolds it into one column for each name, under a h
 name of the block; the arrow in that row folds it again. When an item's data is itself a block of
 names, its names are the columns.
 
-With several items, a row with the label of each item comes before the item's rows, and its text
-stays in place when the table scrolls sideways. Selecting that row selects all of the item's rows.
-The arrow beside the label folds the item to that row. "Expand all" and "Collapse all", in the menu
-that right-clicking the row opens, unfold and fold all items. Enter folds the items whose rows with
-their labels are selected, or unfolds them when they are all folded; Cmd-A selects all rows.
+With several items, "Group by item", in the top line of the window, is checked at first: the rows
+of each item follow each other, under a row with the item's label, whose text stays in place when
+the table scrolls sideways. Selecting that row selects all of the item's rows. The arrow beside the
+label folds the item to that row. "Expand all" and "Collapse all", in the menu that right-clicking
+the row opens, unfold and fold all items. Enter folds the items whose rows with their labels are
+selected, or unfolds them when they are all folded; Cmd-A selects all rows. When "Group by item" is
+unchecked, the first column, `item`, shows the label of the item of each row instead. The menus of
+the rows with the labels and of the headers check and uncheck "Group by item" too.
 
 Clicking the header of a column selects the column, and Shift-click selects the columns up to it.
 The arrow at the right of the column's name, which shows when the mouse is over the header, sorts
-the rows of each item by the column: ascending, then descending, then not at all. Shift-click on the
-arrow adds another column to sort by.
+by the column: ascending, then descending, then not at all. When the rows are grouped by item, it
+sorts the rows of each item; otherwise it sorts all rows, and sorting by `item` puts the items in
+order. Shift-click on the arrow adds another column to sort by.
 Right-clicking the header opens a menu. Its field takes a filter: a Julia function, such as `≥(0)`
 or `!in(["C2_3um"])`, which the table calls with each value of the column. The table shows the rows
 for which it returns `true`; a funnel at the right of the column's name marks the filter. The menu
@@ -63,9 +68,11 @@ the label of the item of each row.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
     table::Union{Nothing,ItemTable} = nothing
-    # The table has a first column `item`, built here from several items, which the table shows as
-    # a row with the label of each item before the item's rows.
+    # The table has a first column `item`, built here from several items.
     item_column::Bool = false
+    # "Group by item": the rows of each item follow each other, under the row with its label.
+    # Otherwise the column `item` shows the label of each row's item.
+    group::Bool = true
     # The selection the table was built from, the metadata it has, and the metadata the user picked
     # as columns.
     selection::Union{Nothing,Selection} = nothing
@@ -215,13 +222,20 @@ function draw_header!(view::TableView, ctx)::Nothing
         end
         ig.EndPopup()
     end
-    (view.selection === nothing || !isempty(view.zoom) || isempty(view.metadata_names)) && return nothing
-    ig.SameLine()
-    if open_list("$ICON_TAG Metadata", "##metadata", "The metadata that the table shows as columns")
-        toggled = render_list_picker!(view.metadata_picker, string.(view.metadata_names),
-            [name in view.metadata for name in view.metadata_names])
-        toggled === nothing || _pick_metadata!(view, view.metadata_names[toggled])
-        ig.EndPopup()
+    if view.selection !== nothing && isempty(view.zoom) && !isempty(view.metadata_names)
+        ig.SameLine()
+        if open_list("$ICON_TAG Metadata", "##metadata", "The metadata that the table shows as columns")
+            toggled = render_list_picker!(view.metadata_picker, string.(view.metadata_names),
+                [name in view.metadata for name in view.metadata_names])
+            toggled === nothing || _pick_metadata!(view, view.metadata_names[toggled])
+            ig.EndPopup()
+        end
+    end
+    if view.item_column
+        ig.SameLine()
+        group = view.group
+        @c(ig.Checkbox("Group by item", &group)) && _group!(view, group)
+        ig.SetItemTooltip("Show the rows of each item under a row with its label. When off, the column `item` shows the label of each row's item.")
     end
     return nothing
 end
@@ -263,6 +277,7 @@ function draw!(view::TableView, ctx)::Nothing
     end
 
     shown = view.shown
+    grouped = view.item_column && view.group
     item(row) = table.row_item[shown[row]]
     function cell(row, column)
         text = _number_text(table.getvalue(shown[row], column), view.formats[column])
@@ -318,6 +333,11 @@ function draw!(view::TableView, ctx)::Nothing
             ig.TextUnformatted(view.filter_errors[name])
             ig.PopStyleColor()
         end
+        if view.item_column && ig.MenuItem("Group by item", C_NULL, view.group)
+            change = () -> _group!(view, !view.group)
+        end
+        # The column `item` shows unless the rows are grouped by item.
+        view.item_column && column == 1 && return nothing
         ig.MenuItem("Hide column") || return nothing
         if _data_column(view, column)
             push!(view.hidden, name)
@@ -362,6 +382,8 @@ function draw!(view::TableView, ctx)::Nothing
             band_popup=function (_)
                 ig.MenuItem("Expand all") && (change = () -> _fold!(view, eachindex(table.item_labels), false))
                 ig.MenuItem("Collapse all") && (change = () -> _fold!(view, eachindex(table.item_labels), true))
+                ig.Separator()
+                ig.MenuItem("Group by item", C_NULL, true) && (change = () -> _group!(view, false))
             end,
             on_sort=columns -> (view.sort = [(table.columns[c], ascending) for (c, ascending) in columns];
                                 change = () -> _arrange!(view)),
@@ -369,14 +391,14 @@ function draw!(view::TableView, ctx)::Nothing
                 !haskey(view.filter_errors, table.columns[column]) ? ICON_FILTER : "",
             header_popup=filter_popup,
             # The rows with the labels of the items show the column `item`.
-            hidden=column -> table.columns[column] in view.hidden || view.item_column && column == 1,
+            hidden=column -> table.columns[column] in view.hidden || grouped && column == 1,
             # TODO: pass on the selected columns, `view.grid.selected_columns`, too.
             on_selection_change=_ -> _pass_on!(view),
         )
     end
     # Enter folds the items whose selected rows include the row with their label, or unfolds them
     # when they are all folded.
-    if view.item_column && ig.IsWindowFocused(ig.ImGuiFocusedFlags_ChildWindows) &&
+    if grouped && ig.IsWindowFocused(ig.ImGuiFocusedFlags_ChildWindows) &&
             (ig.IsKeyPressed(ig.ImGuiKey_Enter, false) || ig.IsKeyPressed(ig.ImGuiKey_KeypadEnter, false))
         items = Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows if view.label_row[row])
         isempty(items) || _fold!(view, items, !issubset(items, view.folded))
@@ -387,6 +409,14 @@ function draw!(view::TableView, ctx)::Nothing
     elseif rebuild
         _rebuild!(view)
     end
+    return nothing
+end
+
+# Group the rows by item, or show the column `item` instead.
+function _group!(view::TableView, group::Bool)::Nothing
+    view.group = group
+    _arrange!(view)
+    view.grid.fit_columns = true
     return nothing
 end
 
@@ -468,7 +498,8 @@ function _arrange!(view::TableView)::Nothing
         sort!(rows; by=row -> _sort_key(table.getvalue(row, column), ascending), rev=!ascending)
     end
     # The rows of each item stay together, under the row with the item's label.
-    view.item_column && sort!(rows; by=row -> table.row_item[row])
+    grouped = view.item_column && view.group
+    grouped && sort!(rows; by=row -> table.row_item[row])
     view.order = rows
 
     view.shown = Int[]
@@ -479,12 +510,12 @@ function _arrange!(view::TableView)::Nothing
         item = table.row_item[row]
         new_item = !haskey(view.item_rows, item)
         push!(get!(Vector{Int}, view.item_rows, item), row)
-        if view.item_column && new_item
+        if grouped && new_item
             push!(view.shown, row)
             push!(view.label_row, true)
             push!(view.run_start, length(view.shown))
         end
-        view.item_column && item in view.folded && continue
+        grouped && item in view.folded && continue
         # A row below a row of the same item, other than the row with its label, continues its run.
         continues = !isempty(view.shown) && !last(view.label_row) && table.row_item[last(view.shown)] == item
         push!(view.run_start, continues ? last(view.run_start) : length(view.shown) + 1)
