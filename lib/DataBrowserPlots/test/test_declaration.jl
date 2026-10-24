@@ -51,3 +51,12 @@ end
         mapping(; markersize=:P) * visual(Lines)
     end)
 end
+
+@testset "the limits of a scale remove the values outside them before the analyses run" begin
+    rows = (x=[1.0, 1, 2, 2], y=[1.0, 10, 2, 20])
+    plot = @plot data(rows) * mapping(:x, :y) begin
+        expectation() * visual(Lines)
+        scales(y = (; limits = (0, 15)))
+    end
+    @test last.(only(plotted(figure(plot), Lines))[1][]) ≈ [5.5, 2.0]
+end

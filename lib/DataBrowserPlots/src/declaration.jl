@@ -202,6 +202,17 @@ their names, as AlgebraOfGraphics' `scales` takes them.
 
     scales(color = (; categories = ["719a" => "Chip 719a", "72b" => "Chip 72b"]))
 
+The scales of `x` and `y` set their axes:
+
+    scales(x = (; label = "Gap (µm)"), y = (; label = "R (Ω)", scale = log10, limits = (1, 1e4)))
+
+- `label` names the axis.
+- `scale` is a function, such as `log10`, that applies to the values before the analyses run, so it
+  can change their results: the mean of `expectation()` is then taken of the logarithms.
+- `limits` are the lowest and highest value shown. The values outside them are removed before the
+  analyses run, so they can change their results too.
+- `reversed = true` draws the axis from the highest value to the lowest.
+
 The legend has a section for each role, such as `color`. Roles share a section when one of them
 determines the others, that is, when each of its values is drawn with the same values of the
 others: one entry then shows a chip's color and its site's line style. Each entry is named after

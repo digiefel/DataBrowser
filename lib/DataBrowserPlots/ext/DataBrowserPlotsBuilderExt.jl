@@ -35,10 +35,11 @@ const PLOT_TYPES = ["Scatter", "Lines", "ScatterLines", "BarPlot", "Errorbars", 
 # The mappings whose scale `scales(...)` sets.
 const SCALED = [:x, :y, :color, :marker, :linestyle, :markersize, :linewidth, :layout, :row, :col]
 # The settings the menu of a scale offers.
-const SCALE_SETTINGS = [:label, :scale, :ticks, :tickformat]
+const SCALE_SETTINGS = [:label, :scale, :limits, :reversed, :ticks, :tickformat]
 # What the settings of a scale change, shown by the info button beside them.
 const SCALE_INFO = Dict(
     :scale => "The scale function applies before the analyses run, and can change their results.",
+    :limits => "The values outside the limits are removed before the analyses run, and can change their results.",
 )
 # A value the user is writing in the panel: the call it goes in (see `target_call`), its name, and
 # whether the user writes the value or its text after `=>`; the text, and whether the field takes

@@ -6,7 +6,7 @@ using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, resolve
-using DataBrowserPlots: @plot, Fit, LegendEntry, PlotLines, Scaled, Statistic, column, fit_statistic
+using DataBrowserPlots: @plot, Fit, LegendEntry, PlotLine, PlotLines, Scaled, Statistic, column, fit_statistic
 using DataBrowserAPI: item_data, metadata
 using DataBrowserCore: Group, select
 using PrecompileTools: @setup_workload, @compile_workload
@@ -192,13 +192,56 @@ end
 const ROLE_SCALES = Dict(:x => :X, :y => :Y, :color => :Color, :marker => :Marker, :linestyle => :LineStyle,
     :markersize => :MarkerSize, :linewidth => :LineWidth, :layout => :Layout, :col => :Col, :row => :Row)
 
+# A step that runs before the analyses of a layer and removes its points outside the limits of x and
+# y, as `limits` of their scales does. `limits[i]` are those of position `i`, or `nothing`.
+# TODO: positions that a plot type shows on another axis, such as the first of a horizontal BarPlot.
+# TODO: the points that a fit line fits; it is fitted before its layer is drawn.
+struct WithinLimits
+    limits::Vector{Any}
+end
+
+function (step::WithinLimits)(p::AoG.ProcessedLayer)
+    # The points of each group that are inside the limits.
+    inside = map(eachindex(first(p.positional))) do group
+        keep = trues(length(first(p.positional)[group]))
+        for (position, limits) in enumerate(step.limits)
+            (limits === nothing || position > length(p.positional)) && continue
+            keep .&= coalesce.(first(limits) .<= p.positional[position][group] .<= last(limits), false)
+        end
+        keep
+    end
+    cut(values) = map(eachindex(values)) do group
+        points = values[group]
+        points isa AbstractVector && length(points) == length(inside[group]) ? points[inside[group]] : points
+    end
+    return AoG.ProcessedLayer(p; positional=map(cut, p.positional), named=map(cut, p.named))
+end
+
+limited(layer::AoG.Layer, step) = AoG.Layer(; transformation=layer.transformation ∘ step, layer.data, layer.positional, layer.named)
+limited(layers::AoG.Layers, step) = AoG.Layers([limited(layer, step) for layer in layers.layers])
+limited(plot::PlotLines, step) =
+    PlotLines([PlotLine(limited(drawable(line.layers), step), line.shared, line.drawn) for line in plot.lines])
+
 function figure(plot::Scaled, args...; options...)
     for (r, _) in plot.scales
         haskey(ROLE_SCALES, r) || error("scales sets the scale of a role such as color; $r is not one")
     end
-    settings = AoG.scales(; (ROLE_SCALES[r] => value for (r, value) in plot.scales)...)
+    # `limits` and `reversed` of x and y are ours: Makie's axis draws them, and the limits also
+    # remove the points outside them before the analyses run.
+    limits = Any[nothing, nothing]
+    axis = Pair{Symbol,Any}[]
+    scales = map(plot.scales) do (r, value)
+        r in (:x, :y) && value isa NamedTuple || return r => value
+        haskey(value, :limits) && (limits[r === :x ? 1 : 2] = value.limits)
+        get(value, :reversed, false) && push!(axis, Symbol(r, :reversed) => true)
+        return r => Base.structdiff(value, NamedTuple{(:limits, :reversed)})
+    end
+    any(!isnothing, limits) && push!(axis, :limits => Tuple(limits))
+    settings = AoG.scales(; (ROLE_SCALES[r] => value for (r, value) in scales)...)
+    layers = any(!isnothing, limits) ? limited(drawable(plot.layers), WithinLimits(limits)) : drawable(plot.layers)
     legend = (; plot.legend..., get(options, :legend, (;))...)
-    return figure(drawable(plot.layers), settings, args...; options..., texts=plot.texts, legend)
+    return figure(layers, settings, args...; options..., axis=(; axis..., get(options, :axis, (;))...),
+        texts=plot.texts, legend)
 end
 
 function Base.:*(statistic::Statistic, layer::AoG.Layer)
