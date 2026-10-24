@@ -6,14 +6,16 @@ arrow keys are on.
 
 A list picker is a field with a list of names below it, each with a checkmark, drawn in a popup by
 [`render_list_picker!`](@ref). Typing in the field narrows the list to the names that have the typed
-letters in the same order, not necessarily next to each other: `wf` finds `width_finger`. The
-up and down arrow keys move through the list, Enter checks or unchecks the name they are on, and a
-click checks or unchecks a name. Escape closes the popup.
+letters in the same order, not necessarily next to each other: `wf` finds `width_finger`. A click
+checks or unchecks a name. The up and down arrow keys move a highlight through the list, which
+starts on the first name that matches as soon as the user types, and Enter checks or unchecks the
+highlighted name. Escape closes the popup.
 """
 Base.@kwdef mutable struct ListPicker
     query::String = ""
-    # The place of the name the arrow keys are on, among the names that match the query.
-    cursor::Int = 1
+    # The place of the name the arrow keys are on, among the names that match the query; 0 before
+    # the user types or presses an arrow key, and after a click.
+    cursor::Int = 0
 end
 
 """
@@ -38,7 +40,7 @@ function render_list_picker!(picker::ListPicker, names::Vector{String},
     moved = ig.IsKeyPressed(ig.ImGuiKey_DownArrow) || ig.IsKeyPressed(ig.ImGuiKey_UpArrow)
     ig.IsKeyPressed(ig.ImGuiKey_DownArrow) && (picker.cursor += 1)
     ig.IsKeyPressed(ig.ImGuiKey_UpArrow) && (picker.cursor -= 1)
-    picker.cursor = clamp(picker.cursor, 1, max(length(matches), 1))
+    picker.cursor = clamp(picker.cursor, moved ? 1 : 0, length(matches))
 
     style = unsafe_load(ig.GetStyle())
     box = ig.GetFontSize()
@@ -52,14 +54,14 @@ function render_list_picker!(picker::ListPicker, names::Vector{String},
     ig.SetNextItemWidth(width)
     if ig.InputTextWithHint("##query", "type to filter", buffer, length(buffer),
             ig.ImGuiInputTextFlags_EnterReturnsTrue)
-        isempty(matches) || (toggled = first(matches[picker.cursor]))
+        picker.cursor == 0 || (toggled = first(matches[picker.cursor]))
         # Enter ends the typing, so the field takes the keys again.
         ig.SetKeyboardFocusHere(-1)
     end
     query = unsafe_string(pointer(buffer))
     if query != picker.query
         picker.query = query
-        picker.cursor = 1
+        picker.cursor = isempty(query) ? 0 : 1
     end
 
     if isempty(matches)
@@ -76,7 +78,7 @@ function render_list_picker!(picker::ListPicker, names::Vector{String},
             position = ig.GetCursorScreenPos()
             if ig.Selectable("##name_$index", place == picker.cursor, ig.ImGuiSelectableFlags_NoAutoClosePopups)
                 toggled = index
-                picker.cursor = place
+                picker.cursor = 0
             end
             moved && place == picker.cursor && ig.SetScrollHereY()
             ig.RenderFrame(position, ig.ImVec2(position.x + box, position.y + box),
@@ -95,7 +97,6 @@ function render_list_picker!(picker::ListPicker, names::Vector{String},
         ig.PopItemFlag()
         ig.EndChild()
     end
-    ig.TextDisabled("$(length(matches)) of $(length(names)) · $(count(checked)) checked")
     return toggled
 end
 
