@@ -324,7 +324,7 @@ function forget_stale!(workspace::Workspace)::Nothing
             saved = get(workspace.collection_keys, key, nothing)
             saved === nothing || clear_cached_result_state!(cache, stage, saved)
         else
-            filter!(target -> first(target) != key, workspace.errors)
+            filter!(entry -> entry.first[1] != key, workspace.errors)
             saved = pop!(workspace.collection_keys, key, nothing)
             saved === nothing && continue
             delete_collection_metadata!(cache, [saved])
@@ -344,7 +344,7 @@ function remove_items!(workspace::Workspace, source::SourceKey)::Nothing
     removed_ids = String[id(catalog, item) for item in removed]
     publish!(catalog, source, ItemEntry[])
     delete_source_output!(workspace.cache.db, cache_key(workspace, source), removed_ids)
-    filter!(target -> !(first(target) in removed), workspace.errors)
+    filter!(entry -> !(entry.first[1] in removed), workspace.errors)
     setdiff!(workspace.wanted, removed)
     forget_stale!(workspace)
     return nothing
@@ -395,7 +395,7 @@ function ingest_source_changes!(
             delete!(catalog, source)
             delete!(workspace.source_items, source)
             delete!(workspace.source_locks, source)
-            filter!(target -> first(target) != source, workspace.errors)
+            filter!(entry -> entry.first[1] != source, workspace.errors)
         end
         delete_source_item!(cache, saved, String[])
         changed = true

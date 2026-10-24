@@ -306,7 +306,10 @@ the payload is gone, or the item type does not rebuild from a payload, `expand` 
 function unprocessed(workspace::Workspace, item::ItemKey, known, given::MetadataDict)::AbstractDataItem
     cached = only(read_payload(workspace.cache.db, [known.id]; stage=SOURCE_EXPAND))
     value = cached === nothing ? nothing : reconstruct(known.type, known.id, something(cached), given)
-    value === nothing && (value = expand_again(workspace, item))
+    if value === nothing
+        value = expand_again(workspace, item)
+        value = something(reconstruct(known.type, known.id, item_data(value), given), value)
+    end
     return adopt(value, known.label, given, known.collections)
 end
 
