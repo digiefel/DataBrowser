@@ -208,6 +208,18 @@ struct ItemList
 end
 
 """
+The part of the workspace selection that exists and is visible, as `_project_visible_selection`
+returns it. Kept while `key` stays the same: the key covers the workspace and its generation, the
+selection and the tags.
+"""
+struct VisibleSelection
+    key::UInt
+    collections::Vector{Workspace.Catalogs.CollectionKey}
+    items::Vector{Workspace.Catalogs.ItemKey}
+    path::Vector{String}
+end
+
+"""
 Runtime state owned by the browser.
 
 The workspace owns items, selection, cache state, data, and background work. This type owns
@@ -217,6 +229,7 @@ Base.@kwdef mutable struct BrowserState
     workspace::Union{Nothing,Workspace.Workspace} = nothing
     tree_cache::Union{Nothing,TreeCache} = nothing
     item_list::Union{Nothing,ItemList} = nothing
+    visible_selection::Union{Nothing,VisibleSelection} = nothing
     # The windows that show a value with a visualizer, and the number of the last one opened.
     windows::Vector{Window} = Window[]
     next_window::Int = 0

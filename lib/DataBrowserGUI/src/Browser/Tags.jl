@@ -25,7 +25,8 @@ end
 """
 Resolve the current selected collections and items after applying tag visibility.
 The selection in the workspace is left untouched; this returns only the part of it that exists and
-is visible now. The root is never among the returned collections.
+is visible now. The root is never among the returned collections. The returned vectors are kept for
+the next calls: do not change them.
 """
 function _project_visible_selection(
     state::BrowserState,
@@ -34,6 +35,13 @@ function _project_visible_selection(
     if !(workspace isa Workspace.Workspace)
         return CollectionKey[], ItemKey[], String[]
     end
+    # The panels and every window ask at each frame; looking up each selected id costs time and
+    # memory in proportion to the selection.
+    key = hash((objectid(workspace), Workspace.generation(workspace), workspace.selection.collections,
+        workspace.selection.item_ids, hash(state.tag_visibility), workspace.tags.revision, _tags_ready(state)))
+    kept = state.visible_selection
+    kept !== nothing && kept.key == key && return kept.collections, kept.items, kept.path
+
     selected_collections = CollectionKey[]
     for path in workspace.selection.collections
         collection = Workspace.collection(workspace, path)
@@ -60,6 +68,7 @@ function _project_visible_selection(
         selected_path = String[
             label(workspace, key) for key in [Workspace.ancestors(workspace, selected); selected]]
     end
+    state.visible_selection = VisibleSelection(key, selected_collections, selected_items, selected_path)
     return selected_collections, selected_items, selected_path
 end
 
