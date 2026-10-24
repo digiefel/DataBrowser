@@ -16,7 +16,6 @@ using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure,
 const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
 using .GLMakieExt: DARK, FigureView
 import .GLMakieExt: theme_button
-using .GLMakieExt.MakieImguiIntegration: plot_theme
 import .GLMakieExt: build!, export_name
 
 # Icons of the Lucide font that DataBrowserGUI loads with the interface font.
@@ -47,6 +46,8 @@ const SCALE_INFO = Dict(
     :scale => "The scale function applies before the analyses run, and can change their results.",
     :limits => "The values outside the limits are removed before the analyses run, and can change their results.",
 )
+# The theme of a plot without a `theme(...)` line: Makie's default.
+const DEFAULT_THEME = Makie.Theme()
 # Makie's themes, as `theme(...)` names them: `:default` for Makie's default, `:dark` for `theme_dark`.
 const THEMES = [:default, :light, :dark, :black, :minimal, :ggplot2, :latexfonts]
 # The figure-wide settings of a theme that the menu of `theme` offers, and its groups.
@@ -244,7 +245,7 @@ function select_code(data::Ptr{ig.lib.ImGuiInputTextCallbackData})::Cint
     return Cint(0)
 end
 
-# The plot's `theme(...)` line sets its theme; without one, it has the theme of the other windows.
+# The plot's `theme(...)` line sets its theme; without one, it has Makie's default theme.
 theme_button(::BuilderView) = false
 
 # Run the code with `selection` set, and draw what it returns.
@@ -282,7 +283,7 @@ function build!(view::BuilderView, ctx)::Nothing
         # A declaration of paths is drawn for the selection, any other for its own data.
         plot isa DataBrowserPlots.Declaration && (plot = Base.invokelatest(plot.layers, selection))
         view.mappings = mappings(plot)
-        view.figure = plot isa Makie.Figure ? plot : Makie.with_theme(() -> figure(plot), plot_theme(view.dark))
+        view.figure = plot isa Makie.Figure ? plot : Makie.with_theme(() -> figure(plot), DEFAULT_THEME)
         view.message = ""
         view.error_details = ""
     catch err
@@ -432,8 +433,8 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
     found = call === nothing ? nothing : findfirst(entry -> entry.name == name, call.entries)
     if found !== nothing
         edit!(code, call.entries[found].value, text)
-    elseif call !== nothing && name isa Int
-        # A position, such as the theme of `theme(...)`, goes first.
+    elseif call !== nothing && target[1] === :theme && name isa Int
+        # The theme of `theme(...)` goes first.
         opening = findnext('(', code.text, first(call.range))
         next = findnext(!isspace, code.text, opening + 1)
         edit!(code, opening+1:opening, code.text[next] in (';', ')') ? text : "$text, ")
@@ -443,7 +444,8 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
     elseif call !== nothing
         # After the last value, so that a call over several lines, or with a comma after its last
         # value, stays as it is written.
-        named = any(entry -> entry.name isa Symbol, call.entries)
+        # A value written with its name, including a position such as `x = :gap`.
+        named = any(entry -> entry.range != entry.value, call.entries)
         after = isempty(call.entries) ? last(call.range) - 1 : maximum(last(entry.range) for entry in call.entries)
         edit!(code, after+1:after, "$(named ? ", " : "; ")$(entry_name(name))=$text")
     elseif target[1] === :mapping
@@ -486,7 +488,8 @@ end
 
 # The field of the value being written, over the row and as large as its text, over the plot when
 # it needs to be. Enter, or a click elsewhere, gives the text to write; Ctrl-Enter starts a new
-# line; Escape gives up. Returns the text once the user is done, or `nothing`.
+# line; Escape gives up. An empty field stays, so that a value just added keeps its row. Returns
+# the text once the user is done, or `nothing`.
 function draw_field!(view::BuilderView)::Union{Nothing,String}
     edit = view.editing
     style = unsafe_load(ig.GetStyle())
@@ -499,13 +502,15 @@ function draw_field!(view::BuilderView)::Union{Nothing,String}
     size = with_font(() -> ig.CalcTextSize(unsafe_string(pointer(edit.buffer)) * "  "), :code)
     ig.SetNextWindowPos(position)
     ig.SetNextWindowSize((clamp(size.x + 2style.FramePadding.x, width, max(width, right - position.x)),
-        size.y + 2style.FramePadding.y + 4))
+        size.y + 2style.FramePadding.y))
     edit.focus && ig.SetNextWindowFocus()
     ig.PushStyleVar(ig.ImGuiStyleVar_WindowPadding, (0.0f0, 0.0f0))
     ig.PushStyleVar(ig.ImGuiStyleVar_WindowBorderSize, 0.0f0)
+    # Windows are at least 32 points high otherwise, almost two rows.
+    ig.PushStyleVar(ig.ImGuiStyleVar_WindowMinSize, (1.0f0, 1.0f0))
     ig.Begin("##field", C_NULL, ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoSavedSettings |
         ig.ImGuiWindowFlags_NoDocking | ig.ImGuiWindowFlags_NoMove)
-    ig.PopStyleVar(2)
+    ig.PopStyleVar(3)
     edit.focus && ig.SetKeyboardFocusHere()
     edit.focus = false
     flags = ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_CtrlEnterForNewLine |
@@ -519,13 +524,12 @@ function draw_field!(view::BuilderView)::Union{Nothing,String}
     ig.PopStyleVar()
     edit.problem === nothing || (ig.PopStyleColor(); ig.SetItemTooltip(edit.problem))
     done = entered || ig.IsItemDeactivatedAfterEdit()
-    escaped = ig.IsKeyPressed(ig.ImGuiKey_Escape) || ig.IsItemDeactivated() && !done
+    left = ig.IsItemDeactivated() && !done
     ig.End()
-    if escaped
+    text = String(strip(unsafe_string(pointer(edit.buffer))))
+    if ig.IsKeyPressed(ig.ImGuiKey_Escape) || left && !isempty(text)
         view.editing = nothing
-    elseif done
-        text = String(strip(unsafe_string(pointer(edit.buffer))))
-        isempty(text) && (view.editing = nothing; return nothing)
+    elseif done && !isempty(text)
         # Text that Julia cannot read is not written; Julia's message says why.
         edit.problem = try
             Meta.parse(text)
@@ -782,22 +786,38 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     gutter = ig.CalcTextSize(ICON_X).x + 6
     if removable && ig.IsMouseHoveringRect(row, (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight()))
         ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (2.0f0, unsafe_load(ig.GetStyle()).FramePadding.y))
+        call = target_call(view.plot, target)
+        written = call !== nothing && any(entry -> entry.name == name, call.entries)
+        # A value being added is not in the code yet.
         icon_button(ICON_X, "Remove $(entry_name(name))"; danger=true) &&
-            (change = () -> remove_entry!(view.code, target_call(view.plot, target), name))
+            (written ? (change = () -> remove_entry!(view.code, call, name)) : (view.editing = nothing))
         ig.PopStyleVar()
         ig.SameLine(0.0f0, 0.0f0)
     end
     ig.SetCursorScreenPos((row.x + gutter, ig.GetCursorScreenPos().y))
     start = ig.GetCursorPosX()
+    label_width = with_font(() -> ig.CalcTextSize(label).x, :code)
     with_font(() -> ig.TextDisabled(label), :code)
     if info !== nothing
         ig.SameLine(0.0f0, 2.0f0)
         ig.TextDisabled(ICON_INFO)
         ig.SetItemTooltip(info)
     end
-    ig.SameLine(start + name_width)
+    # A name longer than the others, such as one being added, pushes its value to the right.
+    label_width + unsafe_load(ig.GetStyle()).ItemSpacing.x > name_width ? ig.SameLine() : ig.SameLine(start + name_width)
     edit = view.editing
-    if edit !== nothing && edit.target == target && edit.name == name
+    symbol = nothing
+    # The values written as a symbol that the panel offers in a menu.
+    choices = target[1] === :visual && name === :marker ? MARKERS :
+        target[1] === :visual && name === :linestyle ? LINESTYLES :
+        target[1] === :legend && name === :position ? LEGEND_POSITIONS :
+        target[1] === :theme && name == 1 ? THEMES : nothing
+    if edit !== nothing && edit.target == target && edit.name == name && choices !== nothing
+        # A value being added that has a menu: an empty box with the menu open.
+        clicked, _, _ = code_box("value", "", max(ig.GetContentRegionAvail().x, 24.0f0))
+        (edit.focus || clicked) && ig.OpenPopup("choices")
+        edit.focus = false
+    elseif edit !== nothing && edit.target == target && edit.name == name
         text = draw_field!(view)
         text === nothing || (change = () -> write_entry!(view.code, view.plot, target, name, text))
     elseif value in ("true", "false")
@@ -805,11 +825,6 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         ig.Checkbox("##value", checked) && (change = () -> write_entry!(view.code, view.plot, target, name, string(checked[])))
     else
         style = unsafe_load(ig.GetStyle())
-        # The values written as a symbol that the panel offers in a menu.
-        choices = target[1] === :visual && name === :marker ? MARKERS :
-            target[1] === :visual && name === :linestyle ? LINESTYLES :
-            target[1] === :legend && name === :position ? LEGEND_POSITIONS :
-            target[1] === :theme && name == 1 ? THEMES : nothing
         symbol = choices === nothing ? nothing : written_symbol(value)
         drawn = symbol !== nothing && name in (:marker, :linestyle)
         dimmed = inherited || unused || skipped
@@ -835,24 +850,25 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         end
         symbol === nothing && (choices = nothing)
         # A formula is edited in the code, where a click on it selects it.
-        if clicked && formula && range !== nothing
+        if clicked && formula && range !== nothing && !inherited
             view.showing = range
             view.focus_code = true
         elseif clicked
             choices === nothing ? start_edit!(view, target, name, value) : ig.OpenPopup("choices")
         end
-        if choices !== nothing && ig.BeginPopup("choices")
-            for choice in choices
-                position = ig.GetCursorScreenPos()
-                picked = with_font(() -> ig.Selectable(drawn ? "      :$choice" : ":$choice", choice === symbol), :code)
-                middle = position.y + ig.GetTextLineHeight() / 2
-                color = ig.GetColorU32(ig.ImGuiCol_Text)
-                drawn && (name === :marker ? draw_marker(ig.GetWindowDrawList(), (position.x + 8, middle), 5.0f0, choice, color) :
-                    draw_linestyle(ig.GetWindowDrawList(), position.x, position.x + 22, middle, choice, color))
-                picked && (change = () -> write_entry!(view.code, view.plot, target, name, ":$choice"))
-            end
-            ig.EndPopup()
+    end
+    if choices !== nothing && ig.BeginPopup("choices")
+        glyphs = target[1] === :visual
+        for choice in choices
+            position = ig.GetCursorScreenPos()
+            picked = with_font(() -> ig.Selectable(glyphs ? "      :$choice" : ":$choice", choice === symbol), :code)
+            middle = position.y + ig.GetTextLineHeight() / 2
+            color = ig.GetColorU32(ig.ImGuiCol_Text)
+            glyphs && (name === :marker ? draw_marker(ig.GetWindowDrawList(), (position.x + 8, middle), 5.0f0, choice, color) :
+                draw_linestyle(ig.GetWindowDrawList(), position.x, position.x + 22, middle, choice, color))
+            picked && (change = () -> write_entry!(view.code, view.plot, target, name, ":$choice"))
         end
+        ig.EndPopup()
     end
     ig.PopID()
     return change
@@ -1050,8 +1066,8 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 row = ig.GetCursorScreenPos()
                 row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
                 offered = settings === nothing ? String[] : String.(setdiff(SCALE_SETTINGS, [entry.name for entry in present]))
-                name = heading!(view, "scale", entry_name(scale.name), offered; role=:plain, tooltip="Add a setting of this scale")
-                name === nothing || start_edit!(view, (:scale, k), Symbol(name), "")
+                picked = heading!(view, "scale", entry_name(scale.name), offered; role=:plain, tooltip="Add a setting of this scale")
+                picked === nothing || start_edit!(view, (:scale, k), Symbol(picked), "")
                 if ig.IsMouseHoveringRect(row, row_end)
                     ig.SameLine(ig.GetWindowWidth() - unsafe_load(ig.GetStyle()).WindowPadding.x - 2ig.GetFrameHeight() - 4)
                     icon_button(ICON_X, "Remove the scale of $(entry_name(scale.name))"; danger=true) &&
@@ -1120,9 +1136,9 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                     type = isdefined(Makie, value.name) ? getproperty(Makie, value.name) : nothing
                     names = type isa Type ? collect(Makie.attribute_names(type)) : Symbol[]
                     names = setdiff(names, get(NOT_STYLE, value.name, Symbol[]), NOT_STYLE[:plots], [entry.name for entry in group.entries])
-                    name = heading!(view, "group", String(value.name), sort(String.(names)); role=:plain,
+                    picked = heading!(view, "group", String(value.name), sort(String.(names)); role=:plain,
                         tooltip="Add a setting of every $(value.name)")
-                    name === nothing || start_edit!(view, (:group, k), Symbol(name), "")
+                    picked === nothing || start_edit!(view, (:group, k), Symbol(picked), "")
                     if ig.IsMouseHoveringRect(row, row_end)
                         ig.SameLine(ig.GetWindowWidth() - unsafe_load(ig.GetStyle()).WindowPadding.x - 2ig.GetFrameHeight() - 4)
                         icon_button(ICON_X, "Remove $(value.name)"; danger=true) &&
