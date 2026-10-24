@@ -20,7 +20,7 @@ function figure(
     texts::Vector{Pair{Symbol,Function}}=Pair{Symbol,Function}[],
     options...,
 )
-    drawn = @timed_dbg "aog_draw" AoG.draw(specification, args...; legend=(; show=false), options...)
+    drawn = @timed_dbg "aog_draw" AoG.draw(drawable(specification), args...; legend=(; show=false), options...)
     get(legend, :show, true) || return drawn.figure
     sections = legend_sections(drawn.grid, texts, get(legend, :merge, false))
     isempty(sections) && return drawn.figure
@@ -276,6 +276,9 @@ end
 function inherit(header::AoG.Layer, line::AoG.Layer)
     line.data === nothing || return line
     positional = isempty(line.positional) ? header.positional : line.positional
+    # A line with `y` and no `x` takes the header's `x`.
+    first(positional, 1) == [nothing] && length(header.positional) >= 1 &&
+        (positional = [header.positional[1]; positional[2:end]])
     named = filter(!isnothing, merge(header.named, line.named))
     return AoG.Layer(AoG.:⨟(header.transformation, line.transformation), header.data, positional, named)
 end
@@ -308,6 +311,20 @@ resolve(layers::AoG.Layers, items) = foldl(+, (resolve(layer, items) for layer i
 
 # A statistic without a visual is drawn with its own.
 drawable(statistic::Statistic) = statistic * AoG.visual(getproperty(AoG.Makie, statistic.plottype))
+# A layer with `y` and no `x`, as in `mapping(; y=:gap) * visual(Hist)`, draws its values against
+# the vertical axis: a plot type with a `direction` setting, such as `Hist`, `BarPlot` or `Density`,
+# turns to it unless a `visual` sets `direction` already, and other plot types draw the values
+# against their index.
+# TODO: an analysis without a `visual`, such as `histogram()`, does not turn.
+function drawable(layer::AoG.Layer)
+    first(layer.positional, 1) == [nothing] && length(layer.positional) == 2 || return layer
+    visuals = filter(step -> step isa AoG.Visual, steps(layer.transformation))
+    turns = any(v -> :direction in AoG.Makie.attribute_names(v.plottype), visuals) &&
+        !any(v -> haskey(v.attributes, :direction), visuals)
+    layer = AoG.Layer(layer.transformation, layer.data, layer.positional[2:2], layer.named)
+    return turns ? layer * AoG.visual(; direction=:x) : layer
+end
+drawable(layers::AoG.Layers) = AoG.Layers(map(drawable, layers.layers))
 drawable(layers) = layers
 
 Base.:+(a::Statistic, b::Union{Statistic,AoG.AbstractAlgebraic}) = drawable(a) + drawable(b)

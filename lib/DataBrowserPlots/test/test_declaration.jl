@@ -60,4 +60,6 @@ end
         scales(y = (; limits = (0, 15)))
     end
     @test last.(only(plotted(figure(plot), Lines))[1][]) ≈ [5.5, 2.0]
+    # A `y` without `x` turns a histogram.
+    @test only(plotted(figure(@plot data(rows) * mapping(; y=:y) * visual(Hist)), Hist)).direction[] == :x
 end

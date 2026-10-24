@@ -124,7 +124,9 @@ item, and `:data.V` is the column `V` of each item's data.
     @plot mapping(:data.V, :data.I; color=:Device) * visual(Lines)
 
 The positions can also be named: `mapping(; x=:data.V, y=:data.I, color=:Device)` is the same
-mapping.
+mapping. A `y` without `x` draws its values against the vertical axis: `mapping(; y=:gap) *
+visual(Hist)` is a histogram whose bars grow to the right, unless the `visual` sets `direction`. A
+line with only `y` takes the header's `x`.
 
 The values of one item in one layer broadcast together, so this draws one point per row of each
 item's data, each with its item's device. Each layer reads its own values, so a layer of one point
@@ -484,8 +486,8 @@ function call_arguments(call)
 end
 
 # The expression with each `mapping` that names its positions, such as `mapping(; x=:gap, y=:R)`,
-# written with positions, `mapping(:gap, :R)`, as AlgebraOfGraphics takes them.
-# TODO: `y` alone, such as for a histogram along the vertical axis.
+# written with positions, `mapping(:gap, :R)`, as AlgebraOfGraphics takes them. A `y` without `x`
+# keeps `nothing` as its `x`: a line takes the header's `x` there, and drawing reads it as `y` alone.
 function positions_named(expression)
     expression isa Expr || return expression
     expression = Expr(expression.head, map(positions_named, expression.args)...)
@@ -499,8 +501,8 @@ function positions_named(expression)
         append!(slots, fill(nothing, max(0, index - length(slots))))
         slots[index] = value
     end
-    gap = findfirst(isnothing, slots)
-    gap === nothing || error("`mapping` has $((:x, :y, :z)[findlast(!isnothing, slots)]) without $((:x, :y, :z)[gap])")
+    gap = findfirst(isnothing, slots[2:end])
+    gap === nothing || error("`mapping` has z without y")
     rest = [Expr(:kw, name, value) for (name, value) in named if !(name in (:x, :y, :z))]
     return Expr(:call, :mapping, Expr(:parameters, rest...), slots...)
 end
