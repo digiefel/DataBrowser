@@ -574,11 +574,16 @@ the table as a first-class view.
   - [x] Names in `mapping` are paths into the selected items, such as `:device` and `:data.V`,
     and formulas of them run once per item; `@plot` needs no `data(...)`. `unnest` puts values
     of several items together in one table.
-  - [x] `fit(curve, starts) * visual(Lines; label="Rc = $(:Rc)")` fits a curve to the header's
+  - [x] `fit(curve, starts) * visual(Lines)` fits a curve to the header's
     points, once for each group of its categorical roles, and draws it on the header's axes and
-    roles; the label names each group's legend entry. `fit` gives one `Group` per group, with the
+    roles. `fit` gives one `Group` per group, with the
     parameters as metadata, the curve as data and the fitted items as members; `name = fit(...)`
     keeps them for later lines. The workspace does not keep them yet.
+  - [x] `scales(color = ...)` and `legend(color = "$(:Chip): Rc = $(contacts.Rc) Ω")` lines in
+    `@plot`. The legend has a section per role; roles share a section when one determines the
+    others; `legend(merge = (:color, :linestyle))` or `merge = true` merges them on request. A text
+    reads any value the entry determines, mapped or not; `legend(position = :bottom)` and Makie's
+    `Legend` settings go in the same line.
   - [ ] The plot file's own grammar: `mapping`, `data`, `visual` and the statistics as our names,
     without AlgebraOfGraphics in the plot file. Each statistic gives a value, drawn with `visual`,
     such as `histogram(bins=20) * visual(Stairs)`.
