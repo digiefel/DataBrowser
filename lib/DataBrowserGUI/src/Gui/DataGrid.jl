@@ -13,7 +13,7 @@ Generic over T so it can be used with item ids (String), row indices (Int), etc.
 function _update_multi_selection!(
     selected_items::Vector{T},
     item::T,
-    all_items::Vector{T},
+    all_items::AbstractVector{T},
     shift_held::Bool,
     ctrl_held::Bool,
 )::Nothing where {T}
@@ -383,7 +383,7 @@ function render_data_grid!(
 
     row_selection_changed = false
     selected = state.selected_rows
-    all_rows = selection_mode === :rows ? collect(1:n_rows) : Int[]
+    all_rows = selection_mode === :rows ? (1:n_rows) : (1:0)
 
     if active && n_rows > 0
         ctrl_held = unsafe_load(io.KeyCtrl)
