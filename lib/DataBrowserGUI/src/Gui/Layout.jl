@@ -496,6 +496,9 @@ function _run_browser(
         error("exit_after_frames must be positive when provided; got $exit_after_frames")
     DEDICATED_IO_THREAD()
     _set_browser_window_hints(window_start)
+    # A GLFW error while the browser runs, such as a paste when the clipboard holds no text, is a
+    # warning: GLFW.jl's own handler throws it out of the frame and stops the drawing.
+    GLFW.SetErrorCallback(error -> @warn "GLFW: $(error.description)")
     first_frame       = Ref(true)
     setup_layout      = Ref(true)
     startup_presented = Ref(false)
