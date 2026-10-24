@@ -165,8 +165,8 @@ Arguments:
 - `height`: child height in pixels; 0.0f0 = fill available
 
 The grid fits its columns to the content of the rows on screen when `state.fit_columns` is set,
-which it is for a new state. In row mode, `state.top_row` is the first row in view, below the
-headers, when the grid was last drawn.
+which it is for a new state. In row mode, `state.top_row` is the first row wholly in view, below
+the headers, when the grid was last drawn.
 
 Row mode: click = replace, Shift+click = extend range, Ctrl/Cmd+click = toggle,
 Ctrl/Cmd+A = select all, up/down = move (Shift extends), Escape = clear.
@@ -251,29 +251,17 @@ function render_data_grid!(
             ig.GetColorU32(ig.ImGuiCol_Text), open ? ig.ImGuiDir_Down : ig.ImGuiDir_Right, 0.7f0)
     end
     arrow_width = ig.GetFontSize() + style.ItemInnerSpacing.x
-    # The rows of group names. Each column of a group writes the group's name from the left edge of
-    # the group's first column; each column shows only its own part, so the name reads across them.
+    shown_columns = [column for column in 1:n_cols if !hidden(column)]
+    # The rows of group names. A group is one cell over its shown columns, with no lines between
+    # them, and its name stays at the left edge of the grid while the group is in view, as the text
+    # of a band. Each column of a group with an arrow has a button that folds the group.
     for level in 1:levels
         # The row is as high as a row of headers, also when it holds no button.
         ig.TableNextRow(ig.ImGuiTableRowFlags_Headers, ig.TableGetHeaderRowHeight())
         for column in 1:n_cols
             ig.TableSetColumnIndex(column - 1)
             ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, ig.GetColorU32(ig.ImGuiCol_TableHeaderBg))
-            groups = column_groups(column)
-            length(groups) >= level || continue
-            group = groups[1:level]
-            start = column
-            while start > 1 && length(column_groups(start - 1)) >= level &&
-                    column_groups(start - 1)[1:level] == group
-                start -= 1
-            end
-            position = ig.ImVec2(ig.TableGetCellBgRect(ig.GetCurrentTable(), start - 1).Min.x +
-                style.CellPadding.x, ig.GetCursorScreenPos().y)
-            header_open = header_fold(column, level)
-            header_open === nothing || draw_arrow(position, header_open)
-            ig.AddText(draw_list, ig.ImVec2(position.x + (header_open === nothing ? 0.0f0 : arrow_width), position.y),
-                ig.GetColorU32(ig.ImGuiCol_Text), groups[level])
-            header_open === nothing && continue
+            length(column_groups(column)) >= level && header_fold(column, level) !== nothing || continue
             ig.PushID(column)
             ig.PushID(level)
             ig.InvisibleButton("##group", ig.ImVec2(max(1.0f0, ig.GetContentRegionAvail().x), ig.GetFontSize())) &&
@@ -281,10 +269,37 @@ function render_data_grid!(
             ig.PopID()
             ig.PopID()
         end
+        group(column) = length(column_groups(column)) >= level ? column_groups(column)[1:level] : nothing
+        # The background channel is above the lines that ImGui draws between the columns.
+        # TODO: with frozen columns, a group that scrolls under them covers them.
+        ig.TablePushBackgroundChannel()
+        first = 1
+        while first <= length(shown_columns)
+            last = first
+            while last < length(shown_columns) && group(shown_columns[first]) !== nothing &&
+                    group(shown_columns[last + 1]) == group(shown_columns[first])
+                last += 1
+            end
+            if group(shown_columns[first]) !== nothing
+                start = ig.TableGetCellBgRect(grid_table, shown_columns[first] - 1)
+                stop = ig.TableGetCellBgRect(grid_table, shown_columns[last] - 1)
+                ig.PushClipRect(draw_list, start.Min, ig.ImVec2(stop.Max.x, stop.Max.y), true)
+                ig.AddRectFilled(draw_list, start.Min, ig.ImVec2(stop.Max.x, stop.Max.y),
+                    ig.GetColorU32(ig.ImGuiCol_TableHeaderBg))
+                position = ig.ImVec2(max(start.Min.x, ig.GetWindowPos().x) + style.CellPadding.x,
+                    start.Min.y + style.CellPadding.y)
+                header_open = header_fold(shown_columns[first], level)
+                header_open === nothing || draw_arrow(position, header_open)
+                ig.AddText(draw_list, ig.ImVec2(position.x + (header_open === nothing ? 0.0f0 : arrow_width), position.y),
+                    ig.GetColorU32(ig.ImGuiCol_Text), column_groups(shown_columns[first])[level])
+                ig.PopClipRect(draw_list)
+            end
+            first = last + 1
+        end
+        ig.TablePopBackgroundChannel()
     end
     ig.TableNextRow(ig.ImGuiTableRowFlags_Headers)
     io = ig.GetIO()
-    shown_columns = [column for column in 1:n_cols if !hidden(column)]
     for column in 1:n_cols
         ig.TableSetColumnIndex(column - 1)
         # The header is known by its name, so that it stays the one the user drags when it moves.
@@ -669,9 +684,8 @@ function render_data_grid!(
                     ig.TableSetColumnIndex(first_column - 1)
                     position = ig.GetCursorScreenPos()
                     # The clipper draws the rows from the top down, after a first row it measures.
-                    state.top_row == 0 && position.y - padding.y +
-                        max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y) >
-                        ig.GetClipRectMin(ig.GetWindowDrawList()).y && (state.top_row = row)
+                    state.top_row == 0 && position.y - padding.y >
+                        ig.GetClipRectMin(ig.GetWindowDrawList()).y - 1 && (state.top_row = row)
                     is_selected = row in selected_set
                     if ig.Selectable(
                         "##row_$row",

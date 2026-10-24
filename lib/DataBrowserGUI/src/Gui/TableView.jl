@@ -30,8 +30,8 @@ names, its names are the columns.
 
 With several items, "Group by item", in the top line of the window, is checked at first: the rows
 of each item follow each other, under a row with the item's label, whose text stays in place when
-the table scrolls sideways. The label of the item of the first row in view stays above the column
-names. Selecting that row selects all of the item's rows. The arrow beside the
+the table scrolls sideways. Once that row has scrolled up out of view, the label stays above the
+column names. Selecting the row with the label selects all of the item's rows. The arrow beside the
 label folds the item to that row. Enter folds the items whose rows with their labels are selected,
 or unfolds them when they are all folded; Cmd-A selects all rows. Right-clicking the row opens a
 menu that acts on the items of the selected rows: it folds or unfolds them, and copies their labels.
@@ -419,10 +419,11 @@ function draw!(view::TableView, ctx)::Nothing
         end
         return nothing
     end
-    # When the rows are grouped by item, all columns are in a group named after the item of the
-    # first row in view, so that its label stays above the column names.
+    # When the rows are grouped by item, all columns are in a group named after the item whose rows
+    # go on above the first row wholly in view, so that its label stays above the column names once
+    # its own row with the label has scrolled away.
     top = view.grid.top_row
-    top_label = grouped && 1 <= top <= length(shown) ? table.item_labels[item(top)] : ""
+    top_label = grouped && 2 <= top <= length(shown) ? table.item_labels[item(top - 1)] : ""
     outer = grouped ? 1 : 0
     with_font(:code) do
         render_data_grid!(
