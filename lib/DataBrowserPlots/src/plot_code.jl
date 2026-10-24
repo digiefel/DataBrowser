@@ -18,6 +18,9 @@ struct LineCode
     name::Union{Nothing,Symbol}
     # The line's own mapping, a factor of its product such as `mapping(; marker=:Site) * visual(Scatter)`.
     mapping::Union{Nothing,MappingCode}
+    # Whether the line takes the header's mapping: not when it has its own data, `data(...)` or the
+    # name of an earlier line, whose value has its data, such as a fit's result.
+    inherits::Bool
 end
 
 """
@@ -43,6 +46,7 @@ function Base.tryparse(::Type{PlotCode}, code::CodeFile)::Union{Nothing,PlotCode
     header_mapping = mapping_code(arguments[1])
     block = length(arguments) >= 2 && kind(arguments[2]) == K"block" ? arguments[2] : nothing
     lines = LineCode[]
+    names = Symbol[]
     for line in (block === nothing ? SyntaxNode[] : children(block))
         hidden = kind(line) == K"macrocall" && sourcetext(children(line)[1]) == "invisible" && length(children(line)) == 2
         # The line starts after the space that follows `@invisible`.
@@ -53,8 +57,11 @@ function Base.tryparse(::Type{PlotCode}, code::CodeFile)::Union{Nothing,PlotCode
         (is_call(line, "scales") || is_call(line, "legend")) && continue
         named = kind(line) == K"=" && kind(children(line)[1]) == K"Identifier"
         value = named ? children(line)[2] : line
-        push!(lines, LineCode(range, invisible, named ? Symbol(sourcetext(children(line)[1])) : nothing,
-            mapping_code(value)))
+        own_data = any(factor -> is_call(factor, "data") || kind(factor) == K"Identifier" && Symbol(sourcetext(factor)) in names,
+            factors(value))
+        name = named ? Symbol(sourcetext(children(line)[1])) : nothing
+        push!(lines, LineCode(range, invisible, name, mapping_code(value), !own_data))
+        name === nothing || push!(names, name)
     end
     return PlotCode(header_mapping, lines)
 end
@@ -73,13 +80,17 @@ end
 is_call(node::SyntaxNode, name::String) =
     kind(node) == K"call" && !isempty(children(node)) && sourcetext(children(node)[1]) == name
 
-# The `mapping(...)` among the factors of a product such as `data(t) * mapping(...) * visual(Lines)`.
-function mapping_code(node::SyntaxNode)::Union{Nothing,MappingCode}
+# The factors of a product such as `data(t) * mapping(...) * visual(Lines)`, or the node itself.
+function factors(node::SyntaxNode)::Vector{SyntaxNode}
     product = kind(node) == K"call" && length(children(node)) >= 3 && sourcetext(children(node)[2]) == "*"
-    factors = product ? filter(factor -> sourcetext(factor) != "*", children(node)) : [node]
-    index = findfirst(factor -> is_call(factor, "mapping"), factors)
+    return product ? filter(factor -> sourcetext(factor) != "*", children(node)) : [node]
+end
+
+# The `mapping(...)` among the factors of a product.
+function mapping_code(node::SyntaxNode)::Union{Nothing,MappingCode}
+    index = findfirst(factor -> is_call(factor, "mapping"), factors(node))
     index === nothing && return nothing
-    call = factors[index]
+    call = factors(node)[index]
     roles = Pair{Union{Int,Symbol},UnitRange{Int}}[]
     named(argument) = push!(roles, Symbol(sourcetext(children(argument)[1])) => byte_range(children(argument)[2]))
     for argument in children(call)[2:end]

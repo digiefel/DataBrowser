@@ -21,6 +21,8 @@ using DataBrowserGUI: CodeFile
     @test [line.invisible === nothing ? nothing : text(line.invisible) for line in plot.lines] == [nothing, nothing, "@invisible "]
     @test [text(last(only(line.mapping.roles))) for line in plot.lines[1:2]] == [":Site", "nothing"]
     @test plot.lines[3].mapping === nothing
+    # A line that draws the value of `contacts` keeps that value's mapping.
+    @test [line.inherits for line in plot.lines] == [true, true, false]
 
     @test tryparse(PlotCode, CodeFile(; text="x = 1")) === nothing
 end

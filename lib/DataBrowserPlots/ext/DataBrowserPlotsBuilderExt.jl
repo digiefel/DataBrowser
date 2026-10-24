@@ -8,15 +8,23 @@ import GLMakie.Makie as Makie
 import DataBrowserAPI
 using DataBrowserAPI: Setting
 using DataBrowserCore: Selection
-using DataBrowserGUI: CodeFile, ischanged_on_disk, isunsaved, load!, save!
+using DataBrowserGUI: CodeFile, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
 import DataBrowserAPI: draw!, prepare!, settings
-using DataBrowserPlots: DataBrowserPlots, figure
+using DataBrowserPlots: DataBrowserPlots, PlotCode, figure
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
 const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
 using .GLMakieExt: DARK, FigureView
 using .GLMakieExt.MakieImguiIntegration: plot_theme
 import .GLMakieExt: build!, export_name
 
+# The part of the window width the panel of roles and layers takes.
+# TODO: let the user drag the border between the panel and the figure.
+const PANEL_WIDTH = 0.28f0
+# The width of the names of the roles in the panel.
+const ROLE_WIDTH = 56.0f0
+# Icons of the Lucide font that DataBrowserGUI loads with the interface font.
+const ICON_EYE = "\ue0ba"
+const ICON_EYE_OFF = "\ue0bb"
 # The part of the window height the code takes.
 # TODO: let the user drag the border between the figure and the code.
 const CODE_HEIGHT = 0.35f0
@@ -30,6 +38,8 @@ The plot builder: a plot written as code, drawn for the selection.
 The user names the plot in the window's header: the name `tlm` is the file `plots/tlm.jl`, and a
 name ending in `.jl` is a path. A new plot starts with code that draws the selection's columns. The
 code is shown under the figure and edited there or, once the plot has a name, in any other editor.
+The panel at the left shows the roles of the mapping of `@plot` and its layers. Its eye button
+hides a layer, writing [`@invisible`](@ref) before its line, and draws it again.
 Giving a name that has no file yet saves the code under it; a name that has a file opens it. It
 is ordinary Julia, and its last value is the plot: an AlgebraOfGraphics declaration such as one
 written with `@plot`, or a Makie figure. The file runs from the start in a module of its own, which
@@ -58,6 +68,9 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     # TODO: ask before a change of file drops code that is not saved.
     loaded::Union{Nothing,String} = nothing
     code::CodeFile = CodeFile()
+    # The parts of the `@plot` of the code, and the code they were read from.
+    plot::Union{Nothing,PlotCode} = nothing
+    parsed::Union{Nothing,String} = nothing
     # The code `first_code` gave, while the file does not exist.
     first::String = ""
     # The text buffer ImGui edits.
@@ -124,6 +137,19 @@ end
 function save_code!(view::BuilderView)::Nothing
     view.code.path = view.loaded = code_path(view)
     save!(view.code)
+    return nothing
+end
+
+# Write the code to its file, when it has one, and draw it.
+function save_and_build!(view::BuilderView, ctx)::Nothing
+    try
+        isempty(code_path(view)) || save_code!(view)
+    catch err
+        view.message, view.error_details = DataBrowserAPI.report_error(
+            "Plot builder: saving $(code_path(view)) failed", err, catch_backtrace())
+        return nothing
+    end
+    build!(view, ctx)
     return nothing
 end
 
@@ -203,6 +229,12 @@ function draw!(view::BuilderView, ctx)::Nothing
     end
 
     available = ig.GetContentRegionAvail()
+    ig.BeginChild("panel", (round(available.x * PANEL_WIDTH), 0.0f0), true)
+    draw_panel!(view, ctx)
+    ig.EndChild()
+    ig.SameLine()
+    ig.BeginGroup()
+    available = ig.GetContentRegionAvail()
     code_height = round(available.y * CODE_HEIGHT)
     ig.BeginChild("figure", (0.0f0, max(available.y - code_height, 1.0f0)), false)
     invoke(draw!, Tuple{FigureView,Any}, view, ctx)
@@ -240,15 +272,81 @@ function draw!(view::BuilderView, ctx)::Nothing
         sizeof(view.code.text) > length(view.buffer) - CODE_ROOM ÷ 4 && set_code!(view, view.code.text)
     end
     save |= ig.IsItemActive() && ig.IsKeyChordPressed(ig.ImGuiMod_Ctrl | ig.ImGuiKey_S)
-    if save
-        try
-            isempty(path) || save_code!(view)
-        catch err
-            view.message, view.error_details = DataBrowserAPI.report_error(
-                "Plot builder: saving $path failed", err, catch_backtrace())
-            return nothing
+    ig.EndGroup()
+    save && save_and_build!(view, ctx)
+    return nothing
+end
+
+# The name of a position of a mapping, as the panel shows it.
+role_name(role::Int) = role <= 3 ? ("x", "y", "z")[role] : string(role)
+role_name(role::Symbol) = String(role)
+
+# A role and its value, dimmed when the layer takes it from the header.
+function draw_role(role, value::String; inherited::Bool)::Nothing
+    ig.AlignTextToFramePadding()
+    ig.TextDisabled(role_name(role))
+    ig.SameLine(ROLE_WIDTH)
+    with_font(:code) do
+        inherited ? ig.TextDisabled(value) : ig.TextUnformatted(value)
+    end
+    return nothing
+end
+
+# The roles of the mapping of `@plot` and its layers. A change writes the code, as "Save" does.
+function draw_panel!(view::BuilderView, ctx)::Nothing
+    if view.parsed != view.code.text
+        view.plot = tryparse(PlotCode, view.code)
+        view.parsed = view.code.text
+    end
+    plot = view.plot
+    if plot === nothing
+        ig.TextDisabled("The code has no @plot.")
+        return nothing
+    end
+    text(range) = view.code.text[range]
+    header = plot.mapping === nothing ? Pair{Union{Int,Symbol},UnitRange{Int}}[] : plot.mapping.roles
+    ig.SeparatorText("Mapping")
+    for (role, range) in header
+        draw_role(role, text(range); inherited=false)
+    end
+    ig.SeparatorText("Layers")
+    edited = false
+    for (index, line) in enumerate(plot.lines)
+        ig.PushID(index)
+        hidden = line.invisible !== nothing
+        if ig.SmallButton(hidden ? ICON_EYE_OFF : ICON_EYE)
+            # `@invisible` keeps the line in the plot without drawing it.
+            hidden ? edit!(view.code, line.invisible, "") : edit!(view.code, first(line.range):first(line.range)-1, "@invisible ")
+            edited = true
         end
-        build!(view, ctx)
+        ig.SetItemTooltip(hidden ? "Draw the layer" : "Hide the layer, keeping its line")
+        ig.SameLine()
+        hidden && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
+        opened = with_font(() -> ig.TreeNodeEx(text(line.range), ig.ImGuiTreeNodeFlags_SpanAvailWidth), :code)
+        hidden && ig.PopStyleColor()
+        if opened
+            # The line's own roles, and those it takes from the header: a position of the line
+            # replaces all of the header's positions, and a named role replaces the header's.
+            own = line.mapping === nothing ? Pair{Union{Int,Symbol},UnitRange{Int}}[] : line.mapping.roles
+            positions = any(((role, _),) -> role isa Int, own)
+            taken = !line.inherits ? empty(header) :
+                filter(((role, _),) -> !(role isa Int && positions) && all(r -> first(r) != role, own), header)
+            roles = [[(role, range, true) for (role, range) in taken]; [(role, range, false) for (role, range) in own]]
+            # Positions first, in order, then the named roles.
+            for (role, range, inherited) in sort(roles; by=((role, _, _),) -> role isa Int ? (0, role) : (1, 0))
+                draw_role(role, text(range); inherited)
+            end
+            ig.TreePop()
+        end
+        ig.PopID()
+        # The edit moved the bytes of the lines after it; the next frame reads them again.
+        edited && break
+    end
+    if edited
+        set_code!(view, view.code.text)
+        # A new id for the text box, which shows the edited code.
+        view.reads += 1
+        save_and_build!(view, ctx)
     end
     return nothing
 end
