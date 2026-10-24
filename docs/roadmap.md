@@ -607,7 +607,8 @@ the table as a first-class view.
   - [ ] Long text cut with "…", and the full text on hover.
   - [x] Columns fitted to their content when the data changes.
   - [x] Hide columns, from the "Columns" list in the top line of the window or the header's menu.
-  - [ ] Reorder columns; freeze the first column; an optional row-number column.
+  - [x] Move columns by dragging their headers.
+  - [ ] Freeze the first column; an optional row-number column.
   - [x] Sort by a column with the arrow in its header, and by several with Shift-click. With several
     items, the rows of each item are sorted, under the row with its label.
   - [x] Select columns by clicking their headers, with Shift-click and Cmd-click as for rows.

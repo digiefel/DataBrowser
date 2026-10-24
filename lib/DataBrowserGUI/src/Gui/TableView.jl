@@ -39,6 +39,7 @@ unchecked, the first column, `item`, shows the label of the item of each row ins
 the rows with the labels and of the headers check and uncheck "Group by item" too.
 
 Clicking the header of a column selects the column, and Shift-click selects the columns up to it.
+Dragging the header moves the column; the column `item` stays first.
 The arrow at the right of the column's name, which shows when the mouse is over the header, sorts
 by the column: ascending, then descending, then not at all. When the rows are grouped by item, it
 sorts the rows of each item; otherwise it sorts all rows, and sorting by `item` puts the items in
@@ -73,7 +74,12 @@ selected, with the columns it shows. With several items, it also passes on the c
 the label of the item of each row.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
+    # The table as it was built, and the table it shows: the same, with the columns in the order the
+    # user moved them to.
+    built::Union{Nothing,ItemTable} = nothing
     table::Union{Nothing,ItemTable} = nothing
+    # The names of the columns in the order the user moved them to; the column `item` stays first.
+    column_order::Vector{String} = String[]
     # The table has a first column `item`, built here from several items.
     item_column::Bool = false
     # "Group by item": the rows of each item follow each other, under the row with its label.
@@ -96,7 +102,9 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     zoom::Vector{Tuple{Int,Vector{String}}} = Tuple{Int,Vector{String}}[]
     # The paths of the blocks of names that show one column for each name.
     unfolded::Set{Vector{String}} = Set{Vector{String}}()
-    # How each column writes its numbers; `nothing` for a column of other values.
+    # How each column of `built` and of `table` writes its numbers; `nothing` for a column of other
+    # values.
+    built_formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
     formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
     # The items that show only the row with their label.
     folded::Set{Int} = Set{Int}()
@@ -133,21 +141,47 @@ prepare!(view::TableView, table::ItemTable, ctx)::Nothing = _show!(view, table, 
 
 # Show `table`, whose first column `item` holds the labels of several items when `item_column`.
 function _show!(view::TableView, table::ItemTable, item_column::Bool)::Nothing
-    view.table = table
+    view.built = table
     view.item_column = item_column
     view.selection = nothing
     view.metadata_names = Symbol[]
     # TODO: read each column once rather than each cell, for large tables.
-    view.formats = [_number_format(table.getvalue(row, column) for row in 1:table.rows)
-                    for column in eachindex(table.columns)]
+    view.built_formats = [_number_format(table.getvalue(row, column) for row in 1:table.rows)
+                          for column in eachindex(table.columns)]
     view.folded = Set{Int}()
     view.warnings = String[]
     view.grid = DataGridState()
     view.grid_id = "table"
-    # The sort and the filters stay, as long as the table has their columns.
+    _order!(view)
+    _arrange!(view)
+    return nothing
+end
+
+# Put the columns of the table in the order the user moved them to. The columns the user moved
+# take each other's places, and the other columns keep theirs. The sort, the filters and the
+# selected columns stay, as long as the table has their columns.
+function _order!(view::TableView)::Nothing
+    built = view.built::ItemTable
+    selected = view.table === nothing ? String[] :
+        [view.table.columns[column] for column in view.grid.selected_columns]
+    order = collect(eachindex(built.columns))
+    order[findall(in(view.column_order), built.columns)] =
+        [findfirst(==(name), built.columns) for name in view.column_order if name in built.columns]
+    view.table = table = built[1:built.rows, order]
+    view.formats = view.built_formats[order]
     view.grid.sort = [(findfirst(==(name), table.columns), ascending)
                       for (name, ascending) in view.sort if name in table.columns]
-    _arrange!(view)
+    view.grid.selected_columns = [findfirst(==(name), table.columns) for name in selected if name in table.columns]
+    return nothing
+end
+
+# Swap two columns, as the user drags the header of one past the other.
+function _move!(view::TableView, column::Int, to::Int)::Nothing
+    names = copy((view.table::ItemTable).columns)
+    names[column], names[to] = names[to], names[column]
+    view.column_order = view.item_column ? names[2:end] : names
+    _order!(view)
+    _pass_on!(view)
     return nothing
 end
 
@@ -422,6 +456,9 @@ function draw!(view::TableView, ctx)::Nothing
             header_popup=filter_popup,
             # The rows with the labels of the items show the column `item`.
             hidden=column -> table.columns[column] in view.hidden || grouped && column == 1,
+            # The column `item` stays first.
+            on_move=(column, to) -> view.item_column && 1 in (column, to) ||
+                (change = () -> _move!(view, column, to)),
             # TODO: pass on the selected columns, `view.grid.selected_columns`, too.
             on_selection_change=_ -> _pass_on!(view),
         )

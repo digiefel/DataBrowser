@@ -156,6 +156,10 @@ Arguments:
   of the column opens. Below it, the menu has the sort items of `on_sort`, and always "Size column
   to fit" and "Size all columns to fit"
 - `hidden`: `(col::Int) -> Bool`, whether the column is hidden. No column is hidden by default
+- `on_move`: called with `(col, to)` when the user drags the header of `col` past the edge of the
+  header of `to`, the column shown next to it. The caller swaps the two columns, so that the header
+  stays under the mouse; a header is known by its name and the names of its groups. The columns
+  cannot move without it
 - `on_selection_change`: called with the new `Vector{Int}` whenever the selection changes
 - `selection_mode`: `:rows` for multi-row selection or `:cells` for a spreadsheet rectangle
 - `height`: child height in pixels; 0.0f0 = fill available
@@ -197,6 +201,7 @@ function render_data_grid!(
     on_header_fold::Function = (_, _) -> nothing,
     header_popup::Union{Nothing,Function} = nothing,
     hidden::Function = _ -> false,
+    on_move::Union{Nothing,Function} = nothing,
     on_selection_change::Function = identity,
     selection_mode::Symbol = :rows,
     height::Float32 = 0.0f0,
@@ -281,7 +286,8 @@ function render_data_grid!(
     shown_columns = [column for column in 1:n_cols if !hidden(column)]
     for column in 1:n_cols
         ig.TableSetColumnIndex(column - 1)
-        ig.PushID(column)
+        # The header is known by its name, so that it stays the one the user drags when it moves.
+        ig.PushID(join([column_groups(column); columns[column]], '.'))
         icon = header_icon(column)
         header_open = header_fold(column, length(column_groups(column)) + 1)
         place = findfirst(spec -> first(spec) == column, state.sort)
@@ -306,6 +312,22 @@ function render_data_grid!(
                 unsafe_load(io.KeyShift), unsafe_load(io.KeyCtrl))
         end
         header_min, header_max = ig.GetItemRectMin(), ig.GetItemRectMax()
+        # Dragging the header out of its column moves the column past the one next to it, once the
+        # mouse is far enough that the header is still under it after the move.
+        if on_move !== nothing && ig.IsItemActive()
+            at = findfirst(==(column), shown_columns)
+            mouse = unsafe_load(io.MousePos).x
+            own = ig.TableGetCellBgRect(grid_table, column - 1)
+            width(place) = (rect = ig.TableGetCellBgRect(grid_table, shown_columns[place] - 1); rect.Max.x - rect.Min.x)
+            to = at > 1 && mouse < min(own.Min.x, own.Max.x - width(at - 1)) ? at - 1 :
+                at < length(shown_columns) && mouse > max(own.Max.x, own.Min.x + width(at + 1)) ? at + 1 : at
+            if to != at
+                # TODO: keep the widths of the two columns, rather than fitting them to their content.
+                ig.TableSetColumnWidthAutoSingle(grid_table, column - 1)
+                ig.TableSetColumnWidthAutoSingle(grid_table, shown_columns[to] - 1)
+                on_move(column, shown_columns[to])
+            end
+        end
         hovered = ig.IsMouseHoveringRect(header_min, header_max) && ig.IsWindowHovered()
         top = header_min.y + style.CellPadding.y
         right = header_max.x - style.CellPadding.x
