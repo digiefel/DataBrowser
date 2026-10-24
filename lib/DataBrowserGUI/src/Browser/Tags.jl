@@ -68,7 +68,8 @@ function _project_visible_selection(
         selected_path = String[
             label(workspace, key) for key in [Workspace.ancestors(workspace, selected); selected]]
     end
-    state.visible_selection = VisibleSelection(key, selected_collections, selected_items, selected_path)
+    state.visible_selection =
+        VisibleSelection(key, selected_collections, selected_items, Set(selected_items), selected_path)
     return selected_collections, selected_items, selected_path
 end
 

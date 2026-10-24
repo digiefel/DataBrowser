@@ -604,7 +604,8 @@ function _render_items_panel(
     root_selected = Workspace.CollectionPath() in workspace.selection.collections
     all_items = @timed "items_panel" _items_of_selected_collections(state)
     visible_items = @timed "visible_items" _visible_items(state, workspace, all_items, filter_item)
-    selected_id_set = Set(workspace.selection.item_ids)
+    # Kept with the selection: a row shown here is selected when it is among the visible selected items.
+    selected_item_set = state.visible_selection.item_set
     registry_ready = _tags_ready(state)
 
     _render_selection_toolbar!(
@@ -662,14 +663,14 @@ function _render_items_panel(
                     end_idx = Int(unsafe_load(clipper.DisplayEnd))
                     for idx in start_idx:end_idx
                         item = visible_items[idx]
-                        item_id = id(workspace, item)
                         item_label = label(workspace, item)
-                        ig.PushID(item_id)
+                        # The key names the row for ImGui: the public id would be built at every frame.
+                        ig.PushID(Int32(item.index))
                         ig.TableNextRow()
                         ig.TableSetColumnIndex(0)
                         rows_rendered += 1
 
-                        is_selected = item_id in selected_id_set
+                        is_selected = item in selected_item_set
                         bad_text_pushed = false
                         registry_ready && (bad_text_pushed = _push_tag_text_style!(workspace, item))
                         readiness = Workspace.readiness(workspace, item)
@@ -692,14 +693,14 @@ function _render_items_panel(
                             visible_ids = [id(workspace, visible) for visible in visible_items]
                             _update_multi_selection!(
                                 selected_ids,
-                                item_id,
+                                id(workspace, item),
                                 visible_ids,
                                 shift_held,
                                 ctrl_held,
                             )
                             workspace.selection.item_ids = selected_ids
                         end
-                        if state.scroll_to_item_id == item_id
+                        if state.scroll_to_item_id !== nothing && state.scroll_to_item_id == id(workspace, item)
                             ig.SetScrollHereY(0.5)
                             state.scroll_to_item_id = nothing
                         end
@@ -714,7 +715,7 @@ function _render_items_panel(
                                 item_context_menu!(
                                     ext,
                                     state;
-                                    item_ids=[item_id],
+                                    item_ids=[id(workspace, item)],
                                     label=item_label,
                                     kind=label(Workspace.valuetype(workspace, item)),
                                 )

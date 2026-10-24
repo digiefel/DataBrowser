@@ -216,12 +216,14 @@ end
 """
 The part of the workspace selection that exists and is visible, as `_project_visible_selection`
 returns it. Kept while `key` stays the same: the key covers the workspace and its generation, the
-selection and the tags.
+selection and the tags. `item_set` holds the same items as `items`, for rows that ask whether they
+are selected.
 """
 struct VisibleSelection
     key::UInt
     collections::Vector{Workspace.Catalogs.CollectionKey}
     items::Vector{Workspace.Catalogs.ItemKey}
+    item_set::Set{Workspace.Catalogs.ItemKey}
     path::Vector{String}
 end
 
