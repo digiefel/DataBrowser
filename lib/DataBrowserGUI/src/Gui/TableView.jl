@@ -30,7 +30,8 @@ names, its names are the columns.
 
 With several items, "Group by item", in the top line of the window, is checked at first: the rows
 of each item follow each other, under a row with the item's label, whose text stays in place when
-the table scrolls sideways. Selecting that row selects all of the item's rows. The arrow beside the
+the table scrolls sideways. The label of the item of the first row in view stays above the column
+names. Selecting that row selects all of the item's rows. The arrow beside the
 label folds the item to that row. Enter folds the items whose rows with their labels are selected,
 or unfolds them when they are all folded; Cmd-A selects all rows. Right-clicking the row opens a
 menu that acts on the items of the selected rows: it folds or unfolds them, and copies their labels.
@@ -418,20 +419,25 @@ function draw!(view::TableView, ctx)::Nothing
         end
         return nothing
     end
+    # When the rows are grouped by item, all columns are in a group named after the item of the
+    # first row in view, so that its label stays above the column names.
+    top = view.grid.top_row
+    top_label = grouped && 1 <= top <= length(shown) ? table.item_labels[item(top)] : ""
+    outer = grouped ? 1 : 0
     with_font(:code) do
         render_data_grid!(
             view.grid_id,
             view.grid;
             n_rows=length(shown),
             columns=last.(table.paths),
-            column_groups=column -> table.paths[column][1:end-1],
+            column_groups=column -> grouped ? [top_label; table.paths[column][1:end-1]] : table.paths[column][1:end-1],
             # An unfolded block has an open arrow above its columns; a table inside the data always
-            # shows its columns, and has no arrow.
-            header_fold=(column, level) -> level > length(table.paths[column]) - 1 ?
-                (column in table.groups ? false : nothing) :
-                (table.paths[column][1:level] in view.unfolded ? true : nothing),
+            # shows its columns, and has no arrow. The group of the item has none.
+            header_fold=(column, level) -> level <= outer ? nothing :
+                level - outer > length(table.paths[column]) - 1 ? (column in table.groups ? false : nothing) :
+                (table.paths[column][1:level-outer] in view.unfolded ? true : nothing),
             on_header_fold=function (column, level)
-                path = table.paths[column][1:level]
+                path = table.paths[column][1:level-outer]
                 path in view.unfolded ? delete!(view.unfolded, path) : push!(view.unfolded, path)
                 rebuild = true
             end,
@@ -442,7 +448,6 @@ function draw!(view::TableView, ctx)::Nothing
             align_right=column -> view.formats[column] !== nothing,
             muted=(_, column) -> column in table.groups,
             span=(row, column) -> table.spans_item(shown[row], column) ? view.run_start[row] : row,
-            # TODO: the row with the label of an item stays at the top while the item's rows scroll.
             band=row -> view.label_row[row] ? table.item_labels[item(row)] : nothing,
             fold=row -> view.label_row[row] ? !(item(row) in view.folded) : nothing,
             on_fold=function (row)

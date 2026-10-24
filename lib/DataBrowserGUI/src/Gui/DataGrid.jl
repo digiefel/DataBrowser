@@ -165,7 +165,8 @@ Arguments:
 - `height`: child height in pixels; 0.0f0 = fill available
 
 The grid fits its columns to the content of the rows on screen when `state.fit_columns` is set,
-which it is for a new state.
+which it is for a new state. In row mode, `state.top_row` is the first row in view, below the
+headers, when the grid was last drawn.
 
 Row mode: click = replace, Shift+click = extend range, Ctrl/Cmd+click = toggle,
 Ctrl/Cmd+A = select all, up/down = move (Shift extends), Escape = clear.
@@ -641,6 +642,7 @@ function render_data_grid!(
         ig.Begin(clipper, n_rows, -1.0f0)
         # The row to scroll to is drawn even when it is out of view.
         target = state.scroll_to_row
+        state.top_row = 0
         target !== nothing && 1 <= target <= n_rows && ig.IncludeItemByIndex(clipper, target - 1)
         while ig.Step(clipper)
             start_idx = Int(unsafe_load(clipper.DisplayStart)) + 1
@@ -666,6 +668,10 @@ function render_data_grid!(
                 if selection_mode === :rows
                     ig.TableSetColumnIndex(first_column - 1)
                     position = ig.GetCursorScreenPos()
+                    # The clipper draws the rows from the top down, after a first row it measures.
+                    state.top_row == 0 && position.y - padding.y +
+                        max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y) >
+                        ig.GetClipRectMin(ig.GetWindowDrawList()).y && (state.top_row = row)
                     is_selected = row in selected_set
                     if ig.Selectable(
                         "##row_$row",
