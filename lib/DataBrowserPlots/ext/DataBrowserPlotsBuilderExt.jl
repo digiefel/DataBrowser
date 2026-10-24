@@ -47,8 +47,8 @@ const SCALE_INFO = Dict(
     :scale => "The scale function applies before the analyses run, and can change their results.",
     :limits => "The values outside the limits are removed before the analyses run, and can change their results.",
 )
-# Makie's themes, as `theme(...)` names them: `:dark` for `theme_dark`.
-const THEMES = [:light, :dark, :black, :minimal, :ggplot2, :latexfonts]
+# Makie's themes, as `theme(...)` names them: `:default` for Makie's default, `:dark` for `theme_dark`.
+const THEMES = [:default, :light, :dark, :black, :minimal, :ggplot2, :latexfonts]
 # The figure-wide settings of a theme that the menu of `theme` offers, and its groups.
 const THEME_SETTINGS = [:backgroundcolor, :textcolor, :font, :fontsize, :figure_padding, :rowgap, :colgap,
     :palette, :colormap, :linecolor, :linestyle, :linewidth, :marker, :markercolor, :markersize,
@@ -1093,12 +1093,12 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
         section("theme") do
             values = entries(plot.theme)
             present = [entry.name for entry in values]
-            # Makie's themes by their function names, then the figure-wide settings, then the groups.
-            offered = [(1 in present ? String[] : ["theme_$t" for t in THEMES]); String.(setdiff(THEME_SETTINGS, present));
+            # Makie's themes as the code names them, then the figure-wide settings, then the groups.
+            offered = [(1 in present ? String[] : [":$t" for t in THEMES]); String.(setdiff(THEME_SETTINGS, present));
                 String.(setdiff(THEME_GROUPS, present))]
             name = heading!(view, "theme", "theme", offered; tooltip="Add a setting of the theme")
-            if name !== nothing && startswith(name, "theme_")
-                push!(changes, () -> write_entry!(view.code, plot, (:theme, 0), 1, ":$(name[7:end])"))
+            if name !== nothing && startswith(name, ':')
+                push!(changes, () -> write_entry!(view.code, plot, (:theme, 0), 1, name))
             elseif name !== nothing && Symbol(name) in THEME_GROUPS
                 push!(changes, () -> write_entry!(view.code, plot, (:theme, 0), Symbol(name), "(;)"))
             elseif name !== nothing

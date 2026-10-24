@@ -42,8 +42,8 @@ struct PlotLines
     lines::Vector{PlotLine}
 end
 
-# The `theme(...)` line of a plot: one of Makie's themes by name, such as `:dark` for `theme_dark`,
-# or `nothing` for the theme in use, and the settings that change it.
+# The `theme(...)` line of a plot: one of Makie's themes by name, such as `:dark` for `theme_dark` or
+# `:default`, or `nothing` for the theme in use, and the settings that change it.
 struct PlotTheme
     base::Union{Nothing,Symbol}
     settings::NamedTuple
@@ -248,8 +248,8 @@ one section, with one entry for each combination of their values that is drawn, 
 
 ## Theme
 
-A `theme` line sets the look of the plot: one of Makie's themes, such as `:dark` for `theme_dark`,
-changed by Makie's theme settings. Settings for the whole figure come first, then a group for each
+A `theme` line sets the look of the plot: one of Makie's themes, such as `:dark` for `theme_dark`
+or `:default` for Makie's default theme, changed by Makie's theme settings. Settings for the whole figure come first, then a group for each
 of Makie's blocks or plot types:
 
     theme(:dark; fontsize = 14, Axis = (; xgridvisible = false), Scatter = (; markersize = 10))

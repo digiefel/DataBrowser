@@ -251,8 +251,9 @@ end
 # of `Hist`.
 # TODO: show that where it matters.
 function makie_theme(theme::PlotTheme)::AoG.Makie.Theme
+    # Makie fills in its default theme under any theme, so an empty one is the default.
     base = theme.base === nothing ? AoG.Makie.current_default_theme() :
-        getproperty(AoG.Makie, Symbol(:theme_, theme.base))()
+        theme.base === :default ? AoG.Makie.Theme() : getproperty(AoG.Makie, Symbol(:theme_, theme.base))()
     return merge(AoG.Makie.Theme(; pairs(theme.settings)...), base)
 end
 
