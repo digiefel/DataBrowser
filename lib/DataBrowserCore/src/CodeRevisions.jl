@@ -392,6 +392,9 @@ const METHODS = Ref{Pair{UInt,IdDict{Any,Vector{Method}}}}(UInt(0) => IdDict{Any
 
 """Every method callable on objects of type `F`, also with keyword arguments, in changeable modules."""
 function visit_methods!(walk::Walk, @nospecialize(F::Type))::Nothing
+    # A call with keywords, `Core.kwcall(keywords, f, ...)`, also names `f`, whose keyword methods are
+    # followed with it. The methods of `kwcall` are every keyword method of every function.
+    F === typeof(Core.kwcall) && return nothing
     haskey(walk.seen, (:call, F)) && return nothing
     walk.seen[(:call, F)] = nothing
     lists = @lock LOCK begin

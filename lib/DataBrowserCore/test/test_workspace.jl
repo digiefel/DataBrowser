@@ -286,6 +286,18 @@ DataBrowserAPI.process(::HelperProject, i::EngineItem) = EngineItem(id(i),
     end
 end
 
+keyword_helper(x; k=1) = x * k
+keyword_stage(x) = keyword_helper(x; k=2)
+
+@testset "only the keyword functions that a stage calls are part of its code" begin
+    revision() = DataBrowserCore.CodeRevisions.code_revision(collect(methods(keyword_stage))).hash
+    before = revision()
+    @eval unrelated_keywords(; a=1) = a
+    @test revision() == before
+    @eval keyword_helper(x; k=1) = x * k + 1
+    @test revision() != before
+end
+
 @testset "a read may return the item itself" begin
     ws = W.open_workspace(TypedProject(), EngineSource("source", 1, false); cache=false)
     try
