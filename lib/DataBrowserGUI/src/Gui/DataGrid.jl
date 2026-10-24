@@ -296,6 +296,10 @@ function render_data_grid!(
             end
             first = last + 1
         end
+        # The line below the row, across the grid.
+        bottom = ig.TableGetCellBgRect(grid_table, 0).Max.y
+        ig.AddLine(draw_list, ig.ImVec2(ig.GetWindowPos().x, bottom), ig.ImVec2(ig.GetWindowPos().x + ig.GetWindowWidth(), bottom),
+            ig.GetColorU32(ig.ImGuiCol_TableBorderLight))
         ig.TablePopBackgroundChannel()
     end
     ig.TableNextRow(ig.ImGuiTableRowFlags_Headers)
