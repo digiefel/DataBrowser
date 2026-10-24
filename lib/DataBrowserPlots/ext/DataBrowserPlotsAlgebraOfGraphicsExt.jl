@@ -21,6 +21,7 @@ function figure(
     options...,
 )
     drawn = @timed_dbg "aog_draw" AoG.draw(drawable(specification), args...; legend=(; show=false), options...)
+    label_inspector!(drawn.grid)
     get(legend, :show, true) || return drawn.figure
     sections = legend_sections(drawn.grid, texts, get(legend, :merge, nothing))
     isempty(sections) && return drawn.figure
@@ -33,6 +34,49 @@ function figure(
     AoG.Makie.Legend(AoG.guides_position(drawn.figure, position), [s.samples for s in sections],
         [s.texts for s in sections], titles; orientation=AoG.default_orientation(position), settings...)
     return drawn.figure
+end
+
+# The text the inspector shows for a point: its x and y under the labels of the axes, then the value
+# of each role of its group, such as its color, under the title of the role's scale.
+# TODO: the items behind the point, and for an analysis, how many values it took.
+# TODO: the values of `group`, `layout`, `row` and `col`, which AlgebraOfGraphics has replaced by
+# their places in a scale that the drawn figure lacks.
+function label_inspector!(grid)
+    for entries in grid
+        axis = entries.axis
+        axis isa AoG.Makie.Axis || continue
+        # AlgebraOfGraphics draws a plot for each group of each layer, in the order of the groups. A
+        # plot type that draws all groups in one plot, such as `BarPlot`, has a value for each point.
+        for (plot, p) in zip(axis.scene.plots, entries.processedlayers)
+            mapping = AoG.aesthetic_mapping(p)
+            roles = [(AoG.getlabel(scale), Dict(zip(AoG.datavalues(scale), AoG.datalabels(scale))), value)
+                for (key, value) in pairs(p.primary)
+                for scale in (get(get(entries.categoricalscales, get(mapping, key, nothing), Dict()), nothing, nothing),)
+                if scale !== nothing]
+            plot.inspector_label = function (_, index, position)
+                lines = ["$(axis.xlabel[]): $(inspected(position[1]))", "$(axis.ylabel[]): $(inspected(position[2]))"]
+                for (title, names, value) in roles
+                    value isa AbstractVector && (value = value[index])
+                    push!(lines, "$title: $(get(names, value, value))")
+                end
+                return join(lines, "\n")
+            end
+        end
+    end
+    return nothing
+end
+
+# A number as the inspector shows it: four significant digits, and a power of ten for a very large
+# or very small one, such as 1.234×10⁻⁵.
+function inspected(value)::String
+    value isa Real && isfinite(value) || return string(value)
+    value == 0 && return "0"
+    power = floor(Int, log10(abs(value)))
+    # A whole number shows without its ".0".
+    digits(x) = replace(string(round(x; sigdigits=4)), r"\.0$" => "")
+    -3 <= power < 4 && return digits(value)
+    superscript = map(c -> c == '-' ? '⁻' : "⁰¹²³⁴⁵⁶⁷⁸⁹"[nextind("⁰¹²³⁴⁵⁶⁷⁸⁹", 0, c - '0' + 1)], string(power))
+    return "$(digits(value / 10.0^power))×10$superscript"
 end
 
 # The processed layers of each line, drawn or not. A role the line takes from the header is left
@@ -79,6 +123,7 @@ piece(p::AoG.ProcessedLayer) = (p.plottype, p.attributes)
 # The legend's sections, each as `(; samples, texts, title)`: the categorical scales' sections, then
 # one for each continuous scale, then one for the pieces with their own label.
 # TODO: legends of additional scales, such as `color=:Chip => scale(:other)`.
+# TODO: plot types that draw all groups in one plot, such as `BarPlot` with `color`, fail here.
 function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge)
     scales(kind) = [aes => scale for (aes, d) in pairs(AoG.legendable_scales(Val(kind),
         kind === :categorical ? first(grid).categoricalscales : first(grid).continuousscales))
