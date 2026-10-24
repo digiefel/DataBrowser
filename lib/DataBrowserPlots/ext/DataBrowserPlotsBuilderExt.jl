@@ -10,7 +10,7 @@ using DataBrowserAPI: Setting
 using DataBrowserCore: Selection
 using DataBrowserGUI: CodeFile, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
 import DataBrowserAPI: draw!, prepare!, settings
-using DataBrowserPlots: DataBrowserPlots, PlotCode, figure
+using DataBrowserPlots: DataBrowserPlots, PlotCode, figure, mappings
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
 const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
 using .GLMakieExt: DARK, FigureView
@@ -21,10 +21,18 @@ import .GLMakieExt: build!, export_name
 # TODO: let the user drag the border between the panel and the figure.
 const PANEL_WIDTH = 0.28f0
 # The width of the names of the roles in the panel.
-const ROLE_WIDTH = 56.0f0
+const ROLE_WIDTH = 84.0f0
 # Icons of the Lucide font that DataBrowserGUI loads with the interface font.
 const ICON_EYE = "\ue0ba"
 const ICON_EYE_OFF = "\ue0bb"
+# A mapping the user is writing in the panel: of the header (`line` 0) or of the line of that index,
+# its name, the text of its value, and whether the field takes the keyboard in the next frame.
+mutable struct MappingEdit
+    line::Int
+    name::Union{Int,Symbol}
+    buffer::Vector{UInt8}
+    focus::Bool
+end
 # The part of the window height the code takes.
 # TODO: let the user drag the border between the figure and the code.
 const CODE_HEIGHT = 0.35f0
@@ -38,8 +46,9 @@ The plot builder: a plot written as code, drawn for the selection.
 The user names the plot in the window's header: the name `tlm` is the file `plots/tlm.jl`, and a
 name ending in `.jl` is a path. A new plot starts with code that draws the selection's columns. The
 code is shown under the figure and edited there or, once the plot has a name, in any other editor.
-The panel at the left shows the roles of the mapping of `@plot` and its layers. Its eye button
-hides a layer, writing [`@invisible`](@ref) before its line, and draws it again.
+The panel at the left shows the mappings of `@plot` and its layers. A click on a value edits it,
+and "+ mapping" adds one that the layers' plot types can show; Enter writes it into the code. The
+eye button hides a layer, writing [`@invisible`](@ref) before its line, and draws it again.
 Giving a name that has no file yet saves the code under it; a name that has a file opens it. It
 is ordinary Julia, and its last value is the plot: an AlgebraOfGraphics declaration such as one
 written with `@plot`, or a Makie figure. The file runs from the start in a module of its own, which
@@ -71,6 +80,9 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     # The parts of the `@plot` of the code, and the code they were read from.
     plot::Union{Nothing,PlotCode} = nothing
     parsed::Union{Nothing,String} = nothing
+    # The named mappings each line of the block can show, as the last drawing found them.
+    mappings::Vector{Vector{Symbol}} = Vector{Symbol}[]
+    editing::Union{Nothing,MappingEdit} = nothing
     # The code `first_code` gave, while the file does not exist.
     first::String = ""
     # The text buffer ImGui edits.
@@ -202,9 +214,9 @@ function build!(view::BuilderView, ctx)::Nothing
         Core.eval(mod, :(selection = $selection))
         plot = Base.invokelatest(include_string, mod, view.code.text, code_path(view))
         # A declaration of paths is drawn for the selection, any other for its own data.
-        input = plot isa DataBrowserPlots.Declaration ? (selection,) : ()
-        view.figure = plot isa Makie.Figure ? plot :
-            Makie.with_theme(() -> figure(plot, input...), plot_theme(view.dark))
+        plot isa DataBrowserPlots.Declaration && (plot = Base.invokelatest(plot.layers, selection))
+        view.mappings = mappings(plot)
+        view.figure = plot isa Makie.Figure ? plot : Makie.with_theme(() -> figure(plot), plot_theme(view.dark))
         view.message = ""
         view.error_details = ""
     catch err
@@ -281,18 +293,111 @@ end
 role_name(role::Int) = role <= 3 ? ("x", "y", "z")[role] : string(role)
 role_name(role::Symbol) = String(role)
 
-# A role and its value, dimmed when the layer takes it from the header.
-function draw_role(role, value::String; inherited::Bool)::Nothing
-    ig.AlignTextToFramePadding()
-    ig.TextDisabled(role_name(role))
-    ig.SameLine(ROLE_WIDTH)
-    with_font(:code) do
-        inherited ? ig.TextDisabled(value) : ig.TextUnformatted(value)
+# The named mappings of the layout, which every plot type takes.
+const LAYOUT = [:layout, :row, :col, :group]
+
+function start_edit!(view::BuilderView, line::Int, name, value::String)::Nothing
+    buffer = zeros(UInt8, max(1024, 2sizeof(value)))
+    copyto!(buffer, codeunits(value))
+    view.editing = MappingEdit(line, name, buffer, true)
+    return nothing
+end
+
+# The field of the value being written. Enter, or a click elsewhere, gives the text to write; Escape
+# gives up. Returns the text once the user is done, or `nothing`.
+function draw_field!(view::BuilderView)::Union{Nothing,String}
+    edit = view.editing
+    edit.focus && ig.SetKeyboardFocusHere()
+    edit.focus = false
+    ig.SetNextItemWidth(-1.0f0)
+    flags = ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_AutoSelectAll
+    entered = with_font(() -> ig.InputText("##value", edit.buffer, length(edit.buffer), flags), :code)
+    done = entered || ig.IsItemDeactivatedAfterEdit()
+    if ig.IsKeyPressed(ig.ImGuiKey_Escape) || ig.IsItemDeactivated() && !done
+        view.editing = nothing
+    elseif done
+        view.editing = nothing
+        text = strip(unsafe_string(pointer(edit.buffer)))
+        return isempty(text) ? nothing : String(text)
     end
     return nothing
 end
 
-# The roles of the mapping of `@plot` and its layers. A change writes the code, as "Save" does.
+# A mapping of the header (`line` 0) or of a line, with its value: dimmed when the line takes it
+# from the header or no drawn line shows it, and struck through when the line's plot type cannot
+# show it. A click on the value edits it; a line's own value then replaces the header's. Returns
+# the edit and the text to write once the user is done, or `nothing`.
+function draw_mapping!(view::BuilderView, line::Int, role, value::String;
+        inherited::Bool=false, unused::Bool=false, skipped::Bool=false)::Union{Nothing,Tuple{MappingEdit,String}}
+    ig.PushID("$line/$role")
+    ig.AlignTextToFramePadding()
+    ig.TextDisabled(role_name(role))
+    ig.SameLine(ROLE_WIDTH)
+    edit = view.editing
+    written = nothing
+    if edit !== nothing && edit.line == line && edit.name == role
+        value = draw_field!(view)
+        written = value === nothing ? nothing : (edit, value)
+    else
+        dimmed = inherited || unused || skipped
+        dimmed && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
+        clicked = with_font(() -> ig.Selectable(value), :code)
+        dimmed && ig.PopStyleColor()
+        if skipped
+            low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
+            middle = round((low.y + high.y) / 2)
+            width = with_font(() -> ig.CalcTextSize(value).x, :code)
+            ig.AddLine(ig.GetWindowDrawList(), (low.x, middle), (low.x + width, middle),
+                ig.GetColorU32(ig.ImGuiCol_TextDisabled))
+        end
+        ig.SetItemTooltip(skipped ? "The plot type of this layer does not show $(role_name(role))" :
+            unused ? "No drawn layer shows $(role_name(role))" :
+            inherited ? "From the plot's mapping; click to give this layer its own" : "Click to edit")
+        clicked && start_edit!(view, line, role, value)
+    end
+    ig.PopID()
+    return written
+end
+
+# The "+ mapping" button of the header (`line` 0) or of a line, and its menu of `offered` names.
+function draw_add_menu!(view::BuilderView, line::Int, offered::Vector{Symbol})::Nothing
+    isempty(offered) && return nothing
+    ig.PushID("add/$line")
+    ig.SmallButton("+ mapping") && ig.OpenPopup("names")
+    # TODO: type-ahead filter, as the other long lists of the browser have.
+    if ig.BeginPopup("names")
+        for name in offered
+            ig.Selectable(String(name)) && start_edit!(view, line, name, "")
+        end
+        ig.EndPopup()
+    end
+    ig.PopID()
+    return nothing
+end
+
+# Write the value of a mapping into the code: in place of its old value, or added to the
+# `mapping(...)` of the header or of the line, which gets one if it has none.
+function write_mapping!(code::CodeFile, plot::PlotCode, edit::MappingEdit, text::String)::Nothing
+    mapping = edit.line == 0 ? plot.mapping : plot.lines[edit.line].mapping
+    roles = mapping === nothing ? Pair{Union{Int,Symbol},UnitRange{Int}}[] : mapping.roles
+    found = findfirst(role -> first(role) == edit.name, roles)
+    if found !== nothing
+        edit!(code, last(roles[found]), text)
+    elseif mapping !== nothing
+        # After the last value, so that a call over several lines, or with a comma after its last
+        # value, stays as it is written.
+        named = any(role -> first(role) isa Symbol, roles)
+        after = isempty(roles) ? last(mapping.range) - 1 : maximum(last(range) for (_, range) in roles)
+        separator = named ? ", " : "; "
+        edit!(code, after+1:after, "$separator$(edit.name)=$text")
+    else
+        start = first(plot.lines[edit.line].range)
+        edit!(code, start:start-1, "mapping(; $(edit.name)=$text) * ")
+    end
+    return nothing
+end
+
+# The mappings of `@plot` and its layers. A change writes the code, as "Save" does.
 function draw_panel!(view::BuilderView, ctx)::Nothing
     if view.parsed != view.code.text
         view.plot = tryparse(PlotCode, view.code)
@@ -304,45 +409,82 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
         return nothing
     end
     text(range) = view.code.text[range]
-    header = plot.mapping === nothing ? Pair{Union{Int,Symbol},UnitRange{Int}}[] : plot.mapping.roles
+    no_roles = Pair{Union{Int,Symbol},UnitRange{Int}}[]
+    header = plot.mapping === nothing ? no_roles : plot.mapping.roles
+    own(line) = line.mapping === nothing ? no_roles : line.mapping.roles
+    # A line takes a mapping of the header that it does not set itself; a position of the line
+    # replaces all of the header's positions.
+    takes(line, role) = line.inherits && all(r -> first(r) != role, own(line)) &&
+        !(role isa Int && any(r -> first(r) isa Int, own(line)))
+    # The mappings each line can show, as the last drawing found them; a named line is not drawn.
+    drawn_lines = [index for (index, line) in enumerate(plot.lines) if line.name === nothing]
+    known = length(drawn_lines) == length(view.mappings)
+    shown(index) = known && index in drawn_lines ? view.mappings[findfirst(==(index), drawn_lines)] : nothing
+    unused(role) = known && role isa Symbol && !any(drawn_lines) do index
+        line = plot.lines[index]
+        line.invisible === nothing && takes(line, role) && role in shown(index)
+    end
+    # The mapping and the text to write, or the eye's edit, ends the frame's drawing of the panel.
+    written = nothing
+    eye = false
+
     ig.SeparatorText("Mapping")
     for (role, range) in header
-        draw_role(role, text(range); inherited=false)
+        written = something(draw_mapping!(view, 0, role, text(range); unused=unused(role)), Some(written))
     end
+    edit = view.editing
+    if edit !== nothing && edit.line == 0 && all(r -> first(r) != edit.name, header)
+        written = something(draw_mapping!(view, 0, edit.name, ""), Some(written))
+    end
+    if plot.mapping !== nothing && known
+        draw_add_menu!(view, 0, setdiff(union(view.mappings..., LAYOUT), first.(header)))
+    end
+
     ig.SeparatorText("Layers")
-    edited = false
     for (index, line) in enumerate(plot.lines)
         ig.PushID(index)
         hidden = line.invisible !== nothing
         if ig.SmallButton(hidden ? ICON_EYE_OFF : ICON_EYE)
             # `@invisible` keeps the line in the plot without drawing it.
             hidden ? edit!(view.code, line.invisible, "") : edit!(view.code, first(line.range):first(line.range)-1, "@invisible ")
-            edited = true
+            eye = true
         end
         ig.SetItemTooltip(hidden ? "Draw the layer" : "Hide the layer, keeping its line")
         ig.SameLine()
         hidden && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
-        opened = with_font(() -> ig.TreeNodeEx(text(line.range), ig.ImGuiTreeNodeFlags_SpanAvailWidth), :code)
+        # A line written over several lines of code shows on one.
+        label = replace(text(line.range), r"\s+" => " ")
+        opened = with_font(() -> ig.TreeNodeEx(label, ig.ImGuiTreeNodeFlags_SpanAvailWidth), :code)
         hidden && ig.PopStyleColor()
         if opened
-            # The line's own roles, and those it takes from the header: a position of the line
-            # replaces all of the header's positions, and a named role replaces the header's.
-            own = line.mapping === nothing ? Pair{Union{Int,Symbol},UnitRange{Int}}[] : line.mapping.roles
-            positions = any(((role, _),) -> role isa Int, own)
-            taken = !line.inherits ? empty(header) :
-                filter(((role, _),) -> !(role isa Int && positions) && all(r -> first(r) != role, own), header)
-            roles = [[(role, range, true) for (role, range) in taken]; [(role, range, false) for (role, range) in own]]
-            # Positions first, in order, then the named roles.
-            for (role, range, inherited) in sort(roles; by=((role, _, _),) -> role isa Int ? (0, role) : (1, 0))
-                draw_role(role, text(range); inherited)
+            # The line's own mappings, and those it takes from the header: positions first, in
+            # order, then the named ones.
+            roles = [[(role, range, true) for (role, range) in header if takes(line, role)];
+                [(role, range, false) for (role, range) in own(line)]]
+            sort!(roles; by=((role, _, _),) -> role isa Int ? (0, role) : (1, 0))
+            names = shown(index)
+            for (role, range, inherited) in roles
+                skipped = inherited && names !== nothing && role isa Symbol && !(role in names)
+                written = something(draw_mapping!(view, index, role, text(range); inherited, skipped), Some(written))
             end
+            edit = view.editing
+            if edit !== nothing && edit.line == index && all(((role, _, _),) -> role != edit.name, roles)
+                written = something(draw_mapping!(view, index, edit.name, ""), Some(written))
+            end
+            # TODO: mappings of a named line, such as the groups of a fit.
+            names === nothing || draw_add_menu!(view, index, setdiff(names, [role for (role, _, _) in roles]))
             ig.TreePop()
         end
         ig.PopID()
         # The edit moved the bytes of the lines after it; the next frame reads them again.
-        edited && break
+        eye && break
     end
-    if edited
+
+    if written !== nothing
+        edit, value = written
+        write_mapping!(view.code, plot, edit, value)
+    end
+    if eye || written !== nothing
         set_code!(view, view.code.text)
         # A new id for the text box, which shows the edited code.
         view.reads += 1

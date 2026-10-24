@@ -12,6 +12,15 @@ end
 function inherit end
 function resolve end
 
+"""
+    mappings(lines) -> Vector{Vector{Symbol}}
+
+For each line of a `@plot` block, drawn or not, the named mappings that its plot types can show,
+such as `:color` and `:markersize` for `Scatter`, and those of the layout, such as `:row`. A plot
+without a block has no lines.
+"""
+mappings(_) = Vector{Symbol}[]
+
 # The latest world: code that the browser runs defines the declaration after the caller started.
 figure(declaration::Declaration, input, args...; options...) =
     figure(Base.invokelatest(declaration.layers, input), args...; options...)

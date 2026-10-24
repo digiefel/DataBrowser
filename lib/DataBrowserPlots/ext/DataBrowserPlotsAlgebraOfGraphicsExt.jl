@@ -3,7 +3,7 @@ module DataBrowserPlotsAlgebraOfGraphicsExt
 
 import AlgebraOfGraphics as AoG
 using DataBrowserAPI: @timed_dbg
-import DataBrowserPlots: figure, inherit, resolve
+import DataBrowserPlots: figure, inherit, mappings, resolve
 using DataBrowserPlots: Fit, LegendEntry, PlotLines, Scaled, Statistic, column, fit_statistic
 using DataBrowserAPI: item_data, metadata
 
@@ -27,27 +27,39 @@ function figure(
     return drawn.figure
 end
 
-# Each line processed on its own, so that a role the line takes from the header is left out of the
-# layers whose plot type cannot show it, such as `markersize` of `Lines`. Its values still divide the
-# line's points into groups, as other roles' values do.
-function figure(plot::PlotLines, args...; options...)
-    settings = !isempty(args) && first(args) isa AoG.Scales ? first(args) : AoG.scales()
+# The processed layers of each line, drawn or not. A role the line takes from the header is left
+# out of the layers whose plot type cannot show it, such as `markersize` of `Lines`. Its values still
+# divide the line's points into groups, as other roles' values do.
+function processed_lines(plot::PlotLines, settings::AoG.Scales=AoG.scales())::Vector{Vector{AoG.ProcessedLayer}}
     transforms = AoG.axis_transforms_from_scales(settings)
-    processed = AoG.ProcessedLayer[]
-    for line in plot.lines
-        line.drawn || continue
-        for p in AoG.ProcessedLayers(drawable(line.layers), transforms).layers
+    return map(plot.lines) do line
+        map(AoG.ProcessedLayers(drawable(line.layers), transforms).layers) do p
             shown = AoG.aesthetic_mapping(p)
             skipped = [key for key in line.shared if !haskey(shown, key) && AoG.hardcoded_mapping(key) === nothing]
             primary, named, labels = copy(p.primary), copy(p.named), copy(p.labels)
             for key in skipped, values in (primary, named, labels)
                 haskey(values, key) && delete!(values, key)
             end
-            push!(processed, AoG.ProcessedLayer(p; primary, named, labels))
+            AoG.ProcessedLayer(p; primary, named, labels)
         end
     end
-    return figure(AoG.ProcessedLayers(processed), args...; options...)
 end
+
+function figure(plot::PlotLines, args...; options...)
+    settings = !isempty(args) && first(args) isa AoG.Scales ? first(args) : AoG.scales()
+    drawn = [layers for (line, layers) in zip(plot.lines, processed_lines(plot, settings)) if line.drawn]
+    return figure(AoG.ProcessedLayers(reduce(vcat, drawn; init=AoG.ProcessedLayer[])), args...; options...)
+end
+
+# The named roles each line can show: those of its plot types, and those of the layout.
+# TODO: the lines are processed again when drawn; process them once for both.
+function mappings(plot::PlotLines)::Vector{Vector{Symbol}}
+    layout = [:layout, :row, :col, :group]
+    return map(processed_lines(plot)) do layers
+        union((Symbol[key for key in keys(AoG.aesthetic_mapping(p)) if key isa Symbol] for p in layers)..., layout)
+    end
+end
+mappings(plot::Scaled) = mappings(plot.layers)
 
 # The role of an aesthetic, as `mapping` names it: `:linestyle` for `AesLineStyle`.
 role(aes) = Symbol(lowercase(replace(string(nameof(aes)), r"^Aes" => "")))
