@@ -36,10 +36,10 @@ is_iv_file(file)::Bool =
     !contains_ci(file.filename, "FeCapBD") && !contains_ci(file.filename, "FeCap_BD")
 
 function ruo2_location(filename::AbstractString)::Vector{String}
-    m = match(r"^(RuO2.+?)_\d{8}_\d{6}_", String(filename))
+    m = match(r"^(RuO2?test.+?)_\d{8}_\d{6}_", String(filename))
     m === nothing && error("Unrecognized RuO2 filename: $filename")
     identifier = m.captures[1]
-    structured = match(r"^(RuO2test_?[A-Z0-9]+)_([XVI]+)_(.+)_([A-Z][0-9]+(?:[A-Z][0-9]+)*)$", identifier)
+    structured = match(r"^(RuO2?test_?[A-Z0-9]+)_([XVI]+)_(.+)_([A-Z][0-9]+(?:[A-Z][0-9]+)*)$", identifier)
     structured !== nothing && return [
         String(structured[1]),
         String(structured[2]),
@@ -91,8 +91,8 @@ function ruo2_read(data, metadata)
     return (data=data, metadata=merge(Dict{Symbol,Any}(metadata), entry.metadata))
 end
 
-ruo2_collection(_data, metadata)::Vector{String} =
-    String[String(metadata[key]) for key in RUO2_LOCATION_KEYS]
+ruo2_collection(_data, metadata)::NamedTuple =
+    NamedTuple{RUO2_LOCATION_KEYS}(Tuple(String(metadata[key]) for key in RUO2_LOCATION_KEYS))
 
 function ruo2_id(_data, metadata)::String
     id_parts = String[]
