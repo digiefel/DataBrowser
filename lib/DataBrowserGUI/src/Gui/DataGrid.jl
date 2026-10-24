@@ -136,6 +136,9 @@ Arguments:
 - `fold`: `(row::Int) -> Union{Nothing,Bool}`, whether a band starts with an arrow that folds
   something, open (`true`) or closed (`false`). No band has an arrow by default
 - `on_fold`: called with `row` when the user clicks the arrow of a band
+- `band_of`: `(row::Int) -> Int`, the band that heads `row`, or 0 for none; a band heads itself.
+  While `row` is at the top of the view, its band stays there, above it, until the next band
+  pushes it up. No row has one by default
 - `on_sort`: called with the columns to sort by, as `(col, ascending)` pairs from the first to the
   last, when the user changes them. The arrow at the right edge of a header, which shows when the
   column is sorted or the mouse is over the header, sorts by the column: ascending, then descending,
@@ -165,8 +168,7 @@ Arguments:
 - `height`: child height in pixels; 0.0f0 = fill available
 
 The grid fits its columns to the content of the rows on screen when `state.fit_columns` is set,
-which it is for a new state. In row mode, `state.top_row` is the first row wholly in view, below
-the headers, when the grid was last drawn.
+which it is for a new state.
 
 Row mode: click = replace, Shift+click = extend range, Ctrl/Cmd+click = toggle,
 Ctrl/Cmd+A = select all, up/down = move (Shift extends), Escape = clear.
@@ -195,6 +197,7 @@ function render_data_grid!(
     band::Function = _ -> nothing,
     fold::Function = _ -> nothing,
     on_fold::Function = _ -> nothing,
+    band_of::Function = _ -> 0,
     on_sort::Union{Nothing,Function} = nothing,
     header_icon::Function = _ -> "",
     column_groups::Function = _ -> String[],
@@ -245,6 +248,9 @@ function render_data_grid!(
     grid_table = ig.GetCurrentTable()
     style = unsafe_load(ig.GetStyle())
     draw_list = ig.GetWindowDrawList()
+    # The left edge and the width of the grid on screen, which a band spans.
+    grid_left = ig.GetWindowPos().x
+    grid_width = ig.GetWindowWidth()
     # An arrow as ImGui draws it in a tree node, at the left of the text at `position`.
     function draw_arrow(position, open)
         ig.RenderArrow(draw_list, ig.ImVec2(position.x, position.y + ig.GetFontSize() * 0.15f0),
@@ -529,39 +535,63 @@ function render_data_grid!(
     selected_column = ig.GetColorU32(ig.ImGuiCol_Header)
     # Between the color of the headers and that of the rows, so that a band is not taken for a header.
     band_color = ig.GetColorU32(ig.ImGuiCol_TableHeaderBg, 0.5f0)
+    # The top of the rows below a band that stays at the top of the view.
+    body_top = Ref(-Inf32)
     # The row's selection, which spans all columns, is in the first column the grid shows.
     first_column = something(findfirst(column -> !hidden(column), 1:n_cols), 1)
     # A band across the whole row, with its arrow and its text at the left edge of the grid, in the
     # color `color`. `top` is the top of the row's text.
-    function draw_band(row, text, color, top)
-        # Items in the background channel may be anywhere in the grid, not only in their column. The
-        # band covers the lines between the columns, which ImGui draws below this channel.
-        ig.TablePushBackgroundChannel()
-        left = ig.GetWindowPos().x + padding.x
-        ig.AddRectFilled(ig.GetWindowDrawList(), ig.ImVec2(ig.GetWindowPos().x, top - padding.y),
-            ig.ImVec2(ig.GetWindowPos().x + ig.GetWindowWidth(), top + ig.GetTextLineHeightWithSpacing() + padding.y),
-            color)
-        row > 1 && ig.AddLine(ig.GetWindowDrawList(), ig.ImVec2(ig.GetWindowPos().x, top - padding.y),
-            ig.ImVec2(ig.GetWindowPos().x + ig.GetWindowWidth(), top - padding.y), border)
-        open = fold(row)
-        if open !== nothing
-            draw_arrow(ig.ImVec2(left, top), open)
-            ig.SetCursorScreenPos(ig.ImVec2(left, top))
-            # Out of ImGui's keyboard navigation; a click on the text selects, as anywhere else in
-            # the row.
-            ig.PushItemFlag(ig.ImGuiItemFlags_NoNav, true)
-            # The button takes no room: the row stays as high as its selection.
-            reach = Ptr{ig.ImVec2}(ig.GetCurrentWindow().DC +
-                fieldoffset(ig.lib.ImGuiWindowTempData, Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
-            kept = unsafe_load(reach)
-            ig.InvisibleButton("##fold", ig.ImVec2(arrow_width, ig.GetFontSize())) && on_fold(row)
-            unsafe_store!(reach, kept)
-            ig.PopItemFlag()
-            left += arrow_width
+    function paint_band(row, text, color, top)
+        # The color of a band lets through what is below it, which is the rows for a band that
+        # stays at the top.
+        for fill in (background, color)
+            ig.AddRectFilled(draw_list, ig.ImVec2(grid_left, top - padding.y),
+                ig.ImVec2(grid_left + grid_width, top + ig.GetTextLineHeightWithSpacing() + padding.y), fill)
         end
-        ig.AddText(ig.GetWindowDrawList(), ig.ImVec2(left, top), ig.GetColorU32(ig.ImGuiCol_Text), text)
-        ig.TablePopBackgroundChannel()
+        row > 1 && ig.AddLine(draw_list, ig.ImVec2(grid_left, top - padding.y),
+            ig.ImVec2(grid_left + grid_width, top - padding.y), border)
+        open = fold(row)
+        open === nothing || draw_arrow(ig.ImVec2(grid_left + padding.x, top), open)
+        ig.AddText(draw_list, ig.ImVec2(grid_left + padding.x + (open === nothing ? 0.0f0 : arrow_width), top),
+            ig.GetColorU32(ig.ImGuiCol_Text), text)
         return nothing
+    end
+    # The button on the arrow of a band, whose text has its top at `top`.
+    function band_button(row, top)
+        fold(row) === nothing && return nothing
+        ig.SetCursorScreenPos(ig.ImVec2(grid_left + padding.x, top))
+        # Out of ImGui's keyboard navigation; a click on the text selects, as anywhere else in the row.
+        ig.PushItemFlag(ig.ImGuiItemFlags_NoNav, true)
+        # The button takes no room: the row stays as high as its selection.
+        reach = Ptr{ig.ImVec2}(ig.GetCurrentWindow().DC +
+            fieldoffset(ig.lib.ImGuiWindowTempData, Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
+        kept = unsafe_load(reach)
+        ig.InvisibleButton("##fold", ig.ImVec2(arrow_width, ig.GetFontSize())) && on_fold(row)
+        unsafe_store!(reach, kept)
+        ig.PopItemFlag()
+        return nothing
+    end
+    # The item that selects the row, across all columns, and the row's menu. Returns whether a click
+    # changed the selection, and the color of the row if it is a band.
+    function select_row(row)
+        is_selected = row in selected_set
+        clicked = ig.Selectable("##row_$row", is_selected,
+            ig.ImGuiSelectableFlags_SpanAllColumns | ig.ImGuiSelectableFlags_AllowOverlap,
+            (0.0f0, ig.GetTextLineHeightWithSpacing()))
+        clicked && _update_multi_selection!(
+            state.selected_rows, row, all_rows, unsafe_load(io.KeyShift), unsafe_load(io.KeyCtrl))
+        # The band covers the highlight of the row's selection, so it draws it itself.
+        color = is_selected ? ig.GetColorU32(ig.ImGuiCol_Header) :
+            ig.IsItemHovered() ? ig.GetColorU32(ig.ImGuiCol_HeaderHovered) : band_color
+        if row_popup !== nothing
+            ig.IsItemClicked(ig.ImGuiMouseButton_Right) &&
+                right_click(row, band(row) === nothing ? Int(ig.TableGetHoveredColumn()) + 1 : 0)
+            if ig.BeginPopupContextItem("##row_popup")
+                row_popup(row, state.menu_column)
+                ig.EndPopup()
+            end
+        end
+        return clicked, color
     end
     # Right-clicking a row that is not selected selects it, before its menu opens.
     function right_click(row, column)
@@ -597,7 +627,7 @@ function render_data_grid!(
         # the header, until the end of the span pushes it up. Only the first row of the cell and the
         # row at the top of the view write it: the clipper also draws rows out of view, such as the
         # first row, which it measures.
-        clip_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y
+        clip_top = max(ig.GetClipRectMin(ig.GetWindowDrawList()).y, body_top[])
         row_top = position.y - padding.y
         height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
         (row_top + height > clip_top && (first == row || row_top <= clip_top)) || return nothing
@@ -607,8 +637,7 @@ function render_data_grid!(
             while last_row < last_visible && span(last_row + 1, column) == first
                 last_row += 1
             end
-            visible_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y + padding.y
-            top = max(top, visible_top)
+            top = max(top, clip_top + padding.y)
             last_row < last_visible && (top = min(top, position.y + (last_row - row) * row_height))
         end
         moved = top != ig.GetCursorScreenPos().y
@@ -655,13 +684,20 @@ function render_data_grid!(
         end
         return nothing
     end
+    # The band that heads the rows at the top of the view stays there, until the next band pushes it
+    # up. Its item is the last one in the grid, so that it takes the mouse from the rows below it,
+    # and it is painted over them after the table. A band in its own row draws only while all of it
+    # is in view. `pinned` is -1 until the first row in view is drawn, then the band, or 0 for none.
+    pinned = -1
+    pinned_added = false
+    pinned_x = pinned_top = view_top = view_bottom = 0.0f0
+    pinned_color = band_color
     clipper = ig.lib.ImGuiListClipper()
     try
         # The clipper measures the height of a row from the first one.
         ig.Begin(clipper, n_rows, -1.0f0)
         # The row to scroll to is drawn even when it is out of view.
         target = state.scroll_to_row
-        state.top_row = 0
         target !== nothing && 1 <= target <= n_rows && ig.IncludeItemByIndex(clipper, target - 1)
         while ig.Step(clipper)
             start_idx = Int(unsafe_load(clipper.DisplayStart)) + 1
@@ -687,38 +723,39 @@ function render_data_grid!(
                 if selection_mode === :rows
                     ig.TableSetColumnIndex(first_column - 1)
                     position = ig.GetCursorScreenPos()
+                    row_top = position.y - padding.y
+                    height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
                     # The clipper draws the rows from the top down, after a first row it measures.
-                    state.top_row == 0 && position.y - padding.y >
-                        ig.GetClipRectMin(ig.GetWindowDrawList()).y - 1 && (state.top_row = row)
-                    is_selected = row in selected_set
-                    if ig.Selectable(
-                        "##row_$row",
-                        is_selected,
-                        ig.ImGuiSelectableFlags_SpanAllColumns |
-                            ig.ImGuiSelectableFlags_AllowOverlap,
-                        (0.0f0, ig.GetTextLineHeightWithSpacing()),
-                    )
-                        ctrl_held = unsafe_load(io.KeyCtrl)
-                        shift_held = unsafe_load(io.KeyShift)
-                        _update_multi_selection!(
-                            state.selected_rows, row, all_rows, shift_held, ctrl_held)
-                        selected_set = Set(state.selected_rows)
-                        row_selection_changed = true
-                    end
-                    text = band(row)
-                    # The band covers the highlight of the row's selection, so it draws it itself.
-                    color = is_selected ? ig.GetColorU32(ig.ImGuiCol_Header) :
-                        ig.IsItemHovered() ? ig.GetColorU32(ig.ImGuiCol_HeaderHovered) : band_color
-                    if row_popup !== nothing
-                        ig.IsItemClicked(ig.ImGuiMouseButton_Right) &&
-                            right_click(row, text === nothing ? Int(ig.TableGetHoveredColumn()) + 1 : 0)
-                        if ig.BeginPopupContextItem("##row_popup")
-                            row_popup(row, state.menu_column)
-                            ig.EndPopup()
+                    if pinned == -1 && row_top + height > ig.GetClipRectMin(ig.GetWindowDrawList()).y
+                        view_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y
+                        view_bottom = ig.GetClipRectMax(ig.GetWindowDrawList()).y
+                        pinned = band_of(row)
+                        pinned == row && row_top >= view_top - 1 && (pinned = 0)
+                        if pinned != 0
+                            # A band in the next row pushes it up.
+                            pushed = row < n_rows && band(row + 1) !== nothing
+                            pinned_x = position.x
+                            pinned_top = (pushed ? row_top : view_top) + padding.y
+                            body_top[] = pinned_top - padding.y + height
                         end
                     end
+                    text = band(row)
+                    if text !== nothing && row_top < ig.GetClipRectMin(ig.GetWindowDrawList()).y - 1
+                        # Room for the band, which stays at the top of the view or is out of view.
+                        ig.Dummy(ig.ImVec2(0.0f0, ig.GetTextLineHeightWithSpacing()))
+                        ig.PopID()
+                        continue
+                    end
+                    clicked, color = select_row(row)
+                    clicked && (selected_set = Set(state.selected_rows); row_selection_changed = true)
                     if text !== nothing
-                        draw_band(row, text, color, position.y)
+                        band_button(row, position.y)
+                        # Items in the background channel may be anywhere in the grid, not only in
+                        # their column. The band covers the lines between the columns, which ImGui
+                        # draws below this channel.
+                        ig.TablePushBackgroundChannel()
+                        paint_band(row, text, color, position.y)
+                        ig.TablePopBackgroundChannel()
                     else
                         ig.SameLine()
                         draw_cell(row, first_column, position, end_idx, row_height)
@@ -727,6 +764,26 @@ function render_data_grid!(
                             ig.TableSetColumnIndex(column - 1)
                             draw_cell(row, column, ig.GetCursorScreenPos(), end_idx, row_height)
                         end
+                    end
+                    # The band at the top comes with the last row in view, after the rows below it.
+                    if pinned > 0 && !pinned_added && (row == n_rows ||
+                            row_top + height >= ig.GetClipRectMax(ig.GetWindowDrawList()).y)
+                        pinned_added = true
+                        ig.TableSetColumnIndex(first_column - 1)
+                        back = ig.GetCursorScreenPos()
+                        reach = Ptr{ig.ImVec2}(ig.GetCurrentWindow().DC + fieldoffset(ig.lib.ImGuiWindowTempData,
+                            Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
+                        kept = unsafe_load(reach)
+                        ig.PopID()
+                        ig.PushID(pinned)
+                        ig.SetCursorScreenPos(ig.ImVec2(pinned_x, pinned_top))
+                        clicked, pinned_color = select_row(pinned)
+                        clicked && (selected_set = Set(state.selected_rows); row_selection_changed = true)
+                        band_button(pinned, pinned_top)
+                        ig.PopID()
+                        ig.PushID(row)
+                        ig.SetCursorScreenPos(back)
+                        unsafe_store!(reach, kept)
                     end
                 else
                     for column in 1:n_cols
@@ -767,6 +824,11 @@ function render_data_grid!(
     state.scroll_to_row = nothing
 
     ig.EndTable()
+    if pinned > 0
+        ig.PushClipRect(draw_list, ig.ImVec2(grid_left, view_top), ig.ImVec2(grid_left + grid_width, view_bottom), false)
+        paint_band(pinned, band(pinned), pinned_color, pinned_top)
+        ig.PopClipRect(draw_list)
+    end
 
     if row_selection_changed
         on_selection_change(copy(state.selected_rows))

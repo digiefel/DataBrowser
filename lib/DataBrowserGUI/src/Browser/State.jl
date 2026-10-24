@@ -70,8 +70,6 @@ Base.@kwdef mutable struct DataGridState
     sort::Vector{Tuple{Int,Bool}}        = Tuple{Int,Bool}[]
     # The column of the cell whose row's menu is open; 0 for a band.
     menu_column::Int                     = 0
-    # The first row wholly in view, as the grid drew it in the last frame; 0 for none.
-    top_row::Int                         = 0
 end
 
 """
