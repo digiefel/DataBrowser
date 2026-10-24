@@ -42,12 +42,13 @@ const SCALE_INFO = Dict(
     :limits => "The values outside the limits are removed before the analyses run, and can change their results.",
 )
 # A value the user is writing in the panel: the call it goes in (see `target_call`), its name, its
-# text, and whether the field takes the keyboard in the next frame.
+# text, whether the field takes the keyboard in the next frame, and why its text was refused.
 mutable struct EntryEdit
     target::Tuple{Symbol,Int}
     name::Union{Int,Symbol}
     buffer::Vector{UInt8}
     focus::Bool
+    problem::Union{Nothing,String}
 end
 # The part of the window height the code takes.
 # TODO: let the user drag the border between the figure and the code.
@@ -394,7 +395,7 @@ end
 function start_edit!(view::BuilderView, target, name, value::String)::Nothing
     buffer = zeros(UInt8, max(1024, 2sizeof(value)))
     copyto!(buffer, codeunits(value))
-    view.editing = EntryEdit(target, name, buffer, true)
+    view.editing = EntryEdit(target, name, buffer, true, nothing)
     return nothing
 end
 
@@ -406,14 +407,26 @@ function draw_field!(view::BuilderView)::Union{Nothing,String}
     edit.focus = false
     ig.SetNextItemWidth(-1.0f0)
     flags = ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_AutoSelectAll
+    edit.problem === nothing || ig.PushStyleColor(ig.ImGuiCol_FrameBg, ig.GetColorU32(ig.ImVec4(0.45f0, 0.16f0, 0.16f0, 1.0f0)))
     entered = with_font(() -> ig.InputText("##value", edit.buffer, length(edit.buffer), flags), :code)
+    edit.problem === nothing || (ig.PopStyleColor(); ig.SetItemTooltip(edit.problem))
     done = entered || ig.IsItemDeactivatedAfterEdit()
     if ig.IsKeyPressed(ig.ImGuiKey_Escape) || ig.IsItemDeactivated() && !done
         view.editing = nothing
     elseif done
+        text = String(strip(unsafe_string(pointer(edit.buffer))))
+        isempty(text) && (view.editing = nothing; return nothing)
+        # The text replaces one value of the code, so it must be one value: `1, 2` would become
+        # several.
+        expression, stop = Meta.parse(text, 1; raise=false)
+        edit.problem = Meta.isexpr(expression, (:error, :incomplete)) || stop <= ncodeunits(text) ?
+            "This is not one Julia value" :
+            Meta.isexpr(expression, :tuple) && !startswith(text, '(') ?
+            "Several values: write them in brackets, as [$text], or in parentheses" :
+            Meta.isexpr(expression, (:(=), :kw)) ? "Write only the value, without a name" : nothing
+        edit.problem === nothing || (edit.focus = true; return nothing)
         view.editing = nothing
-        text = strip(unsafe_string(pointer(edit.buffer)))
-        return isempty(text) ? nothing : String(text)
+        return text
     end
     return nothing
 end

@@ -151,6 +151,8 @@ function call_code(text::String, node::SyntaxNode)::Union{Nothing,CallCode}
     for argument in arguments
         kind(argument) == K"parameters" ? foreach(read, children(argument)) : read(argument)
     end
+    # A named tuple of settings has only names; other tuples are read as code.
+    kind(node) == K"tuple" && any(e -> e.name isa Int, entries) && return nothing
     # Positions come first, as `mapping` takes them.
     return CallCode(byte_range(node), sort(entries; by=e -> e.name isa Symbol))
 end
