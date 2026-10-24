@@ -121,11 +121,13 @@ end
 What the browser tells a visualizer about its window.
 
 `id` names the window. It is unique in the browser and stays the same from frame to frame.
-`workspace` is the open workspace.
+`workspace` is the open workspace. `open_window(visualizer)` opens a new window that shows the value
+of this window with `visualizer`.
 """
 struct WindowContext
     id::String
     workspace::Workspace.Workspace
+    open_window::Function
 end
 
 """Newest-last cap for the throughput history ring buffers (~1 minute at the 0.25s sample rate)."""

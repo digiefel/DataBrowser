@@ -89,6 +89,11 @@ function visualizers(T::Type)::Vector{AbstractVisualizer}
     return sort!(AbstractVisualizer[V() for V in types]; by=label)
 end
 
+# What `window` tells its visualizer. A window opened from it is drawn from the next frame on, as
+# the browser draws a copy of its list of windows.
+WindowContext(state::BrowserState, window::Window) = WindowContext(window.id, state.workspace,
+    visualizer -> (transform!(open_window!(state, visualizer; input=window.input), window.transform); nothing))
+
 """
     open_window!(state, visualizer; input=LiveSelection()) -> Window
 
@@ -219,7 +224,7 @@ function refresh!(state::BrowserState, window::Window)::Nothing
     current == window.stamp && return nothing
     window.stamp = current
     visualizer = window.visualizer
-    ctx = WindowContext(window.id, state.workspace)
+    ctx = WindowContext(state, window)
     try
         window.value = value(input, state)
         transform = window.transform

@@ -30,6 +30,9 @@ through its `prepare!` methods.
 
 - `ctx.id` names the window. It is unique in the browser and stays the same from frame to frame.
 - `ctx.workspace` is the open workspace.
+- `ctx.open_window(visualizer)` opens a new window that shows the value of this window with
+  `visualizer`: it takes its value from the same input and passes it through the same function.
+  The window opens after this frame.
 """
 abstract type AbstractVisualizer end
 

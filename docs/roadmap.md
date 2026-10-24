@@ -614,7 +614,8 @@ the table as a first-class view.
   - [x] A cell that holds a vector, a matrix, a table or a block of names zooms in place: the window
     shows the value as a table, under a path back to the items. Data that is a vector or a matrix
     shows its columns.
-  - [ ] Right-clicking such a cell opens its value in a new window.
+  - [x] Right-clicking such a cell opens a new window that shows the same items, zoomed into it.
+  - [ ] The browser saves the zoom of a window.
   - [x] A filter for each column, from a right-click on its header: a Julia function of the value.
   - [ ] For a column with one value for each item, a checkbox for each value, which writes the
     filter.

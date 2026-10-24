@@ -41,7 +41,7 @@ which the table calls with each value of the column. The table shows the rows fo
 A cell that holds a vector, a matrix, a table or a block of names is a link. Clicking it zooms into
 the cell: the window shows the value of the cell as a table, and the path above the table names the
 item and the cells it went through. The arrow goes back one step, and each name in the path goes back
-to it.
+to it. Right-clicking the cell opens a new window that shows the same items, zoomed into the cell.
 
 Below the filter, the same menu lists the metadata of the items. A checked name is a column after
 `item`, with the value of each item in one cell beside its rows.
@@ -240,13 +240,25 @@ function draw!(view::TableView, ctx)::Nothing
             (view.item_column && path == ["item"] || Symbol(only(path)) in view.metadata) && return false
         return !folded(row, column) && _zoomable(table.getvalue(shown[row], column))
     end
+    # The step from the table to the value of a cell.
+    function zoom_step(row, column)
+        # The rows of an item follow each other in the table.
+        within = shown[row] - findfirst(==(item(row)), table.row_item) + 1
+        return (table.spans_item(shown[row], column) ? 0 : within, table.paths[column])
+    end
     zoomed = false
     function zoom!(row, column)
         isempty(view.zoom) && (view.zoom_item = table.item_labels[item(row)])
-        # The rows of an item follow each other in the table.
-        within = shown[row] - findfirst(==(item(row)), table.row_item) + 1
-        push!(view.zoom, (table.spans_item(shown[row], column) ? 0 : within, table.paths[column]))
+        push!(view.zoom, zoom_step(row, column))
         zoomed = true
+    end
+    # TODO: the browser does not save the zoom of a window, which shows all of its items when the
+    # browser opens again.
+    function open_zoomed(row, column)
+        ig.MenuItem("Open in a new window") || return nothing
+        zoom_item = isempty(view.zoom) ? table.item_labels[item(row)] : view.zoom_item
+        ctx.open_window(TableView(; zoom_item, zoom=[view.zoom; [zoom_step(row, column)]]))
+        return nothing
     end
     # Picking metadata and unfolding blocks change the columns, so the table is built again after
     # the grid is drawn.
@@ -304,6 +316,7 @@ function draw!(view::TableView, ctx)::Nothing
             cell,
             clickable=zoomable,
             on_click=zoom!,
+            link_popup=open_zoomed,
             align_right=column -> view.formats[column] !== nothing,
             muted=(row, column) -> folded(row, column) || column in table.groups,
             tooltip=(row, column) -> folded(row, column) ? last(view.folded_cells[item(row)][column]) : nothing,
