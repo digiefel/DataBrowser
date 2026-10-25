@@ -405,11 +405,11 @@ function Base.:*(result::Result, layer::AoG.Layer)
         error("A result is drawn with a visual, such as `contacts * visual(Lines)`")
     # The data of each group, its first column as x and its second as y, with the group's value in
     # each role. An aggregate of several functions has a column for each; a line draws them by
-    # mapping them, as in `mapping(y = spread.mean)`.
+    # mapping them, as in `mapping(y = result.mean)`.
     plottype = layer.transformation.plottype
     data = item_data(first(getfield(result, :groups)))
-    length(data) == 2 || error("A result with the values $(join(keys(data)[2:end], ", ")) is drawn by mapping " *
-        "the one to draw, as in `mapping(y = spread.$(keys(data)[2]))` for a result named `spread`")
+    length(data) == 2 || error("This result has several values: $(join(keys(data)[2:end], ", ")). Give it a name and map " *
+        "the value to draw, as `mapping(y = name.$(keys(data)[2]))`")
     positional = getfield(result, :positional)
     # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
     shown = hasmethod(AoG.aesthetic_mapping, Tuple{Type{plottype},Int}) ?
@@ -519,7 +519,7 @@ resolve(layers::AoG.Layers, items, axes) = foldl(+, (resolve(layer, items, axes)
 # A line that reads the values of a result, drawn over its groups: `table` holds the values the
 # line's mapping reads, one row for each group, and the line takes the roles of the result's points,
 # such as `color`, so that it shares their legend entries. A line with `y` and no `x` takes the x of
-# the result's points, as `mapping(y = spread.mean)`.
+# the result's points, as `mapping(y = result.mean)`.
 function over_result(result::Result, table, layer)
     named = getfield(result, :named)
     groups = getfield(result, :groups)
@@ -530,10 +530,10 @@ function over_result(result::Result, table, layer)
     # The values computed after the y scale's function, such as an aggregate's `mean` and `std`,
     # are placed back on the axis by what the visual draws with them: a y value is a position, and
     # the third value of `Errorbars` a length on each side of y, drawn as the distances to the ends.
-    # A value read by index, as `spread.extrema[1]`, is one too; a value the line computes itself, as
-    # `10^spread.mean`, is drawn as it is.
+    # A value read by index, as `result.extrema[1]`, is one too; a value the line computes itself, as
+    # `10^result.mean`, is drawn as it is.
     scale = getfield(result, :scale)
-    # The column of `spread.extrema[1]` is named `(:extrema)[1]`.
+    # The column of `result.extrema[1]` is named `(:extrema)[1]`.
     is_computed(name) = any(n -> occursin(Regex("^\\(?:?\\Q$n\\E\\)?(\\[.*\\])?\$"), string(name)), getfield(result, :scaled))
     back = unscaled(scale)
     placed = Dict{Symbol,Any}()

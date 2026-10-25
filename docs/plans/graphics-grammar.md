@@ -150,16 +150,16 @@ column its meaning: the third value of `Errorbars` is a half-length because Maki
 
     # Several functions: a line maps the columns. A line with only `y` takes the header's x,
     # which is also the name of the result's x column.
-    spread = aggregate(mean, mycoolstd, extrema)
-    mapping(y = spread.mean) * visual(Lines)
-    mapping(spread.x, spread.mean, spread.mycoolstd) * visual(Errorbars)
+    result = aggregate(mean, mycoolstd, extrema)
+    mapping(y = result.mean) * visual(Lines)
+    mapping(result.x, result.mean, result.mycoolstd) * visual(Errorbars)
 
     # A function with several values: each is read by its index, as the header reads
     # `:size[1]`.
-    mapping(spread.x, spread.extrema[1], spread.extrema[2]) * visual(Rangebars)
+    mapping(result.x, result.extrema[1], result.extrema[2]) * visual(Rangebars)
 
     # A column that is not a y value.
-    mapping(spread.x, spread.count) * visual(Scatter)
+    mapping(result.x, result.count) * visual(Scatter)
 end
 ```
 
@@ -171,7 +171,7 @@ section above.
 ```
 @plot block
  │
- ├─ spread = aggregate(f, g)                    a statement, run when the plot is declared
+ ├─ result = aggregate(f, g)                    a statement, run when the plot is declared
  │    the header's mapping gives a table: x, y, roles, item ids
  │    the y scale's function applies to y; limits of x and y remove points
  │    split → apply f, g to each group's y values → one Group per row:
@@ -179,8 +179,8 @@ section above.
  │         members  = the items whose points it took
  │    → Result
  │
- ├─ mapping(y = spread.mean) * visual(Lines)    a line that reads a result
- │    `spread.mean` is the path :mean into each group
+ ├─ mapping(y = result.mean) * visual(Lines)    a line that reads a result
+ │    `result.mean` is the path :mean into each group
  │    a table with one row per group → data(table) * mapping * visual
  │    the result's roles, such as color, join the mapping, so the legend matches the points
  │
@@ -196,8 +196,8 @@ stay those of the model.
 Agreed with Davide on 25 October 2026. With `scale = log10`, the functions receive `log10` of the
 y values, and a result holds exactly what they return: `mean` gives a value in decades, such as
 -10, and a standard deviation a width in decades, such as 1. A legend text or other code that reads
-a result gets these values: `$(spread.mean)`, where `spread` is the name the plot gives to
-`aggregate(...)`, prints -10, and `$(10^spread.mean)` prints the value in the data's units. No
+a result gets these values: `$(result.mean)`, where `result` is the name the plot gives to
+`aggregate(...)`, prints -10, and `$(10^result.mean)` prints the value in the data's units. No
 value is converted back silently, so nobody computes a geometric standard deviation without
 knowing it.
 

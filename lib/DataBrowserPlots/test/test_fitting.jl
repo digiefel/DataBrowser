@@ -58,10 +58,10 @@ half_range(values) = (maximum(values) - minimum(values)) / 2
 @testset "a line maps the values of an aggregate, and takes its x when it maps only y" begin
     devices = [FitTestDevice("$chip$gap$R", chip, gap, R) for chip in ("A", "B") for gap in (5.0, 10.0) for R in (1.0, 3.0)]
     plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
-        spread = aggregate(average, half_range)
-        mapping(y = spread.average) * visual(Scatter)
-        mapping(spread.gap, spread.average, spread.half_range) * visual(Errorbars)
-        mapping(spread.gap, spread.count) * visual(Lines)
+        result = aggregate(average, half_range)
+        mapping(y = result.average) * visual(Scatter)
+        mapping(result.gap, result.average, result.half_range) * visual(Errorbars)
+        mapping(result.gap, result.count) * visual(Lines)
     end
     drawn = figure(plot, select(devices))
     plots(type, drawn=drawn) = [p for p in axis(drawn).scene.plots if p isa type]
@@ -79,9 +79,9 @@ deviation(values) = sqrt(sum(abs2, values .- average(values)) / (length(values) 
 @testset "on a log axis, an aggregate takes the logarithms and draws its values back on the axis" begin
     rows = [(x=x, y=y) for x in (1.0, 2.0) for y in (1.0, 100.0)]
     plot = @plot data(rows) * mapping(:x, :y) begin
-        spread = aggregate(average, deviation)
-        mapping(y = spread.average) * visual(Lines)
-        mapping(spread.x, spread.average, spread.deviation) * visual(Errorbars)
+        result = aggregate(average, deviation)
+        mapping(y = result.average) * visual(Lines)
+        mapping(result.x, result.average, result.deviation) * visual(Errorbars)
         scales(y = (; scale = log10))
     end
     drawn = figure(plot)

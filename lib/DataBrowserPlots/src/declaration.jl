@@ -212,10 +212,10 @@ draws, each under the name of its function:
 
     @plot data(table) * mapping(:x, :y; color=:sample) begin
         visual(Scatter)
-        spread = aggregate(mean, std, extrema)
-        mapping(y = spread.mean) * visual(Lines)
-        mapping(spread.x, spread.mean, spread.std) * visual(Errorbars)
-        mapping(spread.x, spread.extrema[1], spread.extrema[2]) * visual(Rangebars)
+        result = aggregate(mean, std, extrema)
+        mapping(y = result.mean) * visual(Lines)
+        mapping(result.x, result.mean, result.std) * visual(Errorbars)
+        mapping(result.x, result.extrema[1], result.extrema[2]) * visual(Rangebars)
     end
 
 A line that maps only `y` takes the x of the groups. The visual gives each value its meaning: the
@@ -229,18 +229,18 @@ the value of each function under its name, such as `:mean`, and the `count` of t
 members are the items whose points it takes. Without a visual, an aggregate of one function is drawn
 with `Scatter`.
 
-A named result reads the values of its groups by name: `spread.count` is the count of each group,
+A named result reads the values of its groups by name: `result.count` is the count of each group,
 and `contacts.Rc` the parameter `Rc` of each fit. A line that reads them, such as
-`mapping(spread.x, spread.count) * visual(Lines)`, draws one point for each group, in the roles of
+`mapping(result.x, result.count) * visual(Lines)`, draws one point for each group, in the roles of
 the result's points.
 
 The analyses take the values after the function of the y scale, such as `log10`, as
 `expectation()` does: on a log axis, `aggregate(mean)` gives the mean of the logarithms, and `fit`
 measures how far its curve is from the points in decades. A result holds the values as its functions
-give them: with `scale = log10`, `\$(spread.mean)` in a legend text is a number of decades, and
-`\$(10^spread.mean)` is the value in the units of the data. Drawing places them back on the axis by
+give them: with `scale = log10`, `\$(result.mean)` in a legend text is a number of decades, and
+`\$(10^result.mean)` is the value in the units of the data. Drawing places them back on the axis by
 what the visual draws: a y value as a position, and the third value of `Errorbars` as a length on
-each side of y in decades. A value that a line computes itself, such as `10^spread.mean`, is drawn as
+each side of y in decades. A value that a line computes itself, such as `10^result.mean`, is drawn as
 it is.
 
 A line `name = value` gives a name to the value of the line for the other lines, such as a fit
@@ -491,7 +491,7 @@ function declare_layer(layer, input::Symbol)
 end
 
 # A drawn line as a function of the input. A line that reads the values of a named result, such as
-# `mapping(spread.gap, spread.count) * visual(Scatter)`, is drawn over the result's groups, one row
+# `mapping(result.gap, result.count) * visual(Scatter)`, is drawn over the result's groups, one row
 # each, in the roles of the result's points; any other line is a layer of the header.
 function declare_line(header, line, names::Vector{Symbol}, input::Symbol)
     found = Symbol[]
@@ -501,7 +501,7 @@ function declare_line(header, line, names::Vector{Symbol}, input::Symbol)
     isempty(found) && return declare_layers(:($inherit($header, $line)), input)
     length(unique(found)) == 1 || error("A line reads the values of one named result, not of $(join(unique(found), " and "))")
     result = first(found)
-    # `spread.count` is the path `:count` into each group of `spread`.
+    # `result.count` is the path `:count` into each group of `result`.
     paths_of(e) = reads(e) ? e.args[2] : e isa Expr ? Expr(e.head, map(paths_of, e.args)...) : e
     tabulated = tabulate(paths_of(line), value -> per_item(value, result))
     tabulated === nothing && return declare_layers(:($inherit($header, $line)), input)

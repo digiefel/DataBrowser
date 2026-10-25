@@ -94,7 +94,7 @@ end
 Result(groups, positional, named, plottype) = Result(groups, positional, named, plottype, identity, Symbol[])
 Base.size(result::Result) = size(getfield(result, :groups))
 Base.getindex(result::Result, index::Int) = getfield(result, :groups)[index]
-# A value of each group's metadata, such as `contacts.Rc` or `spread.count`: one for each group.
+# A value of each group's metadata, such as `contacts.Rc` or `result.count`: one for each group.
 # TODO: the data and the members of each group.
 Base.getproperty(result::Result, name::Symbol) = [metadata(group)[name] for group in getfield(result, :groups)]
 Base.propertynames(result::Result) = unique(reduce(vcat, [collect(keys(metadata(group))) for group in getfield(result, :groups)]; init=Symbol[]))
