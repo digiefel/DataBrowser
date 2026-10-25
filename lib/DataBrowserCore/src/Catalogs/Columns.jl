@@ -164,25 +164,34 @@ Base.getindex(column::Union{IdColumn,LabelColumn}, row::Integer)::String = Strin
 
 """
 The rows each item is made from, in row order: the source item that `expand` gave it from, or the
-items a computed value reads. Inputs never change, so a row stores only where its inputs end; they
-start after the previous row's.
+items a computed value reads. New inputs of a row are added at the end, and the row points to them.
 """
 struct InputColumn
     keys::Vector{Union{SourceKey,ItemKey}}
-    ends::Vector{UInt32}
+    starts::Vector{UInt32}
+    lengths::Vector{UInt32}
 end
 
-InputColumn() = InputColumn(Union{SourceKey,ItemKey}[], UInt32[])
+InputColumn() = InputColumn(Union{SourceKey,ItemKey}[], UInt32[], UInt32[])
 
 function Base.push!(column::InputColumn, keys)::InputColumn
+    push!(column.starts, length(column.keys) + 1)
     append!(column.keys, keys)
-    push!(column.ends, length(column.keys))
+    push!(column.lengths, length(column.keys) - column.starts[end] + 1)
+    return column
+end
+
+# TODO: the inputs a row no longer points to stay in `keys` until the workspace closes.
+function Base.setindex!(column::InputColumn, keys, row::Integer)::InputColumn
+    column.starts[row] = length(column.keys) + 1
+    append!(column.keys, keys)
+    column.lengths[row] = length(column.keys) - column.starts[row] + 1
     return column
 end
 
 function Base.view(column::InputColumn, row::Integer)
-    start = row == 1 ? 1 : Int(column.ends[row-1]) + 1
-    return view(column.keys, start:Int(column.ends[row]))
+    start = Int(column.starts[row])
+    return view(column.keys, start:start+Int(column.lengths[row])-1)
 end
 
 """

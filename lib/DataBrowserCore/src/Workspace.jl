@@ -40,6 +40,7 @@ using ..Catalogs:
     stale!
 using DataBrowserAPI:
     MetadataDict,
+    metadata_value,
     PipelineStage,
     COLLECTION_ANALYZE,
     COLLECTION_PROCESS,

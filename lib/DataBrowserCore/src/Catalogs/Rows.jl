@@ -414,7 +414,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
                 move!(key, entry.collection, 1)
                 # The computed values that read an item of this id before it was removed read it again.
                 for (reader, old) in pop!(items.waiting, entry.id, Tuple{ItemKey,ItemKey}[])
-                    reader in items || continue
+                    reader in items && old in view(items.inputs, reader.index) || continue
                     replace!(view(items.inputs, reader.index), old => key)
                     push!(get!(Vector{ItemKey}, items.readers, key), reader)
                 end
@@ -467,23 +467,38 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
 end
 
 """
-    get!(catalog, entry::ItemEntry, inputs) -> ItemKey
+    publish!(catalog, entry::ItemEntry, inputs) -> ItemKey
 
-The key of the computed value with the id of `entry`, added when the catalog has none: a row in the
-collection of `entry`, made from the items `inputs`. Its `process` runs once every input is
-processed, and runs again whenever an input changes. Its analyze is absent. A missing collection or
-input throws an `ArgumentError` and leaves the catalog unchanged.
+The key of the computed value with the id of `entry`, made from the items `inputs`: a new row in the
+collection of `entry` when the catalog has none, or the row of that id, which now reads `inputs`.
+Its `process` runs once every input is processed, and runs again whenever an input changes or it
+reads other inputs. Its analyze is absent. A missing collection or input throws an `ArgumentError`
+and leaves the catalog unchanged.
 """
-function Base.get!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{ItemKey})::ItemKey
+function publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{ItemKey})::ItemKey
     @lock catalog.lock begin
         items = catalog.items
         collections = catalog.collections
-        key = get(items.lookup, entry.id, nothing)
-        key === nothing || return key
         entry.collection in collections ||
             throw(ArgumentError("item \"$(entry.id)\" names a collection that does not exist"))
         all(input -> input in items, inputs) ||
             throw(ArgumentError("an input of item \"$(entry.id)\" does not exist"))
+        # An input that failed blocks it.
+        blocked = any(input -> (old = status(catalog, input, ITEM_PROCESS); old.failed || old.blocked), inputs)
+        key = get(items.lookup, entry.id, nothing)
+        if key !== nothing
+            view(items.inputs, key.index) == inputs && return key
+            for input in unique(view(items.inputs, key.index))
+                input isa ItemKey && filter!(!=(key), get(items.readers, input, ItemKey[]))
+            end
+            items.inputs[key.index] = inputs
+            foreach(input -> push!(get!(Vector{ItemKey}, items.readers, input), key), unique(inputs))
+            old = status(catalog, key, ITEM_PROCESS)
+            old.blocked == blocked || (catalog[key, ITEM_PROCESS] = StageStatus(old; blocked))
+            invalidate!(catalog, key, ITEM_PROCESS)
+            notify(catalog.changed)
+            return key
+        end
         key = ItemKey(length(push!(items, entry.id)))
         push!(items.labels, entry.label)
         push!(items.inputs, inputs)
@@ -491,9 +506,8 @@ function Base.get!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{It
         push!(items.type, entry.type)
         items.lookup[entry.id] = key
         foreach(input -> push!(get!(Vector{ItemKey}, items.readers, input), key), unique(inputs))
-        # An input that failed blocks it from the start. Its analyze is absent.
+        # Its analyze is absent.
         # TODO: analyze leaves Core; then an item has only process.
-        blocked = any(input -> (old = status(catalog, input, ITEM_PROCESS); old.failed || old.blocked), inputs)
         items.status[key.index] = word(StageStatus(; blocked), StageStatus(; absent=true, blocked))
         push!(collections.items[entry.collection.index], key)
         collections.not_fresh[entry.collection.index] += 1
