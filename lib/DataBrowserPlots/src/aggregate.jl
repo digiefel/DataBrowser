@@ -3,9 +3,11 @@ The functions to apply to the y values of a layer's points that share x and thei
 `aggregate(mean, std)` in [`@plot`](@ref) writes them. The aggregate is done when the layer has its
 points, and gives a [`Result`](@ref) with the value of each function under its name.
 """
-struct Aggregate
-    functions::Vector{Any}
-    Aggregate(functions...) = new(collect(Any, functions))
+# The types of the functions are part of the type of the aggregate, so the workspace computes it
+# again when their code changes (`DataBrowserCore.CodeRevisions`).
+struct Aggregate{F<:Tuple}
+    functions::F
+    Aggregate(functions...) = new{typeof(functions)}(functions)
 end
 
 # The name of a function's value in a group's metadata, such as `:mean`.
@@ -41,4 +43,4 @@ end
 
 # The result of an aggregate already done, as `groups`, drawn as points.
 Result(aggregate::Aggregate, groups::Vector{Group}, positional::Vector, roles::Vector; scale=identity) =
-    Result(groups, positional, roles, :Scatter, scale, function_name.(aggregate.functions))
+    Result(groups, positional, roles, :Scatter, scale, collect(Symbol, function_name.(aggregate.functions)))

@@ -51,7 +51,7 @@ DataBrowserAPI.reconstruct(::Type{FitTestDevice}, name::AbstractString, data, me
 const curve_calls = Ref(0)
 counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; resistance(gap; Rc, Rsh))
 
-@testset "in a workspace, a fit is an item for each group, which a new palette does not compute again" begin
+@testset "in a workspace, a fit is an item for each group, computed again when its curve changes and not when its palette does" begin
     W = DataBrowserCore.Workspace
     workspace = W.open_workspace(FitTestProject(), FitTestSource(); cache=false, background_processing=true)
     try
@@ -67,6 +67,9 @@ counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; resistance(gap; Rc, Rsh)
         curve_calls[] = 0
         figure(plot([:green, :orange]), devices)
         @test curve_calls[] == 0
+        # A new curve, R = Rc + Rsh * gap, gives each chip twice the Rc.
+        @eval counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; Rc + Rsh * gap)
+        @test timedwait(() -> sort(round.(W.select(workspace, fits.id).Rc)) == [100.0, 600.0], 20) === :ok
     finally
         W.close_workspace!(workspace)
     end

@@ -231,8 +231,8 @@ legend entry shows its points and its curve. Without a visual, a fit is drawn wi
 When the plot draws items of a workspace, each group of a `fit` or an `aggregate` is an item of the
 workspace, under `Computed`, and a fit's parameters are its metadata. The workspace computes a group
 again when one of its items changes, or when the code that gives the result changes: the `fit` or
-`aggregate` call, the values mapped to x, y and the roles that form the groups, and the limits and
-function of the axes. A change of visuals, palette or legend draws the result again without
+`aggregate` call and the functions it calls, such as the curve, the values mapped to x, y and the
+roles that form the groups, and the limits and function of the axes. A change of visuals, palette or legend draws the result again without
 computing it.
 
 `aggregate` applies functions to the y values of the points that share x and their groups: it
@@ -550,10 +550,12 @@ const AXES = Symbol("#axes")
 # step again when the items change: the code of the step, such as `fit(line, (a = 1,))`, the code of
 # the value of each column, such as `:data.V` for `:V`, and the function that gives the points of a
 # selection of items.
-struct Points
+# The function's type is part of the type of a fit's computed item, so the item is computed again
+# when the code of a formula of the points changes.
+struct Points{T<:Function}
     step::String
     texts::Dict{Symbol,String}
-    table::Function
+    table::T
 end
 
 # The `Points` of a layer, as an expression of the input, or `nothing` without a fit or an aggregate.

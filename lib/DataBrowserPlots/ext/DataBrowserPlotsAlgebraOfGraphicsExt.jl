@@ -550,13 +550,15 @@ function resolve(layer::AoG.Layer, items, axes, points=nothing)
 end
 
 # A fit or an aggregate of a layer's points, with what it needs to compute again: the values the
-# layer maps, the settings of its axes, and the code of its points.
-struct Analysis
-    step::Union{Fit,Aggregate}
+# layer maps, the settings of its axes, and the code of its points. The types of the step and the
+# points hold the types of the functions they call, so a computed item of the analysis is computed
+# again when their code changes.
+struct Analysis{S<:Union{Fit,Aggregate},P<:Union{Points,Nothing}}
+    step::S
     positional::Vector{Any}
     named::Vector{Pair{Symbol,Any}}
     axes::Any
-    points::Union{Points,Nothing}
+    points::P
 end
 
 setting(analysis::Analysis, r, key, default) = get(get(analysis.axes, r, (;)), key, default)
@@ -623,10 +625,9 @@ Workspace.function_name(analysis::Analysis) = analysis.step isa Fit ? "fit" : "a
 # The code that gives the result of a group, such as
 # `fit(line, (a = 1,)) of :V, :I by :Chip; y scale log10 for :Chip = "A"`: the step, the values
 # mapped to x and y, the values that form the groups, the limits and the y scale, and the group.
-# Titles, transformations and visuals are left out.
-# TODO: the code of a function the step calls, such as the curve of a fit, is not part of it yet
-# (plans/processing.md).
-function DataBrowserAPI.id(value::Workspace.Computed{Analysis})
+# Titles, transformations and visuals are left out. The code of the functions the step calls, such
+# as the curve of a fit, is in the type of the analysis instead.
+function DataBrowserAPI.id(value::Workspace.Computed{<:Analysis})
     analysis, group = value.f, value.settings.group
     texts = analysis.points.texts
     text(v) = v isa AbstractVector ? "[" * join(text.(v), ", ") * "]" : get(texts, column(v), repr(column(v)))
@@ -641,7 +642,7 @@ end
 
 # The title of a group's result: the step and the group's values, such as
 # `fit(line, (a = 1,)) for A`. The id holds the rest of the code.
-DataBrowserAPI.label(value::Workspace.Computed{Analysis}) = string(value.f.points.step,
+DataBrowserAPI.label(value::Workspace.Computed{<:Analysis}) = string(value.f.points.step,
     isempty(value.settings.group) ? "" : " for " * join(string.(values(value.settings.group)), ", "))
 
 # The title of a value of `mapping`: the title after `=>`, as in `:I => "V > 0"` and
