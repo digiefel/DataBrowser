@@ -5,7 +5,11 @@ A plot whose values come from an input given when it is drawn, as `@plot` writes
 struct Declaration
     # The AlgebraOfGraphics declaration for an input.
     layers::Function
+    # The type of the values of each named role of each line for an input, as `role => type`,
+    # inferred without drawing; see `scale_kinds`.
+    types::Function
 end
+Declaration(layers::Function) = Declaration(layers, _ -> Pair{Symbol,Any}[])
 
 # A line of a plot as a layer of the header, `inherit(header, line)`, and a layer with its fit done
 # over its points, `resolve(layer, items, axes)`. The AlgebraOfGraphics extension defines them.
@@ -23,11 +27,15 @@ mappings(_) = Vector{Symbol}[]
 
 """
     scale_kinds(lines) -> Dict{Symbol,Symbol}
+    scale_kinds(declaration, input) -> Dict{Symbol,Symbol}
 
 For each named mapping of the lines of a `@plot` block, such as `:color`, whether its scale holds
-categories, `:categorical`, or numbers, `:continuous`, as AlgebraOfGraphics finds them in the points.
+categories, `:categorical`, or numbers, `:continuous`, as AlgebraOfGraphics judges the type of its
+values. The types of a declaration's values are inferred from the types of `input`, without
+drawing it. A mapping whose type is not known, or that holds values of both kinds in different
+lines, is left out.
 """
-scale_kinds(_) = Dict{Symbol,Symbol}()
+scale_kinds(_...) = Dict{Symbol,Symbol}()
 
 # The latest world: code that the browser runs defines the declaration after the caller started.
 figure(declaration::Declaration, input, args...; options...) =
@@ -376,7 +384,15 @@ macro plot(header, block)
         :($PlotLine($(declare_line(header, line, names, input)), Symbol[$(shared...)], $(!hidden)))
     end
     declared = isempty(drawn) ? declare_layers(header, input) : :($PlotLines([$(drawn...)]))
-    return esc(declare(declared, statements; input, settings=declare_settings(settings, header, names, input)))
+    # The type of each named role's values in each drawn line, for `scale_kinds`. A line with data of
+    # its own, or that reads a named result, is left out.
+    # TODO: the types of the values of a line that reads a named result, such as `result.mean`.
+    named = call === nothing ? Pair{Symbol,Any}[] : last(call_arguments(call))
+    types = has_data(header) ? Expr[] : [:($(QuoteNode(role)) => $(per_item_type(value, input)))
+        for line in lines if !Meta.isexpr(line, :(=)) && !(line in settings) && !has_data(line) && !any(name -> uses(line, name), names)
+        for (role, value) in merge(Dict(named), Dict(find_call(line, :mapping) === nothing ? [] : last(call_arguments(find_call(line, :mapping)))))
+        if value !== :nothing]
+    return esc(declare(declared, statements; input, settings=declare_settings(settings, header, names, input), types))
 end
 
 """
@@ -432,17 +448,48 @@ function map_mapped(f, expression; chosen=value -> !isempty(paths(value)))
     return Expr(expression.head, map(e -> map_mapped(f, e; chosen), expression.args)...)
 end
 
-# The values of a mapped value for each item of `input`. A formula runs once per item, with each
-# path replaced by that item's value.
-function per_item(value, input::Symbol)
-    reading(names) = foldl((e, name) -> Expr(:., e, QuoteNode(name)), names; init=input)
-    path(value) === nothing || return reading(path(value))
+# The values of the path `names` for each item of `input`, such as `input.data.V`.
+reading(names, input::Symbol) = foldl((e, name) -> Expr(:., e, QuoteNode(name)), names; init=input)
+
+# A formula as a function of the values of its paths, and the values of each path for the items of
+# `input`: `resistance(:data.V, :data.I)` is `(V, I) -> resistance(V, I)` of `input.data.V` and
+# `input.data.I`.
+function formula(value, input::Symbol)
     found = paths(value)
     arguments = [gensym(join(names, '_')) for names in found]
     replaced(e) = path(e) in found ? arguments[findfirst(==(path(e)), found)] :
         e isa Expr ? Expr(e.head, map(replaced, e.args)...) : e
-    return :(map(($(arguments...),) -> $(replaced(value)), $(map(reading, found)...)))
+    return :(($(arguments...),) -> $(replaced(value))), [reading(names, input) for names in found]
 end
+
+# The values of a mapped value for each item of `input`. A formula runs once per item, with each
+# path replaced by that item's value.
+function per_item(value, input::Symbol)
+    path(value) === nothing || return reading(path(value), input)
+    f, readings = formula(value, input)
+    return :(map($f, $(readings...)))
+end
+
+# The type of the values that a mapped value gives the points of the items of `input`, as Julia
+# infers it from the types of the values its paths read, without running it; `Any` when it is not
+# known. An item's vector gives one value to each of its points. A title after `=>` stays out, and
+# a function after it applies to each value.
+# TODO: a path into the items' data, such as `:data.I`, is of type `Any` until an item's data is
+# read, as `selection.data` holds the data of any item. Core could know the type of the data of each
+# kind of item, for example by inferring it from the project's `read` and `process`.
+function per_item_type(value, input::Symbol)
+    if Meta.isexpr(value, :call) && value.args[1] === :(=>)
+        inner, after = per_item_type(value.args[2], input), value.args[3]
+        (after isa String || Meta.isexpr(after, :string)) && return inner
+        f = Meta.isexpr(after, :call) && after.args[1] === :(=>) ? after.args[2] : after
+        return :($Base.infer_return_type($f, Tuple{$inner}))
+    end
+    isempty(paths(value)) && return Any
+    path(value) === nothing || return :($point_type(eltype($(reading(path(value), input)))))
+    f, readings = formula(value, input)
+    return :($point_type($Base.infer_return_type($f, Tuple{$((:(eltype($r)) for r in readings)...)})))
+end
+point_type(T::Type) = T <: AbstractVector ? eltype(T) : T
 
 # The layers of a declaration, each a product without `+`: `h * (a + b)` is `h * a` and `h * b`, as
 # AlgebraOfGraphics multiplies it out.
@@ -534,14 +581,15 @@ declare_layers(expression, input::Symbol) =
 
 # The declared layers, `drawn`, after the `statements`, which define names for them. The result is
 # a function of the input when a layer or a statement reads it. `settings` are the statements and
-# the arguments of `Scaled` that the scales and legend lines give, or `nothing`.
-function declare(drawn, statements=Expr[]; input::Symbol, settings=nothing)
+# the arguments of `Scaled` that the scales and legend lines give, or `nothing`. `types` are the
+# `role => type` pairs of the roles' values, which read the input.
+function declare(drawn, statements=Expr[]; input::Symbol, settings=nothing, types=Expr[])
     if settings !== nothing
         statements = [statements; settings.statements]
         drawn = :($Scaled($drawn, $(settings.arguments...)))
     end
     body = isempty(statements) ? drawn : Expr(:let, Expr(:block), Expr(:block, statements..., drawn))
-    return uses(body, input) ? :($Declaration($input -> $body)) : body
+    return uses(body, input) ? :($Declaration($input -> $body, $input -> Pair{Symbol,Any}[$(types...)])) : body
 end
 
 # The `scales(...)`, `legend(...)` and `theme(...)` lines as the arguments of `Scaled` after its layers, and the

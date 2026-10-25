@@ -145,8 +145,8 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     parsed::Union{Nothing,String} = nothing
     # The named mappings each line of the block can show, as the last drawing found them.
     mappings::Vector{Vector{Symbol}} = Vector{Symbol}[]
-    # Whether the scale of each named mapping holds categories or numbers, as the last drawing
-    # found them; see `scale_kinds`.
+    # Whether the scale of each named mapping holds categories or numbers, from the types of its
+    # values; see `scale_kinds`.
     scale_kinds::Dict{Symbol,Symbol} = Dict{Symbol,Symbol}()
     editing::Union{Nothing,EntryEdit} = nothing
     # The columns a mapping can pick, for the selection; `nothing` until the panel needs them.
@@ -297,11 +297,15 @@ function build!(view::BuilderView, ctx)::Nothing
         Core.eval(mod, :(const Main_names = $shared))
         Core.eval(mod, :(using .Main_names))
         Core.eval(mod, :(selection = $selection))
+        # Code that does not run has no kinds: each scale offers the settings of both.
+        view.scale_kinds = Dict{Symbol,Symbol}()
         plot = Base.invokelatest(include_string, mod, view.code.text, code_path(view))
         # A declaration of paths is drawn for the selection, any other for its own data.
+        # The kinds of a declaration's scales come from the types of the selection's values, before
+        # it is drawn.
+        view.scale_kinds = plot isa DataBrowserPlots.Declaration ? scale_kinds(plot, selection) : scale_kinds(plot)
         plot isa DataBrowserPlots.Declaration && (plot = Base.invokelatest(plot.layers, selection))
         view.mappings = mappings(plot)
-        view.scale_kinds = scale_kinds(plot)
         view.figure = plot isa Makie.Figure ? plot : Makie.with_theme(() -> figure(plot), DEFAULT_THEME)
         view.message = ""
         view.error_details = ""

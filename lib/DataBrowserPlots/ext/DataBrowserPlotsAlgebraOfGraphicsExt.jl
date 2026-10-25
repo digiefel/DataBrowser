@@ -6,7 +6,7 @@ using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_kinds
-using DataBrowserPlots: @plot, Aggregate, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Result, category, column
+using DataBrowserPlots: @plot, Aggregate, Declaration, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Result, category, column
 using DataBrowserAPI: item_data, metadata
 using DataBrowserCore: Group, select
 using DataBrowserPlots: Tables
@@ -122,16 +122,33 @@ function mappings(plot::PlotLines)::Vector{Vector{Symbol}}
 end
 mappings(plot::Scaled) = mappings(plot.layers)
 
-# AlgebraOfGraphics keeps the roles of categories, which divide the points into groups, apart from
-# those of numbers.
-# TODO: the lines are processed again here; process them once for `mappings`, this and the drawing.
-function scale_kinds(plot::PlotLines)::Dict{Symbol,Symbol}
-    kinds = Dict{Symbol,Symbol}()
-    for layers in processed_lines(plot), (p, _) in layers
-        foreach(key -> key isa Symbol && (kinds[key] = :categorical), keys(p.primary))
-        foreach(key -> key isa Symbol && (kinds[key] = :continuous), keys(p.named))
+# The kind of each role from the types of its values in each line, `role => type`, as
+# AlgebraOfGraphics judges a column of values of that type. A type of `Any` is not known.
+function scale_kinds(types::Vector{Pair{Symbol,Any}})::Dict{Symbol,Symbol}
+    found = Dict{Symbol,Set{Union{Nothing,Symbol}}}()
+    for (role, type) in types
+        judged = type === Any ? nothing : AoG.scientific_type(type)
+        push!(get!(Set{Union{Nothing,Symbol}}, found, role),
+            judged === AoG.continuous ? :continuous : judged === AoG.categorical ? :categorical : nothing)
     end
-    return kinds
+    return Dict(role => only(kinds) for (role, kinds) in found if length(kinds) == 1 && only(kinds) !== nothing)
+end
+scale_kinds(declaration::Declaration, input) = scale_kinds(Base.invokelatest(declaration.types, input))
+
+# A plot of data that it holds: the types of the columns of each line's data.
+function scale_kinds(plot::PlotLines)::Dict{Symbol,Symbol}
+    types = Pair{Symbol,Any}[]
+    for line in plot.lines, layer in (line.layers isa AoG.Layers ? line.layers.layers : [line.layers])
+        layer isa AoG.Layer && layer.data isa AoG.Columns || continue
+        columns = Tables.columns(layer.data.columns)
+        type(name::Union{Symbol,AbstractString}) = eltype(Tables.getcolumn(columns, Symbol(name)))
+        # A title after `=>` stays out, and a function after it applies to each value.
+        type(value::Pair) = last(value) isa AbstractString ? type(first(value)) :
+            Base.infer_return_type(last(value) isa Pair ? first(last(value)) : last(value), Tuple{type(first(value))})
+        type(_) = Any
+        append!(types, [role => type(value) for (role, value) in pairs(layer.named)])
+    end
+    return scale_kinds(types)
 end
 scale_kinds(plot::Scaled) = scale_kinds(plot.layers)
 
