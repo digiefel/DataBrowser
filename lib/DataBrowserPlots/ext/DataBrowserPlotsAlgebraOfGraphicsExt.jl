@@ -10,6 +10,7 @@ using DataBrowserPlots: @plot, Aggregate, Declaration, Fit, ITEM, LegendEntry, P
 import DataBrowserAPI
 using DataBrowserAPI: id, item_data, metadata
 import DataBrowserCore.Workspace
+import DataBrowserPlots
 using DataBrowserCore: Group, Selection, select
 using DataBrowserPlots: Tables
 using PrecompileTools: @setup_workload, @compile_workload
@@ -606,6 +607,8 @@ function computed(analysis::Analysis, columns, items::Selection, workspace)::Res
         push!(workspace, value)
         return value
     end
+    drawn = DataBrowserPlots.DRAWN[]
+    drawn === nothing || union!(drawn, id.(values))
     groups = reduce(vcat, collect(select(workspace, id.(values)).data); init=Group[])
     return Result(analysis.step, groups, positional, roles; scale=setting(analysis, :y, :scale, identity))
 end

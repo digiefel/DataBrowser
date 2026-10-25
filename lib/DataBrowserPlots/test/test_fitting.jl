@@ -70,6 +70,11 @@ counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; resistance(gap; Rc, Rsh)
         # A new curve, R = Rc + Rsh * gap, gives each chip twice the Rc.
         @eval counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; Rc + Rsh * gap)
         @test timedwait(() -> sort(round.(W.select(workspace, fits.id).Rc)) == [100.0, 600.0], 20) === :ok
+        # A plot file drawn again for chip A alone no longer keeps the fit of chip B.
+        draw(selection) = DataBrowserPlots.drawing(() -> figure(plot([:red, :blue]), selection), selection, "fits.jl")
+        draw(devices)
+        draw(filter(device -> device.Chip == "A", devices))
+        @test length(filter(startswith("fit("), W.query_items(workspace))) == 1
     finally
         W.close_workspace!(workspace)
     end

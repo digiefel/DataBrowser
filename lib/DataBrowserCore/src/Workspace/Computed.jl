@@ -94,6 +94,24 @@ function Base.push!(workspace::Workspace, value::Computed)::Workspace
     return workspace
 end
 
+"""
+Remove the computed item with `id` from the workspace, with its result. The computed items that read
+it wait until a value of that id is added again. An id the workspace has no item for changes nothing.
+"""
+function Base.delete!(workspace::Workspace, id::AbstractString)::Workspace
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        key = item(workspace, id)
+        key === nothing && return workspace
+        delete!(catalog, key)
+        delete!(workspace.computations, key)
+        delete!(workspace.results, key)
+        filter!(entry -> first(entry.first) != key, workspace.errors)
+        delete!(workspace.wanted, key)
+    end
+    return workspace
+end
+
 # The key of `value`, added with the `Computed` values it reads.
 function row!(workspace::Workspace, value::Computed)::ItemKey
     keys = map(reads(value)) do x

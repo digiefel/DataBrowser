@@ -320,7 +320,8 @@ function build!(view::BuilderView, ctx)::Nothing
         # The kinds of a declaration's scales come from the types of the selection's values, before
         # it is drawn.
         view.scale_kinds = plot isa DataBrowserPlots.Declaration ? scale_kinds(plot, selection) : scale_kinds(plot)
-        plot isa DataBrowserPlots.Declaration && (plot = Base.invokelatest(plot.layers, selection))
+        plot isa DataBrowserPlots.Declaration &&
+            (plot = DataBrowserPlots.drawing(() -> Base.invokelatest(plot.layers, selection), selection, code_path(view)))
         view.mappings = mappings(plot)
         view.categories = scale_categories(plot)
         view.figure = plot isa Makie.Figure ? plot : Makie.with_theme(() -> figure(plot), DEFAULT_THEME)

@@ -521,6 +521,40 @@ function publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{Ite
 end
 
 """
+    delete!(catalog, key::ItemKey)
+
+Remove the computed value `key`, and its collection if this leaves it empty. The computed values
+that read it wait until a value of its id comes back, as for an item that its source removed. An
+item that a source item expanded is removed with its source item instead.
+"""
+function Base.delete!(catalog::Catalog, key::ItemKey)::Catalog
+    @lock catalog.lock begin
+        items, collections = catalog.items, catalog.collections
+        key in items || return catalog
+        source(catalog, key) === nothing ||
+            throw(ArgumentError("item \"$(items.ids[key.index])\" is removed with its source item"))
+        collection = items.collection[key.index]
+        analyze = status(catalog, key, ITEM_ANALYZE)
+        fresh = analyze.validity == FRESH
+        collections.not_fresh[collection.index] -= !fresh
+        add_nested!(collections, collection, -1, -fresh)
+        add_stuck!(catalog, collection, -(analyze.failed || analyze.blocked))
+        filter!(!=(key), collections.items[collection.index])
+        for input in unique(view(items.inputs, key.index))
+            filter!(!=(key), get(items.readers, input, ItemKey[]))
+        end
+        readers = pop!(items.readers, key, ItemKey[])
+        append!(get!(Vector{Tuple{ItemKey,ItemKey}}, items.waiting, items.ids[key.index]),
+            [(reader, key) for reader in readers])
+        invalidate!(catalog, Target[(reader, ITEM_PROCESS) for reader in readers])
+        delete!(items, key)
+        invalidate!(catalog, collection, COLLECTION_PROCESS)
+        delete!(catalog, collection)
+    end
+    return catalog
+end
+
+"""
     delete!(catalog, source::SourceKey)
 
 Remove a source item, its items, and every collection this leaves empty.
