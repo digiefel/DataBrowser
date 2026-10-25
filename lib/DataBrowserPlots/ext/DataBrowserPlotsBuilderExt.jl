@@ -167,6 +167,8 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     fields::Dict{String,Vector{UInt8}} = Dict{String,Vector{UInt8}}()
     # The value of each bound of a widget, such as the lowest of `limits`, while the user drags it.
     bounds::Dict{String,Float32} = Dict{String,Float32}()
+    # The bound being typed, and whether its field takes the keyboard in the next frame.
+    typing::Union{Nothing,Tuple{String,Bool}} = nothing
     # The place of a palette being changed in a popup, with the key of its widget, and the color
     # being picked for it, red, green, blue and alpha, as the picker changes it.
     picking::Union{Nothing,Tuple{String,Int}} = nothing
@@ -1238,9 +1240,10 @@ function draw_widget!(view::BuilderView, widget::Choice, target, name, (current,
     return written
 end
 
-# Two numbers, the lowest and the highest value, side by side; each is dragged, or typed after a
-# double click. The lowest stays below the highest. An empty bound shows its hint in place of a number,
-# and is typed, as it has no number to drag from.
+# Two numbers, the lowest and the highest value, side by side; each is dragged, or typed in a field
+# after a double click. The lowest stays below the highest while dragged. An empty bound shows its
+# hint in place of a number, and is typed, as it has no number to drag from; a bound typed empty is
+# `nothing`, Makie's own.
 function draw_widget!(view::BuilderView, widget::Bounds, target, name, (low, high), focus::Bool)::Union{Nothing,String}
     key = "$target/$name"
     # A bound set while the code has none yet, as the first of a pair that is not optional, stays.
@@ -1253,23 +1256,34 @@ function draw_widget!(view::BuilderView, widget::Bounds, target, name, (low, hig
     speed = 0.005f0 * (iszero(size) ? 1.0f0 : size)
     spacing = unsafe_load(ig.GetStyle()).ItemInnerSpacing.x
     each = (ig.GetContentRegionAvail().x - spacing) / 2
-    focus && ig.SetKeyboardFocusHere()
+    # A setting just added starts with its lowest bound typed.
+    focus && (view.typing = ("$key/low", true))
     written = nothing
     for (i, part) in enumerate(("low", "high"))
         i == 2 && ig.SameLine(0.0f0, spacing)
         other = parsed[3 - i]
-        # The value shown is the code's, except while the user drags it. An empty bound holds NaN, so
-        # any number typed in it is a change.
+        hint = widget.optional ? "auto" : i == 1 ? "lowest" : "highest"
+        tooltip = i == 1 ? widget.low : widget.high
+        if view.typing !== nothing && first(view.typing) == "$key/$part"
+            last(view.typing) && ig.SetKeyboardFocusHere()
+            view.typing = ("$key/$part", false)
+            typed = part_field!(view, "$key/$part", i == 1 ? low : high, each; hint, tooltip)
+            (typed !== nothing || ig.IsItemDeactivated()) && (view.typing = nothing)
+            typed === nothing || (written = i == 1 ? (typed, high) : (low, typed))
+            continue
+        end
+        # The value shown is the code's, except while the user drags it.
         ig.GetActiveID() == ig.GetID("##$key/$part") || (view.bounds["$key/$part"] = something(parsed[i], NaN32))
         ref = Ref(view.bounds["$key/$part"])
-        hint = widget.optional ? "auto" : i == 1 ? "lowest" : "highest"
         format = parsed[i] === nothing && ig.GetActiveID() != ig.GetID("##$key/$part") ? hint : "%g"
         # Neither bound passes the other.
         lowest, highest = i == 1 ? (-Inf32, something(other, Inf32)) : (something(other, -Inf32), Inf32)
         ig.SetNextItemWidth(each)
-        with_font(() -> ig.DragFloat("##$key/$part", ref, speed, lowest, highest, format, ig.ImGuiSliderFlags_AlwaysClamp), :code)
+        with_font(() -> ig.DragFloat("##$key/$part", ref, speed, lowest, highest, format,
+            ig.ImGuiSliderFlags_AlwaysClamp | ig.ImGuiSliderFlags_NoInput), :code)
         view.bounds["$key/$part"] = ref[]
-        ig.SetItemTooltip(i == 1 ? widget.low : widget.high)
+        ig.SetItemTooltip(tooltip * "; drag it, or double-click to type it")
+        ig.IsItemHovered() && ig.IsMouseDoubleClicked(ig.ImGuiMouseButton_Left) && (view.typing = ("$key/$part", true))
         ig.IsItemDeactivatedAfterEdit() || continue
         number = round(Float64(ref[]); sigdigits=6)
         text = string(isinteger(number) && abs(number) < 1e15 ? Int(number) : number)
@@ -1395,10 +1409,11 @@ colormap_code(name, reversed::Bool) = reversed ? "Reverse(:$name)" : ":$name"
 palette_code(name, reversed::Bool) = discrete(Symbol(name)) && !reversed ? ":$name" : "from_continuous($(colormap_code(name, reversed)))"
 
 # Draws `icon` in the middle of the box from `low` to `high`, by the shape of its glyph: the glyph
-# of an icon is narrower than its place in a text, and off its middle.
+# of an icon is narrower than its place in a text, and off its middle. ImGui cuts the place of a
+# text down to whole points, so it is rounded first.
 function draw_icon(draw_list, low, high, icon::String, color::UInt32)::Nothing
     glyph = unsafe_load(ig.lib.ImFontBaked_FindGlyph(ig.lib.igGetFontBaked(), ig.lib.ImWchar(first(icon))))
-    ig.AddText(draw_list, ((low.x + high.x - glyph.X0 - glyph.X1) / 2, (low.y + high.y - glyph.Y0 - glyph.Y1) / 2), color, icon)
+    ig.AddText(draw_list, (round((low.x + high.x - glyph.X0 - glyph.X1) / 2), round((low.y + high.y - glyph.Y0 - glyph.Y1) / 2)), color, icon)
     return nothing
 end
 
