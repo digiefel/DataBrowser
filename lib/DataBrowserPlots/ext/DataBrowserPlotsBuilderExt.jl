@@ -6,7 +6,7 @@ import CImGui as ig
 import GLMakie.Makie as Makie
 
 import DataBrowserAPI
-using DataBrowserAPI: Setting
+using DataBrowserAPI: @timed_dbg, Setting
 using DataBrowserCore: Selection
 using DataBrowserGUI: CODE_COLORS, CodeFile, code_text, draw_code, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
 using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!, guarded_draw, draw_colors
@@ -295,6 +295,7 @@ function build!(view::BuilderView, ctx)::Nothing
     try
         # A new module for each run, so that nothing from an earlier run of the file is left.
         # TODO: modules are never freed; reuse one module per window if this grows.
+        mod = @timed_dbg "builder_module" begin
         mod = Module(Symbol(view.figure_id))
         Core.eval(mod, :(const AlgebraOfGraphics = $AlgebraOfGraphics))
         Core.eval(mod, :(const Makie = $Makie))
@@ -313,18 +314,20 @@ function build!(view::BuilderView, ctx)::Nothing
         Core.eval(mod, :(const Main_names = $shared))
         Core.eval(mod, :(using .Main_names))
         Core.eval(mod, :(selection = $selection))
+        mod
+        end
         # Code that does not run has no kinds: each scale offers the settings of both.
         view.scale_kinds = Dict{Symbol,Symbol}()
-        plot = Base.invokelatest(include_string, mod, view.code.text, code_path(view))
+        plot = @timed_dbg "builder_code" Base.invokelatest(include_string, mod, view.code.text, code_path(view))
         # A declaration of paths is drawn for the selection, any other for its own data.
         # The kinds of a declaration's scales come from the types of the selection's values, before
         # it is drawn.
         view.scale_kinds = plot isa DataBrowserPlots.Declaration ? scale_kinds(plot, selection) : scale_kinds(plot)
         plot isa DataBrowserPlots.Declaration &&
-            (plot = DataBrowserPlots.drawing(() -> Base.invokelatest(plot.layers, selection), selection, code_path(view)))
+            (plot = @timed_dbg "builder_layers" DataBrowserPlots.drawing(() -> Base.invokelatest(plot.layers, selection), selection, code_path(view)))
         view.mappings = mappings(plot)
         view.categories = scale_categories(plot)
-        view.figure = plot isa Makie.Figure ? plot : Makie.with_theme(() -> figure(plot), DEFAULT_THEME)
+        view.figure = @timed_dbg "builder_figure" (plot isa Makie.Figure ? plot : Makie.with_theme(() -> figure(plot), DEFAULT_THEME))
         view.message = ""
         view.error_details = ""
     catch err
