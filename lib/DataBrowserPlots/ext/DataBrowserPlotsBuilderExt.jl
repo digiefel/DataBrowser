@@ -595,11 +595,14 @@ code_color(role::Symbol, alpha::Float32=1.0f0) = ig.ImVec4(getfield(CODE_COLORS,
 names_width(names) = with_font(() -> maximum(name -> ig.CalcTextSize(entry_name(name)).x, names; init=0.0f0), :code) +
     2unsafe_load(ig.GetStyle()).ItemSpacing.x
 
-# A button that shows only its icon until the mouse is on it. `danger` makes it red then.
-function icon_button(icon::String, tooltip::String; danger::Bool=false)::Bool
+# A button that shows only its icon until the mouse is on it. `danger` makes it red then. A `bold`
+# icon is drawn twice, a pixel apart, as the icons have one weight.
+function icon_button(icon::String, tooltip::String; danger::Bool=false, bold::Bool=false)::Bool
     ig.PushStyleColor(ig.ImGuiCol_Button, ig.GetColorU32(ig.ImGuiCol_Button, 0.0f0))
     danger && ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, ig.GetColorU32(ig.ImVec4(0.75f0, 0.28f0, 0.28f0, 0.8f0)))
     clicked = ig.SmallButton(icon)
+    bold && ig.AddText(ig.GetWindowDrawList(), (ig.GetItemRectMin().x + unsafe_load(ig.GetStyle()).FramePadding.x + 1, ig.GetItemRectMin().y),
+        ig.GetColorU32(ig.ImGuiCol_Text), icon)
     ig.PopStyleColor(danger ? 2 : 1)
     ig.SetItemTooltip(tooltip)
     return clicked
@@ -648,7 +651,7 @@ function heading!(view::BuilderView, id::String, title::String, offered::Abstrac
     picked = nothing
     if !isempty(offered)
         to_right_end(ig.GetFrameHeight())
-        if icon_button(ICON_PLUS, tooltip)
+        if icon_button(ICON_PLUS, tooltip; bold=true)
             view.picker = ListPicker()
             ig.OpenPopup("names")
         end
@@ -885,8 +888,8 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         end
         ig.SetItemTooltip(mapping ? (formula ? "A formula; click to pick a column instead" : "A column; click to write a formula instead") :
             formula ? "Code; click to set the value with the widget" : "Sets $kind; click to write the value as code")
-        # The badge is part of the value, as one of its parts.
-        ig.SameLine(0.0f0, PART_GAP)
+        # The badge is part of the value: the value starts where it ends.
+        ig.SameLine(0.0f0, 0.0f0)
         if switched && editing
             edit.typed = !edit.typed
             edit.focus = true
@@ -897,7 +900,24 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         end
     end
     if widget !== nothing && !formula
-        text = draw_widget!(view, widget, target, name, something(fields, widget_parts(widget, "")), editing && edit.focus)
+        # The parts of the widget sit on one frame, joined to the badge, in a lighter tint than
+        # theirs. The frame has room around them, and they are shorter by as much, so the row is as
+        # tall as any other.
+        style = unsafe_load(ig.GetStyle())
+        room = min(3.0f0, style.FramePadding.y)
+        ig.PushStyleVar(ig.ImGuiStyleVar_WindowPadding, (room, room))
+        ig.BeginChild("widget", (0.0f0, 0.0f0), ig.ImGuiChildFlags_AutoResizeY | ig.ImGuiChildFlags_AlwaysUseWindowPadding,
+            ig.ImGuiWindowFlags_NoScrollbar)
+        ig.PopStyleVar()
+        ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (style.FramePadding.x, style.FramePadding.y - room))
+        text = try
+            draw_widget!(view, widget, target, name, something(fields, widget_parts(widget, "")), editing && edit.focus)
+        finally
+            ig.PopStyleVar()
+            ig.EndChild()
+        end
+        ig.AddRectFilled(ig.GetWindowDrawList(), ig.GetItemRectMin(), ig.GetItemRectMax(), ig.GetColorU32(ig.ImGuiCol_FrameBg, 0.4f0),
+            style.FrameRounding, ig.ImDrawFlags_RoundRight)
         editing && (edit.focus = false)
         if text !== nothing
             editing && (view.editing = nothing)
@@ -1185,11 +1205,12 @@ function draw_widget!(view::BuilderView, widget::Bounds, target, name, (low, hig
     # The drag speed follows the size of the values, as a bound can be 10⁻¹² or 10⁶.
     size = max(abs(something(parsed[1], 0.0f0)), abs(something(parsed[2], 0.0f0)))
     speed = 0.005f0 * (iszero(size) ? 1.0f0 : size)
-    each = (ig.GetContentRegionAvail().x - PART_GAP) / 2
+    spacing = unsafe_load(ig.GetStyle()).ItemInnerSpacing.x
+    each = (ig.GetContentRegionAvail().x - spacing) / 2
     focus && ig.SetKeyboardFocusHere()
     written = nothing
     for (i, part) in enumerate(("low", "high"))
-        i == 2 && ig.SameLine(0.0f0, PART_GAP)
+        i == 2 && ig.SameLine(0.0f0, spacing)
         other = parsed[3 - i]
         # The value shown is the code's, except while the user drags it. An empty bound holds NaN, so
         # any number typed in it is a change.
@@ -1327,9 +1348,6 @@ colormap_code(name, reversed::Bool) = reversed ? "Reverse(:$name)" : ":$name"
 # few colors, otherwise spread over the categories.
 palette_code(name, reversed::Bool) = discrete(Symbol(name)) && !reversed ? ":$name" : "from_continuous($(colormap_code(name, reversed)))"
 
-# The gap between the parts of a value: its badge, the two bounds, the chips of a list.
-const PART_GAP = 2.0f0
-
 # A row of chips, one for each value of a list, then a "+" chip, wrapping to more rows when needed.
 # `draw(i, low, high)` draws the chip of value `i`, `width` wide. A click on a chip, a drag of one
 # onto another, a right click on one and a click on "+" give `(:pick, i)`, `(:move, i, j)`,
@@ -1339,7 +1357,7 @@ function draw_chips!(count::Int, width::Float32, draw)::Union{Nothing,Tuple{Symb
     left = ig.GetCursorScreenPos().x
     right = left + ig.GetContentRegionAvail().x
     # The next chip follows the one before on its row, or starts the next row.
-    next!(width) = ig.GetItemRectMax().x + PART_GAP + width <= right ? ig.SameLine(0.0f0, PART_GAP) :
+    next!(width) = ig.GetItemRectMax().x + 3 + width <= right ? ig.SameLine(0.0f0, 3.0f0) :
         ig.SetCursorScreenPos((left, ig.GetCursorScreenPos().y))
     action = nothing
     for i in 1:count
@@ -1401,7 +1419,7 @@ function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, 
     ig.BeginGroup()
     action = draw_chips!(length(shown), size, (i, low, high) ->
         ig.AddRectFilled(ig.GetWindowDrawList(), low, high, ig.GetColorU32(shown[i]), 2.0f0))
-    ig.SameLine(0.0f0, PART_GAP)
+    ig.SameLine(0.0f0, 3.0f0)
     (ig.Button("$(ICON_PALETTE)##schemes", (size, size)) || focus) && (view.picker = ListPicker(); ig.OpenPopup("colormaps"))
     ig.SetItemTooltip(scheme === nothing ? "Take the colors of a colormap" : "The colors of $scheme; click to take another colormap's")
     ig.EndGroup()
@@ -1504,7 +1522,7 @@ function draw_widget!(view::BuilderView, widget::GlyphPalette, target, name, gly
     width = widget.role === :marker ? size : 2size
     color = ig.GetColorU32(ig.ImGuiCol_Text)
     draw_glyph(draw_list, glyph, low, high) = widget.role === :marker ?
-        draw_marker(draw_list, ((low.x + high.x) / 2, (low.y + high.y) / 2), 5.0f0, glyph, color) :
+        draw_marker(draw_list, ((low.x + high.x) / 2, (low.y + high.y) / 2), 0.3f0 * (high.y - low.y), glyph, color) :
         draw_linestyle(draw_list, low.x + 3, high.x - 3, (low.y + high.y) / 2, glyph, color)
     action = draw_chips!(length(glyphs), width, function (i, low, high)
         ig.AddRectFilled(ig.GetWindowDrawList(), low, high, ig.GetColorU32(ig.ImGuiCol_FrameBg), 2.0f0)
