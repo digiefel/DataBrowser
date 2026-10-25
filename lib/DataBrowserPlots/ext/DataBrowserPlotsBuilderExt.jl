@@ -916,7 +916,7 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         text = if !framed(widget)
             draw_widget!(view, widget, target, name, drawn, editing && edit.focus)
         else
-            room = min(3.0f0, style.FramePadding.y)
+            room = min(2.0f0, style.FramePadding.y)
             ig.PushStyleVar(ig.ImGuiStyleVar_WindowPadding, (room, room))
             ig.BeginChild("widget", (0.0f0, 0.0f0), ig.ImGuiChildFlags_AutoResizeY | ig.ImGuiChildFlags_AlwaysUseWindowPadding,
                 ig.ImGuiWindowFlags_NoScrollbar)
