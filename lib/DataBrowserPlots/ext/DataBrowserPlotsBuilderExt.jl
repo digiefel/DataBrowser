@@ -98,8 +98,10 @@ name ending in `.jl` is a path. A new plot starts with code that draws the selec
 code is shown under the figure and edited there or, once the plot has a name, in any other editor.
 The panel at the left shows the parts of `@plot` as the code names them: its `mapping`, its layers
 with the `mapping` and `visual` of each, and its `scales`. A click on a value edits it, and Enter
-writes it into the code; a marker or a line style is picked from a menu that draws them. The "+"
-at the end of a title adds a value, a layer or a scale, offering only what the plot can use; "×",
+writes it into the code. Some values have their own fields: a marker or a line style is picked
+from a menu that draws them, the `limits` of an axis are two numbers, and its `ticks` are a kind of
+ticks with their count or their values. The ƒ before such a value switches it to code and back. The
+"+" at the end of a title adds a value, a layer or a scale, offering only what the plot can use; "×",
 shown while the mouse is on a value, a layer or a scale, removes it.
 The eye button hides a layer, writing [`@invisible`](@ref) before its line, and draws it again.
 The border between the panel and the figure can be dragged.
@@ -139,6 +141,8 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     editing::Union{Nothing,EntryEdit} = nothing
     # The columns a mapping can pick, for the selection; `nothing` until the panel needs them.
     columns::Union{Nothing,Vector{ListItem}} = nothing
+    # The text of each field of a widget, such as the lowest of `limits`, while the user types in it.
+    fields::Dict{String,Vector{UInt8}} = Dict{String,Vector{UInt8}}()
     # The type-ahead of the open menu of names.
     picker::ListPicker = ListPicker()
     # The part of the window width the panel takes; the user drags the border.
@@ -485,7 +489,7 @@ function remove_line!(code::CodeFile, line)::Nothing
     return nothing
 end
 
-function start_edit!(view::BuilderView, target, name, value::String; typed::Bool=true)::Nothing
+function start_edit!(view::BuilderView, target, name, value::String; typed::Bool=!haskey(WIDGETS, (target[1], name)))::Nothing
     buffer = zeros(UInt8, max(1024, 2sizeof(value)))
     copyto!(buffer, codeunits(value))
     view.editing = EntryEdit(target, name, buffer, typed, true, nothing)
@@ -823,19 +827,16 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     label_width + unsafe_load(ig.GetStyle()).ItemSpacing.x > name_width ? ig.SameLine() : ig.SameLine(start + name_width)
     edit = view.editing
     editing = edit !== nothing && edit.target == target && edit.name == name
-    symbol = nothing
-    # The values written as a symbol that the panel offers in a menu.
-    choices = target[1] === :visual && name === :marker ? MARKERS :
-        target[1] === :visual && name === :linestyle ? LINESTYLES :
-        target[1] === :legend && name === :position ? LEGEND_POSITIONS :
-        target[1] === :theme && name == 1 ? THEMES : nothing
-    # A mapping is a column, picked from a menu, or a formula, typed as code. The ƒ before it is lit
-    # for a formula, and a click on it switches.
+    # A mapping is a column, picked from a menu, or a formula, typed as code. A setting with a
+    # widget, such as `limits`, is set with it, or typed as code when its code is more than the
+    # widget writes. The ƒ before either is lit for code, and a click on it switches.
     mapping = target[1] === :mapping
     parts = mapping && !isempty(value) ? mapping_parts(value) : nothing
-    formula = editing ? edit.typed : parts !== nothing && any(((kind, _),) -> kind === :formula, parts)
+    widget = get(WIDGETS, (target[1], name), nothing)
+    fields = widget === nothing ? nothing : widget_parts(widget, editing ? unsafe_string(pointer(edit.buffer)) : value)
+    formula = editing ? edit.typed : mapping ? parts !== nothing && any(((kind, _),) -> kind === :formula, parts) : fields === nothing
     pick_column = false
-    if mapping
+    if mapping || widget !== nothing
         # Purple, filled when on and faint when off.
         purple(alpha) = ig.GetColorU32(ig.ImVec4(0.72f0, 0.45f0, 0.95f0, alpha))
         ig.PushStyleVar(ig.ImGuiStyleVar_FrameBorderSize, 1.0f0)
@@ -847,21 +848,29 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         switched = with_font(() -> ig.SmallButton("ƒ"), :code)
         ig.PopStyleColor(5)
         ig.PopStyleVar()
-        ig.SetItemTooltip(formula ? "Pick a column instead of the formula" : "Write a formula instead of a column")
+        ig.SetItemTooltip(mapping ? (formula ? "Pick a column instead of the formula" : "Write a formula instead of a column") :
+            formula ? "Set the value with the widget instead of code" : "Write the value as code")
         ig.SameLine()
         if switched && editing
             edit.typed = !edit.typed
             edit.focus = true
+        elseif switched && widget !== nothing
+            start_edit!(view, target, name, formula ? "" : value; typed=!formula)
         elseif switched
             formula ? (pick_column = true) : start_edit!(view, target, name, value)
         end
     end
-    if editing && (choices !== nothing || !edit.typed)
-        # A value being added that has a menu: an empty box with the menu open.
-        clicked, _, _ = code_box("value", "", max(ig.GetContentRegionAvail().x, 24.0f0))
-        if edit.focus || clicked
-            mapping ? (pick_column = true) : ig.OpenPopup("choices")
+    if widget !== nothing && !formula
+        text = draw_widget!(view, widget, target, name, something(fields, widget_parts(widget, "")), editing && edit.focus)
+        editing && (edit.focus = false)
+        if text !== nothing
+            editing && (view.editing = nothing)
+            change = () -> write_entry!(view.code, view.plot, target, name, text)
         end
+    elseif editing && !edit.typed
+        # A mapping being added: an empty box with the menu of columns open.
+        clicked, _, _ = code_box("value", "", max(ig.GetContentRegionAvail().x, 24.0f0))
+        (edit.focus || clicked) && (pick_column = true)
         edit.focus = false
     elseif editing
         text = draw_field!(view)
@@ -871,11 +880,8 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         ig.Checkbox("##value", checked) && (change = () -> write_entry!(view.code, view.plot, target, name, string(checked[])))
     else
         style = unsafe_load(ig.GetStyle())
-        symbol = choices === nothing ? nothing : written_symbol(value)
-        drawn = symbol !== nothing && name in (:marker, :linestyle)
         dimmed = inherited || unused || skipped
-        clicked, hovered, clipped = code_box("value", value, max(ig.GetContentRegionAvail().x, 24.0f0);
-            dimmed, glyph=drawn ? (name, symbol) : nothing, parts)
+        clicked, hovered, clipped = code_box("value", value, max(ig.GetContentRegionAvail().x, 24.0f0); dimmed, parts)
         low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
         if skipped
             middle = round((low.y + high.y) / 2)
@@ -892,11 +898,10 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
             status === nothing || ig.TextDisabled(status)
             ig.EndTooltip()
         end
-        symbol === nothing && (choices = nothing)
         if clicked && mapping && !formula
             pick_column = true
         elseif clicked
-            choices === nothing ? start_edit!(view, target, name, value) : ig.OpenPopup("choices")
+            start_edit!(view, target, name, value; typed=true)
         end
     end
     if mapping
@@ -916,21 +921,152 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
             change = () -> write_entry!(view.code, view.plot, target, name, text)
         end
     end
-    if choices !== nothing && ig.BeginPopup("choices")
-        glyphs = target[1] === :visual
-        for choice in choices
+    ig.PopID()
+    return change
+end
+
+# The parts of `text` between `open` and `close`, split at the commas outside brackets: ["1", "f(2, 3)"]
+# for "[1, f(2, 3)]". `nothing` when the text is not written so.
+function code_parts(text::String, open::Char, close::Char)::Union{Nothing,Vector{String}}
+    t = strip(text)
+    length(t) >= 2 && first(t) == open && last(t) == close || return nothing
+    parts, depth, current = String[], 0, IOBuffer()
+    for c in t[nextind(t, 1):prevind(t, lastindex(t))]
+        depth += c in "([{" ? 1 : c in ")]}" ? -1 : 0
+        c == ',' && depth == 0 ? push!(parts, strip(String(take!(current)))) : write(current, c)
+    end
+    rest = strip(String(take!(current)))
+    isempty(rest) && isempty(parts) || push!(parts, rest)
+    return parts
+end
+
+"""
+How the panel sets a value: a widget, whose type holds what it offers, or code, for the values
+without one. `WIDGETS` gives each setting its widget. `widget_parts(widget, value)` reads the parts
+the widget shows from the code of the value, as strings, or gives `nothing` when the code is more
+than the widget writes; the value is then typed as code. An empty value, as of a setting being
+added, has empty parts. `draw_widget!` draws the widget and gives the code to write once the user
+changed it.
+"""
+abstract type Widget end
+
+# A symbol picked from a menu, such as `:circle` for `marker`.
+struct Choice <: Widget
+    choices::Vector{Symbol}
+end
+
+# The lowest and highest value, as `limits` writes them; an empty one is `nothing`, Makie's own.
+struct Bounds <: Widget end
+
+# The kind of ticks, one of `kinds` as Makie names them or `values`, then its count or its values.
+struct Ticks <: Widget
+    kinds::Vector{String}
+end
+
+# The widget of each setting that has one, by the kind of call it is in and its name.
+# TODO: `scale` as a menu of functions, `tickformat`, and the palettes and colormaps of scales.
+const WIDGETS = Dict{Tuple{Symbol,Union{Int,Symbol}},Widget}(
+    (:visual, :marker) => Choice(MARKERS), (:visual, :linestyle) => Choice(LINESTYLES),
+    (:legend, :position) => Choice(LEGEND_POSITIONS), (:theme, 1) => Choice(THEMES),
+    (:scale, :limits) => Bounds(), (:scale, :ticks) => Ticks(["WilkinsonTicks", "LinearTicks", "LogTicks", "values"]))
+
+function widget_parts(::Choice, value::String)::Union{Nothing,Vector{String}}
+    isempty(strip(value)) && return [""]
+    symbol = written_symbol(String(strip(value)))
+    return symbol === nothing ? nothing : [String(symbol)]
+end
+
+function widget_parts(::Bounds, value::String)::Union{Nothing,Vector{String}}
+    isempty(strip(value)) && return ["", ""]
+    bounds = code_parts(value, '(', ')')
+    return bounds === nothing || length(bounds) != 2 ? nothing : [b == "nothing" ? "" : b for b in bounds]
+end
+
+function widget_parts(::Ticks, value::String)::Union{Nothing,Vector{String}}
+    isempty(strip(value)) && return ["", ""]
+    counted = match(r"^\s*(WilkinsonTicks|LinearTicks)\(\s*(\d+)\s*\)\s*$", value)
+    counted === nothing || return [counted[1], counted[2]]
+    log = match(r"^\s*LogTicks\(\s*LinearTicks\(\s*(\d+)\s*\)\s*\)\s*$", value)
+    log === nothing || return ["LogTicks", log[1]]
+    values = code_parts(value, '[', ']')
+    return values === nothing ? nothing : ["values", join(values, ", ")]
+end
+
+# A field of one part of a value, such as the lowest of `limits`, that shows `shown` from the code
+# while the user is not typing in it. Returns its text once the user is done, or `nothing`.
+function part_field!(view::BuilderView, key::String, shown::String, width::Float32; hint::String, tooltip::String)
+    buffer = get!(() -> zeros(UInt8, 256), view.fields, key)
+    ig.GetActiveID() == ig.GetID("##$key") || (fill!(buffer, 0x00); copyto!(buffer, codeunits(shown)))
+    ig.SetNextItemWidth(width)
+    with_font(() -> ig.InputTextWithHint("##$key", hint, buffer, length(buffer)), :code)
+    ig.SetItemTooltip(tooltip)
+    ig.IsItemDeactivatedAfterEdit() || return nothing
+    text = String(strip(unsafe_string(pointer(buffer))))
+    # Text that Julia cannot read leaves the code as it is.
+    isempty(text) || try Meta.parse(text) catch; return nothing end
+    return text
+end
+
+# A box with the symbol, drawn as it looks for a marker or a line style, and its menu, open when
+# `focus` is set.
+function draw_widget!(view::BuilderView, widget::Choice, target, name, (current,), focus::Bool)::Union{Nothing,String}
+    symbol = isempty(current) ? nothing : Symbol(current)
+    drawn = name in (:marker, :linestyle)
+    clicked, _, _ = code_box("value", symbol === nothing ? "" : ":$symbol", max(ig.GetContentRegionAvail().x, 24.0f0);
+        glyph=drawn && symbol !== nothing ? (name, symbol) : nothing)
+    (clicked || focus) && ig.OpenPopup("choices")
+    written = nothing
+    if ig.BeginPopup("choices")
+        for choice in widget.choices
             position = ig.GetCursorScreenPos()
-            picked = with_font(() -> ig.Selectable(glyphs ? "      :$choice" : ":$choice", choice === symbol), :code)
+            picked = with_font(() -> ig.Selectable(drawn ? "      :$choice" : ":$choice", choice === symbol), :code)
             middle = position.y + ig.GetTextLineHeight() / 2
             color = ig.GetColorU32(ig.ImGuiCol_Text)
-            glyphs && (name === :marker ? draw_marker(ig.GetWindowDrawList(), (position.x + 8, middle), 5.0f0, choice, color) :
+            drawn && (name === :marker ? draw_marker(ig.GetWindowDrawList(), (position.x + 8, middle), 5.0f0, choice, color) :
                 draw_linestyle(ig.GetWindowDrawList(), position.x, position.x + 22, middle, choice, color))
-            picked && (change = () -> write_entry!(view.code, view.plot, target, name, ":$choice"))
+            picked && (written = ":$choice")
         end
         ig.EndPopup()
     end
-    ig.PopID()
-    return change
+    return written
+end
+
+# Two fields, the lowest and the highest value, with "to" between them.
+function draw_widget!(view::BuilderView, ::Bounds, target, name, (low, high), focus::Bool)::Union{Nothing,String}
+    key = "$target/$name"
+    each = (ig.GetContentRegionAvail().x - ig.CalcTextSize("to").x - 2unsafe_load(ig.GetStyle()).ItemSpacing.x) / 2
+    focus && ig.SetKeyboardFocusHere()
+    lowest = part_field!(view, "$key/low", low, each; hint="auto", tooltip="The lowest value shown; empty for Makie's own")
+    ig.SameLine(); ig.TextDisabled("to"); ig.SameLine()
+    highest = part_field!(view, "$key/high", high, each; hint="auto", tooltip="The highest value shown; empty for Makie's own")
+    lowest === nothing && highest === nothing && return nothing
+    bound(text) = isempty(text) ? "nothing" : text
+    return "($(bound(something(lowest, low))), $(bound(something(highest, high))))"
+end
+
+# A menu of the kind of ticks, then a field of its count or its values. A kind with a count starts
+# with that of the kind before, or 5.
+function draw_widget!(view::BuilderView, widget::Ticks, target, name, (kind, count), focus::Bool)::Union{Nothing,String}
+    key = "$target/$name"
+    written(kind, text) = kind == "values" ? "[$text]" : kind == "LogTicks" ? "LogTicks(LinearTicks($text))" : "$kind($text)"
+    code = nothing
+    # The menu is as wide as the kind's name, and the field takes the rest of the row.
+    if with_font(() -> ig.BeginCombo("##kind", isempty(kind) ? "kind" : kind, ig.ImGuiComboFlags_WidthFitPreview), :code)
+        for choice in widget.kinds
+            with_font(() -> ig.Selectable(choice, choice == kind), :code) && choice != kind || continue
+            # A list of values starts empty, so it waits for the user to write them.
+            choice == "values" ? start_edit!(view, target, name, "[]"; typed=false) :
+                (code = written(choice, kind != "values" && !isempty(count) ? count : "5"))
+        end
+        ig.EndCombo()
+    end
+    isempty(kind) && return code
+    ig.SameLine()
+    focus && ig.SetKeyboardFocusHere()
+    text = kind == "values" ?
+        part_field!(view, "$key/values", count, ig.GetContentRegionAvail().x; hint="1, 2, 5", tooltip="The values with a tick, separated by commas") :
+        part_field!(view, "$key/count", count, ig.GetContentRegionAvail().x; hint="5", tooltip="How many ticks Makie aims for")
+    return text === nothing || isempty(text) ? code : written(kind, text)
 end
 
 # A layer, as a card: a band with a button that folds it, its eye, its plot type, the names of its analyses and a picture of

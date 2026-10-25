@@ -60,7 +60,7 @@ end
     # The positions by name, as the plot builder writes them.
     plot = @plot data(rows) * mapping(; x=:x, y=:y) begin
         expectation() * visual(Lines)
-        scales(y = (; limits = (0, 15)))
+        scales(y = (; limits = (nothing, 15)))
     end
     @test last.(only(plotted(figure(plot), Lines))[1][]) ≈ [5.5, 2.0]
     # The limits and scale of `coord` only change the drawing.

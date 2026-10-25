@@ -260,7 +260,9 @@ function (step::WithinLimits)(p::AoG.ProcessedLayer)
         keep = trues(length(first(p.positional)[group]))
         for (position, limits) in enumerate(step.limits)
             (limits === nothing || position > length(p.positional)) && continue
-            keep .&= coalesce.(first(limits) .<= p.positional[position][group] .<= last(limits), false)
+            # A bound of `nothing` is Makie's own, so it removes no points.
+            low, high = something(first(limits), -Inf), something(last(limits), Inf)
+            keep .&= coalesce.(low .<= p.positional[position][group] .<= high, false)
         end
         keep
     end
