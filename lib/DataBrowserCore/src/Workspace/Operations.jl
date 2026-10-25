@@ -139,8 +139,8 @@ function _install_runtime!(
     workspace.catalog = Catalog(background_processing)
     foreach(empty!, (
         workspace.source_items, workspace.source_locks, workspace.collection_keys,
-        workspace.changes, workspace.errors, workspace.wanted, workspace.code,
-        workspace.outdated_reads))
+        workspace.changes, workspace.errors, workspace.wanted, workspace.computations,
+        workspace.results, workspace.code, workspace.outdated_reads))
     workspace.next_collection_key = 1
     workspace.running = 0
     workspace.completed = 0

@@ -49,18 +49,24 @@ end
 function dependents(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Target}
     stage == SOURCE_READ && return Target[(key, SOURCE_EXPAND)]
     stage == SOURCE_EXPAND && return Target[(item, ITEM_PROCESS) for item in items(catalog, key)]
-    stage == ITEM_PROCESS && return Target[(key, ITEM_ANALYZE)]
+    stage == ITEM_PROCESS &&
+        return Target[(key, ITEM_ANALYZE); [(reader, ITEM_PROCESS) for reader in readers(catalog, key)]]
     stage == ITEM_ANALYZE && return Target[(collection(catalog, key), COLLECTION_PROCESS)]
     stage == COLLECTION_PROCESS && return Target[(key, COLLECTION_ANALYZE)]
     key == ROOT && return Target[]
     return Target[(parent(catalog, key), COLLECTION_PROCESS)]
 end
 
-"""The stages whose output `stage` on `key` reads. A source item's read reads outside the catalog."""
+"""
+The stages whose output `stage` on `key` reads: for an item's process, the expand of its source
+item or the process of each item a computed value reads. A source item's read reads outside the
+catalog.
+"""
 function inputs(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Target}
     stage == SOURCE_READ && return Target[]
     stage == SOURCE_EXPAND && return Target[(key, SOURCE_READ)]
-    stage == ITEM_PROCESS && return Target[(source(catalog, key), SOURCE_EXPAND)]
+    stage == ITEM_PROCESS && return Target[
+        (input, input isa SourceKey ? SOURCE_EXPAND : ITEM_PROCESS) for input in inputs(catalog, key)]
     stage == ITEM_ANALYZE && return Target[(key, ITEM_PROCESS)]
     stage == COLLECTION_PROCESS && return Target[
         [(item, ITEM_ANALYZE) for item in items(catalog, key)];
@@ -75,8 +81,9 @@ source item, read has not failed.
 function ready(catalog::Catalog, key::RowKey, stage::PipelineStage)::Bool
     stage == SOURCE_READ && return true
     stage == SOURCE_EXPAND && return !status(catalog, key, SOURCE_READ).failed
-    stage == ITEM_PROCESS &&
-        return status(catalog, source(catalog, key), SOURCE_EXPAND).validity == FRESH
+    stage == ITEM_PROCESS && return all(
+        ((input, input_stage),) -> status(catalog, input, input_stage).validity == FRESH,
+        inputs(catalog, key, stage))
     stage == ITEM_ANALYZE && return status(catalog, key, ITEM_PROCESS).validity == FRESH
     stage == COLLECTION_PROCESS && return catalog.collections.not_fresh[key.index] == 0
     return status(catalog, key, COLLECTION_PROCESS).validity == FRESH
@@ -111,8 +118,8 @@ finished(old::StageStatus, failed::Bool)::StageStatus = failed ?
     invalidate!(catalog, targets)
 
 Mark `stage` on `key`, or each `(key, stage)` in `targets`, and every stage downstream as stale: the
-second stage of the row, the items of a source item, the collection that holds an item, and each
-collection up to the root. Every stage reached gets one new revision, so a job running for it
+second stage of the row, the items of a source item, the computed values that read an item, the
+collection that holds an item, and each collection up to the root. Every stage reached gets one new revision, so a job running for it
 cannot publish, and loses its failure. A stage that was never computed stays missing.
 
 A stage that is wanted is queued once its inputs allow it (see [`take!`](@ref)).

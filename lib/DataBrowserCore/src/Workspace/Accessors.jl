@@ -180,12 +180,14 @@ valuetype(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Type =
     valuetype(workspace.catalog, key)
 
 """
-    source_item_id(workspace, item) -> String
+    source_item_id(workspace, item) -> Union{String,Nothing}
 
-The public id of the source item that produced `item`.
+The public id of the source item that produced `item`, or `nothing` for a computed item.
 """
-source_item_id(workspace::Workspace, item::ItemKey)::String =
-    Catalogs.id(workspace.catalog, Catalogs.source(workspace.catalog, item))
+function source_item_id(workspace::Workspace, item::ItemKey)::Union{String,Nothing}
+    source = Catalogs.source(workspace.catalog, item)
+    return source === nothing ? nothing : Catalogs.id(workspace.catalog, source)
+end
 
 """
     source_item(workspace, item) -> Union{AbstractDataSourceItem,Nothing}

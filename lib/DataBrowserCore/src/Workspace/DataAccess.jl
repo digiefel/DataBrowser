@@ -30,7 +30,10 @@ function wait_processed(workspace::Workspace, items::Vector{ItemKey})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
         for item in setdiff(items, workspace.wanted)
-            request(catalog, item, ITEM_ANALYZE; priority=VIEWED_ITEM)
+            # A computed item has no analyze.
+            # TODO: analyze leaves Core; then process is the last stage of every item.
+            last_stage = Catalogs.status(catalog, item, ITEM_ANALYZE).absent ? ITEM_PROCESS : ITEM_ANALYZE
+            request(catalog, item, last_stage; priority=VIEWED_ITEM)
             # The collections above the item are queued and not waited for.
             for holder in ancestors(workspace, item), stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
                 Catalogs.status(catalog, holder, stage).absent || request(catalog, holder, stage; priority=VIEWED_COLLECTION)
@@ -45,8 +48,12 @@ function wait_processed(workspace::Workspace, items::Vector{ItemKey})::UInt
             status.validity == Catalogs.FRESH && continue
             workspace.stopping && error("The workspace was closed")
             item in catalog || error("An item was removed from the workspace while it was loaded")
-            # A stage that did not fail itself waits for the source item that failed.
-            failed = status.failed ? (item, ITEM_PROCESS) : (Catalogs.source(catalog, item), SOURCE_EXPAND)
+            # A stage that did not fail itself waits for the source item that failed. A computed
+            # item waits for an item it reads.
+            source = Catalogs.source(catalog, item)
+            !status.failed && source === nothing &&
+                error("An item that $(id(catalog, item)) reads failed")
+            failed = status.failed ? (item, ITEM_PROCESS) : (source, SOURCE_EXPAND)
             error(get(workspace.errors, failed) do
                 get(workspace.errors, (first(failed), SOURCE_READ), "work failed")
             end)

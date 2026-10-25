@@ -117,6 +117,8 @@ function failed!(workspace::Workspace, key::RowKey, stage::PipelineStage, messag
         saved = cache_key(workspace, key)
         store_result_failure!(cache, stage, saved, saved, message)
     elseif key isa ItemKey
+        # TODO: computed items go to the cache too, with their failures.
+        haskey(workspace.computations, key) && return nothing
         store_result_failure!(cache, stage, id(workspace.catalog, key), cache_key(workspace, key), message)
     else
         store_result_failure!(cache, stage, workspace.collection_keys[key], 0, message)
@@ -350,6 +352,7 @@ end
 """Run `process` for one item and save its payload, its label and the metadata it changed."""
 function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Nothing
     catalog = workspace.catalog
+    @lock(catalog.lock, haskey(workspace.computations, job.key)) && return compute!(workspace, job)
     cache = workspace.cache.db
     item = job.key
     known, given, saved = @lock catalog.lock (
@@ -448,6 +451,13 @@ function versions(
 )::Vector{AbstractDataItem}
     catalog = workspace.catalog
     cache = workspace.cache.db
+    computed = @lock catalog.lock [haskey(workspace.computations, item) for item in items]
+    if any(computed)
+        found = Vector{AbstractDataItem}(undef, length(items))
+        found[.!computed] = versions(workspace, items[.!computed]; reader)
+        found[computed] = [computed_version(workspace, item) for item in items[computed]]
+        return found
+    end
     own = reader !== nothing && first(reader) isa ItemKey
     # For each item, the saved key of the collection whose version to read; 0 is the item's own.
     known, chosen, given = @lock catalog.lock begin

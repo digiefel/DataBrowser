@@ -163,6 +163,29 @@ end
 Base.getindex(column::Union{IdColumn,LabelColumn}, row::Integer)::String = String(view(column, row))
 
 """
+The rows each item is made from, in row order: the source item that `expand` gave it from, or the
+items a computed value reads. Inputs never change, so a row stores only where its inputs end; they
+start after the previous row's.
+"""
+struct InputColumn
+    keys::Vector{Union{SourceKey,ItemKey}}
+    ends::Vector{UInt32}
+end
+
+InputColumn() = InputColumn(Union{SourceKey,ItemKey}[], UInt32[])
+
+function Base.push!(column::InputColumn, keys)::InputColumn
+    append!(column.keys, keys)
+    push!(column.ends, length(column.keys))
+    return column
+end
+
+function Base.view(column::InputColumn, row::Integer)
+    start = row == 1 ? 1 : Int(column.ends[row-1]) + 1
+    return view(column.keys, start:Int(column.ends[row]))
+end
+
+"""
 Public id → key of one table. A key is found by `hash(id)` and confirmed against the stored id; an
 id whose hash is already taken goes into `collisions`.
 """

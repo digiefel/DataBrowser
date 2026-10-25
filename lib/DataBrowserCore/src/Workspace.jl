@@ -284,6 +284,10 @@ mutable struct Workspace{P<:AbstractProject}
     errors::Dict{Target,String}
     # Items that were delivered. Their analyze is requested, so their metadata becomes complete.
     wanted::Set{ItemKey}
+    # The `Computed` value of each computed item, and its result once its `process` ran.
+    # TODO: results go to the cache, so that they survive closing the workspace.
+    computations::Dict{ItemKey,AbstractDataItem}
+    results::Dict{ItemKey,Any}
     # The code that each stage first ran with for each type: its roots, the world they were read
     # in, and their revision. When the revision changes, the results of that stage for that type
     # are out of date.
@@ -406,6 +410,8 @@ function Workspace(
         Dict{CollectionKey,Dict{ItemKey,MetadataDict}}(),
         Dict{Target,String}(),
         Set{ItemKey}(),
+        Dict{ItemKey,AbstractDataItem}(),
+        Dict{ItemKey,Any}(),
         Dict{Tuple{PipelineStage,Type},StageCode}(),
         Set{Type}(),
         Task[],
@@ -461,6 +467,7 @@ include("Workspace/Operations.jl")
 include("Workspace/Status.jl")
 include("Workspace/DataAccess.jl")
 include("Workspace/Selection.jl")
+include("Workspace/Computed.jl")
 include("Workspace/Processing.jl")
 include("Workspace/MemoryDiagnostics.jl")
 

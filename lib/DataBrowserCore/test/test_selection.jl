@@ -75,3 +75,20 @@ DataBrowserAPI.expand(::ChipsProject, ::ChipsFile, ::Nothing) = [
         W.close_workspace!(workspace)
     end
 end
+
+@testset "a computed value is an item that reads other items" begin
+    workspace = W.open_workspace(ChipsProject(), ChipsSource(); cache=false, background_processing=true)
+    try
+        W.wait_workspace_idle!(workspace; timeout=20)
+        sweeps = W.materialize_items(workspace, ["IV_A", "IV_B"])
+        top(xs; scale) = (top = scale * maximum(maximum(DataBrowserAPI.item_data(x).V) for x in xs), count = length(xs))
+        value = W.Computed(top, sweeps; scale=2)
+        push!(workspace, value)
+        W.wait_workspace_idle!(workspace; timeout=20)
+        computed = W.select(workspace, [DataBrowserAPI.id(value)])
+        @test only(computed.data) == (top=4.0, count=2)
+        @test computed.top == [4.0]
+    finally
+        W.close_workspace!(workspace)
+    end
+end
