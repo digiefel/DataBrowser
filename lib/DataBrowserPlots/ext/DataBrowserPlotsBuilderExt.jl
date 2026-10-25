@@ -125,6 +125,8 @@ Giving a name that has no file yet saves the code under it; a name that has a fi
 is ordinary Julia, and its last value is the plot: an AlgebraOfGraphics declaration such as one
 written with `@plot`, or a Makie figure. The file runs from the start in a module of its own, which
 uses AlgebraOfGraphics, Makie and DataBrowserPlots and has `selection` set to the selected items.
+It runs again when the code changes; a declaration of `@plot` is drawn again for each selection
+without running the file. Code that names `selection` itself runs again for each selection.
 Other packages are loaded with `using` in the file. Names defined in `Main`, such as the functions
 of the project script or the REPL, are reached by name; a name that the file defines takes their
 place.
@@ -185,6 +187,10 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     # show the code just read, even while the user is typing in the box.
     reads::Int = 0
     selection::Union{Nothing,Selection} = nothing
+    # What the code last ran with, its code, file and the names of `Main` with their values, and
+    # the value it gave; `nothing` until it ran without an error.
+    ran::Union{Nothing,Tuple} = nothing
+    value::Any = nothing
     inspect::Bool = false
     figure::Any = nothing
     dark::Bool = true
@@ -293,32 +299,44 @@ function build!(view::BuilderView, ctx)::Nothing
         return nothing
     end
     try
-        # A new module for each run, so that nothing from an earlier run of the file is left.
-        # TODO: modules are never freed; reuse one module per window if this grows.
-        mod = @timed_dbg "builder_module" begin
-        mod = Module(Symbol(view.figure_id))
-        Core.eval(mod, :(const AlgebraOfGraphics = $AlgebraOfGraphics))
-        Core.eval(mod, :(const Makie = $Makie))
-        Core.eval(mod, :(const DataBrowserPlots = $DataBrowserPlots))
-        Core.eval(mod, :(using .AlgebraOfGraphics, .Makie, .DataBrowserPlots))
-        # The names defined in Main, such as the project's functions, are reached by name. They
-        # come through `using`, so a name that the file defines itself takes their place.
-        # TODO: a sandbox for plot code, for example the project's code in a module of its own.
-        shared = Module(:Main_names)
+        # The names defined in Main, such as the project's functions, are reached by name.
         defined = [name for name in names(Main; all=true) if isdefinedglobal(Main, name) &&
             !startswith(String(name), '#') && name ∉ (:eval, :include, :Base, :Core, :Main)]
-        for name in defined
-            Core.eval(shared, :(const $name = $(getglobal(Main, name))))
+        run = (view.code.text, code_path(view), defined, Any[getglobal(Main, name) for name in defined])
+        # The code runs again only when it changes, or the names of Main do, so that the functions
+        # it defines keep the code Julia compiled for them. Code that reads `selection` itself runs
+        # for each selection.
+        same = view.ran !== nothing && view.ran[1:3] == run[1:3] && all(map(===, view.ran[4], run[4])) &&
+            !reads_selection(view.code.text)
+        if !same
+            view.ran = nothing
+            mod = @timed_dbg "builder_module" begin
+            # A new module for each run, so that nothing from an earlier run of the file is left.
+            # TODO: modules are never freed; reuse one module per window if this grows.
+            mod = Module(Symbol(view.figure_id))
+            Core.eval(mod, :(const AlgebraOfGraphics = $AlgebraOfGraphics))
+            Core.eval(mod, :(const Makie = $Makie))
+            Core.eval(mod, :(const DataBrowserPlots = $DataBrowserPlots))
+            Core.eval(mod, :(using .AlgebraOfGraphics, .Makie, .DataBrowserPlots))
+            # The names of Main come through `using`, so a name that the file defines itself takes
+            # their place.
+            # TODO: a sandbox for plot code, for example the project's code in a module of its own.
+            shared = Module(:Main_names)
+            for (name, value) in zip(defined, run[4])
+                Core.eval(shared, :(const $name = $value))
+            end
+            Core.eval(shared, Expr(:export, defined...))
+            Core.eval(mod, :(const Main_names = $shared))
+            Core.eval(mod, :(using .Main_names))
+            Core.eval(mod, :(selection = $selection))
+            mod
+            end
+            # Code that does not run has no kinds: each scale offers the settings of both.
+            view.scale_kinds = Dict{Symbol,Symbol}()
+            view.value = @timed_dbg "builder_code" Base.invokelatest(include_string, mod, view.code.text, code_path(view))
+            view.ran = run
         end
-        Core.eval(shared, Expr(:export, defined...))
-        Core.eval(mod, :(const Main_names = $shared))
-        Core.eval(mod, :(using .Main_names))
-        Core.eval(mod, :(selection = $selection))
-        mod
-        end
-        # Code that does not run has no kinds: each scale offers the settings of both.
-        view.scale_kinds = Dict{Symbol,Symbol}()
-        plot = @timed_dbg "builder_code" Base.invokelatest(include_string, mod, view.code.text, code_path(view))
+        plot = view.value
         # A declaration of paths is drawn for the selection, any other for its own data.
         # The kinds of a declaration's scales come from the types of the selection's values, before
         # it is drawn.
@@ -337,6 +355,12 @@ function build!(view::BuilderView, ctx)::Nothing
             "Plot builder: $(export_name(view)) failed", err, bt)
     end
     return nothing
+end
+
+# Whether the code names `selection`.
+function reads_selection(code::String)::Bool
+    reads(e) = e === :selection || e isa Expr && any(reads, e.args)
+    return reads(Meta.parseall(code))
 end
 
 function draw!(view::BuilderView, ctx)::Nothing
