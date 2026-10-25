@@ -974,8 +974,19 @@ struct Choice <: Widget
     choices::Vector{Symbol}
 end
 
-# The lowest and highest value, as `limits` writes them; an empty one is `nothing`, Makie's own.
-struct Bounds <: Widget end
+# The lowest and highest value, as `limits` writes them, with the tooltip of each. An empty one of
+# an `optional` pair is `nothing`, Makie's own; a pair that is not optional, such as `colorrange`,
+# is written once both are given.
+struct Bounds <: Widget
+    low::String
+    high::String
+    optional::Bool
+end
+const LIMITS = Bounds("The lowest value shown; empty for Makie's own", "The highest value shown; empty for Makie's own", true)
+const SIZES = Bounds("The size of the lowest value", "The size of the highest value", false)
+
+# One color, such as the `nan_color` of `color`, drawn as a swatch.
+struct OneColor <: Widget end
 
 # The kind of ticks, one of `kinds` as Makie names them or `values`, then its count or its values.
 struct Ticks <: Widget
@@ -1004,7 +1015,10 @@ struct Colormap <: Widget end
 const WIDGETS = Dict{Tuple{Symbol,Union{Int,Symbol}},Widget}(
     (:visual, :marker) => Choice(MARKERS), (:visual, :linestyle) => Choice(LINESTYLES),
     (:legend, :position) => Choice(LEGEND_POSITIONS), (:theme, 1) => Choice(THEMES),
-    (:x, :limits) => Bounds(), (:y, :limits) => Bounds(),
+    (:x, :limits) => LIMITS, (:y, :limits) => LIMITS,
+    (:color, :colorrange) => Bounds("The value drawn with the first color of the colormap", "The value drawn with the last color", false),
+    (:color, :lowclip) => OneColor(), (:color, :highclip) => OneColor(), (:color, :nan_color) => OneColor(),
+    (:markersize, :sizerange) => SIZES, (:linewidth, :sizerange) => SIZES,
     (:x, :ticks) => Ticks(["WilkinsonTicks", "LinearTicks", "LogTicks", "values"]),
     (:y, :ticks) => Ticks(["WilkinsonTicks", "LinearTicks", "LogTicks", "values"]),
     (:color, :palette) => ColorPalette(), (:color, :colormap) => Colormap(),
@@ -1078,16 +1092,22 @@ function draw_widget!(view::BuilderView, widget::Choice, target, name, (current,
 end
 
 # Two fields, the lowest and the highest value, with "to" between them.
-function draw_widget!(view::BuilderView, ::Bounds, target, name, (low, high), focus::Bool)::Union{Nothing,String}
+function draw_widget!(view::BuilderView, widget::Bounds, target, name, (low, high), focus::Bool)::Union{Nothing,String}
     key = "$target/$name"
+    # A bound typed while the code has none yet, as the first of a pair that is not optional, stays.
+    kept(part, value) = !widget.optional && isempty(value) && haskey(view.fields, "$key/$part") ?
+        unsafe_string(pointer(view.fields["$key/$part"])) : value
+    low, high = kept("low", low), kept("high", high)
     each = (ig.GetContentRegionAvail().x - ig.CalcTextSize("to").x - 2unsafe_load(ig.GetStyle()).ItemSpacing.x) / 2
     focus && ig.SetKeyboardFocusHere()
-    lowest = part_field!(view, "$key/low", low, each; hint="auto", tooltip="The lowest value shown; empty for Makie's own")
+    lowest = part_field!(view, "$key/low", low, each; hint=widget.optional ? "auto" : "lowest", tooltip=widget.low)
     ig.SameLine(); ig.TextDisabled("to"); ig.SameLine()
-    highest = part_field!(view, "$key/high", high, each; hint="auto", tooltip="The highest value shown; empty for Makie's own")
+    highest = part_field!(view, "$key/high", high, each; hint=widget.optional ? "auto" : "highest", tooltip=widget.high)
     lowest === nothing && highest === nothing && return nothing
+    low, high = something(lowest, low), something(highest, high)
+    widget.optional || !isempty(low) && !isempty(high) || return nothing
     bound(text) = isempty(text) ? "nothing" : text
-    return "($(bound(something(lowest, low))), $(bound(something(highest, high))))"
+    return "($(bound(low)), $(bound(high)))"
 end
 
 # A menu of the kind of ticks, then a field of its count or its values. A kind with a count starts
@@ -1168,6 +1188,11 @@ function widget_parts(::ColorPalette, value::String)
     scheme === nothing || return String(scheme) in Makie.all_gradient_names && discrete(scheme) ? (; scheme, reversed=false, colors=String[]) : nothing
     colors = code_parts(value, '[', ']')
     return colors === nothing || any(c -> written_color(c) === nothing, colors) ? nothing : (; scheme=nothing, reversed=false, colors)
+end
+
+function widget_parts(::OneColor, value::String)::Union{Nothing,Vector{String}}
+    isempty(strip(value)) && return [""]
+    return written_color(value) === nothing ? nothing : [String(strip(value))]
 end
 
 function widget_parts(widget::GlyphPalette, value::String)
@@ -1285,6 +1310,36 @@ function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, 
     end
     picked = colormaps_menu(view)
     picked === nothing || (code = palette_code(picked, false))
+    return code
+end
+
+# A swatch of the color; a click opens a color picker, which writes the color once it closes.
+function draw_widget!(view::BuilderView, ::OneColor, target, name, (current,), focus::Bool)::Union{Nothing,String}
+    key = "$target/$name"
+    shown = isempty(current) ? nothing : written_color(current)
+    code = nothing
+    if view.picking !== nothing && first(view.picking) == key && !ig.IsPopupOpen("color")
+        view.picking = nothing
+        picked = color_code(ig.ImVec4(view.color...))
+        picked != current && (code = picked)
+    end
+    size = ig.GetFrameHeight()
+    if ig.InvisibleButton("swatch", (2size, size)) || focus
+        c = something(shown, ig.ImVec4(0, 0, 0, 1))
+        view.color .= (c.x, c.y, c.z, c.w)
+        view.picking = (key, 1)
+        ig.OpenPopup("color")
+    end
+    low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
+    draw_list = ig.GetWindowDrawList()
+    shown === nothing ? ig.AddRect(draw_list, low, high, ig.GetColorU32(ig.ImGuiCol_TextDisabled), 2.0f0) :
+        ig.AddRectFilled(draw_list, low, high, ig.GetColorU32(shown), 2.0f0)
+    ig.SetItemTooltip(shown === nothing ? "Click to pick a color" : "$current; click to change")
+    if ig.BeginPopup("color")
+        original = shown === nothing ? copy(view.color) : Float32[shown.x, shown.y, shown.z, shown.w]
+        ig.ColorPicker4("##color", view.color, ig.ImGuiColorEditFlags_PickerHueWheel | ig.ImGuiColorEditFlags_AlphaBar, original)
+        ig.EndPopup()
+    end
     return code
 end
 
