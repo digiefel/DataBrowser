@@ -1,7 +1,8 @@
 using Tables
 
-using DataBrowserAPI: item_data, items
-using DataBrowserCore: Selection
+import DataBrowserAPI
+using DataBrowserAPI: AbstractDataItem, id, item_data, items, label, metadata, reconstruct
+using DataBrowserCore: Group, Selection, Workspace
 
 """
 Table view over the data of one or more items.
@@ -11,7 +12,8 @@ which names it inside the item's data, from the outside in, such as `["fit", "sl
 `columns` is the path joined with dots. A column in `groups` holds a block of names, such as a named
 tuple, that is not split into columns.
 
-`row_item[r]` is the 1-based index into `item_labels` for row `r`.
+`row_item[r]` is the 1-based index into `item_labels` for row `r`, and `item_row[r]` is the row
+within that item.
 `getcell(row, col)` returns display text for any cell; `getvalue(row, col)` returns the raw
 typed value (`missing` when the row's item lacks that column). Consumers that compute — plotting,
 fitting, export — must read `getvalue`, never parse display text. `spans_item(row, col)` tells
@@ -25,6 +27,7 @@ struct ItemTable
     groups::Set{Int}
     rows::Int
     row_item::Vector{Int}
+    item_row::Vector{Int}
     item_labels::Vector{String}
     getcell::Function    # (row::Int, col::Int) -> String
     getvalue::Function   # (row::Int, col::Int) -> Any
@@ -193,7 +196,7 @@ function _union_table(labels::Vector{String}, item_columns, item_rows::Vector{In
         return cell === nothing || !last(cell)
     end
     return ItemTable([join(path, ".") for path in paths], paths, groups, length(row_item), row_item,
-        labels, getcell, getvalue, spans_item)
+        row_offsets, labels, getcell, getvalue, spans_item)
 end
 
 # A value that the table can show as a table of its own: a vector, a matrix, a table or a block of
@@ -228,6 +231,7 @@ Base.getindex(table::ItemTable, rows::AbstractVector{Int})::ItemTable = ItemTabl
     table.groups,
     length(rows),
     table.row_item[rows],
+    table.item_row[rows],
     table.item_labels,
     (row, col) -> table.getcell(rows[row], col),
     (row, col) -> table.getvalue(rows[row], col),
@@ -245,8 +249,55 @@ Base.getindex(table::ItemTable, rows::AbstractVector{Int}, columns::AbstractVect
     Set(place for (place, column) in enumerate(columns) if column in table.groups),
     length(rows),
     table.row_item[rows],
+    table.item_row[rows],
     table.item_labels,
     (row, col) -> table.getcell(rows[row], columns[col]),
     (row, col) -> table.getvalue(rows[row], columns[col]),
     (row, col) -> table.spans_item(rows[row], columns[col]),
 )
+
+"""
+    selected_rows(item; rows, columns)
+
+`item` with only some rows and columns of the table that [`merge_item_tables`](@ref) makes of its
+data: `rows` are rows within the item, and `columns` are the paths of the columns. A value that the
+table shows as one cell beside all of the item's rows is kept when its column is, and a block of
+names keeps the names whose columns are kept.
+
+The data keeps its shape, and the item is made again from it with `reconstruct`. An item that its
+type cannot make again, such as a computed item, is a `Group` with the data instead.
+"""
+function selected_rows(item::AbstractDataItem; rows::Vector{Int}, columns::Vector{Vector{String}})
+    # The same walk as `_item_columns`: only the first table gives rows. `nothing` drops a value.
+    table_found = false
+    function cut(path::Vector{String}, value)::Union{Nothing,Some}
+        if !table_found && _is_table(value)
+            table_found = true
+            table = Tables.columns(value)
+            names = Tuple(name for name in Tables.columnnames(table) if [path; string(name)] in columns)
+            return Some(NamedTuple{names}(Tuple(Tables.getcolumn(table, name)[rows] for name in names)))
+        elseif path in columns
+            return Some(value)
+        elseif isempty(path) && value isa AbstractVector
+            return ["1"] in columns ? Some(value[rows]) : nothing
+        elseif isempty(path) && value isa AbstractMatrix
+            return Some(value[rows, [column for column in axes(value, 2) if [string(column)] in columns]])
+        elseif _is_block(value) && any(column -> length(column) > length(path) && column[1:length(path)] == path, columns)
+            named = value isa AbstractDict ? sort!(collect(pairs(value)); by=part -> string(first(part))) : pairs(value)
+            parts = [name => cut([path; string(name)], part) for (name, part) in named]
+            kept = [name => something(part) for (name, part) in parts if part !== nothing]
+            return Some(value isa NamedTuple ? NamedTuple(kept) : Dict(kept))
+        elseif isempty(path) && !_is_block(value)
+            # Data that is one value is the column `data`.
+            return ["data"] in columns ? Some(value) : nothing
+        end
+        return nothing
+    end
+    data = something(cut(String[], item_data(item)), nothing)
+    given = Dict{Symbol,Any}(metadata(item))
+    rebuilt = item isa Group ? nothing : reconstruct(typeof(item), id(item), data, given)
+    return something(rebuilt, Group(id(item), given, data, AbstractDataItem[]))
+end
+
+# A selection of rows is named after its item.
+DataBrowserAPI.label(value::Workspace.Computed{typeof(selected_rows)}) = label(only(value.args))

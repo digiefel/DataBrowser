@@ -7,8 +7,8 @@ using NativeFileDialog: save_file
 
 import DataBrowserAPI: draw!, draw_header!, export!, label, output, prepare!
 using DataBrowserAPI: AbstractVisualizer, item_data, items
-using DataBrowserCore: Selection
-using ..DataBrowserGUI: ItemTable, _zoomable, merge_item_tables, value_table, zoom_value
+using DataBrowserCore: Selection, Workspace
+using ..DataBrowserGUI: ItemTable, _zoomable, merge_item_tables, selected_rows, value_table, zoom_value
 
 # How a column writes its numbers: with `decimals` digits after the point, and, when `engineering`,
 # each number as a number from 1 to 1000 followed by its power of ten, such as `e-6`, padded to
@@ -70,9 +70,9 @@ right-aligned, so that their decimal points line up. In a column with numbers sm
 larger than a million, each number is written with a power of ten of its own, a multiple of 3, such
 as `38.990e-9`.
 
-The window passes on the table as it shows it: the rows the user selected, or all rows when none is
-selected, with the columns it shows. With several items, it also passes on the column `item`, with
-the label of the item of each row.
+The window passes on the rows the user selected, or all rows when none is selected, as items: each
+item that has some of them, with only those rows and the columns the table shows. Each is an item of
+the workspace, under "Computed", and has the shape and the type of the item it comes from.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
     # The table as it was built, and the table it shows: the same, with the columns in the order the
@@ -89,6 +89,8 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     # The selection the table was built from, the metadata it has, and the metadata the user picked
     # as columns.
     selection::Union{Nothing,Selection} = nothing
+    # The items of `selection`, as the project made them.
+    items::Vector = []
     metadata_names::Vector{Symbol} = Symbol[]
     metadata::Vector{Symbol} = Symbol[]
     # The columns of the data the user hid, by name.
@@ -127,8 +129,10 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     run_start::Vector{Int} = Int[]
     # The rows of each item, in the order of `order`.
     item_rows::Dict{Int,Vector{Int}} = Dict{Int,Vector{Int}}()
-    # What the window passes on to other windows.
-    output::Union{Nothing,ItemTable} = nothing
+    # The rows of `table` the window passes on, and what it passes on to other windows: the
+    # selected rows of each item.
+    output_rows::Vector{Int} = Int[]
+    output::Union{Nothing,Vector{Workspace.Computed}} = nothing
     warnings::Vector{String} = String[]
     grid::DataGridState = DataGridState()
     # Names the grid for ImGui, which keeps the column widths under this name in imgui.ini: one
@@ -139,8 +143,6 @@ end
 label(::TableView)::String = "Table"
 
 output(view::TableView) = view.output
-
-prepare!(view::TableView, table::ItemTable, ctx)::Nothing = _show!(view, table, false)
 
 # Show `table`, whose first column `item` holds the labels of several items when `item_column`.
 function _show!(view::TableView, table::ItemTable, item_column::Bool)::Nothing
@@ -218,9 +220,11 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
         (value_table(view.zoom_item, value; view.unfolded), String[])
     _show!(view, table, length(table.item_labels) > 1)
     view.selection = selection
+    view.items = items(selection)
     view.metadata_names = names
     view.warnings = warnings
-    types = unique(typeof.(items(selection)))
+    _pass_on!(view)
+    types = unique(typeof.(view.items))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
     # A zoomed table keeps column widths of its own.
     for (_, path) in view.zoom
@@ -420,9 +424,9 @@ function draw!(view::TableView, ctx)::Nothing
         else
             column >= 1 && ig.MenuItem("Copy cell") &&
                 ig.SetClipboardText(_copy_text(table.getvalue(shown[row], column)))
-            rows = (view.output::ItemTable).rows
+            rows = length(view.output_rows)
             ig.MenuItem(rows > 1 ? "Copy $rows rows" : "Copy row") &&
-                ig.SetClipboardText(_copy_text(view.output::ItemTable))
+                ig.SetClipboardText(_copy_text(table[view.output_rows, _shown_columns(view)]))
             if column >= 1 && zoomable(row, column)
                 ig.Separator()
                 open_zoomed(row, column)
@@ -512,8 +516,10 @@ function _fold!(view::TableView, items, fold::Bool)::Nothing
     return nothing
 end
 
-# Pass on the rows the user selected, or all rows when none is selected. The row with the label of
-# an item stands for all of the item's rows that pass the filters.
+# Pass on the rows the user selected, or all rows when none is selected, with the columns the table
+# shows: one computed item of `selected_rows` for each item that has some of them. The row with the
+# label of an item stands for all of the item's rows that pass the filters.
+# TODO: a zoomed table passes on the items it was given; pass on the rows of the value it shows.
 function _pass_on!(view::TableView)::Nothing
     table = view.table::ItemTable
     rows = Int[]
@@ -521,8 +527,19 @@ function _pass_on!(view::TableView)::Nothing
         view.label_row[row] ? append!(rows, view.item_rows[table.row_item[view.shown[row]]]) :
             push!(rows, view.shown[row])
     end
-    unique!(rows)
-    view.output = table[isempty(view.grid.selected_rows) ? view.order : rows, _shown_columns(view)]
+    view.output_rows = isempty(view.grid.selected_rows) ? view.order : unique!(rows)
+    selection = view.selection
+    if selection === nothing || !isempty(view.zoom)
+        view.output = nothing
+        return nothing
+    end
+    columns = table.paths[_shown_columns(view)]
+    view.output = map(unique(table.row_item[view.output_rows])) do index
+        # TODO: an item is found by its label, which another item may have too.
+        item = view.items[findfirst(==(table.item_labels[index]), selection.label)]
+        rows = table.item_row[[row for row in view.output_rows if table.row_item[row] == index]]
+        return Workspace.Computed(selected_rows, item; rows, columns)
+    end
     return nothing
 end
 

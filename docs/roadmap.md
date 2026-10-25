@@ -529,9 +529,9 @@ the table as a first-class view.
   items has the same header.
 - [x] Let a window take its input from another window. A visualizer says what its window passes
   on with `output`; without a method the window passes on its own value. The header has a menu,
-  after "from", to choose the selection or another window. The table passes on what it shows: the
-  selected rows, with the column `item` when it shows several items. The table and the plot
-  builder show a table that another window passes on.
+  after "from", to choose the selection or another window. The table passes on the selected rows
+  as items: each item that has some, with only those rows and the columns it shows. Another window
+  shows them as it shows any items, and its function receives them one by one.
 - [x] "Export" in the header of every window calls `export!(visualizer, ctx)`. The default saves a
   picture of what the visualizer draws as PNG, without the title and header of the window.
 - [x] The table exports its rows as CSV, with the columns it shows.

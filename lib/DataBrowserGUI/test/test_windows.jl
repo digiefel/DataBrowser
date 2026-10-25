@@ -1,7 +1,9 @@
 using Test, DataBrowserGUI
 import DataBrowserAPI
 using DataBrowserCore: Workspace
-using DataBrowserGUI.Browser: BrowserState, FixedItems, open_window!, refresh!, transform!
+using DataBrowserCore: Group
+using DataBrowserGUI: selected_rows
+using DataBrowserGUI.Browser: BrowserState, FixedItems, TableView, WindowOutput, open_window!, refresh!, transform!
 
 # Three numbers, each an item.
 struct WindowTestProject <: DataBrowserAPI.AbstractProject end
@@ -33,6 +35,7 @@ Kept() = Kept(nothing)
 DataBrowserAPI.prepare!(kept::Kept, selection::Workspace.Selection, ctx) = (kept.value = selection; nothing)
 
 doubled(number::WindowTestNumber) = 2number.value
+plus_one(number::WindowTestNumber) = number.value + 1
 
 @testset "a window's function gives one computed item for each item, computed again when its code changes" begin
     workspace = Workspace.open_workspace(WindowTestProject(), WindowTestSource(); cache=false, background_processing=true)
@@ -52,4 +55,26 @@ doubled(number::WindowTestNumber) = 2number.value
     finally
         Workspace.close_workspace!(workspace)
     end
+end
+
+@testset "a table passes on its rows as items, which go through a window's function" begin
+    workspace = Workspace.open_workspace(WindowTestProject(), WindowTestSource(); cache=false, background_processing=true)
+    try
+        Workspace.wait_workspace_idle!(workspace; timeout=20)
+        state = BrowserState(; workspace)
+        table = open_window!(state, TableView(); input=FixedItems(["n1", "n2", "n3"]))
+        window = open_window!(state, Kept(); input=WindowOutput(table.id))
+        transform!(window, GlobalRef(@__MODULE__, :plus_one))
+        refresh!(state, window)
+        @test collect(window.visualizer.value.data) == [2, 3, 4]
+    finally
+        Workspace.close_workspace!(workspace)
+    end
+end
+
+@testset "the selected rows of an item keep the shape of its data" begin
+    item = Group("A", Dict{Symbol,Any}(:Chip => "A"), (iv=(x=[1, 2, 3], y=[4, 5, 6]), fit=(slope=2.0, offset=1.0)), [])
+    kept = selected_rows(item; rows=[3, 1], columns=[["iv", "x"], ["fit"]])
+    @test kept.data == (iv=(x=[3, 1],), fit=(slope=2.0, offset=1.0))
+    @test kept.metadata[:Chip] == "A"
 end

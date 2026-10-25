@@ -166,8 +166,7 @@ show for it. Each result is an item of the workspace, under "Computed", computed
 and computed again when the item or the code of the function changes. The visualizer shows the
 selection of these items, whose data are the results.
 
-A value of the input that is not a selection of items, such as the rows a table passes on, is
-passed to the function as it is.
+A value of the input that is not a selection of items is passed to the function as it is.
 """
 function transform!(window::Window, transform::Union{Nothing,GlobalRef})::Nothing
     window.transform = transform
@@ -232,22 +231,29 @@ function refresh!(state::BrowserState, window::Window)::Nothing
     ctx = WindowContext(state, window)
     try
         window.value = value(input, state)
+        # The computed items the window adds to the workspace: the rows another window passes on,
+        # then the results of the transform.
+        held = Workspace.Computed[]
+        if window.value isa Vector{Workspace.Computed}
+            append!(held, window.value)
+            foreach(value -> push!(workspace, value), held)
+            computed!(state, window, id.(held))
+            window.value = Workspace.select(workspace, id.(held))
+        end
         transform = window.transform
-        transform === nothing && computed!(state, window, String[])
         if transform !== nothing
             try
                 f = Base.invokelatest(getglobal, transform.mod, transform.name)
                 # TODO: a function of the whole selection, such as a mean over items, gets one
                 # computed item for it: the function's methods tell which (`f(::Selection)`).
                 # TODO: an item that fails hides the results of the others; show its error alone.
-                # TODO: the rows a table passes on become a selection, and go through `f` as items.
                 if window.value isa Workspace.Selection
-                    values = [Workspace.Computed(f, item) for item in Workspace.items(window.value)]
-                    foreach(value -> push!(workspace, value), values)
-                    computed!(state, window, id.(values))
-                    window.value = Workspace.select(workspace, window.computed)
+                    results = [Workspace.Computed(f, item) for item in Workspace.items(window.value)]
+                    foreach(value -> push!(workspace, value), results)
+                    append!(held, results)
+                    computed!(state, window, id.(held))
+                    window.value = Workspace.select(workspace, id.(results))
                 else
-                    computed!(state, window, String[])
                     window.value = Base.invokelatest(f, window.value)
                 end
             catch err
@@ -256,6 +262,7 @@ function refresh!(state::BrowserState, window::Window)::Nothing
                 return nothing
             end
         end
+        computed!(state, window, id.(held))
         if applicable(prepare!, visualizer, window.value, ctx)
             prepare!(visualizer, window.value, ctx)
             window.error = ""

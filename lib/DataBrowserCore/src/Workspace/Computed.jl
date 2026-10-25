@@ -155,13 +155,25 @@ function compute!(workspace::Workspace, job::Job{ItemKey})::Nothing
 end
 
 """
-The version of a computed item that views receive: a `Group` with its result as data, the named
-parts of its result as metadata, and the items it reads, through other computed items, as members.
+The results of the computed items with `ids`, as their functions returned them. Items that are not
+computed yet are computed now, and the call waits for them.
+"""
+function results(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector
+    keys = ItemKey[something(item(workspace, id)) for id in ids]
+    wait_processed(workspace, keys)
+    return @lock workspace.catalog.lock [workspace.results[key] for key in keys]
+end
+
+"""
+The version of a computed item that views receive: a `Group` with its result as data, or the data
+of its result when the result is an item, the named parts of its result as metadata, and the items
+it reads, through other computed items, as members.
 """
 function computed_version(workspace::Workspace, key::ItemKey)::Group
     catalog = workspace.catalog
     value, result, given = @lock catalog.lock (
         workspace.computations[key], workspace.results[key], metadata(workspace, key; through=ITEM_PROCESS))
     read = ItemKey[something(item(workspace, i)) for i in member_ids(value)]
-    return Group(id(value), Dict{Symbol,Any}(given), result, versions(workspace, read))
+    data = result isa AbstractDataItem ? item_data(result) : result
+    return Group(id(value), Dict{Symbol,Any}(given), data, versions(workspace, read))
 end
