@@ -14,9 +14,10 @@ Aggregate(functions...) = Aggregate(collect(Any, functions))
 function_name(f) = Symbol(nameof(f))
 
 # The aggregate over the points of `table`, whose columns `positional` maps to x and y: one group for
-# each x and each group of the categorical roles in `named`. Each group's metadata holds its x, its
-# roles' values, the value of each function and the `count` of its points; its data holds its x and
-# those values, one column each; its members are the items of `source` whose rows it takes.
+# each x and each group of the categorical roles in `named`, sorted by x, then by those roles. Each
+# group's metadata holds its x, its roles' values, the value of each function and the `count` of its
+# points; its data holds its x and those values, one column each; its members are the items of
+# `source` whose rows it takes.
 function Result(aggregate::Aggregate, table, positional::Vector, named::Vector, source)::Result
     length(positional) == 2 || error("aggregate needs the points to map two positional values, x and y")
     columns = Tables.columntable(table)
@@ -26,7 +27,7 @@ function Result(aggregate::Aggregate, table, positional::Vector, named::Vector, 
     keyed = unique([x; Symbol[column(v) for (_, v) in roles]])
     keys = [NamedTuple{Tuple(keyed)}(Tuple(columns[k][row] for k in keyed)) for row in eachindex(columns[x])]
     names = function_name.(aggregate.functions)
-    groups = map(unique(keys)) do key
+    groups = map(sort(unique(keys))) do key
         rows = [row for row in eachindex(keys) if keys[row] == key && columns[y][row] isa Real && isfinite(columns[y][row])]
         values = [f(Float64.(columns[y][rows])) for f in aggregate.functions]
         name = join(("$k = $v" for (k, v) in pairs(key)), ", ")

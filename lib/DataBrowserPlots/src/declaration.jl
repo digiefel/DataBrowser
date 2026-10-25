@@ -212,7 +212,8 @@ the measurements of several devices at each gap:
         spread * visual(Errorbars)
     end
 
-`aggregate` gives a [`Result`](@ref) with one `Group` for each x and group of points. Its metadata
+`aggregate` gives a [`Result`](@ref) with one `Group` for each x and group of points, in order of
+x, so that `Lines` joins them from left to right. Its metadata
 holds the x and the roles' values, the value of each function under its name, such as `:mean`, and
 the `count` of the points; its members are the items whose points it takes. A visual draws the
 first function's value at each x, and `Errorbars` also draws the second's as the length of the bar
