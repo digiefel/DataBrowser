@@ -563,8 +563,10 @@ end
 # that draws keeps them (`drawing`).
 const DRAWN = Base.ScopedValues.ScopedValue{Union{Nothing,Set{String}}}(nothing)
 
-# The computed items that each plot file drew last, by the file's path.
+# The computed items that each plot file drew last, by the file's path. Plots draw in background
+# tasks, so the lock covers it.
 const DRAWN_BY_FILE = Dict{String,Set{String}}()
+const DRAWN_LOCK = ReentrantLock()
 
 # `draw()`, the drawing of the plot of the file at `path` for `selection`. The computed items the
 # file drew last time and that no file draws now, such as the fit of a group that is gone or of
@@ -575,9 +577,11 @@ function drawing(draw, selection, path::AbstractString)
     selection isa Selection || return result
     workspace = getfield(selection.data, :workspace)
     workspace === nothing && return result
-    others = reduce(union, (ids for (other, ids) in DRAWN_BY_FILE if other != path); init=Set{String}())
-    foreach(id -> delete!(workspace, id), setdiff(get(DRAWN_BY_FILE, path, Set{String}()), drawn, others))
-    DRAWN_BY_FILE[path] = drawn
+    @lock DRAWN_LOCK begin
+        others = reduce(union, (ids for (other, ids) in DRAWN_BY_FILE if other != path); init=Set{String}())
+        foreach(id -> delete!(workspace, id), setdiff(get(DRAWN_BY_FILE, path, Set{String}()), drawn, others))
+        DRAWN_BY_FILE[path] = drawn
+    end
     return result
 end
 
