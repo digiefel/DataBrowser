@@ -1162,7 +1162,8 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
             skipped = inherited && names !== nothing && !is_position(entry.name) && !(entry.name in names)
             offer(draw_entry!(view, (:mapping, index), entry.name, text(entry.value); name_width=width, inherited, skipped))
         end
-        adding((:mapping, index), own) && offer(draw_entry!(view, (:mapping, index), view.editing.name, ""; name_width=width))
+        # A mapping taken from the header is edited in its own row.
+        adding((:mapping, index), first.(rows)) && offer(draw_entry!(view, (:mapping, index), view.editing.name, ""; name_width=width))
 
         ig.Dummy((0.0f0, 2.0f0))
         offered = sort(String.(setdiff(attributes, [entry.name for entry in visual])))
