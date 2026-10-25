@@ -71,7 +71,8 @@ larger than a million, each number is written with a power of ten of its own, a 
 as `38.990e-9`.
 
 The window passes on the rows the user selected, or all rows when none is selected, as items: each
-item that has some of them, with only those rows and the columns the table shows. Each is an item of
+item that has some of them, with only those rows and the columns the user selected, or the columns
+the table shows when none is selected. Each is an item of
 the workspace, under "Computed", and has the shape and the type of the item it comes from.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
@@ -476,7 +477,6 @@ function draw!(view::TableView, ctx)::Nothing
             # The column `item` stays first.
             on_move=(column, to) -> view.item_column && 1 in (column, to) ||
                 (change = () -> _move!(view, column, to)),
-            # TODO: pass on the selected columns, `view.grid.selected_columns`, too.
             on_selection_change=_ -> _pass_on!(view),
         )
     end
@@ -516,9 +516,10 @@ function _fold!(view::TableView, items, fold::Bool)::Nothing
     return nothing
 end
 
-# Pass on the rows the user selected, or all rows when none is selected, with the columns the table
-# shows: one computed item of `selected_rows` for each item that has some of them. The row with the
-# label of an item stands for all of the item's rows that pass the filters.
+# Pass on the rows the user selected, or all rows when none is selected, with the columns the user
+# selected, or all columns the table shows when none is selected: one computed item of
+# `selected_rows` for each item that has some of the rows. The row with the label of an item stands
+# for all of the item's rows that pass the filters.
 # TODO: a zoomed table passes on the items it was given; pass on the rows of the value it shows.
 function _pass_on!(view::TableView)::Nothing
     table = view.table::ItemTable
@@ -533,10 +534,11 @@ function _pass_on!(view::TableView)::Nothing
         view.output = nothing
         return nothing
     end
-    columns = table.paths[_shown_columns(view)]
+    shown = _shown_columns(view)
+    picked = filter(in(shown), view.grid.selected_columns)
+    columns = table.paths[isempty(picked) ? shown : sort(picked)]
     view.output = map(unique(table.row_item[view.output_rows])) do index
-        # TODO: an item is found by its label, which another item may have too.
-        item = view.items[findfirst(==(table.item_labels[index]), selection.label)]
+        item = view.items[table.item_index[index]]
         rows = table.item_row[[row for row in view.output_rows if table.row_item[row] == index]]
         return Workspace.Computed(selected_rows, item; rows, columns)
     end

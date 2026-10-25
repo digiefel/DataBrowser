@@ -13,7 +13,8 @@ which names it inside the item's data, from the outside in, such as `["fit", "sl
 tuple, that is not split into columns.
 
 `row_item[r]` is the 1-based index into `item_labels` for row `r`, and `item_row[r]` is the row
-within that item.
+within that item. `item_index[i]` is the place of item `i` in the selection the table was built
+from, which also has the items whose data could not be read; it is empty for the table of a value.
 `getcell(row, col)` returns display text for any cell; `getvalue(row, col)` returns the raw
 typed value (`missing` when the row's item lacks that column). Consumers that compute — plotting,
 fitting, export — must read `getvalue`, never parse display text. `spans_item(row, col)` tells
@@ -29,6 +30,7 @@ struct ItemTable
     row_item::Vector{Int}
     item_row::Vector{Int}
     item_labels::Vector{String}
+    item_index::Vector{Int}
     getcell::Function    # (row::Int, col::Int) -> String
     getvalue::Function   # (row::Int, col::Int) -> Any
     spans_item::Function # (row::Int, col::Int) -> Bool
@@ -115,6 +117,7 @@ function merge_item_tables(
     unfolded::Set{Vector{String}}=Set{Vector{String}}(),
 )::Tuple{ItemTable,Vector{String}}
     labels = String[]
+    item_index = Int[]
     item_columns = Vector{Pair{Vector{String},Tuple{Any,Bool}}}[]
     item_rows = Int[]
     warnings = String[]
@@ -134,6 +137,7 @@ function merge_item_tables(
             if !ismissing(getproperty(selection, name)[index])]
         item_column && pushfirst!(leading, ["item"] => (String(item_label), false))
         push!(labels, String(item_label))
+        push!(item_index, index)
         push!(item_columns, [leading; columns])
         push!(item_rows, rows)
     end
@@ -143,7 +147,7 @@ function merge_item_tables(
     end
     # The column `item` and the metadata come first, also when the first item lacks some metadata.
     first_paths = [item_column ? [["item"]] : Vector{String}[]; [[string(name)] for name in metadata]]
-    return _union_table(labels, item_columns, item_rows, first_paths), warnings
+    return _union_table(labels, item_columns, item_rows, first_paths; item_index), warnings
 end
 
 """
@@ -159,7 +163,7 @@ end
 # The table of several items, from the columns and the number of rows of each item. The columns
 # of `first_paths` that an item has come first, in their order.
 function _union_table(labels::Vector{String}, item_columns, item_rows::Vector{Int},
-        first_paths::Vector{Vector{String}}=Vector{String}[])::ItemTable
+        first_paths::Vector{Vector{String}}=Vector{String}[]; item_index::Vector{Int}=Int[])::ItemTable
     # The union of the items' columns, in the order they first appear, and the value of each column
     # for each item.
     paths = Vector{String}[]
@@ -196,7 +200,7 @@ function _union_table(labels::Vector{String}, item_columns, item_rows::Vector{In
         return cell === nothing || !last(cell)
     end
     return ItemTable([join(path, ".") for path in paths], paths, groups, length(row_item), row_item,
-        row_offsets, labels, getcell, getvalue, spans_item)
+        row_offsets, labels, item_index, getcell, getvalue, spans_item)
 end
 
 # A value that the table can show as a table of its own: a vector, a matrix, a table or a block of
@@ -233,6 +237,7 @@ Base.getindex(table::ItemTable, rows::AbstractVector{Int})::ItemTable = ItemTabl
     table.row_item[rows],
     table.item_row[rows],
     table.item_labels,
+    table.item_index,
     (row, col) -> table.getcell(rows[row], col),
     (row, col) -> table.getvalue(rows[row], col),
     (row, col) -> table.spans_item(rows[row], col),
@@ -251,6 +256,7 @@ Base.getindex(table::ItemTable, rows::AbstractVector{Int}, columns::AbstractVect
     table.row_item[rows],
     table.item_row[rows],
     table.item_labels,
+    table.item_index,
     (row, col) -> table.getcell(rows[row], columns[col]),
     (row, col) -> table.getvalue(rows[row], columns[col]),
     (row, col) -> table.spans_item(rows[row], columns[col]),

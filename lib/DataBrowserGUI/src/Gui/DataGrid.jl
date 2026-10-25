@@ -163,7 +163,8 @@ Arguments:
   header of `to`, the column shown next to it. The caller swaps the two columns, so that the header
   stays under the mouse; a header is known by its name and the names of its groups. The columns
   cannot move without it
-- `on_selection_change`: called with the new `Vector{Int}` whenever the selection changes
+- `on_selection_change`: called with the selected rows, a `Vector{Int}`, whenever the selection of
+  rows or of columns changes
 - `selection_mode`: `:rows` for multi-row selection or `:cells` for a spreadsheet rectangle
 - `height`: child height in pixels; 0.0f0 = fill available
 
@@ -211,6 +212,7 @@ function render_data_grid!(
     height::Float32 = 0.0f0,
 )::Nothing
     isempty(columns) && return nothing
+    selected_columns = copy(state.selected_columns)
     selection_mode in (:rows, :cells) || throw(ArgumentError(
         "DataGrid selection_mode must be :rows or :cells; got $(repr(selection_mode))",
     ))
@@ -833,7 +835,7 @@ function render_data_grid!(
         ig.PopClipRect(draw_list)
     end
 
-    if row_selection_changed
+    if row_selection_changed || state.selected_columns != selected_columns
         on_selection_change(copy(state.selected_rows))
     end
 
