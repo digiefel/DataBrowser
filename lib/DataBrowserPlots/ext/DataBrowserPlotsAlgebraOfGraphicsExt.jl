@@ -639,6 +639,11 @@ function DataBrowserAPI.id(value::Workspace.Computed{Analysis})
         isempty(group) ? "" : " for " * join(("$(get(texts, k, repr(k))) = $(repr(v))" for (k, v) in pairs(group)), ", "))
 end
 
+# The title of a group's result: the step and the group's values, such as
+# `fit(line, (a = 1,)) for A`. The id holds the rest of the code.
+DataBrowserAPI.label(value::Workspace.Computed{Analysis}) = string(value.f.points.step,
+    isempty(value.settings.group) ? "" : " for " * join(string.(values(value.settings.group)), ", "))
+
 # The title of a value of `mapping`: the title after `=>`, as in `:I => "V > 0"` and
 # `:I => abs => "V < 0"`, or the column's name.
 title(value) = !(value isa Pair) ? string(column(value)) : last(value) isa AbstractString ? last(value) :
