@@ -11,7 +11,7 @@ using DataBrowserCore: Selection
 using DataBrowserGUI: CODE_COLORS, CodeFile, code_text, draw_code, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
 using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!, guarded_draw, draw_colors
 import DataBrowserAPI: draw!, prepare!, settings
-using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mapping_order, mappings
+using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mapping_order, mappings, scale_kinds
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
 const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
 using .GLMakieExt: DARK, FigureView
@@ -43,9 +43,12 @@ const PLOT_TYPES = ["Scatter", "Lines", "ScatterLines", "BarPlot", "Errorbars", 
 const SCALED = [:x, :y, :color, :marker, :linestyle, :markersize, :linewidth, :layout, :row, :col]
 # The settings the menu of a scale offers: those of an axis for x and y, and those of a scale of
 # categories, such as the markers of `marker`, for the other mappings.
-# `color` also offers `colormap`, for colors of numbers.
+# A scale of numbers offers those of its mapping, such as the `colormap` of `color`. A scale not
+# drawn yet offers both kinds.
 const AXIS_SETTINGS = [:label, :scale, :limits, :reversed, :ticks, :tickformat]
 const CATEGORY_SETTINGS = [:label, :palette, :categories, :legend]
+const NUMBER_SETTINGS = Dict(:color => [:label, :legend, :colormap, :colorrange, :scale, :lowclip, :highclip, :nan_color],
+    :markersize => [:label, :legend, :sizerange, :ticks, :tickformat], :linewidth => [:label, :legend, :sizerange, :ticks, :tickformat])
 # What the settings of a scale change, shown by the info button beside them.
 const LEGEND_INFO = Dict(
     :merge => "The mappings that share a section, such as (:color, :linestyle), or true for all of them.",
@@ -142,6 +145,9 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     parsed::Union{Nothing,String} = nothing
     # The named mappings each line of the block can show, as the last drawing found them.
     mappings::Vector{Vector{Symbol}} = Vector{Symbol}[]
+    # Whether the scale of each named mapping holds categories or numbers, as the last drawing
+    # found them; see `scale_kinds`.
+    scale_kinds::Dict{Symbol,Symbol} = Dict{Symbol,Symbol}()
     editing::Union{Nothing,EntryEdit} = nothing
     # The columns a mapping can pick, for the selection; `nothing` until the panel needs them.
     columns::Union{Nothing,Vector{ListItem}} = nothing
@@ -295,6 +301,7 @@ function build!(view::BuilderView, ctx)::Nothing
         # A declaration of paths is drawn for the selection, any other for its own data.
         plot isa DataBrowserPlots.Declaration && (plot = Base.invokelatest(plot.layers, selection))
         view.mappings = mappings(plot)
+        view.scale_kinds = scale_kinds(plot)
         view.figure = plot isa Makie.Figure ? plot : Makie.with_theme(() -> figure(plot), DEFAULT_THEME)
         view.message = ""
         view.error_details = ""
@@ -1561,7 +1568,9 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 # The scale's name, with a "+" for its settings and, under the mouse, a cross.
                 row = ig.GetCursorScreenPos()
                 row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
-                kinds = scale.name in (:x, :y) ? AXIS_SETTINGS : scale.name === :color ? [CATEGORY_SETTINGS; :colormap] : CATEGORY_SETTINGS
+                numbers = get(NUMBER_SETTINGS, scale.name, Symbol[])
+                kinds = scale.name in (:x, :y) ? AXIS_SETTINGS : get(view.scale_kinds, scale.name, nothing) === :categorical ? CATEGORY_SETTINGS :
+                    get(view.scale_kinds, scale.name, nothing) === :continuous ? numbers : union(CATEGORY_SETTINGS, numbers)
                 offered = settings === nothing ? String[] : String.(setdiff(kinds, [entry.name for entry in present]))
                 picked = heading!(view, "scale", entry_name(scale.name), offered; role=:plain, tooltip="Add a setting of this scale")
                 picked === nothing || start_edit!(view, (:scale, k), Symbol(picked), "")

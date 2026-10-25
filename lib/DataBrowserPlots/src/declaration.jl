@@ -21,6 +21,14 @@ without a block has no lines.
 """
 mappings(_) = Vector{Symbol}[]
 
+"""
+    scale_kinds(lines) -> Dict{Symbol,Symbol}
+
+For each named mapping of the lines of a `@plot` block, such as `:color`, whether its scale holds
+categories, `:categorical`, or numbers, `:continuous`, as AlgebraOfGraphics finds them in the points.
+"""
+scale_kinds(_) = Dict{Symbol,Symbol}()
+
 # The latest world: code that the browser runs defines the declaration after the caller started.
 figure(declaration::Declaration, input, args...; options...) =
     figure(Base.invokelatest(declaration.layers, input), args...; options...)

@@ -5,7 +5,7 @@ import AlgebraOfGraphics as AoG
 using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
-import DataBrowserPlots: figure, inherit, mappings, over_result, resolve
+import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_kinds
 using DataBrowserPlots: @plot, Aggregate, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Result, category, column
 using DataBrowserAPI: item_data, metadata
 using DataBrowserCore: Group, select
@@ -121,6 +121,19 @@ function mappings(plot::PlotLines)::Vector{Vector{Symbol}}
     end
 end
 mappings(plot::Scaled) = mappings(plot.layers)
+
+# AlgebraOfGraphics keeps the roles of categories, which divide the points into groups, apart from
+# those of numbers.
+# TODO: the lines are processed again here; process them once for `mappings`, this and the drawing.
+function scale_kinds(plot::PlotLines)::Dict{Symbol,Symbol}
+    kinds = Dict{Symbol,Symbol}()
+    for layers in processed_lines(plot), (p, _) in layers
+        foreach(key -> key isa Symbol && (kinds[key] = :categorical), keys(p.primary))
+        foreach(key -> key isa Symbol && (kinds[key] = :continuous), keys(p.named))
+    end
+    return kinds
+end
+scale_kinds(plot::Scaled) = scale_kinds(plot.layers)
 
 # The role of an aesthetic, as `mapping` names it: `:linestyle` for `AesLineStyle`.
 role(aes) = Symbol(lowercase(replace(string(nameof(aes)), r"^Aes" => "")))

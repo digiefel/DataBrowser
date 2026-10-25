@@ -49,6 +49,10 @@ end
     drawn = figure(plot)
     @test length(plotted(drawn, Scatter)) == 1
     @test length(plotted(drawn, Lines)) == 1
+    # A role holds categories or numbers, as the points give them.
+    @test DataBrowserPlots.scale_kinds(@plot data((; rows..., C=["a", "b", "a", "b"])) * mapping(:V, :I; markersize=:P) begin
+        mapping(; color=:C) * visual(Scatter)
+    end) == Dict(:markersize => :continuous, :color => :categorical)
     # A role of the line's own mapping is not left out.
     @test_throws ArgumentError figure(@plot data(rows) * mapping(:V, :I) begin
         mapping(; markersize=:P) * visual(Lines)
