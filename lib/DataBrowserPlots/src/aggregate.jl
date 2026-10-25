@@ -6,8 +6,8 @@ points, and gives a [`Result`](@ref).
 """
 struct Aggregate
     functions::Vector{Any}
+    Aggregate(functions...) = new(collect(Any, functions))
 end
-Aggregate(functions...) = Aggregate(collect(Any, functions))
 
 # The name of a function's value in a group's metadata, such as `:mean`.
 # TODO: an anonymous function, such as `v -> std(v) / sqrt(length(v))`, is named `#1`.

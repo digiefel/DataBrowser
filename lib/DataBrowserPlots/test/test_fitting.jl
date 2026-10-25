@@ -64,8 +64,12 @@ half_range(values) = (maximum(values) - minimum(values)) / 2
         mapping(spread.gap, spread.count) * visual(Lines)
     end
     drawn = figure(plot, select(devices))
-    plots(type) = [p for p in axis(drawn).scene.plots if p isa type]
+    plots(type, drawn=drawn) = [p for p in axis(drawn).scene.plots if p isa type]
     @test sort(Tuple.(reduce(vcat, [p[1][] for p in plots(Scatter)]))) == [(5.0, 2.0), (5.0, 2.0), (10.0, 2.0), (10.0, 2.0)]
     @test length(plots(Errorbars)) == 2
     @test [last.(p[1][]) for p in plots(Lines)] == [[2, 2], [2, 2]]
+    plot = @plot mapping(:gap, only(:data.R)) begin
+        aggregate(average) * visual(Lines)
+    end
+    @test Tuple.(only(plots(Lines, figure(plot, select(devices))))[1][]) == [(5.0, 2.0), (10.0, 2.0)]
 end
