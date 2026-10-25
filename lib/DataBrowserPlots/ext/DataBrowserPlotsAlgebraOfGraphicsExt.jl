@@ -402,14 +402,15 @@ end
 
 function Base.:*(result::Result, layer::AoG.Layer)
     layer.transformation isa AoG.Visual ||
-        error("A result is drawn with a visual, such as `contacts * visual(Lines)`")
+        error("A result is drawn by multiplying it with a visual")
     # The data of each group, its first column as x and its second as y, with the group's value in
     # each role. An aggregate of several functions has a column for each; a line draws them by
     # mapping them, as in `mapping(y = result.mean)`.
     plottype = layer.transformation.plottype
     data = item_data(first(getfield(result, :groups)))
-    length(data) == 2 || error("This result has several values: $(join(keys(data)[2:end], ", ")). Give it a name and map " *
-        "the value to draw, as `mapping(y = name.$(keys(data)[2]))`")
+    length(data) == 2 || error("This aggregate has several values: $(join(keys(data)[2:end], ", ")). To draw one of them, " *
+        "give the aggregate a name in a line of its own, then map the value through that name. " *
+        "See the aggregate section of the @plot documentation.")
     positional = getfield(result, :positional)
     # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
     shown = hasmethod(AoG.aesthetic_mapping, Tuple{Type{plottype},Int}) ?
