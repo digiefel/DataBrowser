@@ -533,8 +533,9 @@ end
 # The field of the value being written, over the row and as large as its text, over the plot when
 # it needs to be. Enter, or a click elsewhere, gives the text to write; Ctrl-Enter starts a new
 # line; Escape gives up. An empty field stays, so that a value just added keeps its row. Returns
-# the text once the user is done, or `nothing`.
-function draw_field!(view::BuilderView)::Union{Nothing,String}
+# the text once the user is done, or `nothing`. A `plain` field holds a text, not code, in `buffer`:
+# it is in the text font and in the color and on the tint of a text in code, and any text is written.
+function draw_field!(view::BuilderView, buffer::Vector{UInt8}=view.editing.buffer; plain::Bool=false)::Union{Nothing,String}
     edit = view.editing
     style = unsafe_load(ig.GetStyle())
     position = ig.GetCursorScreenPos()
@@ -543,7 +544,8 @@ function draw_field!(view::BuilderView)::Union{Nothing,String}
     ig.Dummy((width, ig.GetFrameHeight()))
     viewport = ig.GetWindowViewport()
     right = unsafe_load(viewport.Pos).x + unsafe_load(viewport.Size).x - style.WindowPadding.x
-    size = with_font(() -> ig.CalcTextSize(unsafe_string(pointer(edit.buffer)) * "  "), :code)
+    font = plain ? :interface : :code
+    size = with_font(() -> ig.CalcTextSize(unsafe_string(pointer(buffer)) * "  "), font)
     ig.SetNextWindowPos(position)
     # Two points more than the text, or ImGui scrolls the field up and down to keep the cursor in view.
     ig.SetNextWindowSize((clamp(size.x + 2style.FramePadding.x, width, max(width, right - position.x)),
@@ -561,19 +563,24 @@ function draw_field!(view::BuilderView)::Union{Nothing,String}
     flags = ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_CtrlEnterForNewLine |
         ig.ImGuiInputTextFlags_NoHorizontalScroll
     edit.problem === nothing || ig.PushStyleColor(ig.ImGuiCol_FrameBg, ig.GetColorU32(ig.ImVec4(0.45f0, 0.16f0, 0.16f0, 1.0f0)))
+    plain && push_text_colors()
     # The field grows with its text, so it has no scroll bar.
     ig.PushStyleVar(ig.ImGuiStyleVar_ScrollbarSize, 0.0f0)
-    entered = with_font(:code) do
-        ig.InputTextMultiline("##value", edit.buffer, length(edit.buffer), (-1.0f0, -1.0f0), flags)
+    entered = with_font(font) do
+        ig.InputTextMultiline("##value", buffer, length(buffer), (-1.0f0, -1.0f0), flags)
     end
     ig.PopStyleVar()
+    plain && ig.PopStyleColor(4)
     edit.problem === nothing || (ig.PopStyleColor(); ig.SetItemTooltip(edit.problem))
     done = entered || ig.IsItemDeactivatedAfterEdit()
     left = ig.IsItemDeactivated() && !done
     ig.End()
-    text = String(strip(unsafe_string(pointer(edit.buffer))))
+    text = String(strip(unsafe_string(pointer(buffer))))
     if ig.IsKeyPressed(ig.ImGuiKey_Escape) || left && !isempty(text)
         view.editing = nothing
+    elseif done && plain
+        view.editing = nothing
+        return text
     elseif done && !isempty(text)
         # Text that Julia cannot read is not written; Julia's message says why.
         edit.problem = try
@@ -647,9 +654,13 @@ function heading!(view::BuilderView, id::String, title::String, offered::Abstrac
     end
     picked = nothing
     if !isempty(offered)
-        to_right_end(ig.GetFrameHeight())
-        # A bold "+" of the text font, which stands out more than the icon.
-        if with_font(() -> icon_button("+", tooltip), :interface; bold=true)
+        # A bold "+" of the text font, which stands out more than the icon, at the right end of the
+        # row as the values under it.
+        clicked = with_font(:interface; bold=true) do
+            to_right_end(ig.CalcTextSize("+").x + 2unsafe_load(ig.GetStyle()).FramePadding.x)
+            icon_button("+", tooltip)
+        end
+        if clicked
             view.picker = ListPicker()
             ig.OpenPopup("names")
         end
@@ -880,10 +891,7 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         draw_list = ig.GetWindowDrawList()
         ig.AddRectFilled(draw_list, low, high, ig.GetColorU32(code_color(role, ig.IsItemHovered() ? 0.4f0 : 0.2f0)),
             unsafe_load(ig.GetStyle()).FrameRounding, ig.ImDrawFlags_RoundLeft)
-        with_font(formula ? :code : :interface) do
-            shown = ig.CalcTextSize(icon)
-            ig.AddText(draw_list, (low.x + (size - shown.x) / 2, low.y + (size - shown.y) / 2), ig.GetColorU32(code_color(role)), icon)
-        end
+        with_font(() -> draw_icon(draw_list, low, high, icon, ig.GetColorU32(code_color(role))), formula ? :code : :interface)
         ig.SetItemTooltip(mapping ? (formula ? "A formula; click to pick a column instead" : "A column; click to write a formula instead") :
             formula ? "Code; click to set the value with the widget" : "Sets $kind; click to write the value as code")
         # The badge is part of the value: the value starts where it ends.
@@ -898,24 +906,30 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         end
     end
     if widget !== nothing && !formula
-        # The parts of the widget sit on one frame, joined to the badge, in a lighter tint than
-        # theirs. The frame has room around them, and they are shorter by as much, so the row is as
-        # tall as any other.
+        # The parts of a widget of several parts sit on one frame, joined to the badge, in a lighter
+        # tint than theirs. The frame has room around them, and they are shorter by as much, so the
+        # row is as tall as any other.
         style = unsafe_load(ig.GetStyle())
-        room = min(3.0f0, style.FramePadding.y)
-        ig.PushStyleVar(ig.ImGuiStyleVar_WindowPadding, (room, room))
-        ig.BeginChild("widget", (0.0f0, 0.0f0), ig.ImGuiChildFlags_AutoResizeY | ig.ImGuiChildFlags_AlwaysUseWindowPadding,
-            ig.ImGuiWindowFlags_NoScrollbar)
-        ig.PopStyleVar()
-        ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (style.FramePadding.x, style.FramePadding.y - room))
-        text = try
-            draw_widget!(view, widget, target, name, something(fields, widget_parts(widget, "")), editing && edit.focus)
-        finally
+        drawn = something(fields, widget_parts(widget, ""))
+        text = if !framed(widget)
+            draw_widget!(view, widget, target, name, drawn, editing && edit.focus)
+        else
+            room = min(3.0f0, style.FramePadding.y)
+            ig.PushStyleVar(ig.ImGuiStyleVar_WindowPadding, (room, room))
+            ig.BeginChild("widget", (0.0f0, 0.0f0), ig.ImGuiChildFlags_AutoResizeY | ig.ImGuiChildFlags_AlwaysUseWindowPadding,
+                ig.ImGuiWindowFlags_NoScrollbar)
             ig.PopStyleVar()
-            ig.EndChild()
+            ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (style.FramePadding.x, style.FramePadding.y - room))
+            written = try
+                draw_widget!(view, widget, target, name, drawn, editing && edit.focus)
+            finally
+                ig.PopStyleVar()
+                ig.EndChild()
+            end
+            ig.AddRectFilled(ig.GetWindowDrawList(), ig.GetItemRectMin(), ig.GetItemRectMax(), ig.GetColorU32(ig.ImGuiCol_FrameBg, 0.4f0),
+                style.FrameRounding, ig.ImDrawFlags_RoundRight)
+            written
         end
-        ig.AddRectFilled(ig.GetWindowDrawList(), ig.GetItemRectMin(), ig.GetItemRectMax(), ig.GetColorU32(ig.ImGuiCol_FrameBg, 0.4f0),
-            style.FrameRounding, ig.ImDrawFlags_RoundRight)
         editing && (edit.focus = false)
         if text !== nothing
             editing && (view.editing = nothing)
@@ -1068,6 +1082,10 @@ const WIDGETS = Dict{Tuple{Symbol,Union{Int,Symbol}},Widget}(
 
 # The badge of a widget: an icon of the kind of value it writes, the role of that kind in the colors
 # of code, and its name.
+# Whether the parts of a widget sit on one frame, as those of a widget of several parts do.
+framed(::Widget) = false
+framed(::Union{Bounds,Ticks,ColorPalette,GlyphPalette,Colormap,Categories}) = true
+
 badge(::Words) = (ICON_TYPE, :string, "a text")
 badge(::Categories) = (ICON_ORDERED, :string, "the order and names of the values")
 badge(::Bounds) = (ICON_HASH, :number, "two numbers")
@@ -1112,6 +1130,15 @@ function widget_parts(::Ticks, value::String)::Union{Nothing,Vector{String}}
     return values === nothing ? nothing : ["values", join(values, ", ")]
 end
 
+# The colors of a text typed without quotes: those of a text in code, on its tint. Four colors to pop.
+function push_text_colors()::Nothing
+    ig.PushStyleColor(ig.ImGuiCol_Text, code_color(:string))
+    ig.PushStyleColor(ig.ImGuiCol_FrameBg, code_color(:string, 0.08f0))
+    ig.PushStyleColor(ig.ImGuiCol_FrameBgHovered, code_color(:string, 0.14f0))
+    ig.PushStyleColor(ig.ImGuiCol_FrameBgActive, code_color(:string, 0.18f0))
+    return nothing
+end
+
 # A field of one part of a value, such as the lowest of `limits`, that shows `shown` from the code
 # while the user is not typing in it. Returns its text once the user is done, or `nothing`. The
 # text of a `code` field is Julia code; any other is a text, typed without quotes, in the text font
@@ -1119,12 +1146,7 @@ end
 function part_field!(view::BuilderView, key::String, shown::String, width::Float32; hint::String, tooltip::String, code::Bool=true)
     buffer = get!(() -> zeros(UInt8, 256), view.fields, key)
     ig.GetActiveID() == ig.GetID("##$key") || (fill!(buffer, 0x00); copyto!(buffer, codeunits(shown)))
-    if !code
-        ig.PushStyleColor(ig.ImGuiCol_Text, code_color(:string))
-        ig.PushStyleColor(ig.ImGuiCol_FrameBg, code_color(:string, 0.08f0))
-        ig.PushStyleColor(ig.ImGuiCol_FrameBgHovered, code_color(:string, 0.14f0))
-        ig.PushStyleColor(ig.ImGuiCol_FrameBgActive, code_color(:string, 0.18f0))
-    end
+    code || push_text_colors()
     ig.SetNextItemWidth(width)
     with_font(() -> ig.InputTextWithHint("##$key", hint, buffer, length(buffer)), code ? :code : :interface)
     code || ig.PopStyleColor(4)
@@ -1144,12 +1166,38 @@ function widget_parts(::Words, value::String)::Union{Nothing,Vector{String}}
     return text isa String ? [text] : nothing
 end
 
-# A text field; a text with values in it, such as `"\$(:Chip)"`, is code.
+# A text, typed without quotes. It shows in a box, with the whole text over it when it does not fit;
+# a click opens a field as large as the text. A text with values in it, such as `"\$(:Chip)"`, is code.
 function draw_widget!(view::BuilderView, ::Words, target, name, (text,), focus::Bool)::Union{Nothing,String}
-    focus && ig.SetKeyboardFocusHere()
-    typed = part_field!(view, "$target/$name", text, ig.GetContentRegionAvail().x; hint="text", code=false,
-        tooltip="A text; the badge writes it as code, for a text with values in it")
-    return typed === nothing ? nothing : repr(typed)
+    key = "$target/$name"
+    edit = view.editing
+    if edit !== nothing && edit.target == target && edit.name == name
+        # The text being typed starts as the code's.
+        focus && (view.fields[key] = [codeunits(text); zeros(UInt8, max(1024, 2sizeof(text)))])
+        typed = draw_field!(view, view.fields[key]; plain=true)
+        return typed === nothing ? nothing : repr(typed)
+    end
+    width = ig.GetContentRegionAvail().x
+    clicked = ig.InvisibleButton("text", (width, ig.GetFrameHeight()))
+    low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
+    draw_list = ig.GetWindowDrawList()
+    ig.AddRectFilled(draw_list, low, high, ig.GetColorU32(code_color(:string, ig.IsItemHovered() ? 0.14f0 : 0.08f0)),
+        unsafe_load(ig.GetStyle()).FrameRounding)
+    padding = unsafe_load(ig.GetStyle()).FramePadding
+    shown = isempty(text) ? "text" : text
+    clipped = ig.CalcTextSize(shown).x + 2padding.x > width
+    ig.PushClipRect(low, (high.x - padding.x, high.y), true)
+    ig.AddText(draw_list, (low.x + padding.x, low.y + padding.y),
+        isempty(text) ? ig.GetColorU32(ig.ImGuiCol_TextDisabled) : ig.GetColorU32(code_color(:string)), shown)
+    ig.PopClipRect()
+    if ig.IsItemHovered()
+        ig.BeginTooltip()
+        clipped && ig.TextColored(code_color(:string), text)
+        ig.TextDisabled("A text; the badge writes it as code, for a text with values in it")
+        ig.EndTooltip()
+    end
+    (clicked || focus) && start_edit!(view, target, name, repr(text); typed=false)
+    return nothing
 end
 
 # Each value written, and its name in the legend, empty for none.
@@ -1346,12 +1394,20 @@ colormap_code(name, reversed::Bool) = reversed ? "Reverse(:$name)" : ":$name"
 # few colors, otherwise spread over the categories.
 palette_code(name, reversed::Bool) = discrete(Symbol(name)) && !reversed ? ":$name" : "from_continuous($(colormap_code(name, reversed)))"
 
-# A button `size` wide and tall with its icon in the middle, its corners rounded as the chips'.
-function square_button(label::String, size::Float32)::Bool
-    ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (0.0f0, 0.0f0))
+# Draws `icon` in the middle of the box from `low` to `high`, by the shape of its glyph: the glyph
+# of an icon is narrower than its place in a text, and off its middle.
+function draw_icon(draw_list, low, high, icon::String, color::UInt32)::Nothing
+    glyph = unsafe_load(ig.lib.ImFontBaked_FindGlyph(ig.lib.igGetFontBaked(), ig.lib.ImWchar(first(icon))))
+    ig.AddText(draw_list, ((low.x + high.x - glyph.X0 - glyph.X1) / 2, (low.y + high.y - glyph.Y0 - glyph.Y1) / 2), color, icon)
+    return nothing
+end
+
+# A button `size` wide and tall with `icon` in the middle, its corners rounded as the chips'.
+function square_button(icon::String, id::String, size::Float32)::Bool
     ig.PushStyleVar(ig.ImGuiStyleVar_FrameRounding, 2.0f0)
-    clicked = ig.Button(label, (size, size))
-    ig.PopStyleVar(2)
+    clicked = ig.Button("##$id", (size, size))
+    ig.PopStyleVar()
+    draw_icon(ig.GetWindowDrawList(), ig.GetItemRectMin(), ig.GetItemRectMax(), icon, ig.GetColorU32(ig.ImGuiCol_Text))
     return clicked
 end
 
@@ -1390,7 +1446,7 @@ function draw_chips!(count::Int, width::Float32, draw)::Union{Nothing,Tuple{Symb
         ig.PopID()
     end
     count > 0 && next!(height)
-    square_button("$(ICON_PLUS)##add", height) && (action = (:add, 0))
+    square_button(ICON_PLUS, "add", height) && (action = (:add, 0))
     ig.SetItemTooltip("Add a value")
     return action
 end
@@ -1427,7 +1483,7 @@ function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, 
     action = draw_chips!(length(shown), size, (i, low, high) ->
         ig.AddRectFilled(ig.GetWindowDrawList(), low, high, ig.GetColorU32(shown[i]), 2.0f0))
     ig.SameLine(0.0f0, 3.0f0)
-    (square_button("$(ICON_PALETTE)##schemes", size) || focus) && (view.picker = ListPicker(); ig.OpenPopup("colormaps"))
+    (square_button(ICON_PALETTE, "schemes", size) || focus) && (view.picker = ListPicker(); ig.OpenPopup("colormaps"))
     ig.SetItemTooltip(scheme === nothing ? "Take the colors of a colormap" : "The colors of $scheme; click to take another colormap's")
     ig.EndGroup()
     if action !== nothing && first(action) === :pick
@@ -1607,7 +1663,7 @@ function draw_colormap!(view::BuilderView, colormap, reversed::Bool, focus::Bool
     code = nothing
     ig.SameLine()
     reversed && ig.PushStyleColor(ig.ImGuiCol_Button, ig.GetColorU32(ig.ImGuiCol_ButtonActive))
-    flipped = square_button("$(ICON_FLIP)##reverse", size)
+    flipped = square_button(ICON_FLIP, "reverse", size)
     reversed && ig.PopStyleColor()
     ig.SetItemTooltip(reversed ? "Reversed; click to draw it from its start" : "Reverse the colormap")
     flipped && colormap !== nothing && (code = written(colormap, !reversed))
