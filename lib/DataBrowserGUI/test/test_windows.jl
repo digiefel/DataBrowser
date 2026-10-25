@@ -37,6 +37,7 @@ DataBrowserAPI.prepare!(kept::Kept, selection::Workspace.Selection, ctx) = (kept
 doubled(number::WindowTestNumber) = 2number.value
 plus_one(number::WindowTestNumber) = number.value + 1
 total(numbers::Workspace.Selection) = sum(only(data.value) for data in numbers.data)
+not_two(number::WindowTestNumber) = number.value == 2 ? error("two is not allowed") : number.value
 
 @testset "a window's function gives one computed item for each item, computed again when its code changes" begin
     workspace = Workspace.open_workspace(WindowTestProject(), WindowTestSource(); cache=false, background_processing=true)
@@ -56,6 +57,10 @@ total(numbers::Workspace.Selection) = sum(only(data.value) for data in numbers.d
         # A function of a whole selection gives one value for all items.
         transform!(window, GlobalRef(@__MODULE__, :total))
         @test shown() == [6]
+        # An item whose function fails is left out, and the window says why.
+        transform!(window, GlobalRef(@__MODULE__, :not_two))
+        @test shown() == [1, 3]
+        @test occursin("two is not allowed", window.failed)
     finally
         Workspace.close_workspace!(workspace)
     end

@@ -118,6 +118,8 @@ mutable struct Window
     stamp::Any
     # Why the window does not show the value; empty when it shows it.
     error::String
+    # The computed items the window leaves out of its value because they failed, one on each line.
+    failed::String
     # Why the last "Export" failed; empty when it succeeded.
     export_error::String
     # Why the visualizer failed to draw in the last frame; empty when it drew.

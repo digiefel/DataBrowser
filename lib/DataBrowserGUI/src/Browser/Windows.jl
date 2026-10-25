@@ -102,7 +102,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], nothing, nothing, "", "", "")
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], nothing, nothing, "", "", "", "")
     push!(state.windows, window)
     return window
 end
@@ -231,6 +231,24 @@ function refresh!(state::BrowserState, window::Window)::Nothing
     window.stamp = current
     visualizer = window.visualizer
     ctx = WindowContext(state, window)
+    # The computed items that failed, each with the first line of its error.
+    failures = String[]
+    window.failed = ""
+    # The selection of the computed items of `values` that were computed; the others are failures.
+    function computed_selection(values)::Workspace.Selection
+        ids = String[]
+        for value in values
+            try
+                Workspace.wait_processed(workspace, ItemKey[something(Workspace.item(workspace, id(value)))])
+                push!(ids, id(value))
+            catch err
+                err isa ErrorException || rethrow()
+                push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
+            end
+        end
+        window.failed = join(failures, '\n')
+        return Workspace.select(workspace, ids)
+    end
     try
         window.value = value(input, state)
         # The computed items the window adds to the workspace: the rows another window passes on,
@@ -240,13 +258,12 @@ function refresh!(state::BrowserState, window::Window)::Nothing
             append!(held, window.value)
             foreach(value -> push!(workspace, value), held)
             computed!(state, window, id.(held))
-            window.value = Workspace.select(workspace, id.(held))
+            window.value = computed_selection(held)
         end
         transform = window.transform
         if transform !== nothing
             try
                 f = Base.invokelatest(getglobal, transform.mod, transform.name)
-                # TODO: an item that fails hides the results of the others; show its error alone.
                 if window.value isa Workspace.Selection
                     items = Workspace.items(window.value)
                     # A function with a method for a selection and none for its items combines the
@@ -257,7 +274,7 @@ function refresh!(state::BrowserState, window::Window)::Nothing
                     foreach(value -> push!(workspace, value), results)
                     append!(held, results)
                     computed!(state, window, id.(held))
-                    window.value = Workspace.select(workspace, id.(results))
+                    window.value = computed_selection(results)
                 else
                     window.value = Base.invokelatest(f, window.value)
                 end
