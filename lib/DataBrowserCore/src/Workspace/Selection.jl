@@ -77,11 +77,11 @@ that item.
 `filter`, and indexing with several indices, give a `Selection` again. A `Selection` is a Tables.jl
 table, so `DataFrame(selection)` copies it into a data frame.
 """
-struct Selection{T<:LazyRow} <: AbstractVector{T}
-    # One vector for each property.
-    table::StructArray
+struct Selection{T<:LazyRow,S<:StructArray} <: AbstractVector{T}
+    # Keep the column types so property access and row iteration can be inferred.
+    table::S
 end
-Selection(table::StructArray) = Selection{eltype(LazyRows(table))}(table)
+Selection(table::StructArray) = Selection{eltype(LazyRows(table)),typeof(table)}(table)
 
 Base.size(selection::Selection) = size(getfield(selection, :table))
 Base.getindex(selection::Selection, index::Int) = LazyRows(getfield(selection, :table))[index]
