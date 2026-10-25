@@ -204,25 +204,34 @@ of over the fitted points. With `data(table)` in the header, `fit` takes the row
 The visual draws the fit on the axes of the points and in the roles of its group, so the group's
 legend entry shows its points and its curve. Without a visual, a fit is drawn with `Lines`.
 
-`aggregate` applies functions to the y values of the points that share x and their groups, such as
-the measurements of several devices at each gap:
+`aggregate` applies functions to the y values of the points that share x and their groups: it
+splits the points into one group for each x and each value of the categorical roles, such as
+`color`, and applies each function to the y values of each group. With one function, a visual draws
+its value at each x, as `aggregate(mean) * visual(Lines)`. With several, a line maps the values it
+draws, each under the name of its function:
 
-    @plot mapping(:gap, R(:data.V, :data.I); color=:Chip) begin
-        spread = aggregate(mean, std)
-        spread * visual(ScatterLines)
-        spread * visual(Errorbars)
+    @plot data(table) * mapping(:x, :y; color=:sample) begin
+        visual(Scatter)
+        spread = aggregate(mean, std, extrema)
+        mapping(y = spread.mean) * visual(Lines)
+        mapping(spread.x, spread.mean, spread.std) * visual(Errorbars)
+        mapping(spread.x, spread.extrema[1], spread.extrema[2]) * visual(Rangebars)
     end
 
+A line that maps only `y` takes the x of the groups. The visual gives each value its meaning: the
+third value of `Errorbars` is the length of the bar on each side of y, and the two values of
+`Rangebars` are its ends. A function that gives several values, such as `extrema`, is read by
+index.
+
 `aggregate` gives a [`Result`](@ref) with one `Group` for each x and group of points, in order of
-x, so that `Lines` joins them from left to right. Its metadata
-holds the x and the roles' values, the value of each function under its name, such as `:mean`, and
-the `count` of the points; its members are the items whose points it takes. A visual draws the
-first function's value at each x, and `Errorbars` also draws the second's as the length of the bar
-on each side. Without a visual, an aggregate is drawn with `Scatter`.
+x, so that `Lines` joins them from left to right. Its metadata holds the x and the roles' values,
+the value of each function under its name, such as `:mean`, and the `count` of the points; its
+members are the items whose points it takes. Without a visual, an aggregate of one function is drawn
+with `Scatter`.
 
 A named result reads the values of its groups by name: `spread.count` is the count of each group,
 and `contacts.Rc` the parameter `Rc` of each fit. A line that reads them, such as
-`mapping(spread.gap, spread.count) * visual(Lines)`, draws one point for each group, in the roles of
+`mapping(spread.x, spread.count) * visual(Lines)`, draws one point for each group, in the roles of
 the result's points. The functions take the values
 as the line maps them, before the scale's function, such as `log10`.
 

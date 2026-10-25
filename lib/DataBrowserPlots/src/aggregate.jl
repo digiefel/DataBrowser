@@ -1,8 +1,7 @@
 """
 The functions to apply to the y values of a layer's points that share x and their groups, as
-`aggregate(mean, std)` in [`@plot`](@ref) writes them. The first function gives the drawn value,
-the second the length of its error bar on each side. The aggregate is done when the layer has its
-points, and gives a [`Result`](@ref).
+`aggregate(mean, std)` in [`@plot`](@ref) writes them. The aggregate is done when the layer has its
+points, and gives a [`Result`](@ref) with the value of each function under its name.
 """
 struct Aggregate
     functions::Vector{Any}

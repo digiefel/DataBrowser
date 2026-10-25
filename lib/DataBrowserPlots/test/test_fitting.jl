@@ -55,12 +55,12 @@ end
 average(values) = sum(values) / length(values)
 half_range(values) = (maximum(values) - minimum(values)) / 2
 
-@testset "an aggregate draws the first function's value at each x, and Errorbars the second's" begin
+@testset "a line maps the values of an aggregate, and takes its x when it maps only y" begin
     devices = [FitTestDevice("$chip$gap$R", chip, gap, R) for chip in ("A", "B") for gap in (5.0, 10.0) for R in (1.0, 3.0)]
     plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
         spread = aggregate(average, half_range)
-        spread * visual(Scatter)
-        spread * visual(Errorbars)
+        mapping(y = spread.average) * visual(Scatter)
+        mapping(spread.gap, spread.average, spread.half_range) * visual(Errorbars)
         mapping(spread.gap, spread.count) * visual(Lines)
     end
     drawn = figure(plot, select(devices))

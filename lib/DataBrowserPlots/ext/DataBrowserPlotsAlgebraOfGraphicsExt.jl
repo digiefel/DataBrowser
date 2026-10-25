@@ -396,18 +396,18 @@ function Base.:*(result::Result, layer::AoG.Layer)
     layer.transformation isa AoG.Visual ||
         error("A result is drawn with a visual, such as `contacts * visual(Lines)`")
     # The data of each group, its first column as x and its second as y, with the group's value in
-    # each role. `Errorbars` draws its third column too, as the error of y, such as an aggregate's
-    # `std`.
-    # TODO: Band and Rangebars, between y minus and plus the error.
+    # each role. An aggregate of several functions has a column for each; a line draws them by
+    # mapping them, as in `mapping(y = spread.mean)`.
     plottype = layer.transformation.plottype
     data = item_data(first(getfield(result, :groups)))
-    third = plottype <: AoG.Makie.Errorbars && length(data) >= 3 ? [keys(data)[3]] : Symbol[]
-    positional = [getfield(result, :positional); third]
+    length(data) == 2 || error("A result with the values $(join(keys(data)[2:end], ", ")) is drawn by mapping " *
+        "the one to draw, as in `mapping(y = spread.$(keys(data)[2]))` for a result named `spread`")
+    positional = getfield(result, :positional)
     # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
     shown = hasmethod(AoG.aesthetic_mapping, Tuple{Type{plottype},Int}) ?
         keys(AoG.aesthetic_mapping(plottype, length(positional))) : keys(Dict(getfield(result, :named)))
     roles = [(role, value, column(value)) for (role, value) in getfield(result, :named) if role in shown]
-    drawn = [column.(getfield(result, :positional)); third]
+    drawn = column.(positional)
     columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [drawn; [c for (_, _, c) in roles]])
     for group in getfield(result, :groups)
         values = item_data(group)
@@ -495,11 +495,17 @@ resolve(layers::AoG.Layers, items) = foldl(+, (resolve(layer, items) for layer i
 
 # A line that reads the values of a result, drawn over its groups: `table` holds the values the
 # line's mapping reads, one row for each group, and the line takes the roles of the result's points,
-# such as `color`, so that it shares their legend entries.
+# such as `color`, so that it shares their legend entries. A line with `y` and no `x` takes the x of
+# the result's points, as `mapping(y = spread.mean)`.
 function over_result(result::Result, table, layer)
     named = getfield(result, :named)
-    roles = [column(value) => [metadata(group)[column(value)] for group in getfield(result, :groups)] for (_, value) in named]
-    return AoG.data((; pairs(table)..., roles...)) * AoG.mapping(; named...) * layer
+    groups = getfield(result, :groups)
+    roles = [column(value) => [metadata(group)[column(value)] for group in groups] for (_, value) in named]
+    x = first(getfield(result, :positional))
+    xs = haskey(table, column(x)) ? [] : [column(x) => [metadata(group)[column(x)] for group in groups]]
+    with_x(l) = first(l.positional, 1) == [nothing] ? AoG.Layer(l.transformation, l.data, [x; l.positional[2:end]], l.named) : l
+    layer = layer isa AoG.Layers ? AoG.Layers(map(with_x, layer.layers)) : with_x(layer)
+    return AoG.data((; pairs(table)..., roles..., xs...)) * AoG.mapping(; named...) * layer
 end
 
 # A result without a visual is drawn with its own.
