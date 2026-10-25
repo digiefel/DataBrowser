@@ -42,12 +42,13 @@ end
 ListItem(name::String; options...) = ListItem(; name, options...)
 
 """
-    render_list_picker!(picker::ListPicker, items::Vector{ListItem})
+    render_list_picker!(picker::ListPicker, items::Vector{ListItem}; sections=false)
 
 Draw the picker in the current popup. Return the index in `items` of the item the user picked in
-this frame, or `nothing`.
+this frame, or `nothing`. With `sections`, the typed letters also match the section and then the
+name: `ghib pon` finds `ponyo` in the section `Ghibli`.
 """
-function render_list_picker!(picker::ListPicker, items::Vector{ListItem})::Union{Nothing,Int}
+function render_list_picker!(picker::ListPicker, items::Vector{ListItem}; sections::Bool=false)::Union{Nothing,Int}
     if ig.IsKeyPressed(ig.ImGuiKey_Escape)
         ig.CloseCurrentPopup()
         return nothing
@@ -56,6 +57,12 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem})::Union
     matches = Tuple{Int,Vector{Int}}[]
     for (index, item) in enumerate(items)
         letters = _fuzzy_match(picker.query, item.name)
+        if letters === nothing && sections && !isempty(item.section)
+            # The letters that match the section first, then those that match the name.
+            both = _fuzzy_match(picker.query, item.section * "\0" * item.name)
+            start = ncodeunits(item.section) + 1
+            both === nothing || (letters = [at - start for at in both if at > start])
+        end
         letters === nothing || push!(matches, (index, letters))
     end
     moved = ig.IsKeyPressed(ig.ImGuiKey_DownArrow) || ig.IsKeyPressed(ig.ImGuiKey_UpArrow)

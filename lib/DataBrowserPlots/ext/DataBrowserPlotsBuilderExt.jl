@@ -971,8 +971,9 @@ struct Ticks <: Widget
     kinds::Vector{String}
 end
 
-# A list of colors, each drawn as a swatch, or a color scheme, such as `:tab10`, as the `palette`
-# of `color` writes them.
+# A list of colors, each drawn as a swatch; a colormap of a few colors, such as `:tab10`; or the
+# colors of a gradient, such as `from_continuous(:viridis)`, spread over the categories; as the
+# `palette` of `color` writes them.
 struct ColorPalette <: Widget end
 
 # A list of `choices`, each drawn as it looks, as the `palette` of `marker` or `linestyle` writes
@@ -1130,26 +1131,32 @@ sampled(name::Symbol, count::Int=24)::Vector{ig.ImVec4} = get!(SAMPLED, name) do
     [imcolor(colors[i]) for i in places]
 end
 
-# The color schemes a palette offers, those of at most 20 colors, and the colormaps, each with its
-# colors and under the collection it comes from, such as "tableau". Made when first needed.
-const SCHEMES = ListItem[]
+# Makie's colormaps, each with its colors and under the collection it comes from, such as
+# "tableau". Made when first needed.
+# TODO: browse them by kind (sequential, diverging, cyclic, categorical) and by look, not only by name.
 const COLORMAPS = ListItem[]
-function scheme_items(list::Vector{ListItem}, names, keep)::Vector{ListItem}
-    isempty(list) || return list
+function colormaps()::Vector{ListItem}
+    isempty(COLORMAPS) || return COLORMAPS
     schemes = Makie.ColorSchemes.colorschemes
     collection(name) = haskey(schemes, name) ? schemes[name].category : "Makie"
-    kept = sort([Symbol(n) for n in names if keep(Symbol(n))]; by=n -> (collection(n), n))
-    append!(list, [ListItem(String(n); section=collection(n), colors=sampled(n)) for n in kept])
+    names = sort(Symbol.(Makie.all_gradient_names); by=n -> (collection(n), n))
+    append!(COLORMAPS, [ListItem(String(n); section=collection(n), colors=sampled(n)) for n in names])
 end
-schemes() = scheme_items(SCHEMES, keys(Makie.ColorSchemes.colorschemes), n -> length(Makie.ColorSchemes.colorschemes[n]) <= 20)
-colormaps() = scheme_items(COLORMAPS, Makie.all_gradient_names, n -> true)
+
+# Whether the colormap `name` is a few colors, such as `:tab10`, rather than a gradient.
+discrete(name::Symbol) = length(sampled(name)) <= 20
 
 function widget_parts(::ColorPalette, value::String)
-    isempty(strip(value)) && return (; scheme=nothing, colors=String[])
+    isempty(strip(value)) && return (; scheme=nothing, reversed=false, colors=String[])
+    spread = match(r"^\s*from_continuous\((.*)\)\s*$", value)
+    if spread !== nothing
+        colormap = widget_parts(Colormap(), String(spread[1]))
+        return colormap === nothing || colormap.name === nothing ? nothing : (; scheme=colormap.name, colormap.reversed, colors=String[])
+    end
     scheme = written_symbol(String(strip(value)))
-    scheme === nothing || return haskey(Makie.ColorSchemes.colorschemes, scheme) ? (; scheme, colors=String[]) : nothing
+    scheme === nothing || return String(scheme) in Makie.all_gradient_names && discrete(scheme) ? (; scheme, reversed=false, colors=String[]) : nothing
     colors = code_parts(value, '[', ']')
-    return colors === nothing || any(c -> written_color(c) === nothing, colors) ? nothing : (; scheme=nothing, colors)
+    return colors === nothing || any(c -> written_color(c) === nothing, colors) ? nothing : (; scheme=nothing, reversed=false, colors)
 end
 
 function widget_parts(widget::GlyphPalette, value::String)
@@ -1166,6 +1173,13 @@ function widget_parts(::Colormap, value::String)
     name = written_symbol(reversed === nothing ? String(strip(value)) : String(reversed[1]))
     return name === nothing || !(String(name) in Makie.all_gradient_names) ? nothing : (; name, reversed=reversed !== nothing)
 end
+
+# The code of a colormap, such as `:viridis` or `Reverse(:viridis)`.
+colormap_code(name, reversed::Bool) = reversed ? "Reverse(:$name)" : ":$name"
+
+# The palette of `color` that takes its colors from the colormap `name`: its colors in order for a
+# few colors, otherwise spread over the categories.
+palette_code(name, reversed::Bool) = discrete(Symbol(name)) && !reversed ? ":$name" : "from_continuous($(colormap_code(name, reversed)))"
 
 # A row of chips, one for each value of a list, then a "+" chip, wrapping to more rows when needed.
 # `draw(i, low, high)` draws the chip of value `i`, `width` wide. A click on a chip, a drag of one
@@ -1219,7 +1233,9 @@ end
 
 # The swatches of the colors, or those of the scheme; a click on one opens a color picker, which
 # writes the list once it closes. The button after them opens the list of color schemes.
-function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, colors), focus::Bool)::Union{Nothing,String}
+function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, reversed, colors), focus::Bool)::Union{Nothing,String}
+    # The colors of a gradient are drawn as it, and they change as a colormap does.
+    scheme !== nothing && !discrete(scheme) && return draw_colormap!(view, scheme, reversed, focus, palette_code)
     key = "$target/$name"
     shown = scheme === nothing ? [written_color(c) for c in colors] : sampled(scheme)
     codes = scheme === nothing ? colors : color_code.(shown)
@@ -1237,8 +1253,8 @@ function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, 
     action = draw_chips!(length(shown), size, (i, low, high) ->
         ig.AddRectFilled(ig.GetWindowDrawList(), low, high, ig.GetColorU32(shown[i]), 2.0f0))
     ig.SameLine(0.0f0, 3.0f0)
-    (ig.Button("$(ICON_PALETTE)##schemes", (size, size)) || focus) && (view.picker = ListPicker(); ig.OpenPopup("schemes"))
-    ig.SetItemTooltip(scheme === nothing ? "Pick a color scheme" : "The color scheme $scheme; click to pick another")
+    (ig.Button("$(ICON_PALETTE)##schemes", (size, size)) || focus) && (view.picker = ListPicker(); ig.OpenPopup("colormaps"))
+    ig.SetItemTooltip(scheme === nothing ? "Take the colors of a colormap" : "The colors of $scheme; click to take another colormap's")
     ig.EndGroup()
     if action !== nothing && first(action) === :pick
         c = shown[action[2]]
@@ -1256,12 +1272,8 @@ function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, 
         ig.ColorPicker4("##color", view.color, ig.ImGuiColorEditFlags_PickerHueWheel | ig.ImGuiColorEditFlags_AlphaBar, original)
         ig.EndPopup()
     end
-    if ig.BeginPopup("schemes")
-        items = schemes()
-        index = render_list_picker!(view.picker, items)
-        index === nothing || (code = ":$(items[index].name)"; ig.CloseCurrentPopup())
-        ig.EndPopup()
-    end
+    picked = colormaps_menu(view)
+    picked === nothing || (code = palette_code(picked, false))
     return code
 end
 
@@ -1309,8 +1321,24 @@ end
 # The gradient of the colormap, with its name; a click opens the list of colormaps. The button after
 # it turns the colormap around.
 function draw_widget!(view::BuilderView, ::Colormap, target, name, (colormap, reversed), focus::Bool)::Union{Nothing,String}
+    return draw_colormap!(view, colormap, reversed, focus, colormap_code)
+end
+
+# The list of colormaps, in the popup "colormaps". Returns the name the user picked, or `nothing`.
+function colormaps_menu(view::BuilderView)::Union{Nothing,String}
+    ig.BeginPopup("colormaps") || return nothing
+    items = colormaps()
+    index = render_list_picker!(view.picker, items; sections=true)
+    index === nothing || ig.CloseCurrentPopup()
+    ig.EndPopup()
+    return index === nothing ? nothing : items[index].name
+end
+
+# The gradient of `colormap`, or an empty box for `nothing`, with its name; a click opens the list
+# of colormaps, and the button after it turns the colormap around. `written(name, reversed)` is the
+# code of a colormap. Returns the code to write once the user changed it, or `nothing`.
+function draw_colormap!(view::BuilderView, colormap, reversed::Bool, focus::Bool, written)::Union{Nothing,String}
     size = ig.GetFrameHeight()
-    written(colormap, reversed) = reversed ? "Reverse(:$colormap)" : ":$colormap"
     width = ig.GetContentRegionAvail().x - size - unsafe_load(ig.GetStyle()).ItemSpacing.x
     (ig.InvisibleButton("gradient", (max(width, size), size)) || focus) && (view.picker = ListPicker(); ig.OpenPopup("colormaps"))
     low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
@@ -1337,12 +1365,8 @@ function draw_widget!(view::BuilderView, ::Colormap, target, name, (colormap, re
     reversed && ig.PopStyleColor()
     ig.SetItemTooltip(reversed ? "Reversed; click to draw it from its start" : "Reverse the colormap")
     flipped && colormap !== nothing && (code = written(colormap, !reversed))
-    if ig.BeginPopup("colormaps")
-        items = colormaps()
-        index = render_list_picker!(view.picker, items)
-        index === nothing || (code = written(items[index].name, reversed); ig.CloseCurrentPopup())
-        ig.EndPopup()
-    end
+    picked = colormaps_menu(view)
+    picked === nothing || (code = written(picked, reversed))
     return code
 end
 
