@@ -97,7 +97,8 @@ function Base.tryparse(::Type{PlotCode}, code::CodeFile)::Union{Nothing,PlotCode
                 call_code(text, named[entry.name]) : nothing for entry in theme.entries]
         end
         is_call(line, "legend") && (legend = call_code(text, line))
-        any(name -> is_call(line, name), ("scales", "legend", "theme")) && continue
+        # TODO: show the `coord(...)` lines in the panel.
+        any(name -> is_call(line, name), ("scales", "legend", "theme", "coord")) && continue
         named = kind(line) == K"=" && kind(children(line)[1]) == K"Identifier"
         value = named ? children(line)[2] : line
         own_data = any(factor -> is_call(factor, "data") || kind(factor) == K"Identifier" && Symbol(sourcetext(factor)) in names,

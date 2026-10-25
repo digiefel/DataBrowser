@@ -290,7 +290,25 @@ function figure(plot::Scaled, args...; options...)
         get(value, :reversed, false) && push!(axis, Symbol(r, :reversed) => true)
         return r => Base.structdiff(value, NamedTuple{(:limits, :reversed)})
     end
-    any(!isnothing, limits) && push!(axis, :limits => Tuple(limits))
+    # The `coord` lines only change where the values are drawn, after the analyses: Makie's axis
+    # draws their scales, limits and reversed axes, and their limits remove no points.
+    # TODO: two scales of one axis, composed in the order of the lines.
+    zoom = Any[nothing, nothing]
+    for step in plot.coords, (key, value) in pairs(step)
+        if key in (:x, :y)
+            extra = setdiff(keys(value), (:scale, :limits, :reversed))
+            isempty(extra) || error("coord sets the scale, limits and reversed of $key, not $(join(extra, ", "))")
+            haskey(value, :scale) && push!(axis, Symbol(key, :scale) => value.scale)
+            haskey(value, :reversed) && push!(axis, Symbol(key, :reversed) => value.reversed)
+            haskey(value, :limits) && (zoom[key === :x ? 1 : 2] = value.limits)
+        elseif key === :aspect
+            push!(axis, :aspect => value)
+        else
+            error("coord sets x, y and aspect, not $key")
+        end
+    end
+    shown = [z === nothing ? l : z for (z, l) in zip(zoom, limits)]
+    any(!isnothing, shown) && push!(axis, :limits => Tuple(shown))
     settings = AoG.scales(; (ROLE_SCALES[r] => value for (r, value) in scales)...)
     layers = any(!isnothing, limits) ? limited(drawable(plot.layers), WithinLimits(limits)) : drawable(plot.layers)
     legend = (; plot.legend..., get(options, :legend, (;))...)

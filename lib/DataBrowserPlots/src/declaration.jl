@@ -62,6 +62,8 @@ struct Scaled
     # The legend's settings, such as `merge` and `position`.
     legend::NamedTuple
     theme::Union{Nothing,PlotTheme}
+    # The settings of each `coord(...)` line, in order, such as `(; y = (; scale = log10))`.
+    coords::Vector{NamedTuple}
 end
 
 # The roles whose values a legend explains, and whose section a legend text names.
@@ -253,6 +255,17 @@ The scales of `x` and `y` set their axes:
   analyses run, so they can change their results too.
 - `reversed = true` draws the axis from the highest value to the lowest.
 
+A `coord` line changes only where the values are drawn, after the analyses ran:
+
+    coord(y = (; scale = log10, limits = (1e-9, 1e-5)), aspect = DataAspect())
+
+- `scale` draws the axis with that function, such as `log10`, while the analyses take the values
+  as they are: the mean of `expectation()` is then the mean of the values, drawn on a log axis.
+- `limits` are the lowest and highest value shown; the values outside them stay in the analyses.
+- `reversed = true` draws the axis from the highest value to the lowest.
+- `aspect` is Makie's `aspect` of the axis, such as `DataAspect()`, which draws one unit of x as
+  long as one unit of y.
+
 The legend has a section for each role, such as `color`. Roles share a section when one of them
 determines the others, that is, when each of its values is drawn with the same values of the
 others: one entry then shows a chip's color and its site's line style. Each entry is named after
@@ -296,7 +309,7 @@ macro plot(header, block)
     lines = [hidden ? last(line.args) : line for (line, hidden) in zip(lines, invisible)]
     statements = filter(line -> Meta.isexpr(line, :(=)), lines)
     names = Symbol[first(statement.args) for statement in statements]
-    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme), lines)
+    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme, :coord), lines)
     input = gensym("input")
     # Each line, named or drawn, is a layer of the header; a name holds its line's value.
     statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))
@@ -483,12 +496,18 @@ end
 # reads that value for the entry's group.
 function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol)
     isempty(settings) && return nothing
-    scales, templates, legend, theme = Expr[], Pair{Symbol,Any}[], Expr[], nothing
+    scales, templates, legend, theme, coords = Expr[], Pair{Symbol,Any}[], Expr[], nothing, Expr[]
     for line in filter(line -> line.args[1] === :theme, settings)
         base, named = call_arguments(line)
         theme = :($PlotTheme($(isempty(base) ? nothing : only(base)), $(Expr(:tuple, Expr(:parameters, (Expr(:kw, k, v) for (k, v) in named)...)))))
     end
-    for line in filter(line -> line.args[1] !== :theme, settings), (key, value) in last(call_arguments(line))
+    for line in filter(line -> line.args[1] === :coord, settings)
+        positional, named = call_arguments(line)
+        # TODO: a step of both positions, such as `coord((x, y) -> (y, x))`, and `polar`.
+        isempty(positional) || error("coord takes settings of x and y, such as `coord(y = (; scale = log10))`")
+        push!(coords, Expr(:tuple, Expr(:parameters, (Expr(:kw, k, v) for (k, v) in named)...)))
+    end
+    for line in filter(line -> !(line.args[1] in (:theme, :coord)), settings), (key, value) in last(call_arguments(line))
         line.args[1] === :scales ? push!(scales, :($(QuoteNode(key)) => $value)) :
         key in LEGEND_ROLES ? push!(templates, key => value) : push!(legend, Expr(:kw, key, value))
     end
@@ -517,7 +536,7 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
         :($(QuoteNode(role)) => ($entry -> string($text)))
     end
     return (; statements, arguments=(:(Pair{Symbol,Any}[$(scales...)]), :(Pair{Symbol,Function}[$(texts...)]),
-        Expr(:tuple, Expr(:parameters, legend...)), theme))
+        Expr(:tuple, Expr(:parameters, legend...)), theme, :(NamedTuple[$(coords...)])))
 end
 
 # A legend text with each path `p` replaced by `onpath(p)` and each name of the block by

@@ -63,6 +63,13 @@ end
         scales(y = (; limits = (0, 15)))
     end
     @test last.(only(plotted(figure(plot), Lines))[1][]) ≈ [5.5, 2.0]
+    # The limits and scale of `coord` only change the drawing.
+    drawn = figure(@plot data(rows) * mapping(:x, :y) begin
+        expectation() * visual(Lines)
+        coord(y = (; scale = log10, limits = (1, 15)))
+    end)
+    @test last.(only(plotted(drawn, Lines))[1][]) ≈ [5.5, 11.0]
+    @test only(filter(c -> c isa Axis, drawn.content)).yscale[] === log10
     # A `y` without `x` turns a histogram.
     @test only(plotted(figure(@plot data(rows) * mapping(; y=:y) * visual(Hist)), Hist)).direction[] == :x
     # A theme line sets the look.
