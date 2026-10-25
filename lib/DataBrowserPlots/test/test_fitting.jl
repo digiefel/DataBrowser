@@ -61,9 +61,11 @@ half_range(values) = (maximum(values) - minimum(values)) / 2
         spread = aggregate(average, half_range)
         spread * visual(Scatter)
         spread * visual(Errorbars)
+        mapping(spread.gap, spread.count) * visual(Lines)
     end
     drawn = figure(plot, select(devices))
     plots(type) = [p for p in axis(drawn).scene.plots if p isa type]
     @test sort(Tuple.(reduce(vcat, [p[1][] for p in plots(Scatter)]))) == [(5.0, 2.0), (5.0, 2.0), (10.0, 2.0), (10.0, 2.0)]
     @test length(plots(Errorbars)) == 2
+    @test [last.(p[1][]) for p in plots(Lines)] == [[2, 2], [2, 2]]
 end

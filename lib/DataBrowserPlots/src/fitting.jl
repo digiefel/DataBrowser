@@ -70,6 +70,9 @@ What a line of [`@plot`](@ref) computes from its points, such as the curves and 
 Multiply it by a `visual` to draw it: its data is drawn on the axes of the points, in the named
 roles of their groups, such as `color`, so that it shares their legend entries. Alone, it is drawn
 with its own visual, `Lines` for a fit.
+
+A name of its groups' metadata reads one value for each group: `contacts.Rc` is the parameter `Rc`
+of each fit.
 """
 struct Result <: AbstractVector{Group}
     groups::Vector{Group}
@@ -80,8 +83,12 @@ struct Result <: AbstractVector{Group}
     # The plot type it is drawn with when no visual is given, a name in Makie.
     plottype::Symbol
 end
-Base.size(result::Result) = size(result.groups)
-Base.getindex(result::Result, index::Int) = result.groups[index]
+Base.size(result::Result) = size(getfield(result, :groups))
+Base.getindex(result::Result, index::Int) = getfield(result, :groups)[index]
+# A value of each group's metadata, such as `contacts.Rc` or `spread.count`: one for each group.
+# TODO: the data and the members of each group.
+Base.getproperty(result::Result, name::Symbol) = [metadata(group)[name] for group in getfield(result, :groups)]
+Base.propertynames(result::Result) = unique(reduce(vcat, [collect(keys(metadata(group))) for group in getfield(result, :groups)]; init=Symbol[]))
 
 """
 A curve to fit to the points of a layer, as `fit(curve, starts; options...)` in [`@plot`](@ref)

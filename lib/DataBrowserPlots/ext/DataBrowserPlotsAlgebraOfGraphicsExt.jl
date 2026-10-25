@@ -5,7 +5,7 @@ import AlgebraOfGraphics as AoG
 using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
-import DataBrowserPlots: figure, inherit, mappings, resolve
+import DataBrowserPlots: figure, inherit, mappings, over_result, resolve
 using DataBrowserPlots: @plot, Aggregate, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Result, category, column
 using DataBrowserAPI: item_data, metadata
 using DataBrowserCore: Group, select
@@ -317,16 +317,16 @@ function Base.:*(result::Result, layer::AoG.Layer)
     # `std`.
     # TODO: Band and Rangebars, between y minus and plus the error.
     plottype = layer.transformation.plottype
-    data = item_data(first(result.groups))
+    data = item_data(first(getfield(result, :groups)))
     third = plottype <: AoG.Makie.Errorbars && length(data) >= 3 ? [keys(data)[3]] : Symbol[]
-    positional = [result.positional; third]
+    positional = [getfield(result, :positional); third]
     # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
     shown = hasmethod(AoG.aesthetic_mapping, Tuple{Type{plottype},Int}) ?
-        keys(AoG.aesthetic_mapping(plottype, length(positional))) : keys(Dict(result.named))
-    roles = [(role, value, column(value)) for (role, value) in result.named if role in shown]
-    drawn = [column.(result.positional); third]
+        keys(AoG.aesthetic_mapping(plottype, length(positional))) : keys(Dict(getfield(result, :named)))
+    roles = [(role, value, column(value)) for (role, value) in getfield(result, :named) if role in shown]
+    drawn = [column.(getfield(result, :positional)); third]
     columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [drawn; [c for (_, _, c) in roles]])
-    for group in result.groups
+    for group in getfield(result, :groups)
         values = item_data(group)
         for (name, value) in zip(drawn, values)
             append!(columns[name], value)
@@ -410,8 +410,17 @@ function one_y(table, positional::Vector, named::Vector)
 end
 resolve(layers::AoG.Layers, items) = foldl(+, (resolve(layer, items) for layer in layers.layers))
 
+# A line that reads the values of a result, drawn over its groups: `table` holds the values the
+# line's mapping reads, one row for each group, and the line takes the roles of the result's points,
+# such as `color`, so that it shares their legend entries.
+function over_result(result::Result, table, layer)
+    named = getfield(result, :named)
+    roles = [column(value) => [metadata(group)[column(value)] for group in getfield(result, :groups)] for (_, value) in named]
+    return AoG.data((; pairs(table)..., roles...)) * AoG.mapping(; named...) * layer
+end
+
 # A result without a visual is drawn with its own.
-drawable(result::Result) = result * AoG.visual(getproperty(AoG.Makie, result.plottype))
+drawable(result::Result) = result * AoG.visual(getproperty(AoG.Makie, getfield(result, :plottype)))
 # A layer with `y` and no `x`, as in `mapping(; y=:gap) * visual(Hist)`, draws its values against
 # the vertical axis: a plot type with a `direction` setting, such as `Hist`, `BarPlot` or `Density`,
 # turns to it unless a `visual` sets `direction` already, and other plot types draw the values

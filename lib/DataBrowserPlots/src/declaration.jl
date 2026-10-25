@@ -109,10 +109,10 @@ end
 # The metadata of the one group of `result` that the legend entry determines: the group whose
 # values in the entry's roles are the entry's values.
 function entry_values(result::Result, entry::LegendEntry)::NamedTuple
-    matches(group) = all(result.named) do (role, value)
+    matches(group) = all(getfield(result, :named)) do (role, value)
         !haskey(entry.values, role) || category(value, metadata(group)[column(value)]) == entry.values[role]
     end
-    found = filter(matches, result.groups)
+    found = filter(matches, getfield(result, :groups))
     length(found) == 1 || error("The legend entry $(describe(entry)) matches $(length(found)) groups of a " *
         "result; its text can read only a value that the entry determines")
     return (; metadata(only(found))...)
@@ -213,7 +213,12 @@ the measurements of several devices at each gap:
 holds the x and the roles' values, the value of each function under its name, such as `:mean`, and
 the `count` of the points; its members are the items whose points it takes. A visual draws the
 first function's value at each x, and `Errorbars` also draws the second's as the length of the bar
-on each side. Without a visual, an aggregate is drawn with `Scatter`. The functions take the values
+on each side. Without a visual, an aggregate is drawn with `Scatter`.
+
+A named result reads the values of its groups by name: `spread.count` is the count of each group,
+and `contacts.Rc` the parameter `Rc` of each fit. A line that reads them, such as
+`mapping(spread.gap, spread.count) * visual(Lines)`, draws one point for each group, in the roles of
+the result's points. The functions take the values
 as the line maps them, before the scale's function, such as `log10`.
 
 A line `name = value` gives a name to the value of the line for the other lines, such as a fit
@@ -305,7 +310,7 @@ macro plot(header, block)
     own_roles(line) = (own = find_call(line, :mapping); own === nothing ? Symbol[] : first.(last(call_arguments(own))))
     drawn = map(filter(((line, _),) -> !Meta.isexpr(line, :(=)) && !(line in settings), collect(zip(lines, invisible)))) do (line, hidden)
         shared = QuoteNode.(setdiff(header_roles, own_roles(line)))
-        :($PlotLine($(declare_layers(:($inherit($header, $line)), input)), Symbol[$(shared...)], $(!hidden)))
+        :($PlotLine($(declare_line(header, line, names, input)), Symbol[$(shared...)], $(!hidden)))
     end
     declared = isempty(drawn) ? declare_layers(header, input) : :($PlotLines([$(drawn...)]))
     return esc(declare(declared, statements; input, settings=declare_settings(settings, header, names, input)))
@@ -433,6 +438,28 @@ function declare_layer(layer, input::Symbol)
             $resolve($plain, nothing)
     end)
 end
+
+# A drawn line as a function of the input. A line that reads the values of a named result, such as
+# `mapping(spread.gap, spread.count) * visual(Scatter)`, is drawn over the result's groups, one row
+# each, in the roles of the result's points; any other line is a layer of the header.
+function declare_line(header, line, names::Vector{Symbol}, input::Symbol)
+    found = Symbol[]
+    reads(e) = Meta.isexpr(e, :., 2) && e.args[1] in names && e.args[2] isa QuoteNode
+    visit(e) = (reads(e) && push!(found, e.args[1]); e isa Expr && foreach(visit, e.args))
+    visit(line)
+    isempty(found) && return declare_layers(:($inherit($header, $line)), input)
+    length(unique(found)) == 1 || error("A line reads the values of one named result, not of $(join(unique(found), " and "))")
+    result = first(found)
+    # `spread.count` is the path `:count` into each group of `spread`.
+    paths_of(e) = reads(e) ? e.args[2] : e isa Expr ? Expr(e.head, map(paths_of, e.args)...) : e
+    tabulated = tabulate(paths_of(line), value -> per_item(value, result))
+    tabulated === nothing && return declare_layers(:($inherit($header, $line)), input)
+    table, rewritten = tabulated
+    return :($over_result($result, $table, $rewritten))
+end
+
+# Implemented by the AlgebraOfGraphics extension.
+function over_result end
 
 # The declared layers of `expression`, added.
 declare_layers(expression, input::Symbol) =
