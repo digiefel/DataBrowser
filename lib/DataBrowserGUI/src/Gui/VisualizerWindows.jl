@@ -173,7 +173,7 @@ function render_windows!(state::BrowserState)::Nothing
                 ig.Separator()
                 isempty(window.export_error) || ig.TextWrapped(window.export_error)
                 isempty(window.waiting) || ig.TextDisabled("Loading")
-                isempty(window.failed) || ig.TextWrapped("Left out, as they failed:\n" * window.failed)
+                isempty(window.failed) || ig.TextWrapped("Failed:\n" * window.failed)
                 measure_window_picture!(window.id)
                 if isempty(window.error)
                     draw!(window.visualizer, ctx)
