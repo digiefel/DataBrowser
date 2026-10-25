@@ -1,440 +1,245 @@
 # Graphics grammar and plot builder
 
-Status: revised design proposal, not an implemented API. This replaces the earlier proposal in
-this file. The [adversarial review](graphics-grammar-review.md) records rejected designs, concrete
-counterexamples, and the limits of the verification performed.
+Target design, curated on 21 October 2026. Use AlgebraOfGraphics first. The older custom
+`Layer`/`LinearFit` grammar and the chronological reviews are preserved in the
+[archive](archive/2026-10-21-discussion/graphics-grammar.md); they are not the active API.
 
-## Requirements
+The accepted panel and source-editing interactions live in [plot editor](../plot-editor.md).
+[Fitting](fitting.md) owns numerical behavior. [Processing](processing.md) owns shared execution;
+plots do not introduce another workspace engine.
 
-- A proper graphics grammar: data, mappings, statistics, geometries, positions, scales,
-  coordinates, facets, guides, and themes compose through a declarative definition.
-- Ordinary Julia data and standalone use from `DataBrowserPlots`, without a workspace or GUI.
-- All attributes supported by the chosen Makie primitive remain available. Attribute discovery,
-  validation, completion, and controls share infrastructure; a primitive does not need bespoke
-  macro/widget code for each keyword.
-- Fitting is a layer's statistic. Models and coefficients remain accessible without rendering.
-  Other layers, annotations, and legends can use that same statistical result.
-- Legends have editable content, samples, order, placement, and Makie presentation settings.
-- Text annotations come early. Better avoidance comes later, after evaluating Makie's facilities.
-- The editor keeps code visible and uses customized controls. Supported Julia declarations and
-  GUI edits describe the same plot, with stable identity, repeatable source edits, and named Julia
-  extensions for arbitrary behavior.
+## Scope
 
-The agreed authoring scope is a defined Julia declaration syntax with named extensions, rather than
-lossless graphical editing of arbitrary Julia programs. The source/GUI editor belongs to the
-existing [tabs](tabs.md) direction; shared execution belongs to the
-[scientific workspace](scientific-workspace.md). Neither is replaced by this plan.
+A graphics grammar composes data, mappings, statistics, geometries, positions, scales,
+coordinates, facets, guides and themes. It must cover ordinary scientific work beyond curves:
+images, heatmaps, scattered points, interpolation, distributions and multidimensional data.
+These examples define breadth; they are not claims of complete implementation.
 
-## Complete authoring example
+`DataBrowserPlots` must also work with ordinary Julia data without a workspace or GUI. Native
+statistical results and coefficients must be usable without rendering. A workspace plot can
+publish/reuse a tracked computation through the same model as other analysis; defining it in a
+plot must not force the author to write the same calculation again elsewhere.
 
-The table has `x`, `y`, and `series` columns. This one definition includes grouped observations,
-straight-line fits, fit coefficients in the legend, and text beside every fitted curve:
+Common plots must be authorable entirely through the GUI. The GUI and editable source describe
+the same plot within a supported declaration grammar. Arbitrary Julia helpers remain ordinary
+code referenced by that grammar; lossless graphical editing of arbitrary functions is not the
+scope.
+
+## Accepted single-panel source form
+
+The shared header provides data and mappings. The block has one layer per statement; layers are
+added and explicit `*` combines parts within a layer. A named layer exposes its statistical
+result to other layers, labels and the Inspector.
 
 ```julia
-using DataBrowserPlots: Layer, LinearFit, @plot
-import DataBrowserPlots as DP
-using StatsAPI: coef, predict
-
-p = @plot table begin
-    mapping = (; x=:x, y=:y, color=:series)
-    group = :series
-
-    layers = (
-        observations=Layer(:points;
-            attributes=(; marker=:circle, markersize=6, alpha=0.6)),
-
-        trend=Layer(:lines;
-            stat=LinearFit(),
-            attributes=(; linewidth=2, linestyle=:dash,
-                label="$(group.series): m = $(round(stat.slope; digits=2))")),
-
-        coefficients=Layer(:text;
-            from=:trend,
-            at=:end,
-            attributes=(; text="m = $(round(stat.slope; digits=2))",
-                offset=(8, 0), align=(:left, :center))),
-    )
-
-    guides = (
-        color=(; title="Series", position=:bottom,
-            labels=:trend, layers=(:observations, :trend),
-            attributes=(; framevisible=false)),
-    )
+@plot data(table) * mapping(:x, :y; color=:series) begin
+    visual(Scatter; markersize=6)
+    fit = linear(; interval=nothing) * subvisual(:prediction; linewidth=2)
+    mapping(fit.x[end], fit.y[end]) *
+        visual(Text; text="Gain = $(round(fit.slope; digits=2))",
+            offset=(8, 0), align=(:left, :center))
 end
 ```
 
-Layer names are ordinary named-tuple keys. `from=:trend` references that layer's statistical output.
-It does not depend on the producer's position in the declaration. The layer sequence determines
-drawing order only. Referencing a later layer is valid; missing names and dependency cycles are
-errors before computation.
+Named dependencies are resolved before computation; drawing order follows layer order. Forward
+references and a named producer's use of its own result in presentation expressions are part of
+the intended behavior. They do not authorize computational dependency cycles.
 
-`attributes` is a plain named tuple of direct Makie values, including computed values. It keeps Makie names separate from
-grammar controls such as `from` and `stat`, including for custom recipes with overlapping keyword
-names. It does not introduce a styling DSL or a new object for each value.
+Explicit positional mappings replace the inherited positional tuple. Omitted named roles inherit;
+`nothing` removes a named role. A result coordinate belongs to its producer's row domain and
+retains the corresponding group/facet identity. Pooling must explicitly resolve varying roles.
+Separate-panel composition remains deferred.
 
-`@plot` captures the complete declaration and lowers it to the same description/function API.
-The statements in its block declare values; they are not a sequence of plot mutations. Its
-underlying `DP.plot` binds that definition to data and produces a plot value with its statistical
-results. It does not create a window or require a graphics backend. Rendering and extraction are
-independent uses of that value:
+The future general `fit(curve, starts; ...)` declaration is specified in [fitting](fitting.md).
+The `linear` example here describes the available declaration path; it is not proof that the
+future fitting package exists.
 
-```julia
-fit = DP.models(p, :trend)[(; series="A")]
-coef(fit)                         # the model library's ordinary coefficient API
-predict(fit, [0.0, 1.0])
-DP.coefficients(p, :trend)        # Tables.jl table, with group and parameter columns
-DP.figure(p)                     # requires Makie and a rendering backend
+## Shared requirements
+
+Use a useful inferred grouping default with an explicit override: users should not routinely
+need to write `group`. Davide requested overriding it with `nothing` or a series value. The exact
+inference algorithm is open. Keeping statistical groups distinct from aesthetics does not mean
+requiring a separate grouping declaration for every plot. Pooling within facets explicitly uses
+`group=nothing` and resolves varying inherited aesthetics; clearing color alone is insufficient.
+
+Initial figures auto-fit. Style, guide and layer changes preserve the user's viewport when axis
+semantics stay the same; explicit reset uses current automatic limits. Retain panel/facet identity.
+The exact reset policy for changed data or axis mappings remains to be specified. Viewport state
+is not a fit domain or implicit input filter.
+
+- Keep population grouping distinct from color and other aesthetics. Continuous color does not
+  automatically split observations into separate analyses. Input mappings and mappings of a
+  computed result must not be confused with direct Makie attributes.
+- Expose attributes supported by the chosen Makie primitive. Discovery, documentation,
+  validation, completion and GUI controls should share infrastructure rather than require
+  bespoke macro/widget code for each keyword.
+- Preserve native models and reusable values. A table of summaries may help inspection; it
+  does not replace the native result or prescribe that every result is scalar metadata.
+- Labels, legends, bands and curves read the same result. Style, visibility and drawing-order
+  changes do not refit or delete that result. Stable references must survive layer reordering.
+- Legends need editable content, samples, order, placement and Makie presentation settings.
+  Text annotations come early; better avoidance follows evaluation of available facilities.
+- Expose data and result provenance to the Inspector and shared data access, including values
+  computed from several inputs. A plotting window is not the sole owner of a calculation.
+
+These are design requirements. The public extension/schema and retained-result APIs that fulfill
+them still need proposals and verification.
+
+## Scales and legends
+
+Agreed with Davide on 22 October 2026. Implemented as `scales(...)` and `legend(...)` lines of
+`@plot`; see its docstring.
+
+A scale belongs to one role. It gives each value a look, such as a color, and gives the value its
+name and its order. A legend explains the scales and never changes them.
+
+The legend works from a table with one row per drawn group: the piece that drew it and the values
+of its categorical roles. The legend divides the roles into sections. A section has one entry for
+each combination of its roles' values that appears in that table.
+
+- One section per role is the default of the grammar of graphics.
+- Roles share a section automatically when one of them determines the others: each of its values
+  always appears with the same values of the others. The section then has no more entries than
+  that role has values. Chip and Site measured 2 × 2 stay apart; chips each measured on one wafer
+  share a section with Wafer.
+- The plot can ask for roles to share a section anyway, which gives one entry per drawn
+  combination: a flat legend.
+- A piece's group appears in every entry that has the same values for the roles that piece maps.
+  Its sample is overlaid with the samples of other pieces in that entry.
+- An entry's text can use any value its combination determines: metadata, or a value of a named
+  piece. A value the entry does not determine is an error.
+
+The scale orders the entries and names the values. A value's scale name shows wherever the value
+appears: in the default entry text, in facet titles, and inside a legend text, where `$(:Chip)`
+shows the scale's name of that chip. A value no scale maps shows as it is.
+
+Continuous roles get a colorbar. Facet roles are not in the legend.
+
+## Aggregates
+
+Agreed with Davide on 25 October 2026 and implemented; see the `@plot` docstring. Before, the
+first function was always drawn as y and the second as the half-length of `Errorbars`. That fixed
+meaning broke for functions with other names, such as `mycoolstd`, and for functions that return
+several values, such as `extrema`.
+
+`aggregate` is split-apply-combine and nothing more. It splits the points of its line into one
+group per x and per value of each categorical role, applies each function to the y values of each
+group, and combines the results into one row per group. Each column is named after its function.
+`aggregate` knows nothing about how the columns are drawn.
+
+```
+points of the line (x, y, roles)
+   │ split: one group per x and per value of each categorical role, such as color
+   ▼
+groups ── apply each function to the group's y values ──▶ one row per group
+
+   x  │ color │ mean │ mycoolstd │ extrema    │ count
+   10 │ A     │ 1.2  │ 0.3       │ (0.9, 1.6) │ 4
+   20 │ A     │ 3.9  │ 0.2       │ (3.6, 4.1) │ 4
 ```
 
-The model implements its fitting library's normal interface. Do not redefine `coef` to return a
-named tuple when that library returns a vector. The built-in model implements the relevant StatsAPI
-methods. `models` returns native models by group; `coefficients` is the common tabular view across
-adapters. Statistical summaries used for labels are distinct from native models: `stat.slope` in
-the example is a documented field of the built-in linear statistic's summary.
-
-`PlotDescription(; mapping, group, layers, guides, ...)` is the reusable definition without data.
-`DP.plot(table, description)` binds it. The macro constructs that same description, with retained
-expressions for computed values; there is one definition model. No public `evaluate`/compiled-plan step is needed for normal use.
-
-## One authoring macro
-
-Use one `@plot` macro around the whole declaration. It captures all expressions and their source
-locations together, so authors do not need `@label`, a macro around each aesthetic, or a family
-of formatting objects. Labels use the same expression handling as numeric/categorical attributes:
+A line draws the columns it needs by mapping them, as it maps any data. The visual gives each
+column its meaning: the third value of `Errorbars` is a half-length because Makie defines it so.
 
 ```julia
-attributes=(;
-    label="$(group.series): m = $(round(stat.slope; digits=2))",
-    linewidth=1 + 2 * stat.r2,
-)
-```
+@plot data(table) * mapping(:x, :y; color=:sample) begin
+    visual(Scatter)
 
-Within computed expressions, `group` denotes the current population key and `stat` its declared
-statistical summary. Other names resolve in the caller's Julia scope; column names remain explicit
-selectors in mappings. The macro must not guess whether an unqualified name is a column or a Julia
-variable. It validates context/stage/cardinality from the binding and schema, independent of the
-expression's value type. A group named `slope` remains separate from `stat.slope`.
+    # One function: drawn as y without a mapping, as `expectation()` is.
+    aggregate(mean) * visual(Lines)
 
-Capturing syntax does not choose scale semantics. `mapping` maps input values through aesthetic
-scales, `output` maps computed statistical fields through those scales, and `attributes` supplies
-direct Makie values. Thus the computed line width above is a direct width; it is not silently
-rescaled to a palette of widths. The same rule applies to computed colors, alpha, markers, and
-text. Literal expressions remain constants. A computed expression without the needed context,
-or with a cardinality the attribute does not support, is an error.
+    # Several functions: a line maps the columns. A line with only `y` takes the header's x,
+    # which is also the name of the result's x column.
+    spread = aggregate(mean, mycoolstd, extrema)
+    mapping(y = spread.mean) * visual(Lines)
+    mapping(spread.x, spread.mean, spread.mycoolstd) * visual(Errorbars)
 
-Named Julia functions remain available:
+    # A function with several values: each is read by its index, as the header reads
+    # `:size[1]`.
+    mapping(spread.x, spread.extrema[1], spread.extrema[2]) * visual(Rangebars)
 
-```julia
-slope_label(group, stat) = "slope = $(round(stat.slope; digits=2))"
-```
-
-A schema-declared formatter slot can reference that function directly; an ordinary deferred
-expression can also call `slope_label(group, stat)`. Attribute functions with native Makie meaning
-are passed through according to their schema, not automatically treated as formatters. The retained
-declaration records expressions and named references, not just evaluated values or opaque closures.
-Newly loaded user functions run through the existing latest-world preparation boundary; rendering
-uses their prepared values rather than calling them every frame.
-
-The block supports the defined declaration syntax. The macro reads the full block before resolving
-references; assignments do not establish dependency order. It does not run arbitrary user statements
-or replace tabs' file loading. A function/constructor API underneath supports programmatic creation
-of the same definitions, without becoming a second plotting system.
-
-Proposed GUI interaction for slopes 2.3147 and 0.7862:
-
-```text
-Text:       [slope = ] [+ insert result]
-Result:     [Slope v]
-Formatting: [2 decimal places]
-Position:   [End of line v]
-
-Preview:    slope = 2.31
-            slope = 0.79
-```
-
-Those controls edit `text="slope = $(round(stat.slope; digits=2))"` inside the `@plot` declaration.
-Text-specific controls edit the same retained Julia-expression representation as color/number
-controls. More complex expressions remain intact and can be edited as code. Named functions are
-shown by name and open their definitions; the editor does not infer arbitrary function bodies.
-This interaction is a recommendation, not a user-approved mockup.
-
-Per-observation text uses ordinary data mapping, for example `mapping=(; text=:label)`. Named row
-transformations can produce that column. Result text with `at=:end` is per group; its expression
-is not unexpectedly evaluated once per observation.
-
-## Layers and statistical output
-
-A layer declares its source, input mapping, grouping, statistic, geometry, position adjustment, and fixed
-attributes. The default source is the plot input; the default statistic is identity. `from` selects
-another layer's statistical output, before its geometry-specific position adjustment and display
-scales. It does not copy graphics objects or inherit that layer's fixed styling.
-
-A statistical output has three independent parts:
-
-- Data for drawing, with declared column names and group/facet keys.
-- A summary per population, with a declared schema for formatting and inspection.
-- Scientific values, including native models where the statistic produces models.
-
-For `LinearFit`, drawing data contains `x` and predicted `y`; the summary contains `slope`,
-`intercept`, counts and available diagnostics; models remain separately accessible. Intervals,
-residuals, parameter tables, and covariance are derived from that same fit when supported/requested.
-Histograms instead expose bin data/counts/densities and do not pretend to have models.
-
-Input mapping and mapping statistical output are different stages. Keep them explicit with a
-plain `output` named tuple when the statistic's default output mapping is not wanted:
-
-```julia
-Layer(:bars;
-    mapping=(; x=:value),
-    stat=Histogram(bins=30),
-    output=(; y=:density))
-
-Layer(:band;
-    from=:trend,
-    mapping=(; x=:x, lower=:lower, upper=:upper),
-    attributes=(; alpha=0.2))
-```
-
-`Histogram` supplies its registered default output coordinates; `output.y` selects its computed
-density instead of the default count. A layer using `from` reads the referenced output as its input,
-so normal mapping selects that output's fields. It never rereads the producer's original input
-table. Requesting absent interval fields is an explicit error; it does not silently trigger another
-fit with different settings. Interval computation is requested on the producing statistic.
-
-Named result dependencies are validated and evaluated independently of drawing order. Changing a
-producer affects its consumers. Hiding its marks does not remove the statistical output that other
-layers or callers use. Removing its definition leaves a visible unresolved-reference error.
-
-## Mapping, grouping, and scales
-
-`mapping` reads columns or named column transformations. `attributes` supplies fixed Makie values.
-A symbol inside `mapping` names a column; inside `attributes` it is an ordinary Julia value.
-All relevant attributes can be exposed without adding a wrapper type per value.
-
-Plot mappings are defaults. A layer's explicit mapping or constant overrides the corresponding
-plot default. Declaring both a mapping and a constant for the same attribute on the same layer is
-an error. `nothing` in a layer mapping explicitly removes an inherited mapping. A fixed red fit
-does not accidentally become a series-colored fit again during lowering.
-
-Grouping is independent of color. `group=:series` creates separate statistical populations and
-curves even when all are black. Continuous color does not create a population per observation.
-Facets add their keys to population identity by default; facet and group scope are explicit in
-the statistic contract. Browser item overlays write their item grouping into the definition.
-Layers can override grouping explicitly; `group=()` requests one population within each facet.
-Consumers of a referenced output retain its keys unless a declared regrouping/statistic changes them.
-
-Mapped attributes that are constant within a statistical group can be retained in its output.
-Nonconstant attributes need a declared preservation rule or an explicit output mapping; do not
-guess colors for newly sampled fit points. Raw per-point mappings stay supported for identity
-layers. Numeric category codes can be declared categorical through scale settings.
-
-Shared aesthetic scales train across contributing layers, before legends are built. Different
-scales have explicit names. `scales=(; color=(; kind=:categorical, domain=["A", "B"], ...))` declares
-category order when it matters; generated output can select an independent scale explicitly.
-Automatically discovered categories use a documented stable order for a bound input revision.
-Live browser bindings retain assigned categories as new ones arrive; saved explicit domains are
-the reproducible choice across independent openings. Scale domains, group order, and legend order
-are not derived from formatted label strings or hash-table iteration.
-
-Statistics operate on mapped data before display scales by default. Changing the viewport never
-changes fit input. Changing a display axis to log does not silently fit logarithms. An explicit
-scale-space statistic can be added with defined inverse mapping and parameter units; unsupported
-noninvertible cases must be rejected. This scientific default is deliberate, not a claim to copy
-ggplot2's exact evaluation order.
-
-Position adjustments such as dodge/stack/jitter, coordinate systems, facet scale linking, and
-non-tabular data adapters have their own contracts. The evaluator must preserve these stages;
-they are not new branches in a lines/scatter renderer. Initial coverage can be small, while the
-model supports the full grammar. Do not claim competitor parity before its feature combinations
-have been implemented and checked.
-
-## Legends and annotations
-
-Guides are named by scale; each guide is a plain description. Categorical scales normally create
-legends; continuous color scales create colorbars. The example's color guide selects samples from
-the observations and trend layers, and takes labels from the trend layer. Thus a marker and fitted
-line can share a sample with the fit coefficient in its label.
-
-Entry identity is the scale/category key, not the text of its label. Merge samples only when their
-keys agree. If several fits match one legend category, choosing `labels=:trend` is ambiguous: report
-the conflicting populations and require more grouping in the guide or a named aggregation/formatter.
-Never pick the first slope. Same displayed labels do not merge unrelated populations.
-
-The guide editor covers visibility, title, category/entry order, label source/formatting, contributing
-layers, sample overrides, merge/split behavior, placement, direction, and columns. Its `attributes`
-contains the remaining Makie Legend/Colorbar settings, including fonts, spacing and frame. Explicit
-fixed-style entries, multiple guides, shared guides across facets, and figure-level guides use this
-same guide model. Labels identify their source/result revision, so curves and coefficients cannot
-come from different evaluations.
-
-Text is a layer rather than a special property of a fitted line. `at=:end` selects the last point
-of each referenced curve in its declared plotted order; fit predictions use increasing x by default.
-Data/axis-relative positions and anchors are explicit alternatives. For a nonidentity position
-adjustment, an endpoint anchor must name the adjusted geometry; the initial shortcut is limited to
-curves without that adjustment rather than guessing the wrong position. User offsets use display
-units, while curve targets use data coordinates.
-
-Use Makie's annotation recipe for automatic placement where suitable. First compare it on actual
-fit labels, dense overlapping lines, axis boundaries, and resized panels. Later improvements can
-consider projected curves/obstacles, pinned labels, priorities and deterministic placement. Layout
-uses display coordinates and actual text bounds; panning/resizing/reformatting can rerun placement
-without refitting. Automatic layout does not continually rewrite the declaration. Manual pins win.
-
-## Attribute and extension infrastructure
-
-One registration macro/function binds a grammar mark to a Makie recipe:
-
-```julia
-@mark :points Makie.Scatter begin
-    arguments = (:x, :y)
-    attributes = inherit
+    # A column that is not a y value.
+    mapping(spread.x, spread.count) * visual(Scatter)
 end
 ```
 
-It inherits the recipe's attribute surface and common semantic/editor rules. Only non-obvious
-argument, mapping-cardinality, scale, or composite-recipe behavior needs an override. The function
-equivalent exists for programmatic registration. A shared statistic registration declares inputs,
-settings, drawing-output schema/default roles, summary schema, and scientific result access.
-Extension functions compute ordinary Julia values; graphics lowering is separate.
+A legend text can read a column when each entry determines one group, by the rule of the legend
+section above.
 
-Use exported Makie facilities such as `default_theme` for available defaults/names and
-`help_attributes` for help where applicable. Installed recipe source contains richer metadata, but
-unexported `documented_attributes` and `_attribute_docs` are not required application interfaces.
-Do not base the design on private metadata access. Determine exact supported coverage of public
-discovery in the first implementation experiment; full keyword forwarding does not depend on
-complete metadata or on writing one widget for every primitive.
+### How it works
 
-Shared editors cover booleans, numbers, colors, choices, marker shapes, dash patterns, sizes, tuples,
-text, expressions and named bindings. The attribute schema supplies semantic information not
-recoverable from defaults: value/cardinality rules, scale contribution and editor choices. Keep
-that information shared by attribute/value type wherever possible. Primitive-specific exceptions
-are small registered data, not repeated macros or custom GUI implementations.
+```
+@plot block
+ │
+ ├─ spread = aggregate(f, g)                    a statement, run when the plot is declared
+ │    the header's mapping gives a table: x, y, roles, item ids
+ │    the y scale's function applies to y; limits of x and y remove points
+ │    split → apply f, g to each group's y values → one Group per row:
+ │         metadata = x, role values, f and g under their names, count
+ │         members  = the items whose points it took
+ │    → Result
+ │
+ ├─ mapping(y = spread.mean) * visual(Lines)    a line that reads a result
+ │    `spread.mean` is the path :mean into each group
+ │    a table with one row per group → data(table) * mapping * visual
+ │    the result's roles, such as color, join the mapping, so the legend matches the points
+ │
+ └─ figure: AlgebraOfGraphics draws every layer, then the legend of this package
+```
 
-Every supported keyword can pass through in `attributes`. A valid uncommon/custom value that has
-no specialized widget remains editable as a supported Julia expression or named binding, and
-survives all unrelated GUI edits. Common aesthetics must have direct controls. Unknown keywords
-receive Makie's validation error with the layer/property attached; never silently discard them.
-Theme inheritance is a state of a setting, not a copied list of resolved defaults.
+`fit` takes
+the same scaled values: its residuals are measured after the scale's function, and its parameters
+stay those of the model.
 
-## One definition and repeatable editing
+### Values on a scaled axis
 
-`PlotDescription` is the canonical declaration. The bound plot contains the input revision and
-prepared results for that declaration; graphics objects and local viewport state are separate.
-No annotation/legend mutation sequence is needed to reconstruct the plot.
+Agreed with Davide on 25 October 2026. With `scale = log10`, the functions receive `log10` of the
+y values, and a result holds exactly what they return: `mean` gives a value in decades, such as
+-10, and a standard deviation a width in decades, such as 1. A legend text or other code that reads
+a result gets these values: `$(spread.mean)`, where `spread` is the name the plot gives to
+`aggregate(...)`, prints -10, and `$(10^spread.mean)` prints the value in the data's units. No
+value is converted back silently, so nobody computes a geometric standard deviation without
+knowing it.
 
-Layer and guide names survive reordering and source edits. A GUI edit replaces the relevant value
-in the description through shared public editing operations. It publishes a new description/result
-revision; it does not append another line to an execution transcript. Repeating a declaration
-produces an equivalent value and does not accumulate layers or windows. A GUI no-op neither
-refits nor rewrites the file. Independently constructing a standalone plot may compute again;
-idempotent meaning does not imply a hidden global cache. Painter order is explicit state.
-Undo/redo restores earlier definitions, not graphics-side effects.
+Drawing converts each column by the role it is mapped to: a column mapped as x or y is a position,
+drawn at 10⁻¹⁰; a column mapped as the half-length of `Errorbars` is a width, drawn from 10⁻¹¹ to
+10⁻⁹ around that position.
 
-The source editor understands constructors, literals, tuples/named tuples, named bindings,
-registered extensions and expressions inside the outer plot macro. It patches the affected syntax range, preserving
-comments and unrelated source. Named functions stay named references and open in the code editor.
-Use source revision checks for concurrent external edits, reconcile disjoint edits, and present
-actual conflicts. Incomplete/unsupported expressions stay intact and retain the last usable plot.
-Round-trip guarantees apply to the supported declaration syntax, not arbitrary Julia execution.
+### Open questions
+- Where `Result` belongs. It is to move out of this package into Core, as a general record of
+  what a function produced from which inputs; that design is discussed separately.
+- The names of the positional values of a visual, such as the half-length of `Errorbars`, which
+  would let a line that needs three or more values leave out x.
 
-Use custom expression rows and inline value controls, with searchable pickers, completion, help,
-keyboard navigation, visible inherited/mapped/fixed/code-owned states, and direct selection from
-the figure. Reusable widget components live in the GUI; validation/meaning and editing operations
-live below it. Prototype the complete workflow above, including external code edits, rather than
-building a generic property grid and calling it the finished editor.
+## Open design and implementation work
 
-## Execution and ownership
+1. Complete the grammar coverage and extension contract: custom statistics, output schemas,
+   cardinality, grouping/facets, coordinates, scales and guides. Do not infer a complete contract
+   from the named linear statistic alone.
+2. Integrate declared computations with Core revisions, invalidation and retained results.
+   Standalone use remains possible; workspace integration must not create a private fit cache.
+3. Define result naming and field collisions consistently with fitting. Decide how callers obtain
+   native models and a table of grouped summaries without reviving the withdrawn custom API.
+4. Complete common GUI authoring: data/mappings, layers, statistics, images/heatmaps, labels and
+   legends. A read-only generated code preview does not meet the code-panel requirement.
+5. Implement source edits that preserve user text, comments and formatting. Specify supported
+   syntax, source identity, undo, external-file edits and revision checks before applying a patch.
+   Inline controls and explicit insertion actions follow [plot editor](../plot-editor.md#editing).
+6. Check public Makie attribute coverage and help against actual supported primitives, including
+   custom recipes. Do not present a few built-in controls as complete discovery.
+7. Design multipanel composition and more complex annotation interaction after the single-panel
+   workflow is sound.
 
-Ordinary `plot(table; ...)` captures the input used for that bound plot and prepares its statistics
-without rendering. Prepared columns/results are stable for its lifetime; later mutation of the
-caller's table must not pair old fits with new raw points. Capture required values once, retaining
-owned/versioned immutable buffers where the integration can guarantee them. Do not make a deep
-copy of an entire workspace merely to preserve a plot. Complex data adapters declare ownership.
+## Current implementation and evidence
 
-The browser owns a live binding through its existing input/revision mechanisms and schedules
-preparation off the render path. Input, mapping, grouping, statistic settings and relevant code
-revisions identify scientific work. Attribute, text and guide changes reuse unchanged statistical
-results. Source identity participates in reuse, not just its revision number. A changed named
-formatter refreshes text; a changed fitting function refreshes the affected statistics.
+The current package exports `figure` and `@plot`. Its AlgebraOfGraphics extension and declaration
+implementation support the shared-header path and a named `linear` result. See the
+[package README](../../lib/DataBrowserPlots/README.md),
+[declaration implementation](../../lib/DataBrowserPlots/src/declaration.jl) and
+[roadmap](../roadmap.md#0110--core-visualizers).
 
-Completed results publish atomically and obsolete work is rejected. Pending/failed preparation
-keeps the last completed result with the current status. Statistical adapters declare finite-row
-handling, minimum-data requirements, singularities, uncertainty assumptions and errors. There are
-no fabricated coefficients or labels for failed populations. The initial failure policy is a clear
-failed evaluation; partial populations require explicit diagnostics before being offered.
-A two-point nonsingular linear fit can have valid coefficients while residual-variance estimates
-and parameter standard errors are unavailable. Expose unavailable uncertainty as such, not zero.
-The coefficient table carries group/facet keys, parameter names, estimates, available errors and
-the recorded uncertainty method; covariance and native diagnostics remain inspectable.
-
-Native model objects are exposed for inspection under their library's ownership/mutation contract;
-the plotting system never mutates them during rendering. Snapshot values remain independently
-usable for Julia extraction and file export after a browser window closes. DataBrowser's existing
-execution/cache facilities own scheduling/persistence where used; no second public job/cache system
-belongs in this grammar.
-
-Initial figures auto-fit. Style, guide and layer changes preserve viewport state when axis semantics
-are unchanged. Data/axis mapping changes reset according to the existing policy; explicit reset
-uses current automatic limits. Facet/panel identity must retain the same behavior. Viewport state
-does not become a fit range or an implicit input filter.
-
-## Modules and implementation order
-
-Keep one `DataBrowserPlots` package initially, with these boundaries:
-
-| Component | Responsibility |
-| --- | --- |
-| Description | Grammar values, identities, validation, editing operations and registrations |
-| Statistics | Built-in fit and adapters, native models, schemas and diagnostic/result tables |
-| Preparation | Data binding, group/facet work, result dependencies, reuse, scale/guide preparation |
-| Julia syntax | Outer plot macro, retained expressions, source patches and named references |
-| Makie extension | Primitive attributes, marks, guides, annotations and composition lowering |
-| Browser extension | Selection/value adapter, editor widgets, live binding and GLMakie embedding |
-
-Base description/statistics/preparation must not load Core, GUI, GLFW, ModernGL, NativeFileDialog,
-or GLMakie. Existing lightweight DataBrowserAPI registration can remain. Move workspace/Selection
-methods to optional integration; put rendering in a Makie extension so CairoMakie can render without
-the browser. The GLMakie/browser extension owns embedding. Keep plain Tables.jl inputs independent
-of GUI-owned ItemTable adapters and preserve useful data types/provenance.
-
-Implement in small items, each retaining the complete authoring model:
-
-1. **Standalone foundation and fitting.** Separate dependencies; add named layers, explicit grouping,
-   native model access and result schemas. Resolve forward references and distinguish output mapping.
-   Preserve registered plot callbacks and the in-flight Selection work.
-2. **Shared attributes and guides.** Establish public Makie discovery, macro/function registration,
-   shared value editors, keyword forwarding, scale identity and editable guides. Exercise one small
-   faceted case before freezing guide/population rules.
-3. **Result-driven text and complete first editor workflow.** Add text layers, computed
-   attributes, coefficient insertion, anchors and manual offsets. Support targeted source patches,
-   stable names and undo/redo for this workflow. Evaluate Makie's placement before adding a solver.
-4. **Broaden the grammar.** Add histogram/density/summary statistics, full facets and independent
-   scales, positions, coordinate systems, arrays and more fit adapters. Integrate composed figures
-   and advanced avoidance through the same descriptions, rather than special fitting APIs.
-
-The first source-editing experiment belongs alongside step 1, not after a large UI implementation.
-Implementation validation targets public behavior and real figures; no test per forwarded keyword
-or mirror of every setter. Documentation-only review requires no package test run.
-
-## Review status and implementation gates
-
-The [review record](graphics-grammar-review.md) covers declaration order, fit/result reuse, ordinary
-formatting, input vs output mapping, field collisions, palette/legend identity, standalone ownership,
-GUI/source identity, live code, and module boundaries. A disposable Julia experiment checked selected
-dependency/model/label/reuse mechanics. It is not an implementation of this API or evidence of a
-finished editor, the new outer macro, complete metadata discovery, numerical uncertainty or full graphics grammar.
-
-Before production code, the remaining technical gates are: validate public attribute discovery on
-representative Makie recipes/blocks; prove comment-preserving source patches and external edits;
-and inspect the complete first workflow in the editor. These are scoped implementation experiments,
-not requests for the user to debug another incomplete API.
-
-## References
-
-- [AoG mapping](https://aog.makie.org/stable/reference/mapping): separate grouping and aesthetic semantics.
-- [AoG analyses](https://aog.makie.org/stable/reference/analyses): statistical transformations and output layers.
-- [ggplot2 statistical layers](https://ggplot2.tidyverse.org/reference/layer_stats.html): statistics composed with geometries.
-- [Makie recipes](https://docs.makie.org/stable/explanations/recipes.html): reusable recipe extensions.
-- [Makie legends](https://docs.makie.org/stable/reference/blocks/legend.html): explicit and combined samples.
-- [Makie annotations](https://docs.makie.org/stable/reference/plots/annotation.html): placement and display-relative offsets.
-- Installed StatsAPI source, `src/statisticalmodel.jl` and `src/regressionmodel.jl`: existing model access contracts.
+The [scratch prototype](../../work/gui-editing/fit-capture-probe.jl) explored named dependencies,
+endpoint text, facets and pooling. It is evidence for selected mechanics, not verification of the
+complete GUI editor, numerical fitting, grammar schemas or live workspace integration. The old
+[review](archive/2026-10-21-discussion/graphics-grammar-review.md) also contains self-review and
+limited probes; its statements of agreement do not approve the superseded custom API.
