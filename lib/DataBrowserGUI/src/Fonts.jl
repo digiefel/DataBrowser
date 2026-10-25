@@ -5,6 +5,8 @@ import Base.ScopedValues
 struct _GUIFonts
     interface::Ptr{CImGui.lib.ImFont}
     code::Ptr{CImGui.lib.ImFont}
+    interface_bold::Ptr{CImGui.lib.ImFont}
+    code_bold::Ptr{CImGui.lib.ImFont}
 end
 
 # Bind these while running the browser. Its render task inherits the binding; other browsers
@@ -12,9 +14,10 @@ end
 const _CURRENT_FONTS = ScopedValues.ScopedValue{_GUIFonts}()
 
 """
-    with_font(f, role::Symbol)
+    with_font(f, role::Symbol; bold::Bool=false)
 
-Draw with the browser's `:interface` or `:code` font for the duration of `f()`. Return its result
+Draw with the browser's `:interface` or `:code` font, in its bold weight when `bold` is set, for
+the duration of `f()`. Return its result
 and restore the previous font, including when `f` throws. Calls may be nested.
 
 Use this during browser drawing. The interface font (Lexend) is the default for controls and
@@ -29,7 +32,7 @@ end
 
 Fonts belong to `DataBrowserGUI`; using them does not require a workspace or browser-state handle.
 """
-function with_font(f::Function, role::Symbol)
+function with_font(f::Function, role::Symbol; bold::Bool=false)
     role in (:interface, :code) || throw(ArgumentError(
         "Unknown font role $(repr(role)); use :interface or :code",
     ))
@@ -37,7 +40,7 @@ function with_font(f::Function, role::Symbol)
         "with_font must be called during browser drawing",
     ))
     fonts = _CURRENT_FONTS[]
-    font = role === :interface ? fonts.interface : fonts.code
+    font = role === :interface ? (bold ? fonts.interface_bold : fonts.interface) : (bold ? fonts.code_bold : fonts.code)
     CImGui.PushFont(font, 0.0f0)
     try
         return f()
@@ -54,37 +57,44 @@ const _ICON_RANGE = CImGui.lib.ImWchar[0xe000, 0xf8ff, 0]
 function _load_fonts!()::_GUIFonts
     assets = joinpath(pkgdir(@__MODULE__), "assets")
     atlas = unsafe_load(CImGui.GetIO().Fonts)
-    interface = CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "Lexend-Regular.ttf"), 13.0f0)
+    # The fonts of one weight: the interface font and the code font, each with the icons.
+    function load(weight::String)
+        interface = CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "Lexend-$weight.ttf"), 13.0f0)
 
-    # Keep scientific labels readable when Lexend lacks a character. Earlier sources take
-    # precedence, so ordinary interface text keeps Lexend's proportional character widths.
-    merge = CImGui.lib.ImFontConfig_ImFontConfig()
-    try
-        merge.MergeMode = true
-        merge.GlyphExcludeRanges = pointer(_ICON_RANGE)
-        CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-Regular.ttf"), 13.0f0, merge)
-        merge.GlyphExcludeRanges = C_NULL
-        # Icons fill their font size; load them smaller and move them onto the text baseline.
-        merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
-        CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
-    finally
-        CImGui.lib.ImFontConfig_destroy(merge)
-    end
+        # Keep scientific labels readable when Lexend lacks a character. Earlier sources take
+        # precedence, so ordinary interface text keeps Lexend's proportional character widths.
+        merge = CImGui.lib.ImFontConfig_ImFontConfig()
+        try
+            merge.MergeMode = true
+            merge.GlyphExcludeRanges = pointer(_ICON_RANGE)
+            CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-$weight.ttf"), 13.0f0, merge)
+            merge.GlyphExcludeRanges = C_NULL
+            # Icons fill their font size; load them smaller and move them onto the text baseline.
+            merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
+            CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
+        finally
+            CImGui.lib.ImFontConfig_destroy(merge)
+        end
 
-    config = CImGui.lib.ImFontConfig_ImFontConfig()
-    code = try
-        config.GlyphExcludeRanges = pointer(_ICON_RANGE)
-        CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-Regular.ttf"), 13.0f0, config)
-    finally
-        CImGui.lib.ImFontConfig_destroy(config)
+        config = CImGui.lib.ImFontConfig_ImFontConfig()
+        code = try
+            config.GlyphExcludeRanges = pointer(_ICON_RANGE)
+            CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-$weight.ttf"), 13.0f0, config)
+        finally
+            CImGui.lib.ImFontConfig_destroy(config)
+        end
+        merge = CImGui.lib.ImFontConfig_ImFontConfig()
+        try
+            merge.MergeMode = true
+            merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
+            CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
+        finally
+            CImGui.lib.ImFontConfig_destroy(merge)
+        end
+        return interface, code
     end
-    merge = CImGui.lib.ImFontConfig_ImFontConfig()
-    try
-        merge.MergeMode = true
-        merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
-        CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
-    finally
-        CImGui.lib.ImFontConfig_destroy(merge)
-    end
-    return _GUIFonts(interface, code)
+    # The regular weight loads first: ImGui takes the first font as the default.
+    interface, code = load("Regular")
+    interface_bold, code_bold = load("Bold")
+    return _GUIFonts(interface, code, interface_bold, code_bold)
 end
