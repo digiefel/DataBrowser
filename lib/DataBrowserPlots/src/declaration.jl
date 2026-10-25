@@ -62,7 +62,8 @@ struct Scaled
     # The legend's settings, such as `merge` and `position`.
     legend::NamedTuple
     theme::Union{Nothing,PlotTheme}
-    # The settings of each `coord(...)` line, in order, such as `(; y = (; scale = log10))`.
+    # The settings of each `coord(...)` line, in order, such as `(; y = (; scale = log10))`; the
+    # function of the points that a line takes by place is under `points`.
     coords::Vector{NamedTuple}
 end
 
@@ -263,6 +264,15 @@ A `coord` line changes only where the values are drawn, after the analyses ran:
   as they are: the mean of `expectation()` is then the mean of the values, drawn on a log axis.
 - `limits` are the lowest and highest value shown; the values outside them stay in the analyses.
 - `reversed = true` draws the axis from the highest value to the lowest.
+- `label` names the axis, for when a function of the points changes what it shows.
+- A function given by place takes the x and y of each point and gives where it is drawn. Here it
+  swaps the axes, and the second line turns a FORC map into coercive and interaction fields:
+
+      coord((x, y) -> (y, x))
+      coord((Hr, H) -> ((H - Hr) / 2, (H + Hr) / 2); x = (; label = "Hc"), y = (; label = "Hu"))
+
+  The lines apply in order, and a function comes before the lines that set a `scale` or `reversed`.
+  Only the points move: the cells of a `Heatmap` and the bars of a `BarPlot` stay upright.
 - `aspect` is Makie's `aspect` of the axis, such as `DataAspect()`, which draws one unit of x as
   long as one unit of y.
 
@@ -503,9 +513,10 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
     end
     for line in filter(line -> line.args[1] === :coord, settings)
         positional, named = call_arguments(line)
-        # TODO: a step of both positions, such as `coord((x, y) -> (y, x))`, and `polar`.
-        isempty(positional) || error("coord takes settings of x and y, such as `coord(y = (; scale = log10))`")
-        push!(coords, Expr(:tuple, Expr(:parameters, (Expr(:kw, k, v) for (k, v) in named)...)))
+        # TODO: `polar`, and a tilt of the drawn axes.
+        length(positional) <= 1 || error("coord takes one function of the points, such as `coord((x, y) -> (y, x))`")
+        points = [Expr(:kw, :points, f) for f in positional]
+        push!(coords, Expr(:tuple, Expr(:parameters, points..., (Expr(:kw, k, v) for (k, v) in named)...)))
     end
     for line in filter(line -> !(line.args[1] in (:theme, :coord)), settings), (key, value) in last(call_arguments(line))
         line.args[1] === :scales ? push!(scales, :($(QuoteNode(key)) => $value)) :

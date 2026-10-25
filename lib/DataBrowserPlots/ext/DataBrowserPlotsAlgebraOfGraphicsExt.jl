@@ -271,10 +271,32 @@ function (step::WithinLimits)(p::AoG.ProcessedLayer)
     return AoG.ProcessedLayer(p; positional=map(cut, p.positional), named=map(cut, p.named))
 end
 
-limited(layer::AoG.Layer, step) = AoG.Layer(; transformation=layer.transformation ∘ step, layer.data, layer.positional, layer.named)
-limited(layers::AoG.Layers, step) = AoG.Layers([limited(layer, step) for layer in layers.layers])
-limited(plot::PlotLines, step) =
-    PlotLines([PlotLine(limited(drawable(line.layers), step), line.shared, line.drawn) for line in plot.lines])
+# A step of `coord` that runs after the analyses of a layer and moves its points: `functions` take
+# the x and y of a point and give where it is drawn, in order.
+# TODO: plot types that draw shapes around their points, such as the cells of a Heatmap, the bars of
+# a BarPlot and the lengths of Errorbars, keep their shapes upright.
+struct MovedPoints
+    functions::Vector{Any}
+end
+
+function (step::MovedPoints)(p::AoG.ProcessedLayer)
+    length(p.positional) >= 2 || error("coord moves points by their x and y; this layer has one position")
+    x, y = copy(p.positional[1]), copy(p.positional[2])
+    for group in eachindex(x)
+        moved = map(x[group], y[group]) do a, b
+            foldl((point, f) -> f(point...), step.functions; init=(a, b))
+        end
+        x[group], y[group] = first.(moved), last.(moved)
+    end
+    return AoG.ProcessedLayer(p; positional=[x, y, p.positional[3:end]...])
+end
+
+# The layers with `change` applied to their transformation, such as `t -> t ∘ step` to run `step`
+# before the analyses, or `t -> step ∘ t` after them.
+retransformed(layer::AoG.Layer, change) = AoG.Layer(; transformation=change(layer.transformation), layer.data, layer.positional, layer.named)
+retransformed(layers::AoG.Layers, change) = AoG.Layers([retransformed(layer, change) for layer in layers.layers])
+retransformed(plot::PlotLines, change) =
+    PlotLines([PlotLine(retransformed(drawable(line.layers), change), line.shared, line.drawn) for line in plot.lines])
 
 function figure(plot::Scaled, args...; options...)
     for (r, _) in plot.scales
@@ -290,14 +312,21 @@ function figure(plot::Scaled, args...; options...)
         get(value, :reversed, false) && push!(axis, Symbol(r, :reversed) => true)
         return r => Base.structdiff(value, NamedTuple{(:limits, :reversed)})
     end
-    # The `coord` lines only change where the values are drawn, after the analyses: Makie's axis
-    # draws their scales, limits and reversed axes, and their limits remove no points.
-    # TODO: two scales of one axis, composed in the order of the lines.
+    # The `coord` lines only change where the values are drawn, after the analyses: their functions
+    # move the points, then Makie's axis draws their scales, limits and reversed axes, and their
+    # limits remove no points.
+    # TODO: two scales of one axis, and a function after a scale, composed in the order of the lines.
     zoom = Any[nothing, nothing]
+    functions, scaled = Any[], false
     for step in plot.coords, (key, value) in pairs(step)
-        if key in (:x, :y)
-            extra = setdiff(keys(value), (:scale, :limits, :reversed))
-            isempty(extra) || error("coord sets the scale, limits and reversed of $key, not $(join(extra, ", "))")
+        if key === :points
+            scaled && error("A coord line with a function of the points comes before those that set a scale or reversed")
+            push!(functions, value)
+        elseif key in (:x, :y)
+            extra = setdiff(keys(value), (:label, :scale, :limits, :reversed))
+            isempty(extra) || error("coord sets the label, scale, limits and reversed of $key, not $(join(extra, ", "))")
+            scaled |= haskey(value, :scale) || haskey(value, :reversed)
+            haskey(value, :label) && push!(axis, Symbol(key, :label) => value.label)
             haskey(value, :scale) && push!(axis, Symbol(key, :scale) => value.scale)
             haskey(value, :reversed) && push!(axis, Symbol(key, :reversed) => value.reversed)
             haskey(value, :limits) && (zoom[key === :x ? 1 : 2] = value.limits)
@@ -310,7 +339,9 @@ function figure(plot::Scaled, args...; options...)
     shown = [z === nothing ? l : z for (z, l) in zip(zoom, limits)]
     any(!isnothing, shown) && push!(axis, :limits => Tuple(shown))
     settings = AoG.scales(; (ROLE_SCALES[r] => value for (r, value) in scales)...)
-    layers = any(!isnothing, limits) ? limited(drawable(plot.layers), WithinLimits(limits)) : drawable(plot.layers)
+    layers = drawable(plot.layers)
+    any(!isnothing, limits) && (layers = retransformed(layers, t -> t ∘ WithinLimits(limits)))
+    isempty(functions) || (layers = retransformed(layers, t -> MovedPoints(functions) ∘ t))
     legend = (; plot.legend..., get(options, :legend, (;))...)
     draw() = figure(layers, settings, args...; options..., axis=(; axis..., get(options, :axis, (;))...),
         texts=plot.texts, legend)
