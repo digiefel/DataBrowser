@@ -133,7 +133,8 @@ end
 
 """
 Compute a computed item from the processed versions of the items it reads and the results of the
-`Computed` values it reads, and keep its result and its metadata.
+`Computed` values it reads, and keep its result and its metadata. A computed item that reads one
+item has that item's metadata too.
 """
 function compute!(workspace::Workspace, job::Job{ItemKey})::Nothing
     catalog = workspace.catalog
@@ -150,7 +151,12 @@ function compute!(workspace::Workspace, job::Job{ItemKey})::Nothing
     result = value.f(filled(value.args, fill)...; value.settings...)
     # TODO: the browser shows a computed item only by its title: there is no way yet to examine its
     # result or its metadata, such as the parameters of a fit.
-    @lock catalog.lock finish!(catalog, job; metadata=parts(result)) && (workspace.results[job.key] = result)
+    # A computed item that reads one item, such as the selected rows of an item, has all of that
+    # item's metadata, with the named parts of its result on top.
+    # TODO: metadata the item gets later, such as from its `analyze`, reaches the computed item only
+    # when it is computed again.
+    given = length(keys) == 1 ? metadata(workspace, only(keys)) : MetadataDict()
+    @lock catalog.lock finish!(catalog, job; metadata=merge(given, parts(result))) && (workspace.results[job.key] = result)
     return nothing
 end
 

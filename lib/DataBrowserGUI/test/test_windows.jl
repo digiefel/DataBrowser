@@ -23,6 +23,7 @@ DataBrowserAPI.fingerprint(::WindowTestFile) = 1
 DataBrowserAPI.read(::WindowTestProject, ::WindowTestSource, ::WindowTestFile) = nothing
 DataBrowserAPI.expand(::WindowTestProject, ::WindowTestFile, ::Nothing) = [WindowTestNumber("n$i", i) for i in 1:3]
 DataBrowserAPI.id(number::WindowTestNumber) = number.name
+DataBrowserAPI.metadata(number::WindowTestNumber) = Dict{Symbol,Any}(:number => number.value)
 DataBrowserAPI.label(number::WindowTestNumber) = number.name
 DataBrowserAPI.item_data(number::WindowTestNumber) = (; value=[number.value])
 DataBrowserAPI.reconstruct(::Type{WindowTestNumber}, name::AbstractString, data, ::Dict) = WindowTestNumber(name, only(data.value))
@@ -77,6 +78,8 @@ end
         transform!(window, GlobalRef(@__MODULE__, :plus_one))
         timedwait(() -> (refresh!(state, window); isempty(window.waiting)), 20)
         @test collect(window.visualizer.value.data) == [2, 3, 4]
+        # Each result has the metadata of its item.
+        @test window.visualizer.value.number == [1, 2, 3]
     finally
         Workspace.close_workspace!(workspace)
     end

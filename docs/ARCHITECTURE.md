@@ -173,7 +173,8 @@ because its inputs are chosen elsewhere, such as the groups of a fit in a plot. 
 `Computed(f, args...; settings...)` value, which is not an API for projects or scripts. Its row is
 in a collection named after `f`, below the collection `Computed`. Its `process` runs `f` once every
 item it reads is processed, and again whenever one of them becomes stale. A computed
-item has no `analyze`; the named single values of its result are its metadata. When a source item
+item has no `analyze`; the named single values of its result are its metadata, on top of the
+metadata of the item it reads when it reads one. When a source item
 changes, its items are removed and added again with new keys: a computed item that read one waits,
 and reads the new item with the same id. Computed results stay in memory and are not saved in the
 cache. A plot's fit adds one computed item for each group of its points; the id of the item is the
