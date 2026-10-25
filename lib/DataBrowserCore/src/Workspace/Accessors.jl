@@ -114,7 +114,9 @@ function children(workspace::Workspace, collection::CollectionKey)::Vector{Colle
     end
     length(keys) < 2 && return keys
     roman = all(text -> roman_value(text) !== nothing, labels)
-    return keys[sortperm(roman ? roman_value.(labels) : natural_key.(labels))]
+    # Separate calls preserve the key vectors' element types during inference.
+    order = roman ? sortperm(roman_value.(labels)) : sortperm(natural_key.(labels))
+    return keys[order]
 end
 
 """The integer value of a Roman numeral, or `nothing` for other text."""

@@ -12,6 +12,9 @@ each package test process only that package's dependencies and `Test`.
   alter private GUI state, or force reloads to make a test pass. GUI controls wait for a public API.
 - Pkg handles dependency resolution and compilation. The runner selects work and records results;
   it must remain simpler than the system being measured.
+- Prioritize startup to an operational browser and avoiding compilation stalls during GUI use,
+  then reduce precompilation time while preserving that coverage. Keep GLMakie and AoG workloads
+  in their extensions, so users without those packages do not pay for them.
 - Reuse unchanged successful workloads and compiled code during development. Full verification
   measures clean precompilation when package inputs change, then reuses that compilation.
 - Measure package overhead with fixed inputs and minimal user callbacks. Include import time,
