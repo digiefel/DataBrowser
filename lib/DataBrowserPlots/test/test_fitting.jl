@@ -81,7 +81,8 @@ deviation(values) = sqrt(sum(abs2, values .- average(values)) / (length(values) 
     plot = @plot data(rows) * mapping(:x, :y) begin
         result = aggregate(average, deviation)
         mapping(y = result.average) * visual(Lines)
-        mapping(result.x, result.average, result.deviation) * visual(Errorbars)
+        aggregate(average, deviation) * visual(Errorbars)
+        aggregate(extrema) * visual(Rangebars)
         scales(y = (; scale = log10))
     end
     drawn = figure(plot)
@@ -90,4 +91,6 @@ deviation(values) = sqrt(sum(abs2, values .- average(values)) / (length(values) 
     bars = only(p for p in axis(drawn).scene.plots if p isa Errorbars)
     # One standard deviation of the logarithms, √2 decades, on each side of 10.
     @test collect(first(bars[1][])) ≈ [1.0, 10.0, 10.0 - 10^(1 - √2), 10^(1 + √2) - 10.0]
+    ranges = only(p for p in axis(drawn).scene.plots if p isa Rangebars)
+    @test collect(first(ranges[1][])) ≈ [1.0, 1.0, 100.0]
 end

@@ -214,22 +214,30 @@ legend entry shows its points and its curve. Without a visual, a fit is drawn wi
 
 `aggregate` applies functions to the y values of the points that share x and their groups: it
 splits the points into one group for each x and each value of the categorical roles, such as
-`color`, and applies each function to the y values of each group. With one function, a visual draws
-its value at each x, as `aggregate(mean) * visual(Lines)`. With several, a line maps the values it
-draws, each under the name of its function:
+`color`, and applies each function to the y values of each group. A visual draws the values at
+each x, in the order of the functions, and a function that gives several values, such as `extrema`,
+gives the visual one value for each:
 
     @plot data(table) * mapping(:x, :y; color=:sample) begin
         visual(Scatter)
-        result = aggregate(mean, std, extrema)
-        mapping(y = result.mean) * visual(Lines)
-        mapping(result.x, result.mean, result.std) * visual(Errorbars)
-        mapping(result.x, result.extrema[1], result.extrema[2]) * visual(Rangebars)
+        aggregate(mean) * visual(Lines)
+        aggregate(mean, std) * visual(Errorbars)
+        aggregate(extrema) * visual(Rangebars)
     end
 
-A line that maps only `y` takes the x of the groups. The visual gives each value its meaning: the
-third value of `Errorbars` is the length of the bar on each side of y, and the two values of
-`Rangebars` are its ends. A function that gives several values, such as `extrema`, is read by
-index.
+The visual gives each value its meaning: the third value of `Errorbars` is the length of the bar on
+each side of y, and the two values of `Rangebars` are the ends of the bar. A visual that does not draw
+as many values as the aggregate gives, such as `Lines` with `aggregate(mean, std)`, is an error.
+
+A named aggregate can be drawn by more than one line. Each line maps the values it draws, each
+under the name of its function, and a value of a function that gives several is read by index:
+
+    result = aggregate(mean, std, extrema)
+    mapping(y = result.mean) * visual(Lines)
+    mapping(result.x, result.mean, result.std) * visual(Errorbars)
+    mapping(result.x, result.extrema[1], result.extrema[2]) * visual(Rangebars)
+
+A line that maps only `y` takes the x of the groups.
 
 `aggregate` gives a [`Result`](@ref) with one `Group` for each x and group of points, in order of
 x, so that `Lines` joins them from left to right. Its metadata holds the x and the roles' values,

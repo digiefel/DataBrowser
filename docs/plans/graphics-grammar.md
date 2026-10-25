@@ -145,10 +145,13 @@ column its meaning: the third value of `Errorbars` is a half-length because Maki
 @plot data(table) * mapping(:x, :y; color=:sample) begin
     visual(Scatter)
 
-    # One function: drawn as y without a mapping, as `expectation()` is.
+    # Without a name: the visual draws the values at each x, in the order of the functions.
+    # A function with several values, such as `extrema`, gives one value for each.
     aggregate(mean) * visual(Lines)
+    aggregate(mean, mycoolstd) * visual(Errorbars)
+    aggregate(extrema) * visual(Rangebars)
 
-    # Several functions: a line maps the columns. A line with only `y` takes the header's x,
+    # With a name, several lines draw one aggregate: each maps the columns it draws. A line with only `y` takes the header's x,
     # which is also the name of the result's x column.
     result = aggregate(mean, mycoolstd, extrema)
     mapping(y = result.mean) * visual(Lines)
@@ -206,10 +209,11 @@ drawn at 10⁻¹⁰; a column mapped as the half-length of `Errorbars` is a widt
 10⁻⁹ around that position.
 
 ### Open questions
+- Values named by the place they fill, as `aggregate(y = mean, low = minimum, high = maximum)`.
+  Makie does not name the places of a visual, so the names would come from this package.
+- Points grouped by y, with the values drawn on x, for a visual with `direction = :x`.
 - Where `Result` belongs. It is to move out of this package into Core, as a general record of
   what a function produced from which inputs; that design is discussed separately.
-- The names of the positional values of a visual, such as the half-length of `Errorbars`, which
-  would let a line that needs three or more values leave out x.
 
 ## Open design and implementation work
 

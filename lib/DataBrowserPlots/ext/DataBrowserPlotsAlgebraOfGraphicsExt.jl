@@ -416,14 +416,36 @@ end
 function Base.:*(result::Result, layer::AoG.Layer)
     layer.transformation isa AoG.Visual ||
         error("A result is drawn by multiplying it with a visual")
-    # The data of each group, its first column as x and its second as y, with the group's value in
-    # each role. An aggregate of several functions has a column for each; a line draws them by
-    # mapping them, as in `mapping(y = result.mean)`.
     plottype = layer.transformation.plottype
-    data = item_data(first(getfield(result, :groups)))
-    length(data) == 2 || error("This aggregate has several values: $(join(keys(data)[2:end], ", ")). To draw one of them, " *
-        "give the aggregate a name in a line of its own, then map the value through that name. " *
-        "See the aggregate section of the @plot documentation.")
+    # An aggregate's values fill the places of the visual after x, in the order of its functions:
+    # `aggregate(mean, std) * visual(Errorbars)` draws x, mean and std. A function with several
+    # values, such as `extrema`, fills one place for each.
+    # TODO: with `direction = :x`, group the points by y and draw the values on x.
+    # TODO: `aggregate(y = mean, low = minimum, high = maximum)`, with each value named by its place.
+    if !isempty(getfield(result, :scaled))
+        groups = getfield(result, :groups)
+        places = Pair{Symbol,Vector}[]
+        for name in getfield(result, :scaled)
+            computed = [metadata(group)[name] for group in groups]
+            first(computed) isa Tuple ?
+                append!(places, [Symbol(name, "[", i, "]") => getindex.(computed, i) for i in eachindex(first(computed))]) :
+                push!(places, name => computed)
+        end
+        # A third place of `Lines` or `Scatter` is z, which this axis does not draw.
+        kinds = try
+            AoG.aesthetic_mapping(plottype, ntuple(_ -> AoG.Continuous(), length(places) + 1)...)
+        catch err
+            err isa MethodError || rethrow()
+        end
+        (kinds isa MethodError || any(==(AoG.AesZ), values(kinds))) &&
+            error("$(plottype) cannot draw the $(length(places)) values of this aggregate at each x: " *
+                join(first.(places), ", "))
+        # The first value is drawn as the points' y, under its title.
+        positional = Any[nothing; [i == 1 ? name => title(getfield(result, :positional)[2]) : name for (i, (name, _)) in enumerate(places)]]
+        return over_result(result, (; places...), AoG.Layer(layer.transformation, nothing, positional, layer.named))
+    end
+    # The data of each fit, its first column as x and its second as y, with the group's value in
+    # each role.
     positional = getfield(result, :positional)
     # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
     shown = hasmethod(AoG.aesthetic_mapping, Tuple{Type{plottype},Int}) ?
@@ -431,12 +453,10 @@ function Base.:*(result::Result, layer::AoG.Layer)
     roles = [(role, value, column(value)) for (role, value) in getfield(result, :named) if role in shown]
     drawn = column.(positional)
     columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [drawn; [c for (_, _, c) in roles]])
-    # A value computed after the y scale's function, such as an aggregate's `mean`, is placed back.
-    y = keys(data)[2] in getfield(result, :scaled) ? unscaled(getfield(result, :scale)) : identity
     for group in getfield(result, :groups)
         values = item_data(group)
         for (name, value) in zip(drawn, values)
-            append!(columns[name], name === drawn[2] ? y.(value) : value)
+            append!(columns[name], value)
         end
         for (_, _, c) in unique(r -> r[3], roles)
             append!(columns[c], fill(metadata(group)[c], length(first(values))))
@@ -506,6 +526,11 @@ function resolve(layer::AoG.Layer, items, axes)
     after = found[2:end]
     return isempty(after) ? result : result * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
 end
+# The title of a value of `mapping`: the title after `=>`, as in `:I => "V > 0"` and
+# `:I => abs => "V < 0"`, or the column's name.
+title(value) = !(value isa Pair) ? string(column(value)) : last(value) isa AbstractString ? last(value) :
+    last(value) isa Pair && last(last(value)) isa AbstractString ? last(last(value)) : string(column(value))
+
 # The points of a layer with several values of y, as `y` and `y2` give, as points of one y: a row
 # for each point and each value, with the value in the column `y` and its title in the column
 # `ydims`, which the roles that `ydims()` maps take, in the order of the values and without a title
@@ -515,9 +540,6 @@ function one_y(table, positional::Vector, named::Vector)
     length(positional) == 2 && positional[2] isa AbstractVector || return table, positional, named
     columns = Tables.columntable(table)
     ys = positional[2]
-    # The title after `=>`, as in `:I => "V > 0"` and `:I => abs => "V < 0"`, or the column's name.
-    title(value) = !(value isa Pair) ? string(column(value)) : last(value) isa AbstractString ? last(value) :
-        last(value) isa Pair && last(last(value)) isa AbstractString ? last(last(value)) : string(column(value))
     repeated = [name => reduce(vcat, [columns[name] for _ in ys]) for name in keys(columns)]
     count = length(first(columns))
     # Each value after its transformation, as in `:I => abs => "V < 0"`.
