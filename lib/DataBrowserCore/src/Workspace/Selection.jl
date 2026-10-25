@@ -17,6 +17,7 @@ DataBrowserAPI.members(group::Group) = group.members
 
 """
 The data of each item, or a value inside it, read from the cache only when the vector is indexed.
+Going through all of it, as `map` and `collect` do, reads all the items in one read.
 
 `selection.data` is the data of each item, as the project returned it. A property follows a path
 into it: `selection.data.V` is the column `V` of each item's table, or the field `V` of any other
@@ -37,8 +38,22 @@ Base.getproperty(data::ItemData, name::Symbol) =
     ItemData(getfield(data, :workspace), getfield(data, :items), [getfield(data, :path); name])
 Base.size(data::ItemData) = size(getfield(data, :items))
 function Base.getindex(data::ItemData, index::Int)
-    workspace, item, path = getfield(data, :workspace), getfield(data, :items)[index], getfield(data, :path)
+    workspace, item = getfield(data, :workspace), getfield(data, :items)[index]
     item = workspace === nothing ? item : only(materialize_items(workspace, [item]))
+    return follow(item, getfield(data, :path))
+end
+# Going through all the values, as `map` and `collect` do, reads the items from the cache together.
+function Base.iterate(data::ItemData, (items, index)=(nothing, 1))
+    if items === nothing
+        workspace, items = getfield(data, :workspace), getfield(data, :items)
+        workspace === nothing || (items = materialize_items(workspace, Vector{ItemKey}(items)))
+    end
+    index > length(items) && return nothing
+    return follow(items[index], getfield(data, :path)), (items, index + 1)
+end
+
+# The value at `path` inside the data of `item`.
+function follow(item, path::Vector{Symbol})
     value = item_data(item)
     for (depth, name) in enumerate(path)
         # A column of a table, or a field of any other value.
