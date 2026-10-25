@@ -169,7 +169,8 @@ A line takes the header's mapping and changes it with its own: its positions, su
 replace the header's; its named roles, such as `marker`, add to the header's or replace them; and a
 role set to `nothing` is removed. A role of the header that the line's plot type cannot show, such as
 `markersize` for `Lines`, is left out of that line, while its values still divide the line's points
-into groups. A role of the line's own mapping that its plot type cannot show is an error. Write a
+into groups and place them in the legend: with `marker` and `linestyle` in one legend section, the
+entry for a value shows its marker from `Scatter` and its line style from `Lines`. A role of the line's own mapping that its plot type cannot show is an error. Write a
 layer with `*` within a line; a line that continues on the next one ends with `*`.
 
 With `data(table)`, the declaration is ordinary AlgebraOfGraphics over that table, and the names in

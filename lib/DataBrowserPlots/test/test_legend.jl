@@ -42,6 +42,16 @@ end
     @test sections(figure(plot)) == [("Chip", ["72b", "719a"]), ("Site", ["L", "R"])]
 end
 
+@testset "roles that each piece cannot show share entries: markers of Scatter, line styles of Lines" begin
+    rows = [(V=v, I=sign * v, Sign=sign > 0 ? "V > 0" : "V < 0") for sign in (1.0, -1.0) for v in (0.0, 1.0)]
+    plot = @plot data(rows) * mapping(:V, :I; marker=:Sign, linestyle=:Sign) begin
+        visual(Scatter)
+        visual(Lines)
+        legend(merge = (:marker, :linestyle))
+    end
+    @test sections(figure(plot)) == [("Sign", ["V < 0", "V > 0"])]
+end
+
 @testset "a legend text reads a value that no role maps, when the entry determines it" begin
     rows = [(V=v, I=v / R, Chip=c, Wafer=w) for (c, w, R) in (("72b", "W1", 1.0), ("719a", "W2", 3.0)) for v in (0.0, 1.0)]
     plot = @plot data(rows) * mapping(:V, :I; color=:Chip) begin

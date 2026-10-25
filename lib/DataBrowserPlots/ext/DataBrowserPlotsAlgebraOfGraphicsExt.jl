@@ -14,17 +14,20 @@ using PrecompileTools: @setup_workload, @compile_workload
 
 # The legend is ours, not AoG's: roles share a section when one determines the others
 # (plans/graphics-grammar.md). `texts` are the texts of the entries in the section of a role.
+# `groups` are the values of every group's roles, as `key => value`, also of the roles that its
+# layer cannot show.
 function figure(
     specification::Union{AoG.Layer, AoG.Layers, AoG.ProcessedLayer, AoG.ProcessedLayers},
     args...;
     legend=(;),
     texts::Vector{Pair{Symbol,Function}}=Pair{Symbol,Function}[],
+    groups::Vector{Dict{Symbol,Any}}=Dict{Symbol,Any}[],
     options...,
 )
     drawn = @timed_dbg "aog_draw" AoG.draw(drawable(specification), args...; legend=(; show=false), options...)
     label_inspector!(drawn.grid)
     get(legend, :show, true) || return drawn.figure
-    sections = legend_sections(drawn.grid, texts, get(legend, :merge, nothing))
+    sections = legend_sections(drawn.grid, texts, get(legend, :merge, nothing), groups)
     isempty(sections) && return drawn.figure
     position = get(legend, :position, :right)
     settings = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
@@ -80,10 +83,11 @@ function inspected(value)::String
     return "$(digits(value / 10.0^power))×10$superscript"
 end
 
-# The processed layers of each line, drawn or not. A role the line takes from the header is left
-# out of the layers whose plot type cannot show it, such as `markersize` of `Lines`. Its values still
-# divide the line's points into groups, as other roles' values do.
-function processed_lines(plot::PlotLines, settings::AoG.Scales=AoG.scales())::Vector{Vector{AoG.ProcessedLayer}}
+# The processed layers of each line, drawn or not, each with the values of its groups' roles. A
+# role the line takes from the header is left out of the layers whose plot type cannot show it, such
+# as `markersize` of `Lines`. Its values still divide the line's points into groups, as other roles'
+# values do, and stay among the values of the groups for the legend.
+function processed_lines(plot::PlotLines, settings::AoG.Scales=AoG.scales())::Vector{Vector{Pair{AoG.ProcessedLayer,Any}}}
     transforms = AoG.axis_transforms_from_scales(settings)
     return map(plot.lines) do line
         map(AoG.ProcessedLayers(drawable(line.layers), transforms).layers) do p
@@ -93,15 +97,19 @@ function processed_lines(plot::PlotLines, settings::AoG.Scales=AoG.scales())::Ve
             for key in skipped, values in (primary, named, labels)
                 haskey(values, key) && delete!(values, key)
             end
-            AoG.ProcessedLayer(p; primary, named, labels)
+            AoG.ProcessedLayer(p; primary, named, labels) => p.primary
         end
     end
 end
 
 function figure(plot::PlotLines, args...; options...)
     settings = !isempty(args) && first(args) isa AoG.Scales ? first(args) : AoG.scales()
-    drawn = [layers for (line, layers) in zip(plot.lines, processed_lines(plot, settings)) if line.drawn]
-    return figure(AoG.ProcessedLayers(reduce(vcat, drawn; init=AoG.ProcessedLayer[])), args...; options...)
+    drawn = reduce(vcat, [layers for (line, layers) in zip(plot.lines, processed_lines(plot, settings)) if line.drawn];
+        init=Pair{AoG.ProcessedLayer,Any}[])
+    # The values of each group's roles, one group for each element of a layer's values.
+    groups = [Dict{Symbol,Any}(key => values[i] for (key, values) in pairs(primary))
+        for (_, primary) in drawn if !isempty(primary) for i in eachindex(first(values(primary)))]
+    return figure(AoG.ProcessedLayers(first.(drawn)), args...; options..., groups)
 end
 
 # The named roles each line can show: those of its plot types, and those of the layout.
@@ -109,7 +117,7 @@ end
 function mappings(plot::PlotLines)::Vector{Vector{Symbol}}
     layout = [:layout, :row, :col, :group]
     return map(processed_lines(plot)) do layers
-        union((Symbol[key for key in keys(AoG.aesthetic_mapping(p)) if key isa Symbol] for p in layers)..., layout)
+        union((Symbol[key for key in keys(AoG.aesthetic_mapping(p)) if key isa Symbol] for (p, _) in layers)..., layout)
     end
 end
 mappings(plot::Scaled) = mappings(plot.layers)
@@ -122,21 +130,31 @@ role(aes) = Symbol(lowercase(replace(string(nameof(aes)), r"^Aes" => "")))
 piece(p::AoG.ProcessedLayer) = (p.plottype, p.attributes)
 
 # The legend's sections, each as `(; samples, texts, title)`: the categorical scales' sections, then
-# one for each continuous scale, then one for the pieces with their own label.
+# one for each continuous scale, then one for the pieces with their own label. A section without
+# entries is left out. `all_groups` are the values of every group's roles, as `figure` takes them.
 # TODO: legends of additional scales, such as `color=:Chip => scale(:other)`.
 # TODO: plot types that draw all groups in one plot, such as `BarPlot` with `color`, fail here.
-function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge)
+function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge, all_groups::Vector{Dict{Symbol,Any}})
     scales(kind) = [aes => scale for (aes, d) in pairs(AoG.legendable_scales(Val(kind),
         kind === :categorical ? first(grid).categoricalscales : first(grid).continuousscales))
         for (id, scale) in pairs(d) if id === nothing]
     categorical, continuous = Dict(scales(:categorical)), scales(:continuous)
     order = first.(scales(:categorical))
     processed = mapreduce(entry -> entry.processedlayers, vcat, grid)
-    # Each drawn group: its piece, and the value of each categorical legend role it maps.
+    # Each drawn group: its piece, and the value of each categorical legend role it maps. A role that
+    # its piece cannot show, such as `marker` of `Lines`, takes the value of the groups with the same
+    # values in the roles the piece shows, when they all have one.
     groups = map(processed) do p
         mapping = AoG.aesthetic_mapping(p)
-        piece(p) => Dict(mapping[key] => value for (key, value) in pairs(p.primary)
+        values = Dict(mapping[key] => value for (key, value) in pairs(p.primary)
             if haskey(categorical, get(mapping, key, nothing)) && !haskey(p.scale_mapping, key))
+        same = filter(g -> all(((key, value),) -> isequal(get(g, key, nothing), value), pairs(p.primary)), all_groups)
+        for aes in order
+            (haskey(values, aes) || haskey(mapping, role(aes))) && continue
+            found = unique(g[role(aes)] for g in same if haskey(g, role(aes)))
+            length(found) == 1 && (values[aes] = only(found))
+        end
+        piece(p) => values
     end
     for (r, _) in texts
         r in role.(order) || error("The legend text is given for $r, which no categorical role of the plot maps")
@@ -155,7 +173,7 @@ function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge)
     labels = unique(p.attributes[:label] for p in labelled)
     isempty(labels) || push!(sections, (; samples=[reduce(vcat, [AoG._legend_elements(p, AoG.MixedArguments())
         for p in labelled if p.attributes[:label] == label]) for label in labels], texts=labels, title=nothing))
-    return sections
+    return filter(s -> !isempty(s.texts), sections)
 end
 
 # The values of each drawn group in `section`, a vector of aesthetics: one tuple for each distinct
