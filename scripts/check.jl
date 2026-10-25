@@ -132,8 +132,10 @@ function check(args=ARGS)
     records = isfile(RECORD_FILE) ? TOML.parsefile(RECORD_FILE) : Dict{String,Any}()
     depot = measurement_depot()
     if full || precompile_only
-        names = vcat(PACKAGES, ["DataBrowser", "GLMakie", "AlgebraOfGraphics"])
-        command = julia_command(["-e", "using Pkg; Pkg.precompile($(repr(names)); strict=true); using DataBrowser, GLMakie, AlgebraOfGraphics"]; depot)
+        names = collect(keys(Pkg.project().dependencies))
+        # Named selection can omit extensions whose triggers include other extensions.
+        # Prepare the environment, then require its plotting stack without another cache build.
+        command = julia_command(["--compiled-modules=strict", "-e", "using Pkg; Pkg.precompile(; strict=true); using DataBrowser, GLMakie, AlgebraOfGraphics"]; depot)
         code = fingerprint(names, command)
         checked(records, "precompile", code; force=force && precompile_only) do
             # Remove the compiled code of the DataBrowser packages only, in this runner-owned
@@ -145,8 +147,7 @@ function check(args=ARGS)
             end
             seconds = @elapsed run(command)
             fingerprint(names, command) == code || error("Package code changed during precompilation")
-            # Development measurements may include automatic compilation during import.
-            # Measure again with the newly completed compiled cache, including on a later run.
+            # Startup measurements must use the newly completed compiled cache.
             delete!(records, "engine")
             delete!(records, "browser")
             Dict("seconds" => seconds)

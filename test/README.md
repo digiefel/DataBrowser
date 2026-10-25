@@ -84,9 +84,10 @@ An unchanged suite is reported as a reused result, not as a newly executed test.
 selected tests and benchmarks; it only forces clean compilation with the `precompile` selector.
 
 Clean compilation runs when package code or its resolved dependencies change. The runner removes
-the compiled code of the DataBrowser packages from its dedicated depot and precompiles them again,
-together with the umbrella, GLMakie and AlgebraOfGraphics. It then loads the complete plotting
-stack to finish preparing extensions. `precompile_s` includes both steps, so compare it only with
+the compiled code of the DataBrowser packages from its dedicated depot and precompiles the benchmark
+environment, including its available extensions. It then loads the complete plotting stack with
+automatic package precompilation forbidden: a missing cache fails this check. `precompile_s` includes
+preparation and this import check, so compare it only with
 runs using this command. Dependencies such as Makie keep their compiled code between runs:
 recompiling them took about 220 s in each full verification and
 measured nothing about DataBrowser. When a resolved dependency changes, Julia recompiles it during
