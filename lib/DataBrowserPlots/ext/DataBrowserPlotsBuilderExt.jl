@@ -40,8 +40,11 @@ const LINESTYLES = [:solid, :dash, :dot, :dashdot, :dashdotdot]
 const PLOT_TYPES = ["Scatter", "Lines", "ScatterLines", "BarPlot", "Errorbars", "Band", "Text"]
 # The mappings whose scale `scales(...)` sets.
 const SCALED = [:x, :y, :color, :marker, :linestyle, :markersize, :linewidth, :layout, :row, :col]
-# The settings the menu of a scale offers.
-const SCALE_SETTINGS = [:label, :scale, :limits, :reversed, :ticks, :tickformat]
+# The settings the menu of a scale offers: those of an axis for x and y, and those of a scale of
+# categories, such as the markers of `marker`, for the other mappings.
+# TODO: the settings of a continuous color, such as `colormap`.
+const AXIS_SETTINGS = [:label, :scale, :limits, :reversed, :ticks, :tickformat]
+const CATEGORY_SETTINGS = [:label, :palette, :categories, :legend]
 # What the settings of a scale change, shown by the info button beside them.
 const LEGEND_INFO = Dict(
     :merge => "The mappings that share a section, such as (:color, :linestyle), or true for all of them.",
@@ -1120,7 +1123,8 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 # The scale's name, with a "+" for its settings and, under the mouse, a cross.
                 row = ig.GetCursorScreenPos()
                 row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
-                offered = settings === nothing ? String[] : String.(setdiff(SCALE_SETTINGS, [entry.name for entry in present]))
+                kinds = scale.name in (:x, :y) ? AXIS_SETTINGS : CATEGORY_SETTINGS
+                offered = settings === nothing ? String[] : String.(setdiff(kinds, [entry.name for entry in present]))
                 picked = heading!(view, "scale", entry_name(scale.name), offered; role=:plain, tooltip="Add a setting of this scale")
                 picked === nothing || start_edit!(view, (:scale, k), Symbol(picked), "")
                 if ig.IsMouseHoveringRect(row, row_end)
