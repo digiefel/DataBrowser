@@ -1,5 +1,5 @@
-# TODO: move fitting to DataBrowserFitting, with a REPL API and results kept by the workspace
-# (plans/fitting.md).
+# TODO: move fitting to DataBrowserFitting, with a REPL API (plans/fitting.md). The workspace keeps
+# the results of a plot's fits already: one computed item for each group.
 
 """
 A fitted parameter: its estimate `value` and one standard `error`. It prints as `1520 ± 83`.
@@ -90,8 +90,6 @@ struct Result <: AbstractVector{Group}
     plottype::Symbol
     # The function of the y axis, such as `log10`, that the values named `scaled` were computed
     # after, such as an aggregate's `mean`. Drawing places them back on the axis.
-    # TODO: Result moves to Core as a general record of what a function produced; this belongs to
-    # the plot that computed it, not to the record.
     scale::Any
     scaled::Vector{Symbol}
 end

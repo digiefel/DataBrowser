@@ -130,6 +130,8 @@ function compute!(workspace::Workspace, job::Job{ItemKey})::Nothing
     # A selection is made again from its items, so that it has their columns as they are now.
     fill(x) = x isa Selection ? select(workspace, ItemKey[something(item(workspace, i)) for i in x.id]) : values[id(x)]
     result = value.f(filled(value.args, fill)...; value.settings...)
+    # TODO: the browser shows a computed item only by its title: there is no way yet to examine its
+    # result or its metadata, such as the parameters of a fit.
     @lock catalog.lock finish!(catalog, job; metadata=parts(result)) && (workspace.results[job.key] = result)
     return nothing
 end
