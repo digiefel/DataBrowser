@@ -31,6 +31,47 @@ axis(drawn) = only(filter(c -> c isa Axis, drawn.content))
     @test [entry.label[] for (_, entries) in legend.entrygroups[] for entry in entries] == ["chip A on WA: 300.0", "chip B on WB: 50.0"]
 end
 
+# The devices of the first test in a workspace.
+struct FitTestProject <: DataBrowserAPI.AbstractProject end
+struct FitTestSource <: DataBrowserAPI.AbstractDataSource end
+struct FitTestFile <: DataBrowserAPI.AbstractDataSourceItem end
+DataBrowserAPI.project_name(::FitTestProject) = "fits"
+DataBrowserAPI.id(::FitTestSource) = "devices"
+DataBrowserAPI.label(::FitTestSource) = "devices"
+DataBrowserAPI.label(::FitTestFile) = "file"
+DataBrowserAPI.items(::FitTestSource; kwargs...) = [FitTestFile()]
+DataBrowserAPI.id(::FitTestFile) = "file"
+DataBrowserAPI.fingerprint(::FitTestFile) = 1
+DataBrowserAPI.read(::FitTestProject, ::FitTestSource, ::FitTestFile) = nothing
+DataBrowserAPI.expand(::FitTestProject, ::FitTestFile, ::Nothing) = [FitTestDevice("$chip$gap", chip, gap, 2Rc + 100gap)
+    for (chip, Rc) in (("A", 300), ("B", 50)) for gap in (5.0, 10.0, 20.0)]
+DataBrowserAPI.reconstruct(::Type{FitTestDevice}, name::AbstractString, data, metadata::Dict) =
+    FitTestDevice(name, metadata[:Chip], metadata[:gap], only(data.R))
+
+const curve_calls = Ref(0)
+counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; resistance(gap; Rc, Rsh))
+
+@testset "in a workspace, a fit is an item for each group, which a new palette does not compute again" begin
+    W = DataBrowserCore.Workspace
+    workspace = W.open_workspace(FitTestProject(), FitTestSource(); cache=false, background_processing=true)
+    try
+        W.wait_workspace_idle!(workspace; timeout=20)
+        devices = W.select(workspace, W.query_items(workspace))
+        plot(palette) = @plot mapping(:gap, only(:data.R); color=:Chip) begin
+            fit(counted_resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines)
+            scales(color = (; palette))
+        end
+        figure(plot([:red, :blue]), devices)
+        fits = W.select(workspace, filter(startswith("fit("), W.query_items(workspace)))
+        @test sort(round.(fits.Rc)) == [50.0, 300.0]
+        curve_calls[] = 0
+        figure(plot([:green, :orange]), devices)
+        @test curve_calls[] == 0
+    finally
+        W.close_workspace!(workspace)
+    end
+end
+
 @testset "a named fit takes the rows of the header's own table" begin
     rows = [(gap=g, R=2 * 300 + 100g) for g in (5.0, 10.0, 20.0)]
     plot = @plot data(rows) * mapping(:gap, :R) begin

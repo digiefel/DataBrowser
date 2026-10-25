@@ -6,9 +6,11 @@ using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_categories, scale_kinds
-using DataBrowserPlots: @plot, Aggregate, Declaration, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Result, category, column
-using DataBrowserAPI: item_data, metadata
-using DataBrowserCore: Group, select
+using DataBrowserPlots: @plot, Aggregate, Declaration, Fit, ITEM, LegendEntry, PlotLine, PlotLines, PlotTheme, Points, Scaled, Result, category, column, grouping
+import DataBrowserAPI
+using DataBrowserAPI: id, item_data, metadata
+import DataBrowserCore.Workspace
+using DataBrowserCore: Group, Selection, select
 using DataBrowserPlots: Tables
 using PrecompileTools: @setup_workload, @compile_workload
 
@@ -524,39 +526,119 @@ steps(transformation) = transformation === identity ? Any[] : Any[transformation
 # steps after it. `items` are the items whose ids the points' table holds. The result takes the
 # points inside the limits of the x and y scales in `axes`, and the function of the y scale, such as
 # `log10`. A layer with several values of y draws them as one y. Other layers stay as they are.
-function resolve(layer::AoG.Layer, items, axes)
-    if layer.data isa AoG.Columns
-        named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
-        table, positional, named = one_y(layer.data.columns, layer.positional, named)
-        stacked = AoG.mapping(positional...; named...)
-        layer = AoG.Layer(layer.transformation, AoG.Columns(table), stacked.positional, stacked.named)
-    end
+# With `points`, the code of the layer's points, and items of a workspace, the workspace computes the
+# result (`Analysis`).
+function resolve(layer::AoG.Layer, items, axes, points=nothing)
+    named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
     found = steps(layer.transformation)
     computes(step) = step isa Union{Fit,Aggregate}
-    any(computes, found) || return layer
+    if !any(computes, found)
+        layer.data isa AoG.Columns || return layer
+        table, positional, named = one_y(layer.data.columns, layer.positional, named)
+        stacked = AoG.mapping(positional...; named...)
+        return AoG.Layer(layer.transformation, AoG.Columns(table), stacked.positional, stacked.named)
+    end
     computes(first(found)) && count(computes, found) == 1 ||
         error("A fit or an aggregate takes the points of its line before any visual, as in `fit(...) * visual(Lines)`")
     layer.data isa AoG.Columns || error("A fit or an aggregate needs points: a mapping of x and y, such as mapping(:x, :y)")
-    named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
-    setting(r, key, default) = get(get(axes, r, (;)), key, default)
-    columns = Tables.columntable(layer.data.columns)
-    inside = trues(length(first(columns)))
-    for (position, r) in enumerate((:x, :y))
-        limits = setting(r, :limits, nothing)
-        (limits === nothing || position > length(layer.positional)) && continue
-        # A bound of `nothing` is Makie's own, so it removes no points.
-        low, high = something(first(limits), -Inf), something(last(limits), Inf)
-        value = layer.positional[position]
-        inside .&= [v isa Real && low <= v <= high for v in category.(Ref(value), columns[column(value)])]
-    end
-    # AlgebraOfGraphics draws no plot without points.
-    isempty(inside) || any(inside) || error("The limits of the axes remove every point: " *
-        join(("$r = $(setting(r, :limits, nothing))" for r in (:x, :y) if setting(r, :limits, nothing) !== nothing), ", "))
-    table = map(values -> values[inside], columns)
-    result = Result(first(found), table, layer.positional, named, items; scale=setting(:y, :scale, identity))
+    analysis = Analysis(first(found), layer.positional, named, axes, points)
+    workspace = items isa Selection ? getfield(items.data, :workspace) : nothing
+    result = points === nothing || workspace === nothing ? analysis(layer.data.columns, items) :
+        computed(analysis, layer.data.columns, items, workspace)
     after = found[2:end]
     return isempty(after) ? result : result * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
 end
+
+# A fit or an aggregate of a layer's points, with what it needs to compute again: the values the
+# layer maps, the settings of its axes, and the code of its points.
+struct Analysis
+    step::Union{Fit,Aggregate}
+    positional::Vector{Any}
+    named::Vector{Pair{Symbol,Any}}
+    axes::Any
+    points::Union{Points,Nothing}
+end
+
+setting(analysis::Analysis, r, key, default) = get(get(analysis.axes, r, (;)), key, default)
+
+# The points of `columns` that the analysis takes, with their mapping: several values of y as one
+# y, inside the limits of the x and y scales.
+function taken(analysis::Analysis, columns)
+    table, positional, named = one_y(columns, analysis.positional, analysis.named)
+    columns = Tables.columntable(table)
+    inside = trues(length(first(columns)))
+    for (position, r) in enumerate((:x, :y))
+        limits = setting(analysis, r, :limits, nothing)
+        (limits === nothing || position > length(positional)) && continue
+        # A bound of `nothing` is Makie's own, so it removes no points.
+        low, high = something(first(limits), -Inf), something(last(limits), Inf)
+        value = positional[position]
+        inside .&= [v isa Real && low <= v <= high for v in category.(Ref(value), columns[column(value)])]
+    end
+    # AlgebraOfGraphics draws no plot without points.
+    isempty(inside) || any(inside) || error("The limits of the axes remove every point: " * join(
+        ("$r = $(setting(analysis, r, :limits, nothing))" for r in (:x, :y) if setting(analysis, r, :limits, nothing) !== nothing), ", "))
+    return map(values -> values[inside], columns), positional, named
+end
+
+# The result of the analysis over the points of `columns`, whose items are `items`.
+function (analysis::Analysis)(columns, items)::Result
+    table, positional, named = taken(analysis, columns)
+    return Result(analysis.step, table, positional, named, items; scale=setting(analysis, :y, :scale, identity))
+end
+
+# The result of the analysis in the workspace of `items`: one computed item for each group of the
+# points, such as each chip, which the workspace computes again when an item of the group changes.
+# Its id is the code that gives it (`id` below), so a change of the plot's visuals, palette or
+# legend computes nothing again.
+# TODO: a group whose points the plot no longer has, or an analysis whose code changed, stays in the
+# workspace until it closes.
+function computed(analysis::Analysis, columns, items::Selection, workspace)::Result
+    table, positional, named = taken(analysis, columns)
+    roles = grouping(named, table)
+    by = unique(Symbol[column(v) for (_, v) in roles])
+    keys = [NamedTuple{Tuple(by)}(Tuple(table[k][row] for k in by)) for row in eachindex(table[ITEM])]
+    values = map(unique(keys)) do key
+        ids = unique(table[ITEM][[row for row in eachindex(keys) if isequal(keys[row], key)]])
+        value = Workspace.Computed(analysis, items[findall(in(ids), items.id)]; group=key)
+        push!(workspace, value)
+        return value
+    end
+    groups = reduce(vcat, collect(select(workspace, id.(values)).data); init=Group[])
+    return Result(analysis.step, groups, positional, roles; scale=setting(analysis, :y, :scale, identity))
+end
+
+# The analysis of one group of points, as the workspace computes it: the groups of the result over
+# the points of `items` in `group`. A fit gives one group, whose parameters are its metadata.
+function (analysis::Analysis)(items::Selection; group::NamedTuple)
+    table, positional, named = taken(analysis, Tables.columntable(analysis.points.table(items)))
+    rows = [row for row in eachindex(table[ITEM]) if all(k -> isequal(table[k][row], group[k]), keys(group))]
+    result = Result(analysis.step, map(values -> values[rows], table), positional, named, items;
+        scale=setting(analysis, :y, :scale, identity))
+    return analysis.step isa Fit ? only(result) : collect(result)
+end
+
+Workspace.function_name(analysis::Analysis) = analysis.step isa Fit ? "fit" : "aggregate"
+
+# The code that gives the result of a group, such as
+# `fit(line, (a = 1,)) of :V, :I by :Chip; y scale log10 for :Chip = "A"`: the step, the values
+# mapped to x and y, the values that form the groups, the limits and the y scale, and the group.
+# Titles, transformations and visuals are left out.
+# TODO: the code of a function the step calls, such as the curve of a fit, is not part of it yet
+# (plans/processing.md).
+function DataBrowserAPI.id(value::Workspace.Computed{Analysis})
+    analysis, group = value.f, value.settings.group
+    texts = analysis.points.texts
+    text(v) = v isa AbstractVector ? "[" * join(text.(v), ", ") * "]" : get(texts, column(v), repr(column(v)))
+    by = sort(unique([text(v) for (_, v) in analysis.named]))
+    settings = ["$r limits $(repr(limits))" for r in (:x, :y) for limits in (setting(analysis, r, :limits, nothing),) if limits !== nothing]
+    scale = setting(analysis, :y, :scale, identity)
+    scale === identity || push!(settings, "y scale $scale")
+    return string(analysis.points.step, " of ", join(text.(analysis.positional), ", "),
+        isempty(by) ? "" : " by " * join(by, ", "), isempty(settings) ? "" : "; " * join(settings, ", "),
+        isempty(group) ? "" : " for " * join(("$(get(texts, k, repr(k))) = $(repr(v))" for (k, v) in pairs(group)), ", "))
+end
+
 # The title of a value of `mapping`: the title after `=>`, as in `:I => "V > 0"` and
 # `:I => abs => "V < 0"`, or the column's name.
 title(value) = !(value isa Pair) ? string(column(value)) : last(value) isa AbstractString ? last(value) :
@@ -581,7 +663,7 @@ function one_y(table, positional::Vector, named::Vector)
     # TODO: a label of y from the values' own labels.
     return stacked, [positional[1], :y => ""], named
 end
-resolve(layers::AoG.Layers, items, axes) = foldl(+, (resolve(layer, items, axes) for layer in layers.layers))
+resolve(layers::AoG.Layers, items, axes, points=nothing) = foldl(+, (resolve(layer, items, axes, points) for layer in layers.layers))
 
 # A line that reads the values of a result, drawn over its groups: `table` holds the values the
 # line's mapping reads, one row for each group, and the line takes the roles of the result's points,

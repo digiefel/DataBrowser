@@ -23,7 +23,7 @@ function Result(aggregate::Aggregate, table, positional::Vector, named::Vector, 
     length(positional) == 2 || error("aggregate needs the points to map two positional values, x and y")
     columns = Tables.columntable(table)
     members = haskey(columns, ITEM) ? Workspace.items(source) : AbstractDataItem[]
-    roles = [role => value for (role, value) in named if !all(v -> v isa Number || ismissing(v), columns[column(value)])]
+    roles = grouping(named, columns)
     x, y = column.(positional)
     keyed = unique([x; Symbol[column(v) for (_, v) in roles]])
     keys = [NamedTuple{Tuple(keyed)}(Tuple(columns[k][row] for k in keyed)) for row in eachindex(columns[x])]
@@ -36,5 +36,9 @@ function Result(aggregate::Aggregate, table, positional::Vector, named::Vector, 
         Group(name, Dict{Symbol,Any}(pairs(key)..., (names .=> values)..., :count => length(rows)),
             NamedTuple{(:x, names...)}(([key[x]], ([v] for v in values)...)), taken)
     end
-    return Result(groups, positional, roles, :Scatter, scale, names)
+    return Result(aggregate, groups, positional, roles; scale)
 end
+
+# The result of an aggregate already done, as `groups`, drawn as points.
+Result(aggregate::Aggregate, groups::Vector{Group}, positional::Vector, roles::Vector; scale=identity) =
+    Result(groups, positional, roles, :Scatter, scale, function_name.(aggregate.functions))

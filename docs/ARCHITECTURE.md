@@ -176,7 +176,8 @@ item it reads is processed, and again whenever one of them becomes stale. A comp
 item has no `analyze`; the named single values of its result are its metadata. When a source item
 changes, its items are removed and added again with new keys: a computed item that read one waits,
 and reads the new item with the same id. Computed results stay in memory and are not saved in the
-cache.
+cache. A plot's fit adds one computed item for each group of its points; the id of the item is the
+code that gives its result, so a plot drawn again with other visuals finds its results unchanged.
 
 Workers run project code in the latest world, so a method defined after the workspace opened is
 used. Each stage has a code revision for each type it runs for: a content hash of the code it can

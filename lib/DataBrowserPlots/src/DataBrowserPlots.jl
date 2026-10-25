@@ -8,7 +8,7 @@ GLMakie, and are part of the browser once GLMakie is loaded: `using DataBrowser,
 """
 module DataBrowserPlots
 
-import DataBrowserAPI: @timed_dbg
+import DataBrowserAPI: @timed_dbg, metadata_value
 using DataBrowserAPI: AbstractDataItem, id, metadata
 import DataBrowserCore.Workspace
 using DataBrowserCore: Group, Selection

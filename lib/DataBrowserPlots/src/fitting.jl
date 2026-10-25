@@ -9,6 +9,10 @@ struct Parameter
     error::Float64
 end
 
+# A parameter is its estimate in the metadata of a fit's group, so that `Rc < 10` finds it.
+# TODO: the error is left out of the query; keep it next to the estimate (plans/fitting.md).
+metadata_value(parameter::Parameter) = parameter.value
+
 function Base.show(io::IO, parameter::Parameter)
     value, error = parameter.value, parameter.error
     # Two significant digits of the error, and the estimate to the same place.
@@ -142,15 +146,23 @@ category(value, raw) = !(value isa Pair) ? raw :
     last(value) isa Function ? last(value)(raw) :
     last(value) isa Pair && first(last(value)) isa Function ? first(last(value))(raw) : raw
 
+# The roles of `named` that divide the points of `columns` into groups: the categorical ones. A role
+# of numbers, such as a continuous color, does not divide the points.
+# TODO: a role given as a formula, such as `color=chip(:folder)`, keeps its group's value under the
+# formula's text, so a label reads it as `:var"chip(:folder)"`.
+grouping(named::Vector, columns) =
+    Pair{Symbol,Any}[role => value for (role, value) in named if !all(v -> v isa Number || ismissing(v), columns[column(value)])]
+
 # Fit `curve` to the points of `table`, whose columns `positional` maps to x and y, once for each
-# group of the categorical roles in `named`. A role of numbers, such as a continuous color, does
-# not divide the points.
+# group of the categorical roles in `named`.
 function fit_result(curve, starts::NamedTuple, table, positional::Vector, named::Vector; options...)::Result
     length(positional) == 2 || error("fit needs the points to map two positional values, x and y")
     columns = Tables.columntable(table)
-    # TODO: a role given as a formula, such as `color=chip(:folder)`, keeps its group's value
-    # under the formula's text, so a label reads it as `:var"chip(:folder)"`.
-    roles = [role => value for (role, value) in named if !all(v -> v isa Number || ismissing(v), columns[column(value)])]
+    roles = grouping(named, columns)
     groups = fit_groups(curve, starts, columns, column.(positional)..., unique(Symbol[column(v) for (_, v) in roles]); options...)
     return Result(groups, positional, roles, :Lines)
 end
+
+# The result of fits already done, as `groups`, drawn as lines.
+Result(::Fit, groups::Vector{Group}, positional::Vector, roles::Vector; scale=identity) =
+    Result(groups, positional, roles, :Lines)

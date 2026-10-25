@@ -228,6 +228,13 @@ of over the fitted points. With `data(table)` in the header, `fit` takes the row
 The visual draws the fit on the axes of the points and in the roles of its group, so the group's
 legend entry shows its points and its curve. Without a visual, a fit is drawn with `Lines`.
 
+When the plot draws items of a workspace, each group of a `fit` or an `aggregate` is an item of the
+workspace, under `Computed`, and a fit's parameters are its metadata. The workspace computes a group
+again when one of its items changes, or when the code that gives the result changes: the `fit` or
+`aggregate` call, the values mapped to x, y and the roles that form the groups, and the limits and
+function of the axes. A change of visuals, palette or legend draws the result again without
+computing it.
+
 `aggregate` applies functions to the y values of the points that share x and their groups: it
 splits the points into one group for each x and each value of the categorical roles, such as
 `color`, and applies each function to the y values of each group. A visual draws the values at
@@ -528,7 +535,7 @@ function tabulate(layer, column; chosen=value -> !isempty(paths(value)))
         for t in order)
     columns = [Expr(:kw, names[t], column(values[t])) for t in order]
     rewritten = map_mapped(value -> QuoteNode(names[source_text(value)]), layer; chosen)
-    return Expr(:call, Workspace.unnest, Expr(:parameters, columns...)), rewritten
+    return Expr(:call, Workspace.unnest, Expr(:parameters, columns...)), rewritten, names
 end
 
 # One layer as a function of the input: each value its `mapping` names becomes a column of `unnest`
@@ -539,20 +546,40 @@ end
 # for the analyses: they take the points inside the limits, after the scale's function.
 const AXES = Symbol("#axes")
 
+# The points of a layer with a fit or an aggregate, as code, so that the workspace can compute the
+# step again when the items change: the code of the step, such as `fit(line, (a = 1,))`, the code of
+# the value of each column, such as `:data.V` for `:V`, and the function that gives the points of a
+# selection of items.
+struct Points
+    step::String
+    texts::Dict{Symbol,String}
+    table::Function
+end
+
+# The `Points` of a layer, as an expression of the input, or `nothing` without a fit or an aggregate.
+# The code of the step is its text without line numbers, so a new line in it changes nothing.
+function points(layer, table, names, input::Symbol)
+    step = something(find_call(layer, :fit), find_call(layer, :aggregate), Some(nothing))
+    step === nothing && return nothing
+    texts = (:($(QuoteNode(name)) => $text) for (text, name) in names)
+    return :($Points($(string(Base.remove_linenums!(copy(step)))), Dict{Symbol,String}($(texts...)), $input -> $table))
+end
+
 function declare_layer(layer, input::Symbol)
     with_items(table, items) = Expr(table.head, table.args[1], Expr(:parameters, table.args[2].args..., :($item_ids($items)...)))
     own = find_call(layer, :data)
     if own === nothing
         tabulated = tabulate(layer, value -> per_item(value, input))
         tabulated === nothing && return :($resolve($layer, nothing, $AXES))
-        table, rewritten = tabulated
-        return :($resolve(data($(with_items(table, input))) * $rewritten, $input, $AXES))
+        table, rewritten, names = tabulated
+        table = with_items(table, input)
+        return :($resolve(data($table) * $rewritten, $input, $AXES, $(points(layer, table, names, input))))
     end
     value, items = gensym("data"), gensym("items")
     tabulated = tabulate(layer, v -> per_item(v, items))
     tabulated === nothing && return :($resolve($layer, nothing, $AXES))
     plain = replace_call(layer, own, :(data($value)))
-    table, rewritten = tabulated
+    table, rewritten, _ = tabulated
     of_items = replace_call(rewritten, find_call(rewritten, :data), :(data($(with_items(table, items)))))
     return :(let $value = $(own.args[2])
         $value isa AbstractVector{<:$AbstractDataItem} ?
