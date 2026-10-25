@@ -178,6 +178,8 @@ changes, its items are removed and added again with new keys: a computed item th
 and reads the new item with the same id. Computed results stay in memory and are not saved in the
 cache. A plot's fit adds one computed item for each group of its points; the id of the item is the
 code that gives its result, so a plot drawn again with other visuals finds its results unchanged.
+A window that passes its value through a function adds one computed item for each item of its
+input, and removes them when no window uses them any more.
 
 Workers run project code in the latest world, so a method defined after the workspace opened is
 used. Each stage has a code revision for each type it runs for: a content hash of the code it can

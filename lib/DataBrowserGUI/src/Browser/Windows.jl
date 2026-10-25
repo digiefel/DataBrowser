@@ -102,7 +102,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), nothing, nothing, "", "", "")
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], nothing, nothing, "", "", "")
     push!(state.windows, window)
     return window
 end
@@ -113,6 +113,7 @@ again.
 """
 function close_window!(state::BrowserState, window::Window)::Nothing
     close(window.visualizer)
+    computed!(state, window, String[])
     filter!(other -> other !== window, state.windows)
     for other in state.windows
         input = other.input
@@ -160,8 +161,13 @@ end
 Pass the value of `window` through the function named by `transform`, a `GlobalRef`, before the
 visualizer shows it; `nothing` shows the value unchanged.
 
-The function receives the value of the input as it is, for example all selected items, and returns
-the value to show.
+The function receives each item of the input, as `process` receives it, and returns the value to
+show for it. Each result is an item of the workspace, under "Computed", computed in the background
+and computed again when the item or the code of the function changes. The visualizer shows the
+selection of these items, whose data are the results.
+
+A value of the input that is not a selection of items, such as the rows a table passes on, is
+passed to the function as it is.
 """
 function transform!(window::Window, transform::Union{Nothing,GlobalRef})::Nothing
     window.transform = transform
@@ -217,7 +223,9 @@ function refresh!(state::BrowserState, window::Window)::Nothing
     input isa WindowOutput && refresh!(state, source(input, state))
     # TODO: the transform runs in the frame, as loading the items does. Run both in the background,
     # and show the previous value as not final meanwhile.
-    current = (stamp(input, state), window.transform, code(window))
+    workspace = state.workspace::Workspace.Workspace
+    current = (stamp(input, state), window.transform, code(window),
+        Workspace.revision(workspace, _items_for_ids(state, window.computed)))
     current == window.stamp && return nothing
     window.stamp = current
     visualizer = window.visualizer
@@ -225,10 +233,23 @@ function refresh!(state::BrowserState, window::Window)::Nothing
     try
         window.value = value(input, state)
         transform = window.transform
+        transform === nothing && computed!(state, window, String[])
         if transform !== nothing
             try
                 f = Base.invokelatest(getglobal, transform.mod, transform.name)
-                window.value = Base.invokelatest(f, window.value)
+                # TODO: a function of the whole selection, such as a mean over items, gets one
+                # computed item for it: the function's methods tell which (`f(::Selection)`).
+                # TODO: an item that fails hides the results of the others; show its error alone.
+                # TODO: the rows a table passes on become a selection, and go through `f` as items.
+                if window.value isa Workspace.Selection
+                    values = [Workspace.Computed(f, item) for item in Workspace.items(window.value)]
+                    foreach(value -> push!(workspace, value), values)
+                    computed!(state, window, id.(values))
+                    window.value = Workspace.select(workspace, window.computed)
+                else
+                    computed!(state, window, String[])
+                    window.value = Base.invokelatest(f, window.value)
+                end
             catch err
                 window.error, _ = DataBrowserAPI.report_error(
                     "Window: $(transform.name) failed", err, catch_backtrace())
@@ -247,5 +268,14 @@ function refresh!(state::BrowserState, window::Window)::Nothing
         window.error, _ = DataBrowserAPI.report_error(
             "Window: $(label(visualizer)) could not show its value", err, catch_backtrace())
     end
+    return nothing
+end
+
+# Keep `ids` as the computed items of `window`, and remove from the workspace those it kept before
+# that no window keeps now.
+function computed!(state::BrowserState, window::Window, ids::Vector{String})::Nothing
+    before, window.computed = window.computed, ids
+    kept = reduce(union, (other.computed for other in state.windows); init=String[])
+    foreach(id -> delete!(state.workspace::Workspace.Workspace, id), setdiff(before, kept))
     return nothing
 end

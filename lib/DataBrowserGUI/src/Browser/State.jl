@@ -110,6 +110,8 @@ mutable struct Window
     transform::Union{Nothing,GlobalRef}
     # The world and the code revision of the transform when they were last read.
     code::Tuple{UInt,String}
+    # The ids of the computed items the transform added to the workspace: one for each item.
+    computed::Vector{String}
     # The value the window shows, and what tells whether the input gives another value now.
     # `stamp` is `nothing` until the visualizer is given the value.
     value::Any

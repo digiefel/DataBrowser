@@ -591,8 +591,10 @@ the table as a first-class view.
     ([plot-editor.md](plot-editor.md)).
   - [ ] A draggable border between the figure and the code.
 - [x] Let a window pass its value through a function of the project, chosen by name in the
-  header after "through". The function receives the window's value as it is, for example all
-  selected items. The window computes again when the function's code changes. A "Value" visualizer shows any value as the REPL prints it.
+  header after "through". The function receives each item of the window's value, and each
+  result is a computed item of the workspace, computed in the background and again when the item
+  or the function's code changes. A value that is not a selection of items, such as the rows a
+  table passes on, goes to the function as it is. A "Value" visualizer shows any value as the REPL prints it.
 - [ ] Compute a window's value in the background, and show the previous value as not final.
 - [x] Plots drawn with ImPlot, which draw at once and compile nothing: "Line plot" of a vector, or
   of `x => y` or `(x, y)`; "Histogram" of a vector; "Bar chart" of named numbers. Each visualizer
