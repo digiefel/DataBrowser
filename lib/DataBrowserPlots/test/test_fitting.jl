@@ -73,3 +73,21 @@ half_range(values) = (maximum(values) - minimum(values)) / 2
     end
     @test Tuple.(only(plots(Lines, figure(plot, select(devices))))[1][]) == [(5.0, 2.0), (10.0, 2.0)]
 end
+
+deviation(values) = sqrt(sum(abs2, values .- average(values)) / (length(values) - 1))
+
+@testset "on a log axis, an aggregate takes the logarithms and draws its values back on the axis" begin
+    rows = [(x=x, y=y) for x in (1.0, 2.0) for y in (1.0, 100.0)]
+    plot = @plot data(rows) * mapping(:x, :y) begin
+        spread = aggregate(average, deviation)
+        mapping(y = spread.average) * visual(Lines)
+        mapping(spread.x, spread.average, spread.deviation) * visual(Errorbars)
+        scales(y = (; scale = log10))
+    end
+    drawn = figure(plot)
+    lines = only(p for p in axis(drawn).scene.plots if p isa Lines)
+    @test last.(lines[1][]) ≈ [10.0, 10.0]
+    bars = only(p for p in axis(drawn).scene.plots if p isa Errorbars)
+    # One standard deviation of the logarithms, √2 decades, on each side of 10.
+    @test collect(first(bars[1][])) ≈ [1.0, 10.0, 10.0 - 10^(1 - √2), 10^(1 + √2) - 10.0]
+end

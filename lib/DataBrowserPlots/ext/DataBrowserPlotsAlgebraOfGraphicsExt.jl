@@ -267,7 +267,6 @@ const ROLE_SCALES = Dict(:x => :X, :y => :Y, :color => :Color, :marker => :Marke
 # A step that runs before the analyses of a layer and removes its points outside the limits of x and
 # y, as `limits` of their scales does. `limits[i]` are those of position `i`, or `nothing`.
 # TODO: positions that a plot type shows on another axis, such as the first of a horizontal BarPlot.
-# TODO: the points that a fit line fits; it is fitted before its layer is drawn.
 struct WithinLimits
     limits::Vector{Any}
 end
@@ -392,6 +391,15 @@ function makie_theme(theme::PlotTheme)::AoG.Makie.Theme
     return merge(AoG.Makie.Theme(; pairs(theme.settings)...), base)
 end
 
+# The function that places a value computed after `scale`, the function of an axis, back on that
+# axis, such as `exp10` for `log10`.
+function unscaled(scale)
+    scale === identity && return identity
+    inverse = AoG.Makie.inverse_transform(scale)
+    inverse === nothing && error("The scale's function $scale has no inverse, so the values computed after it cannot be drawn")
+    return inverse
+end
+
 function Base.:*(result::Result, layer::AoG.Layer)
     layer.transformation isa AoG.Visual ||
         error("A result is drawn with a visual, such as `contacts * visual(Lines)`")
@@ -409,10 +417,12 @@ function Base.:*(result::Result, layer::AoG.Layer)
     roles = [(role, value, column(value)) for (role, value) in getfield(result, :named) if role in shown]
     drawn = column.(positional)
     columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [drawn; [c for (_, _, c) in roles]])
+    # A value computed after the y scale's function, such as an aggregate's `mean`, is placed back.
+    y = keys(data)[2] in getfield(result, :scaled) ? unscaled(getfield(result, :scale)) : identity
     for group in getfield(result, :groups)
         values = item_data(group)
         for (name, value) in zip(drawn, values)
-            append!(columns[name], value)
+            append!(columns[name], name === drawn[2] ? y.(value) : value)
         end
         for (_, _, c) in unique(r -> r[3], roles)
             append!(columns[c], fill(metadata(group)[c], length(first(values))))
@@ -449,9 +459,10 @@ steps(transformation::ComposedFunction) = [steps(transformation.inner); steps(tr
 steps(transformation) = transformation === identity ? Any[] : Any[transformation]
 
 # A layer whose first step is a fit or an aggregate: its result over the layer's points, drawn by the
-# steps after it. `items` are the items whose ids the points' table holds. A layer with several
-# values of y draws them as one y. Other layers stay as they are.
-function resolve(layer::AoG.Layer, items)
+# steps after it. `items` are the items whose ids the points' table holds. The result takes the
+# points inside the limits of the x and y scales in `axes`, and the function of the y scale, such as
+# `log10`. A layer with several values of y draws them as one y. Other layers stay as they are.
+function resolve(layer::AoG.Layer, items, axes)
     if layer.data isa AoG.Columns
         named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
         table, positional, named = one_y(layer.data.columns, layer.positional, named)
@@ -465,7 +476,19 @@ function resolve(layer::AoG.Layer, items)
         error("A fit or an aggregate takes the points of its line before any visual, as in `fit(...) * visual(Lines)`")
     layer.data isa AoG.Columns || error("A fit or an aggregate needs points: a mapping of x and y, such as mapping(:x, :y)")
     named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
-    result = Result(first(found), layer.data.columns, layer.positional, named, items)
+    setting(r, key, default) = get(get(axes, r, (;)), key, default)
+    columns = Tables.columntable(layer.data.columns)
+    inside = trues(length(first(columns)))
+    for (position, r) in enumerate((:x, :y))
+        limits = setting(r, :limits, nothing)
+        (limits === nothing || position > length(layer.positional)) && continue
+        # A bound of `nothing` is Makie's own, so it removes no points.
+        low, high = something(first(limits), -Inf), something(last(limits), Inf)
+        value = layer.positional[position]
+        inside .&= [v isa Real && low <= v <= high for v in category.(Ref(value), columns[column(value)])]
+    end
+    table = map(values -> values[inside], columns)
+    result = Result(first(found), table, layer.positional, named, items; scale=setting(:y, :scale, identity))
     after = found[2:end]
     return isempty(after) ? result : result * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
 end
@@ -491,7 +514,7 @@ function one_y(table, positional::Vector, named::Vector)
     # TODO: a label of y from the values' own labels.
     return stacked, [positional[1], :y => ""], named
 end
-resolve(layers::AoG.Layers, items) = foldl(+, (resolve(layer, items) for layer in layers.layers))
+resolve(layers::AoG.Layers, items, axes) = foldl(+, (resolve(layer, items, axes) for layer in layers.layers))
 
 # A line that reads the values of a result, drawn over its groups: `table` holds the values the
 # line's mapping reads, one row for each group, and the line takes the roles of the result's points,
@@ -504,8 +527,37 @@ function over_result(result::Result, table, layer)
     x = first(getfield(result, :positional))
     xs = haskey(table, column(x)) ? [] : [column(x) => [metadata(group)[column(x)] for group in groups]]
     with_x(l) = first(l.positional, 1) == [nothing] ? AoG.Layer(l.transformation, l.data, [x; l.positional[2:end]], l.named) : l
-    layer = layer isa AoG.Layers ? AoG.Layers(map(with_x, layer.layers)) : with_x(layer)
-    return AoG.data((; pairs(table)..., roles..., xs...)) * AoG.mapping(; named...) * layer
+    # The values computed after the y scale's function, such as an aggregate's `mean` and `std`,
+    # are placed back on the axis by what the visual draws with them: a y value is a position, and
+    # the third value of `Errorbars` a length on each side of y, drawn as the distances to the ends.
+    # A value read by index, as `spread.extrema[1]`, is one too; a value the line computes itself, as
+    # `10^spread.mean`, is drawn as it is.
+    scale = getfield(result, :scale)
+    # The column of `spread.extrema[1]` is named `(:extrema)[1]`.
+    is_computed(name) = any(n -> occursin(Regex("^\\(?:?\\Q$n\\E\\)?(\\[.*\\])?\$"), string(name)), getfield(result, :scaled))
+    back = unscaled(scale)
+    placed = Dict{Symbol,Any}()
+    function on_axis(l)
+        bars = any(v -> v isa AoG.Visual && v.plottype <: AoG.Makie.Errorbars, steps(l.transformation))
+        positions = map(collect(enumerate(l.positional))) do (index, value)
+            (value === nothing || !is_computed(column(value))) && return [value]
+            index == 1 && error("$(column(value)) is computed after the scale of y, so it is drawn on y")
+            name, label = column(value), value isa Pair ? last(value) : string(column(value))
+            if bars && index >= 3
+                center = column(l.positional[2])
+                m = is_computed(center) ? table[center] : scaled.(scale, table[center])
+                low, high = Symbol(name, "#low"), Symbol(name, "#high")
+                placed[low] = back.(m) .- back.(m .- table[name])
+                placed[high] = back.(m .+ table[name]) .- back.(m)
+                return [low => label, high => label]
+            end
+            placed[Symbol(name, "#placed")] = back.(table[name])
+            return [Symbol(name, "#placed") => label]
+        end
+        return AoG.Layer(l.transformation, l.data, reduce(vcat, positions; init=Any[]), l.named)
+    end
+    layer = layer isa AoG.Layers ? AoG.Layers(map(on_axis ∘ with_x, layer.layers)) : on_axis(with_x(layer))
+    return AoG.data((; pairs(table)..., roles..., xs..., pairs(placed)...)) * AoG.mapping(; named...) * layer
 end
 
 # A result without a visual is drawn with its own.

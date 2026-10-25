@@ -20,11 +20,12 @@ function Base.show(io::IO, parameter::Parameter)
 end
 
 # The least-squares estimates of the parameters named in `starts`, each with one standard error
-# from the covariance, scaled by the residuals.
+# from the covariance, scaled by the residuals. The residuals are measured after `scale`, the
+# function of the y axis, such as `log10`.
 # TODO: known errors, weights, bounds and fixed parameters (plans/fitting.md).
-function solve_fit(curve, x::Vector{Float64}, y::Vector{Float64}, starts::NamedTuple)::NamedTuple
+function solve_fit(curve, x::Vector{Float64}, y::Vector{Float64}, starts::NamedTuple; scale=identity)::NamedTuple
     names = keys(starts)
-    residual(p, _) = curve.(x; NamedTuple{names}(Tuple(p))...) .- y
+    residual(p, _) = scale.(curve.(x; NamedTuple{names}(Tuple(p))...)) .- scale.(y)
     problem = NonlinearLeastSquaresProblem(residual, collect(Float64, values(starts)))
     solution = solve(problem, LevenbergMarquardt())
     SciMLBase.successful_retcode(solution) || error("the fit did not converge ($(solution.retcode))")
@@ -40,18 +41,19 @@ end
 # columns. Each fit is a `Group`: its metadata holds the group's values and the parameters, its data
 # is the curve, as columns `x` and `y`, and its members are the items whose rows it fits. `members`
 # are those items, and the column `item` holds each row's item id.
-# The curve is drawn over the fitted x values, or over `xlim`.
+# The curve is drawn over the fitted x values, or over `xlim`. `scale` is the function of the y axis;
+# a point it has no value for, such as a negative y of `log10`, is left out.
 function fit_groups(curve, starts::NamedTuple, rows, x::Symbol, y::Symbol, group::Vector{Symbol};
-        members=AbstractDataItem[], item=nothing, xlim=nothing)::Vector{Group}
+        members=AbstractDataItem[], item=nothing, xlim=nothing, scale=identity)::Vector{Group}
     table = Tables.columntable(rows)
     keys = [NamedTuple{Tuple(group)}(Tuple(table[g][row] for g in group)) for row in eachindex(table[x])]
     return map(unique(keys)) do key
         rows = [row for row in eachindex(keys) if keys[row] == key &&
-            table[x][row] isa Real && table[y][row] isa Real && isfinite(table[x][row]) && isfinite(table[y][row])]
+            table[x][row] isa Real && table[y][row] isa Real && isfinite(table[x][row]) && isfinite(scaled(scale, table[y][row]))]
         xs, ys = Float64.(table[x][rows]), Float64.(table[y][rows])
         name = string(nameof(curve), isempty(key) ? "" : " for " * join(("$k = $v" for (k, v) in pairs(key)), ", "))
         parameters = try
-            solve_fit(curve, xs, ys, starts)
+            solve_fit(curve, xs, ys, starts; scale)
         catch err
             error("Fitting $name: $(sprint(showerror, err))")
         end
@@ -82,7 +84,14 @@ struct Result <: AbstractVector{Group}
     named::Vector{Pair{Symbol,Any}}
     # The plot type it is drawn with when no visual is given, a name in Makie.
     plottype::Symbol
+    # The function of the y axis, such as `log10`, that the values named `scaled` were computed
+    # after, such as an aggregate's `mean`. Drawing places them back on the axis.
+    # TODO: Result moves to Core as a general record of what a function produced; this belongs to
+    # the plot that computed it, not to the record.
+    scale::Any
+    scaled::Vector{Symbol}
 end
+Result(groups, positional, named, plottype) = Result(groups, positional, named, plottype, identity, Symbol[])
 Base.size(result::Result) = size(getfield(result, :groups))
 Base.getindex(result::Result, index::Int) = getfield(result, :groups)[index]
 # A value of each group's metadata, such as `contacts.Rc` or `spread.count`: one for each group.
@@ -109,11 +118,19 @@ item_ids(selection::Selection) = NamedTuple{(ITEM,)}((selection.id,))
 item_ids(_) = (;)
 
 # The fit's result over the points of a layer: `table`, whose columns `positional` and `named`
-# map. Its groups' members are the items of `source` whose rows they fit.
-function Result(fit::Fit, table, positional::Vector, named::Vector, source)::Result
+# map. Its groups' members are the items of `source` whose rows they fit. `scale` is the function of
+# the y axis, after which the residuals are measured.
+function Result(fit::Fit, table, positional::Vector, named::Vector, source; scale=identity)::Result
     columns = Tables.columntable(table)
     members = haskey(columns, ITEM) ? (; members=Workspace.items(source), item=ITEM) : (;)
-    return fit_result(fit.curve, fit.starts, columns, positional, named; members..., fit.options...)
+    return fit_result(fit.curve, fit.starts, columns, positional, named; members..., scale, fit.options...)
+end
+
+# The value of `scale` at `value`, or `NaN` where it has none, such as `log10` of a negative value.
+scaled(scale, value) = try
+    scale(value)
+catch err
+    err isa DomainError ? NaN : rethrow()
 end
 
 # The column a value of `mapping` names: `:R` in `:R`, in `:R => "R (Ω)"` and in `:R => f => "R"`.

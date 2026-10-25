@@ -8,7 +8,7 @@ struct Declaration
 end
 
 # A line of a plot as a layer of the header, `inherit(header, line)`, and a layer with its fit done
-# over its points, `resolve(layer, items)`. The AlgebraOfGraphics extension defines them.
+# over its points, `resolve(layer, items, axes)`. The AlgebraOfGraphics extension defines them.
 function inherit end
 function resolve end
 
@@ -232,8 +232,16 @@ with `Scatter`.
 A named result reads the values of its groups by name: `spread.count` is the count of each group,
 and `contacts.Rc` the parameter `Rc` of each fit. A line that reads them, such as
 `mapping(spread.x, spread.count) * visual(Lines)`, draws one point for each group, in the roles of
-the result's points. The functions take the values
-as the line maps them, before the scale's function, such as `log10`.
+the result's points.
+
+The analyses take the values after the function of the y scale, such as `log10`, as
+`expectation()` does: on a log axis, `aggregate(mean)` gives the mean of the logarithms, and `fit`
+measures how far its curve is from the points in decades. A result holds the values as its functions
+give them: with `scale = log10`, `\$(spread.mean)` in a legend text is a number of decades, and
+`\$(10^spread.mean)` is the value in the units of the data. Drawing places them back on the axis by
+what the visual draws: a y value as a position, and the third value of `Errorbars` as a length on
+each side of y in decades. A value that a line computes itself, such as `10^spread.mean`, is drawn as
+it is.
 
 A line `name = value` gives a name to the value of the line for the other lines, such as a fit
 drawn twice:
@@ -262,7 +270,8 @@ The scales of `x` and `y` set their axes:
 
 - `label` names the axis.
 - `scale` is a function, such as `log10`, that applies to the values before the analyses run, so it
-  can change their results: the mean of `expectation()` is then taken of the logarithms.
+  can change their results: the mean of `expectation()` or `aggregate(mean)` is then taken of the
+  logarithms.
 - `limits` are the lowest and highest value shown. The values outside them are removed before the
   analyses run, so they can change their results too.
 - `reversed = true` draws the axis from the highest value to the lowest.
@@ -337,6 +346,10 @@ macro plot(header, block)
         for (name, value) in (statement.args for statement in statements)]
     uses(block, :fit) && pushfirst!(statements, :(fit = $Fit))
     uses(block, :aggregate) && pushfirst!(statements, :(aggregate = $Aggregate))
+    # The settings of x and y in the `scales` lines, which the analyses take.
+    axes = [Expr(:kw, key, value) for line in settings if line.args[1] === :scales
+        for (key, value) in last(call_arguments(line)) if key in (:x, :y)]
+    pushfirst!(statements, :($AXES = $(Expr(:tuple, Expr(:parameters, axes...)))))
     # Each line that is a layer, with the named roles it takes from the header: those its own
     # mapping does not set.
     call = find_call(header, :mapping)
@@ -362,7 +375,7 @@ end
 
 macro plot(declaration)
     input = gensym("input")
-    return esc(declare(declare_layers(positions_named(declaration), input); input))
+    return esc(declare(declare_layers(positions_named(declaration), input), [:($AXES = (;))]; input))
 end
 
 # The path a value names, such as `[:data, :V]` for `:data.V`, or `nothing`.
@@ -451,25 +464,29 @@ end
 # over the input, and the mapping names that column. With `data(value)`, the paths read `value`
 # when it is a vector of items, and the layer is left as it is for any other value. A fit in the
 # layer is done over its points (`resolve`), which know their items by the `ITEM` column.
+# The name that holds the settings of the plot's x and y scales, as `(; x, y)` of the `scales` line,
+# for the analyses: they take the points inside the limits, after the scale's function.
+const AXES = Symbol("#axes")
+
 function declare_layer(layer, input::Symbol)
     with_items(table, items) = Expr(table.head, table.args[1], Expr(:parameters, table.args[2].args..., :($item_ids($items)...)))
     own = find_call(layer, :data)
     if own === nothing
         tabulated = tabulate(layer, value -> per_item(value, input))
-        tabulated === nothing && return :($resolve($layer, nothing))
+        tabulated === nothing && return :($resolve($layer, nothing, $AXES))
         table, rewritten = tabulated
-        return :($resolve(data($(with_items(table, input))) * $rewritten, $input))
+        return :($resolve(data($(with_items(table, input))) * $rewritten, $input, $AXES))
     end
     value, items = gensym("data"), gensym("items")
     tabulated = tabulate(layer, v -> per_item(v, items))
-    tabulated === nothing && return :($resolve($layer, nothing))
+    tabulated === nothing && return :($resolve($layer, nothing, $AXES))
     plain = replace_call(layer, own, :(data($value)))
     table, rewritten = tabulated
     of_items = replace_call(rewritten, find_call(rewritten, :data), :(data($(with_items(table, items)))))
     return :(let $value = $(own.args[2])
         $value isa AbstractVector{<:$AbstractDataItem} ?
-            (let $items = $(Workspace.select)($value); $resolve($of_items, $items) end) :
-            $resolve($plain, nothing)
+            (let $items = $(Workspace.select)($value); $resolve($of_items, $items, $AXES) end) :
+            $resolve($plain, nothing, $AXES)
     end)
 end
 
