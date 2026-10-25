@@ -72,6 +72,12 @@ half_range(values) = (maximum(values) - minimum(values)) / 2
         aggregate(average) * visual(Lines)
     end
     @test Tuple.(only(plots(Lines, figure(plot, select(devices))))[1][]) == [(5.0, 2.0), (10.0, 2.0)]
+    # Limits that remove every point leave nothing to draw.
+    plot = @plot mapping(:gap, only(:data.R)) begin
+        aggregate(average) * visual(Lines)
+        scales(y = (; limits = (10, nothing)))
+    end
+    @test_throws ErrorException figure(plot, select(devices))
 end
 
 deviation(values) = sqrt(sum(abs2, values .- average(values)) / (length(values) - 1))

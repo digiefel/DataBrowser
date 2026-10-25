@@ -11,6 +11,7 @@ plotted(drawn, type) = [p for p in only(filter(c -> c isa Axis, drawn.content)).
     drawn = figure(plot)
     @test length(plotted(drawn, Lines)) == 2
     @test last.(only(plotted(drawn, Scatter))[1][]) == [0.0, -1.0, 0.0, -1.0]
+    @test DataBrowserPlots.scale_categories(plot) == Dict(:color => ["a", "b"])
 end
 
 @testset "item paths draw each trace and one peak per item" begin

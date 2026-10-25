@@ -11,7 +11,7 @@ using DataBrowserCore: Selection
 using DataBrowserGUI: CODE_COLORS, CodeFile, code_text, draw_code, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
 using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!, guarded_draw, draw_colors
 import DataBrowserAPI: draw!, prepare!, settings
-using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mapping_order, mappings, scale_kinds
+using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mapping_order, mappings, scale_categories, scale_kinds
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
 const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
 using .GLMakieExt: DARK, FigureView
@@ -33,6 +33,15 @@ const ICON_SETTING = "\ue29a"  # sliders-horizontal
 const ICON_BLOCK = "\ue471"    # layout-panel-top
 const ICON_PLOT = "\ue48a"     # chart-scatter
 const ICON_FLIP = "\ue35e"     # flip-horizontal-2
+const ICON_TYPE = "\ue198"     # type
+const ICON_HASH = "\ue0ef"     # hash
+const ICON_RULER = "\ue14b"    # ruler
+const ICON_TAG = "\ue17f"      # tag
+const ICON_SHAPES = "\ue4b3"   # shapes
+const ICON_RAINBOW = "\ue4c2"  # rainbow
+const ICON_PIPETTE = "\ue13b"  # pipette
+const ICON_ORDERED = "\ue1d1"  # list-ordered
+const ICON_COLUMN = "\ue473"   # variable
 # The values the menus of `marker` and `linestyle` offer, each drawn as it looks.
 const MARKERS = [:circle, :rect, :diamond, :utriangle, :dtriangle, :ltriangle, :rtriangle, :cross,
     :xcross, :pentagon, :hexagon]
@@ -148,11 +157,16 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     # Whether the scale of each named mapping holds categories or numbers, from the types of its
     # values; see `scale_kinds`.
     scale_kinds::Dict{Symbol,Symbol} = Dict{Symbol,Symbol}()
+    # The values of each named mapping that divides the points into groups, as the last drawing
+    # found them.
+    categories::Dict{Symbol,Vector{Any}} = Dict{Symbol,Vector{Any}}()
     editing::Union{Nothing,EntryEdit} = nothing
     # The columns a mapping can pick, for the selection; `nothing` until the panel needs them.
     columns::Union{Nothing,Vector{ListItem}} = nothing
     # The text of each field of a widget, such as the lowest of `limits`, while the user types in it.
     fields::Dict{String,Vector{UInt8}} = Dict{String,Vector{UInt8}}()
+    # The value of each bound of a widget, such as the lowest of `limits`, while the user drags it.
+    bounds::Dict{String,Float32} = Dict{String,Float32}()
     # The place of a palette being changed in a popup, with the key of its widget, and the color
     # being picked for it, red, green, blue and alpha, as the picker changes it.
     picking::Union{Nothing,Tuple{String,Int}} = nothing
@@ -306,6 +320,7 @@ function build!(view::BuilderView, ctx)::Nothing
         view.scale_kinds = plot isa DataBrowserPlots.Declaration ? scale_kinds(plot, selection) : scale_kinds(plot)
         plot isa DataBrowserPlots.Declaration && (plot = Base.invokelatest(plot.layers, selection))
         view.mappings = mappings(plot)
+        view.categories = scale_categories(plot)
         view.figure = plot isa Makie.Figure ? plot : Makie.with_theme(() -> figure(plot), DEFAULT_THEME)
         view.message = ""
         view.error_details = ""
@@ -848,7 +863,8 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     editing = edit !== nothing && edit.target == target && edit.name == name
     # A mapping is a column, picked from a menu, or a formula, typed as code. A setting with a
     # widget, such as `limits`, is set with it, or typed as code when its code is more than the
-    # widget writes. The ƒ before either is lit for code, and a click on it switches.
+    # widget writes. The badge before either shows which: ƒ for code, otherwise the kind of value
+    # the widget writes. A click on it switches.
     mapping = target[1] === :mapping
     parts = mapping && !isempty(value) ? mapping_parts(value) : nothing
     widget = widget_of(view, target, name)
@@ -856,20 +872,21 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     formula = editing ? edit.typed : mapping ? parts !== nothing && any(((kind, _),) -> kind === :formula, parts) : fields === nothing
     pick_column = false
     if mapping || widget !== nothing
-        # Purple, filled when on and faint when off.
-        purple(alpha) = ig.GetColorU32(ig.ImVec4(0.72f0, 0.45f0, 0.95f0, alpha))
-        ig.PushStyleVar(ig.ImGuiStyleVar_FrameBorderSize, 1.0f0)
-        ig.PushStyleColor(ig.ImGuiCol_Text, purple(formula ? 1.0f0 : 0.4f0))
-        ig.PushStyleColor(ig.ImGuiCol_Border, purple(formula ? 1.0f0 : 0.3f0))
-        ig.PushStyleColor(ig.ImGuiCol_Button, purple(formula ? 0.3f0 : 0.0f0))
-        ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, purple(formula ? 0.45f0 : 0.15f0))
-        ig.PushStyleColor(ig.ImGuiCol_ButtonActive, purple(0.55f0))
-        switched = with_font(() -> ig.SmallButton("ƒ"), :code)
-        ig.PopStyleColor(5)
-        ig.PopStyleVar()
-        ig.SetItemTooltip(mapping ? (formula ? "Pick a column instead of the formula" : "Write a formula instead of a column") :
-            formula ? "Set the value with the widget instead of code" : "Write the value as code")
-        ig.SameLine()
+        icon, role, kind = formula ? ("ƒ", :keyword, "code") : mapping ? (ICON_COLUMN, :symbol, "a column") : badge(widget)
+        size = ig.GetFrameHeight()
+        switched = ig.InvisibleButton("badge", (size, size))
+        low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
+        draw_list = ig.GetWindowDrawList()
+        ig.AddRectFilled(draw_list, low, high, ig.GetColorU32(code_color(role, ig.IsItemHovered() ? 0.4f0 : 0.2f0)),
+            unsafe_load(ig.GetStyle()).FrameRounding, ig.ImDrawFlags_RoundLeft)
+        with_font(formula ? :code : :interface) do
+            shown = ig.CalcTextSize(icon)
+            ig.AddText(draw_list, (low.x + (size - shown.x) / 2, low.y + (size - shown.y) / 2), ig.GetColorU32(code_color(role)), icon)
+        end
+        ig.SetItemTooltip(mapping ? (formula ? "A formula; click to pick a column instead" : "A column; click to write a formula instead") :
+            formula ? "Code; click to set the value with the widget" : "Sets $kind; click to write the value as code")
+        # The badge is part of the value, as one of its parts.
+        ig.SameLine(0.0f0, PART_GAP)
         if switched && editing
             edit.typed = !edit.typed
             edit.focus = true
@@ -988,6 +1005,13 @@ const SIZES = Bounds("The size of the lowest value", "The size of the highest va
 # One color, such as the `nan_color` of `color`, drawn as a swatch.
 struct OneColor <: Widget end
 
+# A text, such as the `label` of a scale, typed as it reads, without quotes.
+struct Words <: Widget end
+
+# The values of a scale of categories in their order, each with its name in the legend, as
+# `categories` writes them: `["72b", "719a" => "Chip 719a"]`.
+struct Categories <: Widget end
+
 # The kind of ticks, one of `kinds` as Makie names them or `values`, then its count or its values.
 struct Ticks <: Widget
     kinds::Vector{String}
@@ -1011,7 +1035,7 @@ struct Colormap <: Widget end
 # The widget of each setting that has one: by the kind of call it is in and its name, and for a
 # setting of a scale, by the scale's mapping and its name.
 # TODO: a scale as one widget: its function, limits and ticks drawn on an axis.
-# TODO: `tickformat`, `categories` and `legend`.
+# TODO: `tickformat` and the settings of `legend`.
 const WIDGETS = Dict{Tuple{Symbol,Union{Int,Symbol}},Widget}(
     (:visual, :marker) => Choice(MARKERS), (:visual, :linestyle) => Choice(LINESTYLES),
     (:legend, :position) => Choice(LEGEND_POSITIONS), (:theme, 1) => Choice(THEMES),
@@ -1024,10 +1048,25 @@ const WIDGETS = Dict{Tuple{Symbol,Union{Int,Symbol}},Widget}(
     (:color, :palette) => ColorPalette(), (:color, :colormap) => Colormap(),
     (:marker, :palette) => GlyphPalette(:marker, MARKERS), (:linestyle, :palette) => GlyphPalette(:linestyle, LINESTYLES))
 
+# The badge of a widget: an icon of the kind of value it writes, the role of that kind in the colors
+# of code, and its name.
+badge(::Words) = (ICON_TYPE, :string, "a text")
+badge(::Categories) = (ICON_ORDERED, :string, "the order and names of the values")
+badge(::Bounds) = (ICON_HASH, :number, "two numbers")
+badge(::Ticks) = (ICON_RULER, :number, "the ticks")
+badge(::Choice) = (ICON_TAG, :symbol, "a name")
+badge(::GlyphPalette) = (ICON_SHAPES, :symbol, "a list of names")
+badge(::Union{ColorPalette,OneColor}) = (ICON_PIPETTE, :operator, "colors")
+badge(::Colormap) = (ICON_RAINBOW, :operator, "a colormap")
+
 function widget_of(view::BuilderView, (kind, index), name)::Union{Nothing,Widget}
     kind === :scale || return get(WIDGETS, (kind, name), nothing)
     scales = view.plot.scales === nothing ? EntryCode[] : view.plot.scales.entries
-    return index in eachindex(scales) && scales[index].name isa Symbol ? get(WIDGETS, (scales[index].name, name), nothing) : nothing
+    index in eachindex(scales) && scales[index].name isa Symbol || return nothing
+    # Every scale of a mapping has a label, and those of categories their order.
+    name === :label && return Words()
+    name === :categories && return Categories()
+    return get(WIDGETS, (scales[index].name, name), nothing)
 end
 
 function widget_parts(::Choice, value::String)::Union{Nothing,Vector{String}}
@@ -1039,7 +1078,10 @@ end
 function widget_parts(::Bounds, value::String)::Union{Nothing,Vector{String}}
     isempty(strip(value)) && return ["", ""]
     bounds = code_parts(value, '(', ')')
-    return bounds === nothing || length(bounds) != 2 ? nothing : [b == "nothing" ? "" : b for b in bounds]
+    (bounds === nothing || length(bounds) != 2) && return nothing
+    # A bound written as code, such as `extrema(x)`, leaves the pair to the code.
+    number(b) = b == "nothing" || tryparse(Float64, b) !== nothing
+    return all(number, bounds) ? [b == "nothing" ? "" : b for b in bounds] : nothing
 end
 
 function widget_parts(::Ticks, value::String)::Union{Nothing,Vector{String}}
@@ -1053,18 +1095,57 @@ function widget_parts(::Ticks, value::String)::Union{Nothing,Vector{String}}
 end
 
 # A field of one part of a value, such as the lowest of `limits`, that shows `shown` from the code
-# while the user is not typing in it. Returns its text once the user is done, or `nothing`.
-function part_field!(view::BuilderView, key::String, shown::String, width::Float32; hint::String, tooltip::String)
+# while the user is not typing in it. Returns its text once the user is done, or `nothing`. The
+# text of a `code` field is Julia code; any other is a text, typed without quotes, in the text font
+# and in the color and on the tint of a text in code.
+function part_field!(view::BuilderView, key::String, shown::String, width::Float32; hint::String, tooltip::String, code::Bool=true)
     buffer = get!(() -> zeros(UInt8, 256), view.fields, key)
     ig.GetActiveID() == ig.GetID("##$key") || (fill!(buffer, 0x00); copyto!(buffer, codeunits(shown)))
+    if !code
+        ig.PushStyleColor(ig.ImGuiCol_Text, code_color(:string))
+        ig.PushStyleColor(ig.ImGuiCol_FrameBg, code_color(:string, 0.08f0))
+        ig.PushStyleColor(ig.ImGuiCol_FrameBgHovered, code_color(:string, 0.14f0))
+        ig.PushStyleColor(ig.ImGuiCol_FrameBgActive, code_color(:string, 0.18f0))
+    end
     ig.SetNextItemWidth(width)
-    with_font(() -> ig.InputTextWithHint("##$key", hint, buffer, length(buffer)), :code)
+    with_font(() -> ig.InputTextWithHint("##$key", hint, buffer, length(buffer)), code ? :code : :interface)
+    code || ig.PopStyleColor(4)
     ig.SetItemTooltip(tooltip)
     ig.IsItemDeactivatedAfterEdit() || return nothing
-    text = String(strip(unsafe_string(pointer(buffer))))
+    text = unsafe_string(pointer(buffer))
+    code || return text
+    text = String(strip(text))
     # Text that Julia cannot read leaves the code as it is.
     isempty(text) || try Meta.parse(text) catch; return nothing end
     return text
+end
+
+function widget_parts(::Words, value::String)::Union{Nothing,Vector{String}}
+    isempty(strip(value)) && return [""]
+    text = try Meta.parse(value) catch; nothing end
+    return text isa String ? [text] : nothing
+end
+
+# A text field; a text with values in it, such as `"\$(:Chip)"`, is code.
+function draw_widget!(view::BuilderView, ::Words, target, name, (text,), focus::Bool)::Union{Nothing,String}
+    focus && ig.SetKeyboardFocusHere()
+    typed = part_field!(view, "$target/$name", text, ig.GetContentRegionAvail().x; hint="text", code=false,
+        tooltip="A text; the badge writes it as code, for a text with values in it")
+    return typed === nothing ? nothing : repr(typed)
+end
+
+# Each value written, and its name in the legend, empty for none.
+function widget_parts(::Categories, value::String)::Union{Nothing,Vector{Pair{Any,String}}}
+    isempty(strip(value)) && return Pair{Any,String}[]
+    list = try Meta.parse(value) catch; return nothing end
+    Meta.isexpr(list, :vect) || return nothing
+    literal(e) = e isa Union{String,Number} ? e : e isa QuoteNode && e.value isa Symbol ? e.value : nothing
+    parts = map(list.args) do e
+        named = Meta.isexpr(e, :call, 3) && e.args[1] === :(=>)
+        value = literal(named ? e.args[2] : e)
+        value === nothing || named && !(e.args[3] isa String) ? nothing : value => (named ? e.args[3] : "")
+    end
+    return any(isnothing, parts) ? nothing : Vector{Pair{Any,String}}(parts)
 end
 
 # A box with the symbol, drawn as it looks for a marker or a line style, and its menu, open when
@@ -1091,21 +1172,50 @@ function draw_widget!(view::BuilderView, widget::Choice, target, name, (current,
     return written
 end
 
-# Two fields, the lowest and the highest value, with "to" between them.
+# Two numbers, the lowest and the highest value, side by side; each is dragged, or typed after a
+# double click. The lowest stays below the highest. An empty bound shows its hint in place of a number,
+# and is typed, as it has no number to drag from.
 function draw_widget!(view::BuilderView, widget::Bounds, target, name, (low, high), focus::Bool)::Union{Nothing,String}
     key = "$target/$name"
-    # A bound typed while the code has none yet, as the first of a pair that is not optional, stays.
+    # A bound set while the code has none yet, as the first of a pair that is not optional, stays.
     kept(part, value) = !widget.optional && isempty(value) && haskey(view.fields, "$key/$part") ?
         unsafe_string(pointer(view.fields["$key/$part"])) : value
     low, high = kept("low", low), kept("high", high)
-    each = (ig.GetContentRegionAvail().x - ig.CalcTextSize("to").x - 2unsafe_load(ig.GetStyle()).ItemSpacing.x) / 2
+    parsed = (tryparse(Float32, low), tryparse(Float32, high))
+    # The drag speed follows the size of the values, as a bound can be 10⁻¹² or 10⁶.
+    size = max(abs(something(parsed[1], 0.0f0)), abs(something(parsed[2], 0.0f0)))
+    speed = 0.005f0 * (iszero(size) ? 1.0f0 : size)
+    each = (ig.GetContentRegionAvail().x - PART_GAP) / 2
     focus && ig.SetKeyboardFocusHere()
-    lowest = part_field!(view, "$key/low", low, each; hint=widget.optional ? "auto" : "lowest", tooltip=widget.low)
-    ig.SameLine(); ig.TextDisabled("to"); ig.SameLine()
-    highest = part_field!(view, "$key/high", high, each; hint=widget.optional ? "auto" : "highest", tooltip=widget.high)
-    lowest === nothing && highest === nothing && return nothing
-    low, high = something(lowest, low), something(highest, high)
-    widget.optional || !isempty(low) && !isempty(high) || return nothing
+    written = nothing
+    for (i, part) in enumerate(("low", "high"))
+        i == 2 && ig.SameLine(0.0f0, PART_GAP)
+        other = parsed[3 - i]
+        # The value shown is the code's, except while the user drags it. An empty bound holds NaN, so
+        # any number typed in it is a change.
+        ig.GetActiveID() == ig.GetID("##$key/$part") || (view.bounds["$key/$part"] = something(parsed[i], NaN32))
+        ref = Ref(view.bounds["$key/$part"])
+        hint = widget.optional ? "auto" : i == 1 ? "lowest" : "highest"
+        format = parsed[i] === nothing && ig.GetActiveID() != ig.GetID("##$key/$part") ? hint : "%g"
+        # Neither bound passes the other.
+        lowest, highest = i == 1 ? (-Inf32, something(other, Inf32)) : (something(other, -Inf32), Inf32)
+        ig.SetNextItemWidth(each)
+        with_font(() -> ig.DragFloat("##$key/$part", ref, speed, lowest, highest, format, ig.ImGuiSliderFlags_AlwaysClamp), :code)
+        view.bounds["$key/$part"] = ref[]
+        ig.SetItemTooltip(i == 1 ? widget.low : widget.high)
+        ig.IsItemDeactivatedAfterEdit() || continue
+        number = round(Float64(ref[]); sigdigits=6)
+        text = string(isinteger(number) && abs(number) < 1e15 ? Int(number) : number)
+        written = i == 1 ? (text, high) : (low, text)
+    end
+    written === nothing && return nothing
+    low, high = written
+    if !widget.optional && (isempty(low) || isempty(high))
+        for (part, text) in (("low", low), ("high", high))
+            isempty(text) || (view.fields["$key/$part"] = [codeunits(text); 0x00])
+        end
+        return nothing
+    end
     bound(text) = isempty(text) ? "nothing" : text
     return "($(bound(low)), $(bound(high)))"
 end
@@ -1217,6 +1327,9 @@ colormap_code(name, reversed::Bool) = reversed ? "Reverse(:$name)" : ":$name"
 # few colors, otherwise spread over the categories.
 palette_code(name, reversed::Bool) = discrete(Symbol(name)) && !reversed ? ":$name" : "from_continuous($(colormap_code(name, reversed)))"
 
+# The gap between the parts of a value: its badge, the two bounds, the chips of a list.
+const PART_GAP = 2.0f0
+
 # A row of chips, one for each value of a list, then a "+" chip, wrapping to more rows when needed.
 # `draw(i, low, high)` draws the chip of value `i`, `width` wide. A click on a chip, a drag of one
 # onto another, a right click on one and a click on "+" give `(:pick, i)`, `(:move, i, j)`,
@@ -1226,7 +1339,7 @@ function draw_chips!(count::Int, width::Float32, draw)::Union{Nothing,Tuple{Symb
     left = ig.GetCursorScreenPos().x
     right = left + ig.GetContentRegionAvail().x
     # The next chip follows the one before on its row, or starts the next row.
-    next!(width) = ig.GetItemRectMax().x + 3 + width <= right ? ig.SameLine(0.0f0, 3.0f0) :
+    next!(width) = ig.GetItemRectMax().x + PART_GAP + width <= right ? ig.SameLine(0.0f0, PART_GAP) :
         ig.SetCursorScreenPos((left, ig.GetCursorScreenPos().y))
     action = nothing
     for i in 1:count
@@ -1288,7 +1401,7 @@ function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, 
     ig.BeginGroup()
     action = draw_chips!(length(shown), size, (i, low, high) ->
         ig.AddRectFilled(ig.GetWindowDrawList(), low, high, ig.GetColorU32(shown[i]), 2.0f0))
-    ig.SameLine(0.0f0, 3.0f0)
+    ig.SameLine(0.0f0, PART_GAP)
     (ig.Button("$(ICON_PALETTE)##schemes", (size, size)) || focus) && (view.picker = ListPicker(); ig.OpenPopup("colormaps"))
     ig.SetItemTooltip(scheme === nothing ? "Take the colors of a colormap" : "The colors of $scheme; click to take another colormap's")
     ig.EndGroup()
@@ -1310,6 +1423,48 @@ function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, 
     end
     picked = colormaps_menu(view)
     picked === nothing || (code = palette_code(picked, false))
+    return code
+end
+
+# One row for each value: those written, in their order, then those of the points that are not.
+# Drag a value onto another to move it, and type its name in the legend in the field after it. A
+# value written that the points do not have keeps its place in the legend, and is drawn dimmed.
+function draw_widget!(view::BuilderView, ::Categories, target, name, listed::Vector{Pair{Any,String}}, focus::Bool)::Union{Nothing,String}
+    key = "$target/$name"
+    role = view.plot.scales.entries[last(target)].name
+    found = get(view.categories, role, Any[])
+    rows = [listed; [value => "" for value in found if !any(row -> isequal(first(row), value), listed)]]
+    isempty(rows) && (ig.TextDisabled("The values show here once the plot is drawn"); return nothing)
+    written(rows) = "[" * join((isempty(n) ? repr(v) : "$(repr(v)) => $(repr(n))" for (v, n) in rows), ", ") * "]"
+    width = with_font(() -> maximum(row -> ig.CalcTextSize(repr(first(row))).x, rows), :code) + 2unsafe_load(ig.GetStyle()).FramePadding.x
+    code = nothing
+    # The rows start under the first, in the column of the values.
+    ig.BeginGroup()
+    for (i, (value, label)) in enumerate(rows)
+        ig.PushID(i)
+        present = any(v -> isequal(v, value), found)
+        present || ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
+        with_font(() -> ig.Selectable(repr(value), false, 0, (width, 0.0f0)), :code)
+        present || ig.PopStyleColor()
+        ig.SetItemTooltip(present ? "Drag onto another value to move it" : "Not in the points: its place in the legend is kept")
+        if ig.BeginDragDropSource()
+            ig.SetDragDropPayload("category", Ref(i), sizeof(Int))
+            with_font(() -> ig.Text(repr(value)), :code)
+            ig.EndDragDropSource()
+        end
+        if ig.BeginDragDropTarget()
+            payload = ig.AcceptDragDropPayload("category")
+            payload == C_NULL || (code = written(changed(rows, (:move, unsafe_load(Ptr{Int}(unsafe_load(payload).Data)), i), nothing)))
+            ig.EndDragDropTarget()
+        end
+        ig.SameLine()
+        focus && i == 1 && ig.SetKeyboardFocusHere()
+        typed = part_field!(view, "$key/$i", label, ig.GetContentRegionAvail().x; hint=value isa String ? value : string(value),
+            code=false, tooltip="The name of $(repr(value)) in the legend; empty for the value itself")
+        typed === nothing || typed == label || (code = written([j == i ? value => typed : row for (j, row) in enumerate(rows)]))
+        ig.PopID()
+    end
+    ig.EndGroup()
     return code
 end
 
@@ -1502,7 +1657,10 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         after = ig.GetCursorScreenPos()
         ig.SetCursorScreenPos((right - ig.GetFrameHeight(), band.y))
         icon_button(ICON_X, "Remove the layer"; danger=true) && push!(changes, () -> remove_line!(view.code, line))
-        ig.SetCursorScreenPos(after)
+        # ImGui asks for an item after the cursor moves back: an empty one where the last item
+        # ends, so the cursor lands where it was.
+        ig.SetCursorScreenPos((after.x, after.y - style.ItemSpacing.y))
+        ig.Dummy((0.0f0, 0.0f0))
     end
     ig.ChannelsSetCurrent(draw_list, 0)
     ig.AddRectFilled(draw_list, band, band_end, ig.GetColorU32(ig.ImGuiCol_Header, 0.45f0), style.FrameRounding)

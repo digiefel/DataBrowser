@@ -37,6 +37,14 @@ lines, is left out.
 """
 scale_kinds(_...) = Dict{Symbol,Symbol}()
 
+"""
+    scale_categories(lines) -> Dict{Symbol,Vector{Any}}
+
+For each named mapping of the lines of a `@plot` block that divides the points into groups, such as
+`:color`, the values it takes in the points, sorted.
+"""
+scale_categories(_) = Dict{Symbol,Vector{Any}}()
+
 # The latest world: code that the browser runs defines the declaration after the caller started.
 figure(declaration::Declaration, input, args...; options...) =
     figure(Base.invokelatest(declaration.layers, input), args...; options...)

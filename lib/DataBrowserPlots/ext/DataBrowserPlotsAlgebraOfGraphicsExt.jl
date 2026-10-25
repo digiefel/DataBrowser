@@ -5,7 +5,7 @@ import AlgebraOfGraphics as AoG
 using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
-import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_kinds
+import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_categories, scale_kinds
 using DataBrowserPlots: @plot, Aggregate, Declaration, Fit, LegendEntry, PlotLine, PlotLines, PlotTheme, Scaled, Result, category, column
 using DataBrowserAPI: item_data, metadata
 using DataBrowserCore: Group, select
@@ -151,6 +151,17 @@ function scale_kinds(plot::PlotLines)::Dict{Symbol,Symbol}
     return scale_kinds(types)
 end
 scale_kinds(plot::Scaled) = scale_kinds(plot.layers)
+
+# TODO: the lines are processed again here; process them once for `mappings`, this and the drawing.
+function scale_categories(plot::PlotLines)::Dict{Symbol,Vector{Any}}
+    found = Dict{Symbol,Vector{Any}}()
+    for layers in processed_lines(plot), (p, _) in layers, (key, values) in pairs(p.primary)
+        key isa Symbol && append!(get!(Vector{Any}, found, key), values)
+    end
+    # Values that do not sort together, such as numbers and text, keep the order they come in.
+    return Dict(key => (try sort(unique(values)) catch; unique(values) end) for (key, values) in found)
+end
+scale_categories(plot::Scaled) = scale_categories(plot.layers)
 
 # The role of an aesthetic, as `mapping` names it: `:linestyle` for `AesLineStyle`.
 role(aes) = Symbol(lowercase(replace(string(nameof(aes)), r"^Aes" => "")))
@@ -538,6 +549,9 @@ function resolve(layer::AoG.Layer, items, axes)
         value = layer.positional[position]
         inside .&= [v isa Real && low <= v <= high for v in category.(Ref(value), columns[column(value)])]
     end
+    # AlgebraOfGraphics draws no plot without points.
+    isempty(inside) || any(inside) || error("The limits of the axes remove every point: " *
+        join(("$r = $(setting(r, :limits, nothing))" for r in (:x, :y) if setting(r, :limits, nothing) !== nothing), ", "))
     table = map(values -> values[inside], columns)
     result = Result(first(found), table, layer.positional, named, items; scale=setting(:y, :scale, identity))
     after = found[2:end]
