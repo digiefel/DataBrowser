@@ -9,7 +9,7 @@ import DataBrowserAPI
 using DataBrowserAPI: Setting
 using DataBrowserCore: Selection
 using DataBrowserGUI: CODE_COLORS, CodeFile, code_text, draw_code, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
-using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!, guarded_draw
+using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!, guarded_draw, draw_colors
 import DataBrowserAPI: draw!, prepare!, settings
 using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mapping_order, mappings
 # Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
@@ -32,6 +32,7 @@ const ICON_TEXT = "\ue3d9"     # case-sensitive
 const ICON_SETTING = "\ue29a"  # sliders-horizontal
 const ICON_BLOCK = "\ue471"    # layout-panel-top
 const ICON_PLOT = "\ue48a"     # chart-scatter
+const ICON_FLIP = "\ue35e"     # flip-horizontal-2
 # The values the menus of `marker` and `linestyle` offer, each drawn as it looks.
 const MARKERS = [:circle, :rect, :diamond, :utriangle, :dtriangle, :ltriangle, :rtriangle, :cross,
     :xcross, :pentagon, :hexagon]
@@ -42,7 +43,7 @@ const PLOT_TYPES = ["Scatter", "Lines", "ScatterLines", "BarPlot", "Errorbars", 
 const SCALED = [:x, :y, :color, :marker, :linestyle, :markersize, :linewidth, :layout, :row, :col]
 # The settings the menu of a scale offers: those of an axis for x and y, and those of a scale of
 # categories, such as the markers of `marker`, for the other mappings.
-# TODO: the settings of a continuous color, such as `colormap`.
+# `color` also offers `colormap`, for colors of numbers.
 const AXIS_SETTINGS = [:label, :scale, :limits, :reversed, :ticks, :tickformat]
 const CATEGORY_SETTINGS = [:label, :palette, :categories, :legend]
 # What the settings of a scale change, shown by the info button beside them.
@@ -100,7 +101,10 @@ The panel at the left shows the parts of `@plot` as the code names them: its `ma
 with the `mapping` and `visual` of each, and its `scales`. A click on a value edits it, and Enter
 writes it into the code. Some values have their own fields: a marker or a line style is picked
 from a menu that draws them, the `limits` of an axis are two numbers, and its `ticks` are a kind of
-ticks with their count or their values. The ƒ before such a value switches it to code and back. The
+ticks with their count or their values. A palette of colors, markers or line styles is a row of
+chips: a click on one changes it, a drag moves it, a right click removes it, and "+" adds one; the
+button after the colors picks a color scheme. A colormap is drawn as its gradient. The ƒ before such
+a value switches it to code and back. The
 "+" at the end of a title adds a value, a layer or a scale, offering only what the plot can use; "×",
 shown while the mouse is on a value, a layer or a scale, removes it.
 The eye button hides a layer, writing [`@invisible`](@ref) before its line, and draws it again.
@@ -143,6 +147,10 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     columns::Union{Nothing,Vector{ListItem}} = nothing
     # The text of each field of a widget, such as the lowest of `limits`, while the user types in it.
     fields::Dict{String,Vector{UInt8}} = Dict{String,Vector{UInt8}}()
+    # The place of a palette being changed in a popup, with the key of its widget, and the color
+    # being picked for it, red, green, blue and alpha, as the picker changes it.
+    picking::Union{Nothing,Tuple{String,Int}} = nothing
+    color::Vector{Float32} = zeros(Float32, 4)
     # The type-ahead of the open menu of names.
     picker::ListPicker = ListPicker()
     # The part of the window width the panel takes; the user drags the border.
@@ -489,7 +497,7 @@ function remove_line!(code::CodeFile, line)::Nothing
     return nothing
 end
 
-function start_edit!(view::BuilderView, target, name, value::String; typed::Bool=!haskey(WIDGETS, (target[1], name)))::Nothing
+function start_edit!(view::BuilderView, target, name, value::String; typed::Bool=widget_of(view, target, name) === nothing)::Nothing
     buffer = zeros(UInt8, max(1024, 2sizeof(value)))
     copyto!(buffer, codeunits(value))
     view.editing = EntryEdit(target, name, buffer, typed, true, nothing)
@@ -832,7 +840,7 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     # widget writes. The ƒ before either is lit for code, and a click on it switches.
     mapping = target[1] === :mapping
     parts = mapping && !isempty(value) ? mapping_parts(value) : nothing
-    widget = get(WIDGETS, (target[1], name), nothing)
+    widget = widget_of(view, target, name)
     fields = widget === nothing ? nothing : widget_parts(widget, editing ? unsafe_string(pointer(edit.buffer)) : value)
     formula = editing ? edit.typed : mapping ? parts !== nothing && any(((kind, _),) -> kind === :formula, parts) : fields === nothing
     pick_column = false
@@ -963,12 +971,38 @@ struct Ticks <: Widget
     kinds::Vector{String}
 end
 
-# The widget of each setting that has one, by the kind of call it is in and its name.
-# TODO: `scale` as a menu of functions, `tickformat`, and the palettes and colormaps of scales.
+# A list of colors, each drawn as a swatch, or a color scheme, such as `:tab10`, as the `palette`
+# of `color` writes them.
+struct ColorPalette <: Widget end
+
+# A list of `choices`, each drawn as it looks, as the `palette` of `marker` or `linestyle` writes
+# them; `role` is which of the two.
+struct GlyphPalette <: Widget
+    role::Symbol
+    choices::Vector{Symbol}
+end
+
+# A colormap, such as `:viridis`, drawn as its gradient; `Reverse(:viridis)` turns it around.
+struct Colormap <: Widget end
+
+# The widget of each setting that has one: by the kind of call it is in and its name, and for a
+# setting of a scale, by the scale's mapping and its name.
+# TODO: a scale as one widget: its function, limits and ticks drawn on an axis.
+# TODO: `tickformat`, `categories` and `legend`.
 const WIDGETS = Dict{Tuple{Symbol,Union{Int,Symbol}},Widget}(
     (:visual, :marker) => Choice(MARKERS), (:visual, :linestyle) => Choice(LINESTYLES),
     (:legend, :position) => Choice(LEGEND_POSITIONS), (:theme, 1) => Choice(THEMES),
-    (:scale, :limits) => Bounds(), (:scale, :ticks) => Ticks(["WilkinsonTicks", "LinearTicks", "LogTicks", "values"]))
+    (:x, :limits) => Bounds(), (:y, :limits) => Bounds(),
+    (:x, :ticks) => Ticks(["WilkinsonTicks", "LinearTicks", "LogTicks", "values"]),
+    (:y, :ticks) => Ticks(["WilkinsonTicks", "LinearTicks", "LogTicks", "values"]),
+    (:color, :palette) => ColorPalette(), (:color, :colormap) => Colormap(),
+    (:marker, :palette) => GlyphPalette(:marker, MARKERS), (:linestyle, :palette) => GlyphPalette(:linestyle, LINESTYLES))
+
+function widget_of(view::BuilderView, (kind, index), name)::Union{Nothing,Widget}
+    kind === :scale || return get(WIDGETS, (kind, name), nothing)
+    scales = view.plot.scales === nothing ? EntryCode[] : view.plot.scales.entries
+    return index in eachindex(scales) && scales[index].name isa Symbol ? get(WIDGETS, (scales[index].name, name), nothing) : nothing
+end
 
 function widget_parts(::Choice, value::String)::Union{Nothing,Vector{String}}
     isempty(strip(value)) && return [""]
@@ -1067,6 +1101,249 @@ function draw_widget!(view::BuilderView, widget::Ticks, target, name, (kind, cou
         part_field!(view, "$key/values", count, ig.GetContentRegionAvail().x; hint="1, 2, 5", tooltip="The values with a tick, separated by commas") :
         part_field!(view, "$key/count", count, ig.GetContentRegionAvail().x; hint="5", tooltip="How many ticks Makie aims for")
     return text === nothing || isempty(text) ? code : written(kind, text)
+end
+
+# The color Makie takes for `value`, such as `:red` or "#ff0000", as ImGui draws it.
+function imcolor(value)::ig.ImVec4
+    c = Makie.to_color(value)
+    return ig.ImVec4(c.r, c.g, c.b, c.alpha)
+end
+
+# The color written as a literal in `text`, such as `:red` or `"#ff0000"`, or `nothing`.
+function written_color(text::AbstractString)::Union{Nothing,ig.ImVec4}
+    expression = try Meta.parse(text) catch; return nothing end
+    value = expression isa QuoteNode ? expression.value : expression isa String ? expression : return nothing
+    return try imcolor(value) catch; nothing end
+end
+
+# The code of a color, such as `"#e69f00"`, with its alpha when it is not 1.
+function color_code(c::ig.ImVec4)::String
+    rgba = Makie.RGBAf(c.x, c.y, c.z, c.w)
+    return repr("#" * lowercase(c.w < 1 ? Makie.Colors.hex(rgba) : Makie.Colors.hex(Makie.RGBf(c.x, c.y, c.z))))
+end
+
+# The colors of the colormap or the color scheme `name`, at most `count` of them, evenly spread.
+const SAMPLED = Dict{Symbol,Vector{ig.ImVec4}}()
+sampled(name::Symbol, count::Int=24)::Vector{ig.ImVec4} = get!(SAMPLED, name) do
+    colors = Makie.to_colormap(name)
+    places = length(colors) <= count ? eachindex(colors) : round.(Int, range(1, length(colors); length=count))
+    [imcolor(colors[i]) for i in places]
+end
+
+# The color schemes a palette offers, those of at most 20 colors, and the colormaps, each with its
+# colors and under the collection it comes from, such as "tableau". Made when first needed.
+const SCHEMES = ListItem[]
+const COLORMAPS = ListItem[]
+function scheme_items(list::Vector{ListItem}, names, keep)::Vector{ListItem}
+    isempty(list) || return list
+    schemes = Makie.ColorSchemes.colorschemes
+    collection(name) = haskey(schemes, name) ? schemes[name].category : "Makie"
+    kept = sort([Symbol(n) for n in names if keep(Symbol(n))]; by=n -> (collection(n), n))
+    append!(list, [ListItem(String(n); section=collection(n), colors=sampled(n)) for n in kept])
+end
+schemes() = scheme_items(SCHEMES, keys(Makie.ColorSchemes.colorschemes), n -> length(Makie.ColorSchemes.colorschemes[n]) <= 20)
+colormaps() = scheme_items(COLORMAPS, Makie.all_gradient_names, n -> true)
+
+function widget_parts(::ColorPalette, value::String)
+    isempty(strip(value)) && return (; scheme=nothing, colors=String[])
+    scheme = written_symbol(String(strip(value)))
+    scheme === nothing || return haskey(Makie.ColorSchemes.colorschemes, scheme) ? (; scheme, colors=String[]) : nothing
+    colors = code_parts(value, '[', ']')
+    return colors === nothing || any(c -> written_color(c) === nothing, colors) ? nothing : (; scheme=nothing, colors)
+end
+
+function widget_parts(widget::GlyphPalette, value::String)
+    isempty(strip(value)) && return Symbol[]
+    glyphs = code_parts(value, '[', ']')
+    glyphs === nothing && return nothing
+    symbols = written_symbol.(String.(glyphs))
+    return any(isnothing, symbols) ? nothing : Vector{Symbol}(symbols)
+end
+
+function widget_parts(::Colormap, value::String)
+    isempty(strip(value)) && return (; name=nothing, reversed=false)
+    reversed = match(r"^\s*Reverse\(\s*(:\w+)\s*\)\s*$", value)
+    name = written_symbol(reversed === nothing ? String(strip(value)) : String(reversed[1]))
+    return name === nothing || !(String(name) in Makie.all_gradient_names) ? nothing : (; name, reversed=reversed !== nothing)
+end
+
+# A row of chips, one for each value of a list, then a "+" chip, wrapping to more rows when needed.
+# `draw(i, low, high)` draws the chip of value `i`, `width` wide. A click on a chip, a drag of one
+# onto another, a right click on one and a click on "+" give `(:pick, i)`, `(:move, i, j)`,
+# `(:remove, i)` and `(:add, 0)`; otherwise the result is `nothing`.
+function draw_chips!(count::Int, width::Float32, draw)::Union{Nothing,Tuple{Symbol,Int,Vararg{Int}}}
+    height = ig.GetFrameHeight()
+    left = ig.GetCursorScreenPos().x
+    right = left + ig.GetContentRegionAvail().x
+    # The next chip follows the one before on its row, or starts the next row.
+    next!(width) = ig.GetItemRectMax().x + 3 + width <= right ? ig.SameLine(0.0f0, 3.0f0) :
+        ig.SetCursorScreenPos((left, ig.GetCursorScreenPos().y))
+    action = nothing
+    for i in 1:count
+        i > 1 && next!(width)
+        ig.PushID(i)
+        ig.InvisibleButton("chip", (width, height)) && (action = (:pick, i))
+        ig.IsItemClicked(ig.ImGuiMouseButton_Right) && (action = (:remove, i))
+        low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
+        draw(i, low, high)
+        ig.IsItemHovered() && ig.AddRect(ig.GetWindowDrawList(), low, high, ig.GetColorU32(ig.ImGuiCol_Text), 2.0f0)
+        ig.SetItemTooltip("Click to change, drag onto another to move, right-click to remove")
+        if ig.BeginDragDropSource()
+            ig.SetDragDropPayload("chip", Ref(i), sizeof(Int))
+            ig.Dummy((width, height))
+            draw(i, ig.GetItemRectMin(), ig.GetItemRectMax())
+            ig.EndDragDropSource()
+        end
+        if ig.BeginDragDropTarget()
+            payload = ig.AcceptDragDropPayload("chip")
+            payload == C_NULL || (action = (:move, unsafe_load(Ptr{Int}(unsafe_load(payload).Data)), i))
+            ig.EndDragDropTarget()
+        end
+        ig.PopID()
+    end
+    count > 0 && next!(height)
+    ig.Button("$(ICON_PLUS)##add", (height, height)) && (action = (:add, 0))
+    ig.SetItemTooltip("Add a value")
+    return action
+end
+
+# The list `values` changed as `action` of `draw_chips!` asks, with `added` as the value of "+".
+function changed(values::Vector, action, added)::Vector
+    kind, i = action
+    list = copy(values)
+    kind === :remove && deleteat!(list, i)
+    kind === :add && push!(list, added)
+    kind === :move && insert!(list, action[3], popat!(list, i))
+    return list
+end
+
+# The swatches of the colors, or those of the scheme; a click on one opens a color picker, which
+# writes the list once it closes. The button after them opens the list of color schemes.
+function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, colors), focus::Bool)::Union{Nothing,String}
+    key = "$target/$name"
+    shown = scheme === nothing ? [written_color(c) for c in colors] : sampled(scheme)
+    codes = scheme === nothing ? colors : color_code.(shown)
+    written(codes) = "[" * join(codes, ", ") * "]"
+    code = nothing
+    # The color picked, written once its picker closes.
+    if view.picking !== nothing && first(view.picking) == key && !ig.IsPopupOpen("color")
+        picked = color_code(ig.ImVec4(view.color...))
+        place = last(view.picking)
+        view.picking = nothing
+        place in eachindex(codes) && picked != codes[place] && (code = written([i == place ? picked : c for (i, c) in enumerate(codes)]))
+    end
+    size = ig.GetFrameHeight()
+    ig.BeginGroup()
+    action = draw_chips!(length(shown), size, (i, low, high) ->
+        ig.AddRectFilled(ig.GetWindowDrawList(), low, high, ig.GetColorU32(shown[i]), 2.0f0))
+    ig.SameLine(0.0f0, 3.0f0)
+    (ig.Button("$(ICON_PALETTE)##schemes", (size, size)) || focus) && (view.picker = ListPicker(); ig.OpenPopup("schemes"))
+    ig.SetItemTooltip(scheme === nothing ? "Pick a color scheme" : "The color scheme $scheme; click to pick another")
+    ig.EndGroup()
+    if action !== nothing && first(action) === :pick
+        c = shown[action[2]]
+        view.color .= (c.x, c.y, c.z, c.w)
+        view.picking = (key, action[2])
+        ig.OpenPopup("color")
+    elseif action !== nothing
+        # A color added is Makie's next default one.
+        defaults = Makie.wong_colors()
+        code = written(changed(codes, action, color_code(imcolor(defaults[mod1(length(codes) + 1, length(defaults))]))))
+    end
+    if ig.BeginPopup("color")
+        place = view.picking === nothing ? 0 : last(view.picking)
+        original = place in eachindex(shown) ? Float32[shown[place].x, shown[place].y, shown[place].z, shown[place].w] : copy(view.color)
+        ig.ColorPicker4("##color", view.color, ig.ImGuiColorEditFlags_PickerHueWheel | ig.ImGuiColorEditFlags_AlphaBar, original)
+        ig.EndPopup()
+    end
+    if ig.BeginPopup("schemes")
+        items = schemes()
+        index = render_list_picker!(view.picker, items)
+        index === nothing || (code = ":$(items[index].name)"; ig.CloseCurrentPopup())
+        ig.EndPopup()
+    end
+    return code
+end
+
+# The markers or line styles, each drawn as it looks; a click on one opens all of them to pick from.
+function draw_widget!(view::BuilderView, widget::GlyphPalette, target, name, glyphs::Vector{Symbol}, focus::Bool)::Union{Nothing,String}
+    size = ig.GetFrameHeight()
+    width = widget.role === :marker ? size : 2size
+    color = ig.GetColorU32(ig.ImGuiCol_Text)
+    draw_glyph(draw_list, glyph, low, high) = widget.role === :marker ?
+        draw_marker(draw_list, ((low.x + high.x) / 2, (low.y + high.y) / 2), 5.0f0, glyph, color) :
+        draw_linestyle(draw_list, low.x + 3, high.x - 3, (low.y + high.y) / 2, glyph, color)
+    action = draw_chips!(length(glyphs), width, function (i, low, high)
+        ig.AddRectFilled(ig.GetWindowDrawList(), low, high, ig.GetColorU32(ig.ImGuiCol_FrameBg), 2.0f0)
+        draw_glyph(ig.GetWindowDrawList(), glyphs[i], low, high)
+    end)
+    written(glyphs) = "[" * join(":" .* String.(glyphs), ", ") * "]"
+    code = nothing
+    if action !== nothing && first(action) === :pick
+        view.picking = ("$target/$name", action[2])
+        ig.OpenPopup("glyphs")
+    elseif action !== nothing
+        # A value added is the first one the list lacks.
+        added = widget.choices[something(findfirst(g -> !(g in glyphs), widget.choices), 1)]
+        code = written(changed(glyphs, action, added))
+    end
+    # All of them in a grid, the one being changed lit.
+    if ig.BeginPopup("glyphs")
+        place = view.picking === nothing ? 0 : last(view.picking)
+        columns = widget.role === :marker ? 4 : 1
+        for (k, glyph) in enumerate(widget.choices)
+            (k - 1) % columns == 0 || ig.SameLine()
+            ig.PushID(k)
+            lit = place in eachindex(glyphs) && glyphs[place] === glyph
+            picked = ig.Selectable("##glyph", lit, 0, (widget.role === :marker ? size : 4size, size))
+            draw_glyph(ig.GetWindowDrawList(), glyph, ig.GetItemRectMin(), ig.GetItemRectMax())
+            ig.SetItemTooltip(":$glyph")
+            picked && place in eachindex(glyphs) && (code = written([i == place ? glyph : g for (i, g) in enumerate(glyphs)]))
+            ig.PopID()
+        end
+        ig.EndPopup()
+    end
+    return code
+end
+
+# The gradient of the colormap, with its name; a click opens the list of colormaps. The button after
+# it turns the colormap around.
+function draw_widget!(view::BuilderView, ::Colormap, target, name, (colormap, reversed), focus::Bool)::Union{Nothing,String}
+    size = ig.GetFrameHeight()
+    written(colormap, reversed) = reversed ? "Reverse(:$colormap)" : ":$colormap"
+    width = ig.GetContentRegionAvail().x - size - unsafe_load(ig.GetStyle()).ItemSpacing.x
+    (ig.InvisibleButton("gradient", (max(width, size), size)) || focus) && (view.picker = ListPicker(); ig.OpenPopup("colormaps"))
+    low, high = ig.GetItemRectMin(), ig.GetItemRectMax()
+    draw_list = ig.GetWindowDrawList()
+    if colormap === nothing
+        ig.AddRectFilled(draw_list, low, high, ig.GetColorU32(ig.ImGuiCol_FrameBg), 2.0f0)
+        ig.PushClipRect(low, high, true)
+        ig.AddText(draw_list, (low.x + 6, low.y + unsafe_load(ig.GetStyle()).FramePadding.y), ig.GetColorU32(ig.ImGuiCol_TextDisabled), "colormap")
+        ig.PopClipRect()
+    else
+        colors = sampled(colormap)
+        draw_colors(draw_list, low, high, reversed ? reverse(colors) : colors)
+        # The name on a band of the frame's color, readable on any colormap.
+        text = with_font(() -> ig.CalcTextSize(String(colormap)), :code)
+        ig.AddRectFilled(draw_list, (low.x + 3, low.y + 3), (low.x + text.x + 11, high.y - 3), ig.GetColorU32(ig.ImGuiCol_FrameBg, 0.85f0), 2.0f0)
+        with_font(() -> ig.AddText(draw_list, (low.x + 7, low.y + (size - text.y) / 2), ig.GetColorU32(ig.ImGuiCol_Text), String(colormap)), :code)
+    end
+    ig.IsItemHovered() && ig.AddRect(draw_list, low, high, ig.GetColorU32(ig.ImGuiCol_Text), 2.0f0)
+    ig.SetItemTooltip("Click to pick another colormap")
+    code = nothing
+    ig.SameLine()
+    reversed && ig.PushStyleColor(ig.ImGuiCol_Button, ig.GetColorU32(ig.ImGuiCol_ButtonActive))
+    flipped = ig.Button("$(ICON_FLIP)##reverse", (size, size))
+    reversed && ig.PopStyleColor()
+    ig.SetItemTooltip(reversed ? "Reversed; click to draw it from its start" : "Reverse the colormap")
+    flipped && colormap !== nothing && (code = written(colormap, !reversed))
+    if ig.BeginPopup("colormaps")
+        items = colormaps()
+        index = render_list_picker!(view.picker, items)
+        index === nothing || (code = written(items[index].name, reversed); ig.CloseCurrentPopup())
+        ig.EndPopup()
+    end
+    return code
 end
 
 # A layer, as a card: a band with a button that folds it, its eye, its plot type, the names of its analyses and a picture of
@@ -1260,7 +1537,7 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 # The scale's name, with a "+" for its settings and, under the mouse, a cross.
                 row = ig.GetCursorScreenPos()
                 row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
-                kinds = scale.name in (:x, :y) ? AXIS_SETTINGS : CATEGORY_SETTINGS
+                kinds = scale.name in (:x, :y) ? AXIS_SETTINGS : scale.name === :color ? [CATEGORY_SETTINGS; :colormap] : CATEGORY_SETTINGS
                 offered = settings === nothing ? String[] : String.(setdiff(kinds, [entry.name for entry in present]))
                 picked = heading!(view, "scale", entry_name(scale.name), offered; role=:plain, tooltip="Add a setting of this scale")
                 picked === nothing || start_edit!(view, (:scale, k), Symbol(picked), "")

@@ -19,7 +19,7 @@ Base.@kwdef mutable struct ListPicker
 end
 
 """
-    ListItem(name; section="", icon="", color=nothing, checked=nothing)
+    ListItem(name; section="", icon="", color=nothing, checked=nothing, colors=ImVec4[])
 
 One item of a list picker: its `name`, which the typed letters match, and how it looks.
 
@@ -28,6 +28,8 @@ One item of a list picker: its `name`, which the typed letters match, and how it
 - `icon`: a glyph of the icon font drawn before the name.
 - `color`: the color of the name, an `ImVec4`; the text color when `nothing`.
 - `checked`: `true` or `false` draws a checkbox before the item, checked or not; `nothing` draws none.
+- `colors`: a strip of colors at the right end of the item, such as those of a colormap: blended
+  into each other when there are more than 20, otherwise side by side.
 """
 Base.@kwdef struct ListItem
     name::String
@@ -35,6 +37,7 @@ Base.@kwdef struct ListItem
     icon::String = ""
     color::Union{Nothing,ig.ImVec4} = nothing
     checked::Union{Nothing,Bool} = nothing
+    colors::Vector{ig.ImVec4} = ig.ImVec4[]
 end
 ListItem(name::String; options...) = ListItem(; name, options...)
 
@@ -65,8 +68,9 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem})::Union
     # The room before the name: a checkbox, an icon, or both.
     before(item) = (item.checked === nothing ? 0.0f0 : box + style.ItemInnerSpacing.x) +
         (isempty(item.icon) ? 0.0f0 : ig.CalcTextSize(item.icon).x + style.ItemInnerSpacing.x)
+    strip = any(item -> !isempty(item.colors), items) ? ig.GetFontSize() * 7 : 0.0f0
     width = max(ig.GetFontSize() * 14,
-        maximum(item -> before(item) + ig.CalcTextSize(item.name).x, items; init=0.0f0) + style.ItemInnerSpacing.x)
+        maximum(item -> before(item) + ig.CalcTextSize(item.name).x, items; init=0.0f0) + style.ItemInnerSpacing.x + strip)
     picked = nothing
 
     buffer = zeros(UInt8, sizeof(picker.query) + 256)
@@ -123,6 +127,10 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem})::Union
                 ig.AddText(draw_list, ig.ImVec2(x, position.y), ig.GetColorU32(ig.ImGuiCol_TextDisabled), item.icon)
                 x += ig.CalcTextSize(item.icon).x + style.ItemInnerSpacing.x
             end
+            if !isempty(item.colors) && ig.IsRectVisible(position, ig.ImVec2(position.x + width, position.y + box))
+                draw_colors(draw_list, ig.ImVec2(position.x + width - strip - style.ScrollbarSize, position.y + 2),
+                    ig.ImVec2(position.x + width - style.ScrollbarSize, position.y + box - 2), item.colors)
+            end
             # The name, letter by letter, with the letters that match in the color of the checkmark.
             text = item.color === nothing ? ig.GetColorU32(ig.ImGuiCol_Text) : ig.GetColorU32(item.color)
             for (at, letter) in pairs(item.name)
@@ -135,6 +143,29 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem})::Union
         ig.PopItemFlag()
     end
     return picked
+end
+
+"""
+    draw_colors(draw_list, low, high, colors)
+
+Draw `colors` from left to right in the rectangle from `low` to `high`: blended into each other when
+there are more than 20, as a colormap, otherwise side by side, as a palette.
+"""
+function draw_colors(draw_list, low::ig.ImVec2, high::ig.ImVec2, colors::Vector{ig.ImVec4})::Nothing
+    isempty(colors) && return nothing
+    blended = length(colors) > 20
+    steps = blended ? length(colors) - 1 : length(colors)
+    step = (high.x - low.x) / steps
+    for i in 1:steps
+        left, right = low.x + (i - 1) * step, low.x + i * step
+        if blended
+            a, b = ig.GetColorU32(colors[i]), ig.GetColorU32(colors[i + 1])
+            ig.AddRectFilledMultiColor(draw_list, ig.ImVec2(left, low.y), ig.ImVec2(right, high.y), a, b, b, a)
+        else
+            ig.AddRectFilled(draw_list, ig.ImVec2(left, low.y), ig.ImVec2(right, high.y), ig.GetColorU32(colors[i]))
+        end
+    end
+    return nothing
 end
 
 # The places in `name` of the letters of `query`, found in the same order and ignoring case, or
