@@ -311,6 +311,8 @@ function build!(view::BuilderView, ctx)::Nothing
         # The code runs again only when it changes, or the names of Main do, so that the functions
         # it defines keep the code Julia compiled for them. Code that reads `selection` itself runs
         # for each selection.
+        # TODO: an edit, even of a visual, runs the code again: the functions `@plot` makes are new
+        # types, and the code that handles the plot and its fits compiles again (about 0.5 s).
         same = view.ran !== nothing && view.ran[1:3] == run[1:3] && all(map(===, view.ran[4], run[4])) &&
             !reads_selection(view.code.text)
         if !same
