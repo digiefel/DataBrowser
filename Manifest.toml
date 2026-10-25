@@ -2,7 +2,7 @@
 
 julia_version = "1.13.2"
 manifest_format = "2.1"
-project_hash = "cf9acdb69984404c0e94fda5d87efa917eed9032"
+project_hash = "84bbf85f32260b47ae4aa106b79c3e39776a94cd"
 
 [[deps.ADTypes]]
 deps = ["PrecompileTools"]
@@ -318,9 +318,11 @@ uuid = "a11ddd67-7e33-4db9-a4a8-4453f6eb9e68"
 version = "0.1.0-alpha.1"
 
     [deps.DataBrowser.extensions]
+    DataBrowserGLMakieAlgebraOfGraphicsExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL", "AlgebraOfGraphics"]
     DataBrowserGLMakieExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL"]
 
     [deps.DataBrowser.weakdeps]
+    AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
     GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 
 [[deps.DataBrowserAPI]]

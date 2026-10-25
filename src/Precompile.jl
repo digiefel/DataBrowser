@@ -80,10 +80,13 @@ function _precompile_engine(
         try
             session = open_browser(workspace; wait=false, window_start=:hidden)
             wait_browser_ready(session)
-            select!(workspace, collect(Workspace.items(workspace)))
-            drawn = session.state.performance.frame
-            while session.state.performance.frame < drawn + 30 && !istaskdone(session.task)
-                sleep(0.01)
+            ids = Workspace.query_items(workspace)
+            for selected in (ids[1:1], ids)
+                select!(workspace, selected)
+                drawn = session.state.performance.frame
+                while session.state.performance.frame < drawn + 15 && !istaskdone(session.task)
+                    sleep(0.01)
+                end
             end
             close_browser!(session)
         catch error

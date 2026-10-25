@@ -135,7 +135,18 @@ function check(args=ARGS)
         names = collect(keys(Pkg.project().dependencies))
         # Named selection can omit extensions whose triggers include other extensions.
         # Prepare the environment, then require its plotting stack without another cache build.
-        command = julia_command(["--compiled-modules=strict", "-e", "using Pkg; Pkg.precompile(; strict=true); using DataBrowser, GLMakie, AlgebraOfGraphics"]; depot)
+        prepare = """
+            using Pkg
+            Pkg.precompile(; strict=true)
+            using DataBrowser, DataBrowserPlots, GLMakie, AlgebraOfGraphics
+            for (package, extensions) in (
+                (DataBrowser, (:DataBrowserGLMakieExt, :DataBrowserGLMakieAlgebraOfGraphicsExt)),
+                (DataBrowserPlots, (:DataBrowserPlotsGLMakieExt, :DataBrowserPlotsAlgebraOfGraphicsExt, :DataBrowserPlotsBuilderExt)),
+            ), extension in extensions
+                Base.get_extension(package, extension) === nothing && error("Extension failed to load: \$extension")
+            end
+            """
+        command = julia_command(["--compiled-modules=strict", "-e", prepare]; depot)
         code = fingerprint(names, command)
         checked(records, "precompile", code; force=force && precompile_only) do
             # Remove the compiled code of the DataBrowser packages only, in this runner-owned

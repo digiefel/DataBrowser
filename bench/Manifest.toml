@@ -533,9 +533,10 @@ deps = ["BetterFileWatching", "CImGui", "CSV", "CancellationTokens", "DBInterfac
 path = ".."
 uuid = "a11ddd67-7e33-4db9-a4a8-4453f6eb9e68"
 version = "0.1.0-alpha.1"
-weakdeps = ["GLMakie"]
+weakdeps = ["AlgebraOfGraphics", "GLMakie"]
 
     [deps.DataBrowser.extensions]
+    DataBrowserGLMakieAlgebraOfGraphicsExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL", "AlgebraOfGraphics"]
     DataBrowserGLMakieExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL"]
 
 [[deps.DataBrowserAPI]]

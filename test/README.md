@@ -86,7 +86,8 @@ selected tests and benchmarks; it only forces clean compilation with the `precom
 Clean compilation runs when package code or its resolved dependencies change. The runner removes
 the compiled code of the DataBrowser packages from its dedicated depot and precompiles the benchmark
 environment, including its available extensions. It then loads the complete plotting stack with
-automatic package precompilation forbidden: a missing cache fails this check. `precompile_s` includes
+automatic package precompilation forbidden and checks that all plotting extensions loaded:
+a missing cache or failed extension fails this check. `precompile_s` includes
 preparation and this import check, so compare it only with
 runs using this command. Dependencies such as Makie keep their compiled code between runs:
 recompiling them took about 220 s in each full verification and
@@ -100,6 +101,11 @@ The plotting extension compiles representative grouped table plots, item-selecti
 legends by building figures without opening a window. This moves compilation from first use into
 package preparation; it increases preparation time and does not eliminate compilation of user
 callbacks or every combination of plot options.
+
+When both GLMakie and AoG are installed, a combined extension prepares engine and browser startup
+with both packages loaded, including the default CSV reader. This retains code for their combined
+method definitions. Browser workloads exercise single-item and multiple-item selection through
+public item IDs. The combined workload does not run when either plotting package is absent.
 
 All runner workloads use `bench/results/depot`; Julia builds missing compiled caches there normally.
 Package/file tests and benchmark-only runs never request clean compilation. Use those while editing. Run full
