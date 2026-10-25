@@ -162,9 +162,11 @@ Pass the value of `window` through the function named by `transform`, a `GlobalR
 visualizer shows it; `nothing` shows the value unchanged.
 
 The function receives each item of the input, as `process` receives it, and returns the value to
-show for it. Each result is an item of the workspace, under "Computed", computed in the background
-and computed again when the item or the code of the function changes. The visualizer shows the
-selection of these items, whose data are the results.
+show for it. A function with a method for a `Selection` and none for the items receives the whole
+selection instead, and returns one value, such as a mean over the items. Each result is an item of
+the workspace, under "Computed", computed in the background and computed again when an item it
+reads or the code of the function changes. The visualizer shows the selection of these items,
+whose data are the results.
 
 A value of the input that is not a selection of items is passed to the function as it is.
 """
@@ -244,11 +246,14 @@ function refresh!(state::BrowserState, window::Window)::Nothing
         if transform !== nothing
             try
                 f = Base.invokelatest(getglobal, transform.mod, transform.name)
-                # TODO: a function of the whole selection, such as a mean over items, gets one
-                # computed item for it: the function's methods tell which (`f(::Selection)`).
                 # TODO: an item that fails hides the results of the others; show its error alone.
                 if window.value isa Workspace.Selection
-                    results = [Workspace.Computed(f, item) for item in Workspace.items(window.value)]
+                    items = Workspace.items(window.value)
+                    # A function with a method for a selection and none for its items combines the
+                    # items: it gives one computed item for the whole selection.
+                    whole = Base.invokelatest(hasmethod, f, Tuple{Workspace.Selection}) &&
+                        !all(item -> Base.invokelatest(applicable, f, item), items)
+                    results = whole ? [Workspace.Computed(f, window.value)] : [Workspace.Computed(f, item) for item in items]
                     foreach(value -> push!(workspace, value), results)
                     append!(held, results)
                     computed!(state, window, id.(held))

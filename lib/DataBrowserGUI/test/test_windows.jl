@@ -36,6 +36,7 @@ DataBrowserAPI.prepare!(kept::Kept, selection::Workspace.Selection, ctx) = (kept
 
 doubled(number::WindowTestNumber) = 2number.value
 plus_one(number::WindowTestNumber) = number.value + 1
+total(numbers::Workspace.Selection) = sum(only(data.value) for data in numbers.data)
 
 @testset "a window's function gives one computed item for each item, computed again when its code changes" begin
     workspace = Workspace.open_workspace(WindowTestProject(), WindowTestSource(); cache=false, background_processing=true)
@@ -52,6 +53,9 @@ plus_one(number::WindowTestNumber) = number.value + 1
         transform!(window, nothing)
         @test [only(data.value) for data in shown()] == [1, 2, 3]
         @test !any(startswith("doubled("), Workspace.query_items(workspace))
+        # A function of a whole selection gives one value for all items.
+        transform!(window, GlobalRef(@__MODULE__, :total))
+        @test shown() == [6]
     finally
         Workspace.close_workspace!(workspace)
     end
