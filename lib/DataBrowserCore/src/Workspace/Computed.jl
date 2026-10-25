@@ -4,17 +4,12 @@
 The value `f(args...; settings...)`, computed only when it is needed. Its type is the computation:
 the same function on inputs of the same types gives values of the same type.
 
+Core records with it a result that no `process` of the project describes, because its inputs are
+chosen elsewhere, such as the groups of a fit in a plot. It is not an API for projects or scripts.
+
 `args` are items, other `Computed` values, and vectors or tuples of them. `f` receives each item as
-it is and each `Computed` value as its result. Added to a workspace with `push!`, it becomes an item
-of the workspace: computed once the items it reads are processed, and again when one of them changes.
-Outside a workspace, `item_data` computes it.
-
-Its `members` are the items it reads, through the `Computed` values among its `args`.
-
-```julia
-fits = [Computed(tlm, [x for x in sweeps if x.chip == chip]; chip) for chip in chips]
-foreach(fit -> push!(workspace, fit), fits)
-```
+it is and each `Computed` value as its result. Outside a workspace, `item_data` computes it. Its
+`members` are the items it reads, through the `Computed` values among its `args`.
 """
 struct Computed{F,Args<:Tuple,S<:NamedTuple} <: AbstractGroup
     f::F
@@ -70,8 +65,6 @@ label(collection::ComputedCollection) = collection.name
 const COMPUTED = ComputedCollection("Computed")
 
 """
-    push!(workspace, value::Computed) -> workspace
-
 Add `value` to the workspace as an item, with each `Computed` value it reads. Each is an item of the
 collection of its function, below the collection `Computed`, and its `process` computes it once the
 items it reads are processed. The items among its arguments must be items of the workspace. A

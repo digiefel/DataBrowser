@@ -167,17 +167,19 @@ that depend on it; workers take jobs from the catalog and report their results t
 accessors (`items`, `children`, `label`, `metadata` and others) read the catalog, and the browser
 passes keys.
 
-Workers run project code in the latest world, so a method defined after the workspace opened is
-used. Each stage has a code revision for each type it runs for: a content hash of the code it can
 Each item row records its inputs: the source item that expanded it, or, for a computed item, the
-items it reads. A script adds a computed item with `push!(workspace, Computed(f, args...; settings...))`.
-Its row is in a collection named after `f`, below the collection `Computed`. Its `process` runs `f`
-once every item it reads is processed, and again whenever one of them becomes stale. A computed
+items it reads. A computed item records a result that no `process` of the project describes,
+because its inputs are chosen elsewhere, such as the groups of a fit in a plot. Core holds it as a
+`Computed(f, args...; settings...)` value, which is not an API for projects or scripts. Its row is
+in a collection named after `f`, below the collection `Computed`. Its `process` runs `f` once every
+item it reads is processed, and again whenever one of them becomes stale. A computed
 item has no `analyze`; the named single values of its result are its metadata. When a source item
 changes, its items are removed and added again with new keys: a computed item that read one waits,
 and reads the new item with the same id. Computed results stay in memory and are not saved in the
 cache.
 
+Workers run project code in the latest world, so a method defined after the workspace opened is
+used. Each stage has a code revision for each type it runs for: a content hash of the code it can
 reach from `stage_roots(project, stage, type)` (`DataBrowserCore.CodeRevisions`). The walk follows
 the names in lowered code, the methods of each function reached, closures and their captured values,
 constants, and every method that the project adds to a library function, such as `Base.show` for a
