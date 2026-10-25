@@ -595,14 +595,11 @@ code_color(role::Symbol, alpha::Float32=1.0f0) = ig.ImVec4(getfield(CODE_COLORS,
 names_width(names) = with_font(() -> maximum(name -> ig.CalcTextSize(entry_name(name)).x, names; init=0.0f0), :code) +
     2unsafe_load(ig.GetStyle()).ItemSpacing.x
 
-# A button that shows only its icon until the mouse is on it. `danger` makes it red then. A `bold`
-# icon is drawn twice, a pixel apart, as the icons have one weight.
-function icon_button(icon::String, tooltip::String; danger::Bool=false, bold::Bool=false)::Bool
+# A button that shows only its icon until the mouse is on it. `danger` makes it red then.
+function icon_button(icon::String, tooltip::String; danger::Bool=false)::Bool
     ig.PushStyleColor(ig.ImGuiCol_Button, ig.GetColorU32(ig.ImGuiCol_Button, 0.0f0))
     danger && ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, ig.GetColorU32(ig.ImVec4(0.75f0, 0.28f0, 0.28f0, 0.8f0)))
     clicked = ig.SmallButton(icon)
-    bold && ig.AddText(ig.GetWindowDrawList(), (ig.GetItemRectMin().x + unsafe_load(ig.GetStyle()).FramePadding.x + 1, ig.GetItemRectMin().y),
-        ig.GetColorU32(ig.ImGuiCol_Text), icon)
     ig.PopStyleColor(danger ? 2 : 1)
     ig.SetItemTooltip(tooltip)
     return clicked
@@ -651,7 +648,8 @@ function heading!(view::BuilderView, id::String, title::String, offered::Abstrac
     picked = nothing
     if !isempty(offered)
         to_right_end(ig.GetFrameHeight())
-        if icon_button(ICON_PLUS, tooltip; bold=true)
+        # A bold "+" of the text font, which stands out more than the icon.
+        if with_font(() -> icon_button("+", tooltip), :interface; bold=true)
             view.picker = ListPicker()
             ig.OpenPopup("names")
         end
@@ -1348,6 +1346,15 @@ colormap_code(name, reversed::Bool) = reversed ? "Reverse(:$name)" : ":$name"
 # few colors, otherwise spread over the categories.
 palette_code(name, reversed::Bool) = discrete(Symbol(name)) && !reversed ? ":$name" : "from_continuous($(colormap_code(name, reversed)))"
 
+# A button `size` wide and tall with its icon in the middle, its corners rounded as the chips'.
+function square_button(label::String, size::Float32)::Bool
+    ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (0.0f0, 0.0f0))
+    ig.PushStyleVar(ig.ImGuiStyleVar_FrameRounding, 2.0f0)
+    clicked = ig.Button(label, (size, size))
+    ig.PopStyleVar(2)
+    return clicked
+end
+
 # A row of chips, one for each value of a list, then a "+" chip, wrapping to more rows when needed.
 # `draw(i, low, high)` draws the chip of value `i`, `width` wide. A click on a chip, a drag of one
 # onto another, a right click on one and a click on "+" give `(:pick, i)`, `(:move, i, j)`,
@@ -1383,7 +1390,7 @@ function draw_chips!(count::Int, width::Float32, draw)::Union{Nothing,Tuple{Symb
         ig.PopID()
     end
     count > 0 && next!(height)
-    ig.Button("$(ICON_PLUS)##add", (height, height)) && (action = (:add, 0))
+    square_button("$(ICON_PLUS)##add", height) && (action = (:add, 0))
     ig.SetItemTooltip("Add a value")
     return action
 end
@@ -1420,7 +1427,7 @@ function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, 
     action = draw_chips!(length(shown), size, (i, low, high) ->
         ig.AddRectFilled(ig.GetWindowDrawList(), low, high, ig.GetColorU32(shown[i]), 2.0f0))
     ig.SameLine(0.0f0, 3.0f0)
-    (ig.Button("$(ICON_PALETTE)##schemes", (size, size)) || focus) && (view.picker = ListPicker(); ig.OpenPopup("colormaps"))
+    (square_button("$(ICON_PALETTE)##schemes", size) || focus) && (view.picker = ListPicker(); ig.OpenPopup("colormaps"))
     ig.SetItemTooltip(scheme === nothing ? "Take the colors of a colormap" : "The colors of $scheme; click to take another colormap's")
     ig.EndGroup()
     if action !== nothing && first(action) === :pick
@@ -1600,7 +1607,7 @@ function draw_colormap!(view::BuilderView, colormap, reversed::Bool, focus::Bool
     code = nothing
     ig.SameLine()
     reversed && ig.PushStyleColor(ig.ImGuiCol_Button, ig.GetColorU32(ig.ImGuiCol_ButtonActive))
-    flipped = ig.Button("$(ICON_FLIP)##reverse", (size, size))
+    flipped = square_button("$(ICON_FLIP)##reverse", size)
     reversed && ig.PopStyleColor()
     ig.SetItemTooltip(reversed ? "Reversed; click to draw it from its start" : "Reverse the colormap")
     flipped && colormap !== nothing && (code = written(colormap, !reversed))
