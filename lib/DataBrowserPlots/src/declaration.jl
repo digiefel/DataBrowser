@@ -513,7 +513,7 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
     end
     for line in filter(line -> line.args[1] === :coord, settings)
         positional, named = call_arguments(line)
-        # TODO: `polar`, and a tilt of the drawn axes.
+        # TODO: `polar` and a tilt of the drawn axes; the plan is at `figure(plot::Scaled)` in the AlgebraOfGraphics extension.
         length(positional) <= 1 || error("coord takes one function of the points, such as `coord((x, y) -> (y, x))`")
         points = [Expr(:kw, :points, f) for f in positional]
         push!(coords, Expr(:tuple, Expr(:parameters, points..., (Expr(:kw, k, v) for (k, v) in named)...)))

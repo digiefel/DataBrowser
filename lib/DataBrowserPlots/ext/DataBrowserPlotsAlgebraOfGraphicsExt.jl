@@ -316,6 +316,20 @@ function figure(plot::Scaled, args...; options...)
     # move the points, then Makie's axis draws their scales, limits and reversed axes, and their
     # limits remove no points.
     # TODO: two scales of one axis, and a function after a scale, composed in the order of the lines.
+    # TODO: `polar(angle = :x, turn = 2π, start = 0, clockwise = false, inner = 0)` as a `coord` step.
+    #   AlgebraOfGraphics draws only on Axis and Axis3, so we draw its processed layers ourselves on
+    #   a Makie PolarAxis: each entry of `AoG.compute_axes_grid` holds a plot type, its positions and
+    #   its attributes. The settings map to PolarAxis's: `angle = :y` to `theta_as_x = false`, `start`
+    #   to `theta_0`, `clockwise` to `direction = -1`, `inner` to `radius_at_origin`. `turn` is the
+    #   angle of one unit of the angle values; `turn = :range` stretches their range over one turn,
+    #   as ggplot's coord_polar does. Lines bend along circles only if we add points between theirs
+    #   before drawing, as ggplot does: PolarAxis draws a straight line between two points.
+    # TODO: shapes that move with a function of the points, such as heatmap cells turned into
+    #   diamonds: the function becomes Makie's `transform_func` of the axis (`PointTrans{2}`), which
+    #   also needs `Makie.inverse_transform` and `Makie.apply_transform(f, ::Rect3)` for the limits.
+    #   Only functions with an inverse can do this, so it is a setting of the line, not the default.
+    # TODO: a tilted plot, such as one slanted by 45°: Makie's `rotate!` of the axis scene turns the
+    #   drawing, and we draw the slanted grid and ticks that the turned axis lacks.
     zoom = Any[nothing, nothing]
     functions, scaled = Any[], false
     for step in plot.coords, (key, value) in pairs(step)
