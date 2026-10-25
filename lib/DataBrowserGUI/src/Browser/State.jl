@@ -112,6 +112,8 @@ mutable struct Window
     code::Tuple{UInt,String}
     # The ids of the computed items the transform added to the workspace: one for each item.
     computed::Vector{String}
+    # The items the window waits for before it makes its value again; empty when it waits for none.
+    waiting::Vector{Workspace.Catalogs.ItemKey}
     # The value the window shows, and what tells whether the input gives another value now.
     # `stamp` is `nothing` until the visualizer is given the value.
     value::Any

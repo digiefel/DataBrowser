@@ -102,7 +102,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], nothing, nothing, "", "", "", "")
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], ItemKey[], nothing, nothing, "", "", "", "")
     push!(state.windows, window)
     return window
 end
@@ -216,67 +216,83 @@ end
 """
 Bring `window` up to date: read its input and, when the input gives another value than before or
 the code of its transform changed, pass the value through the transform and hand the result to the
-visualizer. A failure is kept in `window.error` for the window to show.
+visualizer. The items the value needs are processed and computed in the background: until they are
+ready, the window keeps what it shows, and `window.waiting` holds them. A failure is kept in
+`window.error` for the window to show.
 """
 function refresh!(state::BrowserState, window::Window)::Nothing
     input = window.input
     # The other window may not be visible. Its own drawing then does not bring it up to date.
     input isa WindowOutput && refresh!(state, source(input, state))
-    # TODO: the transform runs in the frame, as loading the items does. Run both in the background,
-    # and show the previous value as not final meanwhile.
     workspace = state.workspace::Workspace.Workspace
     current = (stamp(input, state), window.transform, code(window),
         Workspace.revision(workspace, _items_for_ids(state, window.computed)))
+    # The value is made again once the items it waits for are ready, or at once when the input
+    # changed meanwhile.
+    if !isempty(window.waiting)
+        current == window.stamp && !Workspace.processed(workspace, window.waiting) && return nothing
+        window.waiting = ItemKey[]
+        window.stamp = nothing
+    end
     current == window.stamp && return nothing
     window.stamp = current
     visualizer = window.visualizer
     ctx = WindowContext(state, window)
+    # The computed items the window adds to the workspace: the rows another window passes on, then
+    # the results of the transform.
+    held = Workspace.Computed[]
+    keys_of(values) = ItemKey[something(Workspace.item(workspace, id(value))) for value in values]
+    # Whether `items` are ready. Otherwise the window waits for them, and keeps the computed items
+    # it shows until it has a new value.
+    function ready(items::Vector{ItemKey})::Bool
+        Workspace.processed(workspace, items) && return true
+        window.waiting = items
+        computed!(state, window, union(window.computed, id.(held)))
+        return false
+    end
     # The computed items that failed, each with the first line of its error.
     failures = String[]
-    window.failed = ""
     # The selection of the computed items of `values` that were computed; the others are failures.
     function computed_selection(values)::Workspace.Selection
         ids = String[]
         for value in values
             try
-                Workspace.wait_processed(workspace, ItemKey[something(Workspace.item(workspace, id(value)))])
+                Workspace.wait_processed(workspace, keys_of([value]))
                 push!(ids, id(value))
             catch err
                 err isa ErrorException || rethrow()
                 push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
             end
         end
-        window.failed = join(failures, '\n')
         return Workspace.select(workspace, ids)
     end
     try
-        window.value = value(input, state)
-        # The computed items the window adds to the workspace: the rows another window passes on,
-        # then the results of the transform.
-        held = Workspace.Computed[]
-        if window.value isa Vector{Workspace.Computed}
-            append!(held, window.value)
+        input isa WindowOutput || ready(itemkeys(input, state)) || return nothing
+        given = value(input, state)
+        if given isa Vector{Workspace.Computed}
+            append!(held, given)
             foreach(value -> push!(workspace, value), held)
-            computed!(state, window, id.(held))
-            window.value = computed_selection(held)
+            ready(keys_of(held)) || return nothing
+            given = computed_selection(held)
         end
         transform = window.transform
         if transform !== nothing
             try
                 f = Base.invokelatest(getglobal, transform.mod, transform.name)
-                if window.value isa Workspace.Selection
-                    items = Workspace.items(window.value)
+                if given isa Workspace.Selection
+                    items = Workspace.items(given)
                     # A function with a method for a selection and none for its items combines the
                     # items: it gives one computed item for the whole selection.
                     whole = Base.invokelatest(hasmethod, f, Tuple{Workspace.Selection}) &&
                         !all(item -> Base.invokelatest(applicable, f, item), items)
-                    results = whole ? [Workspace.Computed(f, window.value)] : [Workspace.Computed(f, item) for item in items]
+                    results = whole ? [Workspace.Computed(f, given)] : [Workspace.Computed(f, item) for item in items]
                     foreach(value -> push!(workspace, value), results)
                     append!(held, results)
-                    computed!(state, window, id.(held))
-                    window.value = computed_selection(results)
+                    ready(keys_of(results)) || return nothing
+                    given = computed_selection(results)
                 else
-                    window.value = Base.invokelatest(f, window.value)
+                    # TODO: a value that is not a selection goes through the function in the frame.
+                    given = Base.invokelatest(f, given)
                 end
             catch err
                 window.error, _ = DataBrowserAPI.report_error(
@@ -285,6 +301,9 @@ function refresh!(state::BrowserState, window::Window)::Nothing
             end
         end
         computed!(state, window, id.(held))
+        window.value = given
+        window.failed = join(failures, '\n')
+        # TODO: `prepare!` runs in the frame; a visualizer that takes long to prepare stops it.
         if applicable(prepare!, visualizer, window.value, ctx)
             prepare!(visualizer, window.value, ctx)
             window.error = ""

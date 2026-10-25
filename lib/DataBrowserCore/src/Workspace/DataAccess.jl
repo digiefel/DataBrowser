@@ -22,6 +22,38 @@ function materialize_items(workspace::Workspace, items::Vector{ItemKey})::Vector
     end
 end
 
+# Request `items` ahead of background work, once each, with the collections above them.
+function want!(workspace::Workspace, items::Vector{ItemKey})::Nothing
+    catalog = workspace.catalog
+    @lock catalog.lock for item in setdiff(items, workspace.wanted)
+        # A computed item has no analyze.
+        # TODO: analyze leaves Core; then process is the last stage of every item.
+        last_stage = Catalogs.status(catalog, item, ITEM_ANALYZE).absent ? ITEM_PROCESS : ITEM_ANALYZE
+        request(catalog, item, last_stage; priority=VIEWED_ITEM)
+        # The collections above the item are queued and not waited for.
+        for holder in ancestors(workspace, item), stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
+            Catalogs.status(catalog, holder, stage).absent || request(catalog, holder, stage; priority=VIEWED_COLLECTION)
+        end
+        push!(workspace.wanted, item)
+    end
+    return nothing
+end
+
+"""
+    processed(workspace, items) -> Bool
+
+Request `items` ahead of background work, as `select` does, and tell whether each is
+processed now, or failed. The call does not wait, so a view can keep showing what it showed until
+the items are ready.
+"""
+function processed(workspace::Workspace, items::Vector{ItemKey})::Bool
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        want!(workspace, items)
+        return workspace.stopping || all(item -> settled(Catalogs.status(catalog, item, ITEM_PROCESS)), items)
+    end
+end
+
 """
 Request `items` ahead of background work, wait until each is processed, and return their
 [`revision`](@ref). A failed item throws its error.
@@ -29,17 +61,7 @@ Request `items` ahead of background work, wait until each is processed, and retu
 function wait_processed(workspace::Workspace, items::Vector{ItemKey})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
-        for item in setdiff(items, workspace.wanted)
-            # A computed item has no analyze.
-            # TODO: analyze leaves Core; then process is the last stage of every item.
-            last_stage = Catalogs.status(catalog, item, ITEM_ANALYZE).absent ? ITEM_PROCESS : ITEM_ANALYZE
-            request(catalog, item, last_stage; priority=VIEWED_ITEM)
-            # The collections above the item are queued and not waited for.
-            for holder in ancestors(workspace, item), stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
-                Catalogs.status(catalog, holder, stage).absent || request(catalog, holder, stage; priority=VIEWED_COLLECTION)
-            end
-            push!(workspace.wanted, item)
-        end
+        want!(workspace, items)
         for item in items
             while !workspace.stopping && !settled(Catalogs.status(catalog, item, ITEM_PROCESS))
                 wait(catalog.changed)

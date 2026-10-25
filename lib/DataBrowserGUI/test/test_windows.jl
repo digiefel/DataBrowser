@@ -46,7 +46,8 @@ not_two(number::WindowTestNumber) = number.value == 2 ? error("two is not allowe
         state = BrowserState(; workspace)
         window = open_window!(state, Kept(); input=FixedItems(["n1", "n2", "n3"]))
         transform!(window, GlobalRef(@__MODULE__, :doubled))
-        shown() = (refresh!(state, window); collect(window.visualizer.value.data))
+        # The window waits for its items over several frames.
+        shown() = (timedwait(() -> (refresh!(state, window); isempty(window.waiting)), 20); collect(window.visualizer.value.data))
         @test shown() == [2, 4, 6]
         @eval doubled(number::WindowTestNumber) = 10number.value
         @test timedwait(() -> shown() == [10, 20, 30], 20) === :ok
@@ -74,7 +75,7 @@ end
         table = open_window!(state, TableView(); input=FixedItems(["n1", "n2", "n3"]))
         window = open_window!(state, Kept(); input=WindowOutput(table.id))
         transform!(window, GlobalRef(@__MODULE__, :plus_one))
-        refresh!(state, window)
+        timedwait(() -> (refresh!(state, window); isempty(window.waiting)), 20)
         @test collect(window.visualizer.value.data) == [2, 3, 4]
     finally
         Workspace.close_workspace!(workspace)
