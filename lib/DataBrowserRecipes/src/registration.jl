@@ -76,7 +76,7 @@ function register_item!(
     id=nothing,
 )::Project
     recipe = ItemRecipe(
-        kind, detect, read, expand, process, analyze, label, collection, id)
+        kind, detect, read, expand, process, analyze, label, collection, id, caller())
     index = findfirst(r -> r.kind === kind, project.recipes)
     index === nothing ? push!(project.recipes, recipe) : (project.recipes[index] = recipe)
     return project
@@ -99,6 +99,17 @@ function register_collection_analysis!(
     process=nothing,
     analyze=nothing,
 )::Project
-    project.collections[kind] = CollectionRecipe(kind, process, analyze)
+    project.collections[kind] = CollectionRecipe(kind, process, analyze, caller())
     return project
+end
+
+# The line of the project's code that called a `register_*!` function: the first one outside this
+# package and Julia's own code.
+function caller()::LineNumberNode
+    for frame in stacktrace(backtrace())
+        file = String(frame.file)
+        (startswith(file, @__DIR__) || !isabspath(file)) && continue
+        return LineNumberNode(frame.line, frame.file)
+    end
+    return LineNumberNode(0, :unknown)
 end

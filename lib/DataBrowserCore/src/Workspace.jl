@@ -1,6 +1,7 @@
 module Workspace
 
 using Printf
+import InteractiveUtils
 import StructArrays, Tables
 using PrettyTables: @text__no_horizontal_lines, @text__no_vertical_lines, TextTableFormat, pretty_table
 using StructArrays: LazyRow, LazyRows, StructArray
@@ -469,6 +470,7 @@ include("Workspace/Status.jl")
 include("Workspace/DataAccess.jl")
 include("Workspace/Selection.jl")
 include("Workspace/Computed.jl")
+include("Workspace/Calls.jl")
 include("Workspace/Processing.jl")
 include("Workspace/MemoryDiagnostics.jl")
 

@@ -236,6 +236,28 @@ function stage_roots(project::Project, stage::DataBrowserAPI.PipelineStage, type
     return roots
 end
 
+# The code a stage runs is the registration of the recipe whose callback it calls.
+function Base.which(project::Project, stage::DataBrowserAPI.PipelineStage, value)::Union{Method,LineNumberNode,Nothing}
+    A = DataBrowserAPI
+    if value isa AbstractDataSourceItem
+        recipe = _detect_recipe(project, value)
+        recipe === nothing && return nothing
+        return stage == A.SOURCE_READ || recipe.expand !== nothing ? recipe.registered : nothing
+    elseif value <: RegisteredDataItem && stage in (A.ITEM_PROCESS, A.ITEM_ANALYZE)
+        recipe = _recipe(project, label(value))
+        recipe === nothing && return nothing
+        return getfield(recipe, stage == A.ITEM_PROCESS ? :process : :analyze) === nothing ? nothing : recipe.registered
+    elseif stage in (A.COLLECTION_PROCESS, A.COLLECTION_ANALYZE)
+        # TODO: a collection recipe belongs to the kind of its members, which the collection type
+        # does not say; with several, the browser shows none.
+        field = stage == A.COLLECTION_PROCESS ? :process : :analyze
+        recipes = [recipe for recipe in values(project.collections) if getfield(recipe, field) !== nothing]
+        length(recipes) == 1 && return only(recipes).registered
+    end
+    # Typed items and collections may have their own methods.
+    return invoke(which, Tuple{AbstractProject,A.PipelineStage,Any}, project, stage, value)
+end
+
 """A collection stage is defined when any kind registered it, or the collection type has a method."""
 has_stage(project::Project, collection_value::AbstractCollection, stage::DataBrowserAPI.PipelineStage)::Bool =
     any(values(project.collections)) do recipe

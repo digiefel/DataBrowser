@@ -624,6 +624,8 @@ function (analysis::Analysis)(items::Selection; group::NamedTuple)
 end
 
 Workspace.function_name(analysis::Analysis) = analysis.step isa Fit ? "fit" : "aggregate"
+# The code of a fit or an aggregate is the `@plot` that defines its points.
+Base.which(value::Workspace.Computed{<:Analysis}) = only(methods(value.f.points.table))
 
 # The code that gives the result of a group, such as
 # `fit(line, (a = 1,)) of :V, :I by :Chip; y scale log10 for :Chip = "A"`: the step, the values

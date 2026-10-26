@@ -203,6 +203,42 @@ function stage_roots(project::AbstractProject, stage::PipelineStage, type::Type)
     return Any[type; [method for (callback, signature) in signatures for method in methods(callback, signature)]]
 end
 
+"""
+    which(project, stage, source_item) -> Union{Method,LineNumberNode,Nothing}
+    which(project, stage, type) -> Union{Method,LineNumberNode,Nothing}
+
+The code of the project that `stage` runs: for `SOURCE_READ` and `SOURCE_EXPAND`, the code that
+reads `source_item`; for the other stages, the code that runs for values of `type`, an item type or
+a collection type. The browser shows it where it shows how an item was made, and opens it in an
+editor.
+
+The answer is a method, whose docstring the browser shows too, or a place in a file. `nothing`
+means that the stage does nothing of the project's for these values.
+
+The default is the method of the project that Julia calls for the stage, through the project-aware
+form or the context-free form; the defaults of this package do nothing of the project's. A project
+that keeps its stage code in values, such as callbacks stored in the project, adds a method that
+returns where they are.
+"""
+function Base.which(project::AbstractProject, stage::PipelineStage, value)::Union{Method,LineNumberNode,Nothing}
+    P = typeof(project)
+    T = value isa Type ? value : typeof(value)
+    signatures =
+        stage == SOURCE_READ ? Any[(read, Tuple{P,Any,T}), (read, Tuple{Any,T})] :
+        stage == SOURCE_EXPAND ? Any[(expand, Tuple{P,T,Any}), (expand, Tuple{T,Any})] :
+        stage == ITEM_PROCESS ? Any[(process, Tuple{P,T}), (process, Tuple{T})] :
+        stage == ITEM_ANALYZE ? Any[(analyze, Tuple{P,T}), (analyze, Tuple{T})] :
+        Any[(stage == COLLECTION_PROCESS ? process : analyze, Tuple{P,T,Any}),
+            (stage == COLLECTION_PROCESS ? process : analyze, Tuple{T,Any})]
+    for (callback, signature) in signatures
+        for method in methods(callback, signature)
+            # `methods` also lists the methods of Base that accept anything, such as `read(io, x)`.
+            Base.moduleroot(method.module) in (Base, Core, @__MODULE__) || return method
+        end
+    end
+    return nothing
+end
+
 # ---------------------------------------------------------------------------
 # reconstruct
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import DataBrowserAPI
 using DataBrowserCore: Workspace
 using DataBrowserCore: Group
 using DataBrowserGUI: selected_rows
-using DataBrowserGUI.Browser: BrowserState, FixedItems, TableView, WindowOutput, open_window!, refresh!, transform!
+using DataBrowserGUI.Browser: BrowserState, CodeView, FixedItems, TableView, WindowOutput, open_window!, refresh!, transform!
 
 # Three numbers, each an item.
 struct WindowTestProject <: DataBrowserAPI.AbstractProject end
@@ -80,6 +80,21 @@ end
         @test collect(window.visualizer.value.data) == [2, 3, 4]
         # Each result has the metadata of its item.
         @test window.visualizer.value.number == [1, 2, 3]
+    finally
+        Workspace.close_workspace!(workspace)
+    end
+end
+
+@testset "the code view shows the code that made the items, in the order it ran" begin
+    workspace = Workspace.open_workspace(WindowTestProject(), WindowTestSource(); cache=false, background_processing=true)
+    try
+        Workspace.wait_workspace_idle!(workspace; timeout=20)
+        state = BrowserState(; workspace)
+        window = open_window!(state, CodeView(); input=FixedItems(["n1", "n2", "n3"]))
+        timedwait(() -> (refresh!(state, window); !isempty(window.visualizer.rows)), 20)
+        rows = window.visualizer.rows
+        @test [row.call.title for row in rows] == ["read(::WindowTestFile)", "expand(::WindowTestFile)"]
+        @test rows[2].call.count == 3
     finally
         Workspace.close_workspace!(workspace)
     end

@@ -20,6 +20,8 @@ struct ItemRecipe{Detect,Read,Expand,Process,Analyze,Label,Collection,Id}
     label::Label
     collection::Collection
     id::Id
+    # The line of the project's code that registered the recipe.
+    registered::LineNumberNode
 end
 
 """
@@ -32,6 +34,7 @@ struct CollectionRecipe{Process,Analyze}
     kind::Symbol
     process::Process
     analyze::Analyze
+    registered::LineNumberNode
 end
 
 """
