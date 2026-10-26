@@ -604,9 +604,12 @@ the table as a first-class view.
 - [ ] More ImPlot plots: scatter, a 2D histogram of two vectors, a heatmap of a matrix.
 - [x] A "Code" visualizer shows how a window's items, or its computed values after "through", were
   made, as a timeline: each function that ran, from `read` at the top to the last at the bottom,
-  with the file and line of its code and the number of items that went through it. Items made by
-  the same code share a row. Lines join each function to the functions that read its results. ↗
-  opens the code in the editor, and the name shows the method's docstring when hovered.
+  with the file and line of its code, the item it ran for (or how many, listed when hovered), how
+  many failed, and the type a function gives. Items made by the same code share a row. Lines join
+  each function to the functions that read its results. ↗ opens the code in the editor, and the
+  name shows the method's docstring when hovered.
+- [ ] Failures in the Code visualizer: a window leaves out its failed items, so the visualizer never
+  receives them and its rows show no failures.
 - [ ] Show the line of code that called each function, under its row.
 - [ ] A great table:
   - [x] Numbers right-aligned, with the decimal points lined up in each column; one format per

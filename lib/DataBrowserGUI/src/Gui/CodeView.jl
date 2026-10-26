@@ -64,6 +64,10 @@ function prepare!(view::CodeView, selection::Workspace.Selection, ctx)::Nothing
     return nothing
 end
 
+# Lines for a tooltip, cut after the first 30.
+listed(lines::Vector{String})::String =
+    join(first(lines, 30), '\n') * (length(lines) > 30 ? "\n… and $(length(lines) - 30) more" : "")
+
 # The docstring of the method itself, without those of the other methods of its function.
 function docstring(code)::String
     code isa Method || return ""
@@ -101,12 +105,27 @@ function draw!(view::CodeView, ctx)::Nothing
             ig.TextUnformatted(row.call.title)
         end
         !isempty(row.docstring) && ig.IsItemHovered() && ig.SetTooltip(row.docstring)
-        # The count shows where it changes: at a first call, and where a call makes fewer or more
-        # items than the call before it.
         call = row.call
-        if isempty(call.inputs) || call.count != first(call.inputs).count
+        # What it ran for: the item itself when there is one, the labels of the items when hovered.
+        ig.SameLine()
+        if length(call.items) == 1
+            # A long label, such as a path, is cut in the middle and shown whole when hovered.
+            name = only(values(call.items))
+            ig.TextUnformatted(length(name) > 40 ? first(name, 15) * "…" * last(name, 24) : name)
+            length(name) > 40 && ig.IsItemHovered() && ig.SetTooltip(first(name, 2000))
+        else
+            ig.TextUnformatted("$(length(call.items)) items")
+            ig.IsItemHovered() && ig.SetTooltip(listed(sort!(collect(values(call.items)))))
+        end
+        # TODO: a window leaves out its failed items, so they reach this view only through `calls`.
+        if !isempty(call.failed)
             ig.SameLine()
-            ig.TextDisabled("$(call.count)×")
+            ig.TextColored(ig.ImVec4(0.95f0, 0.45f0, 0.4f0, 1.0f0), "$(length(call.failed)) failed")
+            ig.IsItemHovered() && ig.SetTooltip(listed(sort!(["$(call.items[id]): $error" for (id, error) in call.failed])))
+        end
+        if call.result !== nothing
+            ig.SameLine()
+            ig.TextDisabled("→ $(call.result)")
         end
         code = call.code
         if code !== nothing
