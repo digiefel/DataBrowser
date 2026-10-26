@@ -95,6 +95,10 @@ end
         rows = window.visualizer.rows
         @test [row.call.title for row in rows] == ["read(::WindowTestFile)", "expand(::WindowTestFile)"]
         @test rows[2].call.count == 3
+        # After a function, the computed values come after the items they were computed from.
+        transform!(window, GlobalRef(@__MODULE__, :doubled))
+        timedwait(() -> (refresh!(state, window); length(window.visualizer.rows) == 3), 20)
+        @test last(window.visualizer.rows).call.title == "doubled"
     finally
         Workspace.close_workspace!(workspace)
     end

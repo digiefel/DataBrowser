@@ -602,12 +602,11 @@ the table as a first-class view.
   of `x => y` or `(x, y)`; "Histogram" of a vector; "Bar chart" of named numbers. Each visualizer
   takes only the values of its own shape; a transform turns other values into that shape.
 - [ ] More ImPlot plots: scatter, a 2D histogram of two vectors, a heatmap of a matrix.
-- [x] A "Code" visualizer shows how a window's items were made, as a timeline: each function that
-  ran, from `read` at the top to the last at the bottom, with the file and line of its code and the
-  number of items that went through it. Items made by the same code share a row. Lines join each
-  function to the functions that read its results. ↗ opens the code in the editor, and the name
-  shows the method's docstring when hovered.
-- [ ] The Code visualizer for a window's computed values, after "through"; it now takes items only.
+- [x] A "Code" visualizer shows how a window's items, or its computed values after "through", were
+  made, as a timeline: each function that ran, from `read` at the top to the last at the bottom,
+  with the file and line of its code and the number of items that went through it. Items made by
+  the same code share a row. Lines join each function to the functions that read its results. ↗
+  opens the code in the editor, and the name shows the method's docstring when hovered.
 - [ ] Show the line of code that called each function, under its row.
 - [ ] A great table:
   - [x] Numbers right-aligned, with the decimal points lined up in each column; one format per
