@@ -165,11 +165,16 @@ yet or no longer has.
 
 `revision` rises with each [`select!`](@ref), so that a browser can tell a selection it did not
 make itself, and reveal it.
+
+`replaced` gives, for the id of an item that its source item no longer produces, the id of the item
+it produces in its place, as when another recipe reads the source item now. The selection follows
+it, and so should a browser that restores ids it saved.
 """
 Base.@kwdef mutable struct WorkspaceSelection
     collections::Vector{Vector{Tuple{String,String}}} = Vector{Tuple{String,String}}[]
     item_ids::Vector{String} = String[]
     revision::Int = 0
+    replaced::Dict{String,String} = Dict{String,String}()
 end
 
 """
@@ -277,6 +282,9 @@ mutable struct Workspace{P<:AbstractProject}
     source_items::Dict{SourceKey,AbstractDataSourceItem}
     # One lock per source item whose items are read again outside its job.
     source_locks::Dict{SourceKey,ReentrantLock}
+    # The ids of the items of each changed source item, from when it changed until it is expanded
+    # again, to tell which new items replace them.
+    produced_before::Dict{SourceKey,Vector{String}}
     # The key the cache uses for each collection. The cache keeps its keys from session to session.
     collection_keys::Dict{CollectionKey,Int64}
     next_collection_key::Int64
@@ -407,6 +415,7 @@ function Workspace(
         Catalog(background_processing),
         Dict{SourceKey,AbstractDataSourceItem}(),
         Dict{SourceKey,ReentrantLock}(),
+        Dict{SourceKey,Vector{String}}(),
         Dict{CollectionKey,Int64}(),
         Int64(1),
         Dict{CollectionKey,Dict{ItemKey,MetadataDict}}(),

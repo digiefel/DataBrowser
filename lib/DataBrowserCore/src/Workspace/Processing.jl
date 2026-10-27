@@ -211,8 +211,24 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
                 entry.metadata, item_data(item.item))
             for (item, entry) in zip(expanded, entries)])
         pace!(workspace)
+        # The items the source item no longer produces leave the selection. When it produces as
+        # many new items in their place, each new item replaces the one at the same place.
+        before = unique!([pop!(workspace.produced_before, job.key, String[]); previous])
         kept = Set(entry.id for entry in entries)
-        filter!(id -> !(id in previous) || id in kept, workspace.selection.item_ids)
+        gone = filter(id -> !(id in kept), before)
+        added = filter(id -> !(id in before), [entry.id for entry in entries])
+        replaced = workspace.selection.replaced
+        foreach(id -> delete!(replaced, id), added)
+        if length(gone) == length(added)
+            for (old, new) in zip(gone, added)
+                # An item replaced before is replaced by the newest item.
+                map!(id -> id == old ? new : id, values(replaced))
+                replaced[old] = new
+            end
+        end
+        selected = workspace.selection.item_ids
+        filter!(id -> !(id in gone) || haskey(replaced, id), selected)
+        unique!(replace!(id -> get(replaced, id, id), selected))
         conflicts!(workspace, job.key, SOURCE_EXPAND, conflicts)
         forget_stale!(workspace)
     end

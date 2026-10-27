@@ -51,7 +51,8 @@ end
 
             write(b, "c 16")
             @test timedwait(() -> sort(query_items(ws)) == ["a", "c"], 20) === :ok
-            @test selection(ws).id == ["a"]
+            # The file produces `c` in place of `b`, so `c` is selected in its place.
+            @test selection(ws).id == ["a", "c"]
             @test API.item_data(only(materialize_items(ws, ["c"]))).value == [12.0]
 
             rm(b)

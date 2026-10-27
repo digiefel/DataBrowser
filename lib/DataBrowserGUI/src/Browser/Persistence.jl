@@ -203,7 +203,9 @@ function _restore_windows!(state::BrowserState, saved::Vector{PersistedWindow}):
             hasfield(V, name) || continue
             push!(values, name => fieldtype(V, name) === Symbol ? Symbol(value) : value)
         end
-        input = window.input == "items" ? FixedItems(copy(window.ids)) :
+        # TODO: a window of fixed items that are replaced while the browser is open keeps the old ids.
+        replaced = state.workspace.selection.replaced
+        input = window.input == "items" ? FixedItems([get(replaced, id, id) for id in window.ids]) :
             window.input == "window" ? WindowOutput(only(window.ids)) : LiveSelection()
         opened = open_window!(state, V(; values...); input)
         opened.id = window.id
@@ -238,7 +240,9 @@ function _apply_project_view!(
     workspace = state.workspace::Workspace.Workspace
     state.expanded_collections = copy(view.tree.expanded)
     workspace.selection.collections = copy(view.tree.selected)
-    workspace.selection.item_ids = copy(view.items.selected)
+    # The items replaced since the view was saved are selected by their new ids.
+    replaced = workspace.selection.replaced
+    workspace.selection.item_ids = unique!([get(replaced, id, id) for id in view.items.selected])
     state.tree_filter = view.tree.filter
     state.item_filter = view.items.filter
     _restore_windows!(state, view.windows)

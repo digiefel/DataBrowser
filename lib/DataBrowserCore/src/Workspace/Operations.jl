@@ -395,6 +395,7 @@ function ingest_source_changes!(
             delete!(catalog, source)
             delete!(workspace.source_items, source)
             delete!(workspace.source_locks, source)
+            delete!(workspace.produced_before, source)
             filter!(entry -> entry.first[1] != source, workspace.errors)
         end
         delete_source_item!(cache, saved, String[])
@@ -406,6 +407,9 @@ function ingest_source_changes!(
         # A new source item has no saved rows; skipping the delete keeps discovery from filling the
         # write buffer with one delete for every new file.
         if !isempty(Catalogs.items(catalog, source)) || cache_knows_source(cache, saved)
+            # The job of the source item compares them with the items it produces next.
+            produced = String[id(catalog, item) for item in Catalogs.items(catalog, source)]
+            isempty(produced) || append!(get!(Vector{String}, workspace.produced_before, source), produced)
             remove_items!(workspace, source)
             delete_source_item!(cache, saved, String[])
         end
