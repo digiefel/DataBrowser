@@ -212,7 +212,7 @@ function render_data_grid!(
     height::Float32 = 0.0f0,
 )::Nothing
     isempty(columns) && return nothing
-    selected_columns = copy(state.selected_columns)
+    columns_before = copy(state.selected_columns)
     selection_mode in (:rows, :cells) || throw(ArgumentError(
         "DataGrid selection_mode must be :rows or :cells; got $(repr(selection_mode))",
     ))
@@ -835,7 +835,7 @@ function render_data_grid!(
         ig.PopClipRect(draw_list)
     end
 
-    if row_selection_changed || state.selected_columns != selected_columns
+    if row_selection_changed || state.selected_columns != columns_before
         on_selection_change(copy(state.selected_rows))
     end
 
