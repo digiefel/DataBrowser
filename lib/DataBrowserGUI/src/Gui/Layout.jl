@@ -2,14 +2,6 @@ import GLFW
 import CImGui as ig
 import CImGui.CSyntax: @c
 
-# ---------------------------------------------------------------------------
-# ImGui ini file — pointer lifetime
-# ---------------------------------------------------------------------------
-
-# dear imgui stores the IniFilename pointer by address and does NOT copy it; the buffer must
-# outlive the entire process.  We hold it here as a module-level Ref so it is never GC'd.
-const _IMGUI_INI_BYTES = Ref{Vector{UInt8}}(UInt8[])
-
 using DataBrowserAPI:
     label
 using DataBrowserCache: ProjectCacheIdentity
@@ -266,39 +258,6 @@ function render_project_window(state::BrowserState)::Nothing
     return nothing
 end
 
-"""
-Create the initial docking layout: shell panels on the left, and the windows that are open when the
-browser starts in the primary right slot.
-"""
-function _setup_docking_layout!(state::BrowserState, dockspace_id::UInt32)::Nothing
-    vp = ig.GetMainViewport()
-    sz = unsafe_load(vp.Size)
-
-    ig.DockBuilderRemoveNode(dockspace_id)
-    ig.DockBuilderAddNode(dockspace_id, Int(ig.ImGuiDockNodeFlags_DockSpace))
-    ig.DockBuilderSetNodeSize(dockspace_id, sz)
-
-    # Vertical split: left column 2/5, right column 3/5
-    left  = Ref{UInt32}(0)
-    right = Ref{UInt32}(0)
-    ig.DockBuilderSplitNode(dockspace_id, ig.ImGuiDir_Left, 2/5, left, right)
-
-    # Left column: top 3/4 hierarchy, bottom 1/4 info
-    top_left    = Ref{UInt32}(0)
-    bottom_left = Ref{UInt32}(0)
-    ig.DockBuilderSplitNode(left[], ig.ImGuiDir_Up, 3/4, top_left, bottom_left)
-
-    ig.DockBuilderDockWindow("Hierarchy",         top_left[])
-    ig.DockBuilderDockWindow("Information Panel", bottom_left[])
-    for window in state.windows
-        # ImGui knows a window by the part of its name after "###".
-        ig.DockBuilderDockWindow("###$(window.id)", right[])
-    end
-
-    ig.DockBuilderFinish(dockspace_id)
-    return nothing
-end
-
 """Return whether the native GLFW window or `close_browser!` requested shutdown."""
 function _window_close_requested(state::BrowserState)::Bool
     state.exit_requested && return true
@@ -326,15 +285,6 @@ function _init_browser_context!()
     io.ConfigFlags = unsafe_load(io.ConfigFlags) | ig.ImGuiConfigFlags_NavEnableKeyboard
 
     fonts = _load_fonts!()
-
-    # Point imgui at a per-machine ini file so [Table] column widths persist across restarts.
-    # The pointer must live for the whole process — _IMGUI_INI_BYTES holds the bytes.
-    depot = isempty(DEPOT_PATH) ? homedir() : first(DEPOT_PATH)
-    ini_dir = joinpath(depot, "databrowser")
-    mkpath(ini_dir)
-    ini_path = joinpath(ini_dir, "imgui.ini")
-    _IMGUI_INI_BYTES[] = vcat(Vector{UInt8}(codeunits(ini_path)), 0x00)
-    io.IniFilename = Ptr{Cchar}(pointer(_IMGUI_INI_BYTES[]))
 
     ig.StyleColorsDark()
     return ctx, fonts
@@ -500,7 +450,6 @@ function _run_browser(
     # warning: GLFW.jl's own handler throws it out of the frame and stops the drawing.
     GLFW.SetErrorCallback(error -> @warn "GLFW: $(error.description)")
     first_frame       = Ref(true)
-    setup_layout      = Ref(true)
     startup_presented = Ref(false)
     full_frame_submitted = Ref(false)
     return ig.render(
@@ -508,7 +457,6 @@ function _run_browser(
         engine,
         spawn,
         wait,
-        window_size=(1920, 1080),
         window_title="Data Browser",
         opengl_version=v"3.3",
         wait_events=false,
@@ -581,11 +529,7 @@ function _run_browser(
                 return nothing
             end
             @timed "frame_ui" begin
-                dockspace_id = ig.DockSpaceOverViewport(0, ig.GetMainViewport())
-                if setup_layout[]
-                    setup_layout[] = false
-                    _setup_docking_layout!(state, dockspace_id)
-                end
+                ig.DockSpaceOverViewport(0, ig.GetMainViewport())
                 @timed "selection_window" begin
                     render_selection_window(state)
                 end
@@ -631,6 +575,9 @@ in the REPL so it stays interactive.
 With `wait=false`, returns a [`BrowserSession`](@ref) (`task` + `state`). Use
 [`wait_browser_ready`](@ref) to wait until extension initialization is complete and the first
 full browser frame has been presented. Use [`close_browser!`](@ref) to exit the loop cleanly.
+
+Window positions, docking and table widths use ImGui’s `imgui.ini` in the current working
+directory.
 
 Closing the window closes the browser only. The workspace stays open and keeps processing items,
 and `open_browser` can show it again. Use `close_workspace!` to close the workspace.
