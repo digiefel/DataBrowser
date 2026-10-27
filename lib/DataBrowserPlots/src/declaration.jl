@@ -371,10 +371,6 @@ A name of the block reads the value of that result for the entry's group:
 The text reads only values that the entry determines: `:Wafer` needs each chip to be on one
 wafer, and `contacts.Rc` needs the fit's groups to come from roles of the entry's section.
 
-`legend(position=(:right, :top))` places the legend inside the axis at the top right. The symbols
-`:topright`, `:topleft`, `:bottomright` and `:bottomleft` name the inside corners too; `:right`,
-`:left`, `:top` and `:bottom` remain outside positions.
-
 The other settings of a `legend` line are those of [`figure`](@ref)'s legend: `position`, `show`,
 `merge`, and those of Makie's `Legend`. `legend(merge = (:color, :linestyle))` puts those roles in
 one section, with one entry for each combination of their values that is drawn,

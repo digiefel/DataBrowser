@@ -70,20 +70,10 @@ end
     @test right.targetlimits[].widths[1] < 2
 end
 
-@testset "color guides can be hidden and legends can be inset with independent y scales" begin
+@testset "color guides can be hidden with independent y scales" begin
     hidden = @plot data((x=[1.,2.], a=[1.,2.], b=[3.,4.])) * mapping(;x=:x,y=:a,y2=:b,color=ydims()) begin
         visual(Lines)
         scales(y2=(;position=:right),color=(;legend=false))
     end
     @test !any(c -> c isa Legend, figure(hidden).content)
-    inset = @plot data((x=[1.,2.], a=[1.,2.], b=[3.,4.])) * mapping(;x=:x,y=:a,y2=:b,color=ydims()) begin
-        visual(Lines)
-        scales(y2=(;position=:right))
-        legend(position=(:right,:top))
-    end
-    f = figure(inset)
-    guide = only(filter(c -> c isa Legend, f.content))
-    @test guide.halign[] == :right
-    @test guide.valign[] == :top
-    @test !guide.tellwidth[] && !guide.tellheight[]
 end

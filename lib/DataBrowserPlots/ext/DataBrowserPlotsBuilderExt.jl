@@ -65,7 +65,7 @@ const LEGEND_INFO = Dict(
     :merge => "The mappings that share a section, such as (:color, :linestyle), or true for all of them.",
 )
 # The places of the legend that `position` takes.
-const LEGEND_POSITIONS = [:right, :left, :top, :bottom, :topright, :topleft, :bottomright, :bottomleft]
+const LEGEND_POSITIONS = [:right, :left, :top, :bottom]
 const SCALE_INFO = Dict(
     :scale => "The scale function applies before the analyses run, and can change their results.",
     :limits => "The values outside the limits are removed before the analyses run, and can change their results.",

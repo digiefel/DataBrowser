@@ -32,29 +32,13 @@ function figure(
     get(legend, :show, true) || return drawn.figure
     sections = legend_sections(drawn.grid, texts, get(legend, :merge, nothing), groups)
     isempty(sections) && return drawn.figure
-    draw_legend!(drawn.figure, sections, legend)
-    return drawn.figure
-end
-
-# Outside positions allocate a guide cell; inside positions overlay the plot's first cell.
-function draw_legend!(figure, sections, legend)
     position = get(legend, :position, :right)
-    corners = (; topleft=(:left, :top), topright=(:right, :top),
-        bottomleft=(:left, :bottom), bottomright=(:right, :bottom))
-    placement = position isa Symbol ? get(corners, position, position) : position
-    inset = placement isa Tuple
-    if inset
-        length(placement) == 2 && placement[1] in (:left, :center, :right) &&
-            placement[2] in (:top, :center, :bottom) ||
-            throw(ArgumentError("An inside legend position is (horizontal, vertical), such as (:right, :top)"))
-    end
-    target = inset ? figure[1, 1] : AoG.guides_position(figure, position)
-    defaults = inset ? (; tellwidth=false, tellheight=false, halign=placement[1], valign=placement[2]) : (;)
-    kwargs = (; orientation=AoG.default_orientation(position), defaults...,
-        (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))...)
-    titles = [get(legend, :titlevisible, true) && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
-    AoG.Makie.Legend(target, [s.samples for s in sections], [s.texts for s in sections], titles; kwargs...)
-    return nothing
+    settings = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
+    shown = get(legend, :titlevisible, true)
+    titles = [shown && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
+    AoG.Makie.Legend(AoG.guides_position(drawn.figure, position), [s.samples for s in sections],
+        [s.texts for s in sections], titles; orientation=AoG.default_orientation(position), settings...)
+    return drawn.figure
 end
 
 # The text the inspector shows for a point: its x and y under the labels of the axes, then the value
@@ -199,7 +183,13 @@ function scaled_y_figure(plot::PlotLines, yscales, args...; legend=(;), texts=Pa
             for ps in values(processed) for pieces in ps for (_, primary) in pieces
             if !isempty(primary) for i in eachindex(first(values(primary)))]
         sections = legend_sections(grid, texts, get(legend, :merge, nothing), all_groups)
-        isempty(sections) || draw_legend!(drawn.figure, sections, legend)
+        if !isempty(sections)
+            position = get(legend, :position, :right)
+            kwargs = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
+            titles = [get(legend, :titlevisible, true) && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
+            AoG.Makie.Legend(AoG.guides_position(drawn.figure, position), [s.samples for s in sections],
+                [s.texts for s in sections], titles; orientation=AoG.default_orientation(position), kwargs...)
+        end
     end
     return drawn.figure
 end
