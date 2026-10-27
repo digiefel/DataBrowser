@@ -1,4 +1,5 @@
 using Test, DataBrowserGUI
+import DataBrowserAPI
 using DataBrowserGUI: merge_item_tables, value_table, zoom_value
 using DataBrowserCore: Group, select
 
@@ -69,4 +70,28 @@ end
     cut = table[[2], [3, 1]]
     @test cut.columns == ["z", "x"]
     @test cut.getvalue(1, 1) == 6 && cut.getvalue(1, 2) == 2
+end
+
+@testset "column choices survive unavailable columns and explicit choices replace them" begin
+    first = selection_of(("A", (V=[1.,2.], I=[3.,4.]), ()))
+    missing = selection_of(("B", (V=[5.],), ()))
+    returned = selection_of(("C", (I=[6.], V=[7.]), ()))
+    view = only(filter(v -> DataBrowserAPI.label(v) == "Table", DataBrowserGUI.Browser.visualizers(typeof(first))))
+    DataBrowserAPI.prepare!(view, first, nothing)
+    select_columns!(view, ["I"])
+    @test selected_columns(view; available=true) == ["I"]
+    DataBrowserAPI.prepare!(view, missing, nothing)
+    @test selected_columns(view) == ["I"]
+    @test isempty(selected_columns(view; available=true))
+    DataBrowserAPI.prepare!(view, returned, nothing)
+    @test selected_columns(view; available=true) == ["I"]
+    DataBrowserAPI.prepare!(view, missing, nothing)
+    select_columns!(view, ["V"])
+    DataBrowserAPI.prepare!(view, returned, nothing)
+    @test selected_columns(view) == ["V"]
+    @test selected_columns(view; available=true) == ["V"]
+    select_columns!(view, String[])
+    DataBrowserAPI.prepare!(view, first, nothing)
+    @test isempty(selected_columns(view))
+    @test isempty(selected_columns(view; available=true))
 end

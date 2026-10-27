@@ -141,12 +141,53 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     grid_id::String = "mixed"
 end
 
+# Requested columns survive tables that temporarily lack them. Weak keys keep this transient
+# state tied to the visualizer's lifetime, including visualizers already open during live edits.
+const TABLE_COLUMN_SELECTIONS = WeakKeyDict{TableView,Vector{String}}()
+
+"""
+    selected_columns(view::TableView; available=false) -> Vector{String}
+
+The column names the user selected, including names absent from the current items.
+With `available=true`, return only the selected columns available in the current table.
+"""
+function selected_columns(view::TableView; available::Bool=false)::Vector{String}
+    available && return view.table === nothing ? String[] : copy(view.table.columns[view.grid.selected_columns])
+    copy(get!(TABLE_COLUMN_SELECTIONS, view) do
+        view.table === nothing ? String[] : view.table.columns[view.grid.selected_columns]
+    end)
+end
+
+"""
+    select_columns!(view::TableView, names) -> TableView
+
+Select columns by name. Missing names remain requested and are restored when available again.
+An empty list explicitly clears the selection.
+"""
+function select_columns!(view::TableView, names::AbstractVector{<:AbstractString})::TableView
+    TABLE_COLUMN_SELECTIONS[view] = unique(String.(names))
+    if view.table !== nothing
+        view.grid.selected_columns = findall(in(names), view.table.columns)
+        _pass_on!(view)
+    end
+    return view
+end
+
+function _table_selection_changed!(view::TableView)::Nothing
+    current = view.table.columns[view.grid.selected_columns]
+    expected = view.table.columns[findall(in(selected_columns(view)), view.table.columns)]
+    Set(current) == Set(expected) || (TABLE_COLUMN_SELECTIONS[view] = current)
+    _pass_on!(view)
+    return nothing
+end
+
 label(::TableView)::String = "Table"
 
 output(view::TableView) = view.output
 
 # Show `table`, whose first column `item` holds the labels of several items when `item_column`.
 function _show!(view::TableView, table::ItemTable, item_column::Bool)::Nothing
+    selected_columns(view) # capture the current request before replacing the grid
     view.built = table
     view.item_column = item_column
     view.selection = nothing
@@ -168,8 +209,7 @@ end
 # selected columns stay, as long as the table has their columns.
 function _order!(view::TableView)::Nothing
     built = view.built::ItemTable
-    selected = view.table === nothing ? String[] :
-        [view.table.columns[column] for column in view.grid.selected_columns]
+    selected = selected_columns(view)
     order = collect(eachindex(built.columns))
     order[findall(in(view.column_order), built.columns)] =
         [findfirst(==(name), built.columns) for name in view.column_order if name in built.columns]
@@ -477,7 +517,7 @@ function draw!(view::TableView, ctx)::Nothing
             # The column `item` stays first.
             on_move=(column, to) -> view.item_column && 1 in (column, to) ||
                 (change = () -> _move!(view, column, to)),
-            on_selection_change=_ -> _pass_on!(view),
+            on_selection_change=_ -> _table_selection_changed!(view),
         )
     end
     # Enter folds the items whose selected rows include the row with their label, or unfolds them
