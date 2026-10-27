@@ -42,7 +42,7 @@ include("aggregate.jl")
 include("declaration.jl")
 include("plot_code.jl")
 
-export figure, @plot, @invisible
+export figure, @plot, @invisible, add_layer!, set_analysis!
 
 """Create the figure of a registered plot for `selection`."""
 function setup_plot(

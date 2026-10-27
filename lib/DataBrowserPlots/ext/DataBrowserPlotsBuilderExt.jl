@@ -46,6 +46,8 @@ const ICON_COLUMN = "\ue473"   # variable
 const MARKERS = [:circle, :rect, :diamond, :utriangle, :dtriangle, :ltriangle, :rtriangle, :cross,
     :xcross, :pentagon, :hexagon]
 const LINESTYLES = [:solid, :dash, :dot, :dashdot, :dashdotdot]
+# The analyses a layer can choose without typing a Julia expression.
+const ANALYSES = ["expectation()", "histogram()", "frequency()", "density()", "linear()", "smooth()"]
 # The plot types the menu of a new layer offers.
 const PLOT_TYPES = ["Scatter", "Lines", "ScatterLines", "BarPlot", "Errorbars", "Band", "Text"]
 # The mappings whose scale `scales(...)` sets.
@@ -54,7 +56,7 @@ const SCALED = [:x, :y, :color, :marker, :linestyle, :markersize, :linewidth, :l
 # categories, such as the markers of `marker`, for the other mappings.
 # A scale of numbers offers those of its mapping, such as the `colormap` of `color`. A scale not
 # drawn yet offers both kinds.
-const AXIS_SETTINGS = [:label, :scale, :limits, :reversed, :ticks, :tickformat]
+const AXIS_SETTINGS = [:label, :scale, :limits, :reversed, :ticks, :tickformat, :position]
 const CATEGORY_SETTINGS = [:label, :palette, :categories, :legend]
 const NUMBER_SETTINGS = Dict(:color => [:label, :legend, :colormap, :colorrange, :scale, :lowclip, :highclip, :nan_color],
     :markersize => [:label, :legend, :sizerange, :ticks, :tickformat], :linewidth => [:label, :legend, :sizerange, :ticks, :tickformat])
@@ -63,7 +65,7 @@ const LEGEND_INFO = Dict(
     :merge => "The mappings that share a section, such as (:color, :linestyle), or true for all of them.",
 )
 # The places of the legend that `position` takes.
-const LEGEND_POSITIONS = [:right, :left, :top, :bottom]
+const LEGEND_POSITIONS = [:right, :left, :top, :bottom, :topright, :topleft, :bottomright, :bottomleft]
 const SCALE_INFO = Dict(
     :scale => "The scale function applies before the analyses run, and can change their results.",
     :limits => "The values outside the limits are removed before the analyses run, and can change their results.",
@@ -549,7 +551,7 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
     found = call === nothing ? nothing : findfirst(entry -> entry.name == name, call.entries)
     if found !== nothing
         edit!(code, call.entries[found].value, text)
-    elseif call !== nothing && target[1] === :theme && name isa Int
+    elseif call !== nothing && target[1] in (:theme, :visual) && name isa Int
         # The theme of `theme(...)` goes first.
         opening = findnext('(', code.text, first(call.range))
         next = findnext(!isspace, code.text, opening + 1)
@@ -557,6 +559,11 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
     elseif call !== nothing && isempty(call.entries) && code.text[first(call.range)] == '('
         # An empty named tuple, `(;)`.
         edit!(code, call.range, "(; $(entry_name(name))=$text)")
+    elseif call !== nothing && isempty(call.entries)
+        opening = findnext('(', code.text, first(call.range))
+        stop = last(call.range) - 1
+        separator = occursin(';', code.text[opening+1:stop]) ? " " : "; "
+        edit!(code, stop+1:stop, "$separator$(entry_name(name))=$text")
     elseif call !== nothing
         # After the last value, so that a call over several lines, or with a comma after its last
         # value, stays as it is written.
@@ -569,7 +576,7 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
         edit!(code, start:start-1, "mapping(; $(entry_name(name))=$text) * ")
     elseif target[1] === :visual
         stop = last(plot.lines[target[2]].range)
-        edit!(code, stop+1:stop, " * visual(; $name=$text)")
+        edit!(code, stop+1:stop, name isa Int ? " * visual($text)" : " * visual(; $name=$text)")
     else
         edit!(code, plot.ending+1:plot.ending, "\n$(plot.indent)$(target[1])($(name isa Int ? text : "$name=$text"))")
     end
@@ -814,20 +821,20 @@ function draw_sample(plottype, marker, linestyle, alpha::Float32)::Nothing
 end
 
 # A name of the code, such as `expectation`, as a tag in its color.
-function draw_tag(text::String, alpha::Float32)::Nothing
-    with_font(:code) do
+function draw_tag(text::String, alpha::Float32)::Bool
+    return with_font(:code) do
         size = ig.CalcTextSize(text)
         padding = 4.0f0
         position = ig.GetCursorScreenPos()
         height = ig.GetFrameHeight()
-        ig.Dummy((size.x + 2padding, height))
+        clicked = ig.InvisibleButton("tag", (size.x + 2padding, height))
         top = position.y + (height - size.y) / 2 - 1
         draw_list = ig.GetWindowDrawList()
         ig.AddRectFilled(draw_list, (position.x, top), (position.x + size.x + 2padding, top + size.y + 2),
             ig.GetColorU32(code_color(:call, 0.18f0 * alpha)), 3.0f0)
         ig.AddText(draw_list, (position.x + padding, top + 1), ig.GetColorU32(code_color(:call, alpha)), text)
+        return clicked
     end
-    return nothing
 end
 
 # A box that shows code and acts as a button, `width` wide: filled, or only framed when `dimmed`.
@@ -1174,7 +1181,10 @@ function widget_of(view::BuilderView, (kind, index), name)::Union{Nothing,Widget
     # Every scale of a mapping has a label, and those of categories their order.
     name === :label && return Words()
     name === :categories && return Categories()
-    return get(WIDGETS, (scales[index].name, name), nothing)
+    role = scales[index].name
+    DataBrowserPlots.is_y_scale(role) && (role = :y)
+    name === :position && role === :y && return Choice([:left, :right])
+    return get(WIDGETS, (role, name), nothing)
 end
 
 function widget_parts(::Choice, value::String)::Union{Nothing,Vector{String}}
@@ -1757,6 +1767,32 @@ function draw_colormap!(view::BuilderView, colormap, reversed::Bool, focus::Bool
     return code
 end
 
+# Analysis kinds and argument editing live in the tag's popup, rather than a second panel row.
+function analysis_menu!(view::BuilderView, layer::Int, index::Int; adding::Bool=false)::Vector{Function}
+    changes = Function[]
+    for choice in ANALYSES
+        if ig.Selectable(String(first(split(choice, '('))))
+            push!(changes, () -> DataBrowserPlots.set_analysis!(view.code, layer, choice; index))
+            ig.CloseCurrentPopup()
+        end
+    end
+    adding && return changes
+    parts = DataBrowserPlots.analysis_factors(view.code, view.plot.lines[layer])
+    analyses = filter(part -> !any(name -> DataBrowserPlots.is_call(part, name), ("mapping", "visual", "data")), parts)
+    index <= length(analyses) || return changes
+    ig.Separator()
+    source = String(DataBrowserPlots.sourcetext(analyses[index]))
+    edited = part_field!(view, "analysis_expression", source, max(ig.GetContentRegionAvail().x, 240.0f0);
+        hint="Analysis expression", tooltip="Edit the analysis and its arguments")
+    edited === nothing || isempty(edited) || push!(changes,
+        () -> DataBrowserPlots.set_analysis!(view.code, layer, edited; index))
+    if ig.Selectable("Remove analysis")
+        push!(changes, () -> DataBrowserPlots.set_analysis!(view.code, layer, nothing; index))
+        ig.CloseCurrentPopup()
+    end
+    return changes
+end
+
 # A layer, as a card: a band with a button that folds it, its eye, its plot type, the names of its analyses and a picture of
 # its marker and line, and under it, when open, its `mapping` and `visual`. `takes(line, name)`
 # tells whether the line takes a mapping from the header, and `names` are the mappings it can show,
@@ -1805,17 +1841,36 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         ig.SameLine()
         with_font(() -> ig.TextDisabled("$(line.name) ="), :code)
     end
-    if plottype !== nothing
-        ig.SameLine()
-        ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_Text, alpha))
-        ig.TextUnformatted(plottype)
-        ig.PopStyleColor()
+    ig.SameLine()
+    if ig.SmallButton(something(plottype, "Choose visual") * "##type")
+        ig.OpenPopup("visual_type")
+    end
+    ig.SetItemTooltip("Choose the layer's visual type")
+    if ig.BeginPopup("visual_type")
+        for type in PLOT_TYPES
+            ig.Selectable(type, type == plottype) && push!(changes,
+                () -> write_entry!(view.code, plot, (:visual, index), 1, type))
+        end
+        ig.EndPopup()
     end
     # The tags, on more rows under the picture when they do not fit before the room of the cross.
-    for analysis in line.analyses
+    for (k, analysis) in enumerate(line.analyses)
         width = with_font(() -> ig.CalcTextSize(analysis).x, :code) + 8
-        ig.GetItemRectMax().x + 4 + width > right - ig.GetFrameHeight() ? ig.SetCursorPosX(sample_x) : ig.SameLine()
-        draw_tag(analysis, alpha)
+        ig.GetItemRectMax().x + 4 + width > right - 2ig.GetFrameHeight() ? ig.SetCursorPosX(sample_x) : ig.SameLine()
+        ig.PushID("analysis$k")
+        draw_tag(analysis, alpha) && ig.OpenPopup("analysis")
+        ig.SetItemTooltip("Change this analysis or edit its arguments")
+        if ig.BeginPopup("analysis")
+            append!(changes, analysis_menu!(view, index, k))
+            ig.EndPopup()
+        end
+        ig.PopID()
+    end
+    ig.SameLine()
+    icon_button("+", "Add an analysis") && ig.OpenPopup("add_analysis")
+    if ig.BeginPopup("add_analysis")
+        append!(changes, analysis_menu!(view, index, length(line.analyses)+1; adding=true))
+        ig.EndPopup()
     end
     ig.PopStyleVar(2)
     band_end = (right, ig.GetItemRectMax().y)
@@ -1922,9 +1977,8 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
     end
 
     section("layers") do
-        stop = isempty(plot.lines) ? plot.ending : last(plot.lines[end].range)
-        type = heading!(view, "layers", "Layers", stop === nothing ? String[] : PLOT_TYPES; role=:interface, tooltip="Add a layer")
-        type === nothing || push!(changes, () -> edit!(view.code, stop+1:stop, "\n$(plot.indent)visual($type)"))
+        type = heading!(view, "layers", "Layers", PLOT_TYPES; role=:interface, tooltip="Add a layer")
+        type === nothing || push!(changes, () -> DataBrowserPlots.add_layer!(view.code, Symbol(type)))
         for index in eachindex(plot.lines)
             ig.PushID(index)
             index > 1 && ig.Dummy((0.0f0, 4.0f0))
@@ -1938,7 +1992,8 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
             scales = entries(plot.scales)
             # The scales of the mappings the plot has, which `scales` can set.
             used = [entry_name(entry.name) for call in [plot.mapping; [line.mapping for line in plot.lines]] for entry in entries(call)]
-            offered = filter(name -> name in used && !any(scale -> entry_name(scale.name) == name, scales), String.(SCALED))
+            names = union(String.(SCALED), filter(name -> DataBrowserPlots.is_y_scale(Symbol(name)), used))
+            offered = filter(name -> name in used && !any(scale -> entry_name(scale.name) == name, scales), names)
             name = heading!(view, "scales", "scales", offered; tooltip="Add the scale of a mapping")
             name === nothing || push!(changes, () -> write_entry!(view.code, plot, (:scales, 0), Symbol(name), "(;)"))
             # The names of the settings of every scale and, after some, an info button.
@@ -1952,7 +2007,7 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 row = ig.GetCursorScreenPos()
                 row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
                 numbers = get(NUMBER_SETTINGS, scale.name, Symbol[])
-                kinds = scale.name in (:x, :y) ? AXIS_SETTINGS : get(view.scale_kinds, scale.name, nothing) === :categorical ? CATEGORY_SETTINGS :
+                kinds = (scale.name === :x || DataBrowserPlots.is_y_scale(scale.name)) ? (scale.name === :x ? setdiff(AXIS_SETTINGS, [:position]) : AXIS_SETTINGS) : get(view.scale_kinds, scale.name, nothing) === :categorical ? CATEGORY_SETTINGS :
                     get(view.scale_kinds, scale.name, nothing) === :continuous ? numbers : union(CATEGORY_SETTINGS, numbers)
                 offered = settings === nothing ? String[] : String.(setdiff(kinds, [entry.name for entry in present]))
                 picked = heading!(view, "scale", entry_name(scale.name), offered; role=:plain, tooltip="Add a setting of this scale")

@@ -35,3 +35,12 @@ fig = figure(AoGExample.fits(); legend=(position=:bottom,))
 ```
 
 The bench environment includes the dependencies.
+
+In Plot builder, the **+** beside **Layers** inserts a layer, including empty blocks and
+declarations without a block. Click a layer's visual type to change it. Click an analysis tag to
+change the analysis, edit its arguments, or remove it; the small **+** on the layer adds an analysis.
+
+Every mapped `yN` has settings in `scales(yN=...)`, inheriting unspecified settings from `y`.
+For example, `scales(y2=(; position=:right, label="Current (A)"))` gives mapped `y2` an independent
+right axis sharing x. This currently requires one panel. Source callers can use `add_layer!`
+and `set_analysis!` for the same source edits.

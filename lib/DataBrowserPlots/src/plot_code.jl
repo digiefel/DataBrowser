@@ -1,4 +1,4 @@
-using DataBrowserGUI: CodeFile, JuliaSyntax, syntax
+using DataBrowserGUI: CodeFile, JuliaSyntax, syntax, edit!
 using .JuliaSyntax: SyntaxNode, byte_range, children, kind, sourcetext, @K_str
 
 # A value given to a call, such as `color = :Chip` of `mapping(...)`: its name, a position (1 for
@@ -111,7 +111,7 @@ function Base.tryparse(::Type{PlotCode}, code::CodeFile)::Union{Nothing,PlotCode
             factor_call(text, value, "visual"), analyses, !own_data))
         name === nothing || push!(names, name)
     end
-    ending = isempty(statements) ? nothing : last(byte_range(statements[end]))
+    ending = isempty(statements) ? (block === nothing ? nothing : first(byte_range(block)) + 4) : last(byte_range(statements[end]))
     first_line = isempty(statements) ? nothing : first(byte_range(statements[1]))
     indent = first_line === nothing ? "    " : text[something(findprev('\n', text, first_line), 0)+1:first_line-1]
     return PlotCode(header_mapping, lines, scales, settings, legend, theme, groups, ending, indent)
@@ -180,4 +180,96 @@ function call_code(text::String, node::SyntaxNode)::Union{Nothing,CallCode}
     kind(node) == K"tuple" && any(e -> e.name isa Int, entries) && return nothing
     # Positions come first, as `mapping` takes them.
     return CallCode(byte_range(node), sort(entries; by=e -> e.name isa Symbol))
+end
+
+"""
+    add_layer!(code::CodeFile, visual::Symbol) -> CodeFile
+
+Insert a visual layer into the last `@plot` in `code`, preserving surrounding source and comments.
+A declaration without a block acquires one with its original visual as the first layer.
+The file is not saved or evaluated; use `DataBrowserGUI.save!` to save the change.
+"""
+function add_layer!(code::CodeFile, type::Symbol)::CodeFile
+    plot = tryparse(PlotCode, code)
+    plot === nothing && throw(ArgumentError("The code has no @plot declaration"))
+    node = last_plot(syntax(code))
+    if plot.ending !== nothing
+        block = children(node)[3]
+        closing = last(byte_range(block)) - 2
+        start = something(findprev('\n', code.text, closing), 0) + 1
+        if all(isspace, code.text[start:prevind(code.text, closing)])
+            edit!(code, start:start-1, "$(plot.indent)visual($type)\n")
+        else
+            edit!(code, closing:closing-1, "\n$(plot.indent)visual($type)\n")
+        end
+        return code
+    end
+    header = children(node)[2]
+    parts = factors(header)
+    visual = findfirst(part -> is_call(part, "visual"), parts)
+    stop = last(byte_range(header))
+    initial = visual === nothing ? "visual()" : String(sourcetext(parts[visual]))
+    edit!(code, stop+1:stop, " begin\n    $initial\n    visual($type)\nend")
+    if visual !== nothing && length(parts) > 1
+        range = visual == 1 ? (first(byte_range(parts[visual])):first(byte_range(parts[2]))-1) :
+            (last(byte_range(parts[visual-1]))+1:last(byte_range(parts[visual])))
+        edit!(code, range, "")
+    elseif visual !== nothing
+        edit!(code, byte_range(header), "mapping()")
+    end
+    return code
+end
+
+"""
+    set_analysis!(code::CodeFile, layer::Integer, analysis; index=1) -> CodeFile
+
+Replace one analysis factor of a layer in the last `@plot`. `analysis` is Julia source such as
+`"expectation()"`, or `nothing` to remove the factor. If the layer has no analysis at `index`,
+append it before its visual. Mappings, other factors and surrounding source are preserved.
+The file is not saved or evaluated.
+"""
+function set_analysis!(code::CodeFile, layer::Integer, analysis::Union{Nothing,AbstractString}; index::Integer=1)::CodeFile
+    plot = tryparse(PlotCode, code)
+    plot === nothing && throw(ArgumentError("The code has no @plot declaration"))
+    line = plot.lines[layer]
+    parts = analysis_factors(code, line)
+    analyses = filter(part -> !any(name -> is_call(part, name), ("mapping", "visual", "data")), parts)
+    1 <= index <= length(analyses) + 1 || throw(BoundsError(analyses, index))
+    if analysis !== nothing
+        isempty(strip(analysis)) && throw(ArgumentError("An analysis must be an expression"))
+        Meta.parse(analysis)
+    end
+    if index <= length(analyses)
+        factor = analyses[index]
+        if analysis !== nothing
+            edit!(code, byte_range(factor), String(analysis))
+        elseif length(parts) == 1
+            edit!(code, byte_range(factor), "visual()")
+        else
+            position = findfirst(==(factor), parts)
+            range = position == 1 ? (first(byte_range(factor)):first(byte_range(parts[2]))-1) :
+                (last(byte_range(parts[position-1]))+1:last(byte_range(factor)))
+            edit!(code, range, "")
+        end
+    elseif analysis !== nothing
+        visual = findfirst(part -> is_call(part, "visual"), parts)
+        if visual === nothing
+            stop = last(line.range)
+            edit!(code, stop+1:stop, " * $analysis")
+        else
+            start = first(byte_range(parts[visual]))
+            edit!(code, start:start-1, "$analysis * ")
+        end
+    end
+    return code
+end
+
+# Syntax nodes of the factors of the line's value, after @invisible and a result's name.
+function analysis_factors(code::CodeFile, line::LineCode)
+    plot = last_plot(syntax(code))
+    statements = children(children(plot)[3])
+    value = only(filter(node -> first(byte_range(node)) <= first(line.range) <= last(byte_range(node)), statements))
+    kind(value) == K"macrocall" && (value = children(value)[2])
+    kind(value) == K"=" && (value = children(value)[2])
+    return factors(value)
 end

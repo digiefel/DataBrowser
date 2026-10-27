@@ -6,7 +6,7 @@ using AlgebraOfGraphics: data, mapping, visual
 using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_categories, scale_kinds
-using DataBrowserPlots: @plot, Aggregate, Declaration, Fit, ITEM, LegendEntry, PlotLine, PlotLines, PlotTheme, Points, Scaled, Result, category, column, grouping
+using DataBrowserPlots: YScaleLayers, is_y_scale, @plot, Aggregate, Declaration, Fit, ITEM, LegendEntry, PlotLine, PlotLines, PlotTheme, Points, Scaled, Result, category, column, grouping
 import DataBrowserAPI
 using DataBrowserAPI: id, item_data, metadata
 import DataBrowserCore.Workspace
@@ -32,15 +32,29 @@ function figure(
     get(legend, :show, true) || return drawn.figure
     sections = legend_sections(drawn.grid, texts, get(legend, :merge, nothing), groups)
     isempty(sections) && return drawn.figure
-    position = get(legend, :position, :right)
-    settings = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
-    # Makie keeps a row for an empty title, and shows the titles of sections despite `titlevisible`;
-    # only a title of `nothing` takes no room.
-    shown = get(legend, :titlevisible, true)
-    titles = [shown && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
-    AoG.Makie.Legend(AoG.guides_position(drawn.figure, position), [s.samples for s in sections],
-        [s.texts for s in sections], titles; orientation=AoG.default_orientation(position), settings...)
+    draw_legend!(drawn.figure, sections, legend)
     return drawn.figure
+end
+
+# Outside positions allocate a guide cell; inside positions overlay the plot's first cell.
+function draw_legend!(figure, sections, legend)
+    position = get(legend, :position, :right)
+    corners = (; topleft=(:left, :top), topright=(:right, :top),
+        bottomleft=(:left, :bottom), bottomright=(:right, :bottom))
+    placement = position isa Symbol ? get(corners, position, position) : position
+    inset = placement isa Tuple
+    if inset
+        length(placement) == 2 && placement[1] in (:left, :center, :right) &&
+            placement[2] in (:top, :center, :bottom) ||
+            throw(ArgumentError("An inside legend position is (horizontal, vertical), such as (:right, :top)"))
+    end
+    target = inset ? figure[1, 1] : AoG.guides_position(figure, position)
+    defaults = inset ? (; tellwidth=false, tellheight=false, halign=placement[1], valign=placement[2]) : (;)
+    kwargs = (; orientation=AoG.default_orientation(position), defaults...,
+        (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))...)
+    titles = [get(legend, :titlevisible, true) && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
+    AoG.Makie.Legend(target, [s.samples for s in sections], [s.texts for s in sections], titles; kwargs...)
+    return nothing
 end
 
 # The text the inspector shows for a point: its x and y under the labels of the axes, then the value
@@ -105,7 +119,9 @@ function processed_lines(plot::PlotLines, settings::AoG.Scales=AoG.scales())::Ve
     end
 end
 
-function figure(plot::PlotLines, args...; options...)
+function figure(plot::PlotLines, args...; yscales=Dict{Symbol,Any}(), options...)
+    any(line -> line.drawn && line.layers isa YScaleLayers, plot.lines) &&
+        return scaled_y_figure(plot, yscales, args...; options...)
     settings = !isempty(args) && first(args) isa AoG.Scales ? first(args) : AoG.scales()
     drawn = reduce(vcat, [layers for (line, layers) in zip(plot.lines, processed_lines(plot, settings)) if line.drawn];
         init=Pair{AoG.ProcessedLayer,Any}[])
@@ -113,6 +129,79 @@ function figure(plot::PlotLines, args...; options...)
     groups = [Dict{Symbol,Any}(key => values[i] for (key, values) in pairs(primary))
         for (_, primary) in drawn if !isempty(primary) for i in eachindex(first(values(primary)))]
     return figure(AoG.ProcessedLayers(first.(drawn)), args...; options..., groups)
+end
+
+function scaled_y_figure(plot::PlotLines, yscales, args...; legend=(;), texts=Pair{Symbol,Function}[], axis=(;), options...)
+    settings = !isempty(args) && first(args) isa AoG.Scales ? first(args) : AoG.scales()
+    primarysettings = get(yscales, :y, (;))
+    groups = Dict{Symbol,Vector{PlotLine}}(:y => PlotLine[])
+    roles = Symbol[:y]
+    for line in plot.lines
+        line.drawn || continue
+        parts = line.layers isa YScaleLayers ? line.layers.layers : [:y => line.layers]
+        for (role, layer) in parts
+            role in roles || push!(roles, role)
+            push!(get!(Vector{PlotLine}, groups, role), PlotLine(layer, line.shared, true))
+        end
+    end
+    config(role) = get(yscales, role, primarysettings)
+    scale_settings(role, shared=settings.dict) = AoG.scales(;
+        (key => value for (key, value) in pairs(shared) if key !== :Y)...,
+        Y=Base.structdiff(config(role), NamedTuple{(:limits, :reversed, :position)}))
+    processed = Dict(role => processed_lines(PlotLines(groups[role]), scale_settings(role)) for role in roles)
+    shared = Dict{Symbol,Any}(pairs(settings.dict))
+    for role in DataBrowserPlots.LEGEND_ROLES
+        categories = Any[value for ps in values(processed) for pieces in ps for (p, _) in pieces
+            if haskey(p.primary, role) for value in p.primary[role]]
+        isempty(categories) && continue
+        key = ROLE_SCALES[role]
+        scale_options = get(shared, key, (;))
+        haskey(scale_options, :categories) && continue
+        categories = try sort(unique(categories)) catch; unique(categories) end
+        shared[key] = (; pairs(scale_options)..., categories)
+    end
+    pieces(role) = AoG.ProcessedLayers([p for ps in processed[role] for (p, _) in ps])
+    left = pieces(:y)
+    secondaryonly = isempty(left.layers)
+    if secondaryonly
+        left = AoG.ProcessedLayers(data((x=Float64[], y=Float64[])) * mapping(:x, :y) * visual(Lines))
+    end
+    drawn = AoG.draw(left, scale_settings(:y, shared); legend=(; show=false), axis, options...)
+    size(drawn.grid) == (1, 1) || error("Independent y scales currently require one panel")
+    primary = only(drawn.grid).axis
+    grids = [vec(drawn.grid)]
+    for role in roles[2:end]
+        scale = config(role)
+        secondaryaxis = (; yaxisposition=get(scale, :position, :left), backgroundcolor=:transparent,
+            xgridvisible=false, ygridvisible=false, xlabelvisible=false, xticklabelsvisible=false,
+            xticksvisible=false, leftspinevisible=get(scale, :position, :left) === :left,
+            rightspinevisible=get(scale, :position, :left) === :right,
+            bottomspinevisible=false, topspinevisible=false, xscale=primary.xscale[], xreversed=primary.xreversed[])
+        grid = AoG.draw!(drawn.figure[1, 1], pieces(role), scale_settings(role, shared); axis=secondaryaxis)
+        secondary = only(grid).axis
+        AoG.Makie.reset_limits!(secondary)
+        haskey(scale, :limits) && AoG.Makie.ylims!(secondary, scale.limits...)
+        secondary.yreversed = get(scale, :reversed, false)
+        if secondaryonly
+            AoG.Makie.hideydecorations!(primary)
+            primary.leftspinevisible = false
+            bounds = secondary.targetlimits[]
+            AoG.Makie.xlims!(primary, bounds.origin[1], bounds.origin[1] + bounds.widths[1])
+            secondaryonly = false
+        end
+        AoG.Makie.linkxaxes!(primary, secondary)
+        push!(grids, vec(grid))
+    end
+    grid = reduce(vcat, grids)
+    label_inspector!(grid)
+    if get(legend, :show, true)
+        all_groups = Dict{Symbol,Any}[Dict{Symbol,Any}(key => entries[i] for (key, entries) in pairs(primary))
+            for ps in values(processed) for pieces in ps for (_, primary) in pieces
+            if !isempty(primary) for i in eachindex(first(values(primary)))]
+        sections = legend_sections(grid, texts, get(legend, :merge, nothing), all_groups)
+        isempty(sections) || draw_legend!(drawn.figure, sections, legend)
+    end
+    return drawn.figure
 end
 
 # The named roles each line can show: those of its plot types, and those of the layout.
@@ -179,9 +268,10 @@ piece(p::AoG.ProcessedLayer) = (p.plottype, p.attributes)
 # TODO: legends of additional scales, such as `color=:Chip => scale(:other)`.
 # TODO: plot types that draw all groups in one plot, such as `BarPlot` with `color`, fail here.
 function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge, all_groups::Vector{Dict{Symbol,Any}})
-    scales(kind) = [aes => scale for (aes, d) in pairs(AoG.legendable_scales(Val(kind),
-        kind === :categorical ? first(grid).categoricalscales : first(grid).continuousscales))
-        for (id, scale) in pairs(d) if id === nothing]
+    scales(kind) = unique(first, [aes => scale for entry in grid
+        for (aes, d) in pairs(AoG.legendable_scales(Val(kind),
+            kind === :categorical ? entry.categoricalscales : entry.continuousscales))
+        for (id, scale) in pairs(d) if id === nothing])
     categorical, continuous = Dict(scales(:categorical)), scales(:continuous)
     order = first.(scales(:categorical))
     processed = mapreduce(entry -> entry.processedlayers, vcat, grid)
@@ -358,23 +448,31 @@ end
 # before the analyses, or `t -> step ∘ t` after them.
 retransformed(layer::AoG.Layer, change) = AoG.Layer(; transformation=change(layer.transformation), layer.data, layer.positional, layer.named)
 retransformed(layers::AoG.Layers, change) = AoG.Layers([retransformed(layer, change) for layer in layers.layers])
+retransformed(layers::YScaleLayers, change) = YScaleLayers([role => retransformed(drawable(layer), change) for (role, layer) in layers.layers])
+axis_layers(layer::YScaleLayers) = layer
+axis_layers(layer) = drawable(layer)
 retransformed(plot::PlotLines, change) =
-    PlotLines([PlotLine(retransformed(drawable(line.layers), change), line.shared, line.drawn) for line in plot.lines])
+    PlotLines([PlotLine(retransformed(axis_layers(line.layers), change), line.shared, line.drawn) for line in plot.lines])
 
 function figure(plot::Scaled, args...; options...)
     for (r, _) in plot.scales
+        is_y_scale(r) && continue
         haskey(ROLE_SCALES, r) || error("scales sets the scale of a role such as color; $r is not one")
     end
     # `limits` and `reversed` of x and y are ours: Makie's axis draws them, and the limits also
     # remove the points outside them before the analyses run.
     limits = Any[nothing, nothing]
     axis = Pair{Symbol,Any}[]
-    scales = map(plot.scales) do (r, value)
+    primary = get(Dict(plot.scales), :y, (;))
+    yscales = Dict{Symbol,Any}(role => merge(primary, value) for (role, value) in plot.scales if is_y_scale(role))
+    get!(yscales, :y, primary)
+    scales = map(filter(pair -> !is_y_scale(first(pair)) || first(pair) === :y, plot.scales)) do (r, value)
         r in (:x, :y) && value isa NamedTuple || return r => value
         haskey(value, :limits) && (limits[r === :x ? 1 : 2] = value.limits)
         get(value, :reversed, false) && push!(axis, Symbol(r, :reversed) => true)
-        return r => Base.structdiff(value, NamedTuple{(:limits, :reversed)})
+        return r => Base.structdiff(value, NamedTuple{(:limits, :reversed, :position)})
     end
+    push!(axis, :yaxisposition => get(primary, :position, :left))
     # The `coord` lines only change where the values are drawn, after the analyses: their functions
     # move the points, then Makie's axis draws their scales, limits and reversed axes, and their
     # limits remove no points.
@@ -417,11 +515,15 @@ function figure(plot::Scaled, args...; options...)
     any(!isnothing, shown) && push!(axis, :limits => Tuple(shown))
     settings = AoG.scales(; (ROLE_SCALES[r] => value for (r, value) in scales)...)
     layers = drawable(plot.layers)
-    any(!isnothing, limits) && (layers = retransformed(layers, t -> t ∘ WithinLimits(limits)))
+    if layers isa PlotLines
+        layers = PlotLines([PlotLine(with_scale_limits(line.layers, limits, yscales), line.shared, line.drawn) for line in layers.lines])
+    elseif any(!isnothing, limits)
+        layers = retransformed(layers, t -> t ∘ WithinLimits(limits))
+    end
     isempty(functions) || (layers = retransformed(layers, t -> MovedPoints(functions) ∘ t))
     legend = (; plot.legend..., get(options, :legend, (;))...)
     draw() = figure(layers, settings, args...; options..., axis=(; axis..., get(options, :axis, (;))...),
-        texts=plot.texts, legend)
+        texts=plot.texts, legend, (layers isa PlotLines ? (; yscales) : (;))...)
     return plot.theme === nothing ? draw() : AoG.Makie.with_theme(draw, makie_theme(plot.theme))
 end
 
@@ -530,6 +632,8 @@ steps(transformation) = transformation === identity ? Any[] : Any[transformation
 # With `points`, the code of the layer's points, and items of a workspace, the workspace computes the
 # result (`Analysis`).
 function resolve(layer::AoG.Layer, items, axes, points=nothing)
+    split = split_y_scales(layer, items, axes, points)
+    split === nothing || return split
     named = Pair{Symbol,Any}[role => value for (role, value) in pairs(layer.named)]
     found = steps(layer.transformation)
     computes(step) = step isa Union{Fit,Aggregate}
@@ -549,6 +653,39 @@ function resolve(layer::AoG.Layer, items, axes, points=nothing)
     after = found[2:end]
     return isempty(after) ? result : result * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
 end
+
+function split_y_scales(layer::AoG.Layer, items, axes, points)
+    roles = get(axes, :yroles, ())
+    isempty(roles) && return nothing
+    length(layer.positional) >= 2 || return nothing
+    ys = layer.positional[2] isa AbstractVector ? layer.positional[2] : [layer.positional[2]]
+    length(roles) == length(ys) || return nothing
+    primary = get(axes, :y, (;))
+    effective(role) = merge(primary, get(axes, role, (;)))
+    assigned = [effective(role) == primary ? :y : role for role in roles]
+    all(==(:y), assigned) && return nothing
+    parts = Pair{Symbol,Any}[]
+    for role in unique(assigned)
+        take = findall(==(role), assigned)
+        positional = copy(layer.positional)
+        positional[2] = length(ys) > 1 ? ys[take] : only(ys)
+        piece = AoG.Layer(; layer.transformation, layer.data, positional, layer.named)
+        settings = (; x=get(axes, :x, (;)), y=effective(role))
+        push!(parts, role => resolve(piece, items, settings, points))
+    end
+    return YScaleLayers(parts)
+end
+
+Base.:+(a::YScaleLayers, b::YScaleLayers) = YScaleLayers([a.layers; b.layers])
+Base.:+(a::YScaleLayers, b::Union{AoG.AbstractAlgebraic,Result}) = YScaleLayers([a.layers; :y => b])
+Base.:+(a::Union{AoG.AbstractAlgebraic,Result}, b::YScaleLayers) = YScaleLayers([:y => a; b.layers])
+
+function with_scale_limits(layers::YScaleLayers, limits, yscales)
+    YScaleLayers([role => retransformed(drawable(layer), t -> t ∘ WithinLimits(
+        Any[limits[1], get(get(yscales, role, yscales[:y]), :limits, nothing)])) for (role, layer) in layers.layers])
+end
+with_scale_limits(layer, limits, _) = any(!isnothing, limits) ?
+    retransformed(drawable(layer), t -> t ∘ WithinLimits(limits)) : layer
 
 # A fit or an aggregate of a layer's points, with what it needs to compute again: the values the
 # layer maps, the settings of its axes, and the code of its points. The types of the step and the
@@ -736,6 +873,7 @@ function drawable(layer::AoG.Layer)
     return turns ? layer * AoG.visual(; direction=:x) : layer
 end
 drawable(layers::AoG.Layers) = AoG.Layers(map(drawable, layers.layers))
+drawable(layers::YScaleLayers) = reduce(+, [drawable(layer) for (_, layer) in layers.layers])
 drawable(layers) = layers
 
 Base.:+(a::Result, b::Union{Result,AoG.AbstractAlgebraic}) = drawable(a) + drawable(b)

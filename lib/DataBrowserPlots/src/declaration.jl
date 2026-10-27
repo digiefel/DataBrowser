@@ -57,6 +57,11 @@ struct PlotLine
     drawn::Bool
 end
 
+# Layers grouped by the y mapping whose scale they use, such as :y or :y3.
+struct YScaleLayers
+    layers::Vector{Pair{Symbol,Any}}
+end
+
 """
 The lines of a `@plot` block, each with layers of its own. A role that a line takes from the
 header is left out of the layers that cannot show it, such as `markersize` of a `Lines` layer. Draw
@@ -297,6 +302,19 @@ result's mapping.
 
     @invisible contacts * visual(Scatter; markersize=4)
 
+## Secondary y axes
+
+Every mapped `yN` has scale settings of the same name. Unspecified settings inherit from `y`.
+For example, `y2` uses the same scale as `y` by default; `position=:right` places its scale on
+an independent right axis. The scales share x. This currently requires one panel.
+
+    @plot mapping(; x=:data.time, y=:data.voltage, y2=:data.current) begin
+        visual(Lines)
+        scales(y=(; label="Voltage (V)"), y2=(; position=:right, label="Current (A)"))
+    end
+
+The same rule applies to `y3`, `y4` and further defined y mappings.
+
 ## Scales and legend
 
 A `scales` line sets the scale of a role: the look of each value, the order of the values and
@@ -353,6 +371,10 @@ A name of the block reads the value of that result for the entry's group:
 The text reads only values that the entry determines: `:Wafer` needs each chip to be on one
 wafer, and `contacts.Rc` needs the fit's groups to come from roles of the entry's section.
 
+`legend(position=(:right, :top))` places the legend inside the axis at the top right. The symbols
+`:topright`, `:topleft`, `:bottomright` and `:bottomleft` name the inside corners too; `:right`,
+`:left`, `:top` and `:bottom` remain outside positions.
+
 The other settings of a `legend` line are those of [`figure`](@ref)'s legend: `position`, `show`,
 `merge`, and those of Makie's `Legend`. `legend(merge = (:color, :linestyle))` puts those roles in
 one section, with one entry for each combination of their values that is drawn,
@@ -373,6 +395,9 @@ labels, scales, limits and ticks of the axes belong in `scales`, and settings su
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
+    header_roles_y = y_roles(header)
+    raw_lines = filter(line -> !(line isa LineNumberNode), block.args)
+    roles_y = [something(y_roles(line), header_roles_y, [:y]) for line in raw_lines]
     header, block = positions_named(header), positions_named(block)
     lines = filter(line -> !(line isa LineNumberNode), block.args)
     invisible = [Meta.isexpr(line, :macrocall) && line.args[1] === Symbol("@invisible") for line in lines]
@@ -388,16 +413,20 @@ macro plot(header, block)
     uses(block, :aggregate) && pushfirst!(statements, :(aggregate = $Aggregate))
     # The settings of x and y in the `scales` lines, which the analyses take.
     axes = [Expr(:kw, key, value) for line in settings if line.args[1] === :scales
-        for (key, value) in last(call_arguments(line)) if key in (:x, :y)]
+        for (key, value) in last(call_arguments(line)) if key === :x || is_y_scale(key)]
     pushfirst!(statements, :($AXES = $(Expr(:tuple, Expr(:parameters, axes...)))))
     # Each line that is a layer, with the named roles it takes from the header: those its own
     # mapping does not set.
     call = find_call(header, :mapping)
     header_roles = call === nothing ? Symbol[] : first.(last(call_arguments(call)))
     own_roles(line) = (own = find_call(line, :mapping); own === nothing ? Symbol[] : first.(last(call_arguments(own))))
-    drawn = map(filter(((line, _),) -> !Meta.isexpr(line, :(=)) && !(line in settings), collect(zip(lines, invisible)))) do (line, hidden)
+    drawn = map(filter(((line, _, _),) -> !Meta.isexpr(line, :(=)) && !(line in settings), collect(zip(lines, invisible, roles_y)))) do (line, hidden, roles)
         shared = QuoteNode.(setdiff(header_roles, own_roles(line)))
-        :($PlotLine($(declare_line(header, line, names, input)), Symbol[$(shared...)], $(!hidden)))
+        declared = declare_line(header, line, names, input)
+        declared = :(let $AXES = (; $AXES..., yroles=$(QuoteNode(Tuple(roles))))
+            $declared
+        end)
+        :($PlotLine($declared, Symbol[$(shared...)], $(!hidden)))
     end
     declared = isempty(drawn) ? declare_layers(header, input) : :($PlotLines([$(drawn...)]))
     # The type of each named role's values in each drawn line, for `scale_kinds`. A line with data of
@@ -424,6 +453,20 @@ end
 macro plot(declaration)
     input = gensym("input")
     return esc(declare(declare_layers(positions_named(declaration), input), [:($AXES = (;))]; input))
+end
+
+is_y_scale(name::Symbol) = name === :y || occursin(r"^y[1-9]\d*$", String(name))
+
+# Preserve the yN identities before positions_named packs their values into one AoG position.
+function y_roles(expression)
+    call = find_call(expression, :mapping)
+    call === nothing && return nothing
+    positional, named = call_arguments(call)
+    roles = Symbol[key === :y1 ? :y : key for (key, _) in named if is_y_scale(key)]
+    length(positional) >= 2 && push!(roles, :y)
+    isempty(roles) && return nothing
+    sort!(roles; by=role -> role === :y ? 1 : parse(Int, String(role)[2:end]))
+    return roles
 end
 
 # The path a value names, such as `[:data, :V]` for `:data.V`, or `nothing`.
