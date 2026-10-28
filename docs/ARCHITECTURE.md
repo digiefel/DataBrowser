@@ -170,7 +170,7 @@ passes keys.
 Each item row records its inputs: the source item that expanded it, or, for a computed item, the
 items it reads. A computed item records a result that no `process` of the project describes,
 because its inputs are chosen elsewhere, such as the groups of a fit in a plot. Core holds it as a
-`Computed(f, args...; settings...)` value, which is not an API for projects or scripts. Its row is
+`Computation(f, args...; settings...)` value. Its row is
 in a collection named after `f`, below the collection `Computed`. Its `process` runs `f` once every
 item it reads is processed, and again whenever one of them becomes stale. A computed
 item has no `analyze`; the named single values of its result are its metadata, on top of the
@@ -181,6 +181,19 @@ cache. A plot's fit adds one computed item for each group of its points; the id 
 code that gives its result, so a plot drawn again with other visuals finds its results unchanged.
 A window that passes its value through a function adds one computed item for each item of its
 input, and removes them when no window uses them any more.
+
+Project calls and interactive operations share the `Computation` definition in DataBrowserAPI:
+a function, arguments and settings. `computation(workspace, item)` describes the value supplied
+for an item; `computation(workspace, key, stage)` describes one pipeline call. `inputs(value)`
+returns the directly preceding computations. Reading these definitions does not load payloads
+or run project functions. `evaluate(workspace, value)` obtains the native result, reusing existing
+stage caches where available and replaying missing inputs. Results reused by this evaluator are
+copied before being supplied to callers.
+
+The scheduler, publication jobs and cache addressing still use the fixed stages described below.
+Their project calls use the same computation invocation, but their input preparation and publication
+have not yet moved to a general computation runtime. Per-type cache policy and Code visualizer
+output are also pending; see the [roadmap](roadmap.md).
 
 Workers run project code in the latest world, so a method defined after the workspace opened is
 used. Each stage has a code revision for each type it runs for: a content hash of the code it can

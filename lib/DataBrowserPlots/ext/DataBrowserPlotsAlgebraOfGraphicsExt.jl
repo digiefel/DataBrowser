@@ -730,7 +730,7 @@ function computed(analysis::Analysis, columns, items::Selection, workspace)::Res
     keys = [NamedTuple{Tuple(by)}(Tuple(table[k][row] for k in by)) for row in eachindex(table[ITEM])]
     values = map(unique(keys)) do key
         ids = unique(table[ITEM][[row for row in eachindex(keys) if isequal(keys[row], key)]])
-        value = Workspace.Computed(analysis, items[findall(in(ids), items.id)]; group=key)
+        value = Workspace.Computation(analysis, items[findall(in(ids), items.id)]; group=key)
         push!(workspace, value)
         return value
     end
@@ -752,14 +752,14 @@ end
 
 Workspace.function_name(analysis::Analysis) = analysis.step isa Fit ? "fit" : "aggregate"
 # The code of a fit or an aggregate is the `@plot` that defines its points.
-Base.which(value::Workspace.Computed{<:Analysis}) = only(methods(value.f.points.table))
+Base.which(value::Workspace.Computation{<:Analysis}) = only(methods(value.f.points.table))
 
 # The code that gives the result of a group, such as
 # `fit(line, (a = 1,)) of :V, :I by :Chip; y scale log10 for :Chip = "A"`: the step, the values
 # mapped to x and y, the values that form the groups, the limits and the y scale, and the group.
 # Titles, transformations and visuals are left out. The code of the functions the step calls, such
 # as the curve of a fit, is in the type of the analysis instead.
-function DataBrowserAPI.id(value::Workspace.Computed{<:Analysis})
+function DataBrowserAPI.id(value::Workspace.Computation{<:Analysis})
     analysis, group = value.f, value.settings.group
     texts = analysis.points.texts
     text(v) = v isa AbstractVector ? "[" * join(text.(v), ", ") * "]" : get(texts, column(v), repr(column(v)))
@@ -774,7 +774,7 @@ end
 
 # The title of a group's result: the step and the group's values, such as
 # `fit(line, (a = 1,)) for A`. The id holds the rest of the code.
-DataBrowserAPI.label(value::Workspace.Computed{<:Analysis}) = string(value.f.points.step,
+DataBrowserAPI.label(value::Workspace.Computation{<:Analysis}) = string(value.f.points.step,
     isempty(value.settings.group) ? "" : " for " * join(string.(values(value.settings.group)), ", "))
 
 # The title of a value of `mapping`: the title after `=>`, as in `:I => "V > 0"` and

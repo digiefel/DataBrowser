@@ -191,6 +191,10 @@ struct Catalog
     # Stages that lost a fresh or failed result, and collections that were removed, since `stale!`
     # last emptied this list.
     stale::Vector{Target}
+    # The actual calls of project and interactive work. Stages address their publication jobs;
+    # the calls themselves retain the computations that supply their arguments.
+    computations::Dict{Target,Tuple{UInt32,Computation}}
+    computation_targets::IdDict{Computation,Target}
 end
 
 function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int}())
@@ -207,10 +211,21 @@ function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int
         Threads.Condition(lock),
         Dict{Tuple{RowKey,MetadataLayer},Vector{MetadataConflict}}(),
         Target[],
+        Dict{Target,Tuple{UInt32,Computation}}(),
+        IdDict{Computation,Target}(),
     )
     # No collection work runs for the root. It is never rebuilt, so it has no concrete type.
     push!(catalog.collections, "root", "Root", ROOT, AbstractCollection; absent=true)
     return catalog
+end
+
+# Removed rows must not retain call definitions or remain eligible for cached-result lookup.
+function forget_computations!(catalog::Catalog, key::K) where {K<:RowKey}
+    for stage in stages(K)
+        known = pop!(catalog.computations, (key, stage), nothing)
+        known === nothing || delete!(catalog.computation_targets, last(known))
+    end
+    return nothing
 end
 
 table(catalog::Catalog, ::SourceKey) = catalog.sources
@@ -444,6 +459,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
             append!(get!(Vector{Tuple{ItemKey,ItemKey}}, items.waiting, items.ids[key.index]),
                 [(reader, key) for reader in readers])
             invalidate!(catalog, Target[(reader, ITEM_PROCESS) for reader in readers])
+            forget_computations!(catalog, key)
             delete!(items, key)
         end
         for (collection, gone) in leaving
@@ -547,6 +563,7 @@ function Base.delete!(catalog::Catalog, key::ItemKey)::Catalog
         append!(get!(Vector{Tuple{ItemKey,ItemKey}}, items.waiting, items.ids[key.index]),
             [(reader, key) for reader in readers])
         invalidate!(catalog, Target[(reader, ITEM_PROCESS) for reader in readers])
+        forget_computations!(catalog, key)
         delete!(items, key)
         invalidate!(catalog, collection, COLLECTION_PROCESS)
         delete!(catalog, collection)
@@ -563,6 +580,7 @@ function Base.delete!(catalog::Catalog, source::SourceKey)::Catalog
     @lock catalog.lock begin
         source in catalog.sources || return catalog
         publish!(catalog, source, ItemEntry[])
+        forget_computations!(catalog, source)
         delete!(catalog.sources, source)
     end
     return catalog
@@ -586,6 +604,7 @@ function Base.delete!(catalog::Catalog, collection::CollectionKey)::Catalog
             analyze = status(catalog, collection, COLLECTION_ANALYZE)
             collections.not_fresh[parent.index] -= analyze.validity != FRESH
             add_stuck!(catalog, parent, -(analyze.failed || analyze.blocked))
+            forget_computations!(catalog, collection)
             delete!(collections, collection)
             push!(catalog.stale, (collection, COLLECTION_PROCESS))
             invalidate!(catalog, parent, COLLECTION_PROCESS)

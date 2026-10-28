@@ -167,7 +167,7 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
     cached = read_payload(cache, saved)
     loaded = if cached === nothing
         value = try
-            read(workspace.project, workspace.source, source_item)
+            execute(workspace, job.key, SOURCE_READ, workspace.project, workspace.source, source_item)
         catch error
             fail!(workspace, job, error, catch_backtrace(); stage=SOURCE_READ)
             return nothing
@@ -177,7 +177,8 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
     else
         something(cached)
     end
-    expanded = expand(workspace.project, workspace.source, source_item, loaded)
+    native_items = execute(workspace, job.key, SOURCE_EXPAND, workspace.project, source_item, loaded)
+    expanded = expanded_items(workspace.project, workspace.source, source_item, loaded, native_items)
     @lock catalog.lock begin
         # A job whose result is discarded adds no collections.
         iscurrent(catalog, job) || (finish!(catalog, job, ItemEntry[]); return nothing)
@@ -247,7 +248,7 @@ function read_again(workspace::Workspace, source::SourceKey, source_item::Abstra
         error(something(state.message, "Source read failed"))
     cached = read_payload(cache, saved)
     cached === nothing || return something(cached)
-    loaded = read(workspace.project, workspace.source, source_item)
+    loaded = execute(workspace, source, SOURCE_READ, workspace.project, workspace.source, source_item)
     store_source_read!(cache, saved, loaded)
     return loaded
 end
@@ -274,6 +275,7 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
                 "is no longer present in source '$(id(workspace.source))'",
             )
             source_item = reported[position]
+            @lock catalog.lock (workspace.source_items[source] = source_item)
         end
         # Another task may have expanded this source item while this one waited.
         kept = only(read_payload(workspace.cache.db, [id(catalog, item)]; stage=SOURCE_EXPAND))
@@ -281,9 +283,9 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
             valuetype(catalog, item), id(catalog, item), something(kept),
             metadata(workspace, item; through=SOURCE_EXPAND))
         value === nothing || return value
-        expanded = expand(
-            workspace.project, workspace.source, source_item,
-            read_again(workspace, source, source_item))
+        loaded = read_again(workspace, source, source_item)
+        native_items = execute(workspace, source, SOURCE_EXPAND, workspace.project, source_item, loaded)
+        expanded = expanded_items(workspace.project, workspace.source, source_item, loaded, native_items)
         @lock catalog.lock begin
             for produced in expanded
                 sibling = lookup(catalog, ItemKey, produced.id)
@@ -333,7 +335,7 @@ end
 
 """Run `process` of the project on `input` and check what it returns."""
 function processed(workspace::Workspace, input::AbstractDataItem)::AbstractDataItem
-    output = @timed_dbg process(workspace.project, input)
+    output = @timed_dbg execute(workspace, key(workspace, input), ITEM_PROCESS, workspace.project, input)
     output isa AbstractDataItem || error(
         "process(::$(typeof(workspace.project)), ::$(typeof(input))) must return an " *
         "AbstractDataItem; got $(typeof(output))",
@@ -408,7 +410,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_ANALYZE})::Not
     input = only(versions(workspace, [item]; reader=(item, ITEM_ANALYZE)))
     known, given, saved = @lock catalog.lock (
         row(workspace, item), metadata(workspace, item; through=ITEM_PROCESS), cache_key(workspace, item))
-    analysis = @timed_dbg "analyze" metadata_dict(analyze(workspace.project, input))
+    analysis = @timed_dbg "analyze" metadata_dict(execute(workspace, item, ITEM_ANALYZE, workspace.project, input))
     delivered = merge(given, analysis)
     # An item type that does not rebuild from a payload keeps the item that analyze received.
     analyzed = something(reconstruct(known.type, known.id, item_data(input), delivered), input)
@@ -527,7 +529,7 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
         holders = ancestors(workspace, item)
         metadata(workspace, item; above=holders[findfirst(==(job.key), holders)+1:end])
     end
-    outputs = process(workspace.project, last(values(workspace, job.key)), inputs)
+    outputs = execute(workspace, job.key, COLLECTION_PROCESS, workspace.project, last(values(workspace, job.key)), inputs)
     length(outputs) == length(inputs) || error(
         "Collection process for '$(label(catalog, job.key))' returned $(length(outputs)) items " *
         "for $(length(inputs)); it must return one output for each input, in order",
@@ -572,9 +574,8 @@ end
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_ANALYZE})::Nothing
     catalog = workspace.catalog
     value = last(values(workspace, job.key))
-    analysis = metadata_dict(analyze(
-        workspace.project, value,
-        versions(workspace, members(workspace, job.key); reader=(job.key, COLLECTION_ANALYZE))))
+    inputs = versions(workspace, members(workspace, job.key); reader=(job.key, COLLECTION_ANALYZE))
+    analysis = metadata_dict(execute(workspace, job.key, COLLECTION_ANALYZE, workspace.project, value, inputs))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=analysis) || return nothing
         conflicts!(workspace, job.key, COLLECTION_ANALYZE, store_collection_metadata!(

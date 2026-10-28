@@ -52,7 +52,7 @@ function calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vec
         if value !== nothing
             inputs = Call[]
             for x in reads(value)
-                input = last_call(something(item(workspace, x isa Computed ? id(x) : x)))
+                input = last_call(something(item(workspace, x isa Computation ? id(x) : x)))
                 input === nothing || push!(inputs, input)
             end
             # The type the function gives, as Julia infers it, so that no result is read.
@@ -106,16 +106,16 @@ stage_name(stage::PipelineStage)::String =
     stage in (ITEM_PROCESS, COLLECTION_PROCESS) ? "process" : "analyze"
 
 # A computed argument is passed as its result, whose type is known only once it is computed.
-argument_types(value::Computed)::Type{<:Tuple} = Tuple{map(x -> x isa Computed ? Any : typeof(x), value.args)...}
+argument_types(value::Computation)::Type{<:Tuple} = Tuple{map(x -> x isa Computation ? Any : typeof(x), value.args)...}
 
 """
-    which(value::Computed) -> Union{Method,LineNumberNode,Nothing}
+    which(value::Computation) -> Union{Method,LineNumberNode,Nothing}
 
 The code of a computed item: the method of its function for its arguments, or `nothing` when that
 is not known before it runs. A package whose computations are values of its own type, such as the
 fits of a plot, can say where their code is.
 """
-function Base.which(value::Computed)::Union{Method,LineNumberNode,Nothing}
+function Base.which(value::Computation)::Union{Method,LineNumberNode,Nothing}
     found = methods(value.f, argument_types(value))
     return length(found) == 1 ? only(found) : nothing
 end

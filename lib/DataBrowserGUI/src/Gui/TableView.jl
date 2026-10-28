@@ -133,7 +133,7 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     # The rows of `table` the window passes on, and what it passes on to other windows: the
     # selected rows of each item.
     output_rows::Vector{Int} = Int[]
-    output::Union{Nothing,Vector{Workspace.Computed}} = nothing
+    output::Union{Nothing,Vector{Workspace.Computation}} = nothing
     warnings::Vector{String} = String[]
     grid::DataGridState = DataGridState()
     # Names the grid for ImGui, which keeps the column widths under this name in imgui.ini: one
@@ -580,7 +580,7 @@ function _pass_on!(view::TableView)::Nothing
     view.output = map(unique(table.row_item[view.output_rows])) do index
         item = view.items[table.item_index[index]]
         rows = table.item_row[[row for row in view.output_rows if table.row_item[row] == index]]
-        return Workspace.Computed(selected_rows, item; rows, columns)
+        return Workspace.Computation(selected_rows, item; rows, columns)
     end
     return nothing
 end

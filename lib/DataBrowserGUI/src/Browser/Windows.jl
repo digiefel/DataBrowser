@@ -240,7 +240,7 @@ function refresh!(state::BrowserState, window::Window)::Nothing
     ctx = WindowContext(state, window)
     # The computed items the window adds to the workspace: the rows another window passes on, then
     # the results of the transform.
-    held = Workspace.Computed[]
+    held = Workspace.Computation[]
     keys_of(values) = ItemKey[something(Workspace.item(workspace, id(value))) for value in values]
     # Whether `items` are ready. Otherwise the window waits for them, and keeps the computed items
     # it shows until it has a new value.
@@ -269,7 +269,7 @@ function refresh!(state::BrowserState, window::Window)::Nothing
     try
         input isa WindowOutput || ready(itemkeys(input, state)) || return nothing
         given = value(input, state)
-        if given isa Vector{Workspace.Computed}
+        if given isa Vector{Workspace.Computation}
             append!(held, given)
             foreach(value -> push!(workspace, value), held)
             ready(keys_of(held)) || return nothing
@@ -285,7 +285,7 @@ function refresh!(state::BrowserState, window::Window)::Nothing
                     # items: it gives one computed item for the whole selection.
                     whole = Base.invokelatest(hasmethod, f, Tuple{Workspace.Selection}) &&
                         !all(item -> Base.invokelatest(applicable, f, item), items)
-                    results = whole ? [Workspace.Computed(f, given)] : [Workspace.Computed(f, item) for item in items]
+                    results = whole ? [Workspace.Computation(f, given)] : [Workspace.Computation(f, item) for item in items]
                     foreach(value -> push!(workspace, value), results)
                     append!(held, results)
                     ready(keys_of(results)) || return nothing

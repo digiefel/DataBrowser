@@ -109,7 +109,10 @@ import DataBrowserCache
 import DataBrowserCache: query_items
 import DataBrowserAnnotations: Tags
 import DataBrowserAnnotations.Tags: Tag, TagState, Untagged
-using ..DataBrowserCore: ExpandedItem
+using ..DataBrowserCore: ExpandedItem, expanded_items
+using ..DataBrowserCore: Computation
+using ..DataBrowserCore: invoke_computation
+import DataBrowserAPI: computation, inputs, evaluate
 import DataBrowserAPI
 import DataBrowserAPI:
     AbstractCollection,
@@ -294,7 +297,7 @@ mutable struct Workspace{P<:AbstractProject}
     errors::Dict{Target,String}
     # Items that were delivered. Their analyze is requested, so their metadata becomes complete.
     wanted::Set{ItemKey}
-    # The `Computed` value of each computed item, and its result once its `process` ran.
+    # The `Computation` value of each computed item, and its result once its `process` ran.
     # TODO: results go to the cache, so that they survive closing the workspace.
     computations::Dict{ItemKey,AbstractDataItem}
     results::Dict{ItemKey,Any}
@@ -479,6 +482,7 @@ include("Workspace/Status.jl")
 include("Workspace/DataAccess.jl")
 include("Workspace/Selection.jl")
 include("Workspace/Computed.jl")
+include("Workspace/ComputationGraph.jl")
 include("Workspace/Calls.jl")
 include("Workspace/Processing.jl")
 include("Workspace/MemoryDiagnostics.jl")

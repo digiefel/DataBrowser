@@ -83,7 +83,7 @@ end
         sweeps = W.materialize_items(workspace, ["IV_A", "IV_B"])
         top(xs; scale) = (top = scale * maximum(maximum(DataBrowserAPI.item_data(x).V) for x in xs), count = length(xs))
         # TODO: build it through the fit of a plot, its first producer, once that exists.
-        value = W.Computed(top, sweeps; scale=2)
+        value = W.Computation(top, sweeps; scale=2)
         push!(workspace, value)
         W.wait_workspace_idle!(workspace; timeout=20)
         computed = W.select(workspace, [DataBrowserAPI.id(value)])

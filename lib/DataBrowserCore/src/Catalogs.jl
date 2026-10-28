@@ -4,6 +4,8 @@ membership and the status of each stage.
 """
 module Catalogs
 
+using ..DataBrowserCore: Computation
+
 import DataBrowserAPI: id, items, label, metadata
 using DataBrowserAPI:
     AbstractCollection,

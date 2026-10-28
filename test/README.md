@@ -53,7 +53,7 @@ julia --project=bench --threads=auto test/runtests.jl precompile --force
 | `Sources` | `test_directory.jl`: discovery, exclusions, recursion and change fingerprints. |
 | `Recipes` | `test_stages.jl`: registration through typed stages and CSV loading. |
 | `Cache` | `test_persistence.jl`: payload replacement/deletion across reopen; cached `nothing`. |
-| `Core` | `test_workspace.jl`: reconstruction, collections, reopening, code changes, failure recovery, tags and status during on-demand processing. `test_selection.jl`: selection, filtering and table access. `test_source_updates.jl`: actual directory-file edits, collection metadata changes, removal/recreation and recovery from reader/processor failures. |
+| `Core` | `test_computations.jl`: input traversal, native-value evaluation, collection replay and copied cache results. `test_workspace.jl`: reconstruction, collections, reopening, code changes, failure recovery, tags and status during on-demand processing. `test_selection.jl`: selection, filtering and table access. `test_source_updates.jl`: actual directory-file edits, collection metadata changes, removal/recreation and recovery from reader/processor failures. |
 | `GUI` | `test_tables.jl`: prepared table values, columns and provenance. `test_code_file.jl`: editing, saving and noticing changes by another editor. `test_windows.jl`: a window's function as one computed item per item, and the rows a table passes on. None of them exercises GUI controls. |
 | `Plots` | `test_declaration.jl`, `test_fitting.jl`, `test_legend.jl`: ordinary plot declarations, plotted values, grouped fits and legend content. |
 | `Profiling` | `test_timings.jl`: concurrent instrumentation, snapshots and lifecycle. |

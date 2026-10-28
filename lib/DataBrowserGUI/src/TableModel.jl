@@ -306,4 +306,4 @@ function selected_rows(item::AbstractDataItem; rows::Vector{Int}, columns::Vecto
 end
 
 # A selection of rows is named after its item.
-DataBrowserAPI.label(value::Workspace.Computed{typeof(selected_rows)}) = label(only(value.args))
+DataBrowserAPI.label(value::Workspace.Computation{typeof(selected_rows)}) = label(only(value.args))

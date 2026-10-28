@@ -701,7 +701,14 @@ Let users inspect the values produced throughout a project pipeline. The workspa
 chosen value through its normal data-access path; inspectors and visualizers continue to consume the
 payload they are given rather than learning special pipeline logic.
 
-- [ ] Expose the results of `read`, `expand`, `process`, `analyze`, collection `process`, and
+- [x] Share `Computation` definitions between project calls and interactive operations; expose input
+  traversal and evaluation of earlier calls through the application API.
+- [ ] Replace fixed-stage input preparation, scheduling and cache addressing with the computation
+  runtime; add the agreed per-type cache policy and execution information.
+- [ ] Make Code selection output the selected computation through normal visualizer composition.
+  Show step information below the list, including `Last execution: duration (date)` and cache usage.
+
+- [x] Expose the results of `read`, `expand`, `process`, `analyze`, collection `process`, and
   collection `analyze` through the shared application API.
 - [ ] Use the public API vocabulary for the GUI control and skip operations absent from a project.
 - [ ] Coalesce sibling items when moving to a source-level result and group items when moving to a
@@ -711,8 +718,8 @@ payload they are given rather than learning special pipeline logic.
 - [ ] Prototype scientific local-variable capture independently of pipeline-stage inspection. Expose
   capture requests/results through the public API, identify invocation/input/code revisions, and
   never repeat acquisition merely to populate a debug window.
-- [ ] Add the global GUI control and make the current inspectors and visualizers respond to the
-  selected pipeline result without per-visualizer pipeline code.
+- [ ] Move shared window controls into window menus: input, **Process**, following selection,
+  export and arrangement. Keep visualizer settings visible where useful.
 
 ## 0.15.0 — Project configuration
 

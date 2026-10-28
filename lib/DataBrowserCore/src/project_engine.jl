@@ -59,6 +59,11 @@ function expand(
     loaded,
 )::Vector{ExpandedItem}
     items = expand(project, source_item, loaded)
+    return expanded_items(project, source, source_item, loaded, items)
+end
+
+"""Resolve the identity and placement of the native items returned by a project's call."""
+function expanded_items(project, source, source_item, loaded, items)::Vector{ExpandedItem}
     items isa AbstractVector || error(
         "expand(::$(typeof(project)), ::$(typeof(source_item)), ::$(typeof(loaded))) must " *
         "return a vector of items; got $(typeof(items))",
