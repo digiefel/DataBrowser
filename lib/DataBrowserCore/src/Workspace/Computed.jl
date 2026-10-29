@@ -111,7 +111,7 @@ function row!(workspace::Workspace, value::Computation)::ItemKey
         holder = get!(catalog, get!(catalog, ROOT, COMPUTED; absent=none),
             ComputedCollection(function_name(value.f)); absent=none)
         title = target === nothing ? label(value) :
-            first(target) isa SourceKey ? id(workspace, first(target)) : label(workspace, first(target))
+            first(target) isa SourceKey ? id(catalog, first(target)) : label(workspace, first(target))
         key = publish!(catalog, ItemEntry(id(value), title, holder, typeof(value)), Target[dependencies...])
         previous = get(workspace.computations, key, nothing)
         if previous !== nothing && previous !== value
