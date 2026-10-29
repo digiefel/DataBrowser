@@ -34,6 +34,7 @@ using .Workspace:
     untag!
 
 export Computation,
+    ResultItem,
     computation,
     inputs,
     evaluate,

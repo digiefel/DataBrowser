@@ -703,6 +703,11 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     for saved in index.items
         item = lookup(catalog, ItemKey, saved.id)
         item === nothing && continue
+        if result_store(workspace, saved.type) === nothing
+            delete_processed!(cache, saved.id; collection=0)
+            clear_cached_result_state!(cache, ITEM_PROCESS, saved.id)
+            continue
+        end
         restore(item, ITEM_PROCESS, saved.id; metadata=saved.process) &&
             restore(item, ITEM_ANALYZE, saved.id; metadata=saved.analysis)
     end
@@ -769,6 +774,10 @@ function publish_cache_state!(
     state::Symbol,
     index::Union{Nothing,ProjectCacheIndex},
 )::Nothing
+    # Select stores before taking the catalog lock: custom stores may perform setup.
+    if index !== nothing
+        foreach(type -> result_store(workspace, type), unique(item.type for item in index.items))
+    end
     @lock workspace.catalog.lock begin
         scan_epoch == workspace.scan.epoch || return nothing
         if index === nothing

@@ -189,8 +189,9 @@ returns the directly preceding computations. Reading these definitions does not 
 or run project functions. `evaluate(workspace, value)` obtains the native result, reusing existing
 native result stores where available and replaying missing inputs. `storage(project, T)` chooses
 the store for a native `AbstractDataItem` type; the project form defaults to `storage(T)`. Ordinary
-Julia results use the workspace's `Group` item type for this choice. Returning `nothing` leaves
-that result uncached. The default `MemoryStore` uses the same bounded memory buffer as the source
+Julia results are stored as workspace-owned `ResultItem{T}` items, with `T` the result's type.
+Stores receive this complete item; evaluation unwraps it for ordinary function calls. Returning
+`nothing` leaves that result uncached. The default `MemoryStore` uses the same bounded memory buffer as the source
 cache, with one 64 MiB store per item type per workspace opening. Store selection runs once per
 item type. Complete results are copied when written and when supplied from storage.
 
@@ -201,10 +202,12 @@ removal and closing release the workspace's stored results. Store keys currently
 computation revision within one workspace opening; native restoration across openings is pending.
 
 The scheduler, publication jobs and cache addressing still use the fixed stages described below.
-Their project calls use the same computation invocation, but their input preparation and publication
-have not yet moved to a general computation runtime. The older stage payload stores do not yet
-follow the new type-level storage policy. Their migration and Code visualizer output are pending;
-see the [roadmap](roadmap.md).
+Their project calls use the same computation invocation. Normal materialization uses native
+computation results while available and replays uncached results. The older stage payload paths
+also honor the type policy, retain copies and store identity and metadata independently of data
+retention. Supported table payloads can still be restored from the existing persistent cache;
+values that it cannot encode stay in their native result store. Fixed-stage scheduling, native
+restoration across openings and Code visualizer output remain on the [roadmap](roadmap.md).
 
 Workers run project code in the latest world, so a method defined after the workspace opened is
 used. Each stage has a code revision for each type it runs for: a content hash of the code it can

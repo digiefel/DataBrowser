@@ -9,6 +9,25 @@ function result_store(workspace::Workspace, type::Type{<:AbstractDataItem})
     end
 end
 
+keeps_result(workspace::Workspace, value) = result_store(workspace, result_item_type(value)) !== nothing
+
+function result_item(workspace::Workspace, catalog::Catalog, target::Target, result)
+    result isa AbstractDataItem && return result
+    key = first(target)
+    identity, title, given = @lock catalog.lock begin
+        workspace.catalog === catalog && key in catalog || return nothing
+        identity = id(catalog, key)
+        title = key isa SourceKey ? identity : label(catalog, key)
+        given = MetadataDict()
+        if key isa ItemKey && haskey(workspace.computations, key)
+            inputs = Catalogs.inputs(catalog, key)
+            length(inputs) == 1 && (given = metadata(workspace, only(inputs)))
+        end
+        identity, title, merge(given, parts(result))
+    end
+    return ResultItem(identity, title, Dict{Symbol,Any}(given), result)
+end
+
 # Capture the revision before invoking project code. A result of an older revision cannot replace
 # the result of a newer call, even when both calls finish at the same time.
 function execute(workspace::Workspace, value::Computation, args::Tuple)
@@ -20,12 +39,14 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     result = invoke_computation(value, args)
     started === nothing && return result
     target, revision = started
-    type = result isa AbstractDataItem ? typeof(result) : Group
+    item = result_item(workspace, catalog, target, result)
+    item === nothing && return result
+    type = typeof(item)
     store = result_store(workspace, type)
     key = string(objectid(catalog), '/', typeof(first(target)), '/', first(target).index,
         '/', last(target), '/', revision)
     stored = ComputationResult(value, revision, typeof(result), type, store, key)
-    store === nothing || write(store, key, deepcopy(result))
+    store === nothing || write(store, key, deepcopy(item))
     kept, previous = @lock catalog.lock begin
         current = get(catalog.computation_targets, value, nothing)
         if workspace.catalog === catalog && !workspace.stopping && !workspace.closed &&
@@ -50,7 +71,8 @@ function stored_result(value::ComputationResult)
     value.store === nothing && return nothing
     haskey(value.store, value.key) || return nothing
     try
-        return Some(read(value.store, value.value_type, value.key))
+        item = read(value.store, value.item_type, value.key)
+        return Some(value.value_type <: AbstractDataItem ? item : item_data(item))
     catch error
         # A bounded store may have evicted the entry between the presence check and the read.
         error isa KeyError && isequal(error.key, value.key) || rethrow()

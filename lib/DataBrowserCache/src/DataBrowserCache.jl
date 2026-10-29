@@ -36,6 +36,7 @@ include("source_stages.jl")
 
 export BuildMetrics,
     MemoryStore,
+    can_store_payload,
     CacheResultKey,
     CacheResultStatus,
     CacheDB,

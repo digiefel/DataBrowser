@@ -1,10 +1,25 @@
 using Test, DataBrowserAPI, DataBrowserCore
+using DataBrowserCache: MemoryStore
 import DataBrowserCore.Workspace as CW
 
 struct ComputationProject <: AbstractProject
     processes::Base.RefValue{Int}
+    store_types::Vector{Type}
 end
-ComputationProject() = ComputationProject(Ref(0))
+ComputationProject() = ComputationProject(Ref(0), Type[])
+
+# A project store can accept only the native item type it was configured for.
+struct NativeItemStore{T<:AbstractDataItem}
+    values::MemoryStore{String,Any}
+end
+Base.haskey(store::NativeItemStore, id::AbstractString) = haskey(store.values, id)
+Base.write(store::NativeItemStore{T}, id::AbstractString, value::T) where {T} = write(store.values, id, value)
+Base.read(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = read(store.values, T, id)
+Base.delete!(store::NativeItemStore, id::AbstractString) = delete!(store.values, id)
+function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T<:ResultItem}
+    push!(project.store_types, T)
+    return NativeItemStore{T}(MemoryStore())
+end
 struct ComputationSource <: AbstractDataSource end
 struct ComputationFile <: AbstractDataSourceItem end
 struct ComputationCollection <: AbstractCollection end
@@ -56,6 +71,8 @@ struct UncachedComputationProject <: AbstractProject
 end
 DataBrowserAPI.project_name(::UncachedComputationProject) = "uncached-computation-graph"
 DataBrowserAPI.storage(::UncachedComputationProject, ::Type{ComputationItem}) = nothing
+DataBrowserAPI.storage(project::UncachedComputationProject, ::Type{T}) where {T<:ResultItem} =
+    storage(project.project, T)
 DataBrowserAPI.read(project::UncachedComputationProject, source::ComputationSource, file::ComputationFile) =
     read(project.project, source, file)
 DataBrowserAPI.expand(project::UncachedComputationProject, file::ComputationFile, data) =
@@ -74,6 +91,7 @@ DataBrowserAPI.analyze(project::UncachedComputationProject, value::ComputationIt
             CW.wait_workspace_idle!(workspace)
             step = computation(workspace, only(CW.items(workspace)), DataBrowserAPI.ITEM_PROCESS)
             before = counter.processes[]
+            @test ResultItem{Vector{Int}} in counter.store_types
             first = evaluate(workspace, step)
             @test first.gain == 2.0
             first.data.signal[1] = 99
@@ -84,9 +102,85 @@ DataBrowserAPI.analyze(project::UncachedComputationProject, value::ComputationIt
             @test second.metadata[:step] == "process"
             @test second.gain == 2.0
             @test counter.processes[] == before + (cached ? 0 : 2)
+            before = counter.processes[]
+            shown = only(materialize_items(workspace, ["sample"]))
+            shown.data.signal[1] = 123
+            @test only(materialize_items(workspace, ["sample"])).data.signal == [2, 4, 6]
+            @test counter.processes[] == before + (cached ? 0 : 2)
         finally
             CW.close_workspace!(workspace)
         end
+    end
+end
+
+struct PolicyProject <: AbstractProject
+    project::ComputationProject
+    retain::Base.RefValue{Bool}
+end
+struct PolicySource <: AbstractDataSource
+    scans::Base.RefValue{Int}
+end
+DataBrowserAPI.project_name(::PolicyProject) = "type-policy-reopen"
+DataBrowserAPI.id(::PolicySource) = "policy-source"
+DataBrowserAPI.label(::PolicySource) = "policy-source"
+DataBrowserAPI.items(source::PolicySource; kwargs...) = (source.scans[] += 1; [ComputationFile()])
+DataBrowserAPI.storage(project::PolicyProject, ::Type{ComputationItem}) = project.retain[] ? MemoryStore() : nothing
+DataBrowserAPI.read(project::PolicyProject, ::PolicySource, file::ComputationFile) =
+    read(project.project, ComputationSource(), file)
+DataBrowserAPI.expand(project::PolicyProject, file::ComputationFile, data) = expand(project.project, file, data)
+DataBrowserAPI.process(project::PolicyProject, value::ComputationItem) = process(project.project, value)
+DataBrowserAPI.analyze(project::PolicyProject, value::ComputationItem) = analyze(project.project, value)
+
+@testset "disabling type storage also bypasses an earlier persisted payload" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            project = PolicyProject(ComputationProject(), Ref(true))
+            source = PolicySource(Ref(0))
+            for retain in (true, false)
+                project.retain[] = retain
+                before = project.project.processes[]
+                workspace = CW.open_workspace(project, source; background_processing=true)
+                try
+                    CW.wait_workspace_idle!(workspace)
+                    retain || @test project.project.processes[] > before
+                    @test only(materialize_items(workspace, ["sample"])).data.signal == [2, 4, 6]
+                    before = project.project.processes[]
+                    materialize_items(workspace, ["sample"])
+                    @test project.project.processes[] == before + (retain ? 0 : 1)
+                finally
+                    CW.close_workspace!(workspace)
+                end
+            end
+            @test source.scans[] == 2
+        finally
+            popfirst!(DEPOT_PATH)
+        end
+    end
+end
+
+struct VectorValueProject <: AbstractProject end
+struct VectorValueItem <: AbstractDataItem
+    data::Vector{Float64}
+    calibration::Float64
+end
+DataBrowserAPI.project_name(::VectorValueProject) = "native-vector"
+DataBrowserAPI.id(::VectorValueItem) = "vector"
+DataBrowserAPI.item_data(value::VectorValueItem) = value.data
+DataBrowserAPI.read(::VectorValueProject, ::ComputationSource, ::ComputationFile) =
+    VectorValueItem([1.0, 2.0, 3.0], 2.5)
+
+@testset "native vectors do not require a table payload encoding or reconstruction" begin
+    workspace = CW.open_workspace(VectorValueProject(), ComputationSource(); cache=false, background_processing=true)
+    try
+        CW.wait_workspace_idle!(workspace)
+        value = only(materialize_items(workspace, ["vector"]))
+        @test value isa VectorValueItem
+        @test value.calibration == 2.5
+        value.data[1] = 99
+        @test only(materialize_items(workspace, ["vector"])).data == [1.0, 2.0, 3.0]
+    finally
+        CW.close_workspace!(workspace)
     end
 end
 

@@ -88,7 +88,8 @@ function expanded_value(values::AbstractVector, item_id::String)
 end
 
 function native_value(value::AbstractDataItem, known, given::MetadataDict, collections)
-    rebuilt = reconstruct(known.type, known.id, item_data(value), given)
+    isequal(metadata_dict(metadata(value)), given) && return adopt(value, known.label, given, collections)
+    rebuilt = reconstruct(typeof(value), known.id, item_data(value), given)
     return adopt(something(rebuilt, value), known.label, given, collections)
 end
 
@@ -112,9 +113,12 @@ function version_computation(workspace::Workspace, key::ItemKey; reader::Union{N
     haskey(workspace.computations, key) && return value
     own = reader !== nothing && first(reader) isa ItemKey
     own && return native_computation(workspace, key, value, ITEM_PROCESS)
-    known, collections = native_arguments(workspace, key)
-    value = Computation(analyzed_value, value, computation(workspace, key, ITEM_ANALYZE),
-        known, metadata(workspace, key; through=ITEM_PROCESS), collections)
+    analyzed = Catalogs.status(workspace.catalog, key, ITEM_ANALYZE).validity == Catalogs.FRESH
+    if analyzed
+        known, collections = native_arguments(workspace, key)
+        value = Computation(analyzed_value, value, computation(workspace, key, ITEM_ANALYZE),
+            known, metadata(workspace, key; through=ITEM_PROCESS), collections)
+    end
     holders = ancestors(workspace, key)
     if reader !== nothing
         index = findfirst(==(first(reader)), holders) + (last(reader) == COLLECTION_PROCESS)
@@ -126,7 +130,7 @@ function version_computation(workspace::Workspace, key::ItemKey; reader::Union{N
         value = Computation(collection_value, computation(workspace, holder, COLLECTION_PROCESS),
             String[id(workspace, item) for item in members(workspace, holder)], id(workspace, key))
     end
-    return native_computation(workspace, key, value, ITEM_ANALYZE; above=holders)
+    return native_computation(workspace, key, value, analyzed ? ITEM_ANALYZE : ITEM_PROCESS; above=holders)
 end
 
 """
@@ -156,13 +160,14 @@ function computation_result(workspace::Workspace, value::Computation)
     end
     if key isa SourceKey
         stage == SOURCE_READ || return nothing
-        return read_payload(workspace.cache.db, cache_key(workspace, key))
+        cached = read_payload(workspace.cache.db, cache_key(workspace, key))
+        return cached === nothing || !keeps_result(workspace, something(cached)) ? nothing : cached
     elseif key isa ItemKey && stage == ITEM_PROCESS
         haskey(workspace.computations, key) && return nothing
         result_store(workspace, valuetype(workspace, key)) === nothing && return nothing
         payload = only(read_payload(workspace.cache.db, [id(workspace, key)]))
         payload === nothing && return nothing
-        restored = reconstruct(valuetype(workspace, key), id(workspace, key), something(payload),
+        restored = reconstruct(valuetype(workspace, key), id(workspace, key), deepcopy(something(payload)),
             metadata(workspace, key; through=ITEM_PROCESS))
         return restored === nothing ? nothing : Some(restored)
     end

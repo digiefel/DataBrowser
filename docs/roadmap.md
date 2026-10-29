@@ -708,9 +708,11 @@ payload they are given rather than learning special pipeline logic.
 - [x] Share native result storage between project and interactive computations, with
   `storage(project, T)` choosing caching by `AbstractDataItem` type. Copy cached native values;
   replay uncached or evicted results. Use the shared evaluator for interactive inputs.
+- [x] Apply the type-level storage policy to normal materialization and the stage payload paths.
+  Store ordinary Julia results as workspace-owned `ResultItem{T}` items; keep values unsupported
+  by the table cache in native stores. Replay uncached values without rescanning the source.
 - [ ] Replace fixed-stage input preparation, scheduling and cache addressing with the computation
-  runtime. Apply the type-level storage policy to the remaining stage payload paths, add native
-  restoration across workspace openings and record execution information.
+  runtime, add native restoration across workspace openings and record execution information.
 - [ ] Make Code selection output the selected computation through normal visualizer composition.
   Show step information below the list, including `Last execution: duration (date)` and cache usage.
 

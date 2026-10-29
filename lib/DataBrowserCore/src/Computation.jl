@@ -15,6 +15,31 @@ end
 computation_inputs(_) = Computation[]
 
 """
+    ResultItem(id, label, metadata, data)
+
+A workspace-owned item for a computation returning an ordinary Julia value. Project data items
+keep their own types. `item_data(item)` returns `data`; `metadata(item)` contains the named
+scalar results and any metadata inherited by the computed item.
+
+Storage is selected for `ResultItem{typeof(data)}` and receives this complete item. Evaluation
+unwraps it before supplying the value to another function, so ordinary function calls keep their
+native arguments and results.
+"""
+struct ResultItem{T} <: AbstractDataItem
+    id::String
+    label::String
+    metadata::Dict{Symbol,Any}
+    data::T
+end
+DataBrowserAPI.id(item::ResultItem) = item.id
+DataBrowserAPI.label(item::ResultItem) = item.label
+DataBrowserAPI.metadata(item::ResultItem) = item.metadata
+DataBrowserAPI.item_data(item::ResultItem) = item.data
+
+result_item_type(value::AbstractDataItem) = typeof(value)
+result_item_type(value) = ResultItem{typeof(value)}
+
+"""
     evaluate(computation)
 
 Evaluate a computation and its inputs, returning the function's native result. This form runs

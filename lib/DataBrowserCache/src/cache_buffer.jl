@@ -134,6 +134,21 @@ end
 
 const PayloadShape = Tuple{Tuple{Vararg{String}},Tuple{Vararg{String}}}
 
+"""
+    can_store_payload(data) -> Bool
+
+Whether the legacy DuckDB payload store can encode this value as table columns. This is an
+encoding capability, independent of the item's storage policy. Unsupported values can still be
+kept by their native result store. Errors in a declared table's column access are propagated.
+"""
+function can_store_payload(data)::Bool
+    Tables.istable(data) || return false
+    columns = Tables.columns(data)
+    names = Tables.columnnames(columns)
+    any(name -> String(name) in (MB_SEQ_COLUMN, MB_ROW_COLUMN), names) && return false
+    return all(name -> _duckdb_sql_type_maybe(eltype(Tables.getcolumn(columns, name))) !== nothing, names)
+end
+
 """Column names and DuckDB column types of one tabular payload, via the Tables.jl interface."""
 function _payload_shape(data)::PayloadShape
     columns = Tables.columns(data)

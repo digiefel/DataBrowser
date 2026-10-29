@@ -137,15 +137,17 @@ function results(workspace::Workspace, ids::AbstractVector{<:AbstractString})::V
 end
 
 """
-The version of a computed item that views receive: a `Group` with its result as data, or the data
-of its result when the result is an item, the named parts of its result as metadata, and the items
-it reads, through other computed items, as members.
+The version of a computed item that views receive: a `ResultItem` for an ordinary Julia result,
+or a `Group` for a native item result, with the computed row's identity and metadata. The latter
+keeps the items it reads, through other computed items, as members.
 """
-function computed_version(workspace::Workspace, key::ItemKey)::Group
+function computed_version(workspace::Workspace, key::ItemKey)::AbstractDataItem
     catalog = workspace.catalog
     value, given = @lock catalog.lock (
         workspace.computations[key], metadata(workspace, key; through=ITEM_PROCESS))
     result = evaluate(workspace, computation(workspace, key, ITEM_PROCESS))
+    result isa AbstractDataItem || return ResultItem(
+        id(value), label(workspace, key), Dict{Symbol,Any}(given), result)
     read = ItemKey[something(item(workspace, i)) for i in member_ids(value)]
     data = result isa AbstractDataItem ? item_data(result) : result
     return Group(id(value), Dict{Symbol,Any}(given), data, versions(workspace, read))

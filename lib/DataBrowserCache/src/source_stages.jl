@@ -18,7 +18,8 @@ function store_source_result!(cache::CacheDB, stage::PipelineStage, source_key::
 end
 
 """
-Cache a `read` result in memory and publish its completion.
+Cache a `read` result in memory and publish its completion. With `retain=false`, record
+completion without retaining the value, and remove an earlier cached value.
 
 Read results have no disk persistence by default. They use the shared memory cache with a 256 MiB
 FIFO budget measured by `Base.summarysize`, retaining a single oversized value. The estimate covers
@@ -27,8 +28,8 @@ the payload, not the fact that reading succeeded; consumers that need the value 
 its own reference until it finishes, independently of cache eviction. Values, including `nothing`,
 are passed through unchanged; the cache does not serialize or close user-owned handles.
 """
-function store_source_read!(cache::CacheDB, source_key::Int64, value)::Nothing
-    append!(cache.source_reads, source_key, value)
+function store_source_read!(cache::CacheDB, source_key::Int64, value; retain::Bool=true)::Nothing
+    retain ? append!(cache.source_reads, source_key, value) : delete!(cache.source_reads, source_key)
     store_source_result!(cache, SOURCE_READ, source_key)
     return nothing
 end

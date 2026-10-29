@@ -861,17 +861,22 @@ result made from them are deleted, `outputs` are stored, and the expand stage of
 recorded as finished. An id in both lists is a new item: its earlier results do not survive.
 `outputs` may be empty.
 
+`retain` chooses which outputs keep an unprocessed payload. Identity and metadata are recorded
+for every output, independently of payload retention.
+
 Returns type-conflict messages for metadata keys that could not be stored.
 """
 function replace_source_output!(
     cache::CacheDB,
     source_key::Int64,
     previous::Vector{String},
-    outputs::Vector{ItemOutput},
+    outputs::Vector{ItemOutput};
+    retain::AbstractVector{Bool}=trues(length(outputs)),
 )::Vector{String}
+    length(retain) == length(outputs) || throw(DimensionMismatch("One retention choice is required per output"))
     isempty(previous) || delete_source_output!(cache, source_key, previous)
     dropped = WideConflict[]
-    for output in outputs
+    for (output, keep) in zip(outputs, retain)
         started = time_ns()
         key = item_key!(cache, output.id; mint=true)
         append!(cache.items, output.id, ItemRow(
@@ -879,7 +884,7 @@ function replace_source_output!(
         _stage_ledger_item!(cache.stage_ledger, output.id, true)
         append!(dropped, edit!(cache.source_item_metadata, key, output.metadata))
         record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
-        store_item_payload!(cache, output.id, output.payload)
+        keep ? store_item_payload!(cache, output.id, output.payload) : release_item_payload!(cache, output.id)
     end
     store_source_result!(cache, SOURCE_EXPAND, source_key)
     return _conflict_messages(unique(dropped))

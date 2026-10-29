@@ -113,6 +113,8 @@ using ..DataBrowserCore: ExpandedItem, expanded_items
 using ..DataBrowserCore: Computation
 using ..DataBrowserCore: invoke_computation
 using ..DataBrowserCore: ComputationStores, ComputationResult
+using ..DataBrowserCore: ResultItem
+using ..DataBrowserCore: result_item_type
 import DataBrowserAPI: computation, inputs, evaluate
 import DataBrowserAPI
 import DataBrowserAPI:
