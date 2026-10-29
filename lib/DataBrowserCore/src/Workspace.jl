@@ -1,6 +1,7 @@
 module Workspace
 
 using Printf
+using Dates: now
 import InteractiveUtils
 import StructArrays, Tables
 using PrettyTables: @text__no_horizontal_lines, @text__no_vertical_lines, TextTableFormat, pretty_table
@@ -112,7 +113,9 @@ import DataBrowserAnnotations.Tags: Tag, TagState, Untagged
 using ..DataBrowserCore: ExpandedItem, expanded_items
 using ..DataBrowserCore: Computation
 using ..DataBrowserCore: invoke_computation
-using ..DataBrowserCore: ComputationStores, ComputationResult
+using ..DataBrowserCore: ComputationStores, ComputationResult, RecordedExecution
+using DataBrowserAPI: ComputationExecution
+import DataBrowserAPI: last_execution
 using ..DataBrowserCore: ResultItem
 using ..DataBrowserCore: result_item_type
 import DataBrowserAPI: computation, inputs, evaluate
@@ -303,6 +306,7 @@ mutable struct Workspace{P<:AbstractProject}
     # Interactive definitions, and the native result location of each project or interactive call.
     computations::Dict{ItemKey,AbstractDataItem}
     results::Dict{Target,ComputationResult}
+    executions::Dict{Target,RecordedExecution}
     stores::ComputationStores
     # The code that each stage first ran with for each type: its roots, the world they were read
     # in, and their revision. When the revision changes, the results of that stage for that type
@@ -429,6 +433,7 @@ function Workspace(
         Set{ItemKey}(),
         Dict{ItemKey,AbstractDataItem}(),
         Dict{Target,ComputationResult}(),
+        Dict{Target,RecordedExecution}(),
         ComputationStores(),
         Dict{Tuple{PipelineStage,Type},StageCode}(),
         Set{Type}(),

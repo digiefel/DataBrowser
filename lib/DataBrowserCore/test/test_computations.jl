@@ -91,6 +91,12 @@ DataBrowserAPI.analyze(project::UncachedComputationProject, value::ComputationIt
             CW.wait_workspace_idle!(workspace)
             step = computation(workspace, only(CW.items(workspace)), DataBrowserAPI.ITEM_PROCESS)
             before = counter.processes[]
+            previous_execution = last_execution(workspace, step)
+            @test previous_execution isa ComputationExecution
+            @test previous_execution.succeeded
+            @test previous_execution.duration >= 0
+            @test last_execution(workspace, step) === previous_execution
+            @test counter.processes[] == before
             @test ResultItem{Vector{Int}} in counter.store_types
             first = evaluate(workspace, step)
             @test first.gain == 2.0
@@ -101,6 +107,9 @@ DataBrowserAPI.analyze(project::UncachedComputationProject, value::ComputationIt
             @test second.data.signal == [2, 4, 6]
             @test second.metadata[:step] == "process"
             @test second.gain == 2.0
+            current_execution = last_execution(workspace, step)
+            @test current_execution.finished_at >= previous_execution.finished_at
+            @test (current_execution === previous_execution) == cached
             @test counter.processes[] == before + (cached ? 0 : 2)
             before = counter.processes[]
             shown = only(materialize_items(workspace, ["sample"]))
@@ -248,6 +257,27 @@ end
         raw = evaluate(workspace, reader)
         raw[1] = 99
         @test evaluate(workspace, reader) == [1, 2, 3]
+    finally
+        CW.close_workspace!(workspace)
+    end
+end
+
+@testset "execution information includes failures without replaying them" begin
+    workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
+    try
+        CW.wait_workspace_idle!(workspace)
+        value = Computation(error, "deliberate execution failure")
+        @test last_execution(workspace, value) === nothing
+        push!(workspace, value)
+        @test_throws ErrorException CW.results(workspace, [id(value)])
+        step = computation(workspace, something(CW.item(workspace, id(value))), DataBrowserAPI.ITEM_PROCESS)
+        execution = last_execution(workspace, step)
+        @test execution isa ComputationExecution
+        @test !execution.succeeded
+        @test execution.duration >= 0
+        @test last_execution(workspace, step) === execution
+        delete!(workspace, id(value))
+        @test last_execution(workspace, step) === nothing
     finally
         CW.close_workspace!(workspace)
     end

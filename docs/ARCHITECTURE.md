@@ -195,6 +195,12 @@ Stores receive this complete item; evaluation unwraps it for ordinary function c
 cache, with one 64 MiB store per item type per workspace opening. Store selection runs once per
 item type. Complete results are copied when written and when supplied from storage.
 
+`last_execution(workspace, computation)` reports a completed call's duration, completion date and
+whether it returned normally. It reads recorded information without loading stored data. Timing
+covers the function call, excluding input evaluation and result storage; a cache hit does not
+replace the last execution. The record belongs to the current computation revision and workspace
+opening.
+
 Project steps and interactive computations share these result records and storage operations.
 Interactive computations evaluate their input graph directly, replacing their former separate
 input-filling and result dictionaries. Results from stale work are discarded; invalidation,

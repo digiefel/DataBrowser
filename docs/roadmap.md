@@ -711,8 +711,10 @@ payload they are given rather than learning special pipeline logic.
 - [x] Apply the type-level storage policy to normal materialization and the stage payload paths.
   Store ordinary Julia results as workspace-owned `ResultItem{T}` items; keep values unsupported
   by the table cache in native stores. Replay uncached values without rescanning the source.
+- [x] Record execution duration, completion date and success for each computation revision,
+  independently of retained data. Expose these records without evaluating or loading results.
 - [ ] Replace fixed-stage input preparation, scheduling and cache addressing with the computation
-  runtime, add native restoration across workspace openings and record execution information.
+  runtime and add native restoration across workspace openings.
 - [ ] Make Code selection output the selected computation through normal visualizer composition.
   Show step information below the list, including `Last execution: duration (date)` and cache usage.
 

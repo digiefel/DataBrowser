@@ -81,3 +81,10 @@ struct ComputationResult
     store::Any
     key::String
 end
+
+"""The execution of one registered computation revision, independent of retained data."""
+struct RecordedExecution
+    computation::Computation
+    revision::UInt32
+    execution::ComputationExecution
+end

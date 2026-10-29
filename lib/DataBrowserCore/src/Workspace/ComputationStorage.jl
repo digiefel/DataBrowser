@@ -36,8 +36,18 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
         target = get(catalog.computation_targets, value, nothing)
         target === nothing ? nothing : (target, Catalogs.status(catalog, target...).revision)
     end
-    result = invoke_computation(value, args)
-    started === nothing && return result
+    started === nothing && return invoke_computation(value, args)
+    beginning = time_ns()
+    succeeded = false
+    result = try
+        output = invoke_computation(value, args)
+        succeeded = true
+        output
+    finally
+        duration = (time_ns() - beginning) / 1.0e9
+        execution = ComputationExecution(duration, now(), succeeded)
+        record_execution!(workspace, catalog, value, started, execution)
+    end
     target, revision = started
     item = result_item(workspace, catalog, target, result)
     item === nothing && return result
@@ -81,13 +91,14 @@ function stored_result(value::ComputationResult)
 end
 
 function forget_result!(workspace::Workspace, target::Target)
+    delete!(workspace.executions, target)
     value = pop!(workspace.results, target, nothing)
     value === nothing || value.store === nothing || delete!(value.store, value.key)
     return nothing
 end
 
 function forget_results!(workspace::Workspace)
-    for target in collect(keys(workspace.results))
+    for target in union(keys(workspace.results), keys(workspace.executions))
         forget_result!(workspace, target)
     end
     return nothing
@@ -98,4 +109,29 @@ function forget_results!(workspace::Workspace, key::RowKey)
         forget_result!(workspace, (key, stage))
     end
     return nothing
+end
+
+function record_execution!(workspace::Workspace, catalog::Catalog, value::Computation, started,
+    execution::ComputationExecution)
+    target, revision = started
+    @lock catalog.lock begin
+        workspace.catalog === catalog && !workspace.stopping && !workspace.closed &&
+            get(catalog.computation_targets, value, nothing) == target && first(target) in catalog &&
+            Catalogs.status(catalog, target...).revision == revision || return nothing
+        workspace.executions[target] = RecordedExecution(value, revision, execution)
+    end
+    return nothing
+end
+
+function last_execution(workspace::Workspace, value::Computation)
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        target = get(catalog.computation_targets, value, nothing)
+        target === nothing && return nothing
+        recorded = get(workspace.executions, target, nothing)
+        recorded === nothing && return nothing
+        recorded.computation === value &&
+            recorded.revision == Catalogs.status(catalog, target...).revision || return nothing
+        return recorded.execution
+    end
 end

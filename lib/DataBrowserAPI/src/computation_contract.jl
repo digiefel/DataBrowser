@@ -39,3 +39,25 @@ Obtain a computation's native result. Direct evaluation runs the call and its in
 evaluation can reuse available results. Evaluation does not change the workspace selection.
 """
 function evaluate end
+
+"""
+    ComputationExecution
+
+Information about one completed function call, including a call that threw an error. `duration`
+is the elapsed time in seconds, excluding input evaluation and result storage. `finished_at` is
+its local completion date and time; `succeeded` says whether the function returned normally.
+"""
+struct ComputationExecution
+    duration::Float64
+    finished_at::DateTime
+    succeeded::Bool
+end
+
+"""
+    last_execution(workspace, computation) -> Union{Nothing,ComputationExecution}
+
+The most recent execution of this computation's current revision in this workspace opening.
+Return `nothing` when it has not run here. Reading this information does not read stored data or
+execute the computation. Reusing a cached result does not count as another execution.
+"""
+function last_execution end

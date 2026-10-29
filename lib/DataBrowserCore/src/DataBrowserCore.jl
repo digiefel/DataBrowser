@@ -7,7 +7,7 @@ module DataBrowserCore
 using DataBrowserAPI
 using DataBrowserSources
 using DataBrowserAPI: @timed_dbg
-import DataBrowserAPI: Computation, computation, inputs, evaluate
+import DataBrowserAPI: Computation, computation, inputs, evaluate, last_execution
 
 include("project_engine.jl")
 include("Computation.jl")
@@ -34,6 +34,8 @@ using .Workspace:
     untag!
 
 export Computation,
+    ComputationExecution,
+    last_execution,
     ResultItem,
     computation,
     inputs,
