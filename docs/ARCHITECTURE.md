@@ -187,13 +187,24 @@ a function, arguments and settings. `computation(workspace, item)` describes the
 for an item; `computation(workspace, key, stage)` describes one pipeline call. `inputs(value)`
 returns the directly preceding computations. Reading these definitions does not load payloads
 or run project functions. `evaluate(workspace, value)` obtains the native result, reusing existing
-stage caches where available and replaying missing inputs. Results reused by this evaluator are
-copied before being supplied to callers.
+native result stores where available and replaying missing inputs. `storage(project, T)` chooses
+the store for a native `AbstractDataItem` type; the project form defaults to `storage(T)`. Ordinary
+Julia results use the workspace's `Group` item type for this choice. Returning `nothing` leaves
+that result uncached. The default `MemoryStore` uses the same bounded memory buffer as the source
+cache, with one 64 MiB store per item type per workspace opening. Store selection runs once per
+item type. Complete results are copied when written and when supplied from storage.
+
+Project steps and interactive computations share these result records and storage operations.
+Interactive computations evaluate their input graph directly, replacing their former separate
+input-filling and result dictionaries. Results from stale work are discarded; invalidation,
+removal and closing release the workspace's stored results. Store keys currently identify a
+computation revision within one workspace opening; native restoration across openings is pending.
 
 The scheduler, publication jobs and cache addressing still use the fixed stages described below.
 Their project calls use the same computation invocation, but their input preparation and publication
-have not yet moved to a general computation runtime. Per-type cache policy and Code visualizer
-output are also pending; see the [roadmap](roadmap.md).
+have not yet moved to a general computation runtime. The older stage payload stores do not yet
+follow the new type-level storage policy. Their migration and Code visualizer output are pending;
+see the [roadmap](roadmap.md).
 
 Workers run project code in the latest world, so a method defined after the workspace opened is
 used. Each stage has a code revision for each type it runs for: a content hash of the code it can

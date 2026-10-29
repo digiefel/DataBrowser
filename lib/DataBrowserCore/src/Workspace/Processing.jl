@@ -182,7 +182,8 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
     @lock catalog.lock begin
         # A job whose result is discarded adds no collections.
         iscurrent(catalog, job) || (finish!(catalog, job, ItemEntry[]); return nothing)
-        previous = String[id(catalog, item) for item in Catalogs.items(catalog, job.key)]
+        previous_keys = Catalogs.items(catalog, job.key)
+        previous = String[id(catalog, item) for item in previous_keys]
         placed = CollectionKey[]
         entries = map(expanded) do item
             holder = ROOT
@@ -205,6 +206,8 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
                 "  Item: $(id(catalog, job.key))\n  Stage: SOURCE_EXPAND", error, catch_backtrace())
             return nothing
         end
+        foreach(item -> forget_results!(workspace, item),
+            setdiff(previous_keys, Catalogs.items(catalog, job.key)))
         conflicts = replace_source_output!(cache, saved, previous, ItemOutput[
             ItemOutput(
                 entry.id, entry.label, entry.type,

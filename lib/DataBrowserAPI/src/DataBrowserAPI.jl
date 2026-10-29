@@ -18,6 +18,7 @@ include("metadata_types.jl")
 include("source_contract.jl")
 include("item_contract.jl")
 include("computation_contract.jl")
+include("storage_contract.jl")
 include("stage_contract.jl")
 include("visualizer_contract.jl")
 include("timing_debug.jl")
@@ -34,6 +35,7 @@ export AbstractProject,
     computation,
     inputs,
     evaluate,
+    storage,
     Setting,
     open_source,
     close_source!,

@@ -705,8 +705,12 @@ payload they are given rather than learning special pipeline logic.
 
 - [x] Share `Computation` definitions between project calls and interactive operations; expose input
   traversal and evaluation of earlier calls through the application API.
+- [x] Share native result storage between project and interactive computations, with
+  `storage(project, T)` choosing caching by `AbstractDataItem` type. Copy cached native values;
+  replay uncached or evicted results. Use the shared evaluator for interactive inputs.
 - [ ] Replace fixed-stage input preparation, scheduling and cache addressing with the computation
-  runtime; add the agreed per-type cache policy and execution information.
+  runtime. Apply the type-level storage policy to the remaining stage payload paths, add native
+  restoration across workspace openings and record execution information.
 - [ ] Make Code selection output the selected computation through normal visualizer composition.
   Show step information below the list, including `Last execution: duration (date)` and cache usage.
 

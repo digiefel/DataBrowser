@@ -29,13 +29,6 @@ found(_) = Union{String,Computation}[]
 member_ids(value::Computation)::Vector{String} =
     unique(reduce(vcat, [x isa Computation ? member_ids(x) : [x] for x in reads(value)]; init=String[]))
 
-# The arguments with each item, selection and `Computation` value replaced by `fill(x)`.
-filled(x::AbstractDataItem, fill) = fill(x)
-filled(selection::Selection, fill) = fill(selection)
-filled(xs::AbstractVector, fill) = [filled(x, fill) for x in xs]
-filled(xs::Tuple, fill) = map(x -> filled(x, fill), xs)
-filled(x, _) = x
-
 # The metadata of a result: the metadata of an item, or the named values of a named tuple, each one
 # that metadata can hold. A vector, such as the points of a curve, is left out.
 function parts(result)::MetadataDict
@@ -87,7 +80,7 @@ function Base.delete!(workspace::Workspace, id::AbstractString)::Workspace
         key === nothing && return workspace
         delete!(catalog, key)
         delete!(workspace.computations, key)
-        delete!(workspace.results, key)
+        foreach(stage -> forget_result!(workspace, (key, stage)), (ITEM_PROCESS, ITEM_ANALYZE))
         filter!(entry -> first(entry.first) != key, workspace.errors)
         delete!(workspace.wanted, key)
     end
@@ -120,17 +113,8 @@ item has that item's metadata too.
 """
 function compute!(workspace::Workspace, job::Job{ItemKey})::Nothing
     catalog = workspace.catalog
-    value, keys = @lock catalog.lock (workspace.computations[job.key], Catalogs.inputs(catalog, job.key))
-    computed = @lock catalog.lock [key for key in keys if haskey(workspace.computations, key)]
-    read = setdiff(keys, computed)
-    values = Dict{String,Any}(zip(
-        [id(catalog, key) for key in read], versions(workspace, ItemKey[read...]; reader=(job.key, ITEM_PROCESS))))
-    @lock catalog.lock for key in computed
-        values[id(catalog, key)] = workspace.results[key]
-    end
-    # A selection is made again from its items, so that it has their columns as they are now.
-    fill(x) = x isa Selection ? select(workspace, ItemKey[something(item(workspace, i)) for i in x.id]) : values[id(x)]
-    result = execute(workspace, job.key, ITEM_PROCESS, filled(value.args, fill)...)
+    keys = @lock catalog.lock Catalogs.inputs(catalog, job.key)
+    result = evaluate(workspace, computation(workspace, job.key, ITEM_PROCESS))
     # TODO: the browser shows a computed item only by its title: there is no way yet to examine its
     # result or its metadata, such as the parameters of a fit.
     # A computed item that reads one item, such as the selected rows of an item, has all of that
@@ -138,7 +122,7 @@ function compute!(workspace::Workspace, job::Job{ItemKey})::Nothing
     # TODO: metadata the item gets later, such as from its `analyze`, reaches the computed item only
     # when it is computed again.
     given = length(keys) == 1 ? metadata(workspace, only(keys)) : MetadataDict()
-    @lock catalog.lock finish!(catalog, job; metadata=merge(given, parts(result))) && (workspace.results[job.key] = result)
+    @lock catalog.lock finish!(catalog, job; metadata=merge(given, parts(result)))
     return nothing
 end
 
@@ -149,7 +133,7 @@ computed yet are computed now, and the call waits for them.
 function results(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector
     keys = ItemKey[something(item(workspace, id)) for id in ids]
     wait_processed(workspace, keys)
-    return @lock workspace.catalog.lock [workspace.results[key] for key in keys]
+    return [evaluate(workspace, computation(workspace, key, ITEM_PROCESS)) for key in keys]
 end
 
 """
@@ -159,8 +143,9 @@ it reads, through other computed items, as members.
 """
 function computed_version(workspace::Workspace, key::ItemKey)::Group
     catalog = workspace.catalog
-    value, result, given = @lock catalog.lock (
-        workspace.computations[key], workspace.results[key], metadata(workspace, key; through=ITEM_PROCESS))
+    value, given = @lock catalog.lock (
+        workspace.computations[key], metadata(workspace, key; through=ITEM_PROCESS))
+    result = evaluate(workspace, computation(workspace, key, ITEM_PROCESS))
     read = ItemKey[something(item(workspace, i)) for i in member_ids(value)]
     data = result isa AbstractDataItem ? item_data(result) : result
     return Group(id(value), Dict{Symbol,Any}(given), data, versions(workspace, read))

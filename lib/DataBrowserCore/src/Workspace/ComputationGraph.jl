@@ -67,7 +67,10 @@ end
 # constructed with. Project functions still receive those items' native values.
 bound_computation(workspace, value::Computation) =
     Computation(value.f, map(x -> bound_argument(workspace, x), value.args), value.settings)
-bound_argument(workspace, value::Computation) = bound_computation(workspace, value)
+function bound_argument(workspace, value::Computation)
+    key = item(workspace, id(value))
+    return key === nothing ? bound_computation(workspace, value) : computation(workspace, key, ITEM_PROCESS)
+end
 bound_argument(workspace, value::AbstractDataItem) = computation(workspace, value)
 bound_argument(workspace, value::Selection) =
     Computation(select, Computation[computation(workspace, id) for id in value.id])
@@ -135,7 +138,8 @@ it does not change the workspace selection.
 """
 function evaluate(workspace::Workspace, value::Computation)
     workspace.closed && error("The workspace was closed")
-    return Base.invokelatest(evaluate, value, input -> computation_result(workspace, input))
+    return Base.invokelatest(evaluate, value, input -> computation_result(workspace, input),
+        (input, args) -> execute(workspace, input, args))
 end
 
 # A hit is a native result, including `nothing`. Missing native restoration is a miss, so that
@@ -146,13 +150,16 @@ function computation_result(workspace::Workspace, value::Computation)
     key, stage = target
     current = @lock workspace.catalog.lock Catalogs.status(workspace.catalog, key, stage)
     current.validity == Catalogs.FRESH || return nothing
+    native = @lock workspace.catalog.lock get(workspace.results, target, nothing)
+    if native !== nothing && native.computation === value && native.revision == current.revision
+        return stored_result(native)
+    end
     if key isa SourceKey
         stage == SOURCE_READ || return nothing
         return read_payload(workspace.cache.db, cache_key(workspace, key))
     elseif key isa ItemKey && stage == ITEM_PROCESS
-        if haskey(workspace.computations, key)
-            return @lock workspace.catalog.lock haskey(workspace.results, key) ? Some(workspace.results[key]) : nothing
-        end
+        haskey(workspace.computations, key) && return nothing
+        result_store(workspace, valuetype(workspace, key)) === nothing && return nothing
         payload = only(read_payload(workspace.cache.db, [id(workspace, key)]))
         payload === nothing && return nothing
         restored = reconstruct(valuetype(workspace, key), id(workspace, key), something(payload),
@@ -166,5 +173,5 @@ end
 # stored definition still refers to their computations, so it is traversable and replayable.
 function execute(workspace::Workspace, key::RowKey, stage::PipelineStage, args...)
     value = computation(workspace, key, stage)
-    return invoke_computation(value, args)
+    return execute(workspace, value, args)
 end

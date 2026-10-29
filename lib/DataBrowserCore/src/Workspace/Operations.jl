@@ -115,6 +115,7 @@ function _stop_runtime!(workspace::Workspace)::Nothing
     empty!(workspace.background_tasks)
     stop_workers!(workspace)
     try
+        forget_results!(workspace)
         close_cache_db!(workspace.cache.db)
     finally
         close_source!(workspace.source)
@@ -137,6 +138,7 @@ function _install_runtime!(
     workspace.source = source
     workspace.tags = WorkspaceTags(source)
     workspace.catalog = Catalog(background_processing)
+    empty!(workspace.stores.types)
     foreach(empty!, (
         workspace.source_items, workspace.source_locks, workspace.collection_keys,
         workspace.changes, workspace.errors, workspace.wanted, workspace.computations,
@@ -308,6 +310,7 @@ function forget_stale!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
     cache = workspace.cache.db
     for (key, stage) in stale!(catalog)
+        key in catalog ? forget_result!(workspace, (key, stage)) : forget_results!(workspace, key)
         delete!(workspace.errors, (key, stage))
         # A source item's results are removed where its source reports the change.
         key isa SourceKey && continue
@@ -342,6 +345,7 @@ function remove_items!(workspace::Workspace, source::SourceKey)::Nothing
     catalog = workspace.catalog
     removed = Catalogs.items(catalog, source)
     removed_ids = String[id(catalog, item) for item in removed]
+    foreach(item -> forget_results!(workspace, item), removed)
     publish!(catalog, source, ItemEntry[])
     delete_source_output!(workspace.cache.db, cache_key(workspace, source), removed_ids)
     filter!(entry -> !(entry.first[1] in removed), workspace.errors)
@@ -392,6 +396,7 @@ function ingest_source_changes!(
             gone = String[id(catalog, item) for item in Catalogs.items(catalog, source)]
             filter!(id -> !(id in gone), workspace.selection.item_ids)
             remove_items!(workspace, source)
+            forget_results!(workspace, source)
             delete!(catalog, source)
             delete!(workspace.source_items, source)
             delete!(workspace.source_locks, source)

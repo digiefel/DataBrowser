@@ -55,7 +55,7 @@ counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; resistance(gap; Rc, Rsh)
     W = DataBrowserCore.Workspace
     workspace = W.open_workspace(FitTestProject(), FitTestSource(); cache=false, background_processing=true)
     try
-        W.wait_workspace_idle!(workspace; timeout=20)
+        W.wait_workspace_idle!(workspace)
         devices = W.select(workspace, W.query_items(workspace))
         plot(palette) = @plot mapping(:gap, only(:data.R); color=:Chip) begin
             fit(counted_resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines)

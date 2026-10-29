@@ -112,6 +112,7 @@ import DataBrowserAnnotations.Tags: Tag, TagState, Untagged
 using ..DataBrowserCore: ExpandedItem, expanded_items
 using ..DataBrowserCore: Computation
 using ..DataBrowserCore: invoke_computation
+using ..DataBrowserCore: ComputationStores, ComputationResult
 import DataBrowserAPI: computation, inputs, evaluate
 import DataBrowserAPI
 import DataBrowserAPI:
@@ -297,10 +298,10 @@ mutable struct Workspace{P<:AbstractProject}
     errors::Dict{Target,String}
     # Items that were delivered. Their analyze is requested, so their metadata becomes complete.
     wanted::Set{ItemKey}
-    # The `Computation` value of each computed item, and its result once its `process` ran.
-    # TODO: results go to the cache, so that they survive closing the workspace.
+    # Interactive definitions, and the native result location of each project or interactive call.
     computations::Dict{ItemKey,AbstractDataItem}
-    results::Dict{ItemKey,Any}
+    results::Dict{Target,ComputationResult}
+    stores::ComputationStores
     # The code that each stage first ran with for each type: its roots, the world they were read
     # in, and their revision. When the revision changes, the results of that stage for that type
     # are out of date.
@@ -425,7 +426,8 @@ function Workspace(
         Dict{Target,String}(),
         Set{ItemKey}(),
         Dict{ItemKey,AbstractDataItem}(),
-        Dict{ItemKey,Any}(),
+        Dict{Target,ComputationResult}(),
+        ComputationStores(),
         Dict{Tuple{PipelineStage,Type},StageCode}(),
         Set{Type}(),
         Task[],
@@ -482,6 +484,7 @@ include("Workspace/Status.jl")
 include("Workspace/DataAccess.jl")
 include("Workspace/Selection.jl")
 include("Workspace/Computed.jl")
+include("Workspace/ComputationStorage.jl")
 include("Workspace/ComputationGraph.jl")
 include("Workspace/Calls.jl")
 include("Workspace/Processing.jl")
