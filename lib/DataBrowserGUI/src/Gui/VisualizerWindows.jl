@@ -24,7 +24,7 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
     input = window.input
     # TODO: two windows that show the same items with the same visualizer have the same name here.
     # Let the user name a window.
-    name(other) = "$(label(other.visualizer)): $(title(state, other))"
+    name(other) = "$(_window_label(other)): $(title(state, other))"
     preview = input isa WindowOutput ? name(source(input, state)) : "Selection"
     # As wide as the name, up to a limit: the names of several items must not take the whole row.
     ig.SetNextItemWidth(min(ig.CalcTextSize(preview).x + 2 * ig.GetFrameHeight(), 220.0f0))
@@ -173,24 +173,31 @@ function render_windows!(state::BrowserState)::Nothing
     state.workspace isa Workspace.Workspace || return nothing
     # The plots drawn with ImPlot need its context.
     _init_implot_context!(state)
+    _finish_closed_windows!(state)
     for window in copy(state.windows)
+        _finish_preparation!(window)
+        # Restored windows can reuse a closed window's id. Release the old owner before drawing
+        # a replacement whose preparation has just finished.
+        _finish_closed_windows!(state)
         open = Ref(true)
         window.initial_size_pending && ig.SetNextWindowDockID(0, ig.ImGuiCond_Always)
         condition = window.initial_size_pending ? ig.ImGuiCond_Always : ig.ImGuiCond_FirstUseEver
-        ig.SetNextWindowSize(initial_size(window.visualizer), condition)
+        size = preparing(window) ? window.preparation.initial_size : initial_size(window.visualizer)
+        ig.SetNextWindowSize(size, condition)
         window.initial_size_pending = false
         # ImGui knows the window by the part after "###", so the title can change.
         if ig.Begin("$(title(state, window))###$(window.id)", open)
             ctx = WindowContext(state, window)
             # An error of the visualizer, or of the code it runs, leaves the rest of the window and
             # the browser working; the window shows the error where the drawing stopped.
-            window.draw_error = guarded_draw("Window: $(label(window.visualizer)) failed to draw", window.draw_error) do
+            window.draw_error = guarded_draw("Window: $(_window_label(window)) failed to draw", window.draw_error) do
+                if preparing(window)
+                    ig.TextDisabled("Preparing…")
+                    return nothing
+                end
                 _render_window_header!(state, window)
                 _render_arrangement!(state, window)
                 _render_window_settings!(window)
-                # After the menus, which may change the visualizer, the input or a setting, so that
-                # the visualizer has its value before it draws in this frame.
-                refresh!(state, window)
                 ig.SameLine()
                 _render_export_button!(window, ctx)
                 # A group is one item of the row, also when the visualizer draws no button.
@@ -202,10 +209,15 @@ function render_windows!(state::BrowserState)::Nothing
                     chosen = getproperty(window.visualizer, name)
                     isequal(value, chosen) || setting!(window, name, chosen)
                 end
-                refresh!(state, window)
-                _sync_cell_settings!(window)
                 ig.EndGroup()
+                # Every visualizer control runs before handing ownership to preparation.
+                refresh!(state, window)
                 ig.Separator()
+                if preparing(window)
+                    ig.TextDisabled("Preparing…")
+                    return nothing
+                end
+                _sync_cell_settings!(window)
                 isempty(window.export_error) || ig.TextWrapped(window.export_error)
                 isempty(window.waiting) || ig.TextDisabled("Loading")
                 isempty(window.failed) || ig.TextWrapped("Failed:\n" * window.failed)

@@ -40,6 +40,7 @@ The value `window` passes on to a window that takes its input from it: the outpu
 visualizer, or the value of the window when the visualizer has none.
 """
 function output(window::Window)
+    _require_available(window)
     # A grid's per-cell interaction has no single combined output contract yet. Its downstream
     # input remains the full value, rather than silently taking the first cell's output.
     window.arrangement == "grid" && return window.value
@@ -96,7 +97,18 @@ end
 # What `window` tells its visualizer. A window opened from it is drawn from the next frame on, as
 # the browser draws a copy of its list of windows.
 WindowContext(state::BrowserState, window::Window) = WindowContext(window.id, state.workspace,
-    visualizer -> (transform!(open_window!(state, visualizer; input=window.input), window.transform); nothing))
+    visualizer -> (transform!(open_window!(state, visualizer; input=window.input), window.transform); nothing),
+    () -> (window.presentation_dirty = true; window.presentation_revision += UInt(1); nothing))
+
+"""Whether preparation has exclusive access to the visualizer of `window`."""
+preparing(window::Window)::Bool = window.preparation !== nothing
+
+function _require_available(window::Window)::Nothing
+    preparing(window) && throw(ArgumentError("Window $(window.id) is preparing"))
+    return nothing
+end
+
+_window_label(window::Window) = preparing(window) ? window.preparation.label : label(window.visualizer)
 
 """
     open_window!(state, visualizer; input=LiveSelection()) -> Window
@@ -109,7 +121,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], ItemKey[], nothing, nothing, "", "", "", "", true, "auto", "", VisualizerCell[], UInt(0), true, false)
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], ItemKey[], nothing, nothing, "", "", "", "", true, "auto", "", VisualizerCell[], UInt(0), true, false, nothing)
     push!(state.windows, window)
     return window
 end
@@ -119,10 +131,14 @@ Remove `window` from the browser. A window that took its value from `window` fol
 again.
 """
 function close_window!(state::BrowserState, window::Window)::Nothing
-    _close_cells!(window)
-    close(window.visualizer)
-    computed!(state, window, String[])
     filter!(other -> other !== window, state.windows)
+    if preparing(window)
+        push!(state.closing_windows, window)
+    else
+        _close_cells!(window)
+        close(window.visualizer)
+        computed!(state, window, String[])
+    end
     for other in state.windows
         input = other.input
         input isa WindowOutput && input.window == window.id && (other.input = LiveSelection())
@@ -136,6 +152,7 @@ end
 Take the value of `window` from another input.
 """
 function input!(state::BrowserState, window::Window, input::WindowInput)::Nothing
+    _require_available(window)
     if input isa WindowOutput
         other = source(input, state)
         (other === window || follows(state, other, window)) &&
@@ -179,6 +196,7 @@ whose data are the results.
 A value of the input that is not a selection of items is passed to the function as it is.
 """
 function transform!(window::Window, transform::Union{Nothing,GlobalRef})::Nothing
+    _require_available(window)
     window.transform = transform
     window.stamp = nothing
     return nothing
@@ -201,6 +219,7 @@ end
 Show the value of `window` with another visualizer.
 """
 function visualizer!(window::Window, visualizer::AbstractVisualizer)::Nothing
+    _require_available(window)
     _close_cells!(window)
     close(window.visualizer)
     window.visualizer = visualizer
@@ -218,6 +237,7 @@ Change the setting `name` of the visualizer of `window`. The visualizer is given
 window again in the next frame, unless the setting needs no `prepare!`.
 """
 function setting!(window::Window, name::Symbol, value)::Nothing
+    _require_available(window)
     visualizer = window.visualizer
     setproperty!(visualizer, name, value)
     if settings(visualizer)[name].prepare
@@ -236,14 +256,15 @@ ready, the window keeps what it shows, and `window.waiting` holds them. A failur
 `window.error` for the window to show.
 """
 function refresh!(state::BrowserState, window::Window)::Nothing
+    _finish_preparation!(window) || return nothing
     input = window.input
     # The other window may not be visible. Its own drawing then does not bring it up to date.
     if input isa WindowOutput
         upstream = source(input, state)
         refresh!(state, upstream)
-        if !upstream.has_value || !isempty(upstream.error)
+        if preparing(upstream) || !upstream.has_value || !isempty(upstream.error)
             window.error = isempty(upstream.error) ? "" :
-                "Input window ($(label(upstream.visualizer))) failed:\n" * upstream.error
+                "Input window ($(_window_label(upstream))) failed:\n" * upstream.error
             # Retry when the upstream window recovers, even if its output has the same identity.
             window.stamp = nothing
             return nothing
@@ -346,7 +367,7 @@ end
 # that no window keeps now.
 function computed!(state::BrowserState, window::Window, ids::Vector{String})::Nothing
     before, window.computed = window.computed, ids
-    kept = reduce(union, (other.computed for other in state.windows); init=String[])
+    kept = reduce(union, (other.computed for other in Iterators.flatten((state.windows, state.closing_windows))); init=String[])
     foreach(id -> delete!(state.workspace::Workspace.Workspace, id), setdiff(before, kept))
     return nothing
 end

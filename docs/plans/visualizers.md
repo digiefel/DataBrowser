@@ -183,8 +183,13 @@ save_view(v::AbstractVisualizer)::Dict{String,Any}
 load_view!(v::AbstractVisualizer, view::Dict{String,Any})
 ```
 
-`prepare!` does the expensive work once per value. `draw!` runs every frame and only reads what
-`prepare!` stored. `ctx` carries what the browser knows beyond the value, such as the hovered item
+The browser retains each visualizer instance and gives background `prepare!` exclusive access.
+Its window shows "Preparing" and pauses controls, drawing, export and output reads until
+preparation finishes. Other windows remain usable. Graphics attachment and cleanup stay on the UI
+thread. UI callbacks request preparation again with `ctx.prepare()`.
+
+`prepare!` does the expensive work once per value. `draw!` runs every frame after preparation and
+reads what `prepare!` stored. `ctx` carries what the browser knows beyond the value, such as the hovered item
 and the colours of tagged items. A visualizer that does not use them ignores `ctx`.
 
 Methods of `prepare!` dispatch on the value's type, and the most specific method wins:

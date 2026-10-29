@@ -8,10 +8,10 @@ function _close_cells!(window::Window)::Nothing
     return nothing
 end
 
-function _cell_context(state::BrowserState, window::Window, cell::VisualizerCell)
-    parent = WindowContext(state, window)
-    return WindowContext("$(window.id)/$(cell.id)", parent.workspace, parent.open_window)
-end
+_cell_context(state::BrowserState, window::Window, cell::VisualizerCell) =
+    _cell_context(WindowContext(state, window), cell)
+_cell_context(parent::WindowContext, cell::VisualizerCell) =
+    WindowContext("$(parent.id)/$(cell.id)", parent.workspace, parent.open_window, parent.prepare)
 
 function _sync_cell_settings!(window::Window)::Nothing
     for cell in window.cells, name in keys(settings(window.visualizer))
@@ -25,6 +25,7 @@ _can_overlay(window::Window, ctx) = window.value isa Workspace.Selection &&
     applicable(prepare!, window.visualizer, window.value, ctx)
 
 function arrangement!(window::Window, mode::String)::Nothing
+    _require_available(window)
     mode in ("stack", "grid", "overlay") || throw(ArgumentError("Unknown arrangement: $mode"))
     window.arrangement == mode && return nothing
     window.arrangement = mode
@@ -35,37 +36,80 @@ function arrangement!(window::Window, mode::String)::Nothing
 end
 
 function active_item!(window::Window, id::String)::Nothing
+    _require_available(window)
     window.active_item == id && return nothing
     window.active_item = id
     window.presentation_dirty = true
     return nothing
 end
 
+# A single preparation lane also serializes use of process-wide plotting defaults. Each window
+# still has its own task, and the UI never waits for this lock.
+const PREPARATION_LOCK = ReentrantLock()
+
 function _prepare_presentations!(state::BrowserState, window::Window)::Nothing
+    preparing(window) && return nothing
     window.has_value || return nothing
+    saved = _persisted_window(window)
+    name, size = label(window.visualizer), initial_size(window.visualizer)
+    unavailable() = error("Browser actions are available from draw! and draw_header!, not prepare!")
+    ctx = WindowContext(window.id, state.workspace, _ -> unavailable(), unavailable)
     window.presentation_dirty = false
-    try
-        _prepare_presentations_value!(state, window)
-        window.error = ""
-    catch err
-        window.error, _ = DataBrowserAPI.report_error(
-            "Window: $(label(window.visualizer)) could not show its value", err, catch_backtrace())
+    task = Threads.@spawn :default lock(PREPARATION_LOCK) do
+        retired = AbstractVisualizer[]
+        error = ""
+        try
+            Base.invokelatest(_prepare_presentations_value!, window, ctx, retired)
+        catch err
+            error, _ = DataBrowserAPI.report_error(
+                "Window: $name could not show its value", err, catch_backtrace())
+        end
+        (; retired, error)
+    end
+    window.preparation = WindowPreparation(task, saved, name, size)
+    return nothing
+end
+
+"""Return ownership to the UI after preparation, and release retired graphics on that thread."""
+function _finish_preparation!(window::Window)::Bool
+    job = window.preparation
+    job === nothing && return true
+    istaskdone(job.task) || return false
+    result = fetch(job.task)
+    window.preparation = nothing
+    foreach(close, result.retired)
+    window.error = result.error
+    return true
+end
+
+function _finish_closed_windows!(state::BrowserState)::Nothing
+    for window in copy(state.closing_windows)
+        _finish_preparation!(window) || continue
+        _close_cells!(window)
+        close(window.visualizer)
+        filter!(other -> other !== window, state.closing_windows)
+        computed!(state, window, String[])
     end
     return nothing
 end
 
-function _prepare_presentations_value!(state::BrowserState, window::Window)::Nothing
-    ctx = WindowContext(state, window)
+function _retire_cells!(window::Window, retired)::Nothing
+    append!(retired, (cell.visualizer for cell in window.cells if cell.visualizer !== window.visualizer))
+    empty!(window.cells)
+    return nothing
+end
+
+function _prepare_presentations_value!(window::Window, ctx::WindowContext, retired)::Nothing
     given, visualizer = window.value, window.visualizer
     if !(given isa Workspace.Selection)
-        _close_cells!(window)
+        _retire_cells!(window, retired)
         prepare!(visualizer, given, ctx)
         return nothing
     end
     if window.arrangement == "auto"
         # Do not settle the default before the input has any items.
         if isempty(given)
-            _close_cells!(window)
+            _retire_cells!(window, retired)
             return nothing
         end
         # Existing selection-only views, e.g. Table and registered plots, stay combined.
@@ -73,7 +117,7 @@ function _prepare_presentations_value!(state::BrowserState, window::Window)::Not
         window.arrangement = !native && _can_overlay(window, ctx) ? "overlay" : "stack"
     end
     if window.arrangement == "overlay"
-        _close_cells!(window)
+        _retire_cells!(window, retired)
         _can_overlay(window, ctx) || error("$(label(visualizer)) does not support Overlay")
         prepare!(visualizer, given, ctx)
         return nothing
@@ -95,7 +139,7 @@ function _prepare_presentations_value!(state::BrowserState, window::Window)::Not
     end
     for cell in window.cells
         cell.visualizer === visualizer && continue
-        any(other -> other.visualizer === cell.visualizer, next) || close(cell.visualizer)
+        any(other -> other.visualizer === cell.visualizer, next) || push!(retired, cell.visualizer)
     end
     window.cells = next
     _sync_cell_settings!(window)
@@ -105,7 +149,7 @@ function _prepare_presentations_value!(state::BrowserState, window::Window)::Not
         cell.label = String(given.label[i])
         cell.revision == window.presentation_revision && continue
         try
-            child_ctx = _cell_context(state, window, cell)
+            child_ctx = _cell_context(ctx, cell)
             value = data === nothing ? given.data[i] : data[i]
             # Selection-only visualizers still get the metadata of this one item.
             applicable(prepare!, cell.visualizer, value, child_ctx) || (value = given[[i]])

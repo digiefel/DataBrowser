@@ -156,6 +156,7 @@ _waiting_windows(state::BrowserState)::Vector{PersistedWindow} =
     filter(window -> _visualizer_type(window.visualizer) === nothing, state.saved_project_view.windows)
 
 function _persisted_window(window::Window)::PersistedWindow
+    preparing(window) && return window.preparation.saved
     input = window.input
     visualizer = window.visualizer
     # A setting is saved as TOML text, number or boolean; a symbol as its text.

@@ -28,7 +28,7 @@ It may also have:
 - a method `output(visualizer::V)`, the value the window passes on to other windows;
 - a method `Base.close(visualizer::V)`, to release what the visualizer holds outside Julia's
   memory, such as a figure on the graphics card. The browser calls it when the window closes or
-  changes to another visualizer;
+  changes to another visualizer, on the UI thread and after any preparation has finished;
 - a method `label(visualizer::V)`, the name of the visualizer in the menus of the browser. The
   default is the name of the type.
 
@@ -42,6 +42,13 @@ through its `prepare!` methods.
 - `ctx.open_window(visualizer)` opens a new window that shows the value of this window with
   `visualizer`: it takes its value from the same input and passes it through the same function.
   The window opens after this frame.
+- `ctx.prepare()` requests preparation again with the current input, for example after an action
+  in `draw!` changes what must be prepared. The request takes effect after drawing returns.
+
+The browser keeps the same instance throughout its lifetime. During background preparation it
+shows "Preparing" and pauses all other access to that instance, including its controls, drawing,
+export and output. Other windows remain usable. Browser actions on `ctx` are available only to
+UI callbacks, such as `draw!` and `draw_header!`.
 """
 abstract type AbstractVisualizer end
 
@@ -63,6 +70,12 @@ Base.close(::AbstractVisualizer) = nothing
 
 Take `value` and store in `visualizer` what `draw!` needs. The browser calls `prepare!` when the
 value of the window changes, not in every frame, so slow work belongs here.
+
+Preparation runs on a worker with exclusive access to the same visualizer instance. Its settings
+and interaction state remain in that instance. Treat `value` as read-only, and finish all work on
+the instance before returning; do not leave a task modifying it afterward. Do not call ImGui,
+browser UI actions, or graphics operations that require the UI thread. A plot may construct a new,
+unattached Figure here; attachment and release of graphics resources belong to UI callbacks.
 
 The methods of `prepare!` also say which values a visualizer shows. The browser offers a visualizer
 type for a value when a method written for that type accepts the value. Write one method for each
@@ -118,6 +131,7 @@ if it should be shared across Grid cells.
 
 The browser calls `settings` in every frame, also before the first `prepare!`. Return quickly, and
 hide controls that do not apply to the current mode with `visible=false`.
+Calls pause while preparation owns the instance.
 
 Give each such field a default value. The constructor `V()` then makes a visualizer with the
 default settings, and `V(name=value)` makes one with a setting already changed.
@@ -156,6 +170,8 @@ function export! end
 
 Draw what `prepare!` stored. The browser calls `draw!` in every frame in which the window is
 visible, inside the window and below its header, and only after `prepare!` succeeded.
+It runs on the UI thread, with exclusive access to the instance. Request expensive preparation
+with `ctx.prepare()` rather than performing it in this callback.
 """
 function draw! end
 
@@ -173,5 +189,6 @@ is not yet part of the contract.
 The browser reads the output in every frame, and hands it to the other window when it is another
 object than before. Keep the output in a field and return that field; replace the object when the
 output changes.
+While preparation owns the instance, output reads and updates to linked windows pause.
 """
 output(::AbstractVisualizer) = nothing

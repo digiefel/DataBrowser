@@ -46,7 +46,6 @@ function export_name(view::PlotView)::String
 end
 
 function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
-    view.figure_id = "plot_$(ctx.id)"
     view.selection = selection
     kinds = unique(label(typeof(item)) for item in items(selection))
     kind = length(kinds) == 1 ? only(kinds) : nothing
@@ -58,7 +57,7 @@ function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
 
     if isempty(view.plots)
         view.error_details = ""
-        close(view)
+        view.figure = nothing
         view.plot = ""
         view.message =
             isempty(selection) ? "No item selected" :
@@ -80,8 +79,8 @@ function build!(view::PlotView, ctx)::Nothing
     view.dark = DARK[]
     try
         figure = Makie.with_theme(plot_theme(view.dark)) do
-            figure = Browser.@timed "plot_setup" (@timed_dbg setup_plot(workspace, plot, selection))
-            Browser.@timed "plot_data" (@timed_dbg plot_data!(workspace, plot, selection, figure))
+            figure = @timed_dbg setup_plot(workspace, plot, selection)
+            @timed_dbg plot_data!(workspace, plot, selection, figure)
             figure
         end
         figure === nothing && error("The plot returned no figure.")
@@ -92,7 +91,7 @@ function build!(view::PlotView, ctx)::Nothing
         view.error_details = ""
     catch err
         bt = catch_backtrace()
-        close(view)
+        view.figure = nothing
         context = "Plot drawing failed\n" *
             "  Source: $(DataBrowserAPI.source_description(workspace.source))\n" *
             "  Plot: $(view.plot)\n" *

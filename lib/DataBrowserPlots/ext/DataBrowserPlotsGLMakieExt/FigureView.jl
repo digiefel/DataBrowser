@@ -13,7 +13,7 @@ using .MakieImguiIntegration: destroy_figure!, inspect!, plot_theme
 # Every figure of the browser uses the dark theme, or the light one. The theme button of any window
 # with a figure changes it for all of them.
 # TODO: save the theme with the view.
-const DARK = Ref(true)
+const DARK = Threads.Atomic{Bool}(true)
 
 # The time the theme button takes to change its colors after a click.
 const THEME_BLEND_SECONDS = 0.25
@@ -29,14 +29,15 @@ A subtype has these fields:
 - `inspect::Bool`: whether the figure shows the values of the plot element under the mouse;
 - `figure`: the figure, or `nothing`;
 - `dark::Bool`: the theme `figure` was built with;
-- `figure_id::String`: names the figure for GLMakie. Set it from the id of the window in `prepare!`;
+- `figure_id::String`: names the attached figure for GLMakie. `draw!` manages it on the UI thread;
 - `message::String`: why the window shows no figure;
 - `error_details::String`: the full report for the last drawing error.
 
 And these methods:
 
-- `build!(view, ctx)`: build `view.figure` in the theme `DARK[]` and record the theme in
-  `view.dark`. On failure, call `close(view)` and set `view.message`;
+- `build!(view, ctx)`: build a new, unattached `view.figure` during preparation, in the theme
+  `DARK[]`, and record the theme in `view.dark`. On failure, clear `view.figure` and set
+  `view.message`. Graphics attachment and cleanup belong to the UI;
 - `export_name(view)`: the file name "Export" proposes, without its extension.
 
 A subtype whose figures set their own theme defines `theme_button(view) = false` to leave out the
@@ -50,6 +51,7 @@ theme_button(::FigureView) = true
 
 function Base.close(view::FigureView)::Nothing
     destroy_figure!(view.figure_id)
+    view.figure_id = ""
     view.figure = nothing
     return nothing
 end
@@ -112,10 +114,19 @@ end
 embed_figure(view::FigureView) = embed(view.figure, view.figure_id)
 
 function draw!(view::FigureView, ctx)::Nothing
+    figure_id = "plot_$(ctx.id)"
+    if view.figure_id != figure_id
+        destroy_figure!(view.figure_id)
+        view.figure_id = figure_id
+    end
     # The figure was built before the theme changed.
-    view.figure === nothing || view.dark == DARK[] || build!(view, ctx)
+    if theme_button(view) && view.figure !== nothing && view.dark != DARK[]
+        ctx.prepare()
+        return nothing
+    end
 
     if view.figure === nothing
+        destroy_figure!(view.figure_id)
         ig.TextWrapped(view.message)
         if !isempty(view.error_details) && ig.CollapsingHeader("Show details")
             ig.SmallButton("Copy details") && ig.SetClipboardText(view.error_details)

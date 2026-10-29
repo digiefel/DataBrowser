@@ -597,7 +597,9 @@ the table as a first-class view.
   items receives the whole selection and gives one value, such as a mean over the items. A "Value" visualizer shows any value as the REPL prints it.
 - [x] A window has its items processed and computed in the background, and shows its previous
   value, with "Loading", until they are ready.
-- [ ] Prepare a window's value in the background too: `prepare!` still runs in the frame.
+- [x] Prepare a window's value in the background with exclusive access to its persistent
+  visualizer instance. Pause that window's controls and drawing until preparation completes;
+  keep graphics attachment and cleanup on the UI thread.
 - [x] Plots drawn with ImPlot, which draw at once and compile nothing: "Line plot" of a vector, or
   of `x => y` or `(x, y)`; "Histogram" of a vector; "Bar chart" of named numbers. Each visualizer
   takes only the values of its own shape; a transform turns other values into that shape.

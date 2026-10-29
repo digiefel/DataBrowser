@@ -110,10 +110,18 @@ mutable struct VisualizerCell
     draw_error::String
 end
 
+"""A pending handover, with UI properties captured before the worker takes ownership."""
+struct WindowPreparation
+    task::Task
+    saved::PersistedWindow
+    label::String
+    initial_size::Tuple{Int,Int}
+end
+
 """
 A window of the browser that shows a value. Its `input` says where the value comes from, and its
-`visualizer` shows the value. The two do not know each other: the window reads the input and hands
-the value to the visualizer.
+`visualizer` shows the value. The window hands exclusive access to its visualizer and cells to
+background preparation, then regains them when the task completes.
 """
 mutable struct Window
     # Names the window for ImGui. Unique in the browser.
@@ -150,6 +158,9 @@ mutable struct Window
     presentation_revision::UInt
     presentation_dirty::Bool
     has_value::Bool
+    # While present, the task exclusively owns the visualizer and its cells. The other fields
+    # here are browser-owned; saved presentation properties come from WindowPreparation.
+    preparation::Union{Nothing,WindowPreparation}
 end
 
 """
@@ -157,12 +168,14 @@ What the browser tells a visualizer about its window.
 
 `id` names the window. It is unique in the browser and stays the same from frame to frame.
 `workspace` is the open workspace. `open_window(visualizer)` opens a new window that shows the value
-of this window with `visualizer`.
+of this window with `visualizer`. `prepare()` requests preparation again after the UI callback
+returns. These actions are available from UI callbacks only.
 """
 struct WindowContext
     id::String
     workspace::Workspace.Workspace
     open_window::Function
+    prepare::Function
 end
 
 """Newest-last cap for the throughput history ring buffers (~1 minute at the 0.25s sample rate)."""
@@ -268,6 +281,8 @@ Base.@kwdef mutable struct BrowserState
     visible_selection::Union{Nothing,VisibleSelection} = nothing
     # The windows that show a value with a visualizer, and the number of the last one opened.
     windows::Vector{Window} = Window[]
+    # Closed windows retain their resources until preparation returns ownership to the UI.
+    closing_windows::Vector{Window} = Window[]
     next_window::Int = 0
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()

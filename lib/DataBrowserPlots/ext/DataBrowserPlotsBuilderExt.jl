@@ -129,8 +129,8 @@ written with `@plot`, or a Makie figure. The file runs from the start in a modul
 uses AlgebraOfGraphics, Makie and DataBrowserPlots and has `selection` set to the selected items.
 It runs again when the code changes; a declaration of `@plot` is drawn again for each selection
 without running the file. Code that names `selection` itself runs again for each selection.
-A declaration is drawn in the background: the window shows its previous figure until the new one
-is ready.
+A declaration and its figure are prepared in the background. The window pauses interaction and
+shows "Preparing" until preparation returns control to the UI.
 Other packages are loaded with `using` in the file. Names defined in `Main`, such as the functions
 of the project script or the REPL, are reached by name; a name that the file defines takes their
 place.
@@ -195,9 +195,6 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     # the value it gave; `nothing` until it ran without an error.
     ran::Union{Nothing,Tuple} = nothing
     value::Any = nothing
-    # The task that draws the layers of a declaration for the selection, until the frame makes the
-    # figure from them.
-    drawing::Union{Nothing,Task} = nothing
     inspect::Bool = false
     figure::Any = nothing
     dark::Bool = true
@@ -271,12 +268,11 @@ function save_and_build!(view::BuilderView, ctx)::Nothing
             "Plot builder: saving $(code_path(view)) failed", err, catch_backtrace())
         return nothing
     end
-    build!(view, ctx)
+    ctx.prepare()
     return nothing
 end
 
 function prepare!(view::BuilderView, selection::Selection, ctx)::Nothing
-    view.figure_id = "plot_$(ctx.id)"
     view.selection = selection
     view.columns = nothing
     path = code_path(view)
@@ -300,7 +296,7 @@ function build!(view::BuilderView, ctx)::Nothing
     view.dark = DARK[]
     selection = view.selection
     if selection === nothing || isempty(selection)
-        close(view)
+        view.figure = nothing
         view.message = "Select items to plot."
         view.error_details = ""
         return nothing
@@ -322,7 +318,7 @@ function build!(view::BuilderView, ctx)::Nothing
             mod = @timed_dbg "builder_module" begin
             # A new module for each run, so that nothing from an earlier run of the file is left.
             # TODO: modules are never freed; reuse one module per window if this grows.
-            mod = Module(Symbol(view.figure_id))
+            mod = Module(Symbol("plot_$(ctx.id)"))
             Core.eval(mod, :(const AlgebraOfGraphics = $AlgebraOfGraphics))
             Core.eval(mod, :(const Makie = $Makie))
             Core.eval(mod, :(const DataBrowserPlots = $DataBrowserPlots))
@@ -351,21 +347,9 @@ function build!(view::BuilderView, ctx)::Nothing
         # it is drawn.
         view.scale_kinds = plot isa DataBrowserPlots.Declaration ? scale_kinds(plot, selection) : scale_kinds(plot)
         if plot isa DataBrowserPlots.Declaration
-            # The layers are drawn in the background, as they wait for the items and their fits;
-            # until then the window shows its previous figure. The task gives the drawn layers, or
-            # the error and its backtrace. It waits for the previous one, which may still remove
-            # the computed items its file drew before.
-            path, previous = code_path(view), view.drawing
-            view.message = "Loading"
-            view.drawing = Threads.@spawn try
-                previous === nothing || wait(previous)
-                @timed_dbg "builder_layers" DataBrowserPlots.drawing(() -> Base.invokelatest(plot.layers, selection), selection, path)
-            catch err
-                (err, catch_backtrace())
-            end
-            return nothing
+            path = code_path(view)
+            plot = @timed_dbg "builder_layers" DataBrowserPlots.drawing(() -> Base.invokelatest(plot.layers, selection), selection, path)
         end
-        view.drawing = nothing
         figure!(view, plot)
     catch err
         failed!(view, err, catch_backtrace())
@@ -384,7 +368,7 @@ function figure!(view::BuilderView, plot)::Nothing
 end
 
 function failed!(view::BuilderView, err, bt)::Nothing
-    close(view)
+    view.figure = nothing
     view.message, view.error_details = DataBrowserAPI.report_error(
         "Plot builder: $(export_name(view)) failed", err, bt)
     return nothing
@@ -404,19 +388,8 @@ function draw!(view::BuilderView, ctx)::Nothing
     changed = ischanged_on_disk(view.code)
     if changed && !edited
         load_code!(view)
-        build!(view, ctx)
+        ctx.prepare()
         changed = false
-    end
-    # The figure is made in the frame, as Makie is not safe to use from several threads.
-    task = view.drawing
-    if task !== nothing && istaskdone(task)
-        view.drawing = nothing
-        drawn = fetch(task)
-        try
-            drawn isa Tuple{Exception,Any} ? failed!(view, drawn...) : figure!(view, drawn)
-        catch err
-            failed!(view, err, catch_backtrace())
-        end
     end
 
     available = ig.GetContentRegionAvail()
@@ -467,7 +440,7 @@ function draw!(view::BuilderView, ctx)::Nothing
             ig.SameLine()
             if ig.SmallButton("Reload")
                 load_code!(view)
-                build!(view, ctx)
+                ctx.prepare()
             end
             ig.SetItemTooltip("Replace the code in the window with the code in the file")
         end

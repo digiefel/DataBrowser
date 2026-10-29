@@ -463,6 +463,12 @@ function _run_browser(
         on_exit=() -> begin
             # A visualizer may hold a figure that must be released before the window goes. The
             # windows stay in the list, so that they are saved and open again next time.
+            # Finish handovers while the graphics context and workspace are still available.
+            for window in Iterators.flatten((state.windows, state.closing_windows))
+                preparing(window) && wait(window.preparation.task)
+                _finish_preparation!(window)
+            end
+            _finish_closed_windows!(state)
             foreach(state.windows) do window
                 _close_cells!(window)
                 close(window.visualizer)
@@ -585,6 +591,8 @@ directory.
 Closing the window closes the browser only. The workspace stays open and keeps processing items,
 and `open_browser` can show it again. Use `close_workspace!` to close the workspace.
 
+Start Julia with `--threads=auto,1`: thread 1 runs the UI and the default pool prepares values.
+
 `window_start` says how the window appears: `:normal` shows it and gives it the keyboard focus,
 `:background` shows it without the focus, and `:hidden` does not show it.
 """
@@ -596,6 +604,8 @@ function open_browser(
     window_start::Symbol=:normal,
 )
     workspace.closed && error("The workspace is closed. Open it again with `open_workspace`.")
+    Threads.threadpool(1) === :interactive && Threads.threadpoolsize(:default) > 0 ||
+        error("The browser needs a UI thread and background workers. Start Julia with --threads=auto,1.")
     state = BrowserState()
     state.extensions = _instantiate_extensions()
     for ext in state.extensions

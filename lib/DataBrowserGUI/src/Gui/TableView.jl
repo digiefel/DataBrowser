@@ -139,11 +139,10 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     # Names the grid for ImGui, which keeps the column widths under this name in imgui.ini: one
     # name for each item type.
     grid_id::String = "mixed"
+    # Retain requested columns even when an updated table temporarily lacks them. This belongs
+    # to the instance, so preparation never shares a mutable registry with another window.
+    selected_column_names::Union{Nothing,Vector{String}} = nothing
 end
-
-# Requested columns survive tables that temporarily lack them. Weak keys keep this transient
-# state tied to the visualizer's lifetime, including visualizers already open during live edits.
-const TABLE_COLUMN_SELECTIONS = WeakKeyDict{TableView,Vector{String}}()
 
 """
     selected_columns(view::TableView; available=false) -> Vector{String}
@@ -153,9 +152,10 @@ With `available=true`, return only the selected columns available in the current
 """
 function selected_columns(view::TableView; available::Bool=false)::Vector{String}
     available && return view.table === nothing ? String[] : copy(view.table.columns[view.grid.selected_columns])
-    copy(get!(TABLE_COLUMN_SELECTIONS, view) do
-        view.table === nothing ? String[] : view.table.columns[view.grid.selected_columns]
-    end)
+    if view.selected_column_names === nothing
+        view.selected_column_names = view.table === nothing ? String[] : view.table.columns[view.grid.selected_columns]
+    end
+    return copy(view.selected_column_names)
 end
 
 """
@@ -165,7 +165,7 @@ Select columns by name. Missing names remain requested and are restored when ava
 An empty list explicitly clears the selection.
 """
 function select_columns!(view::TableView, names::AbstractVector{<:AbstractString})::TableView
-    TABLE_COLUMN_SELECTIONS[view] = unique(String.(names))
+    view.selected_column_names = unique(String.(names))
     if view.table !== nothing
         view.grid.selected_columns = findall(in(names), view.table.columns)
         _pass_on!(view)
@@ -176,7 +176,7 @@ end
 function _table_selection_changed!(view::TableView)::Nothing
     current = view.table.columns[view.grid.selected_columns]
     expected = view.table.columns[findall(in(selected_columns(view)), view.table.columns)]
-    Set(current) == Set(expected) || (TABLE_COLUMN_SELECTIONS[view] = current)
+    Set(current) == Set(expected) || (view.selected_column_names = current)
     _pass_on!(view)
     return nothing
 end
