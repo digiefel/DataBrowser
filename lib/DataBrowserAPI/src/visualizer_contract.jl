@@ -46,9 +46,10 @@ through its `prepare!` methods.
   in `draw!` changes what must be prepared. The request takes effect after drawing returns.
 
 The browser keeps the same instance throughout its lifetime. During background preparation it
-shows "Preparing" and pauses all other access to that instance, including its controls, drawing,
-export and output. Other windows remain usable. Browser actions on `ctx` are available only to
-UI callbacks, such as `draw!` and `draw_header!`.
+keeps its last rendered contents visible, shows a loading indicator in the title, and pauses all
+other access to that instance, including its controls, drawing, export and output. Other windows
+remain usable. Browser actions on `ctx` are available only to UI callbacks, such as `draw!` and
+`draw_header!`.
 """
 abstract type AbstractVisualizer end
 

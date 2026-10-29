@@ -173,6 +173,7 @@ function render_windows!(state::BrowserState)::Nothing
     state.workspace isa Workspace.Workspace || return nothing
     # The plots drawn with ImPlot need its context.
     _init_implot_context!(state)
+    _release_retired_window_previews!()
     _finish_closed_windows!(state)
     for window in copy(state.windows)
         _finish_preparation!(window)
@@ -186,13 +187,14 @@ function render_windows!(state::BrowserState)::Nothing
         ig.SetNextWindowSize(size, condition)
         window.initial_size_pending = false
         # ImGui knows the window by the part after "###", so the title can change.
-        if ig.Begin("$(title(state, window))###$(window.id)", open)
+        if ig.Begin(_window_caption(state, window), open, _preparing_window_flags(window))
+            content_position, content_size = _window_preview_region()
             ctx = WindowContext(state, window)
             # An error of the visualizer, or of the code it runs, leaves the rest of the window and
             # the browser working; the window shows the error where the drawing stopped.
             window.draw_error = guarded_draw("Window: $(_window_label(window)) failed to draw", window.draw_error) do
                 if preparing(window)
-                    ig.TextDisabled("Preparing…")
+                    _draw_window_preview!(window.id, content_position, content_size)
                     return nothing
                 end
                 _render_window_header!(state, window)
@@ -214,7 +216,7 @@ function render_windows!(state::BrowserState)::Nothing
                 refresh!(state, window)
                 ig.Separator()
                 if preparing(window)
-                    ig.TextDisabled("Preparing…")
+                    _draw_window_preview!(window.id, content_position, content_size)
                     return nothing
                 end
                 _sync_cell_settings!(window)
@@ -229,6 +231,9 @@ function render_windows!(state::BrowserState)::Nothing
                 end
             end
             isempty(window.draw_error) || ig.TextWrapped(window.draw_error)
+            if open[] && !preparing(window)
+                _capture_window_preview!(window.id, content_position, content_size)
+            end
         end
         ig.End()
         open[] || close_window!(state, window)

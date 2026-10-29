@@ -184,8 +184,8 @@ load_view!(v::AbstractVisualizer, view::Dict{String,Any})
 ```
 
 The browser retains each visualizer instance and gives background `prepare!` exclusive access.
-Its window shows "Preparing" and pauses controls, drawing, export and output reads until
-preparation finishes. Other windows remain usable. Graphics attachment and cleanup stay on the UI
+Its window retains the last rendered contents, shows a loading indicator in the title, and
+pauses controls, visualizer drawing, export and output reads until preparation finishes. Other windows remain usable. Graphics attachment and cleanup stay on the UI
 thread. UI callbacks request preparation again with `ctx.prepare()`.
 
 `prepare!` does the expensive work once per value. `draw!` runs every frame after preparation and

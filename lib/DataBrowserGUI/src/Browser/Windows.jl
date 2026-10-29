@@ -131,6 +131,7 @@ Remove `window` from the browser. A window that took its value from `window` fol
 again.
 """
 function close_window!(state::BrowserState, window::Window)::Nothing
+    _discard_window_preview!(window.id)
     filter!(other -> other !== window, state.windows)
     if preparing(window)
         push!(state.closing_windows, window)
