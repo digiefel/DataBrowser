@@ -141,7 +141,11 @@ end
         window = open_window!(state, Kept(); input=FixedItems(["n1", "n2", "n3"]))
         transform!(window, GlobalRef(@__MODULE__, :doubled))
         # The window waits for its items over several frames.
-        shown() = (timedwait(() -> (refresh!(state, window); isempty(window.waiting) && !preparing(window)), 20); collect(window.visualizer.value.data))
+        function shown()
+            ready = timedwait(() -> (refresh!(state, window); isempty(window.waiting) && !preparing(window)), 60)
+            ready === :ok || error("Window did not finish preparing: $(window.error)")
+            return collect(window.visualizer.value.data)
+        end
         @test shown() == [2, 4, 6]
         @eval doubled(number::WindowTestNumber) = 10number.value
         @test timedwait(() -> shown() == [10, 20, 30], 20) === :ok

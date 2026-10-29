@@ -113,10 +113,6 @@ function row!(workspace::Workspace, value::Computation)::ItemKey
         title = target === nothing ? label(value) :
             first(target) isa SourceKey ? id(catalog, first(target)) : label(workspace, first(target))
         key = publish!(catalog, ItemEntry(id(value), title, holder, typeof(value)), Target[dependencies...])
-        previous = get(workspace.computations, key, nothing)
-        if previous !== nothing && previous !== value
-            Catalogs.invalidate!(catalog, key, ITEM_PROCESS)
-        end
         workspace.computations[key] = value
         return key
     end

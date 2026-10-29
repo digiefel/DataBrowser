@@ -12,7 +12,7 @@ include("fixtures/code_project.jl")
         Workspace.wait_workspace_idle!(workspace)
         state = BrowserState(; workspace)
         code = open_window!(state, CodeView(); input=FixedItems(["signal"]))
-        ready(window) = timedwait(() -> (refresh!(state, window); !preparing(window) && window.has_value && isempty(window.waiting) && isempty(window.error) && isempty(window.failed)), 60) === :ok
+        ready(window) = timedwait(() -> (refresh!(state, window); !preparing(code) && !preparing(window) && window.has_value && isempty(window.waiting) && isempty(window.error) && isempty(window.failed)), 60) === :ok
         @test ready(code)
         view = code.visualizer
         @test [row.call.title for row in view.rows] == ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "analyze(::CodeSignal)"]
