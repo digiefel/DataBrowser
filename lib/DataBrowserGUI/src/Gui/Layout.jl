@@ -463,7 +463,10 @@ function _run_browser(
         on_exit=() -> begin
             # A visualizer may hold a figure that must be released before the window goes. The
             # windows stay in the list, so that they are saved and open again next time.
-            foreach(window -> close(window.visualizer), state.windows)
+            foreach(state.windows) do window
+                _close_cells!(window)
+                close(window.visualizer)
+            end
             _shutdown_extensions!(state)
             _shutdown_implot_context!(state)
             _save_project_view_if_changed!(state; every=0)

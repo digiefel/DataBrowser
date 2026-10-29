@@ -39,7 +39,12 @@ end
 The value `window` passes on to a window that takes its input from it: the output of its
 visualizer, or the value of the window when the visualizer has none.
 """
-output(window::Window) = something(output(window.visualizer), Some(window.value))
+function output(window::Window)
+    # A grid's per-cell interaction has no single combined output contract yet. Its downstream
+    # input remains the full value, rather than silently taking the first cell's output.
+    window.arrangement == "grid" && return window.value
+    return something(output(window.visualizer), Some(window.value))
+end
 
 # What tells whether `input` gives another value than before: another stamp means another value.
 # Item keys are never reused, so their hash tells the items apart without building their ids.
@@ -73,15 +78,17 @@ end
     visualizers(T) -> Vector{AbstractVisualizer}
 
 A new visualizer of every loaded visualizer type that shows values of type `T`, sorted by label.
-A visualizer type shows such values when one of its `prepare!` methods accepts them. The methods
+A selection also offers visualizers of individual values, for Stack and Grid. A visualizer type
+shows other values when one of its `prepare!` methods accepts them. The methods
 are read at each call, so a visualizer defined while the browser is open is found at once.
 """
 function visualizers(T::Type)::Vector{AbstractVisualizer}
     types = Set{Type}()
-    for method in methods(prepare!, Tuple{AbstractVisualizer,T,Any})
+    for method in (T <: Workspace.Selection ? methods(prepare!) : methods(prepare!, Tuple{AbstractVisualizer,T,Any}))
         V = Base.unwrap_unionall(method.sig).parameters[2]
         # `methods` also lists methods that accept only some values of type `T`.
-        isconcretetype(V) && hasmethod(prepare!, Tuple{V,T,Any}) && push!(types, V)
+        V isa DataType && V <: AbstractVisualizer && isconcretetype(V) &&
+            (T <: Workspace.Selection || hasmethod(prepare!, Tuple{V,T,Any})) && push!(types, V)
     end
     return sort!(AbstractVisualizer[V() for V in types]; by=label)
 end
@@ -102,7 +109,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], ItemKey[], nothing, nothing, "", "", "", "")
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], ItemKey[], nothing, nothing, "", "", "", "", true, "auto", "", VisualizerCell[], UInt(0), true, false)
     push!(state.windows, window)
     return window
 end
@@ -112,6 +119,7 @@ Remove `window` from the browser. A window that took its value from `window` fol
 again.
 """
 function close_window!(state::BrowserState, window::Window)::Nothing
+    _close_cells!(window)
     close(window.visualizer)
     computed!(state, window, String[])
     filter!(other -> other !== window, state.windows)
@@ -193,8 +201,11 @@ end
 Show the value of `window` with another visualizer.
 """
 function visualizer!(window::Window, visualizer::AbstractVisualizer)::Nothing
+    _close_cells!(window)
     close(window.visualizer)
     window.visualizer = visualizer
+    window.arrangement = "auto"
+    window.presentation_dirty = true
     # The new visualizer is given the value in the next frame.
     window.stamp = nothing
     return nothing
@@ -209,7 +220,11 @@ window again in the next frame, unless the setting needs no `prepare!`.
 function setting!(window::Window, name::Symbol, value)::Nothing
     visualizer = window.visualizer
     setproperty!(visualizer, name, value)
-    settings(visualizer)[name].prepare && (window.stamp = nothing)
+    if settings(visualizer)[name].prepare
+        window.presentation_revision += UInt(1)
+        window.presentation_dirty = true
+    end
+    _sync_cell_settings!(window)
     return nothing
 end
 
@@ -223,7 +238,17 @@ ready, the window keeps what it shows, and `window.waiting` holds them. A failur
 function refresh!(state::BrowserState, window::Window)::Nothing
     input = window.input
     # The other window may not be visible. Its own drawing then does not bring it up to date.
-    input isa WindowOutput && refresh!(state, source(input, state))
+    if input isa WindowOutput
+        upstream = source(input, state)
+        refresh!(state, upstream)
+        if !upstream.has_value || !isempty(upstream.error)
+            window.error = isempty(upstream.error) ? "" :
+                "Input window ($(label(upstream.visualizer))) failed:\n" * upstream.error
+            # Retry when the upstream window recovers, even if its output has the same identity.
+            window.stamp = nothing
+            return nothing
+        end
+    end
     workspace = state.workspace::Workspace.Workspace
     current = (stamp(input, state), window.transform, code(window),
         Workspace.revision(workspace, _items_for_ids(state, window.computed)))
@@ -234,7 +259,10 @@ function refresh!(state::BrowserState, window::Window)::Nothing
         window.waiting = ItemKey[]
         window.stamp = nothing
     end
-    current == window.stamp && return nothing
+    if current == window.stamp
+        window.presentation_dirty && _prepare_presentations!(state, window)
+        return nothing
+    end
     window.stamp = current
     visualizer = window.visualizer
     ctx = WindowContext(state, window)
@@ -302,16 +330,11 @@ function refresh!(state::BrowserState, window::Window)::Nothing
         end
         computed!(state, window, id.(held))
         window.value = given
+        window.has_value = true
         window.failed = join(failures, '\n')
-        # TODO: `prepare!` runs in the frame; a visualizer that takes long to prepare stops it.
-        if applicable(prepare!, visualizer, window.value, ctx)
-            prepare!(visualizer, window.value, ctx)
-            window.error = ""
-        else
-            given = window.value isa Workspace.Selection ? "a selection" :
-                "a value of type $(nameof(typeof(window.value)))"
-            window.error = "$(label(visualizer)) cannot show $given. Choose another visualizer."
-        end
+        window.presentation_revision += UInt(1)
+        window.presentation_dirty = true
+        _prepare_presentations!(state, window)
     catch err
         window.error, _ = DataBrowserAPI.report_error(
             "Window: $(label(visualizer)) could not show its value", err, catch_backtrace())

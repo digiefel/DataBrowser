@@ -1,7 +1,7 @@
 import CImGui as ig
 import CImGui.CSyntax: @c
 
-using DataBrowserAPI: Setting, draw_header!, export!, id, label, settings
+using DataBrowserAPI: Setting, draw_header!, export!, id, initial_size, label, settings
 import DataBrowserCore.Workspace
 
 """
@@ -73,13 +73,30 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
     return nothing
 end
 
-# How the user changes one setting. The type of the field decides: a `Bool` is a checkmark and a
-# `String` is a menu, or a text field when the setting has no options. Each method draws the control and returns the value the user chose, which is
-# `current` when the user changed nothing.
+# How the user changes one setting. Bool is a checkmark; Int and Float64 are numeric inputs;
+# String is a menu or a text field. Each method returns the chosen value, or `current` when the
+# user changed nothing.
 function _render_setting!(setting::Setting, current::Bool)::Bool
     chosen = current
     @c ig.Checkbox(setting.label, &chosen)
     return chosen
+end
+
+function _render_setting!(setting::Setting, current::Int)::Int
+    chosen, step, fast = Ref(current), Ref(1), Ref(16)
+    datatype = sizeof(Int) == 8 ? ig.ImGuiDataType_S64 : ig.ImGuiDataType_S32
+    format = sizeof(Int) == 8 ? "%lld" : "%d"
+    ig.SetNextItemWidth(ig.GetFontSize() * 8)
+    ig.InputScalar(setting.label, datatype, chosen, step, fast, format,
+        ig.ImGuiInputTextFlags_EnterReturnsTrue)
+    return chosen[]
+end
+
+function _render_setting!(setting::Setting, current::Float64)::Float64
+    chosen = Ref(current)
+    ig.SetNextItemWidth(ig.GetFontSize() * 7)
+    ig.InputDouble(setting.label, chosen, 0, 0, "%.6g", ig.ImGuiInputTextFlags_EnterReturnsTrue)
+    return chosen[]
 end
 
 function _render_setting!(setting::Setting, current::String)::String
@@ -114,6 +131,7 @@ changes.
 function _render_window_settings!(window::Window)::Nothing
     # TODO: start a new row when the window is too narrow for the next setting.
     for (name, setting) in pairs(settings(window.visualizer))
+        setting.visible || continue
         ig.SameLine()
         current = getproperty(window.visualizer, name)
         chosen = _render_setting!(setting, current)
@@ -129,7 +147,13 @@ function _render_export_button!(window::Window, ctx::WindowContext)::Nothing
     clicked = ig.Button("Export")
     ig.SetItemTooltip("Save what the window shows")
     try
-        clicked && export!(window.visualizer, ctx)
+        if clicked
+            if window.arrangement == "grid"
+                invoke(export!, Tuple{DataBrowserAPI.AbstractVisualizer,Any}, window.visualizer, ctx)
+            else
+                export!(window.visualizer, ctx)
+            end
+        end
         # The picture of the window, when the default of `export!` asked for one in the last frame.
         save_window_picture!(window.id)
         clicked && (window.export_error = "")
@@ -151,7 +175,10 @@ function render_windows!(state::BrowserState)::Nothing
     _init_implot_context!(state)
     for window in copy(state.windows)
         open = Ref(true)
-        ig.SetNextWindowSize((900, 600), ig.ImGuiCond_FirstUseEver)
+        window.initial_size_pending && ig.SetNextWindowDockID(0, ig.ImGuiCond_Always)
+        condition = window.initial_size_pending ? ig.ImGuiCond_Always : ig.ImGuiCond_FirstUseEver
+        ig.SetNextWindowSize(initial_size(window.visualizer), condition)
+        window.initial_size_pending = false
         # ImGui knows the window by the part after "###", so the title can change.
         if ig.Begin("$(title(state, window))###$(window.id)", open)
             ctx = WindowContext(state, window)
@@ -159,6 +186,7 @@ function render_windows!(state::BrowserState)::Nothing
             # the browser working; the window shows the error where the drawing stopped.
             window.draw_error = guarded_draw("Window: $(label(window.visualizer)) failed to draw", window.draw_error) do
                 _render_window_header!(state, window)
+                _render_arrangement!(state, window)
                 _render_window_settings!(window)
                 # After the menus, which may change the visualizer, the input or a setting, so that
                 # the visualizer has its value before it draws in this frame.
@@ -168,7 +196,14 @@ function render_windows!(state::BrowserState)::Nothing
                 # A group is one item of the row, also when the visualizer draws no button.
                 ig.SameLine()
                 ig.BeginGroup()
+                before = Dict(name => getproperty(window.visualizer, name) for name in keys(settings(window.visualizer)))
                 draw_header!(window.visualizer, ctx)
+                for (name, value) in before
+                    chosen = getproperty(window.visualizer, name)
+                    isequal(value, chosen) || setting!(window, name, chosen)
+                end
+                refresh!(state, window)
+                _sync_cell_settings!(window)
                 ig.EndGroup()
                 ig.Separator()
                 isempty(window.export_error) || ig.TextWrapped(window.export_error)
@@ -176,7 +211,7 @@ function render_windows!(state::BrowserState)::Nothing
                 isempty(window.failed) || ig.TextWrapped("Failed:\n" * window.failed)
                 measure_window_picture!(window.id)
                 if isempty(window.error)
-                    draw!(window.visualizer, ctx)
+                    _draw_presentations!(state, window)
                 else
                     ig.TextWrapped(window.error)
                 end

@@ -167,6 +167,8 @@ function _persisted_window(window::Window)::PersistedWindow
     end
     return PersistedWindow(
         id=window.id,
+        arrangement=window.arrangement,
+        active_item=window.active_item,
         visualizer=String(nameof(typeof(visualizer))),
         input=input isa FixedItems ? "items" : input isa WindowOutput ? "window" : "selection",
         ids=input isa FixedItems ? copy(input.ids) : input isa WindowOutput ? [input.window] : String[],
@@ -209,6 +211,9 @@ function _restore_windows!(state::BrowserState, saved::Vector{PersistedWindow}):
             window.input == "window" ? WindowOutput(only(window.ids)) : LiveSelection()
         opened = open_window!(state, V(; values...); input)
         opened.id = window.id
+        opened.arrangement = window.arrangement
+        opened.active_item = window.active_item
+        opened.initial_size_pending = false
         isempty(window.transform) || transform!(opened, GlobalRef(Main, Symbol(window.transform)))
     end
     # New windows take ids after the saved ones, also those not opened, so ImGui does not give

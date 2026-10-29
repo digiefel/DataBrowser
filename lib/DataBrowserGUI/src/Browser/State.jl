@@ -31,6 +31,8 @@ Base.@kwdef struct PersistedWindow
     # The name of a function in `Main`, or empty.
     transform::String = ""
     settings::Dict{String,Any} = Dict{String,Any}()
+    arrangement::String = "auto"
+    active_item::String = ""
 end
 
 """
@@ -96,6 +98,19 @@ struct WindowOutput <: WindowInput
 end
 
 """
+An instance for one displayed item. The browser owns its identity and preparation revision;
+the visualizer owns the prepared value and drawing state.
+"""
+mutable struct VisualizerCell
+    id::String
+    label::String
+    visualizer::AbstractVisualizer
+    revision::UInt
+    error::String
+    draw_error::String
+end
+
+"""
 A window of the browser that shows a value. Its `input` says where the value comes from, and its
 `visualizer` shows the value. The two do not know each other: the window reads the input and hands
 the value to the visualizer.
@@ -126,6 +141,15 @@ mutable struct Window
     export_error::String
     # Why the visualizer failed to draw in the last frame; empty when it drew.
     draw_error::String
+    # Apply the default once for a newly created window, even if ImGui has a stale size for its id.
+    initial_size_pending::Bool
+    # Presentation belongs to the browser. The visualizer has no Stack/Grid contract.
+    arrangement::String
+    active_item::String
+    cells::Vector{VisualizerCell}
+    presentation_revision::UInt
+    presentation_dirty::Bool
+    has_value::Bool
 end
 
 """

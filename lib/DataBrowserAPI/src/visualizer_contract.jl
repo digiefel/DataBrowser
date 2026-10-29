@@ -3,8 +3,16 @@
 
 A way to show a value in a browser window, for example as a table or as a plot.
 
-One visualizer belongs to one window. It holds the settings of that window and what it prepared for
-drawing. A visualizer type `V` has:
+A window owns its settings. In Stack the browser passes one selected item's value to one
+visualizer. In Grid it manages one visualizer instance per item, with the same declared settings
+and separate prepared data and drawing state. The visualizer does not need to know either mode.
+Each instance receives its own stable `ctx.id`, including when several draw in the same window.
+
+A visualizer that accepts a whole selection through `prepare!` also supports Overlay: it receives
+the selection together and decides how to present its items. Selection-only visualizers receive
+a one-item selection in Stack and Grid so they retain the item's metadata.
+
+An instance holds what it prepared for drawing. A visualizer type `V` has:
 
 - a constructor without arguments, `V()`, which the browser calls for a new window;
 - a method `prepare!(visualizer::V, value, ctx)` for each type of value it shows;
@@ -13,6 +21,7 @@ drawing. A visualizer type `V` has:
 It may also have:
 
 - a method `settings(visualizer::V)`, the settings the user may change;
+- a method `initial_size(visualizer::V)`, the default width and height of a new window;
 - a method `draw_header!(visualizer::V, ctx)`, for buttons in the header of the window;
 - a method `export!(visualizer::V, ctx)`, for what "Export" in the header of the window does. The
   default saves a picture of what `draw!` draws;
@@ -36,6 +45,15 @@ through its `prepare!` methods.
 """
 abstract type AbstractVisualizer end
 
+"""
+    initial_size(visualizer) -> (width, height)
+
+Default size of a new visualizer window, in ImGui pixels. The default is `(900, 600)`.
+The browser applies it when creating a new window. Restored windows keep their saved size,
+and users can resize windows afterward. A docked window takes the size of its docking region.
+"""
+initial_size(::AbstractVisualizer) = (900, 600)
+
 label(visualizer::AbstractVisualizer)::String = String(nameof(typeof(visualizer)))
 
 Base.close(::AbstractVisualizer) = nothing
@@ -57,26 +75,30 @@ text, is the one exception.
 function prepare! end
 
 """
-    Setting(label; options=String[], prepare=true)
+    Setting(label; options=String[], prepare=true, visible=true)
 
 Describes one setting of a visualizer to the user. `label` names the setting in the window.
 
 The type of the visualizer's field decides how the user changes the setting:
 
 - a `Bool` field is a checkmark;
+- an `Int` field is a numeric input with step buttons;
+- a `Float64` field is a numeric input;
 - a `String` field is a menu of `options`, or a text field when there are no options.
 
 `prepare` says whether the visualizer must take its value again when the setting changes. Pass
 `prepare=false` for a setting that only `draw!` reads.
+Pass `visible=false` to hide a control in the current mode while retaining its saved value.
 """
 struct Setting
     label::String
     options::Vector{String}
     prepare::Bool
+    visible::Bool
 end
 
-Setting(label::AbstractString; options=String[], prepare::Bool=true) =
-    Setting(String(label), collect(String, options), prepare)
+Setting(label::AbstractString; options=String[], prepare::Bool=true, visible::Bool=true) =
+    Setting(String(label), collect(String, options), prepare, visible)
 
 """
     settings(visualizer) -> NamedTuple
@@ -90,8 +112,12 @@ The window draws the settings in its header, so `draw!` does not draw them. When
 one, the browser writes the field. It then calls [`prepare!`](@ref) again, unless the setting says
 `prepare=false`.
 
+Grid copies these declared settings to its instances. Keep per-item prepared data and transient
+interaction state out of `settings`. A choice made by `draw_header!` must also be a declared setting
+if it should be shared across Grid cells.
+
 The browser calls `settings` in every frame, also before the first `prepare!`. Return quickly, and
-return only the settings that apply to what the visualizer shows now.
+hide controls that do not apply to the current mode with `visible=false`.
 
 Give each such field a default value. The constructor `V()` then makes a visualizer with the
 default settings, and `V(name=value)` makes one with a setting already changed.
@@ -140,7 +166,9 @@ The value the window of `visualizer` passes on to a window that takes its input 
 example, a table passes on the rows the user selected, and another window plots them.
 
 A visualizer without a method passes on the value it was given, and so does one that returns
-`nothing`.
+`nothing`. Stack keeps the whole input in this case; navigating it does not narrow the input of
+linked windows. Grid currently passes on the whole input; combining per-cell interaction outputs
+is not yet part of the contract.
 
 The browser reads the output in every frame, and hands it to the other window when it is another
 object than before. Keep the output in a field and return that field; replace the object when the
