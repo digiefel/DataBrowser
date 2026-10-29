@@ -163,16 +163,17 @@ end
 Base.getindex(column::Union{IdColumn,LabelColumn}, row::Integer)::String = String(view(column, row))
 
 """
-The rows each item is made from, in row order: the source item that `expand` gave it from, or the
-items a computed value reads. New inputs of a row are added at the end, and the row points to them.
+The producing targets each item reads, in input order: its source item's expand, or the exact
+row and stage supplying an input to a computed value. New inputs of a row are added at the end,
+and the row points to them.
 """
 struct InputColumn
-    keys::Vector{Union{SourceKey,ItemKey}}
+    keys::Vector{Target}
     starts::Vector{UInt32}
     lengths::Vector{UInt32}
 end
 
-InputColumn() = InputColumn(Union{SourceKey,ItemKey}[], UInt32[], UInt32[])
+InputColumn() = InputColumn(Target[], UInt32[], UInt32[])
 
 function Base.push!(column::InputColumn, keys)::InputColumn
     push!(column.starts, length(column.keys) + 1)

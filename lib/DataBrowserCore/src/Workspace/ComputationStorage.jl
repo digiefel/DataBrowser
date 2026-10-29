@@ -21,7 +21,7 @@ function result_item(workspace::Workspace, catalog::Catalog, target::Target, res
         given = MetadataDict()
         if key isa ItemKey && haskey(workspace.computations, key)
             inputs = Catalogs.inputs(catalog, key)
-            length(inputs) == 1 && (given = metadata(workspace, only(inputs)))
+            length(inputs) == 1 && only(inputs) isa ItemKey && (given = metadata(workspace, only(inputs)))
         end
         identity, title, merge(given, parts(result))
     end
@@ -128,10 +128,37 @@ function last_execution(workspace::Workspace, value::Computation)
     @lock catalog.lock begin
         target = get(catalog.computation_targets, value, nothing)
         target === nothing && return nothing
+        first(target) in catalog || return nothing
         recorded = get(workspace.executions, target, nothing)
         recorded === nothing && return nothing
         recorded.computation === value &&
             recorded.revision == Catalogs.status(catalog, target...).revision || return nothing
         return recorded.execution
     end
+end
+
+function cache_info(workspace::Workspace, value::Computation)
+    catalog = workspace.catalog
+    target, record = @lock catalog.lock begin
+        target = get(catalog.computation_targets, value, nothing)
+        if target === nothing || !(first(target) in catalog) ||
+                Catalogs.status(catalog, target...).validity != Catalogs.FRESH
+            return (cached=false, bytes=nothing)
+        end
+        target, get(workspace.results, target, nothing)
+    end
+    if record !== nothing
+        record.computation === value && record.store !== nothing || return (cached=false, bytes=nothing)
+        cached = haskey(record.store, record.key)
+        return (cached=cached, bytes=cached ? DataBrowserAPI.stored_size(record.store, record.key) : nothing)
+    end
+    key, stage = target
+    cached = if key isa SourceKey && stage == SOURCE_READ
+        has_payload(workspace.cache.db, cache_key(workspace, key))
+    elseif key isa ItemKey && stage == ITEM_PROCESS && !haskey(workspace.computations, key)
+        has_payload(workspace.cache.db, id(workspace, key))
+    else
+        false
+    end
+    return (cached=cached, bytes=nothing)
 end

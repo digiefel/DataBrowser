@@ -23,3 +23,19 @@ existing persistent cache; native restoration across openings is still being imp
 function storage end
 
 storage(::AbstractProject, type::Type{<:AbstractDataItem}) = storage(type)
+
+"""
+    stored_size(store, id) -> Union{Nothing,Int}
+
+The recorded size in bytes of a stored value, without reading it. The default is `nothing` when
+size information is unavailable. Implementations should report the size counted by their store.
+"""
+stored_size(store, id) = nothing
+
+"""
+    cache_info(workspace, computation) -> NamedTuple
+
+Whether a current result is available from storage, without loading it or running the computation.
+`cached` is a Boolean; `bytes` is its recorded stored size, or `nothing` when unavailable.
+"""
+function cache_info end

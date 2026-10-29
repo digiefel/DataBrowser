@@ -27,3 +27,9 @@ function Base.write(store::MemoryStore{String,Any}, id::AbstractString, value)
     append!(store, String(id), value)
     return nothing
 end
+
+function DataBrowserAPI.stored_size(store::MemoryStore{String,Any}, id::AbstractString)
+    return lock(store.lock) do
+        get(store.weights, String(id), nothing)
+    end
+end

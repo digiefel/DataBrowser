@@ -12,6 +12,7 @@ function of a computed item. Items that went through the same code share their c
 - `failed`: the first line of the error of each item it failed for, by id;
 - `result`: the type of the values a function gives, as Julia infers it before running it;
   `nothing` when Julia cannot tell, and for a stage of the project;
+- `computations`: the actual computation for each item, by the same id as `items`;
 - `inputs`: the calls whose results it read. A call of a stage reads the call before it.
 """
 mutable struct Call
@@ -20,6 +21,7 @@ mutable struct Call
     items::Dict{String,String}
     failed::Dict{String,String}
     result::Union{Type,Nothing}
+    computations::Dict{String,Computation}
     inputs::Vector{Call}
 end
 
@@ -35,59 +37,64 @@ function calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vec
     known = Dict{Tuple{String,Any,Vector{UInt}},Call}()
     # The call of `code` on `inputs`, which ran for the item `x` with the key `key` in the errors.
     function call!(title, code, inputs::Vector{Call}, x, key, stage; result=nothing)::Call
-        made = get!(() -> Call(title, code, Dict(), Dict(), result, inputs), known, (title, code, map(objectid, inputs)))
+        made = get!(() -> Call(title, code, Dict(), Dict(), result, Dict(), inputs), known, (title, code, map(objectid, inputs)))
         keyed = x isa Union{ItemKey,CollectionKey}
         x_id = keyed ? id(workspace, x) : id(x)
         made.items[x_id] = keyed ? label(workspace, x) : label(x)
+        made.computations[x_id] = computation(workspace, key, stage)
         failure = @lock workspace.catalog.lock get(workspace.errors, (key, stage), nothing)
         failure === nothing || (made.failed[x_id] = first(split(failure, '\n')))
         result === nothing || (made.result = made.result === nothing ? result : typejoin(made.result, result))
         return made
     end
-    # The last call that made each item, so that an item read twice is counted once.
-    made_by = Dict{ItemKey,Union{Call,Nothing}}()
-    last_call(key::ItemKey) = get!(() -> call_of(key), made_by, key)
-    function call_of(key::ItemKey)::Union{Call,Nothing}
-        value = @lock workspace.catalog.lock get(workspace.computations, key, nothing)
-        if value !== nothing
-            inputs = Call[]
-            for x in reads(value)
-                input = last_call(something(item(workspace, x isa Computation ? id(x) : x)))
-                input === nothing || push!(inputs, input)
-            end
-            # The type the function gives, as Julia infers it, so that no result is read.
-            result = Base.infer_return_type(value.f, argument_types(value))
-            return call!(function_name(value.f), which(value), unique!(inputs), key, key, ITEM_PROCESS;
+    # Walk the actual computation inputs. Projection and identity helpers have no project call
+    # of their own, so their inputs pass through. This also handles computations supplied by a
+    # linked visualizer without registering copies of their preceding calls.
+    visited = IdDict{Computation,Vector{Call}}()
+    function calls_of(value::Computation)::Vector{Call}
+        haskey(visited, value) && return visited[value]
+        target = @lock workspace.catalog.lock get(workspace.catalog.computation_targets, value, nothing)
+        preceding = unique!(reduce(vcat, map(calls_of, inputs(value)); init=Call[]))
+        target === nothing && return (visited[value] = preceding)
+        key, stage = target
+        key in workspace.catalog || return (visited[value] = preceding)
+        derived = key isa ItemKey ? get(workspace.computations, key, nothing) : nothing
+        if derived !== nothing
+            original = get(workspace.catalog.computation_targets, derived, nothing)
+            # A row exposing an existing computation adds no function call.
+            original !== nothing && original != target && return (visited[value] = preceding)
+            result = Base.infer_return_type(derived.f, argument_types(derived))
+            made = call!(function_name(derived.f), which(derived), preceding, key, key, stage;
                 result=result === Any ? nothing : result)
+        else
+            ran_for = key isa SourceKey ? get(workspace.source_items, key, nothing) : key
+            ran_for === nothing && return (visited[value] = preceding)
+            type = key isa SourceKey ? typeof(ran_for) : valuetype(workspace, key)
+            code = which(workspace.project, stage, key isa SourceKey ? ran_for : type)
+            code === nothing && stage != SOURCE_READ && return (visited[value] = preceding)
+            title = stage_name(stage) * "(::" * string(key isa SourceKey ? nameof(type) : label(type)) * ")"
+            made = call!(title, code, preceding, ran_for, key, stage)
         end
-        source = source_item(workspace, key)
-        source === nothing && return nothing
-        project, T = workspace.project, valuetype(workspace, key)
-        source_key = @lock workspace.catalog.lock Catalogs.source(workspace.catalog, key)
-        made = nothing
-        # Each stage, with what it ran for and the key of that in the errors.
-        stages = Any[(SOURCE_READ, source, source, source_key), (SOURCE_EXPAND, source, source, source_key),
-            (ITEM_PROCESS, T, key, key), (ITEM_ANALYZE, T, key, key)]
-        for collection in ancestors(workspace, key), stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
-            value = last(values(workspace, collection))
-            has_stage(project, value, stage) && push!(stages, (stage, typeof(value), collection, collection))
-        end
-        for (stage, x, ran_for, error_key) in stages
-            code = which(project, stage, x)
-            # A stage that runs no code of the project made nothing; `read` always runs.
-            code === nothing && stage != SOURCE_READ && continue
-            title = stage_name(stage) * "(::" * string(x isa Type ? label(x) : nameof(typeof(x))) * ")"
-            made = call!(title, code, made === nothing ? Call[] : Call[made], ran_for, error_key, stage)
-        end
-        return made
+        return (visited[value] = Call[made])
     end
     found = Call[]
-    for x in ids
-        key = item(workspace, x)
-        made = key === nothing ? nothing : last_call(key)
-        made === nothing || made in found || push!(found, made)
+    for id in ids
+        key = item(workspace, id)
+        key === nothing && continue
+        append!(found, calls_of(computation(workspace, key)))
+        for holder in ancestors(workspace, key)
+            Catalogs.status(workspace.catalog, holder, COLLECTION_ANALYZE).absent && continue
+            which(workspace.project, COLLECTION_ANALYZE, valuetype(workspace, holder)) === nothing && continue
+            append!(found, calls_of(computation(workspace, holder, COLLECTION_ANALYZE)))
+        end
     end
-    return found
+    unique!(found)
+    preceding = Set{Call}()
+    visit(call) = call in preceding || (push!(preceding, call); foreach(visit, call.inputs))
+    for call in found
+        foreach(visit, call.inputs)
+    end
+    return filter(call -> !(call in preceding), found)
 end
 
 """

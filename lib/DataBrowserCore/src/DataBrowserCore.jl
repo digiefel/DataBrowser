@@ -36,6 +36,7 @@ using .Workspace:
 export Computation,
     ComputationExecution,
     last_execution,
+    cache_info,
     ResultItem,
     computation,
     inputs,

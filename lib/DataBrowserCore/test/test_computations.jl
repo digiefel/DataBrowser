@@ -282,3 +282,67 @@ end
         CW.close_workspace!(workspace)
     end
 end
+
+@testset "pipeline computations compose without replaying retained inputs" begin
+    project = ComputationProject()
+    workspace = CW.open_workspace(project, ComputationSource(); cache=false, background_processing=true)
+    try
+        CW.wait_workspace_idle!(workspace)
+        item = only(CW.items(workspace))
+        process_step = computation(workspace, item, DataBrowserAPI.ITEM_PROCESS)
+        before = project.processes[]
+        calls = CW.calls(workspace, ["sample"])
+        @test project.processes[] == before
+        @test only(values(only(calls).computations)) === computation(workspace, item, DataBrowserAPI.ITEM_ANALYZE)
+        info = cache_info(workspace, process_step)
+        @test info.cached
+        @test info.bytes > 0
+        alias = Computation(identity, process_step)
+        push!(workspace, alias)
+        @test only(CW.results(workspace, [id(alias)])).data.signal == [2, 4, 6]
+        @test project.processes[] == before
+        @test cache_info(workspace, process_step) == info
+        # A native pipeline call itself can also be handed to a consuming window.
+        push!(workspace, process_step)
+        @test only(CW.results(workspace, [id(process_step)])).gain == 2.0
+        @test project.processes[] == before
+    finally
+        CW.close_workspace!(workspace)
+    end
+end
+
+using DataBrowserSources: DirectorySource, SourceFile
+struct ReplayProject <: AbstractProject end
+DataBrowserAPI.project_name(::ReplayProject) = "earlier-call-updates"
+DataBrowserAPI.read(::ReplayProject, ::DirectorySource, file::SourceFile) =
+    VectorValueItem(parse.(Float64, split(read(file.filepath, String))), 2.5)
+DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueItem(2 .* value.data, value.calibration)
+
+@testset "an exposed earlier call follows source changes at its producing stage" begin
+    mktempdir() do root
+        path = joinpath(root, "signal.dat")
+        write(path, "1 2")
+        workspace = CW.open_workspace(ReplayProject(), DirectorySource(root); cache=false, background_processing=true)
+        try
+            CW.wait_workspace_idle!(workspace)
+            history = CW.calls(workspace, ["vector"])
+            order = CW.Call[]
+            visit(call) = (foreach(visit, call.inputs); push!(order, call))
+            foreach(visit, history)
+            read_call = only(filter(call -> startswith(call.title, "read("), order))
+            step = only(values(read_call.computations))
+            push!(workspace, step)
+            @test only(CW.results(workspace, [id(step)])).data == [1.0, 2.0]
+            write(path, "3 4")
+            current() = try
+                only(CW.results(workspace, [id(step)])).data == [3.0, 4.0]
+            catch
+                false
+            end
+            @test timedwait(current, 60) === :ok
+            @test only(materialize_items(workspace, ["vector"])).data == [6.0, 8.0]
+        finally
+            CW.close_workspace!(workspace)
+        end
+    end
+end

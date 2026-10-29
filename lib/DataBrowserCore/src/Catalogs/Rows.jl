@@ -34,11 +34,12 @@ struct ItemTable <: Table
     lookup::IdLookup{ItemKey}
     status::StatusColumn
     inputs::InputColumn
-    # The computed values that read each item, for the items that some computed value reads.
-    readers::Dict{ItemKey,Vector{ItemKey}}
+    # The computed values that consume each producing row and stage.
+    readers::Dict{Target,Vector{ItemKey}}
     # For the id of each removed item that computed values read: each reader, with the key it
-    # reads the item by. An item that comes back with the id takes them over.
-    waiting::Dict{String,Vector{Tuple{ItemKey,ItemKey}}}
+    # reads the target by. An item that comes back with the id takes them over.
+    waiting::Dict{String,Vector{Tuple{ItemKey,Target}}}
+    source::Vector{Union{SourceKey,Nothing}}
     collection::Vector{CollectionKey}
     type::Vector{Type{<:AbstractDataItem}}
     # The metadata that each stage produced: the source item's expand gives each item its first.
@@ -53,8 +54,9 @@ function ItemTable()
         IdLookup{ItemKey}(ids),
         StatusColumn(),
         InputColumn(),
-        Dict{ItemKey,Vector{ItemKey}}(),
-        Dict{String,Vector{Tuple{ItemKey,ItemKey}}}(),
+        Dict{Target,Vector{ItemKey}}(),
+        Dict{String,Vector{Tuple{ItemKey,Target}}}(),
+        Union{SourceKey,Nothing}[],
         CollectionKey[],
         Type{<:AbstractDataItem}[],
         Dict(stage => MetadataColumns() for stage in (SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE)),
@@ -219,11 +221,11 @@ function Catalog(; eager::AbstractDict{PipelineStage,Int}=Dict{PipelineStage,Int
     return catalog
 end
 
-# Removed rows must not retain call definitions or remain eligible for cached-result lookup.
+# Current definitions leave with their row. Addresses of referenced definitions stay until the
+# catalog closes, so a computed value can bind to a replacement item with the same public id.
 function forget_computations!(catalog::Catalog, key::K) where {K<:RowKey}
     for stage in stages(K)
-        known = pop!(catalog.computations, (key, stage), nothing)
-        known === nothing || delete!(catalog.computation_targets, last(known))
+        pop!(catalog.computations, (key, stage), nothing)
     end
     return nothing
 end
@@ -396,7 +398,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
             throw(ArgumentError("a source item cannot produce the same item id twice"))
         for entry in entries
             key = get(items.lookup, entry.id, nothing)
-            key === nothing || view(items.inputs, key.index) == [source] ||
+            key === nothing || items.source[key.index] == source ||
                 throw(ArgumentError("item id \"$(entry.id)\" belongs to another source item"))
         end
 
@@ -422,16 +424,24 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
             if key === nothing
                 key = ItemKey(length(push!(items, entry.id)))
                 push!(items.labels, entry.label)
-                push!(items.inputs, (source,))
+                push!(items.inputs, ((source, SOURCE_EXPAND),))
+                push!(items.source, source)
                 push!(items.collection, entry.collection)
                 push!(items.type, entry.type)
                 items.lookup[entry.id] = key
                 move!(key, entry.collection, 1)
                 # The computed values that read an item of this id before it was removed read it again.
-                for (reader, old) in pop!(items.waiting, entry.id, Tuple{ItemKey,ItemKey}[])
+                for (reader, old) in pop!(items.waiting, entry.id, Tuple{ItemKey,Target}[])
                     reader in items && old in view(items.inputs, reader.index) || continue
-                    replace!(view(items.inputs, reader.index), old => key)
-                    push!(get!(Vector{ItemKey}, items.readers, key), reader)
+                    replacement = (key, last(old))
+                    replace!(view(items.inputs, reader.index), old => replacement)
+                    push!(get!(Vector{ItemKey}, items.readers, replacement), reader)
+                    blocked = any(view(items.inputs, reader.index)) do input
+                        first(input) in catalog || return true
+                        state = status(catalog, input...)
+                        return state.failed || state.blocked
+                    end
+                    catalog[reader, ITEM_PROCESS] = StageStatus(status(catalog, reader, ITEM_PROCESS); blocked)
                 end
             else
                 view(items.labels, key.index) == codeunits(entry.label) ||
@@ -455,10 +465,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
             move!(key, items.collection[key.index], -1)
             # The computed values that read the item wait until an item of its id comes back.
             # TODO: show them as waiting for a removed item, and let them go when it never returns.
-            readers = pop!(items.readers, key, ItemKey[])
-            append!(get!(Vector{Tuple{ItemKey,ItemKey}}, items.waiting, items.ids[key.index]),
-                [(reader, key) for reader in readers])
-            invalidate!(catalog, Target[(reader, ITEM_PROCESS) for reader in readers])
+            remove_readers!(catalog, key; wait_for_replacement=true)
             forget_computations!(catalog, key)
             delete!(items, key)
         end
@@ -485,27 +492,31 @@ end
 """
     publish!(catalog, entry::ItemEntry, inputs) -> ItemKey
 
-The key of the computed value with the id of `entry`, made from the items `inputs`: a new row in the
+The key of the computed value with the id of `entry`, made from `inputs`: item keys mean their
+processed results; explicit `(key, stage)` targets consume that exact result. A new row is added in the
 collection of `entry` when the catalog has none, or the row of that id, which now reads `inputs`.
-Its `process` runs once every input is processed, and runs again whenever an input changes or it
+Its `process` runs once every input target is fresh, and runs again whenever an input changes or it
 reads other inputs. Its analyze is absent. A missing collection or input throws an `ArgumentError`
 and leaves the catalog unchanged.
 """
-function publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{ItemKey})::ItemKey
+publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{ItemKey}) =
+    publish!(catalog, entry, Target[(input, ITEM_PROCESS) for input in inputs])
+
+function publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{Target})::ItemKey
     @lock catalog.lock begin
         items = catalog.items
         collections = catalog.collections
         entry.collection in collections ||
             throw(ArgumentError("item \"$(entry.id)\" names a collection that does not exist"))
-        all(input -> input in items, inputs) ||
+        all(input -> first(input) in catalog, inputs) ||
             throw(ArgumentError("an input of item \"$(entry.id)\" does not exist"))
         # An input that failed blocks it.
-        blocked = any(input -> (old = status(catalog, input, ITEM_PROCESS); old.failed || old.blocked), inputs)
+        blocked = any(input -> (old = status(catalog, input...); old.failed || old.blocked), inputs)
         key = get(items.lookup, entry.id, nothing)
         if key !== nothing
             view(items.inputs, key.index) == inputs && return key
             for input in unique(view(items.inputs, key.index))
-                input isa ItemKey && filter!(!=(key), get(items.readers, input, ItemKey[]))
+                filter!(!=(key), get(items.readers, input, ItemKey[]))
             end
             items.inputs[key.index] = inputs
             foreach(input -> push!(get!(Vector{ItemKey}, items.readers, input), key), unique(inputs))
@@ -518,6 +529,7 @@ function publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{Ite
         key = ItemKey(length(push!(items, entry.id)))
         push!(items.labels, entry.label)
         push!(items.inputs, inputs)
+        push!(items.source, nothing)
         push!(items.collection, entry.collection)
         push!(items.type, entry.type)
         items.lookup[entry.id] = key
@@ -534,6 +546,26 @@ function publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{Ite
         notify(catalog.changed)
         return key
     end
+end
+
+# Readers of removed targets become blocked until their dependencies exist again. Item ids can
+# return after source expansion, so their readers keep both the old key and the consumed stage.
+function remove_readers!(catalog::Catalog, key::RowKey; wait_for_replacement=false)
+    for stage in stages(typeof(key))
+        target = (key, stage)
+        readers = pop!(catalog.items.readers, target, ItemKey[])
+        if wait_for_replacement
+            append!(get!(Vector{Tuple{ItemKey,Target}}, catalog.items.waiting, id(catalog, key)),
+                [(reader, target) for reader in readers])
+        end
+        for reader in readers
+            reader in catalog || continue
+            old = status(catalog, reader, ITEM_PROCESS)
+            catalog[reader, ITEM_PROCESS] = StageStatus(old; blocked=true)
+        end
+        invalidate!(catalog, Target[(reader, ITEM_PROCESS) for reader in readers])
+    end
+    return nothing
 end
 
 """
@@ -559,10 +591,7 @@ function Base.delete!(catalog::Catalog, key::ItemKey)::Catalog
         for input in unique(view(items.inputs, key.index))
             filter!(!=(key), get(items.readers, input, ItemKey[]))
         end
-        readers = pop!(items.readers, key, ItemKey[])
-        append!(get!(Vector{Tuple{ItemKey,ItemKey}}, items.waiting, items.ids[key.index]),
-            [(reader, key) for reader in readers])
-        invalidate!(catalog, Target[(reader, ITEM_PROCESS) for reader in readers])
+        remove_readers!(catalog, key; wait_for_replacement=true)
         forget_computations!(catalog, key)
         delete!(items, key)
         invalidate!(catalog, collection, COLLECTION_PROCESS)
@@ -580,6 +609,7 @@ function Base.delete!(catalog::Catalog, source::SourceKey)::Catalog
     @lock catalog.lock begin
         source in catalog.sources || return catalog
         publish!(catalog, source, ItemEntry[])
+        remove_readers!(catalog, source)
         forget_computations!(catalog, source)
         delete!(catalog.sources, source)
     end
@@ -604,6 +634,7 @@ function Base.delete!(catalog::Catalog, collection::CollectionKey)::Catalog
             analyze = status(catalog, collection, COLLECTION_ANALYZE)
             collections.not_fresh[parent.index] -= analyze.validity != FRESH
             add_stuck!(catalog, parent, -(analyze.failed || analyze.blocked))
+            remove_readers!(catalog, collection)
             forget_computations!(catalog, collection)
             delete!(collections, collection)
             push!(catalog.stale, (collection, COLLECTION_PROCESS))
@@ -678,23 +709,22 @@ valuetype(catalog::Catalog, key::CollectionKey)::Type{<:AbstractCollection} =
     @lock catalog.lock catalog.collections.type[key.index]
 
 """
-    inputs(catalog, item) -> Vector{Union{SourceKey,ItemKey}}
+    inputs(catalog, item) -> Vector{RowKey}
 
 The rows an item is made from: the source item whose `expand` gave it, or the items that a computed
 value reads.
 """
-inputs(catalog::Catalog, item::ItemKey)::Vector{Union{SourceKey,ItemKey}} =
-    @lock catalog.lock collect(view(catalog.items.inputs, item.index))
+inputs(catalog::Catalog, item::ItemKey)::Vector{RowKey} =
+    @lock catalog.lock unique(first.(view(catalog.items.inputs, item.index)))
 
 """The source item whose `expand` gave an item, or `nothing` for a computed value."""
 function source(catalog::Catalog, item::ItemKey)::Union{SourceKey,Nothing}
-    found = inputs(catalog, item)
-    return !isempty(found) && first(found) isa SourceKey ? first(found) : nothing
+    return @lock catalog.lock catalog.items.source[item.index]
 end
 
 """The computed values that read an item."""
-readers(catalog::Catalog, item::ItemKey)::Vector{ItemKey} =
-    @lock catalog.lock copy(get(catalog.items.readers, item, ItemKey[]))
+readers(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{ItemKey} =
+    @lock catalog.lock copy(get(catalog.items.readers, (key, stage), ItemKey[]))
 
 """The collection that directly holds an item, or `ROOT`."""
 collection(catalog::Catalog, item::ItemKey)::CollectionKey =

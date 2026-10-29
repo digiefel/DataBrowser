@@ -1,6 +1,8 @@
 import CImGui as ig
 
-import DataBrowserAPI: draw!, label, prepare!
+import DataBrowserAPI: draw!, label, prepare!, output
+using DataBrowserAPI: Computation, cache_info, last_execution
+using Printf: @sprintf
 using DataBrowserAPI: AbstractVisualizer
 using DataBrowserCore: Workspace
 using .Workspace: Call
@@ -24,16 +26,44 @@ end
 The visualizer that shows the code that made a selection of items, as a timeline: the first call
 at the top and the last at the bottom. Each row names a function, where its code is, and the
 number of items that went through it; items made by the same code share a row. Lines join each
-call to the calls that read its result, and ↗ opens the code in the editor.
+call to the calls that read its result, and ↗ opens the code in the editor. Select a row to see
+its execution and cache information below the list. Its computations are the window's output;
+a linked visualizer receives their results through ordinary window composition.
 """
 Base.@kwdef mutable struct CodeView <: AbstractVisualizer
     rows::Vector{CodeRow} = CodeRow[]
     columns::Int = 0
+    selected::Int = 0
+    output::Vector{Computation} = Computation[]
 end
 
 label(::CodeView)::String = "Code"
+output(view::CodeView) = view.output
+
+"""
+    select_step!(view::CodeView, index)
+
+Select one row of Code. Its computations become the visualizer's output for linked windows.
+This changes the selection without evaluating the computations.
+"""
+function select_step!(view::CodeView, index::Integer)::Nothing
+    checkbounds(view.rows, index)
+    view.selected = index
+    call = view.rows[index].call
+    next = Computation[call.computations[id] for id in sort!(collect(keys(call.computations)))]
+    length(next) == length(view.output) && all(a === b for (a, b) in zip(next, view.output)) ||
+        (view.output = next)
+    return nothing
+end
+
+# Selection follows the same step when the input items or their revisions change.
+function step_identity(call::Call)
+    code = call.code isa Method ? call.code.sig : call.code isa LineNumberNode ? call.code.file : nothing
+    return (call.title, code, map(step_identity, call.inputs))
+end
 
 function prepare!(view::CodeView, selection::Workspace.Selection, ctx)::Nothing
+    previous = 1 <= view.selected <= length(view.rows) ? step_identity(view.rows[view.selected].call) : nothing
     last_calls = Workspace.calls(ctx.workspace, selection.id)
     # Each call comes after the calls whose results it reads.
     order, seen = Call[], Set{Call}()
@@ -61,6 +91,13 @@ function prepare!(view::CodeView, selection::Workspace.Selection, ctx)::Nothing
         push!(rows, CodeRow(call, column, from, through, readers[call] > 0, docstring(call.code)))
     end
     view.rows, view.columns = rows, length(columns)
+    if isempty(rows)
+        view.selected = 0
+        isempty(view.output) || (view.output = Computation[])
+    else
+        selected = findfirst(row -> step_identity(row.call) == previous, rows)
+        select_step!(view, something(selected, length(rows)))
+    end
     return nothing
 end
 
@@ -81,62 +118,102 @@ function docstring(code)::String
 end
 
 function draw!(view::CodeView, ctx)::Nothing
-    draw_list = ig.GetWindowDrawList()
     line, dot = ig.GetColorU32(ig.ImGuiCol_Text, 0.4f0), ig.GetColorU32(ig.ImGuiCol_Text)
     width, height = ig.GetFontSize(), ig.GetFrameHeightWithSpacing()
-    for (index, row) in enumerate(view.rows)
-        ig.PushID(index)
-        corner = ig.GetCursorScreenPos()
-        x(column) = corner.x + (column - 0.5f0) * width
-        top, middle, bottom = corner.y, corner.y + height / 2, corner.y + height
-        for column in row.through
-            ig.AddLine(draw_list, ig.ImVec2(x(column), top), ig.ImVec2(x(column), bottom), line, 1.5f0)
-        end
-        for column in row.from
-            ig.AddLine(draw_list, ig.ImVec2(x(column), top), ig.ImVec2(x(row.column), middle), line, 1.5f0)
-        end
-        row.down && ig.AddLine(draw_list, ig.ImVec2(x(row.column), middle), ig.ImVec2(x(row.column), bottom), line, 1.5f0)
-        ig.AddCircleFilled(draw_list, ig.ImVec2(x(row.column), middle), width / 4, dot)
-        ig.Dummy(ig.ImVec2(view.columns * width, ig.GetFrameHeight()))
+    available = ig.GetContentRegionAvail()
+    if ig.BeginChild("##steps", ig.ImVec2(0, max(height, 0.58f0 * available.y)))
+        draw_list = ig.GetWindowDrawList()
+        for (index, row) in enumerate(view.rows)
+            ig.PushID(index)
+            corner = ig.GetCursorScreenPos()
+            ig.Selectable("##step", index == view.selected, ig.ImGuiSelectableFlags_AllowOverlap,
+                ig.ImVec2(0, ig.GetFrameHeight())) && select_step!(view, index)
+            ig.SetCursorScreenPos(corner)
+            x(column) = corner.x + (column - 0.5f0) * width
+            top, middle, bottom = corner.y, corner.y + height / 2, corner.y + height
+            for column in row.through
+                ig.AddLine(draw_list, ig.ImVec2(x(column), top), ig.ImVec2(x(column), bottom), line, 1.5f0)
+            end
+            for column in row.from
+                ig.AddLine(draw_list, ig.ImVec2(x(column), top), ig.ImVec2(x(row.column), middle), line, 1.5f0)
+            end
+            row.down && ig.AddLine(draw_list, ig.ImVec2(x(row.column), middle), ig.ImVec2(x(row.column), bottom), line, 1.5f0)
+            ig.AddCircleFilled(draw_list, ig.ImVec2(x(row.column), middle), width / 4, dot)
+            ig.Dummy(ig.ImVec2(view.columns * width, ig.GetFrameHeight()))
 
-        ig.SameLine()
-        ig.AlignTextToFramePadding()
-        with_font(:code) do
-            ig.TextUnformatted(row.call.title)
-        end
-        !isempty(row.docstring) && ig.IsItemHovered() && ig.SetTooltip(row.docstring)
-        call = row.call
-        # What it ran for: the item itself when there is one, the labels of the items when hovered.
-        ig.SameLine()
-        if length(call.items) == 1
-            # A long label, such as a path, is cut in the middle and shown whole when hovered.
-            name = only(values(call.items))
-            ig.TextUnformatted(length(name) > 40 ? first(name, 15) * "…" * last(name, 24) : name)
-            length(name) > 40 && ig.IsItemHovered() && ig.SetTooltip(first(name, 2000))
-        else
-            ig.TextUnformatted("$(length(call.items)) items")
-            ig.IsItemHovered() && ig.SetTooltip(listed(sort!(collect(values(call.items)))))
-        end
-        # TODO: a window leaves out its failed items, so they reach this view only through `calls`.
-        if !isempty(call.failed)
             ig.SameLine()
-            ig.TextColored(ig.ImVec4(0.95f0, 0.45f0, 0.4f0, 1.0f0), "$(length(call.failed)) failed")
-            ig.IsItemHovered() && ig.SetTooltip(listed(sort!(["$(call.items[id]): $error" for (id, error) in call.failed])))
-        end
-        if call.result !== nothing
+            ig.AlignTextToFramePadding()
+            with_font(:code) do
+                ig.TextUnformatted(row.call.title)
+            end
+            !isempty(row.docstring) && ig.IsItemHovered() && ig.SetTooltip(row.docstring)
+            call = row.call
+            # What it ran for: the item itself when there is one, the labels of the items when hovered.
             ig.SameLine()
-            ig.TextDisabled("→ $(call.result)")
+            if length(call.items) == 1
+                # A long label, such as a path, is cut in the middle and shown whole when hovered.
+                name = only(values(call.items))
+                ig.TextUnformatted(length(name) > 40 ? first(name, 15) * "…" * last(name, 24) : name)
+                length(name) > 40 && ig.IsItemHovered() && ig.SetTooltip(first(name, 2000))
+            else
+                ig.TextUnformatted("$(length(call.items)) items")
+                ig.IsItemHovered() && ig.SetTooltip(listed(sort!(collect(values(call.items)))))
+            end
+            # TODO: a window leaves out its failed items, so they reach this view only through `calls`.
+            if !isempty(call.failed)
+                ig.SameLine()
+                ig.TextColored(ig.ImVec4(0.95f0, 0.45f0, 0.4f0, 1.0f0), "$(length(call.failed)) failed")
+                ig.IsItemHovered() && ig.SetTooltip(listed(sort!(["$(call.items[id]): $error" for (id, error) in call.failed])))
+            end
+            if call.result !== nothing
+                ig.SameLine()
+                ig.TextDisabled("→ $(call.result)")
+            end
+            code = call.code
+            if code !== nothing
+                ig.SameLine()
+                ig.TextDisabled("$(basename(string(code.file))):$(code.line)")
+                ig.IsItemHovered() && ig.SetTooltip(string(code.file))
+                ig.SameLine()
+                # An editor in the terminal waits until it is closed, so it opens apart from the frame.
+                ig.SmallButton("↗") && errormonitor(Threads.@spawn Workspace.InteractiveUtils.edit(call))
+            end
+            ig.PopID()
         end
-        code = call.code
-        if code !== nothing
-            ig.SameLine()
-            ig.TextDisabled("$(basename(string(code.file))):$(code.line)")
-            ig.IsItemHovered() && ig.SetTooltip(string(code.file))
-            ig.SameLine()
-            # An editor in the terminal waits until it is closed, so it opens apart from the frame.
-            ig.SmallButton("↗") && errormonitor(Threads.@spawn Workspace.InteractiveUtils.edit(call))
-        end
-        ig.PopID()
     end
+    ig.EndChild()
+    ig.Separator()
+    if ig.BeginChild("##step_information", ig.ImVec2(0, 0))
+        if view.selected == 0
+            ig.TextDisabled("No process steps")
+        else
+            call = view.rows[view.selected].call
+            for id in sort!(collect(keys(call.computations)))
+                length(call.computations) > 1 && ig.TextUnformatted(call.items[id])
+                value = call.computations[id]
+                cached = cache_info(ctx.workspace, value)
+                size = cached.bytes === nothing ? "" : " ($(Base.format_bytes(cached.bytes)))"
+                ig.TextUnformatted("Cached: $(cached.cached ? "yes" : "no")$size")
+                execution = last_execution(ctx.workspace, value)
+                if execution === nothing
+                    ig.TextDisabled("Last execution: unavailable")
+                else
+                    duration = execution.duration < 1 ? @sprintf("%.3g ms", 1000execution.duration) :
+                        @sprintf("%.3g s", execution.duration)
+                    date = replace(string(execution.finished_at), 'T' => ' ')
+                    ig.TextUnformatted("Last execution: $duration ($date)")
+                    execution.succeeded || ig.TextUnformatted("Execution failed")
+                end
+                failure = get(call.failed, id, nothing)
+                if failure !== nothing
+                    ig.PushTextWrapPos(0)
+                    ig.TextUnformatted(failure)
+                    ig.PopTextWrapPos()
+                end
+                length(call.computations) > 1 && ig.Spacing()
+            end
+        end
+    end
+    ig.EndChild()
     return nothing
 end

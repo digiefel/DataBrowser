@@ -89,18 +89,34 @@ end
 
 # The key of `value`, added with the `Computation` values it reads.
 function row!(workspace::Workspace, value::Computation)::ItemKey
-    keys = map(reads(value)) do x
-        x isa Computation && return row!(workspace, x)
-        key = item(workspace, x)
-        key === nothing && error("Item '$x' that $(id(value)) reads is not an item of the workspace")
-        return key
-    end
     catalog = workspace.catalog
+    target = @lock catalog.lock get(catalog.computation_targets, value, nothing)
+    existing = item(workspace, id(value))
+    target !== nothing && first(target) == existing && return existing
+    dependencies = if target !== nothing
+        Target[current_target(workspace, target)]
+    else
+        map(reads(value)) do x
+            if x isa Computation
+                known = @lock catalog.lock get(catalog.computation_targets, x, nothing)
+                return known === nothing ? (row!(workspace, x), ITEM_PROCESS) : current_target(workspace, known)
+            end
+            key = item(workspace, x)
+            key === nothing && error("Item '$x' that $(id(value)) reads is not an item of the workspace")
+            return (key, ITEM_PROCESS)
+        end
+    end
     @lock catalog.lock begin
         none = [COLLECTION_PROCESS, COLLECTION_ANALYZE]
         holder = get!(catalog, get!(catalog, ROOT, COMPUTED; absent=none),
             ComputedCollection(function_name(value.f)); absent=none)
-        key = publish!(catalog, ItemEntry(id(value), label(value), holder, typeof(value)), ItemKey[keys...])
+        title = target === nothing ? label(value) :
+            first(target) isa SourceKey ? id(workspace, first(target)) : label(workspace, first(target))
+        key = publish!(catalog, ItemEntry(id(value), title, holder, typeof(value)), Target[dependencies...])
+        previous = get(workspace.computations, key, nothing)
+        if previous !== nothing && previous !== value
+            Catalogs.invalidate!(catalog, key, ITEM_PROCESS)
+        end
         workspace.computations[key] = value
         return key
     end
@@ -121,7 +137,10 @@ function compute!(workspace::Workspace, job::Job{ItemKey})::Nothing
     # item's metadata, with the named parts of its result on top.
     # TODO: metadata the item gets later, such as from its `analyze`, reaches the computed item only
     # when it is computed again.
-    given = length(keys) == 1 ? metadata(workspace, only(keys)) : MetadataDict()
+    definition = workspace.computations[job.key]
+    origin = get(catalog.computation_targets, definition, nothing)
+    exposed = origin !== nothing && origin != (job.key, ITEM_PROCESS)
+    given = !exposed && length(keys) == 1 && only(keys) isa ItemKey ? metadata(workspace, only(keys)) : MetadataDict()
     @lock catalog.lock finish!(catalog, job; metadata=merge(given, parts(result)))
     return nothing
 end

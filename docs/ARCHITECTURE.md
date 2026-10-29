@@ -199,7 +199,14 @@ item type. Complete results are copied when written and when supplied from stora
 whether it returned normally. It reads recorded information without loading stored data. Timing
 covers the function call, excluding input evaluation and result storage; a cache hit does not
 replace the last execution. The record belongs to the current computation revision and workspace
-opening.
+opening. `cache_info(workspace, computation)` checks availability without loading the result;
+its `bytes` field uses the store's optional `stored_size` report.
+
+Code displays these computations as selectable rows. Each row retains the actual computations
+for its items, and selection passes those definitions through `output`. Linked windows use the
+same computed-item path as table selections. Computed-item dependencies name the exact producing
+row and stage, so exposing an earlier call reuses its retained result instead of registering
+copies of its input graph. Source ownership is recorded separately from these dependencies.
 
 Project steps and interactive computations share these result records and storage operations.
 Interactive computations evaluate their input graph directly, replacing their former separate
@@ -213,7 +220,7 @@ computation results while available and replays uncached results. The older stag
 also honor the type policy, retain copies and store identity and metadata independently of data
 retention. Supported table payloads can still be restored from the existing persistent cache;
 values that it cannot encode stay in their native result store. Fixed-stage scheduling, native
-restoration across openings and Code visualizer output remain on the [roadmap](roadmap.md).
+restoration across openings remain on the [roadmap](roadmap.md).
 
 Workers run project code in the latest world, so a method defined after the workspace opened is
 used. Each stage has a code revision for each type it runs for: a content hash of the code it can

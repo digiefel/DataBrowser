@@ -715,7 +715,7 @@ payload they are given rather than learning special pipeline logic.
   independently of retained data. Expose these records without evaluating or loading results.
 - [ ] Replace fixed-stage input preparation, scheduling and cache addressing with the computation
   runtime and add native restoration across workspace openings.
-- [ ] Make Code selection output the selected computation through normal visualizer composition.
+- [x] Make Code selection output the selected computation through normal visualizer composition.
   Show step information below the list, including `Last execution: duration (date)` and cache usage.
 
 - [x] Expose the results of `read`, `expand`, `process`, `analyze`, collection `process`, and

@@ -30,6 +30,9 @@ function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::Pipel
     if stuck != (old.failed || old.blocked)
         if member
             add_stuck!(catalog, holder, stuck ? 1 : -1)
+            for reader in readers(catalog, key, stage)
+                catalog[reader, ITEM_PROCESS] = StageStatus(status(catalog, reader, ITEM_PROCESS); blocked=stuck)
+            end
         else
             for (next_key, next_stage) in dependents(catalog, key, stage)
                 catalog[next_key, next_stage] =
@@ -47,14 +50,20 @@ end
 
 """The stages that read the output of `stage` on `key`."""
 function dependents(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Target}
-    stage == SOURCE_READ && return Target[(key, SOURCE_EXPAND)]
-    stage == SOURCE_EXPAND && return Target[(item, ITEM_PROCESS) for item in items(catalog, key)]
-    stage == ITEM_PROCESS &&
-        return Target[(key, ITEM_ANALYZE); [(reader, ITEM_PROCESS) for reader in readers(catalog, key)]]
-    stage == ITEM_ANALYZE && return Target[(collection(catalog, key), COLLECTION_PROCESS)]
-    stage == COLLECTION_PROCESS && return Target[(key, COLLECTION_ANALYZE)]
-    key == ROOT && return Target[]
-    return Target[(parent(catalog, key), COLLECTION_PROCESS)]
+    pipeline = if stage == SOURCE_READ
+        Target[(key, SOURCE_EXPAND)]
+    elseif stage == SOURCE_EXPAND
+        Target[(item, ITEM_PROCESS) for item in items(catalog, key)]
+    elseif stage == ITEM_PROCESS
+        Target[(key, ITEM_ANALYZE)]
+    elseif stage == ITEM_ANALYZE
+        Target[(collection(catalog, key), COLLECTION_PROCESS)]
+    elseif stage == COLLECTION_PROCESS
+        Target[(key, COLLECTION_ANALYZE)]
+    else
+        key == ROOT ? Target[] : Target[(parent(catalog, key), COLLECTION_PROCESS)]
+    end
+    return unique!([pipeline; Target[(reader, ITEM_PROCESS) for reader in readers(catalog, key, stage)]])
 end
 
 """
@@ -65,8 +74,7 @@ catalog.
 function inputs(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Target}
     stage == SOURCE_READ && return Target[]
     stage == SOURCE_EXPAND && return Target[(key, SOURCE_READ)]
-    stage == ITEM_PROCESS && return Target[
-        (input, input isa SourceKey ? SOURCE_EXPAND : ITEM_PROCESS) for input in inputs(catalog, key)]
+    stage == ITEM_PROCESS && return collect(view(catalog.items.inputs, key.index))
     stage == ITEM_ANALYZE && return Target[(key, ITEM_PROCESS)]
     stage == COLLECTION_PROCESS && return Target[
         [(item, ITEM_ANALYZE) for item in items(catalog, key)];
@@ -82,7 +90,7 @@ function ready(catalog::Catalog, key::RowKey, stage::PipelineStage)::Bool
     stage == SOURCE_READ && return true
     stage == SOURCE_EXPAND && return !status(catalog, key, SOURCE_READ).failed
     stage == ITEM_PROCESS && return all(
-        ((input, input_stage),) -> status(catalog, input, input_stage).validity == FRESH,
+        ((input, input_stage),) -> input in catalog && status(catalog, input, input_stage).validity == FRESH,
         inputs(catalog, key, stage))
     stage == ITEM_ANALYZE && return status(catalog, key, ITEM_PROCESS).validity == FRESH
     stage == COLLECTION_PROCESS && return catalog.collections.not_fresh[key.index] == 0

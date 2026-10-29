@@ -115,7 +115,7 @@ using ..DataBrowserCore: Computation
 using ..DataBrowserCore: invoke_computation
 using ..DataBrowserCore: ComputationStores, ComputationResult, RecordedExecution
 using DataBrowserAPI: ComputationExecution
-import DataBrowserAPI: last_execution
+import DataBrowserAPI: last_execution, cache_info
 using ..DataBrowserCore: ResultItem
 using ..DataBrowserCore: result_item_type
 import DataBrowserAPI: computation, inputs, evaluate

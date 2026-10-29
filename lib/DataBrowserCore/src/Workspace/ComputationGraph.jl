@@ -18,9 +18,10 @@ function computation(workspace::Workspace, key::RowKey, stage::PipelineStage)::C
         known = get(catalog.computations, (key, stage), nothing)
         known === nothing || first(known) != current || return last(known)
         value = stage_computation(workspace, key, stage)
-        known === nothing || delete!(catalog.computation_targets, last(known))
         catalog.computations[(key, stage)] = (current, value)
-        catalog.computation_targets[value] = (key, stage)
+        # A second browsable row may expose an existing call. Keep the producing target's
+        # address: exposing its result adds no invocation and no duplicate stored result.
+        get!(catalog.computation_targets, value, (key, stage))
         return value
     end
 end
@@ -34,7 +35,7 @@ end
 
 function stage_computation(workspace::Workspace, key::ItemKey, stage::PipelineStage)
     derived = get(workspace.computations, key, nothing)
-    derived === nothing || return bound_computation(workspace, derived)
+    derived === nothing || return bound_computation(workspace, derived; owner=(key, stage))
     stage == ITEM_ANALYZE && return Computation(analyze, workspace.project,
         native_computation(workspace, key, computation(workspace, key, ITEM_PROCESS), ITEM_PROCESS))
     source = Catalogs.source(workspace.catalog, key)
@@ -65,9 +66,26 @@ end
 
 # Bind interactive calls to computations rather than retaining the materialized items they were
 # constructed with. Project functions still receive those items' native values.
-bound_computation(workspace, value::Computation) =
-    Computation(value.f, map(x -> bound_argument(workspace, x), value.args), value.settings)
+function current_target(workspace, target::Target)::Target
+    catalog = workspace.catalog
+    key, stage = target
+    key in catalog && return target
+    key isa CollectionKey && error("The computation's collection was removed")
+    replacement = lookup(catalog, typeof(key), id(catalog, key))
+    replacement === nothing && error("The computation's input was removed")
+    return (replacement, stage)
+end
+
+function bound_computation(workspace, value::Computation; owner=nothing)
+    target = get(workspace.catalog.computation_targets, value, nothing)
+    if target !== nothing && target != owner
+        return computation(workspace, current_target(workspace, target)...)
+    end
+    return Computation(value.f, map(x -> bound_argument(workspace, x), value.args), value.settings)
+end
 function bound_argument(workspace, value::Computation)
+    target = get(workspace.catalog.computation_targets, value, nothing)
+    target === nothing || return computation(workspace, current_target(workspace, target)...)
     key = item(workspace, id(value))
     return key === nothing ? bound_computation(workspace, value) : computation(workspace, key, ITEM_PROCESS)
 end
@@ -152,6 +170,7 @@ function computation_result(workspace::Workspace, value::Computation)
     target = @lock workspace.catalog.lock get(workspace.catalog.computation_targets, value, nothing)
     target === nothing && return nothing
     key, stage = target
+    key in workspace.catalog || return nothing
     current = @lock workspace.catalog.lock Catalogs.status(workspace.catalog, key, stage)
     current.validity == Catalogs.FRESH || return nothing
     native = @lock workspace.catalog.lock get(workspace.results, target, nothing)
