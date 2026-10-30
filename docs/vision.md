@@ -509,8 +509,9 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
   model; a backend draws the figure, chosen per client. GLMakie draws with OpenGL in the process
   that holds the figure. WGLMakie sends the figure to a browser, which draws it with WebGL.
   CairoMakie draws PNG, SVG or PDF on the CPU, for terminal clients, agents and export. Backends
-  differ in what they support. Makie loads once per runtime, not once per client. A plot
-  description that clients draw with their own libraries is not planned.
+  differ in what they support. Makie loads once per runtime, not once per client. Makie is the
+  plot visualizer for Julia, not the only way to plot: a Python client must create arbitrary plots
+  without Makie. See [runtime and clients](plans/runtime-and-clients.md).
 - **Multiplayer collaboration.** A long-term extension of client-server: workspace synchronization,
   permissions, conflict handling, shared views, careful state design.
 - **Rust.** Not a near-term plan. Possibly useful later for low-level components, packaging helpers,
