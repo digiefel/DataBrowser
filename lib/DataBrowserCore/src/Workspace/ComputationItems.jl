@@ -18,8 +18,16 @@ item_data(item::ComputationItem) = item.value isa AbstractDataItem ? item_data(i
 computation(item::ComputationItem) = item.computation
 computation(::Workspace, item::ComputationItem) = item.computation
 
+# A value that is an item keeps the item's id and title, as do the selected parts of an item: a
+# computation that reads one item and gives a value that is not an item, such as some of its data.
 function computation_item(workspace::Workspace, value::Computation, result)
     identity, title = computation_identity(workspace, value)
+    read = [x for x in found(value.args) if !(x isa Computation)]
+    if result isa AbstractDataItem
+        identity, title = id(result), label(result)
+    elseif length(read) == 1
+        identity, title = only(read) isa AbstractDataItem ? (id(only(read)), label(only(read))) : (only(read), title)
+    end
     catalog = workspace.catalog
     record = @lock catalog.lock get(workspace.results, computation_address(catalog, value), nothing)
     given = record === nothing ? parts(result) : metadata_dict(record.metadata)
@@ -83,5 +91,6 @@ function evaluate_argument(selection::Selection, result, invoke, resolve)
     return select(items)
 end
 
-found(item::ComputationItem) = Union{String,Computation}[item.computation]
-bound_argument(::Workspace, item::ComputationItem) = item
+found(item::ComputationItem) = Read[item]
+bound_argument(workspace::Workspace, item::ComputationItem) =
+    ComputationItem(item.id, item.label, bound_computation(workspace, item.computation), item.value, item.metadata)

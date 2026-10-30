@@ -634,7 +634,7 @@ function points(layer, table, names, input::Symbol)
 end
 
 function declare_layer(layer, input::Symbol)
-    with_items(table, items) = Expr(table.head, table.args[1], Expr(:parameters, table.args[2].args..., :($item_ids($items)...)))
+    with_items(table, items) = Expr(table.head, table.args[1], Expr(:parameters, table.args[2].args..., :($item_places($items)...)))
     own = find_call(layer, :data)
     if own === nothing
         tabulated = tabulate(layer, value -> per_item(value, input))

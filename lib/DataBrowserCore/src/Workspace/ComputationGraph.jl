@@ -97,8 +97,8 @@ function bound_argument(workspace, value::Computation)
     return key === nothing ? bound_computation(workspace, value) : computation(workspace, key, ITEM_PROCESS)
 end
 bound_argument(workspace, value::AbstractDataItem) = computation(workspace, value)
-bound_argument(workspace, value::Selection) =
-    Computation(select, Computation[computation(workspace, id) for id in value.id])
+bound_argument(workspace, value::Selection) = Computation(select, Computation[ref isa ComputationItem ?
+    bound_computation(workspace, ref.computation) : computation(workspace, i) for (ref, i) in zip(getfield(value.data, :items), value.id)])
 bound_argument(workspace, value::Tuple) = map(x -> bound_argument(workspace, x), value)
 function bound_argument(workspace, value::AbstractVector)
     any(x -> x isa Union{Computation,AbstractDataItem}, value) || return value

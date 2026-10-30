@@ -34,7 +34,7 @@ function Result(aggregate::Aggregate, table, positional::Vector, named::Vector, 
         rows = [row for row in eachindex(keys) if keys[row] == key && columns[y][row] isa Real && isfinite(scaled(scale, columns[y][row]))]
         values = [f(scaled.(scale, Float64.(columns[y][rows]))) for f in aggregate.functions]
         name = join(("$k = $v" for (k, v) in pairs(key)), ", ")
-        taken = haskey(columns, ITEM) ? AbstractDataItem[m for m in members if id(m) in columns[ITEM][rows]] : AbstractDataItem[]
+        taken = haskey(columns, ITEM) ? AbstractDataItem[members[sort(unique(columns[ITEM][rows]))]...] : AbstractDataItem[]
         Group(name, Dict{Symbol,Any}(pairs(key)..., (names .=> values)..., :count => length(rows)),
             NamedTuple{(:x, names...)}(([key[x]], ([v] for v in values)...)), taken)
     end

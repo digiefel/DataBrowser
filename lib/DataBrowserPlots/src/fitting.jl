@@ -44,7 +44,7 @@ end
 # One fit for each group of `rows`, a Tables.jl table: the rows with equal values in the `group`
 # columns. Each fit is a `Group`: its metadata holds the group's values and the parameters, its data
 # is the curve, as columns `x` and `y`, and its members are the items whose rows it fits. `members`
-# are those items, and the column `item` holds each row's item id.
+# are those items, and the column `item` holds the place of each row's item in `members`.
 # The curve is drawn over the fitted x values, or over `xlim`. `scale` is the function of the y axis;
 # a point it has no value for, such as a negative y of `log10`, is left out.
 function fit_groups(curve, starts::NamedTuple, rows, x::Symbol, y::Symbol, group::Vector{Symbol};
@@ -64,7 +64,7 @@ function fit_groups(curve, starts::NamedTuple, rows, x::Symbol, y::Symbol, group
         low, high = xlim === nothing ? extrema(xs) : xlim
         curve_x = collect(range(low, high; length=100))
         curve_y = curve.(curve_x; map(parameter -> parameter.value, parameters)...)
-        fitted = item === nothing ? AbstractDataItem[] : AbstractDataItem[m for m in members if id(m) in table[item][rows]]
+        fitted = item === nothing ? AbstractDataItem[] : AbstractDataItem[members[sort(unique(table[item][rows]))]...]
         return Group(name, Dict{Symbol,Any}(pairs(key)..., pairs(parameters)...), (x=curve_x, y=curve_y), fitted)
     end
 end
@@ -114,12 +114,13 @@ struct Fit{C}
 end
 Fit(curve, starts::NamedTuple; options...) = Fit(curve, starts, NamedTuple(options))
 
-# The column of a layer's table that holds the id of each row's item.
+# The column of a layer's table that holds the place of each row's item in its selection. Ids can
+# repeat in a selection, such as for parts of one item.
 const ITEM = Symbol("#item")
 
 # The `ITEM` column of the tables of the items of a selection, as keywords of `unnest`.
-item_ids(selection::Selection) = NamedTuple{(ITEM,)}((selection.id,))
-item_ids(_) = (;)
+item_places(selection::Selection) = NamedTuple{(ITEM,)}((collect(eachindex(selection)),))
+item_places(_) = (;)
 
 # The fit's result over the points of a layer: `table`, whose columns `positional` and `named`
 # map. Its groups' members are the items of `source` whose rows they fit. `scale` is the function of

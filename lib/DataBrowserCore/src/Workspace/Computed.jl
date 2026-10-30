@@ -17,17 +17,20 @@ argument_id(xs::Union{AbstractVector,Tuple}) = "[" * join(map(argument_id, xs), 
 argument_id(x) = repr(x)
 label(value::Computation) = function_name(value.f)
 
-# The ids of the items and the `Computation` values among the arguments, in order.
-reads(value::Computation)::Vector{Union{String,Computation}} = found(value.args)
-found(x::Computation) = Union{String,Computation}[x]
-found(x::AbstractDataItem) = Union{String,Computation}[id(x)]
-found(selection::Selection) = Union{String,Computation}[selection.id...]
-found(xs::Union{AbstractVector,Tuple}) = reduce(vcat, map(found, xs); init=Union{String,Computation}[])
-found(_) = Union{String,Computation}[]
+# What a value reads, in order: the ids of workspace items, the `Computation` values among its
+# arguments, and the values prepared for a window (`ComputationItem`), which are not workspace items.
+const Read = Union{String,Computation,AbstractDataItem}
+reads(value::Computation)::Vector{Read} = found(value.args)
+found(x::Computation) = Read[x]
+found(x::AbstractDataItem) = Read[id(x)]
+found(selection::Selection) = reduce(vcat,
+    [ref isa ItemKey ? Read[i] : found(ref) for (ref, i) in zip(getfield(selection.data, :items), selection.id)]; init=Read[])
+found(xs::Union{AbstractVector,Tuple}) = reduce(vcat, map(found, xs); init=Read[])
+found(_) = Read[]
 
 # The ids of the items a value reads, also through the `Computation` values it reads.
-member_ids(value::Computation)::Vector{String} =
-    unique(reduce(vcat, [x isa Computation ? member_ids(x) : [x] for x in reads(value)]; init=String[]))
+member_ids(value::Computation)::Vector{String} = unique(reduce(vcat,
+    [x isa Computation ? member_ids(x) : x isa AbstractDataItem ? [id(x)] : [x] for x in reads(value)]; init=String[]))
 
 # The metadata of a result: the metadata of an item, or the named values of a named tuple, each one
 # that metadata can hold. A vector, such as the points of a curve, is left out.
@@ -100,15 +103,14 @@ function _register_computation!(workspace::Workspace, value::Computation)::ItemK
     dependencies = if target !== nothing
         Target[current_target(workspace, target)]
     else
-        map(reads(value)) do x
+        reduce(vcat, map(reads(value)) do x
             if x isa Computation
                 known = @lock catalog.lock get(catalog.computation_targets, x, nothing)
-                return known === nothing ? (row!(workspace, x), ITEM_PROCESS) : current_target(workspace, known)
+                return Target[known === nothing ? (row!(workspace, x), ITEM_PROCESS) : current_target(workspace, known)]
             end
-            key = item(workspace, x)
-            key === nothing && error("Item '$x' that $(id(value)) reads is not an item of the workspace")
-            return (key, ITEM_PROCESS)
-        end
+            x isa AbstractDataItem && return followed(workspace, x.computation)
+            return Target[(read_key(workspace, x), ITEM_PROCESS)]
+        end; init=Target[])
     end
     @lock catalog.lock begin
         none = [COLLECTION_PROCESS, COLLECTION_ANALYZE]
@@ -120,6 +122,22 @@ function _register_computation!(workspace::Workspace, value::Computation)::ItemK
         workspace.computations[key] = value
         return key
     end
+end
+
+function read_key(workspace::Workspace, id::String)::ItemKey
+    key = item(workspace, id)
+    key === nothing && error("Item '$id' that a computed item reads is not an item of the workspace")
+    return key
+end
+
+# The targets of what a value prepared for a window reads: the value itself is not a workspace item.
+function followed(workspace::Workspace, value::Computation)::Vector{Target}
+    known = @lock workspace.catalog.lock get(workspace.catalog.computation_targets, value, nothing)
+    known === nothing || return Target[current_target(workspace, known)]
+    return reduce(vcat, map(reads(value)) do x
+        x isa Computation ? followed(workspace, x) : x isa AbstractDataItem ? followed(workspace, x.computation) :
+            Target[(read_key(workspace, x), ITEM_PROCESS)]
+    end; init=Target[])
 end
 
 """

@@ -50,6 +50,7 @@ DataBrowserAPI.reconstruct(::Type{FitTestDevice}, name::AbstractString, data, me
 
 const curve_calls = Ref(0)
 counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; resistance(gap; Rc, Rsh))
+twice(device::FitTestDevice) = FitTestDevice(device.name, device.chip, device.gap, 2device.R)
 
 @testset "in a workspace, a fit is an item for each group, computed again when its curve changes and not when its palette does" begin
     W = DataBrowserCore.Workspace
@@ -67,6 +68,13 @@ counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; resistance(gap; Rc, Rsh)
         curve_calls[] = 0
         figure(plot([:green, :orange]), devices)
         @test curve_calls[] == 0
+        # Values a window prepared keep their items' ids, and a fit takes their values: each device
+        # with twice its R gives twice the curve.
+        # TODO: their selection does not know the workspace, so their fits are not workspace items.
+        doubled = W.select(workspace, [W.Computation(twice, W.computation(devices, i)) for i in eachindex(devices)])
+        @test doubled.id == devices.id
+        starts(drawn) = sort([last(first(p[1][])) for p in axis(drawn).scene.plots if p isa Lines])
+        @test starts(figure(plot([:red, :blue]), doubled)) ≈ 2starts(figure(plot([:red, :blue]), devices))
         # A new curve, R = Rc + Rsh * gap, gives each chip twice the Rc.
         @eval counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; Rc + Rsh * gap)
         @test timedwait(() -> sort(round.(W.select(workspace, fits.id).Rc)) == [100.0, 600.0], 20) === :ok

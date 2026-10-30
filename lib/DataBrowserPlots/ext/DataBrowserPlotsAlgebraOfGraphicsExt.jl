@@ -729,8 +729,8 @@ function computed(analysis::Analysis, columns, items::Selection, workspace)::Res
     by = unique(Symbol[column(v) for (_, v) in roles])
     keys = [NamedTuple{Tuple(by)}(Tuple(table[k][row] for k in by)) for row in eachindex(table[ITEM])]
     values = map(unique(keys)) do key
-        ids = unique(table[ITEM][[row for row in eachindex(keys) if isequal(keys[row], key)]])
-        value = Workspace.Computation(analysis, items[findall(in(ids), items.id)]; group=key)
+        places = sort(unique(table[ITEM][[row for row in eachindex(keys) if isequal(keys[row], key)]]))
+        value = Workspace.Computation(analysis, items[places]; group=key)
         push!(workspace, value)
         return value
     end
@@ -758,7 +758,10 @@ Base.which(value::Workspace.Computation{<:Analysis}) = only(methods(value.f.poin
 # `fit(line, (a = 1,)) of :V, :I by :Chip; y scale log10 for :Chip = "A"`: the step, the values
 # mapped to x and y, the values that form the groups, the limits and the y scale, and the group.
 # Titles, transformations and visuals are left out. The code of the functions the step calls, such
-# as the curve of a fit, is in the type of the analysis instead.
+# as the curve of a fit, is in the type of the analysis instead. The id ends with a digest of the
+# values it is of: the workspace items by id, and the values a window prepared by the computation
+# that made them, so that the same plot of other values, such as a table's selected parts, is
+# another result.
 function DataBrowserAPI.id(value::Workspace.Computation{<:Analysis})
     analysis, group = value.f, value.settings.group
     texts = analysis.points.texts
@@ -769,7 +772,10 @@ function DataBrowserAPI.id(value::Workspace.Computation{<:Analysis})
     scale === identity || push!(settings, "y scale $scale")
     return string(analysis.points.step, " of ", join(text.(analysis.positional), ", "),
         isempty(by) ? "" : " by " * join(by, ", "), isempty(settings) ? "" : "; " * join(settings, ", "),
-        isempty(group) ? "" : " for " * join(("$(get(texts, k, repr(k))) = $(repr(v))" for (k, v) in pairs(group)), ", "))
+        isempty(group) ? "" : " for " * join(("$(get(texts, k, repr(k))) = $(repr(v))" for (k, v) in pairs(group)), ", "),
+        " on ", string(hash(map(only(value.args).id, getfield(only(value.args).data, :items)) do i, ref
+            ref isa Workspace.ComputationItem ? hash(ref.computation) : hash(i)
+        end); base=62))
 end
 
 # The title of a group's result: the step and the group's values, such as
