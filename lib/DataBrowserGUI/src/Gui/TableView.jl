@@ -578,9 +578,9 @@ function _pass_on!(view::TableView)::Nothing
     picked = filter(in(shown), view.grid.selected_columns)
     columns = table.paths[isempty(picked) ? shown : sort(picked)]
     view.output = map(unique(table.row_item[view.output_rows])) do index
-        item = view.items[table.item_index[index]]
+        source = Workspace.computation(selection, table.item_index[index])
         rows = table.item_row[[row for row in view.output_rows if table.row_item[row] == index]]
-        return Workspace.Computation(selected_rows, item; rows, columns)
+        return Workspace.Computation(selected_rows, source; rows, columns)
     end
     return nothing
 end

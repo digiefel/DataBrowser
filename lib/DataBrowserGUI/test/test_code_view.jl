@@ -1,7 +1,7 @@
 using Test, DataBrowserGUI
 import DataBrowserAPI as API
 using DataBrowserCore: Workspace
-using DataBrowserGUI.Browser: BrowserState, CodeView, FixedItems, WindowOutput, open_window!, refresh!, preparing, input!, close_window!, output
+using DataBrowserGUI.Browser: BrowserState, CodeView, TableView, FixedItems, WindowOutput, open_window!, refresh!, preparing, input!, close_window!, output
 
 include("fixtures/code_project.jl")
 
@@ -47,6 +47,17 @@ include("fixtures/code_project.jl")
         @test ready(linked)
         @test only(linked.visualizer.values) == Dict(:total => 60)
         @test Workspace.query_items(workspace) == indexed_before
+        # Following a table keeps the original pipeline, rather than starting at a payload
+        # detached from its producing computations.
+        table = open_window!(state, TableView(); input=FixedItems(["signal"]))
+        history = open_window!(state, CodeView(); input=WindowOutput(table.id))
+        @test ready(history)
+        @test [row.call.title for row in history.visualizer.rows] ==
+            ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "analyze(::CodeSignal)", "selected_rows"]
+        @test (project.reads[], project.processes[]) == before
+        @test Workspace.query_items(workspace) == indexed_before
+        close_window!(state, history)
+        close_window!(state, table)
         close_window!(state, linked)
         close_window!(state, code)
     finally
