@@ -505,10 +505,12 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
   frontends.
 - **Browser frontend.** A browser client served by a local runtime first, a remote one later. It uses
   the command model and should not require rewriting the scientific core.
-- **Plots in every client.** The runtime draws plots with Makie, and clients display what it draws:
-  GLMakie in the desktop GUI, WGLMakie in a browser client, CairoMakie pictures for terminal
-  clients, agents and export. Makie loads once per runtime, not once per client. A plot description
-  that clients draw with their own libraries is not planned.
+- **Plots in every client.** The runtime builds every plot as a Makie figure. Makie is the figure
+  model; a backend draws the figure, chosen per client. GLMakie draws with OpenGL in the process
+  that holds the figure. WGLMakie sends the figure to a browser, which draws it with WebGL.
+  CairoMakie draws PNG, SVG or PDF on the CPU, for terminal clients, agents and export. Backends
+  differ in what they support. Makie loads once per runtime, not once per client. A plot
+  description that clients draw with their own libraries is not planned.
 - **Multiplayer collaboration.** A long-term extension of client-server: workspace synchronization,
   permissions, conflict handling, shared views, careful state design.
 - **Rust.** Not a near-term plan. Possibly useful later for low-level components, packaging helpers,
