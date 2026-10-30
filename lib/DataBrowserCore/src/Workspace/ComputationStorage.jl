@@ -62,6 +62,8 @@ end
 
 function result_item(workspace::Workspace, catalog::Catalog, value::Computation, args::Tuple, result)
     result isa AbstractDataItem && return result
+    # A selection is a view of the workspace's values, never kept.
+    result isa Selection && return nothing
     workspace.catalog === catalog || return nothing
     identity, title = computation_identity(workspace, value)
     address = computation_address(catalog, value)

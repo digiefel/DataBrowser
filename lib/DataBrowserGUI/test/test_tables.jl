@@ -1,10 +1,8 @@
 using Test, DataBrowserGUI
 import DataBrowserAPI
 using DataBrowserGUI: merge_item_tables, value_table, zoom_value
-using DataBrowserCore: Group, select
+@isdefined(ItemsProject) || include("fixtures/items_project.jl")
 
-# Items in memory, each with its data and metadata.
-selection_of(entries...) = select([Group(label, Dict{Symbol,Any}(pairs(metadata)), data, []) for (label, data, metadata) in entries])
 column(table, name) = [table.getvalue(row, findfirst(==(name), table.columns)) for row in 1:table.rows]
 
 @testset "table union preserves values and item provenance" begin
@@ -102,3 +100,6 @@ end
     @test table.rows == 3
     @test column(table, "charge") == [1., 2., 3.]
 end
+
+foreach(Workspace.close_workspace!, OPENED)
+empty!(OPENED)

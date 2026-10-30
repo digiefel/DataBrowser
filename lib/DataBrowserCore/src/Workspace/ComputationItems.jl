@@ -45,7 +45,7 @@ catalog entries. Each item retains its origin for further computations and linke
 This waits for evaluation and belongs in a background task when used by a GUI.
 """
 function select(workspace::Workspace, values::AbstractVector{<:Computation})::Selection
-    return select(materialize_items(workspace, values))
+    return Selection(workspace, materialize_items(workspace, values))
 end
 
 """Materialize computation references without inserting them into the catalog."""
@@ -60,14 +60,11 @@ revision(workspace::Workspace, value::Computation) =
     computation(selection, index) -> Computation
 
 The computation producing one selected item. This reads its reference without loading its data.
-A selection made directly from native values uses those values as its inputs.
 """
 function computation(selection::Selection, index::Integer)
     data = selection.data::ItemData
-    workspace = getfield(data, :workspace)
     item = getfield(data, :items)[index]
-    item isa ComputationItem && return item.computation
-    return workspace === nothing ? Computation(identity, item) : computation(workspace, item)
+    return item isa ComputationItem ? item.computation : computation(getfield(data, :workspace), item)
 end
 
 # Item operations keep the item interface; scientific transforms use its computation reference
@@ -82,13 +79,14 @@ function computation_inputs(selection::Selection)
     return Computation[computation(selection, i) for i in eachindex(selection)]
 end
 function evaluate_argument(selection::Selection, result, invoke, resolve)
-    items = map(eachindex(selection)) do i
+    items = AbstractDataItem[]
+    for i in eachindex(selection)
         source = computation(selection, i)
         value = evaluate(source, result, invoke, resolve)
         given = value isa AbstractDataItem ? metadata_dict(metadata(value)) : MetadataDict()
-        ComputationItem(String(selection.id[i]), String(selection.label[i]), source, value, Dict{Symbol,Any}(given))
+        push!(items, ComputationItem(String(selection.id[i]), String(selection.label[i]), source, value, Dict{Symbol,Any}(given)))
     end
-    return select(items)
+    return Selection(getfield(selection.data, :workspace), items)
 end
 
 found(item::ComputationItem) = Read[item]

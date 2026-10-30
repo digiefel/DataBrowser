@@ -14,26 +14,14 @@ DataBrowserAPI.metadata(device::FitTestDevice) =
     Dict{Symbol,Any}(:Chip => device.chip, :Wafer => "W$(device.chip)", :gap => device.gap)
 DataBrowserAPI.item_data(device::FitTestDevice) = (R=[device.R],)
 
-axis(drawn) = only(filter(c -> c isa Axis, drawn.content))
+DataBrowserAPI.reconstruct(::Type{FitTestDevice}, name::AbstractString, data, metadata::Dict) =
+    FitTestDevice(name, metadata[:Chip], metadata[:gap], only(data.R))
 
-@testset "a fit draws one curve for each group, and the legend text reads each group's values" begin
-    # Two chips with exact lines: R = 2 * 300 + 100 * gap and R = 2 * 50 + 100 * gap.
-    devices = [FitTestDevice("$chip$gap", chip, gap, 2Rc + 100gap)
-        for (chip, Rc) in (("A", 300), ("B", 50)) for gap in (5.0, 10.0, 20.0)]
-    plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
-        visual(Scatter)
-        contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
-        contacts * visual(Lines)
-        scales(color = (; categories = ["A" => "chip A", "B" => "chip B"]))
-        legend(color = "$(:Chip) on $(:Wafer): $(round(estimate(contacts.Rc)))")
-    end
-    legend = only(filter(c -> c isa Legend, figure(plot, select(devices)).content))
-    @test [entry.label[] for (_, entries) in legend.entrygroups[] for entry in entries] == ["chip A on WA: 300.0", "chip B on WB: 50.0"]
-end
-
-# The devices of the first test in a workspace.
+# A workspace of the devices.
 struct FitTestProject <: DataBrowserAPI.AbstractProject end
-struct FitTestSource <: DataBrowserAPI.AbstractDataSource end
+struct FitTestSource <: DataBrowserAPI.AbstractDataSource
+    devices::Vector{FitTestDevice}
+end
 struct FitTestFile <: DataBrowserAPI.AbstractDataSourceItem end
 DataBrowserAPI.project_name(::FitTestProject) = "fits"
 DataBrowserAPI.id(::FitTestSource) = "devices"
@@ -42,22 +30,46 @@ DataBrowserAPI.label(::FitTestFile) = "file"
 DataBrowserAPI.items(::FitTestSource; kwargs...) = [FitTestFile()]
 DataBrowserAPI.id(::FitTestFile) = "file"
 DataBrowserAPI.fingerprint(::FitTestFile) = 1
-DataBrowserAPI.read(::FitTestProject, ::FitTestSource, ::FitTestFile) = nothing
-DataBrowserAPI.expand(::FitTestProject, ::FitTestFile, ::Nothing) = [FitTestDevice("$chip$gap", chip, gap, 2Rc + 100gap)
+DataBrowserAPI.read(::FitTestProject, source::FitTestSource, ::FitTestFile) = source.devices
+DataBrowserAPI.expand(::FitTestProject, ::FitTestFile, devices) = devices
+
+const W = DataBrowserCore.Workspace
+
+# `f(workspace, selection)` for a workspace of `devices`, with all of them selected.
+function in_workspace(f, devices)
+    workspace = W.open_workspace(FitTestProject(), FitTestSource(devices); cache=false, background_processing=true)
+    try
+        W.wait_workspace_idle!(workspace)
+        return f(workspace, W.select(workspace, W.query_items(workspace)))
+    finally
+        W.close_workspace!(workspace)
+    end
+end
+
+# Two chips with exact lines: R = 2 * 300 + 100 * gap and R = 2 * 50 + 100 * gap.
+const CHIPS = [FitTestDevice("$chip$gap", chip, gap, 2Rc + 100gap)
     for (chip, Rc) in (("A", 300), ("B", 50)) for gap in (5.0, 10.0, 20.0)]
-DataBrowserAPI.reconstruct(::Type{FitTestDevice}, name::AbstractString, data, metadata::Dict) =
-    FitTestDevice(name, metadata[:Chip], metadata[:gap], only(data.R))
+
+axis(drawn) = only(filter(c -> c isa Axis, drawn.content))
+
+@testset "a fit draws one curve for each group, and the legend text reads each group's values" begin
+    plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
+        visual(Scatter)
+        contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
+        contacts * visual(Lines)
+        scales(color = (; categories = ["A" => "chip A", "B" => "chip B"]))
+        legend(color = "$(:Chip) on $(:Wafer): $(round(estimate(contacts.Rc)))")
+    end
+    legend = in_workspace((_, devices) -> only(filter(c -> c isa Legend, figure(plot, devices).content)), CHIPS)
+    @test [entry.label[] for (_, entries) in legend.entrygroups[] for entry in entries] == ["chip A on WA: 300.0", "chip B on WB: 50.0"]
+end
 
 const curve_calls = Ref(0)
 counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; resistance(gap; Rc, Rsh))
 twice(device::FitTestDevice) = FitTestDevice(device.name, device.chip, device.gap, 2device.R)
 
-@testset "in a workspace, a fit is an item for each group, computed again when its curve changes and not when its palette does" begin
-    W = DataBrowserCore.Workspace
-    workspace = W.open_workspace(FitTestProject(), FitTestSource(); cache=false, background_processing=true)
-    try
-        W.wait_workspace_idle!(workspace)
-        devices = W.select(workspace, W.query_items(workspace))
+@testset "a fit is an item for each group, computed again when its curve changes and not when its palette does" begin
+    in_workspace(CHIPS) do workspace, devices
         plot(palette) = @plot mapping(:gap, only(:data.R); color=:Chip) begin
             fit(counted_resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines)
             scales(color = (; palette))
@@ -68,13 +80,6 @@ twice(device::FitTestDevice) = FitTestDevice(device.name, device.chip, device.ga
         curve_calls[] = 0
         figure(plot([:green, :orange]), devices)
         @test curve_calls[] == 0
-        # Values a window prepared keep their items' ids, and a fit takes their values: each device
-        # with twice its R gives twice the curve.
-        # TODO: their selection does not know the workspace, so their fits are not workspace items.
-        doubled = W.select(workspace, [W.Computation(twice, W.computation(devices, i)) for i in eachindex(devices)])
-        @test doubled.id == devices.id
-        starts(drawn) = sort([last(first(p[1][])) for p in axis(drawn).scene.plots if p isa Lines])
-        @test starts(figure(plot([:red, :blue]), doubled)) ≈ 2starts(figure(plot([:red, :blue]), devices))
         # A new curve, R = Rc + Rsh * gap, gives each chip twice the Rc.
         @eval counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; Rc + Rsh * gap)
         @test timedwait(() -> sort(round.(W.select(workspace, fits.id).Rc)) == [100.0, 600.0], 20) === :ok
@@ -83,8 +88,12 @@ twice(device::FitTestDevice) = FitTestDevice(device.name, device.chip, device.ga
         draw(devices)
         draw(filter(device -> device.Chip == "A", devices))
         @test length(filter(startswith("fit("), W.query_items(workspace))) == 1
-    finally
-        W.close_workspace!(workspace)
+        # Values a window prepared keep their items' ids, and their fits are items too: twice each
+        # device's R gives each chip twice the Rc.
+        doubled = W.select(workspace, [W.Computation(twice, W.computation(devices, i)) for i in eachindex(devices)])
+        @test doubled.id == devices.id
+        figure(plot([:red, :blue]), doubled)
+        @test sort(round.(W.select(workspace, filter(startswith("fit("), W.query_items(workspace))).Rc)) == [200.0, 600.0, 1200.0]
     end
 end
 
@@ -99,13 +108,11 @@ end
 end
 
 @testset "a fit line changes the points as any line does" begin
-    devices = [FitTestDevice("$chip$gap", chip, gap, 2Rc + 100gap)
-        for (chip, Rc) in (("A", 300), ("B", 50)) for gap in (5.0, 10.0, 20.0)]
     # Without color, the two chips are one group: Rc is their mean, 175.
     plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
         mapping(; color=nothing) * fit(resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines)
     end
-    curve = only(p for p in axis(figure(plot, select(devices))).scene.plots if p isa Lines)[1][]
+    curve = in_workspace((_, devices) -> only(p for p in axis(figure(plot, devices)).scene.plots if p isa Lines)[1][], CHIPS)
     @test first(curve) ≈ Point2f(5, 850)
 end
 
@@ -113,28 +120,29 @@ average(values) = sum(values) / length(values)
 half_range(values) = (maximum(values) - minimum(values)) / 2
 
 @testset "a line maps the values of an aggregate, and takes its x when it maps only y" begin
-    devices = [FitTestDevice("$chip$gap$R", chip, gap, R) for chip in ("A", "B") for gap in (5.0, 10.0) for R in (1.0, 3.0)]
-    plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
-        result = aggregate(average, half_range)
-        mapping(y = result.average) * visual(Scatter)
-        mapping(result.gap, result.average, result.half_range) * visual(Errorbars)
-        mapping(result.gap, result.count) * visual(Lines)
+    in_workspace([FitTestDevice("$chip$gap$R", chip, gap, R) for chip in ("A", "B") for gap in (5.0, 10.0) for R in (1.0, 3.0)]) do _, devices
+        plot = @plot mapping(:gap, only(:data.R); color=:Chip) begin
+            result = aggregate(average, half_range)
+            mapping(y = result.average) * visual(Scatter)
+            mapping(result.gap, result.average, result.half_range) * visual(Errorbars)
+            mapping(result.gap, result.count) * visual(Lines)
+        end
+        drawn = figure(plot, devices)
+        plots(type, drawn=drawn) = [p for p in axis(drawn).scene.plots if p isa type]
+        @test sort(Tuple.(reduce(vcat, [p[1][] for p in plots(Scatter)]))) == [(5.0, 2.0), (5.0, 2.0), (10.0, 2.0), (10.0, 2.0)]
+        @test length(plots(Errorbars)) == 2
+        @test [last.(p[1][]) for p in plots(Lines)] == [[2, 2], [2, 2]]
+        plot = @plot mapping(:gap, only(:data.R)) begin
+            aggregate(average) * visual(Lines)
+        end
+        @test Tuple.(only(plots(Lines, figure(plot, devices)))[1][]) == [(5.0, 2.0), (10.0, 2.0)]
+        # Limits that remove every point leave nothing to draw.
+        plot = @plot mapping(:gap, only(:data.R)) begin
+            aggregate(average) * visual(Lines)
+            scales(y = (; limits = (10, nothing)))
+        end
+        @test_throws ErrorException figure(plot, devices)
     end
-    drawn = figure(plot, select(devices))
-    plots(type, drawn=drawn) = [p for p in axis(drawn).scene.plots if p isa type]
-    @test sort(Tuple.(reduce(vcat, [p[1][] for p in plots(Scatter)]))) == [(5.0, 2.0), (5.0, 2.0), (10.0, 2.0), (10.0, 2.0)]
-    @test length(plots(Errorbars)) == 2
-    @test [last.(p[1][]) for p in plots(Lines)] == [[2, 2], [2, 2]]
-    plot = @plot mapping(:gap, only(:data.R)) begin
-        aggregate(average) * visual(Lines)
-    end
-    @test Tuple.(only(plots(Lines, figure(plot, select(devices))))[1][]) == [(5.0, 2.0), (10.0, 2.0)]
-    # Limits that remove every point leave nothing to draw.
-    plot = @plot mapping(:gap, only(:data.R)) begin
-        aggregate(average) * visual(Lines)
-        scales(y = (; limits = (10, nothing)))
-    end
-    @test_throws ErrorException figure(plot, select(devices))
 end
 
 deviation(values) = sqrt(sum(abs2, values .- average(values)) / (length(values) - 1))

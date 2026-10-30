@@ -25,8 +25,8 @@ value, and `selection.data.fit.slope` goes one level further. It is not one tabl
 are put together only when the values are named together.
 """
 struct ItemData <: AbstractVector{Any}
-    # `nothing` when the items are values in memory, not keys of the workspace's items.
-    workspace::Union{Workspace,Nothing}
+    workspace::Workspace
+    # Keys of the workspace's items, or values that the workspace prepared, such as for a window.
     items::Vector
     # The names followed inside each item's data, from the outside in; empty for the data itself.
     path::Vector{Symbol}
@@ -38,19 +38,19 @@ Base.getproperty(data::ItemData, name::Symbol) =
     ItemData(getfield(data, :workspace), getfield(data, :items), [getfield(data, :path); name])
 Base.size(data::ItemData) = size(getfield(data, :items))
 function Base.getindex(data::ItemData, index::Int)
-    workspace, item = getfield(data, :workspace), getfield(data, :items)[index]
-    item = workspace === nothing ? item : only(materialize_items(workspace, [item]))
-    return follow(item, getfield(data, :path))
+    items = getfield(data, :items)[index:index]
+    return follow(only(loaded(getfield(data, :workspace), items)), getfield(data, :path))
 end
 # Going through all the values, as `map` and `collect` do, reads the items from the cache together.
 function Base.iterate(data::ItemData, (items, index)=(nothing, 1))
-    if items === nothing
-        workspace, items = getfield(data, :workspace), getfield(data, :items)
-        workspace === nothing || (items = materialize_items(workspace, Vector{ItemKey}(items)))
-    end
+    items === nothing && (items = loaded(getfield(data, :workspace), getfield(data, :items)))
     index > length(items) && return nothing
     return follow(items[index], getfield(data, :path)), (items, index + 1)
 end
+
+# The items themselves: those of the workspace are read from the cache together.
+loaded(workspace::Workspace, items::Vector{ItemKey}) = materialize_items(workspace, items)
+loaded(::Workspace, items::Vector) = items
 
 # The value at `path` inside the data of `item`.
 function follow(item, path::Vector{Symbol})
@@ -178,15 +178,11 @@ function select(workspace::Workspace, items::Vector{ItemKey})::Selection
         [label(workspace, item) for item in items], [metadata(workspace, item) for item in items], levels)
 end
 
-"""
-    select(items) -> Selection
-
-Items that are values in memory, such as the groups of a fit, as a [`Selection`](@ref): a table
-with one row for each item. Its columns are `id`, `label`, then each metadata key, and
-`selection.data` is the data of each item.
-"""
-select(items::AbstractVector{<:AbstractDataItem})::Selection =
-    Selection(ItemData(nothing, collect(items)), id.(items), label.(items), metadata.(items))
+# Values that the workspace prepared, such as the values of a window.
+function Selection(workspace::Workspace, items::AbstractVector)
+    items = AbstractDataItem[items...]
+    return Selection(ItemData(workspace, items), id.(items), label.(items), metadata.(items))
+end
 
 # The columns `id` and `label`, the tree levels, then each metadata key. A value that an item does
 # not have is `missing`.
@@ -232,9 +228,8 @@ The items of `selection` as the project made them, in the same order: the object
 """
 function items(selection::Selection)::Vector
     data = selection.data::ItemData
-    workspace, items = getfield(data, :workspace), getfield(data, :items)
     # Narrow the element type, so that methods can dispatch on the type of the items.
-    return identity.(workspace === nothing ? items : materialize_items(workspace, items))
+    return identity.(loaded(getfield(data, :workspace), getfield(data, :items)))
 end
 
 """

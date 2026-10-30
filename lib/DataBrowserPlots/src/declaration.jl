@@ -206,7 +206,7 @@ With `data(table)`, the declaration is ordinary AlgebraOfGraphics over that tabl
 `mapping` are its columns. Draw it with `figure(declaration)`.
 
 A layer with its own `data(...)` keeps its own mapping: the header's names belong to other data.
-When that data is a vector of items, the names in its `mapping` are paths into those items, as for
+When that data is a [`Selection`](@ref), the names in its `mapping` are paths into its items, as for
 the items the plot is drawn for.
 
 `fit` fits a curve to the points of its line and draws it:
@@ -580,7 +580,7 @@ end
 
 # One layer as a function of the input: each value its `mapping` names becomes a column of `unnest`
 # over the input, and the mapping names that column. With `data(value)`, the paths read `value`
-# when it is a vector of items, and the layer is left as it is for any other value. A fit in the
+# when it is a selection, and the layer is left as it is for any other value. A fit in the
 # layer is done over its points (`resolve`), which know their items by the `ITEM` column.
 # The name that holds the settings of the plot's x and y scales, as `(; x, y)` of the `scales` line,
 # for the analyses: they take the points inside the limits, after the scale's function.
@@ -615,7 +615,6 @@ function drawing(draw, selection, path::AbstractString)
     result = Base.ScopedValues.with(draw, DRAWN => drawn)
     selection isa Selection || return result
     workspace = getfield(selection.data, :workspace)
-    workspace === nothing && return result
     @lock DRAWN_LOCK begin
         others = reduce(union, (ids for (other, ids) in DRAWN_BY_FILE if other != path); init=Set{String}())
         foreach(id -> delete!(workspace, id), setdiff(get(DRAWN_BY_FILE, path, Set{String}()), drawn, others))
@@ -650,8 +649,8 @@ function declare_layer(layer, input::Symbol)
     table, rewritten, _ = tabulated
     of_items = replace_call(rewritten, find_call(rewritten, :data), :(data($(with_items(table, items)))))
     return :(let $value = $(own.args[2])
-        $value isa AbstractVector{<:$AbstractDataItem} ?
-            (let $items = $(Workspace.select)($value); $resolve($of_items, $items, $AXES) end) :
+        $value isa $Selection ?
+            (let $items = $value; $resolve($of_items, $items, $AXES) end) :
             $resolve($plain, nothing, $AXES)
     end)
 end

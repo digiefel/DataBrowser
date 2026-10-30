@@ -50,7 +50,7 @@ end
 function calls(workspace::Workspace, selection::Selection)
     # Catalog selections also expose collection analyses, which contribute metadata without
     # replacing the item's value. A selection of view results follows its own node references.
-    getfield(selection.data, :workspace) === workspace && return calls(workspace, selection.id)
+    getfield(selection.data, :items) isa Vector{ItemKey} && return calls(workspace, selection.id)
     return calls(workspace, Computation[computation(selection, i) for i in eachindex(selection)])
 end
 

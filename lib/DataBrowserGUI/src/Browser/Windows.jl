@@ -324,7 +324,7 @@ function _resolve_window_input(workspace, given, transform)
                 push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
             end
         end
-        return Workspace.select(items)
+        return Workspace.Selection(workspace, items)
     end
     given isa AbstractVector{<:Workspace.Computation} && (given = resolve(given))
     if transform !== nothing

@@ -637,9 +637,8 @@ function resolve(layer::AoG.Layer, items, axes, points=nothing)
         error("A fit or an aggregate takes the points of its line before any visual, as in `fit(...) * visual(Lines)`")
     layer.data isa AoG.Columns || error("A fit or an aggregate needs points: a mapping of x and y, such as mapping(:x, :y)")
     analysis = Analysis(first(found), layer.positional, named, axes, points)
-    workspace = items isa Selection ? getfield(items.data, :workspace) : nothing
-    result = points === nothing || workspace === nothing ? analysis(layer.data.columns, items) :
-        computed(analysis, layer.data.columns, items, workspace)
+    result = points === nothing ? analysis(layer.data.columns, items) :
+        computed(analysis, layer.data.columns, items, getfield(items.data, :workspace))
     after = found[2:end]
     return isempty(after) ? result : result * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
 end
@@ -882,8 +881,6 @@ _precompile_line(x; offset, slope) = offset + slope * x
 @setup_workload begin
     rows = [(x=x, y=2x + offset, chip=chip)
         for (chip, offset) in (("A", 1.0), ("B", 3.0)) for x in (1.0, 2.0, 3.0)]
-    items = select([Group("$chip$x", Dict{Symbol,Any}(:chip => chip, :x => x), (y=[2x + offset],), [])
-        for (chip, offset) in (("A", 1.0), ("B", 3.0)) for x in (1.0, 2.0, 3.0)])
     @compile_workload begin
         # Build figures without a window, so this also runs without a graphics backend.
         ordinary = @plot data(rows) * mapping(:x, :y; color=:chip) begin
@@ -892,13 +889,12 @@ _precompile_line(x; offset, slope) = offset + slope * x
             legend(color = "chip $(:chip)")
         end
         figure(ordinary)
-        fitted_plot = @plot mapping(:x, only(:data.y); color=:chip) begin
+        fitted_plot = @plot data(rows) * mapping(:x, :y; color=:chip) begin
             visual(Scatter)
             fitted = fit(_precompile_line, (offset=0.0, slope=1.0))
             fitted * visual(Lines)
-            legend(color = "$(:chip): $(fitted.offset)")
         end
-        figure(fitted_plot, items)
+        figure(fitted_plot)
     end
 end
 
