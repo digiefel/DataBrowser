@@ -68,3 +68,16 @@ end
         close_source!(source)
     end
 end
+
+@testset "read returns the callback value without a transport carrier" begin
+    project = define_project("native read output")
+    data = (signal=[1.0, 2.0],)
+    register_item!(project, :trace; read=_ -> data)
+    file = RecipeFile("trace.dat")
+    @test read(project, RecipeSource(), file) === data
+    @test item_data(only(expand(project, file, data))) === data
+    envelope = (data=data, metadata=Dict(:scale => 2))
+    register_item!(project, :trace; read=_ -> envelope)
+    @test read(project, RecipeSource(), file) === envelope
+    @test metadata(only(expand(project, file, envelope)))[:scale] == 2
+end

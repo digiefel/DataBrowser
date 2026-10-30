@@ -8,22 +8,6 @@ items behave like any other typed item rather than like a tagged bag.
 """
 
 """
-Private carrier handing one registration's `read` output to its `expand` stage.
-
-`detect` runs inside the dialect's `read`, which is why the `{K}` tag first appears here.
-"""
-struct RegisteredReadResult{K,D}
-    data::D
-    metadata::MetadataDict
-end
-
-RegisteredReadResult{K}(data::D, metadata::MetadataDict) where {K,D} =
-    RegisteredReadResult{K,D}(data, metadata)
-
-"""Result of a `read` whose source item matched no registration; `expand` yields no items."""
-struct NoMatch end
-
-"""
 Private carrier for ordinary data produced by `register_item!`.
 
 Adaptation converts the registration callback's collection strings into normalized

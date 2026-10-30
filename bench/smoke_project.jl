@@ -32,7 +32,9 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
             Threads.atomic_add!(counters.expand, 1)
             values = Float64.(source["values"])
             return [(
-                data=(x=Float64.(eachindex(values)), y=values .+ (index - 1)),
+                # Keep the native item type stable across stages so this fixture exercises
+                # restoration by the persistent table cache, including collection results.
+                data=(x=Float64.(eachindex(values)), y=values .+ (index - 1), members=zeros(Int, length(values))),
                 metadata=Dict{Symbol,Any}(
                     :device => source["device"], :channel => channel),
             ) for (index, channel) in pairs(source["channels"])]
@@ -42,7 +44,7 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
         collection=(_data, metadata) -> (set = "runs", device = metadata[:device]),
         process=function (data, metadata)
             Threads.atomic_add!(counters.processes, 1)
-            return (x=data.x, y=data.y .* metadata[:scale])
+            return (; data..., y=data.y .* metadata[:scale])
         end,
         analyze=function (data, _metadata)
             Threads.atomic_add!(counters.analyses, 1)

@@ -53,9 +53,13 @@ function stage_computation(workspace::Workspace, key::CollectionKey, stage::Pipe
         workspace.project, collection_computation(workspace, key), arguments)
 end
 
-collection_computation(workspace, key) = Computation(reconstruct,
+collection_computation(workspace, key) = Computation(native_collection,
     valuetype(workspace.catalog, key), id(workspace.catalog, key),
     metadata(workspace.catalog, key, :collection))
+
+# Reconstruction supplies the collection argument; it is workspace input preparation, like
+# `native_value` for an item, rather than a project operation of its own.
+native_collection(type, id, given) = reconstruct(type, id, given)
 
 function native_arguments(workspace, key)
     holder = Catalogs.collection(workspace.catalog, key)
@@ -66,14 +70,17 @@ end
 
 # Bind interactive calls to computations rather than retaining the materialized items they were
 # constructed with. Project functions still receive those items' native values.
-function current_target(workspace, target::Target)::Target
-    catalog = workspace.catalog
+function resolve_target(catalog::Catalog, target::Target)::Union{Nothing,Target}
     key, stage = target
     key in catalog && return target
-    key isa CollectionKey && error("The computation's collection was removed")
+    key isa CollectionKey && return nothing
     replacement = lookup(catalog, typeof(key), id(catalog, key))
-    replacement === nothing && error("The computation's input was removed")
-    return (replacement, stage)
+    return replacement === nothing ? nothing : (replacement, stage)
+end
+function current_target(workspace, target::Target)::Target
+    resolved = resolve_target(workspace.catalog, target)
+    resolved === nothing && error("The computation's input was removed")
+    return resolved
 end
 
 function bound_computation(workspace, value::Computation; owner=nothing)
@@ -160,23 +167,34 @@ it does not change the workspace selection.
 """
 function evaluate(workspace::Workspace, value::Computation)
     workspace.closed && error("The workspace was closed")
-    return Base.invokelatest(evaluate, value, input -> computation_result(workspace, input),
-        (input, args) -> execute(workspace, input, args))
+    return @timed_dbg "computation.evaluate" Base.invokelatest(evaluate, value, input -> computation_result(workspace, input),
+        (input, args) -> execute(workspace, input, args), input -> current_computation(workspace, input))
+end
+
+function current_computation(workspace, value::Computation)
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        target = get(catalog.computation_targets, value, nothing)
+        return target === nothing ? value : computation(workspace, current_target(workspace, target)...)
+    end
 end
 
 # A hit is a native result, including `nothing`. Missing native restoration is a miss, so that
 # evaluation follows the recorded inputs instead of inventing a replacement value.
 function computation_result(workspace::Workspace, value::Computation)
-    target = @lock workspace.catalog.lock get(workspace.catalog.computation_targets, value, nothing)
-    target === nothing && return nothing
-    key, stage = target
-    key in workspace.catalog || return nothing
-    current = @lock workspace.catalog.lock Catalogs.status(workspace.catalog, key, stage)
-    current.validity == Catalogs.FRESH || return nothing
-    native = @lock workspace.catalog.lock get(workspace.results, target, nothing)
-    if native !== nothing && native.computation === value && native.revision == current.revision
+    catalog = workspace.catalog
+    target, revision, native = @lock catalog.lock begin
+        target = computation_address(catalog, value)
+        revision = computation_revision(catalog, value)
+        revision === nothing && return nothing
+        target isa Target && Catalogs.status(catalog, target...).validity != Catalogs.FRESH && return nothing
+        target, revision, get(workspace.results, target, nothing)
+    end
+    if native !== nothing && native.computation === value && native.revision == revision
         return stored_result(native)
     end
+    target isa Target || return nothing
+    key, stage = target
     if key isa SourceKey
         stage == SOURCE_READ || return nothing
         cached = read_payload(workspace.cache.db, cache_key(workspace, key))

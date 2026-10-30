@@ -48,22 +48,24 @@ the calls directly. `evaluate(workspace, computation)` uses the workspace's avai
 evaluate(value::Computation) = evaluate(value, _ -> nothing, invoke_computation)
 
 # The resolver supplies retained results; a miss follows the computation's inputs.
-function evaluate(value::Computation, result, invoke)
+evaluate(value::Computation, result, invoke) = evaluate(value, result, invoke, identity)
+function evaluate(value::Computation, result, invoke, resolve)
+    value = resolve(value)
     found = result(value)
-    found === nothing || return deepcopy(something(found))
-    args = map(x -> evaluate_argument(x, result, invoke), value.args)
+    found === nothing || return @timed_dbg "result.copy" deepcopy(something(found))
+    args = map(x -> evaluate_argument(x, result, invoke, resolve), value.args)
     return invoke(value, args)
 end
 
 invoke_computation(value::Computation, args::Tuple) = value.f(args...; value.settings...)
 
-evaluate_argument(value::Computation, result, invoke) = evaluate(value, result, invoke)
-evaluate_argument(values::Tuple, result, invoke) = map(x -> evaluate_argument(x, result, invoke), values)
-function evaluate_argument(values::AbstractVector, result, invoke)
+evaluate_argument(value::Computation, result, invoke, resolve) = evaluate(value, result, invoke, resolve)
+evaluate_argument(values::Tuple, result, invoke, resolve) = map(x -> evaluate_argument(x, result, invoke, resolve), values)
+function evaluate_argument(values::AbstractVector, result, invoke, resolve)
     isempty(computation_inputs(values)) && return values
-    return map(x -> evaluate_argument(x, result, invoke), values)
+    return map(x -> evaluate_argument(x, result, invoke, resolve), values)
 end
-evaluate_argument(value, _, _) = value
+evaluate_argument(value, _, _, _) = value
 
 """One workspace's store choices, initialized once per native item type."""
 struct ComputationStores
@@ -75,16 +77,17 @@ ComputationStores() = ComputationStores(ReentrantLock(), IdDict{Type,Any}())
 """The native result location of one completed computation revision; no payload lives here."""
 struct ComputationResult
     computation::Computation
-    revision::UInt32
+    revision::UInt
     value_type::Type
     item_type::Type
     store::Any
     key::String
+    metadata::Dict{Symbol,Any}
 end
 
-"""The execution of one registered computation revision, independent of retained data."""
+"""The execution of one computation revision, independent of retained data."""
 struct RecordedExecution
     computation::Computation
-    revision::UInt32
+    revision::UInt
     execution::ComputationExecution
 end

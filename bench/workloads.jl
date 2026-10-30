@@ -1,4 +1,5 @@
 using DataBrowserAPI
+using DataBrowserCache: MemoryStore
 import DataBrowserAPI as API
 import DataBrowserCore.Workspace as Workspace
 using Statistics: median
@@ -42,6 +43,10 @@ Base.@kwdef struct BenchProject <: API.AbstractProject
     processes::Threads.Atomic{Int} = Threads.Atomic{Int}(0)
     analyses::Threads.Atomic{Int} = Threads.Atomic{Int}(0)
 end
+# The cache-hit workload retains both native read and process results for its 128 MiB of tables.
+# Its budget includes those copies and their metadata; eviction has separate coverage.
+API.storage(::BenchProject, ::Type{BenchItem}) = MemoryStore(; max_bytes=512 * 1024^2)
+
 function API.read(project::BenchProject, ::PreparedSource, item::BenchSourceItem)
     Threads.atomic_add!(project.reads, 1)
     return item.item
@@ -154,8 +159,8 @@ function measure_cache(source)
             concurrent_samples = [timed_materialize(ws, selected, PAYLOAD_ROWS) for _ in 1:SELECTION_REPEATS]
             written_items = fetch(bulk)
             bulk = nothing
-            project.processes[] == length(ids) || error("Not every item was processed exactly once")
-            project.analyses[] == length(ids) || error("Not every item was analyzed exactly once")
+            project.processes[] == length(ids) || error("Expected $(length(ids)) process calls, got $(project.processes[])")
+            project.analyses[] == length(ids) || error("Expected $(length(ids)) analyze calls, got $(project.analyses[])")
             Workspace.close_workspace!(ws)
             ws = nothing
             write_s = (time_ns() - started) / 1e9

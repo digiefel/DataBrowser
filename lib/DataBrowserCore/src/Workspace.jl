@@ -113,6 +113,7 @@ import DataBrowserAnnotations.Tags: Tag, TagState, Untagged
 using ..DataBrowserCore: ExpandedItem, expanded_items
 using ..DataBrowserCore: Computation
 using ..DataBrowserCore: invoke_computation
+import ..DataBrowserCore: evaluate_argument, computation_inputs
 using ..DataBrowserCore: ComputationStores, ComputationResult, RecordedExecution
 using DataBrowserAPI: ComputationExecution
 import DataBrowserAPI: last_execution, cache_info
@@ -305,8 +306,8 @@ mutable struct Workspace{P<:AbstractProject}
     wanted::Set{ItemKey}
     # Interactive definitions, and the native result location of each project or interactive call.
     computations::Dict{ItemKey,AbstractDataItem}
-    results::Dict{Target,ComputationResult}
-    executions::Dict{Target,RecordedExecution}
+    results::IdDict{Union{Target,Computation},ComputationResult}
+    executions::IdDict{Union{Target,Computation},RecordedExecution}
     stores::ComputationStores
     # The code that each stage first ran with for each type: its roots, the world they were read
     # in, and their revision. When the revision changes, the results of that stage for that type
@@ -432,8 +433,8 @@ function Workspace(
         Dict{Target,String}(),
         Set{ItemKey}(),
         Dict{ItemKey,AbstractDataItem}(),
-        Dict{Target,ComputationResult}(),
-        Dict{Target,RecordedExecution}(),
+        IdDict{Union{Target,Computation},ComputationResult}(),
+        IdDict{Union{Target,Computation},RecordedExecution}(),
         ComputationStores(),
         Dict{Tuple{PipelineStage,Type},StageCode}(),
         Set{Type}(),
@@ -493,6 +494,7 @@ include("Workspace/Selection.jl")
 include("Workspace/Computed.jl")
 include("Workspace/ComputationStorage.jl")
 include("Workspace/ComputationGraph.jl")
+include("Workspace/ComputationItems.jl")
 include("Workspace/Calls.jl")
 include("Workspace/Processing.jl")
 include("Workspace/MemoryDiagnostics.jl")

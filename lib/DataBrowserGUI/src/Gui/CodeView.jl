@@ -64,7 +64,7 @@ end
 
 function prepare!(view::CodeView, selection::Workspace.Selection, ctx)::Nothing
     previous = 1 <= view.selected <= length(view.rows) ? step_identity(view.rows[view.selected].call) : nothing
-    last_calls = Workspace.calls(ctx.workspace, selection.id)
+    last_calls = Workspace.calls(ctx.workspace, selection)
     # Each call comes after the calls whose results it reads.
     order, seen = Call[], Set{Call}()
     visit(call) = call in seen || (push!(seen, call); foreach(visit, call.inputs); push!(order, call))
@@ -202,6 +202,7 @@ function draw!(view::CodeView, ctx)::Nothing
                         @sprintf("%.3g s", execution.duration)
                     date = replace(string(execution.finished_at), 'T' => ' ')
                     ig.TextUnformatted("Last execution: $duration ($date)")
+                    ig.SetItemTooltip("Elapsed call time, including first-call compilation and waiting on other Julia work. Input evaluation and result storage are excluded.")
                     execution.succeeded || ig.TextUnformatted("Execution failed")
                 end
                 failure = get(call.failed, id, nothing)

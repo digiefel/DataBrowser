@@ -70,10 +70,10 @@ right-aligned, so that their decimal points line up. In a column with numbers sm
 larger than a million, each number is written with a power of ten of its own, a multiple of 3, such
 as `38.990e-9`.
 
-The window passes on the rows the user selected, or all rows when none is selected, as items: each
-item that has some of them, with only those rows and the columns the user selected, or the columns
-the table shows when none is selected. Each is an item of
-the workspace, under "Computed", and has the shape and the type of the item it comes from.
+The window passes on computations for the rows the user selected, or all rows when none is
+selected. Each retains its producing computation and returns the item with only those rows and
+the selected columns, or the columns the table shows when none is selected. These references do
+not add items to the workspace catalog.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
     # The table as it was built, and the table it shows: the same, with the columns in the order the
@@ -193,14 +193,14 @@ function _show!(view::TableView, table::ItemTable, item_column::Bool)::Nothing
     view.selection = nothing
     view.metadata_names = Symbol[]
     # TODO: read each column once rather than each cell, for large tables.
-    view.built_formats = [_number_format(table.getvalue(row, column) for row in 1:table.rows)
+    view.built_formats = @timed_dbg "table.formats" [_number_format(table.getvalue(row, column) for row in 1:table.rows)
                           for column in eachindex(table.columns)]
     view.folded = Set{Int}()
     view.warnings = String[]
     view.grid = DataGridState()
     view.grid_id = "table"
-    _order!(view)
-    _arrange!(view)
+    @timed_dbg "table.order" _order!(view)
+    @timed_dbg "table.arrange" _arrange!(view)
     return nothing
 end
 
@@ -256,7 +256,7 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
             value = something(found)
         end
     end
-    table, warnings = isempty(view.zoom) ?
+    table, warnings = @timed_dbg "table.merge" isempty(view.zoom) ?
         merge_item_tables(selection; item_column=true, metadata, view.unfolded) :
         (value_table(view.zoom_item, value; view.unfolded), String[])
     _show!(view, table, length(table.item_labels) > 1)
@@ -264,7 +264,7 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     view.items = items(selection)
     view.metadata_names = names
     view.warnings = warnings
-    _pass_on!(view)
+    @timed_dbg "table.output" _pass_on!(view)
     types = unique(typeof.(view.items))
     view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
     # A zoomed table keeps column widths of its own.
@@ -693,6 +693,15 @@ end
 
 _exponent_text(exponent::Int)::String = exponent == 0 ? "" : "e$exponent"
 
+# Keep rounding inside a method specialized on the number's concrete type. A mixed column's
+# abstract `Real` elements would otherwise dispatch and allocate for every rounding operation.
+function _number_decimals(number::Real, limit::Int)::Int
+    for digits in 0:limit
+        isapprox(round(number; digits), number; rtol=1e-9) && return digits
+    end
+    return limit
+end
+
 # The format of a column, from its numbers: engineering when a number is smaller than 0.001 or
 # larger than a million, and as many decimals as the most precise number needs, at most 6, or 3 in
 # engineering. `nothing` for a column that holds values other than numbers; `missing` is no value.
@@ -704,15 +713,18 @@ function _number_format(values)::Union{Nothing,NumberFormat}
         isfinite(value) && push!(numbers, value)
     end
     isempty(numbers) && return nothing
+    # Table cells can have different types. Narrow a homogeneous numeric column before doing
+    # its repeated arithmetic, without converting any of its values.
+    return _numeric_format(identity.(numbers))
+end
+
+function _numeric_format(numbers::AbstractVector{<:Real})::NumberFormat
     all(isinteger, numbers) && return (decimals=0, engineering=false, exponent_width=0)
     sizes = [abs(number) for number in numbers if number != 0]
     engineering = minimum(sizes) < 1e-3 || maximum(sizes) >= 1e6
     shown = engineering ? first.(_engineering.(numbers)) : numbers
     limit = engineering ? 3 : 6
-    decimals = maximum(shown) do number
-        something(findfirst(digits -> isapprox(round(number; digits), number; rtol=1e-9), 0:limit),
-            limit + 1) - 1
-    end
+    decimals = maximum(number -> _number_decimals(number, limit), shown)
     exponent_width = engineering ? maximum(length ∘ _exponent_text ∘ last ∘ _engineering, numbers) : 0
     return (; decimals, engineering, exponent_width)
 end

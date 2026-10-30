@@ -48,6 +48,11 @@ _parts(value::AbstractDict) = sort!([string(key) => part for (key, part) in valu
 _is_table(value) = _is_block(value) ? !isempty(value) && all(part -> part isa AbstractVector, values(value)) :
     Tables.istable(value)
 
+# A dictionary can contain table columns even when its declared value type is Any. Present a
+# typed column view rather than asking Tables.jl to interpret that dictionary's declared type.
+_table_columns(value::AbstractDict) = NamedTuple(Symbol(name) => column for (name, column) in _parts(value))
+_table_columns(value) = Tables.columns(value)
+
 """Return display text for one table cell value."""
 function _cell_text(value::Any)::String
     _is_block(value) && return length(value) == 1 ? "1 field" : "$(length(value)) fields"
@@ -70,7 +75,7 @@ function _item_columns(data, unfolded::Set{Vector{String}})
     rows = nothing
     function add!(path, value)
         if rows === nothing && _is_table(value)
-            table = Tables.columns(value)
+            table = _table_columns(value)
             rows = Tables.rowcount(table)
             for name in Tables.columnnames(table)
                 push!(columns, [path; string(name)] => (Tables.getcolumn(table, name), true))
@@ -262,24 +267,13 @@ Base.getindex(table::ItemTable, rows::AbstractVector{Int}, columns::AbstractVect
     (row, col) -> table.spans_item(rows[row], columns[col]),
 )
 
-"""
-    selected_rows(item; rows, columns)
-
-`item` with only some rows and columns of the table that [`merge_item_tables`](@ref) makes of its
-data: `rows` are rows within the item, and `columns` are the paths of the columns. A value that the
-table shows as one cell beside all of the item's rows is kept when its column is, and a block of
-names keeps the names whose columns are kept.
-
-The data keeps its shape, and the item is made again from it with `reconstruct`. An item that its
-type cannot make again, such as a computed item, is a `Group` with the data instead.
-"""
-function selected_rows(item::AbstractDataItem; rows::Vector{Int}, columns::Vector{Vector{String}})
+function _selected_data(data; rows::Vector{Int}, columns::Vector{Vector{String}})
     # The same walk as `_item_columns`: only the first table gives rows. `nothing` drops a value.
     table_found = false
     function cut(path::Vector{String}, value)::Union{Nothing,Some}
         if !table_found && _is_table(value)
             table_found = true
-            table = Tables.columns(value)
+            table = _table_columns(value)
             names = Tuple(name for name in Tables.columnnames(table) if [path; string(name)] in columns)
             return Some(NamedTuple{names}(Tuple(Tables.getcolumn(table, name)[rows] for name in names)))
         elseif path in columns
@@ -299,7 +293,22 @@ function selected_rows(item::AbstractDataItem; rows::Vector{Int}, columns::Vecto
         end
         return nothing
     end
-    data = something(cut(String[], item_data(item)), nothing)
+    return something(cut(String[], data), nothing)
+end
+
+"""
+    selected_rows(item; rows, columns)
+
+`item` with only some rows and columns of the table that [`merge_item_tables`](@ref) makes of its
+data: `rows` are rows within the item, and `columns` are the paths of the columns. A value that the
+table shows as one cell beside all of the item's rows is kept when its column is, and a block of
+names keeps the names whose columns are kept.
+
+The data keeps its shape, and the item is made again from it with `reconstruct`. An item that its
+type cannot make again, such as a computed item, is a `Group` with the data instead.
+"""
+function selected_rows(item::AbstractDataItem; rows::Vector{Int}, columns::Vector{Vector{String}})
+    data = _selected_data(item_data(item); rows, columns)
     given = Dict{Symbol,Any}(metadata(item))
     rebuilt = item isa Group ? nothing : reconstruct(typeof(item), id(item), data, given)
     return something(rebuilt, Group(id(item), given, data, AbstractDataItem[]))
@@ -307,3 +316,13 @@ end
 
 # A selection of rows is named after its item.
 DataBrowserAPI.label(value::Workspace.Computation{typeof(selected_rows)}) = label(only(value.args))
+
+# A prepared computation reference retains provenance while the operation receives the native
+# value. Raw tables use their Tables.jl materializer to keep their table type.
+selected_rows(item::Workspace.ComputationItem; rows::Vector{Int}, columns::Vector{Vector{String}}) =
+    selected_rows(item.value; rows, columns)
+
+function selected_rows(value; rows::Vector{Int}, columns::Vector{Vector{String}})
+    data = _selected_data(value; rows, columns)
+    return _is_table(value) && data !== nothing ? Tables.materializer(value)(data) : data
+end

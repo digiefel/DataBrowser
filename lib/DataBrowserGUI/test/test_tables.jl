@@ -95,3 +95,10 @@ end
     @test isempty(selected_columns(view))
     @test isempty(selected_columns(view; available=true))
 end
+
+@testset "dictionary columns use their values rather than their declared Any type" begin
+    table, warnings = merge_item_tables(selection_of(("stats", Dict{Symbol,Any}(:charge => [1.,2.,3.]), ())))
+    @test isempty(warnings)
+    @test table.rows == 3
+    @test column(table, "charge") == [1., 2., 3.]
+end

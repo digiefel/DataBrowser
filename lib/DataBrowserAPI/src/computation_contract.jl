@@ -44,7 +44,8 @@ function evaluate end
     ComputationExecution
 
 Information about one completed function call, including a call that threw an error. `duration`
-is the elapsed time in seconds, excluding input evaluation and result storage. `finished_at` is
+is the elapsed time in seconds, including compilation and scheduling waits but excluding input
+evaluation and result storage. `finished_at` is
 its local completion date and time; `succeeded` says whether the function returned normally.
 """
 struct ComputationExecution

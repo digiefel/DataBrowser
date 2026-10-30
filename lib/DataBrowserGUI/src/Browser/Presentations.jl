@@ -47,7 +47,7 @@ end
 # still has its own task, and the UI never waits for this lock.
 const PREPARATION_LOCK = ReentrantLock()
 
-function _prepare_presentations!(state::BrowserState, window::Window)::Nothing
+function _prepare_presentations!(state::BrowserState, window::Window; resolve_input::Bool=false)::Nothing
     preparing(window) && return nothing
     window.has_value || return nothing
     saved = _persisted_window(window)
@@ -55,16 +55,23 @@ function _prepare_presentations!(state::BrowserState, window::Window)::Nothing
     unavailable() = error("Browser actions are available from draw! and draw_header!, not prepare!")
     ctx = WindowContext(window.id, state.workspace, _ -> unavailable(), unavailable)
     window.presentation_dirty = false
-    task = Threads.@spawn :default lock(PREPARATION_LOCK) do
+    given, transform = window.value, window.transform
+    task = Threads.@spawn :default begin
         retired = AbstractVisualizer[]
-        error = ""
+        error, failed = "", window.failed
         try
-            Base.invokelatest(_prepare_presentations_value!, window, ctx, retired)
+            if resolve_input
+                window.value, failed = @timed_dbg "window.evaluate" Base.invokelatest(
+                    _resolve_window_input, ctx.workspace, given, transform)
+            end
+            lock(PREPARATION_LOCK) do
+                @timed_dbg "visualizer.prepare" Base.invokelatest(_prepare_presentations_value!, window, ctx, retired)
+            end
         catch err
             error, _ = DataBrowserAPI.report_error(
                 "Window: $name could not show its value", err, catch_backtrace())
         end
-        (; retired, error)
+        (; retired, error, failed)
     end
     window.preparation = WindowPreparation(task, saved, name, size)
     return nothing
@@ -79,6 +86,7 @@ function _finish_preparation!(window::Window)::Bool
     window.preparation = nothing
     foreach(close, result.retired)
     window.error = result.error
+    window.failed = result.failed
     return true
 end
 
@@ -88,7 +96,6 @@ function _finish_closed_windows!(state::BrowserState)::Nothing
         _close_cells!(window)
         close(window.visualizer)
         filter!(other -> other !== window, state.closing_windows)
-        computed!(state, window, String[])
     end
     return nothing
 end

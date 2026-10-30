@@ -15,7 +15,7 @@ argument_id(x::Union{AbstractDataSource,AbstractDataSourceItem}) = id(x)
 argument_id(selection::Selection) = "[" * join(selection.id, ", ") * "]"
 argument_id(xs::Union{AbstractVector,Tuple}) = "[" * join(map(argument_id, xs), ", ") * "]"
 argument_id(x) = repr(x)
-label(value::Computation) = id(value)
+label(value::Computation) = function_name(value.f)
 
 # The ids of the items and the `Computation` values among the arguments, in order.
 reads(value::Computation)::Vector{Union{String,Computation}} = found(value.args)
@@ -89,6 +89,10 @@ end
 
 # The key of `value`, added with the `Computation` values it reads.
 function row!(workspace::Workspace, value::Computation)::ItemKey
+    return @timed_dbg "computation.register" _register_computation!(workspace, value)
+end
+
+function _register_computation!(workspace::Workspace, value::Computation)::ItemKey
     catalog = workspace.catalog
     target = @lock catalog.lock get(catalog.computation_targets, value, nothing)
     existing = item(workspace, id(value))

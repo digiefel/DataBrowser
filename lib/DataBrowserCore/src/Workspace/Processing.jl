@@ -498,7 +498,10 @@ function versions(
     computed = @lock catalog.lock [haskey(workspace.computations, item) for item in items]
     types, native = @lock catalog.lock (
         [valuetype(catalog, item) for item in items],
-        [haskey(workspace.results, (item, ITEM_PROCESS)) for item in items])
+        [haskey(workspace.results, (item, ITEM_PROCESS)) || any(ancestors(workspace, item)) do holder
+            Catalogs.status(catalog, holder, COLLECTION_PROCESS).validity == Catalogs.FRESH &&
+                haskey(workspace.results, (holder, COLLECTION_PROCESS))
+        end for item in items])
     graph = [!iscomputed && (hasnative || result_store(workspace, type) === nothing)
         for (iscomputed, hasnative, type) in zip(computed, native, types)]
     if any(computed) || any(graph)

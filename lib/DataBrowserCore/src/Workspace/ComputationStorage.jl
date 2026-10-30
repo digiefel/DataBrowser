@@ -1,5 +1,4 @@
-# Store selection runs outside the catalog lock. One initialization per item type is shared by
-# workers, and project stores are allowed to perform their own setup here.
+# Store choices belong to native item types. Looking at a node never creates a catalog row.
 function result_store(workspace::Workspace, type::Type{<:AbstractDataItem})
     registry = workspace.stores
     return lock(registry.lock) do
@@ -11,32 +10,68 @@ end
 
 keeps_result(workspace::Workspace, value) = result_store(workspace, result_item_type(value)) !== nothing
 
-function result_item(workspace::Workspace, catalog::Catalog, target::Target, result)
-    result isa AbstractDataItem && return result
-    key = first(target)
-    identity, title, given = @lock catalog.lock begin
-        workspace.catalog === catalog && key in catalog || return nothing
-        identity = id(catalog, key)
-        title = key isa SourceKey ? identity : label(catalog, key)
-        given = MetadataDict()
-        if key isa ItemKey && haskey(workspace.computations, key)
-            inputs = Catalogs.inputs(catalog, key)
-            length(inputs) == 1 && only(inputs) isa ItemKey && (given = metadata(workspace, only(inputs)))
-        end
-        identity, title, merge(given, parts(result))
+computation_address(catalog::Catalog, value::Computation) =
+    get(catalog.computation_targets, value, value)
+
+# Stage revisions already follow their dependencies. A new operation follows the revisions of
+# its input nodes and the Julia definitions it can call, without becoming an indexed data item.
+function computation_revision(catalog::Catalog, value::Computation)
+    address = computation_address(catalog, value)
+    if address isa Target
+        address = resolve_target(catalog, address)
+        address === nothing && return nothing
+        return hash((address, Catalogs.status(catalog, address...).revision))
     end
-    return ResultItem(identity, title, Dict{Symbol,Any}(given), result)
+    revision = hash(Base.get_world_counter())
+    for input in inputs(value)
+        current = computation_revision(catalog, input)
+        current === nothing && return nothing
+        revision = hash(current, revision)
+    end
+    return revision
 end
 
-# Capture the revision before invoking project code. A result of an older revision cannot replace
-# the result of a newer call, even when both calls finish at the same time.
+function computation_identity(workspace::Workspace, value::Computation)
+    catalog = workspace.catalog
+    return @lock catalog.lock begin
+        address = computation_address(catalog, value)
+        if address isa Target
+            key, stage = current_target(workspace, address)
+            title = key isa SourceKey ? id(catalog, key) : label(catalog, key)
+            return string(stage, ':', nameof(typeof(key)), ':', id(catalog, key)), title
+        end
+        title = label(value)
+        if length(value.args) == 1 && only(value.args) isa Computation
+            _, input_title = computation_identity(workspace, only(value.args))
+            title *= "(" * input_title * ")"
+        end
+        string("computation:", objectid(value)), title
+    end
+end
+
+function result_item(workspace::Workspace, catalog::Catalog, value::Computation, args::Tuple, result)
+    result isa AbstractDataItem && return result
+    workspace.catalog === catalog || return nothing
+    identity, title = computation_identity(workspace, value)
+    address = computation_address(catalog, value)
+    given = MetadataDict()
+    if address isa Target
+        key = first(address)
+        if key isa ItemKey && haskey(workspace.computations, key)
+            read = Catalogs.inputs(catalog, key)
+            length(read) == 1 && only(read) isa ItemKey && (given = metadata(workspace, only(read)))
+        end
+    elseif length(args) == 1 && only(args) isa AbstractDataItem
+        given = metadata_dict(metadata(only(args)))
+    end
+    return ResultItem(identity, title, Dict{Symbol,Any}(merge(given, parts(result))), result)
+end
+
 function execute(workspace::Workspace, value::Computation, args::Tuple)
     catalog = workspace.catalog
-    started = @lock catalog.lock begin
-        target = get(catalog.computation_targets, value, nothing)
-        target === nothing ? nothing : (target, Catalogs.status(catalog, target...).revision)
-    end
-    started === nothing && return invoke_computation(value, args)
+    address, revision = @lock catalog.lock (
+        computation_address(catalog, value), computation_revision(catalog, value))
+    revision === nothing && error("A computation input was removed")
     beginning = time_ns()
     succeeded = false
     result = try
@@ -44,26 +79,21 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
         succeeded = true
         output
     finally
-        duration = (time_ns() - beginning) / 1.0e9
-        execution = ComputationExecution(duration, now(), succeeded)
-        record_execution!(workspace, catalog, value, started, execution)
+        execution = ComputationExecution((time_ns() - beginning) / 1.0e9, now(), succeeded)
+        @lock catalog.lock if current_execution(workspace, catalog, value, revision)
+            workspace.executions[address] = RecordedExecution(value, revision, execution)
+        end
     end
-    target, revision = started
-    item = result_item(workspace, catalog, target, result)
+    item = result_item(workspace, catalog, value, args, result)
     item === nothing && return result
-    type = typeof(item)
-    store = result_store(workspace, type)
-    key = string(objectid(catalog), '/', typeof(first(target)), '/', first(target).index,
-        '/', last(target), '/', revision)
-    stored = ComputationResult(value, revision, typeof(result), type, store, key)
+    store = result_store(workspace, typeof(item))
+    key = string(objectid(catalog), '/', objectid(value), '/', revision)
+    stored = ComputationResult(value, revision, typeof(result), typeof(item), store, key, Dict{Symbol,Any}(deepcopy(metadata(item))))
     store === nothing || write(store, key, deepcopy(item))
     kept, previous = @lock catalog.lock begin
-        current = get(catalog.computation_targets, value, nothing)
-        if workspace.catalog === catalog && !workspace.stopping && !workspace.closed &&
-                current == target && first(target) in catalog &&
-                Catalogs.status(catalog, target...).revision == revision
-            previous = get(workspace.results, target, nothing)
-            workspace.results[target] = stored
+        if current_execution(workspace, catalog, value, revision)
+            previous = get(workspace.results, address, nothing)
+            workspace.results[address] = stored
             true, previous
         else
             false, nothing
@@ -77,29 +107,32 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     return result
 end
 
+current_execution(workspace, catalog, value, revision) =
+    workspace.catalog === catalog && !workspace.stopping && !workspace.closed &&
+    computation_revision(catalog, value) == revision
+
 function stored_result(value::ComputationResult)
     value.store === nothing && return nothing
     haskey(value.store, value.key) || return nothing
     try
-        item = read(value.store, value.item_type, value.key)
+        item = @timed_dbg "result.read" read(value.store, value.item_type, value.key)
         return Some(value.value_type <: AbstractDataItem ? item : item_data(item))
     catch error
-        # A bounded store may have evicted the entry between the presence check and the read.
         error isa KeyError && isequal(error.key, value.key) || rethrow()
         return nothing
     end
 end
 
-function forget_result!(workspace::Workspace, target::Target)
-    delete!(workspace.executions, target)
-    value = pop!(workspace.results, target, nothing)
+function forget_result!(workspace::Workspace, address)
+    delete!(workspace.executions, address)
+    value = pop!(workspace.results, address, nothing)
     value === nothing || value.store === nothing || delete!(value.store, value.key)
     return nothing
 end
 
 function forget_results!(workspace::Workspace)
-    for target in union(keys(workspace.results), keys(workspace.executions))
-        forget_result!(workspace, target)
+    for address in union(keys(workspace.results), keys(workspace.executions))
+        forget_result!(workspace, address)
     end
     return nothing
 end
@@ -111,48 +144,34 @@ function forget_results!(workspace::Workspace, key::RowKey)
     return nothing
 end
 
-function record_execution!(workspace::Workspace, catalog::Catalog, value::Computation, started,
-    execution::ComputationExecution)
-    target, revision = started
-    @lock catalog.lock begin
-        workspace.catalog === catalog && !workspace.stopping && !workspace.closed &&
-            get(catalog.computation_targets, value, nothing) == target && first(target) in catalog &&
-            Catalogs.status(catalog, target...).revision == revision || return nothing
-        workspace.executions[target] = RecordedExecution(value, revision, execution)
-    end
-    return nothing
-end
-
 function last_execution(workspace::Workspace, value::Computation)
     catalog = workspace.catalog
     @lock catalog.lock begin
-        target = get(catalog.computation_targets, value, nothing)
-        target === nothing && return nothing
-        first(target) in catalog || return nothing
-        recorded = get(workspace.executions, target, nothing)
+        recorded = get(workspace.executions, computation_address(catalog, value), nothing)
         recorded === nothing && return nothing
-        recorded.computation === value &&
-            recorded.revision == Catalogs.status(catalog, target...).revision || return nothing
+        recorded.computation === value && recorded.revision == computation_revision(catalog, value) || return nothing
         return recorded.execution
     end
 end
 
 function cache_info(workspace::Workspace, value::Computation)
     catalog = workspace.catalog
-    target, record = @lock catalog.lock begin
-        target = get(catalog.computation_targets, value, nothing)
-        if target === nothing || !(first(target) in catalog) ||
-                Catalogs.status(catalog, target...).validity != Catalogs.FRESH
+    address, record = @lock catalog.lock begin
+        address = computation_address(catalog, value)
+        if workspace.closed || computation_revision(catalog, value) === nothing ||
+                address isa Target && Catalogs.status(catalog, address...).validity != Catalogs.FRESH
             return (cached=false, bytes=nothing)
         end
-        target, get(workspace.results, target, nothing)
+        address, get(workspace.results, address, nothing)
     end
     if record !== nothing
-        record.computation === value && record.store !== nothing || return (cached=false, bytes=nothing)
+        record.computation === value && record.revision == computation_revision(catalog, value) &&
+            record.store !== nothing || return (cached=false, bytes=nothing)
         cached = haskey(record.store, record.key)
         return (cached=cached, bytes=cached ? DataBrowserAPI.stored_size(record.store, record.key) : nothing)
     end
-    key, stage = target
+    address isa Target || return (cached=false, bytes=nothing)
+    key, stage = address
     cached = if key isa SourceKey && stage == SOURCE_READ
         has_payload(workspace.cache.db, cache_key(workspace, key))
     elseif key isa ItemKey && stage == ITEM_PROCESS && !haskey(workspace.computations, key)

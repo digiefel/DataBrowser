@@ -33,6 +33,29 @@ before it through `inputs`. Items whose calls run the same code, on results made
 share them.
 """
 function calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{Call}
+    definitions = Computation[]
+    for id in ids
+        key = item(workspace, id)
+        key === nothing && continue
+        push!(definitions, computation(workspace, key))
+        for holder in ancestors(workspace, key)
+            Catalogs.status(workspace.catalog, holder, COLLECTION_ANALYZE).absent && continue
+            push!(definitions, computation(workspace, holder, COLLECTION_ANALYZE))
+        end
+    end
+    return calls(workspace, definitions)
+end
+
+"""The calls producing a selection, including unindexed computation results."""
+function calls(workspace::Workspace, selection::Selection)
+    # Catalog selections also expose collection analyses, which contribute metadata without
+    # replacing the item's value. A selection of view results follows its own node references.
+    getfield(selection.data, :workspace) === workspace && return calls(workspace, selection.id)
+    return calls(workspace, Computation[computation(selection, i) for i in eachindex(selection)])
+end
+
+"""Inspect computation references without evaluating them or adding catalog entries."""
+function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})::Vector{Call}
     # The calls made so far, by their code and inputs; the same code on the same inputs is one call.
     known = Dict{Tuple{String,Any,Vector{UInt}},Call}()
     # The call of `code` on `inputs`, which ran for the item `x` with the key `key` in the errors.
@@ -55,7 +78,19 @@ function calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vec
         haskey(visited, value) && return visited[value]
         target = @lock workspace.catalog.lock get(workspace.catalog.computation_targets, value, nothing)
         preceding = unique!(reduce(vcat, map(calls_of, inputs(value)); init=Call[]))
-        target === nothing && return (visited[value] = preceding)
+        if target === nothing
+            parentmodule(typeof(value.f)) === (@__MODULE__) && return (visited[value] = preceding)
+            title, code = function_name(value.f), which(value)
+            made = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding),
+                known, (title, code, map(objectid, preceding)))
+            identity, description = computation_identity(workspace, value)
+            made.items[identity] = description
+            made.computations[identity] = value
+            stored = get(workspace.results, value, nothing)
+            inferred = stored === nothing ? Base.infer_return_type(value.f, argument_types(value)) : stored.value_type
+            inferred === Any || (made.result = made.result === nothing ? inferred : typejoin(made.result, inferred))
+            return (visited[value] = Call[made])
+        end
         key, stage = target
         key in workspace.catalog || return (visited[value] = preceding)
         derived = key isa ItemKey ? get(workspace.computations, key, nothing) : nothing
@@ -77,17 +112,7 @@ function calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vec
         end
         return (visited[value] = Call[made])
     end
-    found = Call[]
-    for id in ids
-        key = item(workspace, id)
-        key === nothing && continue
-        append!(found, calls_of(computation(workspace, key)))
-        for holder in ancestors(workspace, key)
-            Catalogs.status(workspace.catalog, holder, COLLECTION_ANALYZE).absent && continue
-            which(workspace.project, COLLECTION_ANALYZE, valuetype(workspace, holder)) === nothing && continue
-            append!(found, calls_of(computation(workspace, holder, COLLECTION_ANALYZE)))
-        end
-    end
+    found = reduce(vcat, map(calls_of, definitions); init=Call[])
     unique!(found)
     preceding = Set{Call}()
     visit(call) = call in preceding || (push!(preceding, call); foreach(visit, call.inputs))

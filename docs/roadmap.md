@@ -715,6 +715,9 @@ payload they are given rather than learning special pipeline logic.
   independently of retained data. Expose these records without evaluating or loading results.
 - [ ] Replace fixed-stage input preparation, scheduling and cache addressing with the computation
   runtime and add native restoration across workspace openings.
+- [x] Evaluate visualizer computation references in background preparation without creating catalog
+  entries. Share type-selected caching and input-revision checks for unindexed graph nodes.
+- [x] Return Recipes `read` callback values unchanged; resolve their registration during expansion.
 - [x] Make Code selection output the selected computation through normal visualizer composition.
   Show step information below the list, including `Last execution: duration (date)` and cache usage.
 

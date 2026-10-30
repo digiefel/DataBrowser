@@ -118,52 +118,32 @@ function label(project::Project, item::RegisteredDataItem{K})::String where {K}
 end
 
 """
-Run the matching registration's `read` callback, tagging its result with the registration name.
-
-Detection happens here rather than in a pipeline stage of its own: `read` runs for every changed
-source item anyway, and `detect` costs filename-predicate time. A source item matching no
-registration yields `NoMatch`, whose `expand` produces no items.
+Run the matching registration's `read` callback and return its value unchanged. Expansion has
+its source item and resolves its registration there; no recipe tag is attached to user data.
 """
 function read(project::Project, ::AbstractDataSource, item::AbstractDataSourceItem)
     recipe = @timed_dbg _detect_recipe(project, item)
-    recipe === nothing && return NoMatch()
+    recipe === nothing && return nothing
     return @timed_dbg "read" _invoke_read(recipe, item)
 end
 
-"""Function barrier: the concrete recipe specializes the callback call and result construction."""
-function _invoke_read(recipe::ItemRecipe, item::AbstractDataSourceItem)
-    data, read_metadata = _data_and_metadata(recipe.read(item))
-    return RegisteredReadResult{recipe.kind}(data, read_metadata)
+_invoke_read(recipe::ItemRecipe, item::AbstractDataSourceItem) = recipe.read(item)
+
+function expand(project::Project, source_item::AbstractDataSourceItem, loaded)::Vector{AbstractDataItem}
+    recipe = @timed_dbg _detect_recipe(project, source_item)
+    recipe === nothing && return AbstractDataItem[]
+    return @timed_dbg "expand" _expand_recipe(recipe, source_item, loaded)
 end
 
-expand(::Project, ::AbstractDataSourceItem, ::NoMatch)::Vector{AbstractDataItem} =
-    AbstractDataItem[]
-
-"""
-Expand one registration's read result into its data items.
-
-The source item is still in hand because identity is not payload: collection defaults and inherited
-metadata derive from it, while the loaded value stays purely the expensive data.
-"""
-function expand(
-    project::Project,
-    source_item::AbstractDataSourceItem,
-    loaded::RegisteredReadResult{K},
-)::Vector{AbstractDataItem} where {K}
-    recipe = _recipe(project, K)
-    recipe === nothing && error("Missing registration $K")
-    inherited_metadata = merge(metadata_dict(metadata(source_item)), loaded.metadata)
-    return @timed_dbg "expand" begin
-        values = recipe.expand === nothing ? Any[loaded.data] :
-            recipe.expand(loaded.data, inherited_metadata)
-        values isa AbstractVector || error(
-            "expand callback for registration $K must return a vector; got $(typeof(values))",
-        )
-        AbstractDataItem[
-            _registered_item(recipe, value, inherited_metadata, id(source_item), position)
-            for (position, value) in pairs(values)
-        ]
-    end
+function _expand_recipe(recipe::ItemRecipe, source_item::AbstractDataSourceItem, loaded)
+    data, read_metadata = _data_and_metadata(loaded)
+    inherited_metadata = merge(metadata_dict(metadata(source_item)), read_metadata)
+    values = recipe.expand === nothing ? Any[data] : recipe.expand(data, inherited_metadata)
+    values isa AbstractVector || error(
+        "expand callback for registration $(recipe.kind) must return a vector; got $(typeof(values))")
+    return AbstractDataItem[
+        _registered_item(recipe, value, inherited_metadata, id(source_item), position)
+        for (position, value) in pairs(values)]
 end
 
 
@@ -302,6 +282,6 @@ function analyze(project::Project, item::RegisteredDataItem{K})::Dict{Symbol,Any
     recipe = _recipe(project, K)
     recipe === nothing && error("Missing registration $K")
     recipe.analyze === nothing && return Dict{Symbol,Any}()
-    return metadata_dict(recipe.analyze(item_data(item), metadata(item)))
+    return @timed_dbg "recipe.analyze" metadata_dict(recipe.analyze(item_data(item), metadata(item)))
 end
 

@@ -17,6 +17,7 @@ include("fixtures/code_project.jl")
         view = code.visualizer
         @test [row.call.title for row in view.rows] == ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "analyze(::CodeSignal)"]
         before = (project.reads[], project.processes[])
+        indexed_before = Workspace.query_items(workspace)
         select_step!(view, 1)
         chosen = output(code)
         @test chosen === output(code)
@@ -45,6 +46,7 @@ include("fixtures/code_project.jl")
         select_step!(view, 4)
         @test ready(linked)
         @test only(linked.visualizer.values) == Dict(:total => 60)
+        @test Workspace.query_items(workspace) == indexed_before
         close_window!(state, linked)
         close_window!(state, code)
     finally

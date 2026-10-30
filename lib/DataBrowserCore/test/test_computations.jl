@@ -194,6 +194,16 @@ DataBrowserAPI.read(::VectorValueProject, ::ComputationSource, ::ComputationFile
 end
 
 struct GroupComputationProject <: AbstractProject end
+struct GroupedComputationItem <: AbstractDataItem
+    name::String
+    data::NamedTuple
+    metadata::Dict{Symbol,Any}
+end
+DataBrowserAPI.id(value::GroupedComputationItem) = value.name
+DataBrowserAPI.item_data(value::GroupedComputationItem) = value.data
+DataBrowserAPI.metadata(value::GroupedComputationItem) = value.metadata
+DataBrowserAPI.reconstruct(::Type{GroupedComputationItem}, id::AbstractString, data, metadata::Dict) =
+    GroupedComputationItem(String(id), data, metadata)
 DataBrowserAPI.project_name(::GroupComputationProject) = "group-computation-graph"
 DataBrowserAPI.read(::GroupComputationProject, source::ComputationSource, file::ComputationFile) =
     read(ComputationProject(), source, file)
@@ -204,7 +214,7 @@ DataBrowserAPI.process(::GroupComputationProject, value::ComputationItem) =
 DataBrowserAPI.analyze(::GroupComputationProject, value::ComputationItem) =
     analyze(ComputationProject(), value)
 DataBrowserAPI.process(::GroupComputationProject, ::ComputationCollection, values::AbstractVector) =
-    [ComputationItem(id(value), (signal=value.data.signal .* 3,),
+    [GroupedComputationItem(id(value), (signal=value.data.signal .* 3, members=fill(length(values), length(value.data.signal))),
         merge(metadata(value), Dict(:grouped => true))) for value in values]
 
 @testset "collection computations replay the values supplied to views" begin
@@ -220,6 +230,28 @@ DataBrowserAPI.process(::GroupComputationProject, ::ComputationCollection, value
         @test metadata(result) == metadata(supplied)
     finally
         CW.close_workspace!(workspace)
+    end
+end
+
+@testset "reopening supplies native collection outputs with a different item type" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            for _ in 1:2
+                workspace = CW.open_workspace(GroupComputationProject(), ComputationSource(); background_processing=true)
+                try
+                    CW.wait_workspace_idle!(workspace)
+                    value = only(materialize_items(workspace, ["sample"]))
+                    @test value isa GroupedComputationItem
+                    @test value.data.signal == [6, 12, 18]
+                    @test value.data.members == [1, 1, 1]
+                finally
+                    CW.close_workspace!(workspace)
+                end
+            end
+        finally
+            popfirst!(DEPOT_PATH)
+        end
     end
 end
 
@@ -344,5 +376,67 @@ DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueIte
         finally
             CW.close_workspace!(workspace)
         end
+    end
+end
+
+@testset "evaluating a new computation caches its result without indexing it" begin
+    workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
+    try
+        CW.wait_workspace_idle!(workspace)
+        before = query_items(workspace)
+        count = Ref(0)
+        value = Computation(x -> (count[] += 1; x + 1), 4)
+        @test evaluate(workspace, value) == 5
+        @test evaluate(workspace, value) == 5
+        @test count[] == 1
+        @test cache_info(workspace, value).cached
+        @test last_execution(workspace, value).succeeded
+        selected = CW.select(workspace, [value])
+        @test collect(selected.data) == [5]
+        @test computation(selected, 1) === value
+        @test query_items(workspace) == before
+    finally
+        CW.close_workspace!(workspace)
+    end
+end
+
+@testset "unindexed computations follow changes to their inputs" begin
+    mktempdir() do root
+        path = joinpath(root, "signal.dat")
+        write(path, "1 2")
+        workspace = CW.open_workspace(ReplayProject(), DirectorySource(root); cache=false, background_processing=true)
+        try
+            CW.wait_workspace_idle!(workspace)
+            before = query_items(workspace)
+            source = computation(workspace, "vector")
+            value = Computation(item -> sum(item.data), source)
+            @test only(CW.select(workspace, [value]).data) == 6.0
+            write(path, "3 4")
+            current() = try
+                only(CW.select(workspace, [value]).data) == 14.0
+            catch
+                false
+            end
+            @test timedwait(current, 60) === :ok
+            @test query_items(workspace) == before
+        finally
+            CW.close_workspace!(workspace)
+        end
+    end
+end
+
+unindexed_increment(value) = value + 1
+DataBrowserAPI.id(::Computation{typeof(unindexed_increment)}) = error("Evaluating a node must not print its identity")
+@testset "consuming a node needs no browsable identity" begin
+    workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
+    try
+        CW.wait_workspace_idle!(workspace)
+        before = query_items(workspace)
+        value = Computation(unindexed_increment, 5)
+        @test only(CW.select(workspace, [value]).data) == 6
+        @test query_items(workspace) == before
+        @test cache_info(workspace, value).cached
+    finally
+        CW.close_workspace!(workspace)
     end
 end

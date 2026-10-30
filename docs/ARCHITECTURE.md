@@ -179,8 +179,13 @@ changes, its items are removed and added again with new keys: a computed item th
 and reads the new item with the same id. Computed results stay in memory and are not saved in the
 cache. A plot's fit adds one computed item for each group of its points; the id of the item is the
 code that gives its result, so a plot drawn again with other visuals finds its results unchanged.
-A window that passes its value through a function adds one computed item for each item of its
-input, and removes them when no window uses them any more.
+Adding a computation with `push!(workspace, computation)` creates an indexed computed item.
+Viewing a computation is separate: windows hold references to nodes and evaluate them in their
+background preparation task. They do not create or remove catalog rows.
+
+Recipes return each `read` callback's value unchanged. `expand` already receives the source item,
+so it resolves the matching recipe and separates an explicit `(data=..., metadata=...)` callback
+result there. Recipe selection does not require a transport carrier around the read data.
 
 Project calls and interactive operations share the `Computation` definition in DataBrowserAPI:
 a function, arguments and settings. `computation(workspace, item)` describes the value supplied
@@ -197,21 +202,25 @@ item type. Complete results are copied when written and when supplied from stora
 
 `last_execution(workspace, computation)` reports a completed call's duration, completion date and
 whether it returned normally. It reads recorded information without loading stored data. Timing
-covers the function call, excluding input evaluation and result storage; a cache hit does not
+covers elapsed function-call time, including compilation and scheduling waits, and excludes input
+evaluation and result storage; a cache hit does not
 replace the last execution. The record belongs to the current computation revision and workspace
 opening. `cache_info(workspace, computation)` checks availability without loading the result;
 its `bytes` field uses the store's optional `stored_size` report.
 
 Code displays these computations as selectable rows. Each row retains the actual computations
 for its items, and selection passes those definitions through `output`. Linked windows use the
-same computed-item path as table selections. Computed-item dependencies name the exact producing
-row and stage, so exposing an earlier call reuses its retained result instead of registering
-copies of its input graph. Source ownership is recorded separately from these dependencies.
+same reference-evaluation path as table selections. `ComputationItem` keeps a prepared native
+value with its origin; `item_data` exposes its payload, and `computation` follows its origin.
+Scientific transforms receive the native result of the preceding call. Neither selection nor
+window refresh registers a browsable item or builds an identity by printing the input graph.
 
 Project steps and interactive computations share these result records and storage operations.
 Interactive computations evaluate their input graph directly, replacing their former separate
-input-filling and result dictionaries. Results from stale work are discarded; invalidation,
-removal and closing release the workspace's stored results. Store keys currently identify a
+input-filling and result dictionaries. Unindexed nodes use the same type-selected stores and
+execution records as scheduled project calls. Their input revisions invalidate their cached results.
+Results from stale work are discarded, and invalidated results are not reused. Replacing a result
+or closing the workspace releases its stored value. Store keys currently identify a
 computation revision within one workspace opening; native restoration across openings is pending.
 
 The scheduler, publication jobs and cache addressing still use the fixed stages described below.
