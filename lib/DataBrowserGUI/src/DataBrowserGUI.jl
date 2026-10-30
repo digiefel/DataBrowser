@@ -15,7 +15,6 @@ export CodeFile
 include("CodeText.jl")
 
 include("TableModel.jl")
-export TableSelection
 include("Browser.jl")
 
 using .Browser: open_browser, close_browser!, BrowserSession, gui_timings, reset_timings!
