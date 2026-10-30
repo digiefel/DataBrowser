@@ -87,6 +87,8 @@ These are not yet agreed.
   built in, so it starts fast and needs no Julia installation. The desktop GUI is this app; the
   Python package downloads it on first use and starts it in the background when none is running.
   It must keep the full Julia compiler, because it loads and compiles the project's Julia code.
+  A stand-in app built with PackageCompiler compiles new code and installs packages
+  ([check](../../work/runtime-app-check/README.md)).
 - **A boundary test:** a check that fails when the GUI uses a Core name that is not public.
 
 ## Open questions
