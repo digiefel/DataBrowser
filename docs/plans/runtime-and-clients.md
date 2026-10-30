@@ -37,6 +37,15 @@ implemented.
    a third party could use. Bundling decides which modules ship by default.
 10. **Light to compile and load.** Heavy dependencies stay with the feature that needs them. A client
     that connects to a running runtime does not pay its loading time again.
+11. **None of Jupyter's failures.** Each one below has the requirement that prevents it:
+
+    | Jupyter failure | Requirement here |
+    | --- | --- |
+    | Each frontend (Notebook, Lab, VS Code, Colab) reimplements output and widget support, so the same output works in one and breaks in another, and users pick plot "backends" per frontend | One contract per kind of client, owned by this project and checked by tests. A client either draws a visualizer or shows its declared fallback; it never shows it partly broken. |
+    | Widgets were added on top of the output model later; Python and JavaScript widget versions must match | Synchronized state (settings, output, selection) is the base of the protocol, versioned with it. |
+    | Every output is styled on its own, so a notebook does not look like one application | The client gives every visualizer one theme. Visualizers use it and do not bring their own. |
+    | Hidden state: cells run in any order, so the shown results may not follow from the shown code | Results follow from the dependency graph; what is shown always says which code and inputs produced it. |
+    | Notebooks are JSON files with outputs inside, hard to diff and review | Work is plain source files; results are stored apart from code. |
 
 ## Decided
 
