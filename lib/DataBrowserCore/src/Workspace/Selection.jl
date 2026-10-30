@@ -27,7 +27,6 @@ is an error when its type cannot be made from that part.
 Base.view(item::AbstractDataItem, selection) = made_again(item, view(item_data(item), selection))
 Base.getindex(item::AbstractDataItem, selection) = made_again(item, item_data(item)[selection])
 
-# TODO: decide how a part that its type cannot hold fails; for now a plain error.
 function made_again(item::AbstractDataItem, data)
     made = reconstruct(typeof(item), id(item), data, Dict{Symbol,Any}(metadata(item)))
     made === nothing && error("$(typeof(item)) has no reconstruct method for part of its data")
