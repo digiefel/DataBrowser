@@ -425,6 +425,24 @@ end
     end
 end
 
+const code_calls = Ref(0)
+code_increment(value) = (code_calls[] += 1; value + 1)
+@testset "an unindexed computation is computed again when its code changes, and only then" begin
+    workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
+    try
+        CW.wait_workspace_idle!(workspace)
+        value = Computation(code_increment, 4)
+        @test evaluate(workspace, value) == 5
+        @eval unrelated_definition() = 1
+        @test evaluate(workspace, value) == 5
+        @test code_calls[] == 1
+        @eval code_increment(value) = (code_calls[] += 1; value + 2)
+        @test evaluate(workspace, value) == 6
+    finally
+        CW.close_workspace!(workspace)
+    end
+end
+
 unindexed_increment(value) = value + 1
 DataBrowserAPI.id(::Computation{typeof(unindexed_increment)}) = error("Evaluating a node must not print its identity")
 @testset "consuming a node needs no browsable identity" begin

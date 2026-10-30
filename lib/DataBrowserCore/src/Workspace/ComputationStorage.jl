@@ -22,13 +22,24 @@ function computation_revision(catalog::Catalog, value::Computation)
         address === nothing && return nothing
         return hash((address, Catalogs.status(catalog, address...).revision))
     end
-    revision = hash(Base.get_world_counter())
+    revision = hash(code_hash(value.f))
     for input in inputs(value)
         current = computation_revision(catalog, input)
         current === nothing && return nothing
         revision = hash(current, revision)
     end
     return revision
+end
+
+# The revision of the code that `f` reaches. It is followed again only after a method was defined,
+# so the known revisions belong to one world.
+const CODE_HASHES = (lock=ReentrantLock(), world=Ref(UInt(0)), hashes=IdDict{Any,String}())
+function code_hash(f)::String
+    world = Base.get_world_counter()
+    @lock CODE_HASHES.lock begin
+        CODE_HASHES.world[] == world || (empty!(CODE_HASHES.hashes); CODE_HASHES.world[] = world)
+        return get!(() -> code_revision(Any[f]).hash, CODE_HASHES.hashes, f)
+    end
 end
 
 function computation_identity(workspace::Workspace, value::Computation)
