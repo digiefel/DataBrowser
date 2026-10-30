@@ -14,8 +14,27 @@ id(group::Group) = group.id
 metadata(group::Group) = group.metadata
 item_data(group::Group) = group.data
 DataBrowserAPI.members(group::Group) = group.members
-# Part of a group's data is the group of the same members.
-DataBrowserAPI.part(group::Group, data) = Group(group.id, group.metadata, data, group.members)
+
+"""
+    view(item, selection)
+    item[selection]
+
+The part of `item` that `selection` chooses in its data, such as the rows a table window selected:
+`view` holds views of the data, and `getindex` copies of only that part. The item is made again with
+`reconstruct` of its type, whose field types decide whether it keeps the views or copies them. It
+is an error when its type cannot be made from that part.
+"""
+Base.view(item::AbstractDataItem, selection) = made_again(item, view(item_data(item), selection))
+Base.getindex(item::AbstractDataItem, selection) = made_again(item, item_data(item)[selection])
+
+# TODO: decide how a part that its type cannot hold fails; for now a plain error.
+function made_again(item::AbstractDataItem, data)
+    made = reconstruct(typeof(item), id(item), data, Dict{Symbol,Any}(metadata(item)))
+    made === nothing && error("$(typeof(item)) has no reconstruct method for part of its data")
+    return made
+end
+# A group keeps its members, which are not part of its data.
+made_again(group::Group, data) = Group(group.id, group.metadata, data, group.members)
 
 """
 The data of each item, or a value inside it, read from the cache only when the vector is indexed.

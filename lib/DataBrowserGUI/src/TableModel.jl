@@ -1,7 +1,7 @@
 using Tables
 
 import DataBrowserAPI
-using DataBrowserAPI: AbstractDataItem, id, item_data, items, label, metadata, part
+using DataBrowserAPI: AbstractDataItem, id, item_data, items, label, metadata
 using DataBrowserCore: Selection
 
 """
@@ -277,8 +277,7 @@ is, and a block of names keeps the names whose columns are kept.
 
 `view(value, s)` gives views of the selected rows, and `value[s]` copies of them. The data keeps its
 shape, except the table that gives the rows: its view is a named tuple of column views, and its copy
-a table of its own type. An item is made again from that part of its data with
-[`part`](@ref DataBrowserAPI.part).
+a table of its own type. An item is made again from that part of its data.
 """
 struct TableSelection
     rows::Vector{Int}
@@ -287,11 +286,11 @@ end
 
 Base.view(value, s::TableSelection) = _selected(value, s, view)
 Base.getindex(value, s::TableSelection) = _selected(value, s, getindex)
-# Julia's own methods for arrays would otherwise take these.
+# Julia's methods for arrays, and the workspace's for items, would otherwise also take these.
 Base.view(value::AbstractArray, s::TableSelection) = _selected(value, s, view)
 Base.getindex(value::AbstractArray, s::TableSelection) = _selected(value, s, getindex)
-Base.view(item::AbstractDataItem, s::TableSelection) = part(item, view(item_data(item), s))
-Base.getindex(item::AbstractDataItem, s::TableSelection) = part(item, item_data(item)[s])
+Base.view(item::AbstractDataItem, s::TableSelection) = invoke(view, Tuple{AbstractDataItem,Any}, item, s)
+Base.getindex(item::AbstractDataItem, s::TableSelection) = invoke(getindex, Tuple{AbstractDataItem,Any}, item, s)
 
 # The selected part of `data`, with `take`, `view` or `getindex`, over the same walk as
 # `_item_columns`: only the first table gives rows. `nothing` drops a value.

@@ -191,32 +191,10 @@ The browser reads the output in every frame, and hands it to the other window wh
 object than before. Keep the output in a field and return that field; replace the object when the
 output changes.
 While preparation owns the instance, output reads and updates to linked windows pause.
+
+An output that is part of what the visualizer shows, such as the rows the user selected, is a view:
+`Computation(view, computation(selection, i), s)` for each item `i`, with a selection type `S` of the
+visualizer's own and methods `view(data, s::S)` and `getindex(data, s::S)` for the data it shows.
 """
 output(::AbstractVisualizer) = nothing
 
-"""
-    part(item, data) -> item
-
-`item` with `data` in place of its own data, such as some of its rows: the item that
-`reconstruct` makes of its type with its id, `data` and its metadata. It is an error when the type
-cannot be made from `data`. A type whose item holds more than its data, such as the members of a
-`Group`, has a method of its own.
-
-A visualizer whose output is part of what it shows, such as the rows the user selected, has a
-selection type `S` of its own. `view(value, s::S)` gives views of the selected part of any value it
-shows, and `value[s]` copies of only that part. The methods for items make the item again from that
-part of its data:
-
-    Base.view(item::AbstractDataItem, s::S) = part(item, view(item_data(item), s))
-    Base.getindex(item::AbstractDataItem, s::S) = part(item, item_data(item)[s])
-
-Its output is then `Computation(view, computation(selection, i), s)` for each item `i`. A project
-needs nothing for this beyond `reconstruct`: the field types of its items decide whether they hold
-the views or copies of them.
-"""
-function part(item::AbstractDataItem, data)
-    made = reconstruct(typeof(item), id(item), data, Dict{Symbol,Any}(metadata(item)))
-    made === nothing && error("An item of type $(typeof(item)) cannot be made from part of its data: " *
-        "its type needs a method reconstruct(::Type{$(typeof(item))}, id, data, metadata)")
-    return made
-end
