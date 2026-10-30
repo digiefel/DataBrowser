@@ -142,6 +142,9 @@ encoding capability, independent of the item's storage policy. Unsupported value
 kept by their native result store. Errors in a declared table's column access are propagated.
 """
 function can_store_payload(data)::Bool
+    # A named tuple can hold arbitrary named values. It is a column table only when each value
+    # is a vector; Tables.jl's iterable fallback also accepts nested blocks of unrelated values.
+    data isa NamedTuple && !all(value -> value isa AbstractVector, values(data)) && return false
     Tables.istable(data) || return false
     columns = Tables.columns(data)
     names = Tables.columnnames(columns)

@@ -26,10 +26,6 @@ memory of the machine when that is less.
 """
 default_expanded_data_limit()::Int = min(512, Sys.total_memory() ÷ 4 ÷ 1024^2)
 
-# An estimate without reading the values: 8 bytes for each cell of a table.
-_expanded_bytes(data)::Int = Tables.istable(data) ?
-    8 * _payload_rows(data) * length(Tables.columnnames(Tables.columns(data))) : Base.summarysize(data)
-
 """Error raised when a project cache is missing or does not match the current project."""
 struct ProjectCacheError <: Exception
     path::String
@@ -671,7 +667,7 @@ function open_cache_db(
             payload,
             MemoryStore{Int64,Any}(; capacity=256 * 1024^2, weight=Base.summarysize),
             MemoryStore{String,Any}(;
-                capacity=Int(expanded_data_limit) * 1024^2, weight=_expanded_bytes),
+                capacity=Int(expanded_data_limit) * 1024^2, weight=Base.summarysize),
             item_keys,
             next_item_key,
             source_item_keys,

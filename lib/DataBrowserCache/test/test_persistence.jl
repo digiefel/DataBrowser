@@ -16,6 +16,22 @@ function store_fixture_item!(cache, source_key, payload)
 end
 delivered(cache) = only(load_cache_index(cache).items).delivered
 
+@testset "expanded memory storage accepts nested values without a table encoding" begin
+    mktempdir() do dir
+        identity = ProjectCacheIdentity("nested", "source", "source", joinpath(dir, "cache.duckdb"))
+        cache = open_cache_db(identity; persistent=false)
+        try
+            data = (iv=(V=[1, 2],), fit=(slope=2.0, intercept=1.0))
+            @test !can_store_payload(data)
+            store_item_payload!(cache, "nested", data)
+            @test has_payload(cache, "nested"; stage=SOURCE_EXPAND)
+            @test something(only(read_payload(cache, ["nested"]; stage=SOURCE_EXPAND))) == data
+        finally
+            close_cache_db!(cache)
+        end
+    end
+end
+
 @testset "in-memory storage supports payloads and queries without touching the cache file" begin
     mktempdir() do dir
         path = joinpath(dir, "cache.duckdb")
