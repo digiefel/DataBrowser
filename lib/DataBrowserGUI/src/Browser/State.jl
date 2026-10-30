@@ -256,6 +256,16 @@ struct ItemList
 end
 
 """
+The items of an [`ItemList`](@ref) that the tags and the item filter leave visible. Kept while the
+list is the same object and `key` stays the same: the key covers the filter text and the tags.
+"""
+struct VisibleItems
+    listed::Vector{Workspace.Catalogs.ItemKey}
+    key::UInt
+    items::Vector{Workspace.Catalogs.ItemKey}
+end
+
+"""
 The part of the workspace selection that exists and is visible, as `_project_visible_selection`
 returns it. Kept while `key` stays the same: the key covers the workspace and its generation, the
 selection and the tags. `item_set` holds the same items as `items`, for rows that ask whether they
@@ -279,6 +289,7 @@ Base.@kwdef mutable struct BrowserState
     workspace::Union{Nothing,Workspace.Workspace} = nothing
     tree_cache::Union{Nothing,TreeCache} = nothing
     item_list::Union{Nothing,ItemList} = nothing
+    visible_items::Union{Nothing,VisibleItems} = nothing
     visible_selection::Union{Nothing,VisibleSelection} = nothing
     # The windows that show a value with a visualizer, and the number of the last one opened.
     windows::Vector{Window} = Window[]

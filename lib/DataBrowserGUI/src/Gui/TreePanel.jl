@@ -82,7 +82,10 @@ function _item_matches_filter(
     return ig.ImGuiTextFilter_PassFilter(filter_obj, text, C_NULL)
 end
 
-"""Filter items by tags and the text entered in the item panel."""
+"""
+Filter items by tags and the text entered in the item panel. The result is kept for the next calls
+with the same `items`: do not change it.
+"""
 function _visible_items(
     state::BrowserState,
     workspace::Workspace.Workspace,
@@ -92,6 +95,11 @@ function _visible_items(
     if isempty(state.tag_visibility) && !ig.ImGuiTextFilter_IsActive(filter_item)
         return items
     end
+    # The panel asks at each frame; going through every listed item costs time in proportion to them.
+    key = hash((_imgui_text_filter_text(filter_item), hash(state.tag_visibility),
+        workspace.tags.revision, _tags_ready(state)))
+    kept = state.visible_items
+    kept !== nothing && kept.listed === items && kept.key == key && return kept.items
 
     visible = ItemKey[]
     sizehint!(visible, length(items))
@@ -100,6 +108,7 @@ function _visible_items(
         _item_matches_filter(workspace, item, filter_item) || continue
         push!(visible, item)
     end
+    state.visible_items = VisibleItems(items, key, visible)
     return visible
 end
 
