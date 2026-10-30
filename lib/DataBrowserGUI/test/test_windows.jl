@@ -2,7 +2,7 @@ using Test, DataBrowserGUI
 import DataBrowserAPI
 using DataBrowserCore: Workspace
 using DataBrowserCore: Group
-using DataBrowserGUI: selected_rows
+using DataBrowserGUI: TableSelection
 using DataBrowserGUI.Browser: BrowserState, CodeView, FixedItems, TableView, WindowOutput, open_window!, refresh!, transform!, preparing,
     setting!, input!, close_window!, output
 
@@ -207,7 +207,12 @@ end
 
 @testset "the selected rows of an item keep the shape of its data" begin
     item = Group("A", Dict{Symbol,Any}(:Chip => "A"), (iv=(x=[1, 2, 3], y=[4, 5, 6]), fit=(slope=2.0, offset=1.0)), [])
-    kept = selected_rows(item; rows=[3, 1], columns=[["iv", "x"], ["fit"]])
-    @test kept.data == (iv=(x=[3, 1],), fit=(slope=2.0, offset=1.0))
-    @test kept.metadata[:Chip] == "A"
+    selected = TableSelection([3, 1], [["iv", "x"], ["fit"]])
+    @test item[selected].data == (iv=(x=[3, 1],), fit=(slope=2.0, offset=1.0))
+    @test item[selected].metadata[:Chip] == "A"
+    # A view shares the item's data; a copy does not.
+    view(item, selected).data.iv.x[1] = 30
+    @test item.data.iv.x == [1, 2, 30]
+    item[selected].data.iv.x[1] = 0
+    @test item.data.iv.x == [1, 2, 30]
 end

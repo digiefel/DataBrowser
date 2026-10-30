@@ -1,8 +1,8 @@
 using Tables
 
 import DataBrowserAPI
-using DataBrowserAPI: AbstractDataItem, id, item_data, items, label, metadata, reconstruct
-using DataBrowserCore: Group, Selection, Workspace
+using DataBrowserAPI: AbstractDataItem, id, item_data, items, label, metadata, part
+using DataBrowserCore: Selection
 
 """
 Table view over the data of one or more items.
@@ -267,21 +267,52 @@ Base.getindex(table::ItemTable, rows::AbstractVector{Int}, columns::AbstractVect
     (row, col) -> table.spans_item(rows[row], columns[col]),
 )
 
-function _selected_data(data; rows::Vector{Int}, columns::Vector{Vector{String}})
-    # The same walk as `_item_columns`: only the first table gives rows. `nothing` drops a value.
+"""
+    TableSelection(rows, columns)
+
+Some rows and columns of the table that [`merge_item_tables`](@ref) makes of a value: `rows` are
+rows within one item, and `columns` are the paths of the columns. It is what a table window passes
+on. A value that the table shows as one cell beside all of the item's rows is kept when its column
+is, and a block of names keeps the names whose columns are kept.
+
+`view(value, s)` gives views of the selected rows, and `value[s]` copies of them. The data keeps its
+shape, except the table that gives the rows: its view is a named tuple of column views, and its copy
+a table of its own type. An item is made again from that part of its data with
+[`part`](@ref DataBrowserAPI.part).
+"""
+struct TableSelection
+    rows::Vector{Int}
+    columns::Vector{Vector{String}}
+end
+
+Base.view(value, s::TableSelection) = _selected(value, s, view)
+Base.getindex(value, s::TableSelection) = _selected(value, s, getindex)
+# Julia's own methods for arrays would otherwise take these.
+Base.view(value::AbstractArray, s::TableSelection) = _selected(value, s, view)
+Base.getindex(value::AbstractArray, s::TableSelection) = _selected(value, s, getindex)
+Base.view(item::AbstractDataItem, s::TableSelection) = part(item, view(item_data(item), s))
+Base.getindex(item::AbstractDataItem, s::TableSelection) = part(item, item_data(item)[s])
+
+# The selected part of `data`, with `take`, `view` or `getindex`, over the same walk as
+# `_item_columns`: only the first table gives rows. `nothing` drops a value.
+function _selected(data, s::TableSelection, take)
+    rows, columns = s.rows, s.columns
+    # A value kept whole is the value itself in a view, and a copy of it otherwise.
+    whole(value) = take === view ? value : deepcopy(value)
     table_found = false
     function cut(path::Vector{String}, value)::Union{Nothing,Some}
         if !table_found && _is_table(value)
             table_found = true
             table = _table_columns(value)
             names = Tuple(name for name in Tables.columnnames(table) if [path; string(name)] in columns)
-            return Some(NamedTuple{names}(Tuple(Tables.getcolumn(table, name)[rows] for name in names)))
+            kept = NamedTuple{names}(Tuple(take(Tables.getcolumn(table, name), rows) for name in names))
+            return Some(take === view ? kept : Tables.materializer(value)(kept))
         elseif path in columns
-            return Some(value)
+            return Some(whole(value))
         elseif isempty(path) && value isa AbstractVector
-            return ["1"] in columns ? Some(value[rows]) : nothing
+            return ["1"] in columns ? Some(take(value, rows)) : nothing
         elseif isempty(path) && value isa AbstractMatrix
-            return Some(value[rows, [column for column in axes(value, 2) if [string(column)] in columns]])
+            return Some(take(value, rows, [column for column in axes(value, 2) if [string(column)] in columns]))
         elseif _is_block(value) && any(column -> length(column) > length(path) && column[1:length(path)] == path, columns)
             named = value isa AbstractDict ? sort!(collect(pairs(value)); by=part -> string(first(part))) : pairs(value)
             parts = [name => cut([path; string(name)], part) for (name, part) in named]
@@ -289,40 +320,9 @@ function _selected_data(data; rows::Vector{Int}, columns::Vector{Vector{String}}
             return Some(value isa NamedTuple ? NamedTuple(kept) : Dict(kept))
         elseif isempty(path) && !_is_block(value)
             # Data that is one value is the column `data`.
-            return ["data"] in columns ? Some(value) : nothing
+            return ["data"] in columns ? Some(whole(value)) : nothing
         end
         return nothing
     end
     return something(cut(String[], data), nothing)
-end
-
-"""
-    selected_rows(item; rows, columns)
-
-`item` with only some rows and columns of the table that [`merge_item_tables`](@ref) makes of its
-data: `rows` are rows within the item, and `columns` are the paths of the columns. A value that the
-table shows as one cell beside all of the item's rows is kept when its column is, and a block of
-names keeps the names whose columns are kept.
-
-The data keeps its shape, and the item is made again from it with `reconstruct`. An item that its
-type cannot make again, such as a computed item, is a `Group` with the data instead.
-"""
-function selected_rows(item::AbstractDataItem; rows::Vector{Int}, columns::Vector{Vector{String}})
-    data = _selected_data(item_data(item); rows, columns)
-    given = Dict{Symbol,Any}(metadata(item))
-    rebuilt = item isa Group ? nothing : reconstruct(typeof(item), id(item), data, given)
-    return something(rebuilt, Group(id(item), given, data, AbstractDataItem[]))
-end
-
-# A selection of rows is named after its item.
-DataBrowserAPI.label(value::Workspace.Computation{typeof(selected_rows)}) = label(only(value.args))
-
-# A prepared computation reference retains provenance while the operation receives the native
-# value. Raw tables use their Tables.jl materializer to keep their table type.
-selected_rows(item::Workspace.ComputationItem; rows::Vector{Int}, columns::Vector{Vector{String}}) =
-    selected_rows(item.value; rows, columns)
-
-function selected_rows(value; rows::Vector{Int}, columns::Vector{Vector{String}})
-    data = _selected_data(value; rows, columns)
-    return _is_table(value) && data !== nothing ? Tables.materializer(value)(data) : data
 end

@@ -53,7 +53,7 @@ include("fixtures/code_project.jl")
         history = open_window!(state, CodeView(); input=WindowOutput(table.id))
         @test ready(history)
         @test [row.call.title for row in history.visualizer.rows] ==
-            ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "analyze(::CodeSignal)", "selected_rows"]
+            ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "analyze(::CodeSignal)", "view"]
         @test (project.reads[], project.processes[]) == before
         @test Workspace.query_items(workspace) == indexed_before
         close_window!(state, history)

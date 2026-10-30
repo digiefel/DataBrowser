@@ -17,6 +17,7 @@ API.label(::CodeFile) = "code-file"
 API.fingerprint(::CodeFile) = 1
 API.id(value::CodeSignal) = value.name
 API.item_data(value::CodeSignal) = value.data
+API.reconstruct(::Type{CodeSignal}, name::AbstractString, data, ::Dict) = CodeSignal(name, data)
 function API.read(project::CodeProject, ::CodeSource, ::CodeFile)
     project.reads[] += 1
     return (signal=[1, 2, 3],)

@@ -8,7 +8,7 @@ using NativeFileDialog: save_file
 import DataBrowserAPI: draw!, draw_header!, export!, label, output, prepare!
 using DataBrowserAPI: AbstractVisualizer, item_data, items
 using DataBrowserCore: Selection, Workspace
-using ..DataBrowserGUI: ItemTable, _zoomable, merge_item_tables, selected_rows, value_table, zoom_value
+using ..DataBrowserGUI: ItemTable, TableSelection, _zoomable, merge_item_tables, value_table, zoom_value
 
 # How a column writes its numbers: with `decimals` digits after the point, and, when `engineering`,
 # each number as a number from 1 to 1000 followed by its power of ten, such as `e-6`, padded to
@@ -557,8 +557,8 @@ function _fold!(view::TableView, items, fold::Bool)::Nothing
 end
 
 # Pass on the rows the user selected, or all rows when none is selected, with the columns the user
-# selected, or all columns the table shows when none is selected: one computed item of
-# `selected_rows` for each item that has some of the rows. The row with the label of an item stands
+# selected, or all columns the table shows when none is selected: a view of each item that has some
+# of the rows, with a `TableSelection`. The row with the label of an item stands
 # for all of the item's rows that pass the filters.
 # TODO: a zoomed table passes on the items it was given; pass on the rows of the value it shows.
 function _pass_on!(view::TableView)::Nothing
@@ -580,7 +580,7 @@ function _pass_on!(view::TableView)::Nothing
     view.output = map(unique(table.row_item[view.output_rows])) do index
         source = Workspace.computation(selection, table.item_index[index])
         rows = table.item_row[[row for row in view.output_rows if table.row_item[row] == index]]
-        return Workspace.Computation(selected_rows, source; rows, columns)
+        return Workspace.Computation(Base.view, source, TableSelection(rows, columns))
     end
     return nothing
 end

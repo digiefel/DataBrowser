@@ -14,6 +14,8 @@ id(group::Group) = group.id
 metadata(group::Group) = group.metadata
 item_data(group::Group) = group.data
 DataBrowserAPI.members(group::Group) = group.members
+# Part of a group's data is the group of the same members.
+DataBrowserAPI.part(group::Group, data) = Group(group.id, group.metadata, data, group.members)
 
 """
 The data of each item, or a value inside it, read from the cache only when the vector is indexed.
