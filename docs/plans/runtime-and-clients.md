@@ -70,6 +70,11 @@ implemented.
   `show(io, MIME, x)` or Makie's `convert_arguments`. No type is excluded: generic fields, text
   and pictures from runtime visualizers always exist. Large values stay in the runtime and the
   client asks for slices or a size.
+- The Python package runs the runtime in its own process through JuliaCall and PythonCall, whose
+  conversion rules carry values both ways: arrays without copying, any other Julia value as a
+  wrapped object that Python code uses by duck typing. Its users work with the items the project
+  defines and return plain values, which the workspace keeps as results, as it does for Julia.
+  Representations are for clients in other processes.
 
 ## Proposals
 
@@ -90,8 +95,6 @@ These are not yet agreed.
 - Can one visualizer instance appear in several clients at once, sharing settings and output?
 - What does a client show for a visualizer it has no drawing part for: a picture drawn by the
   runtime, the value as a table or text, or nothing?
-- How does a Python client provide sources, `process` methods and visualizers to the runtime: in
-  its own process over the protocol, or embedded through JuliaCall?
 - Does the project ship a notebook-like client, the tools to build one, or both?
 - How must a provider written in another language perform? Calls per item cross a process or
   language boundary.
