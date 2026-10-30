@@ -61,9 +61,9 @@ function computation_identity(workspace::Workspace, value::Computation)
 end
 
 function result_item(workspace::Workspace, catalog::Catalog, value::Computation, args::Tuple, result)
+    # A view, and a selection, are parts of the workspace's values: never kept, and made again when needed.
+    (value.f === view || result isa Selection) && return nothing
     result isa AbstractDataItem && return result
-    # A selection is a view of the workspace's values, never kept.
-    result isa Selection && return nothing
     workspace.catalog === catalog || return nothing
     identity, title = computation_identity(workspace, value)
     address = computation_address(catalog, value)
