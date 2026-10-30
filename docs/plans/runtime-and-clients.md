@@ -46,6 +46,9 @@ implemented.
     | Every output is styled on its own, so a notebook does not look like one application | The client gives every visualizer one theme. Visualizers use it and do not bring their own. |
     | Hidden state: cells run in any order, so the shown results may not follow from the shown code | Results follow from the dependency graph; what is shown always says which code and inputs produced it. |
     | Notebooks are JSON files with outputs inside, hard to diff and review | Work is plain source files; results are stored apart from code. |
+12. **A notebook is one possible client, not the model.** Exploratory analysis is not always a
+    linear sequence of cells. A linear document is still useful for sharing, so the contract must
+    make it possible to build a notebook-like client.
 
 ## Decided
 
@@ -81,6 +84,7 @@ These are not yet agreed.
   runtime, the value as a table or text, or nothing?
 - How does a Python client provide sources, `process` methods and visualizers to the runtime: in
   its own process over the protocol, or embedded through JuliaCall?
+- Does the project ship a notebook-like client, the tools to build one, or both?
 - How must a provider written in another language perform? Calls per item cross a process or
   language boundary.
 
