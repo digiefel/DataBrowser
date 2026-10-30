@@ -3,6 +3,13 @@
 # Stages and jobs
 
 """
+The number of status writes in all catalogs so far. Rows are added and removed together with a
+status write. One counter for all catalogs: a number read from it never comes back, also when the
+workspace opens again with a new catalog.
+"""
+const STATUS_WRITES = Threads.Atomic{Int}(0)
+
+"""
 Write the status of one stage of a row that is not removed, and wake the tasks waiting for a
 request. The caller holds the lock.
 
@@ -44,6 +51,7 @@ function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::Pipel
     if new.validity == FRESH && old.validity != FRESH
         foreach(next -> queue!(catalog, next...), dependents(catalog, key, stage))
     end
+    Threads.atomic_add!(STATUS_WRITES, 1)
     notify(catalog.changed)
     return catalog
 end

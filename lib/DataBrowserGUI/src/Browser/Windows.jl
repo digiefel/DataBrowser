@@ -48,7 +48,22 @@ function output(window::Window)
     return something(output(window.visualizer), Some(window.value))
 end
 
-# What tells whether `input` gives another value than before: another stamp means another value.
+# What tells whether the input of `window` gives another value than before: another stamp means
+# another value. Reading the stamp costs time in proportion to the items, so it is read again only
+# when what it is read from changed: the input and the object it names (kept items, ids or an
+# output, compared by identity), the scan, the status of any stage, or a method definition.
+function stamp(window::Window, state::BrowserState)
+    workspace = state.workspace::Workspace.Workspace
+    input = window.input
+    named = input isa LiveSelection ? itemkeys(input, state) :
+        input isa FixedItems ? input.ids : output(source(input, state))
+    basis = (input, named, workspace.scan.epoch, Workspace.status_revision(workspace),
+        Base.get_world_counter())
+    window.checked !== nothing && first(window.checked) === basis && return last(window.checked)
+    current = stamp(input, state)
+    window.checked = (basis, current)
+    return current
+end
 # Item keys are never reused, so their hash tells the items apart without building their ids.
 function stamp(input::Union{LiveSelection,FixedItems}, state::BrowserState)
     workspace = state.workspace::Workspace.Workspace
@@ -131,7 +146,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), ItemKey[], nothing, nothing, "", "", "", "", true, "auto", "", VisualizerCell[], UInt(0), true, false, nothing)
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), ItemKey[], nothing, nothing, nothing, "", "", "", "", true, "auto", "", VisualizerCell[], UInt(0), true, false, nothing)
     push!(state.windows, window)
     return window
 end
@@ -283,7 +298,7 @@ function _refresh_window!(state::BrowserState, window::Window)::Nothing
         end
     end
     workspace = state.workspace::Workspace.Workspace
-    current = @timed_dbg "window.stamp" (stamp(input, state), window.transform, code(window))
+    current = @timed_dbg "window.stamp" (stamp(window, state), window.transform, code(window))
     if current == window.stamp
         window.presentation_dirty && _prepare_presentations!(state, window)
         return nothing

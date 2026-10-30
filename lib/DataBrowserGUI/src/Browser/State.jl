@@ -139,6 +139,9 @@ mutable struct Window
     # `stamp` is `nothing` until the visualizer is given the value.
     value::Any
     stamp::Any
+    # What the stamp of the input was last read from, and that stamp. While all of it stays the
+    # same, so does the stamp, which costs time in proportion to the items to read again.
+    checked::Any
     # Why the window does not show the value; empty when it shows it.
     error::String
     # The computed items the window leaves out of its value because they failed, one on each line.

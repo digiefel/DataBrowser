@@ -141,4 +141,14 @@ function revision(workspace::Workspace, items::Vector{ItemKey})::UInt
     end
 end
 
+"""
+    status_revision(workspace) -> Int
+
+A number that rises whenever the status of a stage changes, in this or any other workspace. Items
+are added and removed only together with such a change. While the number stays the same, so do the
+[`revision`](@ref) of any items and the item that each public id names. Reading it costs the same
+for any number of items.
+"""
+status_revision(::Workspace)::Int = Catalogs.STATUS_WRITES[]
+
 
