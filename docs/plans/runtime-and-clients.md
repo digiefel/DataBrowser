@@ -63,13 +63,20 @@ implemented.
   DataBrowser is the layer that connects any source, any type and any visualizer. Their settings,
   output and links are held by the runtime, so blocks of both origins combine in one client and
   agents can set them up for humans to use.
+- Values reach client visualizers through representations, not one format. A value offers the
+  representations it can become (an image with scale, PNG, a table, its generic fields, text); a
+  client visualizer declares the ones it accepts; the runtime sends a match in that
+  representation's own encoding. Anyone can define a representation for a type, as with
+  `show(io, MIME, x)` or Makie's `convert_arguments`. No type is excluded: generic fields, text
+  and pictures from runtime visualizers always exist. Large values stay in the runtime and the
+  client asks for slices or a size.
 
 ## Proposals
 
 These are not yet agreed.
 
-- **One protocol for all clients:** commands, change events, opaque ids and transportable values
-  (Arrow for tables and arrays). Julia clients use the same commands as direct calls.
+- **One protocol for all clients:** commands, change events, opaque ids and values as
+  representations. Julia clients use the same commands as direct calls.
 - **The desktop ImGui GUI stays in the runtime's process** and uses only the public commands, ids
   and events. A Makie figure then passes from `prepare!` to `draw!` by reference, as it does now.
   It cannot serve a remote runtime; remote users use the web client.
