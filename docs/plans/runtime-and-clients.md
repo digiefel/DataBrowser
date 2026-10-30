@@ -57,6 +57,12 @@ implemented.
   the process that holds the figure, WGLMakie in a browser, CairoMakie pictures for terminal
   clients, agents and export. Makie is the figure model, not a backend. Requirement 6 means
   Makie is the Julia plot visualizer, not the only way to plot.
+- Visualizers are building blocks, simple or sophisticated, of two origins. Runtime visualizers,
+  such as Makie plots, appear in every client that can show their output. Client visualizers use
+  the client's own technology and appear in that client only. Both receive data and metadata:
+  DataBrowser is the layer that connects any source, any type and any visualizer. Their settings,
+  output and links are held by the runtime, so blocks of both origins combine in one client and
+  agents can set them up for humans to use.
 
 ## Proposals
 
@@ -67,11 +73,6 @@ These are not yet agreed.
 - **The desktop ImGui GUI stays in the runtime's process** and uses only the public commands, ids
   and events. A Makie figure then passes from `prepare!` to `draw!` by reference, as it does now.
   It cannot serve a remote runtime; remote users use the web client.
-- **A visualizer is split in two.** A part shared by all clients holds settings, output, selection
-  and the prepared values. Drawing parts, one per kind of client, show it: Julia `draw!` for the
-  ImGui GUI, an ES module for a web UI, text and pictures for a terminal. Jupyter widgets and
-  anywidget use this split. A Python visualizer's shared part runs in Python, so the shared part
-  is not always Julia code.
 - **WebAssembly components as a plugin format** for sources, stores and transforms: written in any
   language, sandboxed, loadable by the runtime or a client. Julia access to a WebAssembly runtime
   has not been checked.
