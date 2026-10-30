@@ -70,12 +70,6 @@ implemented.
   `show(io, MIME, x)` or Makie's `convert_arguments`. No type is excluded: generic fields, text
   and pictures from runtime visualizers always exist. Large values stay in the runtime and the
   client asks for slices or a size.
-- A client in another language connects to the runtime that has the workspace open, and starts one
-  in the background when none is running, so clients share one workspace and later clients do not
-  pay Julia's loading time. The GUI window belongs to the runtime: a person opens it with the
-  application, or a script asks the runtime to show it. Embedding Julia in a Python process through
-  JuliaCall is not the basis: every script would load Julia again, results would stay in that
-  process, and on macOS a window needs the main thread, which Python holds.
 
 ## Proposals
 
@@ -89,6 +83,10 @@ These are not yet agreed.
 - **WebAssembly components as a plugin format** for sources, stores and transforms: written in any
   language, sandboxed, loadable by the runtime or a client. Julia access to a WebAssembly runtime
   has not been checked.
+- **The runtime ships as one app that contains Julia:** a compiled Julia program with the packages
+  built in, so it starts fast and needs no Julia installation. The desktop GUI is this app; the
+  Python package downloads it on first use and starts it in the background when none is running.
+  It must keep the full Julia compiler, because it loads and compiles the project's Julia code.
 - **A boundary test:** a check that fails when the GUI uses a Core name that is not public.
 
 ## Open questions
@@ -96,6 +94,8 @@ These are not yet agreed.
 - Can one visualizer instance appear in several clients at once, sharing settings and output?
 - What does a client show for a visualizer it has no drawing part for: a picture drawn by the
   runtime, the value as a table or text, or nothing?
+- How does a Python client provide sources, `process` methods and visualizers to the runtime: in
+  its own process over the protocol, or embedded through JuliaCall?
 - Does the project ship a notebook-like client, the tools to build one, or both?
 - How must a provider written in another language perform? Calls per item cross a process or
   language boundary.
