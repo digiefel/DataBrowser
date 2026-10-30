@@ -70,11 +70,12 @@ implemented.
   `show(io, MIME, x)` or Makie's `convert_arguments`. No type is excluded: generic fields, text
   and pictures from runtime visualizers always exist. Large values stay in the runtime and the
   client asks for slices or a size.
-- The Python package runs the runtime in its own process through JuliaCall and PythonCall, whose
-  conversion rules carry values both ways: arrays without copying, any other Julia value as a
-  wrapped object that Python code uses by duck typing. Its users work with the items the project
-  defines and return plain values, which the workspace keeps as results, as it does for Julia.
-  Representations are for clients in other processes.
+- A client in another language connects to the runtime that has the workspace open, and starts one
+  in the background when none is running, so clients share one workspace and later clients do not
+  pay Julia's loading time. The GUI window belongs to the runtime: a person opens it with the
+  application, or a script asks the runtime to show it. Embedding Julia in a Python process through
+  JuliaCall is not the basis: every script would load Julia again, results would stay in that
+  process, and on macOS a window needs the main thread, which Python holds.
 
 ## Proposals
 
