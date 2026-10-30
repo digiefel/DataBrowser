@@ -50,6 +50,7 @@ function select_source_item!(
 )::Bool
     workspace = state.workspace
     workspace isa Workspace.Workspace || return false
+    # TODO(scale): goes through every item of the workspace; ask Core for the items of the source item.
     items = [
         item for item in Workspace.items(workspace)
         if Workspace.source_item_id(workspace, item) == source_item_id]

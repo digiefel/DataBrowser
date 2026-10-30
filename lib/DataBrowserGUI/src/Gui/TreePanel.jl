@@ -625,6 +625,7 @@ function _render_items_panel(
         length(all_items),
         filter_item,
         () -> begin
+            # TODO(scale): select-all builds the id of every visible item; keep the selection as item keys.
             workspace.selection.item_ids = [id(workspace, item) for item in visible_items]
         end;
         item_label="items", filter_id="##items_filter"
@@ -701,6 +702,7 @@ function _render_items_panel(
                             shift_held = unsafe_load(io.KeyShift)
                             ctrl_held = unsafe_load(io.KeyCtrl)
                             selected_ids = copy(workspace.selection.item_ids)
+                            # TODO(scale): each click builds the ids of all visible items; work on item keys.
                             visible_ids = [id(workspace, visible) for visible in visible_items]
                             _update_multi_selection!(
                                 selected_ids,

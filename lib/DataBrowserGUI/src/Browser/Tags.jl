@@ -37,6 +37,7 @@ function _project_visible_selection(
     end
     # The panels and every window ask at each frame; looking up each selected id costs time and
     # memory in proportion to the selection.
+    # TODO(scale): hashing `item_ids` at each frame still costs time in proportion to the selection.
     key = hash((objectid(workspace), Workspace.generation(workspace), workspace.selection.collections,
         workspace.selection.item_ids, hash(state.tag_visibility), workspace.tags.revision, _tags_ready(state)))
     kept = state.visible_selection
