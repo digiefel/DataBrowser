@@ -1,0 +1,6 @@
+name = "TinyRuntime"
+uuid = "7c1f3a52-1d2e-4b8a-9f3c-2a6e5d4b1c90"
+version = "0.1.0"
+
+[deps]
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
