@@ -3,8 +3,8 @@
 
 Store complete native computation results in memory using the shared memory buffer. Values are
 removed in insertion order when their estimated total size exceeds `max_bytes`. One value larger
-than the limit remains available until another value arrives. Reads return the stored value;
-Core makes the copies required by the storage contract.
+than the limit remains available until another value arrives. Reads return a copy of the stored
+value.
 
 Each default item-type store belongs to one workspace opening. To configure an item type, define
 `DataBrowserAPI.storage(project, ::Type{MyItem}) = MemoryStore(; max_bytes=...)`.

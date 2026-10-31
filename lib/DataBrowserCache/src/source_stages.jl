@@ -25,8 +25,8 @@ Read results have no disk persistence by default. They use the shared memory cac
 FIFO budget measured by `Base.summarysize`, retaining a single oversized value. The estimate covers
 Julia-owned memory; memory owned by external libraries is outside that estimate. Eviction removes
 the payload, not the fact that reading succeeded; consumers that need the value again must reread. A scheduled consumer holds
-its own reference until it finishes, independently of cache eviction. Values, including `nothing`,
-are passed through unchanged; the cache does not serialize or close user-owned handles.
+its own reference until it finishes, independently of cache eviction. A read gives a copy of the
+value, including `nothing`; the cache does not serialize or close user-owned handles.
 """
 function store_source_read!(cache::CacheDB, source_key::Int64, value; retain::Bool=true)::Nothing
     retain ? append!(cache.source_reads, source_key, value) : delete!(cache.source_reads, source_key)

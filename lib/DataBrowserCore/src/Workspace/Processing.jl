@@ -170,7 +170,7 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
         @lock catalog.lock iscurrent(catalog, job) && store_source_read!(cache, saved, snapshot; retain)
         value
     else
-        deepcopy(something(cached))
+        something(cached)
     end
     native_items = execute(workspace, job.key, SOURCE_EXPAND, workspace.project, source_item, loaded)
     expanded = expanded_items(workspace.project, workspace.source, source_item, loaded, native_items)
@@ -254,7 +254,7 @@ function read_again(workspace::Workspace, source::SourceKey, source_item::Abstra
     state !== nothing && CacheResultStatus(state.status) === RESULT_FAILED &&
         error(something(state.message, "Source read failed"))
     cached = read_payload(cache, saved)
-    cached === nothing || !keeps_result(workspace, something(cached)) || return deepcopy(something(cached))
+    cached === nothing || !keeps_result(workspace, something(cached)) || return something(cached)
     loaded = execute(workspace, source, SOURCE_READ, workspace.project, workspace.source, source_item)
     retain = keeps_result(workspace, loaded)
     store_source_read!(cache, saved, retain ? deepcopy(loaded) : nothing; retain)
@@ -296,7 +296,7 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
         retain_item = result_store(workspace, valuetype(catalog, item)) !== nothing
         kept = retain_item ? only(read_payload(workspace.cache.db, [id(catalog, item)]; stage=SOURCE_EXPAND)) : nothing
         value = kept === nothing ? nothing : reconstruct(
-            valuetype(catalog, item), id(catalog, item), deepcopy(something(kept)),
+            valuetype(catalog, item), id(catalog, item), something(kept),
             metadata(workspace, item; through=SOURCE_EXPAND))
         value === nothing || return value
         loaded = read_again(workspace, source, source_item)
@@ -338,7 +338,7 @@ the payload is gone, or the item type does not rebuild from a payload, `expand` 
 function unprocessed(workspace::Workspace, item::ItemKey, known, given::MetadataDict)::AbstractDataItem
     cached = result_store(workspace, known.type) === nothing ? nothing :
         only(read_payload(workspace.cache.db, [known.id]; stage=SOURCE_EXPAND))
-    value = cached === nothing ? nothing : reconstruct(known.type, known.id, deepcopy(something(cached)), given)
+    value = cached === nothing ? nothing : reconstruct(known.type, known.id, something(cached), given)
     if value === nothing
         value = expand_again(workspace, item)
         value = something(reconstruct(known.type, known.id, data(value), given), value)
@@ -362,7 +362,7 @@ The item for one saved payload of a processed version of `item`, with `delivered
 `process` run again.
 """
 function rebuilt(workspace::Workspace, item::ItemKey, known, payload, delivered::MetadataDict)::AbstractDataItem
-    value = reconstruct(known.type, known.id, deepcopy(payload), delivered)
+    value = reconstruct(known.type, known.id, payload, delivered)
     value === nothing && (value = processed(workspace, unprocessed(
         workspace, item, known, metadata(workspace, item; through=SOURCE_EXPAND))))
     return value

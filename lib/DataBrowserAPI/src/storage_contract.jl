@@ -8,7 +8,7 @@ The supplied default is a bounded `DataBrowserCache.MemoryStore`.
 
 A store implements `write(store, id, value)`, `read(store, typeof(value), id)`,
 `haskey(store, id)` and `delete!(store, id)`. Store complete native values, including their
-metadata. Core supplies a copy when writing and copies values read back from storage.
+metadata. Core supplies a copy when writing. `read` returns a copy, which the caller may change.
 Missing reads throw `KeyError`; other storage errors propagate to the caller.
 
 Core chooses storage from a returned native item's type. Ordinary Julia results are wrapped in

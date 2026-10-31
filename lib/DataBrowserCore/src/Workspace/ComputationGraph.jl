@@ -171,7 +171,7 @@ function computation_result(workspace::Workspace, value::Computation)
         result_store(workspace, valuetype(workspace, key)) === nothing && return nothing
         payload = only(read_payload(workspace.cache.db, [id(workspace, key)]; stage))
         payload === nothing && return nothing
-        restored = reconstruct(valuetype(workspace, key), id(workspace, key), deepcopy(something(payload)),
+        restored = reconstruct(valuetype(workspace, key), id(workspace, key), something(payload),
             metadata(workspace, key; through=stage))
         return restored === nothing ? nothing : Some(restored)
     elseif key isa CollectionKey && stage == COLLECTION_PROCESS
@@ -179,7 +179,7 @@ function computation_result(workspace::Workspace, value::Computation)
         payload = read_payload(workspace.cache.db, workspace.collection_keys[key]; stage)
         given = metadata(workspace, key)
         return Some(reconstruct(valuetype(catalog, key), id(catalog, key),
-            payload === nothing ? nothing : deepcopy(something(payload)), given))
+            payload === nothing ? nothing : something(payload), given))
     end
     return nothing
 end

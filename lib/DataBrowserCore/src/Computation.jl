@@ -52,7 +52,7 @@ evaluate(value::Computation, result, invoke) = evaluate(value, result, invoke, i
 function evaluate(value::Computation, result, invoke, resolve)
     value = resolve(value)
     found = result(value)
-    found === nothing || return @timed_dbg "result.copy" deepcopy(something(found))
+    found === nothing || return something(found)
     args = map(x -> evaluate_argument(x, result, invoke, resolve), value.args)
     return invoke(value, args)
 end
