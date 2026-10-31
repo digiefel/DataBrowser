@@ -689,14 +689,13 @@ function _render_items_panel(
                             selected_count = length(target_items)
                             selected_count > 1 && ig.TextDisabled("Apply to $selected_count items")
 
-                            # FIXME: the menu says it applies to every selected item, but an
-                            # extension gets only the clicked one. Giving it the ids of all
-                            # selected items at each frame costs time in proportion to the selection.
+                            # The ids are gathered only when an entry is clicked: the selection
+                            # can be large, and the menu draws in every frame while it is open.
                             for ext in state.extensions
                                 item_context_menu!(
                                     ext,
                                     state;
-                                    item_ids=[id(workspace, item)],
+                                    item_ids=() -> [id(workspace, key) for key in target_items],
                                     label=item_label,
                                     kind=label(Workspace.valuetype(workspace, item)),
                                 )

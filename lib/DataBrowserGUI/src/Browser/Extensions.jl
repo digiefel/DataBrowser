@@ -49,8 +49,11 @@ save_view(ext::GuiExtension, state)::Dict{String,Any} = Dict{String,Any}()
 load_view!(ext::GuiExtension, state, view::Dict{String,Any}) = nothing
 
 """
-Called inside the open menu of an item in the item panel, to add entries to it. `item_ids` holds the
-id of the clicked item, `label` is its label, and `kind` the name of its type.
+Called inside the open menu of an item in the item panel, to add entries to it. `item_ids()` gives
+the ids of the items the menu applies to: the selected items when the clicked item is one of them,
+or else the clicked item. Call it only when the user clicks an entry, because it takes time in
+proportion to the selection. `label` is the label of the clicked item, and `kind` the name of its
+type.
 """
 item_context_menu!(ext::GuiExtension, state; item_ids, label, kind) = nothing
 
