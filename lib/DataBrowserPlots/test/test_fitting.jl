@@ -92,6 +92,28 @@ twice(device::FitTestDevice) = FitTestDevice(device.name, device.chip, device.ga
     end
 end
 
+@testset "the plot builder keeps only the fits of the groups it draws" begin
+    BuilderView = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsBuilderExt).BuilderView
+    mktempdir() do dir
+        file = joinpath(dir, "fits.jl")
+        write(file, """
+            @plot mapping(:gap, only(:data.R); color=:Chip) begin
+                fit(resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines)
+            end
+            """)
+        in_workspace(CHIPS) do workspace, devices
+            view = BuilderView(; file)
+            ctx = (id="builder", prepare=() -> nothing)
+            fits() = W.select(workspace, filter(startswith("fit("), W.query_items(workspace)))
+            prepare!(view, devices, ctx)
+            @test sort(round.(fits().Rc)) == [50.0, 300.0]
+            # Drawn for chip A alone, the plot no longer keeps the fit of chip B.
+            prepare!(view, W.select(workspace, filter(startswith("A"), devices.id)), ctx)
+            @test round.(fits().Rc) == [300.0]
+        end
+    end
+end
+
 @testset "a named fit takes the rows of the header's own table" begin
     rows = [(gap=g, R=2 * 300 + 100g) for g in (5.0, 10.0, 20.0)]
     plot = @plot data(rows) * mapping(:gap, :R) begin
