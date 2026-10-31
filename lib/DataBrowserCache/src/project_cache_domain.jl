@@ -758,7 +758,7 @@ function source_item_id(cache::CacheDB, key::Integer)::String
     end
 end
 
-_buffer_rows(data)::Int = 1
+_buffer_rows(data)::Int = Tables.istable(data) ? _payload_rows(data) : 1
 
 """Create the cache tables if they do not already exist."""
 function ensure_schema!(connection)::Nothing

@@ -119,6 +119,10 @@ function _stop_runtime!(workspace::Workspace)::Nothing
         # TODO: values of items removed while the workspace was closed stay in the stores.
         empty!(workspace.results)
         empty!(workspace.executions)
+        # A store that defines `close` writes what it holds when the workspace closes.
+        stores = @lock workspace.stores.lock unique(values(workspace.stores.types))
+        foreach(store -> applicable(close, store) && close(store), stores)
+        empty!(workspace.stores.types)
         close_cache_db!(workspace.cache.db)
     finally
         close_source!(workspace.source)
