@@ -28,7 +28,7 @@ import DataBrowserAPI:
     stage_roots,
     collection,
     id,
-    item_data,
+    data,
     label,
     metadata,
     process,

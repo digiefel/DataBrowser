@@ -209,7 +209,7 @@ its `bytes` field uses the store's optional `stored_size` report.
 Code displays these computations as selectable rows. Each row retains the actual computations
 for its items, and selection passes those definitions through `output`. Linked windows use the
 same reference-evaluation path as table selections. `ComputationItem` keeps a prepared native
-value with its origin; `item_data` exposes its payload, and `computation` follows its origin.
+value with its origin; `data` exposes its payload, and `computation` follows its origin.
 Scientific transforms receive the native result of the preceding call. Neither selection nor
 window refresh registers a browsable item or builds an identity by printing the input graph.
 
@@ -271,7 +271,7 @@ of its value. An item goes where `collection(project, item)` says, or where `col
 says when that is empty. A collection contains every item below it, at any depth. Collection
 `process(project, collection, members)` receives each of them as its own `process` returned it,
 and returns a later version of the collection; the cache keeps the metadata and the data
-(`item_data`) of that version. Member
+(`data`) of that version. Member
 `process(project, member, collection)` then returns a later version of each item, once for each
 collection above it that defines one, from the innermost collection to the outermost; each call
 receives the version of the previous one. The cache keeps the last version next to the item's own

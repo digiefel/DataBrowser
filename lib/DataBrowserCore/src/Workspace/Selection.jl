@@ -12,7 +12,7 @@ struct Group <: AbstractGroup
 end
 id(group::Group) = group.id
 metadata(group::Group) = group.metadata
-item_data(group::Group) = group.data
+data(group::Group) = group.data
 DataBrowserAPI.members(group::Group) = group.members
 
 """
@@ -24,8 +24,8 @@ The part of `item` that `selection` chooses in its data, such as the rows a tabl
 `reconstruct` of its type, whose field types decide whether it keeps the views or copies them. It
 is an error when its type cannot be made from that part.
 """
-Base.view(item::AbstractDataItem, selection) = made_again(item, view(item_data(item), selection))
-Base.getindex(item::AbstractDataItem, selection) = made_again(item, item_data(item)[selection])
+Base.view(item::AbstractDataItem, selection) = made_again(item, view(data(item), selection))
+Base.getindex(item::AbstractDataItem, selection) = made_again(item, data(item)[selection])
 
 function made_again(item::AbstractDataItem, data)
     made = reconstruct(typeof(item), id(item), data, Dict{Symbol,Any}(metadata(item)))
@@ -74,7 +74,7 @@ loaded(::Workspace, items::Vector) = items
 
 # The value at `path` inside the data of `item`.
 function follow(item, path::Vector{Symbol})
-    value = item_data(item)
+    value = data(item)
     for (depth, name) in enumerate(path)
         # A column of a table, or a field of any other value.
         if Tables.istable(value) && name in Tables.columnnames(Tables.columns(value))
@@ -244,7 +244,7 @@ end
     items(selection) -> Vector
 
 The items of `selection` as the project made them, in the same order: the objects whose
-`item_data` is `selection.data`.
+`data` is `selection.data`.
 """
 function items(selection::Selection)::Vector
     data = selection.data::ItemData

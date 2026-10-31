@@ -1,7 +1,7 @@
 using Tables
 
 import DataBrowserAPI
-using DataBrowserAPI: AbstractDataItem, id, item_data, items, label, metadata
+using DataBrowserAPI: AbstractDataItem, id, data, items, label, metadata
 using DataBrowserCore: Selection
 
 """
@@ -127,15 +127,15 @@ function merge_item_tables(
     item_rows = Int[]
     warnings = String[]
     for (index, (item_label, item)) in enumerate(zip(selection.label, items(selection)))
-        # The project's `item_data` may fail for one item; the table shows the others.
-        data = try
-            item_data(item)
+        # The project's `data` may fail for one item; the table shows the others.
+        payload = try
+            data(item)
         catch err
             DataBrowserAPI.report_error("Table: the data of item '$item_label' cannot be read", err, catch_backtrace())
             push!(warnings, "Item '$item_label': its data cannot be read.")
             continue
         end
-        columns, rows = _item_columns(data, unfolded)
+        columns, rows = _item_columns(payload, unfolded)
         # TODO: a metadata key that is also the name of a column of the data is then in the table
         # twice, and so is a column of the data called `item`.
         leading = Pair{Vector{String},Tuple{Any,Bool}}[

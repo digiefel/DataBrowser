@@ -208,7 +208,7 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             ItemOutput(
                 entry.id, entry.label, entry.type,
                 entry.collection == ROOT ? nothing : workspace.collection_keys[entry.collection],
-                entry.metadata, keep ? deepcopy(item_data(item.item)) : nothing)
+                entry.metadata, keep ? deepcopy(data(item.item)) : nothing)
             for (item, entry, keep) in zip(expanded, entries, retain)]; retain)
         pace!(workspace)
         # The items the source item no longer produces leave the selection. When it produces as
@@ -308,7 +308,7 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
                 sibling = lookup(catalog, ItemKey, produced.id)
                 sibling === nothing && continue
                 keep && Catalogs.status(catalog, sibling, ITEM_PROCESS).validity != Catalogs.FRESH &&
-                    store_item_payload!(workspace.cache.db, produced.id, deepcopy(item_data(produced.item)))
+                    store_item_payload!(workspace.cache.db, produced.id, deepcopy(data(produced.item)))
             end
             pace!(workspace)
         end
@@ -341,7 +341,7 @@ function unprocessed(workspace::Workspace, item::ItemKey, known, given::Metadata
     value = cached === nothing ? nothing : reconstruct(known.type, known.id, deepcopy(something(cached)), given)
     if value === nothing
         value = expand_again(workspace, item)
-        value = something(reconstruct(known.type, known.id, item_data(value), given), value)
+        value = something(reconstruct(known.type, known.id, data(value), given), value)
     end
     return value
 end
@@ -389,7 +389,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     known, given, saved = @lock catalog.lock (
         row(workspace, item), metadata(workspace, item; through=SOURCE_EXPAND), cache_key(workspace, item))
     output = processed(workspace, unprocessed(workspace, item, known, given))
-    payload = item_data(output)
+    payload = data(output)
     retain = keeps_result(workspace, output) && typeof(output) == known.type &&
         DataBrowserCache.can_store_payload(payload)
     delivered = metadata_dict(metadata(output))
@@ -500,7 +500,7 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
         finish!(catalog, job; metadata=computed) || return nothing
         # TODO: data that the cache cannot store is lost on reopening, and member `process`
         # methods that run again then receive the collection without it.
-        payload = item_data(output)
+        payload = data(output)
         DataBrowserCache.can_store_payload(payload) || (payload = nothing)
         store_collection_process_result!(
             workspace.cache.db, workspace.collection_keys[job.key], computed, deepcopy(payload))
@@ -520,7 +520,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
     output = evaluate(workspace, computation(workspace, item, MEMBER_PROCESS))
     output isa AbstractDataItem || error(
         "A member process method for $(known.type) must return an AbstractDataItem; got $(typeof(output))")
-    payload = item_data(output)
+    payload = data(output)
     retain = keeps_result(workspace, output) && typeof(output) == known.type &&
         DataBrowserCache.can_store_payload(payload)
     delivered = metadata_dict(metadata(output))

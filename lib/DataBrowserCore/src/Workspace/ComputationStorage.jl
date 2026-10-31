@@ -131,7 +131,7 @@ function stored_result(value::ComputationResult)
     haskey(value.store, value.key) || return nothing
     try
         item = @timed_dbg "result.read" read(value.store, value.item_type, value.key)
-        return Some(value.value_type <: AbstractDataItem ? item : item_data(item))
+        return Some(value.value_type <: AbstractDataItem ? item : data(item))
     catch error
         error isa KeyError && isequal(error.key, value.key) || rethrow()
         return nothing

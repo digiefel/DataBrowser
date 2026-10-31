@@ -186,6 +186,5 @@ function computed_version(workspace::Workspace, key::ItemKey)::AbstractDataItem
     result isa AbstractDataItem || return ResultItem(
         id(value), label(workspace, key), Dict{Symbol,Any}(given), result)
     read = ItemKey[something(item(workspace, i)) for i in member_ids(value)]
-    data = result isa AbstractDataItem ? item_data(result) : result
-    return Group(id(value), Dict{Symbol,Any}(given), data, versions(workspace, read))
+    return Group(id(value), Dict{Symbol,Any}(given), data(result), versions(workspace, read))
 end

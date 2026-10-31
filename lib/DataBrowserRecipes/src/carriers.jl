@@ -31,7 +31,7 @@ id(item::RegisteredDataItem)::String = item.id
 label(::Type{<:RegisteredDataItem{K}}) where {K} = K
 
 metadata(item::RegisteredDataItem)::MetadataDict = item.metadata
-item_data(item::RegisteredDataItem) = item.data
+data(item::RegisteredDataItem) = item.data
 
 """
 Rebuild a registered carrier from a cached payload. The registration comes from the type, so it
@@ -61,7 +61,7 @@ id(collection::NamedCollection)::String = collection.name
 label(collection::NamedCollection)::String = collection.name
 label(::Type{NamedCollection{Level}}) where {Level} = Level
 metadata(collection::NamedCollection)::MetadataDict = collection.metadata
-item_data(collection::NamedCollection) = isempty(collection.data) ? nothing : collection.data
+data(collection::NamedCollection) = isempty(collection.data) ? nothing : collection.data
 reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, metadata::Dict) where {Level} =
     NamedCollection{Level}(String(identity), Dict{String,Any}(), metadata_dict(metadata))
 reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, data, metadata::Dict) where {Level} =

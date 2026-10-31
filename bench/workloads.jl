@@ -19,7 +19,7 @@ struct BenchItem <: API.AbstractDataItem
 end
 API.id(item::BenchItem) = item.identity
 API.label(item::BenchItem) = item.identity
-API.item_data(item::BenchItem) = item.data
+API.data(item::BenchItem) = item.data
 API.metadata(item::BenchItem) = item.metadata
 API.reconstruct(::Type{BenchItem}, id::AbstractString, data, metadata::Dict) = BenchItem(id, data, metadata)
 
@@ -83,7 +83,7 @@ end
 function validate_items(items, ids, rows)
     API.id.(items) == ids || error("Materialization lost or reordered items")
     for item in items
-        data = API.item_data(item)
+        data = API.data(item)
         length(data.time) == rows || error("Incorrect payload row count")
         (data.time[1], data.time[end]) == (1.0, Float64(rows)) || error("Incorrect payload values")
     end

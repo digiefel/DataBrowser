@@ -12,7 +12,7 @@ end
 DataBrowserAPI.id(device::FitTestDevice) = device.name
 DataBrowserAPI.metadata(device::FitTestDevice) =
     Dict{Symbol,Any}(:Chip => device.chip, :Wafer => "W$(device.chip)", :gap => device.gap)
-DataBrowserAPI.item_data(device::FitTestDevice) = (R=[device.R],)
+DataBrowserAPI.data(device::FitTestDevice) = (R=[device.R],)
 
 DataBrowserAPI.reconstruct(::Type{FitTestDevice}, name::AbstractString, data, metadata::Dict) =
     FitTestDevice(name, metadata[:Chip], metadata[:gap], only(data.R))

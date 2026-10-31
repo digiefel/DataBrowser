@@ -115,7 +115,7 @@ end
 # and its source item.
 function process_input(value::AbstractDataItem, id::String, given::MetadataDict)
     isequal(metadata_dict(metadata(value)), given) && return value
-    return something(reconstruct(typeof(value), id, item_data(value), given), value)
+    return something(reconstruct(typeof(value), id, data(value), given), value)
 end
 
 # The computation of the value that `versions` gives for an item.

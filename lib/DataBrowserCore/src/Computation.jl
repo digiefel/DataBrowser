@@ -18,7 +18,7 @@ computation_inputs(_) = Computation[]
     ResultItem(id, label, metadata, data)
 
 A workspace-owned item for a computation returning an ordinary Julia value. Project data items
-keep their own types. `item_data(item)` returns `data`; `metadata(item)` contains the named
+keep their own types. `data(item)` returns `data`; `metadata(item)` contains the named
 scalar results and any metadata inherited by the computed item.
 
 Storage is selected for `ResultItem{typeof(data)}` and receives this complete item. Evaluation
@@ -34,7 +34,7 @@ end
 DataBrowserAPI.id(item::ResultItem) = item.id
 DataBrowserAPI.label(item::ResultItem) = item.label
 DataBrowserAPI.metadata(item::ResultItem) = item.metadata
-DataBrowserAPI.item_data(item::ResultItem) = item.data
+DataBrowserAPI.data(item::ResultItem) = item.data
 
 result_item_type(value::AbstractDataItem) = typeof(value)
 result_item_type(value) = ResultItem{typeof(value)}

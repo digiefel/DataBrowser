@@ -8,7 +8,7 @@ using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_categories, scale_kinds
 using DataBrowserPlots: YScaleLayers, is_y_scale, @plot, Aggregate, Declaration, Fit, ITEM, LegendEntry, PlotLine, PlotLines, PlotTheme, Points, Scaled, Result, category, column, grouping
 import DataBrowserAPI
-using DataBrowserAPI: id, item_data, metadata
+using DataBrowserAPI: id, metadata
 import DataBrowserCore.Workspace
 import DataBrowserPlots
 using DataBrowserCore: Group, Selection, select
@@ -583,7 +583,7 @@ function Base.:*(result::Result, layer::AoG.Layer)
     drawn = column.(positional)
     columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [drawn; [c for (_, _, c) in roles]])
     for group in getfield(result, :groups)
-        values = item_data(group)
+        values = DataBrowserAPI.data(group)
         for (name, value) in zip(drawn, values)
             append!(columns[name], value)
         end

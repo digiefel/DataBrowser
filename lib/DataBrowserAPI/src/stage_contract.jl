@@ -251,7 +251,7 @@ collection input. The item id, payload, and metadata must therefore contain ever
 the method needs at that point.
 
 The default returns the payload when it is already a `T`, preserving the identity of custom items
-whose `item_data(item)` is the item itself. Otherwise it returns `nothing`. While preparing an
+whose `data(item)` is the item itself. Otherwise it returns `nothing`. While preparing an
 unprocessed input, the engine reruns `expand`, reusing its cached read input or calling `read` if
 that input is absent. While preparing a processed input, it also reruns `process`. The fallback
 restores those stage outputs, but it cannot add later metadata to a custom item. A type that needs later metadata must retain it in its `reconstruct` result.
@@ -281,7 +281,7 @@ reconstruct(::Type{T}, id::AbstractString, metadata::Dict) where {T<:AbstractCol
 """
     reconstruct(::Type{T}, id, data, metadata::Dict) -> T
 
-Rebuild the collection value that `process` returned, from its id, its `item_data` and its metadata.
+Rebuild the collection value that `process` returned, from its id, its `data` and its metadata.
 The default ignores `data` and calls `reconstruct(T, id, metadata)`.
 """
 reconstruct(::Type{T}, id::AbstractString, data, metadata::Dict) where {T<:AbstractCollection} =

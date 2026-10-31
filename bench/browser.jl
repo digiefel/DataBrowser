@@ -1,5 +1,6 @@
 include("smoke_project.jl")
 using DataBrowserPlots
+using DataBrowserAPI: data
 using DataBrowserGUI: merge_item_tables
 using DataBrowserGUI.Browser: TimerOutputs
 
@@ -25,12 +26,12 @@ function check_items(ws, expected_peaks)
     select!(ws, ids)
     items = materialize_items(ws, ids)
     sort([metadata(item)[:peak] for item in items]) == expected_peaks || error("Incorrect analysis results")
-    collect(selection(ws).data) == item_data.(items) || error("Selection did not deliver the selected payloads")
+    collect(selection(ws).data) == data.(items) || error("Selection did not deliver the selected payloads")
     table, warnings = merge_item_tables(selection(ws))
     isempty(warnings) || error("Table preparation skipped selected data")
     y = findfirst(==("y"), table.columns)
     [table.getvalue(row, y) for row in 1:table.rows] ==
-        reduce(vcat, [item_data(item).y for item in items]) ||
+        reduce(vcat, [data(item).y for item in items]) ||
         error("Table views did not receive the selected processed payloads")
     return items
 end
@@ -49,7 +50,7 @@ function browser_workload(root, opening, started_ns)
         finish_work(workspace)
         items = check_items(workspace, [4.0, 6.0, 6.0])
         # "runs" holds every item: its callbacks see three members.
-        all(first(item_data(item).members) == metadata(item)[:members] == 3 for item in items) ||
+        all(first(data(item).members) == metadata(item)[:members] == 3 for item in items) ||
             error("Collection processing did not reach the selected items")
         if opening == "reopen"
             all(count[] == 0 for count in values(counters.reads)) || error("Reopening reran source reads")

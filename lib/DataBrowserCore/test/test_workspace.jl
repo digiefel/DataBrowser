@@ -1,4 +1,4 @@
-using DataBrowserAPI: AbstractProject, AbstractDataSource, AbstractDataSourceItem, AbstractDataItem, id, item_data, metadata
+using DataBrowserAPI: AbstractProject, AbstractDataSource, AbstractDataSourceItem, AbstractDataItem, id, data, metadata
 using Test, DataBrowserAPI, DataBrowserCore
 import DataBrowserCore.Workspace as W
 
@@ -29,7 +29,7 @@ DataBrowserAPI.id(::EngineSourceItem) = "source"
 DataBrowserAPI.label(::EngineSourceItem) = "source"
 DataBrowserAPI.fingerprint(s::EngineSourceItem) = (s.version, s.fail)
 DataBrowserAPI.id(i::EngineItem) = i.key
-DataBrowserAPI.item_data(i::EngineItem) = i.data
+DataBrowserAPI.data(i::EngineItem) = i.data
 DataBrowserAPI.metadata(i::EngineItem) = i.meta
 DataBrowserAPI.reconstruct(::Type{EngineItem}, key::AbstractString, data, meta::Dict) = EngineItem(key, data, meta)
 function DataBrowserAPI.read(p::EngineProject, ::EngineSource, s::EngineSourceItem)
@@ -98,7 +98,7 @@ end
 NestedItem(key, data) = NestedItem(key, data, Dict())
 DataBrowserAPI.metadata(i::NestedItem) = i.metadata
 DataBrowserAPI.id(i::NestedItem) = i.key
-DataBrowserAPI.item_data(i::NestedItem) = i.data
+DataBrowserAPI.data(i::NestedItem) = i.data
 DataBrowserAPI.reconstruct(::Type{NestedItem}, key::AbstractString, data, metadata::Dict) = NestedItem(key, data, metadata)
 DataBrowserAPI.collection(i::NestedItem) =
     DataBrowserAPI.AbstractCollection[Outer(), i.key == "a" ? Inner() : Other()]
@@ -168,7 +168,7 @@ end
     ws = W.open_workspace(NestedProject(), EngineSource("source", 1, false); cache=false, background_processing=true)
     try
         settled(ws)
-        x(key) = only(item_data(only(W.materialize_items(ws, [key]))).x)
+        x(key) = only(data(only(W.materialize_items(ws, [key]))).x)
         holder(key) = W.collection(ws, W.item(ws, key))
         # Members take the inner collection's step first, then the outer one.
         @test (x("a"), x("b")) == (20, 10)
@@ -225,7 +225,7 @@ DataBrowserAPI.read(::LateProject, source::EngineSource, item::EngineSourceItem)
 
 @testset "processing code defined and changed after the workspace opens updates its results" begin
     ws = W.open_workspace(LateProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
-    processed() = item_data(only(W.materialize_items(ws, ["only"]))).x
+    processed() = data(only(W.materialize_items(ws, ["only"]))).x
     try
         settled(ws)
         @eval DataBrowserAPI.process(::LateProject, i::EngineItem) =
@@ -283,7 +283,7 @@ DataBrowserAPI.process(::HelperProject, i::EngineItem) = EngineItem(id(i),
 
 @testset "a function that a stage calls, changed after the workspace opens, replaces its results" begin
     ws = W.open_workspace(HelperProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
-    processed() = item_data(only(W.materialize_items(ws, ["only"]))).x
+    processed() = data(only(W.materialize_items(ws, ["only"]))).x
     try
         settled(ws)
         @test processed() == [2]
@@ -310,7 +310,7 @@ end
     ws = W.open_workspace(TypedProject(), EngineSource("source", 1, false); cache=false)
     try
         settled(ws)
-        @test item_data(only(W.materialize_items(ws, W.query_items(ws)))).x == [1]
+        @test data(only(W.materialize_items(ws, W.query_items(ws)))).x == [1]
     finally
         W.close_workspace!(ws)
     end
@@ -349,7 +349,7 @@ DataBrowserAPI.process(::SharedNameProject, i::EngineItem) = EngineItem(id(i), (
     ws = W.open_workspace(SharedNameProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
     try
         settled(ws)
-        @test item_data(only(W.materialize_items(ws, ["only"]))).x == [3]
+        @test data(only(W.materialize_items(ws, ["only"]))).x == [3]
     finally
         W.close_workspace!(ws)
     end
@@ -366,7 +366,7 @@ struct LateItem <: AbstractDataItem
     data::Any
 end
 DataBrowserAPI.id(i::LateItem) = i.key
-DataBrowserAPI.item_data(i::LateItem) = i.data
+DataBrowserAPI.data(i::LateItem) = i.data
 DataBrowserAPI.reconstruct(::Type{LateItem}, key::AbstractString, data, ::Dict) = LateItem(key, data)
 DataBrowserAPI.collection(::LateItem) = DataBrowserAPI.AbstractCollection[LateCollection()]
 DataBrowserAPI.expand(::LateCollectionProject, ::EngineSourceItem, count) = [LateItem(string(n), (x=[n],)) for n in 1:count]
@@ -375,7 +375,7 @@ DataBrowserAPI.expand(::LateCollectionProject, ::EngineSourceItem, count) = [Lat
     ws = W.open_workspace(LateCollectionProject(), EngineSource("source", 1, false); cache=false, background_processing=true)
     try
         settled(ws)
-        x() = only(item_data(only(W.materialize_items(ws, ["1"]))).x)
+        x() = only(data(only(W.materialize_items(ws, ["1"]))).x)
         @test x() == 1
         @eval DataBrowserAPI.process(::LateCollectionProject, i::LateItem, ::LateCollection) =
             LateItem(i.key, (x=i.data.x .* 10,))
@@ -411,7 +411,7 @@ DataBrowserAPI.process(::ClosedProject, i::EngineItem) =
                 W.close_workspace!(ws)
             end
         end
-        first_value(ws) = item_data(first(W.materialize_items(ws, ["1"]))).x
+        first_value(ws) = data(first(W.materialize_items(ws, ["1"]))).x
         try
             reopened(ws -> @test first_value(ws) == [2])
             reads = CLOSED_READS[]
@@ -437,7 +437,7 @@ end
                 settled(ws)
                 items = W.materialize_items(ws, sort(W.query_items(ws)))
                 @test id.(items) == ["1", "2"]
-                @test all(i -> item_data(i).x == [4] && metadata(i)[:total] == 4, items)
+                @test all(i -> data(i).x == [4] && metadata(i)[:total] == 4, items)
             finally
                 W.close_workspace!(ws)
             end
@@ -452,7 +452,7 @@ end
                 @test W.query_items(ws) == ["1"]
                 # The item that the source still produces stays selected.
                 @test W.selection(ws).id == ["1"]
-                @test item_data(only(W.materialize_items(ws, ["1"]))).x == [2]
+                @test data(only(W.materialize_items(ws, ["1"]))).x == [2]
                 W.modify_workspace!(ws; source=EngineSource("source", 0, false))
                 settled(ws)
                 @test isempty(W.query_items(ws))
@@ -502,7 +502,7 @@ end
             try
                 settled(ws)
                 @test isempty(W.workspace_status(ws).errors)
-                @test item_data(only(W.materialize_items(ws, ["1"]))).x == [2]
+                @test data(only(W.materialize_items(ws, ["1"]))).x == [2]
             finally
                 W.close_workspace!(ws)
             end
@@ -524,7 +524,7 @@ end
                     @test W.metadata(ws, W.item(ws, "a"))[:step] == 2
                     @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
                     @test W.label(ws, W.item(ws, "a")) == "inner a"
-                    @test only(item_data(only(W.materialize_items(ws, ["a"]))).x) == 20
+                    @test only(data(only(W.materialize_items(ws, ["a"]))).x) == 20
                     if opening == 2
                         @test W.query_items(ws, "step = 2") == ["a"]
                     end

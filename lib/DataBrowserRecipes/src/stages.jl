@@ -169,25 +169,25 @@ function process(
 )::AbstractCollection
     collection_value isa NamedCollection || return process(collection_value, items)
     level = label(typeof(collection_value))
-    data = Dict{String,Any}()
+    by_member = Dict{String,Any}()
     analysis = MetadataDict()
     for recipe in project.collections
         recipe.level === level || continue
         group = recipe.members === nothing ? items :
             filter(item -> item isa RegisteredDataItem && label(typeof(item)) === recipe.members, items)
         isempty(group) && continue
-        outputs = item_data.(group)
+        outputs = data.(group)
         if recipe.process !== nothing
             outputs = recipe.process(outputs, metadata.(group))
             outputs isa AbstractVector && length(outputs) == length(group) || error(
                 "collection process for level $level must return a vector with one value per member; " *
                 "got $(typeof(outputs)) for $(length(group)) members")
-            merge!(data, Dict(id(item) => output for (item, output) in zip(group, outputs)))
+            merge!(by_member, Dict(id(item) => output for (item, output) in zip(group, outputs)))
         end
         recipe.analyze === nothing ||
             merge!(analysis, metadata_dict(recipe.analyze(outputs, metadata.(group))))
     end
-    return typeof(collection_value)(collection_value.name, data, merge(metadata(collection_value), analysis))
+    return typeof(collection_value)(collection_value.name, by_member, merge(metadata(collection_value), analysis))
 end
 
 """A registered item gets its new data and the metadata of each collection above it."""

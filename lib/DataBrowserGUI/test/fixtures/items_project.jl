@@ -22,7 +22,7 @@ DataBrowserAPI.read(::ItemsProject, source::ItemsSource, ::ItemsFile) = source.e
 DataBrowserAPI.expand(::ItemsProject, ::ItemsFile, entries) = entries
 DataBrowserAPI.id(entry::Entry) = entry.name
 DataBrowserAPI.metadata(entry::Entry) = entry.metadata
-DataBrowserAPI.item_data(entry::Entry) = entry.data
+DataBrowserAPI.data(entry::Entry) = entry.data
 
 # The workspaces that `selection_of` opened, closed at the end of the file that includes this one.
 const OPENED = Workspace.Workspace[]

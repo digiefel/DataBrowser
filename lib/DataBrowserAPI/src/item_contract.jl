@@ -33,7 +33,7 @@ metadata(::AbstractCollection)::Dict = Dict()
 The data of a collection value, such as what its `process` computed from its members. The default
 is `nothing`: a collection has only metadata.
 """
-item_data(::AbstractCollection) = nothing
+data(::AbstractCollection) = nothing
 
 """
     id(item)::String
@@ -112,7 +112,7 @@ function members end
 metadata(::AbstractDataItem)::Dict = Dict()
 
 """The data represented by an item. A custom item is its own data by default."""
-item_data(item::AbstractDataItem) = item
+data(item::AbstractDataItem) = item
 
 """Process an item. Optional; default identity."""
 process(item::AbstractDataItem) = item
