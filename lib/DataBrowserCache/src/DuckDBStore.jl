@@ -50,6 +50,9 @@ function open_duckdb_store(path::String, max_bytes::Integer)
     mkpath(dirname(path))
     database = DuckDB.DB(path)
     serialized = DBInterface.connect(database)
+    # DuckDB.jl runs queries only on Julia tasks, one per Julia thread. DuckDB's own threads make up
+    # the rest of the cores, so a Julia session with few threads still reads at full speed.
+    _run(serialized, "SET threads = $(max(Sys.CPU_THREADS, Threads.nthreads()))")
     _run(serialized, "CREATE TABLE IF NOT EXISTS stored_values (id VARCHAR PRIMARY KEY, value BLOB NOT NULL)")
     _run(serialized, create_table_sql(StoredShell, "stored_items", (:id,)))
     shell_rows = RowStore{String,StoredShell}(database, "stored_items", ("id",))
