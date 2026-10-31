@@ -84,6 +84,8 @@ collection(project::AbstractProject, item::AbstractDataItem)::Vector{AbstractCol
 collection(::AbstractDataItem)::Vector{AbstractCollection} = AbstractCollection[]
 collection(::AbstractDataSourceItem)::Vector{AbstractCollection} = AbstractCollection[]
 
+# TODO: adapt to groups. When sources form groups in place of collections, this is the metadata a
+# source gives to one group.
 """
     metadata(source, collections) -> Dict
 
