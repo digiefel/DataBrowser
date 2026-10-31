@@ -229,7 +229,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
   chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
   one copy of data that a member `process` returned unchanged.
 - [ ] Sort every exported name into the project-author or extension-author tier and stop exporting
-  the rest: `items_for_file`, `SourceFile`, the concrete `Project`, `gui_timings`,
+  the rest: `SourceFile`, the concrete `Project`, `gui_timings`,
   `reset_timings!`, `plot_kinds`, `CollectionRecipe`, `ItemRecipe`, `NoMatch`,
   `RegisteredReadResult`. Export what extension authors need and cannot reach today:
   `GuiExtension`, `register_gui_extension!`, `NamedCollection`.

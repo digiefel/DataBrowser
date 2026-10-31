@@ -32,7 +32,6 @@ const PRECOMPILE_FIXTURES = joinpath(@__DIR__, "..", "test", "fixtures", "TASE")
 function _precompile_engine(
     project=_precompile_project(); selected::Function=(workspace, items) -> nothing,
 )::Nothing
-    foreach(path -> items_for_file(project, path), readdir(PRECOMPILE_FIXTURES; join=true))
     # A workspace keeps its cache in the first depot. A temporary depot keeps the user's depot clean.
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)

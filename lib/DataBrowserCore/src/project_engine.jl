@@ -15,8 +15,7 @@ using DataBrowserAPI:
     AbstractProject,
     MetadataDict,
     metadata_dict
-using DataBrowserSources: DirectorySource, index_source_file
-import DataBrowserAPI: adopt, collection, expand, id, label, metadata, read
+import DataBrowserAPI: collection, expand, id, label, metadata, read
 
 """
 One item that a source item produced, with what the workspace stores for it.
@@ -85,19 +84,5 @@ function expanded_items(project, source, source_item, loaded, items)::Vector{Exp
             MetadataDict[
                 metadata_dict(metadata(source, values[1:depth])) for depth in eachindex(values)],
         )
-    end
-end
-
-"""
-    items_for_file(project, filepath) -> Vector{AbstractDataItem}
-
-Read one file into the data items that project code produces for it, outside any workspace.
-"""
-function items_for_file(project::AbstractProject, filepath::AbstractString)::Vector{AbstractDataItem}
-    source = DirectorySource(dirname(filepath); metadata_file=nothing)
-    source_item = index_source_file(filepath, dirname(filepath))
-    loaded = read(project, source, source_item)
-    return map(expand(project, source, source_item, loaded)) do expanded
-        adopt(expanded.item, expanded.label, expanded.metadata, expanded.collections)
     end
 end
