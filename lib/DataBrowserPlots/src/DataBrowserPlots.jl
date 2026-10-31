@@ -40,6 +40,7 @@ function figure end
 include("fitting.jl")
 include("aggregate.jl")
 include("declaration.jl")
+include("expansion.jl")
 include("plot_code.jl")
 
 export figure, @plot, @invisible, add_layer!, set_analysis!
