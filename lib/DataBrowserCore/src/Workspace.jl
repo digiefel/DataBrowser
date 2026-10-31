@@ -110,6 +110,7 @@ using ..DataBrowserCore: ComputationStores, ComputationResult, RecordedExecution
 using DataBrowserAPI: ComputationExecution
 import DataBrowserAPI: last_execution, cache_info
 using ..DataBrowserCore: ResultItem
+using DataBrowserAPI: AbstractStore
 import DataBrowserAPI: computation, inputs, evaluate
 import DataBrowserAPI
 import DataBrowserAPI:

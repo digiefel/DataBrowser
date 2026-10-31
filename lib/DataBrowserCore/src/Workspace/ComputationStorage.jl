@@ -225,13 +225,6 @@ catalog lock.
 current_value(catalog::Catalog, (key, stage)::Target) =
     !(key isa ItemKey && stage == ITEM_PROCESS && !Catalogs.status(catalog, key, MEMBER_PROCESS).absent)
 
-function stored_result(value::ComputationResult)
-    value.store === nothing && return nothing
-    item = @timed_dbg "result.read" only(read(value.store, value.item_type, [value.key]))
-    item === nothing && return nothing
-    return Some(value.value_type <: AbstractDataItem ? item : data(item))
-end
-
 function forget_result!(workspace::Workspace, address)
     delete!(workspace.executions, address)
     value = pop!(workspace.results, address, nothing)

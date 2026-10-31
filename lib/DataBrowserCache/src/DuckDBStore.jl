@@ -88,24 +88,51 @@ function Base.write(store::DuckDBStore, id::AbstractString, item)
     return nothing
 end
 
-# TODO(perf): one query per column shape for all `ids`, not one per id.
+# Tables are read with one query per column shape, and other values with one query per
+# `READ_BATCH_IDS` ids.
 function Base.read(store::DuckDBStore, ::Type{T}, ids::AbstractVector)::Vector{Union{Nothing,T}} where {T}
-    return Union{Nothing,T}[_read_one(store, T, String(id)) for id in ids]
-end
-
-function _read_one(store::DuckDBStore, ::Type{T}, id::String) where {T}
-    key = stored_key(T, id)
-    recent = read_hit(store.recent, key)
-    recent === nothing || return something(recent)
-    shell = @lock store.lock get(store.shells, key, nothing)
-    item = shell === nothing ? _read_serialized(store, key) : _read_table(store, key, id, shell)
+    keys = [stored_key(T, id) for id in ids]
+    items = Vector{Union{Nothing,T}}(nothing, length(keys))
+    tables = Pair{Int,StoredShell}[]
+    serialized = Int[]
+    for (position, key) in pairs(keys)
+        recent = read_hit(store.recent, key)
+        if recent !== nothing
+            something(recent) isa T && (items[position] = something(recent))
+            continue
+        end
+        @lock store.lock begin
+            shell = get(store.shells, key, nothing)
+            if shell !== nothing
+                push!(tables, position => shell)
+            elseif key in store.serialized_ids
+                push!(serialized, position)
+            end
+        end
+    end
     # A value read from the file is new, so the caller may change it; it is not kept in memory.
-    return item isa T ? item : nothing
+    if !isempty(tables)
+        found = read(store.tables, [keys[position] for (position, _) in tables])
+        for (position, shell) in tables
+            data = get(found, keys[position], nothing)
+            data === nothing && continue
+            item = _rebuilt(shell, String(ids[position]), data)
+            item isa T && (items[position] = item)
+        end
+    end
+    for batch in Iterators.partition(serialized, READ_BATCH_IDS)
+        found = _read_serialized(store, [keys[position] for position in batch])
+        for position in batch
+            item = get(found, keys[position], nothing)
+            item isa T && (items[position] = item)
+        end
+    end
+    return items
 end
 
-function _read_table(store::DuckDBStore, key::String, id::String, shell::StoredShell)
-    data = get(read(store.tables, [key]), key, nothing)
-    data === nothing && return nothing
+const READ_BATCH_IDS = 1_000
+
+function _rebuilt(shell::StoredShell, id::String, data)
     try
         type, given = _deserialize_hex(shell.shell)
         return DataBrowserAPI.reconstruct(type, id, data, given)
@@ -115,21 +142,22 @@ function _read_table(store::DuckDBStore, key::String, id::String, shell::StoredS
     end
 end
 
-function _read_serialized(store::DuckDBStore, key::String)
+# The values in `stored_values` under `keys`, by key.
+function _read_serialized(store::DuckDBStore, keys::Vector{String})::Dict{String,Any}
+    found = Dict{String,Any}()
     @lock store.lock begin
-        bytes = nothing
-        for row in DBInterface.execute(store.serialized, "SELECT value FROM stored_values WHERE id = ?", (key,))
-            bytes = row.value
-        end
-        bytes === nothing && return nothing
-        try
-            return deserialize(IOBuffer(bytes))
-        catch
-            # Written by another Julia or package version: compute it again.
-            _forget_serialized!(store, key)
-            return nothing
+        sql = "SELECT id, value FROM stored_values WHERE id IN (" * join(fill("?", length(keys)), ", ") * ")"
+        for row in DBInterface.execute(store.serialized, sql, keys)
+            key = String(row.id)
+            try
+                found[key] = deserialize(IOBuffer(row.value))
+            catch
+                # Written by another Julia or package version: compute it again.
+                _forget_serialized!(store, key)
+            end
         end
     end
+    return found
 end
 
 function Base.haskey(store::DuckDBStore, ::Type{T}, id::AbstractString)::Bool where {T}

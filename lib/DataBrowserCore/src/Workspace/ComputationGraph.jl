@@ -149,6 +149,29 @@ end
 # A hit is a native result, including `nothing`. Missing native restoration is a miss, so that
 # evaluation follows the recorded inputs instead of inventing a replacement value.
 function computation_result(workspace::Workspace, value::Computation)
+    location = result_location(workspace, value)
+    location === nothing || return only(read_results([location]))
+    catalog = workspace.catalog
+    target, revision = @lock catalog.lock (computation_address(catalog, value), computation_revision(catalog, value))
+    (revision === nothing || target isa Target) && return nothing
+    return restored_result(workspace, value)
+end
+
+"""Where a store keeps the result of a computation: the store, and the item type and id it saves."""
+struct ResultLocation
+    store::AbstractStore
+    type::Type
+    id::String
+    # Whether the result is the data of the saved item, not the item.
+    unwrap::Bool
+end
+
+"""
+Where a store keeps the current result of `value`, computed in this opening or kept from an earlier
+one; `nothing` when there is none, or when it is the result of a call that is not a stage of an
+item, collection or source item, which `restored_result` finds.
+"""
+function result_location(workspace::Workspace, value::Computation)::Union{Nothing,ResultLocation}
     catalog = workspace.catalog
     target, revision, native = @lock catalog.lock begin
         target = computation_address(catalog, value)
@@ -158,9 +181,10 @@ function computation_result(workspace::Workspace, value::Computation)
         target, revision, get(workspace.results, target, nothing)
     end
     if native !== nothing && native.computation === value && native.revision == revision
-        return stored_result(native)
+        native.store === nothing && return nothing
+        return ResultLocation(native.store, native.item_type, native.key, !(native.value_type <: AbstractDataItem))
     end
-    target isa Target || return restored_result(workspace, value)
+    target isa Target || return nothing
     key, stage = target
     # The read and expand results of a source item are not kept.
     key isa SourceKey && return nothing
@@ -176,9 +200,27 @@ function computation_result(workspace::Workspace, value::Computation)
     end
     store = result_store(workspace, type)
     store === nothing && return nothing
-    kept = only(read(store, type, [stored]))
-    kept === nothing && return nothing
-    return Some(key isa ItemKey ? kept : data(kept))
+    return ResultLocation(store, type, stored, !(key isa ItemKey))
+end
+
+"""
+The results at `locations`, each as `Some(result)`, or `nothing` where its store no longer has it.
+Each store reads all its items of one type in one call.
+"""
+function read_results(locations::AbstractVector)::Vector{Union{Nothing,Some}}
+    results = Vector{Union{Nothing,Some}}(nothing, length(locations))
+    groups = Dict{Tuple{AbstractStore,Type},Vector{Int}}()
+    for (position, location) in pairs(locations)
+        location === nothing || push!(get!(Vector{Int}, groups, (location.store, location.type)), position)
+    end
+    for ((store, type), positions) in groups
+        items = @timed_dbg "result.read" read(store, type, [locations[position].id for position in positions])
+        for (position, item) in zip(positions, items)
+            item === nothing && continue
+            results[position] = Some(locations[position].unwrap ? data(item) : item)
+        end
+    end
+    return results
 end
 
 # Execute a scheduled call with the inputs already materialized by its publication job. The

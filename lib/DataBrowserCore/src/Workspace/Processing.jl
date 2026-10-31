@@ -436,11 +436,18 @@ The caller makes sure that item `process` is fresh for every item.
 """
 function versions(workspace::Workspace, items::Vector{ItemKey}; own::Bool=false)::Vector{AbstractDataItem}
     catalog = workspace.catalog
-    return map(items) do item
-        @lock(catalog.lock, haskey(workspace.computations, item)) && return computed_version(workspace, item)
+    computed = [@lock(catalog.lock, haskey(workspace.computations, item)) for item in items]
+    values = [computed[position] ? nothing : version_computation(workspace, item; own)
+              for (position, item) in pairs(items)]
+    # Kept versions are read together, so that a store reads the selection in one call.
+    kept = read_results([value === nothing ? nothing : result_location(workspace, value) for value in values])
+    return map(eachindex(items)) do position
+        item = items[position]
+        computed[position] && return computed_version(workspace, item)
+        kept[position] === nothing || return something(kept[position])
         source = Catalogs.source(catalog, item)
         source === nothing || reported_source_item(workspace, source)
-        return evaluate(workspace, version_computation(workspace, item; own))
+        return evaluate(workspace, values[position])
     end
 end
 
