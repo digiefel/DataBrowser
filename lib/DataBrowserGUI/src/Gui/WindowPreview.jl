@@ -18,12 +18,10 @@ end
 # callback data alive until ImGui renders it, and separate browsers have separate previews.
 const _WINDOW_PREVIEWS = ScopedValues.ScopedValue{WindowPreviewCache}()
 
-function _window_preview(id::String)
-    isassigned(_WINDOW_PREVIEWS) || return nothing
-    return get!(WindowPreview, _WINDOW_PREVIEWS[].windows, id)
-end
+_window_preview(id::String)::WindowPreview = get!(WindowPreview, _WINDOW_PREVIEWS[].windows, id)
 
 function _discard_window_preview!(id::String)::Nothing
+    # A window closed outside a browser, such as in a script, has no preview.
     isassigned(_WINDOW_PREVIEWS) || return nothing
     cache = _WINDOW_PREVIEWS[]
     preview = pop!(cache.windows, id, nothing)
@@ -33,7 +31,6 @@ end
 
 """Release previews after the previous frame's draw commands have consumed them."""
 function _release_retired_window_previews!()::Nothing
-    isassigned(_WINDOW_PREVIEWS) || return nothing
     for preview in _WINDOW_PREVIEWS[].retired
         preview.texture == 0 || GL.glDeleteTextures(1, Ref(preview.texture))
         preview.texture = 0
@@ -43,7 +40,6 @@ function _release_retired_window_previews!()::Nothing
 end
 
 function _discard_window_previews!()::Nothing
-    isassigned(_WINDOW_PREVIEWS) || return nothing
     foreach(_discard_window_preview!, collect(keys(_WINDOW_PREVIEWS[].windows)))
     _release_retired_window_previews!()
     return nothing
@@ -69,37 +65,34 @@ function _capture_window_preview(_draw_list::Ptr{Cvoid}, command::Ptr{Cvoid})::C
     x, y, width, height = preview.region
     binding = Ref{GL.GLint}(0)
     GL.glGetIntegerv(GL.GL_TEXTURE_BINDING_2D, binding)
-    try
-        if preview.texture == 0
-            texture = Ref{GL.GLuint}(0)
-            GL.glGenTextures(1, texture)
-            preview.texture = texture[]
-            GL.glBindTexture(GL.GL_TEXTURE_2D, preview.texture)
-            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
-            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
-            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE)
-            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
-        else
-            GL.glBindTexture(GL.GL_TEXTURE_2D, preview.texture)
-        end
-        if preview.size != (width, height)
-            GL.glCopyTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, x, y, width, height, 0)
-            preview.size = (width, height)
-        else
-            GL.glCopyTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, x, y, width, height)
-        end
-        # Platform windows share textures but have separate GL contexts.
-        GL.glFlush()
-    finally
-        GL.glBindTexture(GL.GL_TEXTURE_2D, GL.GLuint(binding[]))
+    if preview.texture == 0
+        texture = Ref{GL.GLuint}(0)
+        GL.glGenTextures(1, texture)
+        preview.texture = texture[]
+        GL.glBindTexture(GL.GL_TEXTURE_2D, preview.texture)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
+    else
+        GL.glBindTexture(GL.GL_TEXTURE_2D, preview.texture)
     end
+    if preview.size != (width, height)
+        GL.glCopyTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, x, y, width, height, 0)
+        preview.size = (width, height)
+    else
+        GL.glCopyTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, x, y, width, height)
+    end
+    # Platform windows share textures but have separate GL contexts.
+    GL.glFlush()
+    # ImGui's renderer expects the texture it bound before.
+    GL.glBindTexture(GL.GL_TEXTURE_2D, GL.GLuint(binding[]))
     return nothing
 end
 
 """Retain the visible contents after ImGui draws this window, entirely on the GPU."""
 function _capture_window_preview!(id::String, position, size)::Nothing
     preview = _window_preview(id)
-    preview === nothing && return nothing
     viewport = unsafe_load(ig.GetWindowViewport())
     scale = viewport.FramebufferScale
     framebuffer_width = round(Int, viewport.Size.x * scale.x)
@@ -120,17 +113,14 @@ end
 """Show the retained contents without accessing the visualizer or creating active controls."""
 function _draw_window_preview!(id::String, position, size)::Nothing
     preview = _window_preview(id)
-    if preview !== nothing && preview.texture != 0
+    if preview.texture != 0
         # Include padding and the frozen scrollbars, rather than clipping to the live widgets'
         # content rectangle. The image remains anchored to the window when its contents scroll.
         edge = (position.x + size.x, position.y + size.y)
         ig.PushClipRect(position, edge, false)
-        try
-            ig.AddImage(ig.GetWindowDrawList(), ig.ImTextureRef(ig.ImTextureID(preview.texture)),
-                position, edge, (0, 1), (1, 0))
-        finally
-            ig.PopClipRect()
-        end
+        ig.AddImage(ig.GetWindowDrawList(), ig.ImTextureRef(ig.ImTextureID(preview.texture)),
+            position, edge, (0, 1), (1, 0))
+        ig.PopClipRect()
     end
     ig.SetCursorScreenPos(position)
     ig.Dummy(size)

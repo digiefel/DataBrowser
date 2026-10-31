@@ -1,10 +1,13 @@
-"""Browser controls for arranging a selection without changing its membership."""
+"""
+Draw the menu that arranges the items of a selection in the window: Stack, Grid or Overlay. In
+Stack, the arrows beside it go through the items.
+"""
 function _render_arrangement!(state::BrowserState, window::Window)::Nothing
     value = window.value
     value isa Workspace.Selection || return nothing
-    ctx = WindowContext(state, window)
     mode = window.arrangement == "auto" ? "stack" : window.arrangement
     if ig.BeginCombo("##arrangement", uppercasefirst(mode), ig.ImGuiComboFlags_WidthFitPreview)
+        ctx = WindowContext(state, window)
         for candidate in ("stack", "grid", "overlay")
             candidate == "overlay" && !_can_overlay(window, ctx) && continue
             ig.Selectable(uppercasefirst(candidate), mode == candidate) && arrangement!(window, candidate)
@@ -29,18 +32,15 @@ end
 
 function _draw_cell!(state::BrowserState, window::Window, cell::VisualizerCell)::Nothing
     ig.PushID(cell.id)
-    try
-        if !isempty(cell.error)
-            ig.TextWrapped(cell.error)
-        else
-            cell.draw_error = guarded_draw("$(cell.label): drawing failed", cell.draw_error) do
-                draw!(cell.visualizer, _cell_context(state, window, cell))
-            end
-            isempty(cell.draw_error) || ig.TextWrapped(cell.draw_error)
+    if !isempty(cell.error)
+        ig.TextWrapped(cell.error)
+    else
+        cell.draw_error = guarded_draw("$(cell.label): drawing failed", cell.draw_error) do
+            draw!(cell.visualizer, _cell_context(state, window, cell))
         end
-    finally
-        ig.PopID()
+        isempty(cell.draw_error) || ig.TextWrapped(cell.draw_error)
     end
+    ig.PopID()
     return nothing
 end
 
@@ -59,22 +59,15 @@ function _draw_presentations!(state::BrowserState, window::Window)::Nothing
         rows = cld(length(window.cells), columns)
         height = max(280.0f0, (ig.GetContentRegionAvail().y - (rows - 1) * 8) / rows)
         if ig.BeginTable("##visualizer-grid", columns, ig.ImGuiTableFlags_SizingStretchSame)
-            try
-                for cell in window.cells
-                    ig.TableNextColumn()
-                    opened = ig.BeginChild("cell/$(cell.id)", ig.ImVec2(0, height), ig.ImGuiChildFlags_Borders)
-                    try
-                        if opened
-                            ig.TextUnformatted(cell.label)
-                            _draw_cell!(state, window, cell)
-                        end
-                    finally
-                        ig.EndChild()
-                    end
+            for cell in window.cells
+                ig.TableNextColumn()
+                if ig.BeginChild("cell/$(cell.id)", ig.ImVec2(0, height), ig.ImGuiChildFlags_Borders)
+                    ig.TextUnformatted(cell.label)
+                    _draw_cell!(state, window, cell)
                 end
-            finally
-                ig.EndTable()
+                ig.EndChild()
             end
+            ig.EndTable()
         end
     end
     return nothing
