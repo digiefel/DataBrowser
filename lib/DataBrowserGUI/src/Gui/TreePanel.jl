@@ -669,22 +669,13 @@ function _render_items_panel(
                         grayed && ig.PopStyleColor()
                         if clicked
                             io = ig.GetIO()
-                            shift_held = unsafe_load(io.KeyShift)
-                            ctrl_held = unsafe_load(io.KeyCtrl)
-                            selected_ids = copy(workspace.selection.item_ids)
-                            # TODO(scale): each click builds the ids of all visible items; work on item keys.
-                            visible_ids = [id(workspace, visible) for visible in visible_items]
-                            _update_multi_selection!(
-                                selected_ids,
-                                id(workspace, item),
-                                visible_ids,
-                                shift_held,
-                                ctrl_held,
-                            )
                             # The selection may name items the workspace does not have yet, as after
                             # reopening; `select!` takes only items it has.
-                            filter!(id -> Workspace.item(workspace, id) !== nothing, selected_ids)
-                            Workspace.select!(workspace, selected_ids)
+                            selected_keys = ItemKey[key for key in Workspace.item.(Ref(workspace), workspace.selection.item_ids)
+                                                    if key !== nothing]
+                            _update_multi_selection!(selected_keys, item, visible_items,
+                                unsafe_load(io.KeyShift), unsafe_load(io.KeyCtrl))
+                            Workspace.select!(workspace, selected_keys)
                             state.selection_revision = workspace.selection.revision
                         end
                         if state.scroll_to_item_id !== nothing && state.scroll_to_item_id == id(workspace, item)
