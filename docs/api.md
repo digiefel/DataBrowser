@@ -121,7 +121,7 @@ DataBrowserPlots.set_analysis!
 ### Visualizers
 
 A visualizer displays data and metadata in any form the data needs: a table of measurements, a
-plot, a 3D view of a simulation mesh of the Earth, an image, a dashboard. The browser calls
+plot, a 3D view of a simulation mesh of the Earth, an image. The browser calls
 `prepare!` when the value changes and `draw!` in every frame.
 
 ```@docs
