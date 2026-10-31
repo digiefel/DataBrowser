@@ -4,21 +4,12 @@ import CImGui.CSyntax: @c
 using DataBrowserAPI: kind_label, label
 import DataBrowserCore.Workspace
 
-"""Render collection and item details for the visible workspace selection."""
+"""Draw the information panel: the metadata of the selected collection and of the selected item."""
 function render_info_window(state::BrowserState)::Nothing
-    workspace = state.workspace
-    if !(workspace isa Workspace.Workspace)
-        if ig.Begin("Information Panel")
-            ig.TextDisabled("No workspace open")
-        end
-        ig.End()
-        return nothing
-    end
-    selected_collections, selected_items, selected_path =
-        _project_visible_selection(state)
-    if ig.Begin("Information Panel")
-        flags = ig.ImGuiTableFlags_Borders | ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY
-        ig.BeginTable("info_cols", 2, flags)
+    workspace = state.workspace::Workspace.Workspace
+    selected_collections, selected_items, selected_path = _project_visible_selection(state)
+    flags = ig.ImGuiTableFlags_Borders | ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY
+    if ig.Begin("Information Panel") && ig.BeginTable("info_cols", 2, flags)
         ig.TableSetupColumn("Collection")
         ig.TableSetupColumn("Item")
         ig.TableHeadersRow()
@@ -26,15 +17,14 @@ function render_info_window(state::BrowserState)::Nothing
         ig.TableNextColumn()
 
         if length(selected_collections) == 1
-            collection_node = selected_collections[1]
-            sel_name = join(selected_path, "/")
-            ig.Text("Location: $sel_name")
+            collection = only(selected_collections)
+            ig.Text("Location: $(join(selected_path, "/"))")
             ig.Separator()
-            collection_metadata_values = Workspace.metadata(workspace, collection_node)
-            if !isempty(collection_metadata_values)
+            metadata = Workspace.metadata(workspace, collection)
+            if !isempty(metadata)
                 ig.Text("Collection metadata")
-                for k in sort!(collect(keys(collection_metadata_values)); by=String)
-                    ig.BulletText("$(k): $(collection_metadata_values[k])")
+                for k in sort!(collect(keys(metadata)); by=String)
+                    ig.BulletText("$(k): $(metadata[k])")
                 end
             else
                 ig.TextDisabled("No collection metadata found")
@@ -47,26 +37,24 @@ function render_info_window(state::BrowserState)::Nothing
 
         ig.TableNextColumn()
         if length(selected_items) == 1
-            m = selected_items[1]
-            # The delivered metadata dict (inherited ⊕ item ⊕ computed layers), exactly what
-            # project callbacks and views receive.
-            delivered = Workspace.metadata(workspace, m)
-            ig.Text("Title: $(label(workspace, m))")
+            item = only(selected_items)
+            # The metadata that the project's functions and the visualizers receive: that of the
+            # collections above, of the item, and the computed metadata.
+            metadata = Workspace.metadata(workspace, item)
+            ig.Text("Title: $(label(workspace, item))")
             ig.Separator()
-            kind_text = kind_label(workspace.project, label(Workspace.valuetype(workspace, m)))
-            ig.BulletText("Type: $(kind_text)")
-            source = Workspace.source_item_id(workspace, m)
+            ig.BulletText("Type: $(kind_label(workspace.project, label(Workspace.valuetype(workspace, item))))")
+            source = Workspace.source_item_id(workspace, item)
             source === nothing || ig.BulletText("Source item: $source")
             ig.Separator()
-            if !isempty(delivered)
+            if !isempty(metadata)
                 ig.Text("Metadata")
-                for k in sort!(collect(keys(delivered)); by=String)
-                    ig.BulletText("$(k) = $(delivered[k])")
+                for k in sort!(collect(keys(metadata)); by=String)
+                    ig.BulletText("$(k) = $(metadata[k])")
                 end
             else
                 ig.TextDisabled("No metadata")
             end
-
         elseif isempty(selected_items)
             ig.TextDisabled("Select an item to view details")
         else

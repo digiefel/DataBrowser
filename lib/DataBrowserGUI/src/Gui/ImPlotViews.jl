@@ -96,6 +96,7 @@ function draw!(view::HistogramView, ctx)::Nothing
     ig.lib.ImPlot_EndPlot()
     return nothing
 end
+
 """A bar for each named number, such as the results of a fit in a `NamedTuple` or a `Dict`."""
 Base.@kwdef mutable struct BarChartView <: AbstractVisualizer
     names::Vector{String} = String[]

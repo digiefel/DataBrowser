@@ -2,16 +2,15 @@
 # in the browser without an action of its own. GUI-only actions take a session.
 
 """
-The always-on main-task timing tree recorded by `@timed` during the render loop. Returns the live
-`TimerOutput`, so every TimerOutputs function applies to it (`print_timer`, `flatten`, Tables export,
-…). It is lock-free (written only by the render task), so read it while the GUI is idle to avoid
-racing a section update.
+The timings of the frames the browser drew, as the live `TimerOutput`: every TimerOutputs function
+works on it, such as `print_timer`. Only the render task writes to it; read it while the browser is
+idle for consistent numbers.
 """
 gui_timings(session::BrowserSession) = MAIN_TIMER
 
 """
-Clear the main-task timer. The render loop performs the reset at the top of its next frame, where no
-`@timed` section is open; a no-op if the GUI is not running.
+Clear the timings of [`gui_timings`](@ref). The browser clears them at the start of its next frame,
+where no timed section is open; nothing happens if the browser is not running.
 """
 function reset_timings!(session::BrowserSession)::Nothing
     session.state.performance.reset_main_timer = true
@@ -21,9 +20,9 @@ end
 """
     wait_browser_ready(session; timeout_s=120) -> session
 
-Wait until the browser has presented a full frame after extension initialization. The preparation
-screen does not count. This waits for the GUI, not for all background workspace processing.
-Propagate render-task failures; throw if the browser closes or the deadline expires before readiness.
+Wait until the browser has drawn its full window once, after every extension is ready; the startup
+screen does not count. This does not wait for the background work of the workspace. Rethrow the
+error of the render task; throw if the browser closes or `timeout_s` seconds pass first.
 """
 function wait_browser_ready(session::BrowserSession; timeout_s::Real=120)
     deadline = time() + timeout_s

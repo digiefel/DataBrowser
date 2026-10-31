@@ -4,8 +4,7 @@ using DataBrowserAPI: id, label
 using DataBrowserCore.Catalogs: CollectionKey, ItemKey, ROOT
 
 """Whether the workspace read its tags; they cannot be shown or changed otherwise."""
-_tags_ready(state::BrowserState)::Bool =
-    state.workspace isa Workspace.Workspace && isempty(state.workspace.tags.error)
+_tags_ready(state::BrowserState)::Bool = isempty((state.workspace::Workspace.Workspace).tags.error)
 
 """
 Return whether an item or collection remains visible under the visibility chosen for each tag.
@@ -31,10 +30,7 @@ the next calls: do not change them.
 function _project_visible_selection(
     state::BrowserState,
 )::Tuple{Vector{CollectionKey},Vector{ItemKey},Vector{String}}
-    workspace = state.workspace
-    if !(workspace isa Workspace.Workspace)
-        return CollectionKey[], ItemKey[], String[]
-    end
+    workspace = state.workspace::Workspace.Workspace
     # The panels and every window ask at each frame; looking up each selected id costs time and
     # memory in proportion to the selection. The selection revision stands for the selected ids.
     key = hash((objectid(workspace), Workspace.generation(workspace), workspace.selection.collections,
@@ -111,7 +107,10 @@ function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     return all_items
 end
 
-"""Apply a context-menu action to the selection when the clicked item belongs to it."""
+"""
+The rows that a row's menu acts on: the selected rows when the clicked row is one of them, otherwise
+the clicked row alone.
+"""
 function _selection_targets(
     selected_items::Vector{T},
     clicked_item::T,
