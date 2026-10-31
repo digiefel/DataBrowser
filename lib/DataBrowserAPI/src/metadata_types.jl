@@ -24,7 +24,8 @@ function metadata_value(value)::MetadataValue
     # A tuple such as (1000.0, 1000.0) is stored as a vector of its promoted element type.
     value isa Tuple && return metadata_value([value...])
     throw(ArgumentError(
-        "unsupported metadata value of type $(typeof(value)): $(repr(value)); " *
+        # `summary`, not `repr`: printing a large value, such as a table, costs more than the rest.
+        "unsupported metadata value $(summary(value)); " *
         "metadata must be scalars (Bool/Int64/Float64/String/Symbol/Date/DateTime/Missing) " *
         "or homogeneous Bool/Int64/Float64/String vectors or tuples",
     ))
