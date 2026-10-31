@@ -23,10 +23,12 @@ again.
 """
 mutable struct DuckDBStore
     path::String
-    # Held for `serialized` and `shells`; the table store has its own lock.
+    # Held for `serialized`, `serialized_ids` and `shells`; the table store has its own lock.
     lock::ReentrantLock
     database::DuckDB.DB
     serialized::DuckDB.Connection
+    # The ids in `stored_values`, so that writes and lookups need no query.
+    serialized_ids::Set{String}
     tables::TabularFamilyStore
     shell_rows::RowStore{String,StoredShell}
     # The item type and metadata of each item whose data is in `tables`.
@@ -50,7 +52,8 @@ function open_duckdb_store(path::String, max_bytes::Integer)
     _run(serialized, "CREATE TABLE IF NOT EXISTS stored_values (id VARCHAR PRIMARY KEY, value BLOB NOT NULL)")
     _run(serialized, create_table_sql(StoredShell, "stored_items", (:id,)))
     shell_rows = RowStore{String,StoredShell}(database, "stored_items", ("id",))
-    return DuckDBStore(path, ReentrantLock(), database, serialized,
+    serialized_ids = Set{String}(String(row.id) for row in DBInterface.execute(serialized, "SELECT id FROM stored_values"))
+    return DuckDBStore(path, ReentrantLock(), database, serialized, serialized_ids,
         TabularFamilyStore(database; row_limit=CACHE_BUFFER_ROW_LIMIT),
         shell_rows, read(shell_rows), MemoryStore(; max_bytes))
 end
@@ -65,13 +68,14 @@ function Base.write(store::DuckDBStore, id::AbstractString, value)
             append!(store.tables, id, data)
             edit!(store.shell_rows, id, shell)
             store.shells[id] = shell
-            _run_with(store.serialized, "DELETE FROM stored_values WHERE id = ?", (id,))
+            _forget_serialized!(store, id)
         else
             _forget_table!(store, id)
             buffer = IOBuffer()
             serialize(buffer, value)
             # TODO(scale): one statement per value; queue these as the tables are.
             _run_with(store.serialized, "INSERT OR REPLACE INTO stored_values VALUES (?, ?)", (id, take!(buffer)))
+            push!(store.serialized_ids, id)
         end
         write(store.recent, id, value)
     end
@@ -112,7 +116,7 @@ function _read_serialized(store::DuckDBStore, id::String)
             return deserialize(IOBuffer(bytes))
         catch
             # Written by another Julia or package version: compute it again.
-            _run_with(store.serialized, "DELETE FROM stored_values WHERE id = ?", (id,))
+            _forget_serialized!(store, id)
             throw(KeyError(id))
         end
     end
@@ -121,11 +125,7 @@ end
 function Base.haskey(store::DuckDBStore, id::AbstractString)::Bool
     id = String(id)
     haskey(store.recent, id) && return true
-    @lock store.lock begin
-        haskey(store.shells, id) && return true
-        rows = DBInterface.execute(store.serialized, "SELECT 1 FROM stored_values WHERE id = ?", (id,))
-        return !isempty(collect(rows))
-    end
+    return @lock store.lock haskey(store.shells, id) || id in store.serialized_ids
 end
 
 function Base.delete!(store::DuckDBStore, id::AbstractString)
@@ -133,7 +133,7 @@ function Base.delete!(store::DuckDBStore, id::AbstractString)
     delete!(store.recent, id)
     @lock store.lock begin
         _forget_table!(store, id)
-        _run_with(store.serialized, "DELETE FROM stored_values WHERE id = ?", (id,))
+        _forget_serialized!(store, id)
     end
     return store
 end
@@ -143,6 +143,14 @@ function _forget_table!(store::DuckDBStore, id::String)::Nothing
     pop!(store.shells, id, nothing) === nothing && return nothing
     delete!(store.tables, id)
     delete!(store.shell_rows, id)
+    return nothing
+end
+
+# The caller holds the store lock.
+function _forget_serialized!(store::DuckDBStore, id::String)::Nothing
+    id in store.serialized_ids || return nothing
+    delete!(store.serialized_ids, id)
+    _run_with(store.serialized, "DELETE FROM stored_values WHERE id = ?", (id,))
     return nothing
 end
 
