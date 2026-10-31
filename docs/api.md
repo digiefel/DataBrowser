@@ -11,8 +11,8 @@ Each kind has several surfaces: groups of functions and types that are used toge
 
 | Surface                           | Kind     | Contents                                                                  | Package            |
 |:----------------------------------|:---------|:--------------------------------------------------------------------------|:-------------------|
-| [Type API](#Type-API)             | provider | Types and methods that describe a project: its sources, items, collections, processing and storage | DataBrowserAPI |
-| [Sources](#Sources)               | provider | Ready-made source types, such as `DirectorySource`                        | DataBrowserSources |
+| [Type API](#Type-API)             | provider | Types and methods that describe a project: its items, collections, processing and storage | DataBrowserAPI |
+| [Sources](#Sources)               | provider | Types and methods that find source items and report their changes        | DataBrowserAPI, DataBrowserSources |
 | [Recipes](#Recipes)               | provider | Describe a project with plain functions of data and metadata, without defining types | DataBrowserRecipes |
 | [Plots](#Plots)                   | provider | Plot definitions in AlgebraOfGraphics syntax, drawn with Makie            | DataBrowserPlots   |
 | [Visualizers](#Visualizers)       | provider | Types that display data and metadata in the browser, in any form the data needs | DataBrowserAPI   |
@@ -33,21 +33,6 @@ order of the stages below, and keeps their results.
 
 ```@docs
 DataBrowserAPI.AbstractProject
-```
-
-#### Sources and source items
-
-A source finds source items and reports when they change. A source item is one unit that `read`
-loads, such as a file or a database record.
-
-```@docs
-DataBrowserAPI.AbstractDataSource
-DataBrowserAPI.AbstractDataSourceItem
-DataBrowserAPI.open_source
-DataBrowserAPI.close_source!
-DataBrowserAPI.items
-DataBrowserAPI.watch_source
-DataBrowserAPI.fingerprint
 ```
 
 #### Items and collections
@@ -89,6 +74,24 @@ DataBrowserAPI.stored_size
 ```
 
 ### Sources
+
+A source finds source items and reports when they change. A source item is one unit that `read`
+loads, such as a file, a database record or one acquisition of an instrument. A project reads the
+source items of any source, so one source type serves many projects.
+
+```@docs
+DataBrowserAPI.AbstractDataSource
+DataBrowserAPI.AbstractDataSourceItem
+DataBrowserAPI.open_source
+DataBrowserAPI.close_source!
+DataBrowserAPI.items
+DataBrowserAPI.watch_source
+DataBrowserAPI.fingerprint
+```
+
+#### Included sources
+
+DataBrowserSources implements this contract for a directory of files.
 
 ```@docs
 DataBrowserSources.DirectorySource
