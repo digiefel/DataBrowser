@@ -16,21 +16,19 @@ const _CURRENT_FONTS = ScopedValues.ScopedValue{_GUIFonts}()
 """
     with_font(f, role::Symbol; bold::Bool=false)
 
-Draw with the browser's `:interface` or `:code` font, in its bold weight when `bold` is set, for
-the duration of `f()`. Return its result
-and restore the previous font, including when `f` throws. Calls may be nested.
+Draw with the browser's `:interface` or `:code` font, in its bold weight when `bold` is set, while
+`f()` runs. Return the result of `f()` and go back to the font before, also when `f` throws. Calls
+may be nested. Call it only while the browser draws.
 
-Use this during browser drawing. The interface font (Lexend) is the default for controls and
-labels. The code font (JuliaMono) is for table content, printed values, source code, and other
-text that needs equal character widths. Keep a visualizer's controls outside its code-font block.
+The interface font (Lexend) is the default for controls and labels. The code font (JuliaMono) has
+characters of equal width: use it for table content, printed values and code, and keep the
+controls of a visualizer outside it.
 
 ```julia
 with_font(:code) do
     CImGui.TextUnformatted(text)
 end
 ```
-
-Fonts belong to `DataBrowserGUI`; using them does not require a workspace or browser-state handle.
 """
 function with_font(f::Function, role::Symbol; bold::Bool=false)
     role in (:interface, :code) || throw(ArgumentError(
@@ -57,40 +55,29 @@ const _ICON_RANGE = CImGui.lib.ImWchar[0xe000, 0xf8ff, 0]
 function _load_fonts!()::_GUIFonts
     assets = joinpath(pkgdir(@__MODULE__), "assets")
     atlas = unsafe_load(CImGui.GetIO().Fonts)
-    # The fonts of one weight: the interface font and the code font, each with the icons.
+    # The fonts of one weight: the interface font and the code font, each with the icons. ImGui keeps
+    # a copy of each configuration, so one configuration serves several fonts.
     function load(weight::String)
+        merge = CImGui.lib.ImFontConfig_ImFontConfig()
+        merge.MergeMode = true
+        code_config = CImGui.lib.ImFontConfig_ImFontConfig()
+        code_config.GlyphExcludeRanges = pointer(_ICON_RANGE)
+
         interface = CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "Lexend-$weight.ttf"), 13.0f0)
+        # JuliaMono draws the characters that Lexend lacks, such as those of scientific labels. A
+        # merged font only adds characters, so Lexend keeps its own.
+        merge.GlyphExcludeRanges = pointer(_ICON_RANGE)
+        CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-$weight.ttf"), 13.0f0, merge)
+        # Icons fill their font size; they load smaller and move down onto the line of the text.
+        merge.GlyphExcludeRanges = C_NULL
+        merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
+        CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
 
-        # Keep scientific labels readable when Lexend lacks a character. Earlier sources take
-        # precedence, so ordinary interface text keeps Lexend's proportional character widths.
-        merge = CImGui.lib.ImFontConfig_ImFontConfig()
-        try
-            merge.MergeMode = true
-            merge.GlyphExcludeRanges = pointer(_ICON_RANGE)
-            CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-$weight.ttf"), 13.0f0, merge)
-            merge.GlyphExcludeRanges = C_NULL
-            # Icons fill their font size; load them smaller and move them onto the text baseline.
-            merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
-            CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
-        finally
-            CImGui.lib.ImFontConfig_destroy(merge)
-        end
+        code = CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-$weight.ttf"), 13.0f0, code_config)
+        CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
 
-        config = CImGui.lib.ImFontConfig_ImFontConfig()
-        code = try
-            config.GlyphExcludeRanges = pointer(_ICON_RANGE)
-            CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-$weight.ttf"), 13.0f0, config)
-        finally
-            CImGui.lib.ImFontConfig_destroy(config)
-        end
-        merge = CImGui.lib.ImFontConfig_ImFontConfig()
-        try
-            merge.MergeMode = true
-            merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
-            CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
-        finally
-            CImGui.lib.ImFontConfig_destroy(merge)
-        end
+        CImGui.lib.ImFontConfig_destroy(merge)
+        CImGui.lib.ImFontConfig_destroy(code_config)
         return interface, code
     end
     # The regular weight loads first: ImGui takes the first font as the default.
