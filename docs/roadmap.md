@@ -234,11 +234,11 @@ workloads, completed disk writes, cache reads and process memory measurements.
   store. The rest of the cache becomes the workspace file next to the project: items, collections,
   metadata and result states, no results. Its `source_reads` and `unprocessed` buffers go away.
 - [ ] Let a store hand out a kept value without copying it, for callers that do not change it.
-- [ ] Sort every exported name into the project-author or extension-author tier and stop exporting
-  the rest: `SourceFile`, the concrete `Project`, `gui_timings`,
-  `reset_timings!`, `plot_kinds`, `CollectionRecipe`, `ItemRecipe`, `NoMatch`,
-  `RegisteredReadResult`. Export what extension authors need and cannot reach today:
-  `GuiExtension`, `register_gui_extension!`, `NamedCollection`.
+- [x] Stop exporting names that neither project authors nor extension authors use: the concrete
+  `Project` of Recipes, `gui_timings`, `reset_timings!` and `registered_plots`. Export
+  `GuiExtension` and `register_gui_extension!` for GUI extension authors. `SourceFile` stays
+  exported: a type API project dispatches its `read` on it. `NamedCollection` stays internal to
+  Recipes, whose users never name a collection type.
 - [ ] Generate the umbrella's `using`/`export` lists from one table instead of two hand-kept blocks.
 - [ ] One selector concept — `ItemKey`, id, or current selection — implemented once and shared by
   `select_items!`, `materialize_items`, `read_item_data`; delete the runtime-typed

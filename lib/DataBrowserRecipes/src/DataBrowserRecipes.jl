@@ -45,8 +45,7 @@ include("registration.jl")
 include("stages.jl")
 include("premade.jl")
 
-export Project,
-    define_project,
+export define_project,
     register_collection!,
     register_csv!,
     register_item!

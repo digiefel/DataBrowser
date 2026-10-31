@@ -17,9 +17,11 @@ include("CodeText.jl")
 include("TableModel.jl")
 include("Browser.jl")
 
-using .Browser: open_browser, close_browser!, BrowserSession, gui_timings, reset_timings!
-using .Browser: wait_browser_ready
-export wait_browser_ready
-export open_browser, close_browser!, BrowserSession, gui_timings, reset_timings!
+using .Browser: open_browser, close_browser!, BrowserSession, wait_browser_ready
+using .Browser: GuiExtension, register_gui_extension!
+# Browser timings are diagnostics: `DataBrowserGUI.gui_timings`, not exported.
+using .Browser: gui_timings, reset_timings!
+export open_browser, close_browser!, BrowserSession, wait_browser_ready
+export GuiExtension, register_gui_extension!
 
 end

@@ -1,7 +1,7 @@
 include("smoke_project.jl")
 using DataBrowserPlots
 using DataBrowserAPI: data
-using DataBrowserGUI: merge_item_tables
+using DataBrowserGUI: merge_item_tables, gui_timings
 using DataBrowserGUI.Browser: TimerOutputs
 
 function wait_for(predicate, session; timeout=120)

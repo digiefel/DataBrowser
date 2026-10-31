@@ -20,7 +20,7 @@ ToyCounters() = ToyCounters(
     Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
 )
 
-function toy_project(name::AbstractString, counters::ToyCounters)::Project
+function toy_project(name::AbstractString, counters::ToyCounters)
     project = define_project(name)
     register_item!(project, :trace;
         detect=file -> endswith(file.filename, ".dbitem"),
