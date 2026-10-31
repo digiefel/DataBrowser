@@ -30,13 +30,19 @@ function Base.show(io::IO, ::MIME"text/plain", project::Project)
     end
 end
 
-"""Create an empty project. Register item and collection recipes into it afterwards."""
+"""
+Create an empty project. Register item and collection recipes into it afterwards.
+
+Results are kept in the file `values.duckdb`, in the folder of the Julia environment that is active
+when the project is defined, so they stay available when the workspace opens again.
+"""
 function define_project(name::AbstractString; description::AbstractString="")::Project
     return Project(
         String(name),
         String(description),
         ItemRecipe[],
         CollectionRecipe[],
+        joinpath(dirname(Base.active_project()), "values.duckdb"),
     )
 end
 

@@ -16,7 +16,7 @@ metadata. Tables are written in batches by a background task. Other values are k
 [`MemoryStore`](@ref).
 
 While a store is open on `path`, `DuckDBStore(path)` returns that store, so several item types can
-share one file. `close` closes it for all of them.
+share one file. `close` closes it for all of them; closing it again does nothing.
 
 A value that the running Julia version cannot read back counts as missing, so Core computes it
 again.
@@ -205,7 +205,11 @@ _run_with(connection, sql, parameters) = (DBInterface.execute(connection, sql, p
 # Queued tables are written, then the write-ahead log is moved into the file, so the next opening
 # does not replay it.
 function Base.close(store::DuckDBStore)
-    @lock OPEN_STORES.lock delete!(OPEN_STORES.paths, store.path)
+    # Every item type that shares the store closes it; only the first close does the work.
+    @lock OPEN_STORES.lock begin
+        get(OPEN_STORES.paths, store.path, nothing) === store || return nothing
+        delete!(OPEN_STORES.paths, store.path)
+    end
     @lock store.lock begin
         close!(store.tables)
         close!(store.shell_rows)

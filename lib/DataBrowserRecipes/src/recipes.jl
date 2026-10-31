@@ -50,10 +50,16 @@ and package-owned cache, job, and browser state does not belong here.
 `recipes` is deliberately a `Vector` of differently parameterized recipes. Detection order is
 registration order — the first match wins — so the collection has to preserve order, and different
 registrations genuinely have different callback types.
+
+`values` is the file of the `DuckDBStore` that keeps the results of every item type, so they stay
+available when the workspace opens again.
 """
 mutable struct Project <: AbstractProject
     name::String
     description::String
     recipes::Vector{ItemRecipe}
     collections::Vector{CollectionRecipe}
+    values::String
 end
+
+DataBrowserAPI.storage(project::Project, ::Type{<:AbstractDataItem}) = DuckDBStore(project.values)

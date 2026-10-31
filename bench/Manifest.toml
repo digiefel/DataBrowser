@@ -529,7 +529,7 @@ uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.16.0"
 
 [[deps.DataBrowser]]
-deps = ["BetterFileWatching", "CImGui", "CSV", "CancellationTokens", "DBInterface", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "Dates", "DuckDB", "GLFW", "ModernGL", "NativeFileDialog", "Observables", "PrecompileTools", "Printf", "Reexport", "Serialization", "SmoothData", "Statistics", "TOML"]
+deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "GLFW", "ModernGL", "PrecompileTools", "Reexport"]
 path = ".."
 uuid = "a11ddd67-7e33-4db9-a4a8-4453f6eb9e68"
 version = "0.1.0-alpha.1"
@@ -546,7 +546,6 @@ uuid = "08de5a46-6e49-4091-bc31-d2c451d3c374"
 version = "0.1.0"
 
 [[deps.DataBrowserAnnotations]]
-deps = ["DataBrowserAPI"]
 path = "../lib/DataBrowserAnnotations"
 uuid = "f3b8c1a2-4d5e-6f70-8192-a3b4c5d6e7f8"
 version = "0.1.0"
@@ -570,7 +569,7 @@ uuid = "f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"
 version = "0.1.0"
 
 [[deps.DataBrowserPlots]]
-deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserGUI", "ForwardDiff", "GLFW", "InteractiveUtils", "LinearAlgebra", "ModernGL", "NativeFileDialog", "NonlinearSolve", "PrecompileTools", "Printf", "Tables"]
+deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserGUI", "ForwardDiff", "GLFW", "LinearAlgebra", "ModernGL", "NativeFileDialog", "NonlinearSolve", "PrecompileTools", "Tables"]
 path = "../lib/DataBrowserPlots"
 uuid = "e2f3a4b5-c6d7-8e9f-0a1b-2c3d4e5f6a7b"
 version = "0.1.0"
@@ -588,13 +587,13 @@ uuid = "eec02e18-64b4-4cc2-bb20-84dd2a3ff701"
 version = "0.1.0"
 
 [[deps.DataBrowserRecipes]]
-deps = ["CSV", "DataBrowserAPI", "DataBrowserSources", "DataFrames"]
+deps = ["CSV", "DataBrowserAPI", "DataBrowserCache", "DataBrowserSources", "DataFrames"]
 path = "../lib/DataBrowserRecipes"
 uuid = "a7c3e5d9-2b4f-4816-9e0d-3f5a7c9b1e24"
 version = "0.1.0"
 
 [[deps.DataBrowserSources]]
-deps = ["BetterFileWatching", "CancellationTokens", "DataBrowserAPI", "Dates"]
+deps = ["BetterFileWatching", "CancellationTokens", "DataBrowserAPI"]
 path = "../lib/DataBrowserSources"
 uuid = "b4e2f8c1-9a3d-4e5f-8b7c-1d2e3f4a5b6c"
 version = "0.1.0"
