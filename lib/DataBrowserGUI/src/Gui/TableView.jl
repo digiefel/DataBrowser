@@ -6,7 +6,7 @@ using Printf: @sprintf
 using NativeFileDialog: save_file
 
 import DataBrowserAPI: draw!, draw_header!, export!, label, output, prepare!
-using DataBrowserAPI: AbstractVisualizer, item_data, items
+using DataBrowserAPI: AbstractVisualizer
 using DataBrowserCore: Selection, Workspace
 using ..DataBrowserGUI: ItemTable, TableSelection, _zoomable, merge_item_tables, value_table, zoom_value
 
@@ -90,8 +90,6 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     # The selection the table was built from, the metadata it has, and the metadata the user picked
     # as columns.
     selection::Union{Nothing,Selection} = nothing
-    # The items of `selection`, as the project made them.
-    items::Vector = []
     metadata_names::Vector{Symbol} = Symbol[]
     metadata::Vector{Symbol} = Symbol[]
     # The columns of the data the user hid, by name.
@@ -136,9 +134,8 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     output::Union{Nothing,Vector{Workspace.Computation}} = nothing
     warnings::Vector{String} = String[]
     grid::DataGridState = DataGridState()
-    # Names the grid for ImGui, which keeps the column widths under this name in imgui.ini: one
-    # name for each item type.
-    grid_id::String = "mixed"
+    # Names the grid for ImGui: the table of the items, or of the cell it zooms into.
+    grid_id::String = "table"
     # Retain requested columns even when an updated table temporarily lacks them. This belongs
     # to the instance, so preparation never shares a mutable registry with another window.
     selected_column_names::Union{Nothing,Vector{String}} = nothing
@@ -185,25 +182,6 @@ label(::TableView)::String = "Table"
 
 output(view::TableView) = view.output
 
-# Show `table`, whose first column `item` holds the labels of several items when `item_column`.
-function _show!(view::TableView, table::ItemTable, item_column::Bool)::Nothing
-    selected_columns(view) # capture the current request before replacing the grid
-    view.built = table
-    view.item_column = item_column
-    view.selection = nothing
-    view.metadata_names = Symbol[]
-    # TODO: read each column once rather than each cell, for large tables.
-    view.built_formats = @timed_dbg "table.formats" [_number_format(table.getvalue(row, column) for row in 1:table.rows)
-                          for column in eachindex(table.columns)]
-    view.folded = Set{Int}()
-    view.warnings = String[]
-    view.grid = DataGridState()
-    view.grid_id = "table"
-    @timed_dbg "table.order" _order!(view)
-    @timed_dbg "table.arrange" _arrange!(view)
-    return nothing
-end
-
 # Put the columns of the table in the order the user moved them to. The columns the user moved
 # take each other's places, and the other columns keep theirs. The sort, the filters and the
 # selected columns stay, as long as the table has their columns.
@@ -244,12 +222,7 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     if index === nothing
         empty!(view.zoom)
     elseif !isempty(view.zoom)
-        value = try
-            item_data(items(selection)[index])
-        catch
-            # `merge_item_tables` reports why the data cannot be read.
-            empty!(view.zoom)
-        end
+        value = selection.data[index]
         for (step, (row, path)) in enumerate(view.zoom)
             found = zoom_value(value, row, path)
             found === nothing && (resize!(view.zoom, step - 1); break)
@@ -259,18 +232,22 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     table, warnings = @timed_dbg "table.merge" isempty(view.zoom) ?
         merge_item_tables(selection; item_column=true, metadata, view.unfolded) :
         (value_table(view.zoom_item, value; view.unfolded), String[])
-    _show!(view, table, length(table.item_labels) > 1)
+    selected_columns(view) # capture the current request before replacing the grid
+    view.built = table
+    # The first column `item` holds the labels of several items.
+    view.item_column = length(table.item_labels) > 1
     view.selection = selection
-    view.items = items(selection)
     view.metadata_names = names
     view.warnings = warnings
-    @timed_dbg "table.output" _pass_on!(view)
-    types = unique(typeof.(view.items))
-    view.grid_id = length(types) == 1 ? string(label(only(types))) : "mixed"
-    # A zoomed table keeps column widths of its own.
-    for (_, path) in view.zoom
-        view.grid_id *= ">" * join(path, ".")
-    end
+    # TODO: read each column once rather than each cell, for large tables.
+    view.built_formats = @timed_dbg "table.formats" [_number_format(table.getvalue(row, column) for row in 1:table.rows)
+                          for column in eachindex(table.columns)]
+    view.folded = Set{Int}()
+    view.grid = DataGridState()
+    # A zoomed table has a grid of its own, so ImGui does not take its columns for those of the items.
+    view.grid_id = join(["table"; [join(path, ".") for (_, path) in view.zoom]], ">")
+    @timed_dbg "table.order" _order!(view)
+    @timed_dbg "table.arrange" _arrange!(view)
     return nothing
 end
 

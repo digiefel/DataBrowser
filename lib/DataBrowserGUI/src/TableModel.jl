@@ -127,11 +127,12 @@ function merge_item_tables(
     item_rows = Int[]
     warnings = String[]
     for (index, (item_label, item)) in enumerate(zip(selection.label, items(selection)))
+        # The project's `item_data` may fail for one item; the table shows the others.
         data = try
             item_data(item)
         catch err
-            @error "Failed to load item data for table" label=item_label exception=(err, catch_backtrace())
-            push!(warnings, "Item '$item_label': failed to load data; skipped.")
+            DataBrowserAPI.report_error("Table: the data of item '$item_label' cannot be read", err, catch_backtrace())
+            push!(warnings, "Item '$item_label': its data cannot be read.")
             continue
         end
         columns, rows = _item_columns(data, unfolded)
