@@ -173,8 +173,9 @@ What is selected in a workspace: items by public id, and each collection by its
 the workspace is closed and opened again, so a selection may name rows the workspace does not have
 yet or no longer has.
 
-`revision` rises with each [`select!`](@ref), so that a browser can tell a selection it did not
-make itself, and reveal it.
+`revision` rises with each change of `item_ids`: with each [`select!`](@ref), and when selected
+items are removed or replaced. A browser compares it to tell whether the selection changed, without
+reading the ids, and reveals a selection it did not make itself.
 
 `replaced` gives, for the id of an item that its source item no longer produces, the id of the item
 it produces in its place, as when another recipe reads the source item now. The selection follows

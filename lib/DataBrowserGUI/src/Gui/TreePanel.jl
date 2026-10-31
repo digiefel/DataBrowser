@@ -626,7 +626,9 @@ function _render_items_panel(
         filter_item,
         () -> begin
             # TODO(scale): select-all builds the id of every visible item; keep the selection as item keys.
-            workspace.selection.item_ids = [id(workspace, item) for item in visible_items]
+            Workspace.select!(workspace, visible_items)
+            # The browser made this selection itself: nothing to reveal.
+            state.selection_revision = workspace.selection.revision
         end;
         item_label="items", filter_id="##items_filter"
     )
@@ -711,7 +713,11 @@ function _render_items_panel(
                                 shift_held,
                                 ctrl_held,
                             )
-                            workspace.selection.item_ids = selected_ids
+                            # The selection may name items the workspace does not have yet, as after
+                            # reopening; `select!` takes only items it has.
+                            filter!(id -> Workspace.item(workspace, id) !== nothing, selected_ids)
+                            Workspace.select!(workspace, selected_ids)
+                            state.selection_revision = workspace.selection.revision
                         end
                         if state.scroll_to_item_id !== nothing && state.scroll_to_item_id == id(workspace, item)
                             ig.SetScrollHereY(0.5)

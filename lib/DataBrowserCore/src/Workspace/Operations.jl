@@ -394,7 +394,10 @@ function ingest_source_changes!(
             # The items of a source item that is gone leave the selection. The items of a source
             # item that changed stay selected, and are found again once it is expanded.
             gone = String[id(catalog, item) for item in Catalogs.items(catalog, source)]
-            filter!(id -> !(id in gone), workspace.selection.item_ids)
+            selected = workspace.selection.item_ids
+            count = length(selected)
+            filter!(id -> !(id in gone), selected)
+            length(selected) == count || (workspace.selection.revision += 1)
             remove_items!(workspace, source)
             forget_results!(workspace, source)
             delete!(catalog, source)

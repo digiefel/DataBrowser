@@ -235,8 +235,16 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             end
         end
         selected = workspace.selection.item_ids
+        count = length(selected)
         filter!(id -> !(id in gone) || haskey(replaced, id), selected)
-        unique!(replace!(id -> get(replaced, id, id), selected))
+        renamed = false
+        replace!(selected) do id
+            new = get(replaced, id, id)
+            renamed |= new != id
+            return new
+        end
+        unique!(selected)
+        (renamed || length(selected) != count) && (workspace.selection.revision += 1)
         conflicts!(workspace, job.key, SOURCE_EXPAND, conflicts)
         forget_stale!(workspace)
     end

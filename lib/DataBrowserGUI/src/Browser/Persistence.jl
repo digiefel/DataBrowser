@@ -248,7 +248,11 @@ function _apply_project_view!(
     workspace.selection.collections = copy(view.tree.selected)
     # The items replaced since the view was saved are selected by their new ids.
     replaced = workspace.selection.replaced
+    # Not `select!`: the saved ids may name items the workspace does not have yet.
+    # TODO: restore the selection through a workspace operation (see the TODO above).
     workspace.selection.item_ids = unique!([get(replaced, id, id) for id in view.items.selected])
+    workspace.selection.revision += 1
+    state.selection_revision = workspace.selection.revision
     state.tree_filter = view.tree.filter
     state.item_filter = view.items.filter
     _restore_windows!(state, view.windows)

@@ -34,7 +34,7 @@ for n in (10_000, 100_000, 1_000_000)
     fixed_before = ms(() -> B.stamp(fixed.input, state))
     fixed_after = ms(() -> B.stamp(fixed, state))
     ws.selection.collections = [Workspace.CollectionPath()]
-    ws.selection.item_ids = ids
+    Workspace.select!(ws, ids)
     live = B.open_window!(state, Kept())
     length(B.itemkeys(live.input, state)) == n || error("selection not resolved")
     live_before = ms(() -> B.stamp(live.input, state))
