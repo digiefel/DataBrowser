@@ -211,8 +211,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 - [x] Core has no `analyze` stage. An item's metadata is `metadata` of its processed value;
   DataBrowserRecipes keeps its `analyze` callbacks and runs them inside its `process` methods.
-- [ ] Remove the registration adapter's reliance on the internal `adopt` hook for labels and
-  collections; it must consume the same public contract as any other extension.
+- [x] The registration adapter uses the same public contract as any other extension: labels and
+  collections come from `label(project, item)` and `collection(project, item)`.
 - [x] A collection `process` returns a later version of the collection, and a member
   `process(project, member, collection)` returns a later version of each member, with its metadata
   and label, also when its payload is unchanged. This covers cumulative device history: successive
@@ -224,7 +224,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
   after a maximum number of rounds. Today each runs once.
 - [x] Items carry all their metadata: they no longer inherit the metadata of their collections. A
   member `process` method copies it when needed; the Recipes one does.
-- [ ] Remove `native_value` and `adopt`, so that `reconstruct` gives back the stored value.
+- [x] The workspace hands out each item as its `process` returned it, without rebuilding it.
+- [ ] Keep the metadata of an item's latest value alone, instead of merging it over the metadata
+  its `process` received, so that `reconstruct` gets the metadata the value had when it was stored.
 - [ ] Store the results of item and member `process` in the store that `storage(project, T)`
   chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
   one copy of data that a member `process` returned unchanged.

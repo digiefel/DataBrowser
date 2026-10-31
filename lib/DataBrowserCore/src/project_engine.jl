@@ -34,8 +34,10 @@ struct ExpandedItem
 end
 
 """The collection values of `item` from the top down, or those of its source item when it has none."""
-function collections(source_item::AbstractDataSourceItem, item::AbstractDataItem)::Vector{AbstractCollection}
-    values = collection(item)
+function collections(
+    project::AbstractProject, source_item::AbstractDataSourceItem, item::AbstractDataItem,
+)::Vector{AbstractCollection}
+    values = collection(project, item)
     (values isa AbstractVector && all(value -> value isa AbstractCollection, values)) ||
         throw(ArgumentError(
             "collection(::$(typeof(item))) must return a vector of AbstractCollection values; " *
@@ -74,7 +76,7 @@ function expanded_items(project, source, source_item, loaded, items)::Vector{Exp
             "$(typeof(item)) from it, which is not an AbstractDataItem. Return a data item from " *
             "read, or define expand(::$(typeof(source_item)), ::$(typeof(loaded))).",
         )
-        values = collections(source_item, item)
+        values = collections(project, source_item, item)
         ExpandedItem(
             item,
             id(item),

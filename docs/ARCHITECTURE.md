@@ -267,8 +267,8 @@ Selecting such a collection, or clicking a gray row, reads the source items belo
 other (`read_first!`).
 
 A collection is one node of the collection tree, identified by its parent and by the type and `id`
-of its value. An item goes where `collection(item)` says, or where `collection(source_item)` says
-when that is empty. A collection contains every item below it, at any depth. Collection
+of its value. An item goes where `collection(project, item)` says, or where `collection(source_item)`
+says when that is empty. A collection contains every item below it, at any depth. Collection
 `process(project, collection, members)` receives each of them as its own `process` returned it,
 and returns a later version of the collection; the cache keeps the metadata and the data
 (`item_data`) of that version. Member

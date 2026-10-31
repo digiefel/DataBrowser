@@ -322,22 +322,17 @@ end
 # Items
 
 """
-What the workspace holds for an item apart from its data and metadata: its id, its item type, its
-label and the values of its collections. One call reads them under one hold of the catalog lock,
-which every worker needs.
+What the workspace holds for an item apart from its data and metadata: its id and its item type.
+One call reads them under one hold of the catalog lock, which every worker needs.
 """
 function row(workspace::Workspace, item::ItemKey)
     catalog = workspace.catalog
-    @lock catalog.lock begin
-        return (
-            id=id(catalog, item), type=valuetype(catalog, item), label=label(catalog, item),
-            collections=values(workspace, Catalogs.collection(catalog, item)))
-    end
+    @lock catalog.lock (id=id(catalog, item), type=valuetype(catalog, item))
 end
 
 """
 The item that `process` receives: rebuilt from the payload `expand` gave it, with `given`, the
-metadata of its collections and its source item. `known` is the [`row`](@ref) of the item. When
+metadata of the item and its source item. `known` is the [`row`](@ref) of the item. When
 the payload is gone, or the item type does not rebuild from a payload, `expand` runs again.
 """
 function unprocessed(workspace::Workspace, item::ItemKey, known, given::MetadataDict)::AbstractDataItem
@@ -348,7 +343,7 @@ function unprocessed(workspace::Workspace, item::ItemKey, known, given::Metadata
         value = expand_again(workspace, item)
         value = something(reconstruct(known.type, known.id, item_data(value), given), value)
     end
-    return adopt(value, known.label, given, known.collections)
+    return value
 end
 
 """Run `process` of the project on `input` and check what it returns."""
@@ -370,7 +365,7 @@ function rebuilt(workspace::Workspace, item::ItemKey, known, payload, delivered:
     value = reconstruct(known.type, known.id, deepcopy(payload), delivered)
     value === nothing && (value = processed(workspace, unprocessed(
         workspace, item, known, metadata(workspace, item; through=SOURCE_EXPAND))))
-    return adopt(value, known.label, delivered, known.collections)
+    return value
 end
 
 """Replace the label of an item in the catalog and the cache. The caller holds the catalog lock."""
@@ -397,6 +392,9 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     payload = item_data(output)
     retain = keeps_result(workspace, output) && typeof(output) == known.type &&
         DataBrowserCache.can_store_payload(payload)
+    # TODO: keep `metadata(output)` alone, here and in the member `process`. Merged with `given`,
+    # an item that drops a key of its input has less metadata than the workspace gives
+    # `reconstruct` for it after reopening.
     delivered = merge(given, metadata_dict(metadata(output)))
     computed = MetadataDict(
         name => value for (name, value) in delivered

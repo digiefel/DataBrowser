@@ -262,9 +262,9 @@ end
         CW.wait_workspace_idle!(workspace)
         key = only(CW.items(workspace))
         processed = computation(workspace, key, DataBrowserAPI.ITEM_PROCESS)
-        # The item's value is made from the processed item, and its graph keeps that exact call.
+        # The item's value is the processed item, and its graph keeps that exact call.
         @test processed.f === DataBrowserAPI.process
-        pending = inputs(computation(workspace, key))
+        pending = Computation[computation(workspace, key)]
         ancestors = Computation[]
         while !isempty(pending)
             node = pop!(pending)

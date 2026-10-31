@@ -127,7 +127,6 @@ import DataBrowserAPI:
     AbstractProject,
     SourceChanges,
     SourceError,
-    adopt,
     close_source!,
     collection,
     expand,

@@ -20,7 +20,7 @@ end
 
 # The item with `analysis` merged over its metadata.
 _with_metadata(item::RegisteredDataItem{K}, analysis::MetadataDict) where {K} = RegisteredDataItem{K}(
-    item.id, item.label, item.collection, item.data, merge(item.metadata, analysis))
+    item.id, item.data, merge(item.metadata, analysis))
 
 
 """
@@ -61,10 +61,8 @@ end
 """
 Adapt one registration callback result into a `RegisteredDataItem`.
 
-This translates the registration dialect (entry tuples, callback-supplied keys, labels, and
-named collection levels) into the item contract. A recipe without a `collection` callback leaves the path
-empty, and the engine applies the source's default placement afterwards — the same rule typed items
-get.
+This translates the registration dialect (entry tuples and callback-supplied keys) into the item
+contract.
 
 Identity is the dialect's job, not the engine's: `id(item)` is verbatim for every item type, so this
 builds one from the source item, the registration, and either the `id` callback's value or the
@@ -79,19 +77,11 @@ function _registered_item(
 )::RegisteredDataItem where {Label,Collection,Id}
     data, entry_metadata = _data_and_metadata(value)
     local_metadata = merge(copy(inherited_metadata), entry_metadata)
-    collection_path = recipe.collection === nothing ? AbstractCollection[] :
-        _registration_collections(recipe.collection(data, local_metadata))
     supplied_key = recipe.id === nothing ? nothing : recipe.id(data, local_metadata)
     key = supplied_key === nothing || supplied_key == "" ?
         string(position) : string(supplied_key)
     item_id = "$(source_item_id)#$(recipe.kind):$(key)"
-    return RegisteredDataItem{recipe.kind}(
-        item_id,
-        item_id,
-        collection_path,
-        data,
-        local_metadata,
-    )
+    return RegisteredDataItem{recipe.kind}(item_id, data, local_metadata)
 end
 
 
@@ -124,6 +114,17 @@ function label(project::Project, item::RegisteredDataItem{K})::String where {K}
     recipe === nothing && error("Missing registration $K")
     recipe.label === nothing && return item.id
     return String(recipe.label(item.data, item.metadata))
+end
+
+"""
+The collection of one registered item through its `collection` callback, or none when there is no
+callback.
+"""
+function collection(project::Project, item::RegisteredDataItem{K})::Vector{AbstractCollection} where {K}
+    recipe = _recipe(project, K)
+    recipe === nothing && error("Missing registration $K")
+    recipe.collection === nothing && return AbstractCollection[]
+    return _registration_collections(recipe.collection(item.data, item.metadata))
 end
 
 """

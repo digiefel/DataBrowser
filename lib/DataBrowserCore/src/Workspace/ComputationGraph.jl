@@ -48,8 +48,8 @@ function stage_computation(workspace::Workspace, key::ItemKey, stage::PipelineSt
     source = Catalogs.source(workspace.catalog, key)
     source === nothing && error("The item has no producing computation")
     expanded = computation(workspace, source, SOURCE_EXPAND)
-    input = native_computation(workspace, key,
-        Computation(expanded_value, expanded, id(workspace, key)), SOURCE_EXPAND)
+    input = Computation(process_input, Computation(expanded_value, expanded, id(workspace, key)),
+        id(workspace, key), metadata(workspace, key; through=SOURCE_EXPAND))
     return Computation(process, workspace.project, input)
 end
 
@@ -64,15 +64,8 @@ collection_computation(workspace, key) = Computation(native_collection,
     merge(metadata(workspace.catalog, key, :collection), metadata(workspace.catalog, key, :source)))
 
 # Reconstruction supplies the collection argument; it is workspace input preparation, like
-# `native_value` for an item, rather than a project operation of its own.
+# `process_input` for an item, rather than a project operation of its own.
 native_collection(type, id, given) = reconstruct(type, id, given)
-
-function native_arguments(workspace, key)
-    holder = Catalogs.collection(workspace.catalog, key)
-    return ((id=id(workspace, key), type=valuetype(workspace, key), label=label(workspace, key)),
-        Computation[collection_computation(workspace, parent)
-            for parent in [ancestors(workspace, holder); holder] if parent != ROOT])
-end
 
 # Bind interactive calls to computations rather than retaining the materialized items they were
 # constructed with. Project functions still receive those items' native values.
@@ -118,24 +111,18 @@ function expanded_value(values::AbstractVector, item_id::String)
     return values[index]
 end
 
-function native_value(value::AbstractDataItem, known, given::MetadataDict, collections)
-    isequal(metadata_dict(metadata(value)), given) && return adopt(value, known.label, given, collections)
-    rebuilt = reconstruct(typeof(value), known.id, item_data(value), given)
-    return adopt(something(rebuilt, value), known.label, given, collections)
-end
-
-function native_computation(workspace, key, value, through)
-    known, collections = native_arguments(workspace, key)
-    return Computation(native_value, value, known, metadata(workspace, key; through), collections)
+# The item that `process` receives: the item `expand` made, with `given`, the metadata of the item
+# and its source item.
+function process_input(value::AbstractDataItem, id::String, given::MetadataDict)
+    isequal(metadata_dict(metadata(value)), given) && return value
+    return something(reconstruct(typeof(value), id, item_data(value), given), value)
 end
 
 # The computation of the value that `versions` gives for an item.
 function version_computation(workspace::Workspace, key::ItemKey; own::Bool=false)
-    value = computation(workspace, key, ITEM_PROCESS)
-    haskey(workspace.computations, key) && return value
-    !own && member_current(workspace.catalog, key) && return native_computation(
-        workspace, key, computation(workspace, key, MEMBER_PROCESS), MEMBER_PROCESS)
-    return native_computation(workspace, key, value, ITEM_PROCESS)
+    !own && !haskey(workspace.computations, key) && member_current(workspace.catalog, key) &&
+        return computation(workspace, key, MEMBER_PROCESS)
+    return computation(workspace, key, ITEM_PROCESS)
 end
 
 """

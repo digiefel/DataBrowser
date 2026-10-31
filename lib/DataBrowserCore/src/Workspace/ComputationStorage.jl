@@ -64,7 +64,7 @@ function result_item(workspace::Workspace, catalog::Catalog, value::Computation,
     # A view, and a selection, are parts of the workspace's values: never kept, and made again when needed.
     (value.f === view || result isa Selection) && return nothing
     # Preparing a stage's input only relabels a kept value; another copy would evict kept results.
-    value.f in (expanded_value, native_value, native_collection) && return nothing
+    value.f in (expanded_value, process_input, native_collection) && return nothing
     result isa AbstractDataItem && return result
     workspace.catalog === catalog || return nothing
     identity, title = computation_identity(workspace, value)

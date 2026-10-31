@@ -69,14 +69,18 @@ label(item::AbstractDataItem)::String = id(item)
 label(T::Type{<:AbstractDataItem})::Symbol = nameof(T)
 
 """
+    collection(project, item) -> Vector{AbstractCollection}
     collection(item) -> Vector{AbstractCollection}
     collection(source_item) -> Vector{AbstractCollection}
 
-The collection that holds an item, as its collection values from the top down.
+The collection that holds an item, as its collection values from the top down. The workspace asks
+when `expand` creates the item.
 
 An item whose answer is empty goes where its source item is: `collection(source_item)`. The default
-for both is empty, which places the item at the root.
+for both is empty, which places the item at the root. Define `collection(item)`, or the project form
+when the collection depends on the project.
 """
+collection(project::AbstractProject, item::AbstractDataItem)::Vector{AbstractCollection} = collection(item)
 collection(::AbstractDataItem)::Vector{AbstractCollection} = AbstractCollection[]
 collection(::AbstractDataSourceItem)::Vector{AbstractCollection} = AbstractCollection[]
 
@@ -112,17 +116,3 @@ item_data(item::AbstractDataItem) = item
 
 """Process an item. Optional; default identity."""
 process(item::AbstractDataItem) = item
-
-# ---------------------------------------------------------------------------
-# Internal workspace hooks
-# ---------------------------------------------------------------------------
-
-"""
-    adopt(item, label, metadata, collections) -> AbstractDataItem
-
-Let an item take the label, the metadata and the collection values the workspace holds for it.
-Internal workspace hook; the default keeps the item unchanged, because a typed item derives all
-three from its own state. Package-owned carriers adopt them.
-"""
-adopt(item::AbstractDataItem, label::AbstractString, metadata::AbstractDict, collections::AbstractVector) =
-    item
