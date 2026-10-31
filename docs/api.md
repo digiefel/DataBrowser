@@ -120,9 +120,10 @@ DataBrowserPlots.set_analysis!
 
 ### Visualizers
 
-A visualizer displays data and metadata in any form the data needs: a table of measurements, a
-plot, a 3D view of a simulation mesh of the Earth, an image. The browser calls
-`prepare!` when the value changes and `draw!` in every frame.
+A visualizer shows one value in the form its domain needs: an X-ray diffraction pattern with its
+indexed peaks, the wind field of a weather simulation on a globe, a crystal structure that the user
+can rotate, a micrograph with its grain boundaries drawn over it. The browser calls `prepare!` when
+the value changes and `draw!` in every frame.
 
 ```@docs
 DataBrowserAPI.AbstractVisualizer
