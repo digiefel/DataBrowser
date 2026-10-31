@@ -98,8 +98,8 @@ expand(::AbstractDataSourceItem, loaded) = [loaded]
 
 Process one data item. The default forwards to the context-free `process(item)`.
 
-Metadata returned by `metadata(processed_item)` is merged over the item's metadata. The merged
-metadata is supplied to later reconstruction.
+The metadata of the processed item is `metadata(processed_item)`: copy the metadata of `item` into
+it to keep it.
 """
 process(project::AbstractProject, item::AbstractDataItem) = process(item)
 
@@ -245,8 +245,8 @@ end
 """
     reconstruct(::Type{T}, id, data, metadata::Dict) -> Union{Nothing,T}
 
-Rebuild one concrete item from its stored id, cached payload, and the metadata available at the
-calling stage. The engine can call this method before or after item processing, or while preparing
+Rebuild one concrete item from its stored id, cached payload, and the metadata of the item when it
+was stored. The engine can call this method before or after item processing, or while preparing
 collection input. The item id, payload, and metadata must therefore contain everything
 the method needs at that point.
 

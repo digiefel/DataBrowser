@@ -225,11 +225,14 @@ end
 The metadata of a collection or an item, as a new dictionary.
 
 For a collection: the metadata of its value, then the metadata its source provides for it, then
-the metadata of the value its `process` returned. For an item: the metadata its source item and
-`expand` gave it, then the result of `process`, then the result of the member `process` methods of
-its collections while that result is current. Neither includes the metadata of the collections
-above it: a member `process` method can copy it into an item. Later values replace earlier values
-with the same key.
+the metadata of the value its `process` returned. Later values replace earlier values with the same
+key.
+
+For an item: the metadata of its latest value. That is the value that the member `process` methods
+of its collections returned while that result is current, or else the value its `process`
+returned, or else, before `process` has run, the metadata its source item and `expand` gave it.
+Neither includes the metadata of the collections above it: a member `process` method can copy it
+into an item.
 
 `through=SOURCE_EXPAND` gives the metadata that `process` receives, and `through=ITEM_PROCESS` the
 metadata that the member `process` methods receive.
@@ -246,12 +249,11 @@ end
 function metadata(workspace::Workspace, item::ItemKey; through::PipelineStage=MEMBER_PROCESS)::MetadataDict
     catalog = workspace.catalog
     @lock catalog.lock begin
-        merged = copy(metadata(catalog, item, SOURCE_EXPAND))
-        through == SOURCE_EXPAND && return merged
-        merge!(merged, metadata(catalog, item, ITEM_PROCESS))
-        through == ITEM_PROCESS && return merged
-        member_current(catalog, item) && merge!(merged, metadata(catalog, item, MEMBER_PROCESS))
-        return merged
+        through == MEMBER_PROCESS && member_current(catalog, item) &&
+            return copy(metadata(catalog, item, MEMBER_PROCESS))
+        through != SOURCE_EXPAND && Catalogs.status(catalog, item, ITEM_PROCESS).output &&
+            return copy(metadata(catalog, item, ITEM_PROCESS))
+        return copy(metadata(catalog, item, SOURCE_EXPAND))
     end
 end
 

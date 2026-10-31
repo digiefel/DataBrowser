@@ -225,7 +225,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] Items carry all their metadata: they no longer inherit the metadata of their collections. A
   member `process` method copies it when needed; the Recipes one does.
 - [x] The workspace hands out each item as its `process` returned it, without rebuilding it.
-- [ ] Keep the metadata of an item's latest value alone, instead of merging it over the metadata
+- [x] The metadata of an item is the metadata of its latest value, not merged over the metadata
   its `process` received, so that `reconstruct` gets the metadata the value had when it was stored.
 - [ ] Store the results of item and member `process` in the store that `storage(project, T)`
   chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep

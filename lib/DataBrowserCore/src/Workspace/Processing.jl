@@ -392,13 +392,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     payload = item_data(output)
     retain = keeps_result(workspace, output) && typeof(output) == known.type &&
         DataBrowserCache.can_store_payload(payload)
-    # TODO: keep `metadata(output)` alone, here and in the member `process`. Merged with `given`,
-    # an item that drops a key of its input has less metadata than the workspace gives
-    # `reconstruct` for it after reopening.
-    delivered = merge(given, metadata_dict(metadata(output)))
-    computed = MetadataDict(
-        name => value for (name, value) in delivered
-        if !haskey(given, name) || !isequal(given[name], value))
+    delivered = metadata_dict(metadata(output))
     # The results are saved outside the lock: saving takes time, and every other worker needs the
     # lock. A job that turns out not to be current drops the record that its result is ready.
     item_id = known.id
@@ -410,11 +404,11 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
             delete_processed!(cache, item_id; stage=ITEM_PROCESS)
             clear_cached_result_state!(cache, ITEM_PROCESS, item_id)
         end
-        store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, computed)
+        store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, delivered)
         dropped = store_item_metadata!(cache, item_id, delivered)
     end
     @lock catalog.lock begin
-        if finish!(catalog, job; metadata=computed)
+        if finish!(catalog, job; metadata=delivered)
             release_item_payload!(cache, item_id)
             pace!(workspace)
             relabel!(workspace, item, label(workspace.project, output))
@@ -522,18 +516,14 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
     catalog = workspace.catalog
     cache = workspace.cache.db
     item = job.key
-    known, given, saved = @lock catalog.lock (
-        row(workspace, item), metadata(workspace, item; through=ITEM_PROCESS), cache_key(workspace, item))
+    known, saved = @lock catalog.lock (row(workspace, item), cache_key(workspace, item))
     output = evaluate(workspace, computation(workspace, item, MEMBER_PROCESS))
     output isa AbstractDataItem || error(
         "A member process method for $(known.type) must return an AbstractDataItem; got $(typeof(output))")
     payload = item_data(output)
     retain = keeps_result(workspace, output) && typeof(output) == known.type &&
         DataBrowserCache.can_store_payload(payload)
-    delivered = merge(given, metadata_dict(metadata(output)))
-    computed = MetadataDict(
-        name => value for (name, value) in delivered
-        if !haskey(given, name) || !isequal(given[name], value))
+    delivered = metadata_dict(metadata(output))
     dropped = String[]
     if iscurrent(catalog, job)
         if retain
@@ -542,11 +532,11 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
             delete_processed!(cache, known.id; stage=MEMBER_PROCESS)
             clear_cached_result_state!(cache, MEMBER_PROCESS, known.id)
         end
-        store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, computed)
+        store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, delivered)
         dropped = store_item_metadata!(cache, known.id, delivered)
     end
     @lock catalog.lock begin
-        if finish!(catalog, job; metadata=computed)
+        if finish!(catalog, job; metadata=delivered)
             relabel!(workspace, item, label(workspace.project, output))
             conflicts!(workspace, item, MEMBER_PROCESS, dropped)
         else
