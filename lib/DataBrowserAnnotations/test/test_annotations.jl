@@ -1,20 +1,14 @@
-using DataBrowserAnnotations
-const Annotations = DataBrowserAnnotations
+using DataBrowserAnnotations: Tags, Notes
 using Test
 
 const ANNOT_FIXTURES = joinpath(@__DIR__, "fixtures", "annotations")
-const ANNOT_MEASUREMENT_KEY = joinpath(
-    @__DIR__,
-    "fixtures",
-    "3V FE PUND [RuO2test_A9_VI_D1(2) ; 2025-10-01 17_12_33].csv",
-)
 
 @testset "Annotations" begin
 
     @testset "Tags" begin
         @testset "missing files" begin
             mktempdir() do dir
-                state = Annotations.Tags.load(dir)
+                state = Tags.load(dir)
                 @test isempty(state.catalog)
                 @test isempty(state.assignments)
             end
@@ -22,7 +16,7 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
 
         @testset "parse and roundtrip" begin
             fixture = joinpath(ANNOT_FIXTURES, "tags_full")
-            state = Annotations.Tags.load(fixture)
+            state = Tags.load(fixture)
             names = [t.name for t in state.catalog]
             @test "bad" in names && "todo" in names
             bad = state.catalog[findfirst(t -> t.name == "bad", state.catalog)]
@@ -32,17 +26,17 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
             @test "todo" in state.assignments["RuO2test/A10/VI"]
 
             mktempdir() do tmp
-                Annotations.Tags.save(tmp, state)
-                roundtripped = Annotations.Tags.load(tmp)
+                Tags.save(tmp, state)
+                roundtripped = Tags.load(tmp)
                 @test Set(t.name for t in roundtripped.catalog) ==
                     Set(t.name for t in state.catalog)
                 @test roundtripped.assignments == state.assignments
             end
         end
 
-        @testset "generated item keys keep suffix fragments" begin
+        @testset "item ids keep spaces, brackets and suffixes" begin
             mktempdir() do dir
-                key = ANNOT_MEASUREMENT_KEY * "#cycle=10000000"
+                key = "A9/VI/3V FE PUND [D1(2) ; 2025-10-01 17_12_33].csv#cycle=10000000"
                 write(joinpath(dir, "tags.txt"),
                     """
                     # sample generated tags file
@@ -52,17 +46,19 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
                     [assignments]
                     $key\tbad
                     """)
-                state = Annotations.Tags.load(dir)
+                state = Tags.load(dir)
                 @test state.catalog[1].color == (0xff, 0x30, 0x30)
                 @test state.assignments[key] == Set(["bad"])
             end
         end
 
-        @testset "malformed assignment row raises error" begin
+        @testset "malformed rows raise an error" begin
             mktempdir() do dir
                 write(joinpath(dir, "tags.txt"),
                     "[catalog]\nbad\tff3030\t100\n\n[assignments]\nonlyone\n")
-                @test_throws Annotations.Tags.TagsParseError Annotations.Tags.load(dir)
+                @test_throws Tags.TagsParseError Tags.load(dir)
+                write(joinpath(dir, "tags.txt"), "[catalog]\nbad\tred\t100\n")
+                @test_throws Tags.TagsParseError Tags.load(dir)
             end
         end
     end
@@ -70,17 +66,17 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
     @testset "Notes" begin
         @testset "reading notes preserves bracketed body content" begin
             fixture = joinpath(ANNOT_FIXTURES, "notes_basic")
-            chipB = Annotations.Notes.read_section(fixture, "ChipB")
+            chipB = Notes.read_section(fixture, "ChipB")
             @test occursin("Oxygen flow", chipB)
-            site = Annotations.Notes.read_section(fixture, "ChipB/SiteVI")
+            site = Notes.read_section(fixture, "ChipB/SiteVI")
             @test occursin("[observed in second pass]", site)
             @test occursin("dust particle", site)
-            @test Annotations.Notes.read_section(fixture, "Missing/Path") == ""
+            @test Notes.read_section(fixture, "Missing/Path") == ""
         end
 
         @testset "merged_view ordering and editable flags" begin
             fixture = joinpath(ANNOT_FIXTURES, "notes_basic")
-            view = Annotations.Notes.merged_view(fixture, "ChipB/SiteVI", ["ChipB"])
+            view = Notes.merged_view(fixture, "ChipB/SiteVI", ["ChipB"])
             @test length(view) == 2
             @test view[1].path == "ChipB"
             @test view[1].editable == false
@@ -90,8 +86,8 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
 
         @testset "missing notes file" begin
             mktempdir() do dir
-                @test Annotations.Notes.read_section(dir, "Anything") == ""
-                view = Annotations.Notes.merged_view(dir, "ChipA", ["Root"])
+                @test Notes.read_section(dir, "Anything") == ""
+                view = Notes.merged_view(dir, "ChipA", ["Root"])
                 @test length(view) == 1
                 @test view[1].path == "ChipA"
                 @test view[1].body == ""
@@ -104,16 +100,15 @@ const ANNOT_MEASUREMENT_KEY = joinpath(
                 src = joinpath(ANNOT_FIXTURES, "notes_basic", "notes.txt")
                 cp(src, joinpath(dir, "notes.txt"))
 
-                Annotations.Notes.write_section!(dir, "ChipB", "Updated body\n")
-                @test Annotations.Notes.read_section(dir, "ChipB") == "Updated body"
+                Notes.write_section!(dir, "ChipB", "Updated body\n")
+                @test Notes.read_section(dir, "ChipB") == "Updated body"
                 # other section preserved
-                @test occursin("dust particle",
-                    Annotations.Notes.read_section(dir, "ChipB/SiteVI"))
+                @test occursin("dust particle", Notes.read_section(dir, "ChipB/SiteVI"))
 
                 # New section appended
-                Annotations.Notes.write_section!(dir, "ChipC", "fresh note")
-                @test Annotations.Notes.read_section(dir, "ChipC") == "fresh note"
-                @test Annotations.Notes.read_section(dir, "ChipB") == "Updated body"
+                Notes.write_section!(dir, "ChipC", "fresh note")
+                @test Notes.read_section(dir, "ChipC") == "fresh note"
+                @test Notes.read_section(dir, "ChipB") == "Updated body"
             end
         end
     end
