@@ -22,8 +22,8 @@ import DataBrowserAPI:
 const DEFAULT_DIRECTORY_METADATA_FILE = "metadata.txt"
 
 # Files that DataBrowser keeps in the folder of a source. They are never source files.
-# TODO: tags and notes belong to DataBrowserAnnotations and the saved view to DataBrowserGUI. Keep
-# them where this package does not need their names, for example in one hidden folder.
+# TODO: delete this list. Tags, notes and the saved view move beside the project, one set per
+# project (roadmap 0.15.0), and `metadata.txt` gives way to the source's `metadata` method.
 const DIRECTORY_SOURCE_SIDECARS = Set([
     DEFAULT_DIRECTORY_METADATA_FILE,
     "tags.txt",
