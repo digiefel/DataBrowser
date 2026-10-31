@@ -3,7 +3,7 @@ Start cache loading and source scanning for one new workspace.
 With `cache=false`, keep the cache in memory and discard it on close; the project cache file is untouched.
 
 `expanded_data_limit` is the limit, in MiB, for expanded data: the data that `expand` gave each
-item, kept in the store of its item type until the `process` of the item has used it. The default
+item, kept in memory until the `process` of the item has used it. The default
 is 512, or a quarter of the memory of the machine when that is less. While the expanded data is
 under half the limit, the workspace reads its source items first. Above that, it processes items
 first, which replaces their expanded data. A lower limit keeps less expanded data and lists the
@@ -347,6 +347,7 @@ function remove_items!(workspace::Workspace, source::SourceKey)::Nothing
     removed = Catalogs.items(catalog, source)
     removed_ids = String[id(catalog, item) for item in removed]
     foreach(item -> forget_results!(workspace, item), removed)
+    foreach(id -> release_expanded!(workspace, id), removed_ids)
     publish!(catalog, source, ItemEntry[])
     delete_source_output!(workspace.cache.db, cache_key(workspace, source), removed_ids)
     filter!(entry -> !(entry.first[1] in removed), workspace.errors)

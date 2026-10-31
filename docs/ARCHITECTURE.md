@@ -115,7 +115,7 @@ flowchart LR
     read["read"]
     expand["expand<br/>(optional)"]
     index[("catalog<br/>source items, items, collections")]
-    expanded[("expanded item<br/>store of its type")]
+    expanded[("expanded item<br/>in memory")]
     item_process["item process"]
     processed[("processed item<br/>store of its type")]
     item_metadata[("item metadata<br/>cache store")]
@@ -256,12 +256,12 @@ cannot follow: a non-constant global, a call through `eval`, `invokelatest` or a
 generated function, and a value it cannot read; the warning names the way from the stage to it (`research_notes/code-change-detection/design.md`).
 
 Jobs run in this order: what a view asks for, then source items, then the background work on items,
-then the background work on collections. The data that `expand` gives each item stays in the store
-of its item type until the `process` of the item has used it. When that data reaches half its limit
+then the background work on collections. The data that `expand` gives each item stays in memory
+until the `process` of the item has used it. When that data reaches half its limit
 (`expanded_data_limit` of `open_workspace`), items are processed before more source items are read, so that a
 source item normally does not need a second read/expand while processing that batch. This pacing
-does not guarantee exactly-once source access: `read` runs again when a store no longer holds the
-expanded value of an item.
+does not guarantee exactly-once source access: `read` runs again when the expanded value of an
+item is no longer kept, for example after its `process` failed or ran again.
 
 The source items that are not read yet (`unread`) are in the collection tree of the browser from
 the moment the source lists them. Their ids, split at `/`, give folders. A folder with the label of

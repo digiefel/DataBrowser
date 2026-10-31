@@ -328,9 +328,9 @@ mutable struct Workspace{P<:AbstractProject}
     disk_cache::Bool
     # Memory limit (MiB) for the data that `expand` gave the items and `process` has not used yet.
     expanded_data_limit::Int
-    # The ids of the items whose store holds the value that `expand` gave them, which `process` has
-    # not used yet, with its size in bytes; and the sum of those sizes.
-    expanded::Dict{String,Int}
+    # The value that `expand` gave each item, which `process` has not taken yet, with its size in
+    # bytes; and the sum of those sizes.
+    expanded::Dict{String,Tuple{AbstractDataItem,Int}}
     expanded_bytes::Int
     background_tasks::Vector{Task}
     metrics::BuildMetrics
@@ -453,7 +453,7 @@ function Workspace(
         background_processing,
         cache,
         Int(expanded_data_limit),
-        Dict{String,Int}(),
+        Dict{String,Tuple{AbstractDataItem,Int}}(),
         0,
         Task[],
         metrics,

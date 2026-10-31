@@ -144,40 +144,41 @@ pace!(workspace::Workspace)::Nothing = eager!(
     2 * workspace.expanded_bytes >= workspace.expanded_data_limit * 1024^2 ? ITEMS_FIRST : SOURCES_FIRST)
 
 """
-Keep the value that `expand` gave an item in the store of its item type, under its id, until
-`process` uses it. The caller holds the catalog lock.
+Keep the value that `expand` gave an item in memory until `process` takes it. The caller holds the
+catalog lock.
 """
 function keep_expanded!(workspace::Workspace, item_id::String, value::AbstractDataItem)::Nothing
-    store = result_store(workspace, typeof(value))
-    store === nothing && return nothing
-    # TODO(scale): a DuckDBStore writes here while the catalog lock is held.
-    write(store, item_id, deepcopy(value))
+    release_expanded!(workspace, item_id)
     bytes = Base.summarysize(value)
-    workspace.expanded_bytes += bytes - get(workspace.expanded, item_id, 0)
-    workspace.expanded[item_id] = bytes
+    workspace.expanded_bytes += bytes
+    workspace.expanded[item_id] = (value, bytes)
     return nothing
 end
 
-"""Forget that the store of an item holds its expanded value. The caller holds the catalog lock."""
-# TODO: the expanded value of an item removed before its `process` ran stays in the store.
-release_expanded!(workspace::Workspace, item_id::String)::Nothing =
-    (workspace.expanded_bytes -= pop!(workspace.expanded, item_id, 0); nothing)
-
-"""
-The value that `expand` gave an item, with the metadata `given`, while the store of its item type
-holds it; otherwise `nothing`.
-"""
-function kept_expanded(workspace::Workspace, item_id::String, type::Type, given::MetadataDict)
-    @lock(workspace.catalog.lock, haskey(workspace.expanded, item_id)) || return nothing
-    store = result_store(workspace, type)
-    stored = only(read(store, type, [item_id]))
-    stored === nothing && return nothing
-    return reconstruct(type, item_id, data(stored), given)
+"""Drop the expanded value of an item, if it is kept. The caller holds the catalog lock."""
+function release_expanded!(workspace::Workspace, item_id::String)::Nothing
+    kept = pop!(workspace.expanded, item_id, nothing)
+    kept === nothing || (workspace.expanded_bytes -= last(kept))
+    return nothing
 end
 
 """
-Read one source item, turn it into items and publish them. The value of each item is kept in the
-store of its item type until its `process` runs.
+Take the value that `expand` gave an item, with the metadata `given`; `nothing` when it is not kept.
+The value is no longer kept, so the caller may change it.
+"""
+function kept_expanded(workspace::Workspace, item_id::String, type::Type, given::MetadataDict)
+    kept = @lock workspace.catalog.lock begin
+        kept = get(workspace.expanded, item_id, nothing)
+        release_expanded!(workspace, item_id)
+        kept
+    end
+    kept === nothing && return nothing
+    return reconstruct(type, item_id, data(first(kept)), given)
+end
+
+"""
+Read one source item, turn it into items and publish them. The value of each item is kept in
+memory until its `process` runs.
 
 The outcome of `read` is recorded as soon as `read` returns or throws. A later failure is then a
 failure to create items.
@@ -261,7 +262,6 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
         (renamed || length(selected) != count) && (workspace.selection.revision += 1)
         conflicts!(workspace, job.key, SOURCE_EXPAND, conflicts)
         forget_stale!(workspace)
-        # After `forget_stale!`, which removes the earlier values of these items from the stores.
         foreach(id -> release_expanded!(workspace, id), previous)
         foreach((item, entry) -> keep_expanded!(workspace, entry.id, item.item), expanded, entries)
         pace!(workspace)
@@ -326,7 +326,7 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
             for produced in expanded
                 sibling = lookup(catalog, ItemKey, produced.id)
                 sibling === nothing && continue
-                # The store of a processed item holds its processed value.
+                # A processed item needs no expanded value.
                 Catalogs.status(catalog, sibling, ITEM_PROCESS).validity != Catalogs.FRESH &&
                     keep_expanded!(workspace, produced.id, produced.item)
             end
@@ -352,9 +352,8 @@ end
 
 """
 The item that `process` receives: the value `expand` gave it, with `given`, the metadata of the item
-and its source item. `known` is the [`row`](@ref) of the item. When the store of its
-type no longer holds that value, or the item type does not rebuild from its data, `expand` runs
-again.
+and its source item. `known` is the [`row`](@ref) of the item. When that value is no longer kept,
+or the item type does not rebuild from its data, `expand` runs again.
 """
 function unprocessed(workspace::Workspace, item::ItemKey, known, given::MetadataDict)::AbstractDataItem
     value = kept_expanded(workspace, known.id, known.type, given)
@@ -407,8 +406,6 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
         dropped = store_item_metadata!(cache, item_id, delivered)
     end
     @lock catalog.lock begin
-        # `process` has replaced the expanded value in the store, or removed it.
-        release_expanded!(workspace, item_id)
         pace!(workspace)
         if finish!(catalog, job; metadata=delivered)
             relabel!(workspace, item, label(workspace.project, output))
