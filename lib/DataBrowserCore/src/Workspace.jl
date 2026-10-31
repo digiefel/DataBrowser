@@ -46,6 +46,7 @@ using DataBrowserAPI:
     PipelineStage,
     COLLECTION_PROCESS,
     ITEM_PROCESS,
+    MEMBER_PROCESS,
     SOURCE_READ,
     SOURCE_EXPAND,
     metadata_dict
@@ -294,8 +295,6 @@ mutable struct Workspace{P<:AbstractProject}
     # The key the cache uses for each collection. The cache keeps its keys from session to session.
     collection_keys::Dict{CollectionKey,Int64}
     next_collection_key::Int64
-    # What the current `process` result of each collection changed in the metadata of its items.
-    changes::Dict{CollectionKey,Dict{ItemKey,MetadataDict}}
     # The message of each failed stage, and of each stage whose metadata the cache stored in part.
     errors::Dict{Target,String}
     # Items that were delivered. Their process is requested, so their metadata becomes complete.
@@ -358,7 +357,7 @@ expanded data waiting for `process` fills its memory limit. Collections come las
 function Catalog(background_processing::Bool)::Catalog
     eager = Dict{PipelineStage,Int}(SOURCE_EXPAND => SOURCES_FIRST)
     background_processing && merge!(eager, Dict(
-        ITEM_PROCESS => 3, COLLECTION_PROCESS => 1))
+        ITEM_PROCESS => 3, COLLECTION_PROCESS => 1, MEMBER_PROCESS => 1))
     return Catalog(; eager)
 end
 
@@ -425,7 +424,6 @@ function Workspace(
         Dict{SourceKey,Vector{String}}(),
         Dict{CollectionKey,Int64}(),
         Int64(1),
-        Dict{CollectionKey,Dict{ItemKey,MetadataDict}}(),
         Dict{Target,String}(),
         Set{ItemKey}(),
         Dict{ItemKey,AbstractDataItem}(),

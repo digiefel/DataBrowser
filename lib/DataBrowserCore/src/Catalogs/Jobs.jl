@@ -22,10 +22,12 @@ that read it when it turns fresh.
 """
 function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::PipelineStage) where {K<:RowKey}
     old = status(catalog, key, stage)
-    table(catalog, key).status[key.index] =
-        stage == SOURCE_READ ? word(new, status(catalog, key, SOURCE_EXPAND)) :
-        stage == SOURCE_EXPAND ? word(status(catalog, key, SOURCE_READ), new) : word(new)
-    member = key isa ItemKey || key isa CollectionKey && key != ROOT
+    lower, upper = stages(K)..., nothing
+    table(catalog, key).status[key.index] = stage == lower ?
+        word(new, upper === nothing ? StageStatus() : status(catalog, key, upper)) :
+        word(status(catalog, key, lower), new)
+    # The process of an item, and of a collection other than the root, counts in its holder.
+    member = key isa ItemKey && stage == ITEM_PROCESS || key isa CollectionKey && key != ROOT
     if member
         holder = key isa ItemKey ?
             catalog.items.collection[key.index] : catalog.collections.parent[key.index]
@@ -39,6 +41,10 @@ function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::Pipel
             add_stuck!(catalog, holder, stuck ? 1 : -1)
             for reader in readers(catalog, key, stage)
                 catalog[reader, ITEM_PROCESS] = StageStatus(status(catalog, reader, ITEM_PROCESS); blocked=stuck)
+            end
+            for (next_key, next_stage) in dependents(catalog, key, stage)
+                next_stage == MEMBER_PROCESS &&
+                    (catalog[next_key, next_stage] = StageStatus(status(catalog, next_key, next_stage); blocked=stuck))
             end
         else
             for (next_key, next_stage) in dependents(catalog, key, stage)
@@ -63,9 +69,12 @@ function dependents(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector
     elseif stage == SOURCE_EXPAND
         Target[(item, ITEM_PROCESS) for item in items(catalog, key)]
     elseif stage == ITEM_PROCESS
-        Target[(collection(catalog, key), COLLECTION_PROCESS)]
+        Target[(key, MEMBER_PROCESS), (collection(catalog, key), COLLECTION_PROCESS)]
+    elseif stage == MEMBER_PROCESS
+        Target[]
     else
-        key == ROOT ? Target[] : Target[(parent(catalog, key), COLLECTION_PROCESS)]
+        Target[key == ROOT ? Target[] : [(parent(catalog, key), COLLECTION_PROCESS)];
+            catalog.collections.member_process[key.index] ? [(item, MEMBER_PROCESS) for item in nested_items(catalog, key)] : Target[]]
     end
     return unique!([pipeline; Target[(reader, ITEM_PROCESS) for reader in readers(catalog, key, stage)]])
 end
@@ -79,6 +88,16 @@ function inputs(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Tar
     stage == SOURCE_READ && return Target[]
     stage == SOURCE_EXPAND && return Target[(key, SOURCE_READ)]
     stage == ITEM_PROCESS && return collect(view(catalog.items.inputs, key.index))
+    if stage == MEMBER_PROCESS
+        holders = CollectionKey[]
+        holder = collection(catalog, key)
+        while true
+            catalog.collections.member_process[holder.index] && push!(holders, holder)
+            holder == ROOT && break
+            holder = parent(catalog, holder)
+        end
+        return Target[(key, ITEM_PROCESS); [(holder, COLLECTION_PROCESS) for holder in holders]]
+    end
     return Target[
         [(item, ITEM_PROCESS) for item in items(catalog, key)];
         [(child, COLLECTION_PROCESS) for child in children(catalog, key)]]
@@ -91,7 +110,7 @@ source item, read has not failed.
 function ready(catalog::Catalog, key::RowKey, stage::PipelineStage)::Bool
     stage == SOURCE_READ && return true
     stage == SOURCE_EXPAND && return !status(catalog, key, SOURCE_READ).failed
-    stage == ITEM_PROCESS && return all(
+    stage in (ITEM_PROCESS, MEMBER_PROCESS) && return all(
         ((input, input_stage),) -> input in catalog && status(catalog, input, input_stage).validity == FRESH,
         inputs(catalog, key, stage))
     return catalog.collections.not_fresh[key.index] == 0
@@ -203,6 +222,9 @@ function priority(catalog::Catalog, key::RowKey, stage::PipelineStage)::Int
     requested = get(catalog.requests, (key, stage), nothing)
     requested === nothing || (rank = max(rank, maximum(requested)))
     for (next_key, next_stage) in dependents(catalog, key, stage)
+        # A collection does not follow the member process of every item below it: that walk
+        # would visit every item. A view that wants an item requests its collections itself.
+        key isa CollectionKey && next_stage == MEMBER_PROCESS && continue
         rank = max(rank, priority(catalog, next_key, next_stage))
     end
     return rank

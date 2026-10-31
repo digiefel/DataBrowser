@@ -2,13 +2,13 @@
     materialize_items(workspace, items) -> Vector{AbstractDataItem}
 
 The processed items for `items`, given as item keys or public ids, in the same order. Each item
-comes in its latest version: the version of the outermost collection whose `process` changed it and
-whose result is current, or else its own processed data.
+comes in its latest version: the one its member `process` returned, when that is current, or else
+its own processed data.
 
 An item that is not processed yet is processed now, ahead of background work, and the call waits
-for it. Analyze is requested for every delivered item, so that its metadata becomes complete. The
-collections above each item are requested too and the call does not wait for them: a later call
-delivers their versions once they are ready. A failed item throws its error.
+for it. The member `process` of each item and the collections above it are requested too, and the
+call does not wait for them: a later call delivers the later version once it is ready. A failed item
+throws its error.
 
 The data and the metadata of each delivered item belong together: when an item changes while it is
 loaded, it is loaded again.
@@ -27,7 +27,9 @@ function want!(workspace::Workspace, items::Vector{ItemKey})::Nothing
     catalog = workspace.catalog
     @lock catalog.lock for item in setdiff(items, workspace.wanted)
         request(catalog, item, ITEM_PROCESS; priority=VIEWED_ITEM)
-        # The collections above the item are queued and not waited for.
+        # The member process and the collections above the item are queued and not waited for.
+        Catalogs.status(catalog, item, MEMBER_PROCESS).absent ||
+            request(catalog, item, MEMBER_PROCESS; priority=VIEWED_COLLECTION)
         for holder in ancestors(workspace, item)
             Catalogs.status(catalog, holder, COLLECTION_PROCESS).absent ||
                 request(catalog, holder, COLLECTION_PROCESS; priority=VIEWED_COLLECTION)
@@ -115,8 +117,8 @@ end
     revision(workspace, items) -> UInt
 
 A number that changes when `materialize_items` would deliver different versions of `items`: an item
-was processed again, or the `process` of a collection above one became current or
-stopped being so. A view keeps the number it drew with and draws again when it differs.
+was processed again, or its member `process`, or the `process` of a collection above it, became
+current or stopped being so. A view keeps the number it drew with and draws again when it differs.
 """
 function revision(workspace::Workspace, items::Vector{ItemKey})::UInt
     catalog = workspace.catalog
@@ -128,7 +130,7 @@ function revision(workspace::Workspace, items::Vector{ItemKey})::UInt
     @lock catalog.lock begin
         seed = UInt(0)
         for item in items
-            seed = add(seed, item, ITEM_PROCESS)
+            seed = add(add(seed, item, ITEM_PROCESS), item, MEMBER_PROCESS)
             holder = Catalogs.collection(catalog, item)
             while holder != ROOT
                 seed = add(seed, holder, COLLECTION_PROCESS)

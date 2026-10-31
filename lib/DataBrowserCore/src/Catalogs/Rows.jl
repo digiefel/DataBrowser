@@ -59,7 +59,7 @@ function ItemTable()
         Union{SourceKey,Nothing}[],
         CollectionKey[],
         Type{<:AbstractDataItem}[],
-        Dict(stage => MetadataColumns() for stage in (SOURCE_EXPAND, ITEM_PROCESS)),
+        Dict(stage => MetadataColumns() for stage in (SOURCE_EXPAND, ITEM_PROCESS, MEMBER_PROCESS)),
     )
 end
 
@@ -82,6 +82,8 @@ struct CollectionTable <: Table
     # Items at any depth below the collection, and those of them whose process is fresh.
     nested_items::Vector{Int}
     nested_done::Vector{Int}
+    # Whether the project defines a member process for the collection.
+    member_process::Vector{Bool}
     type::Vector{Type{<:AbstractCollection}}
     # The metadata that each stage produced, the metadata of the collection's value (`:collection`)
     # and the metadata its source gives it (`:source`).
@@ -102,6 +104,7 @@ function CollectionTable()
         Int[],
         Int[],
         Int[],
+        Bool[],
         Type{<:AbstractCollection}[],
         Dict{MetadataLayer,MetadataColumns}(
             layer => MetadataColumns()
@@ -136,6 +139,7 @@ function Base.push!(
     push!(collections.children, CollectionKey[])
     foreach(counter -> push!(counter, 0),
         (collections.not_fresh, collections.stuck, collections.nested_items, collections.nested_done))
+    push!(collections.member_process, false)
     return collections
 end
 
@@ -263,6 +267,46 @@ function add_stuck!(catalog::Catalog, collection::CollectionKey, count::Int)::No
 end
 
 """
+Whether the member process of an item in `collection` is absent: neither `collection` nor any
+collection above it defines one.
+"""
+function member_absent(catalog::Catalog, collection::CollectionKey)::Bool
+    collections = catalog.collections
+    while true
+        collections.member_process[collection.index] && return false
+        collection == ROOT && return true
+        collection = collections.parent[collection.index]
+    end
+end
+
+"""
+    member_process!(catalog, collection, defined)
+
+Record whether the project defines a member process for `collection`. The member process of each
+item below it turns absent or present to match, and becomes stale when present.
+"""
+function member_process!(catalog::Catalog, collection::CollectionKey, defined::Bool)::Nothing
+    @lock catalog.lock begin
+        collections = catalog.collections
+        collections.member_process[collection.index] == defined && return nothing
+        collections.member_process[collection.index] = defined
+        pending = [collection]
+        while !isempty(pending)
+            next = pop!(pending)
+            absent = member_absent(catalog, next)
+            for item in collections.items[next.index]
+                old = status(catalog, item, MEMBER_PROCESS)
+                old.absent == absent && continue
+                catalog[item, MEMBER_PROCESS] = StageStatus(old; absent, validity=old.validity == FRESH ? STALE : old.validity)
+                queue!(catalog, item, MEMBER_PROCESS)
+            end
+            append!(pending, collections.children[next.index])
+        end
+    end
+    return nothing
+end
+
+"""
 Replace the metadata of `key` in `layer`, and keep the values that were not stored for
 [`conflicts`](@ref). Returns whether the stored metadata changed. The caller holds the lock.
 """
@@ -314,7 +358,8 @@ The key of the collection `value` below `parent`, added when `parent` has none. 
 found by its collection type and its `id`, so two equal values below different parents are
 different collections. The catalog takes the label of a new collection from `value`, and keeps
 `metadata(value)` as the `:collection` layer of its metadata (see [`metadata!`](@ref)).
-`absent` lists the stages the project does not define for a new collection: they get no job.
+`absent` lists the stages the project does not define for a new collection, `COLLECTION_PROCESS`
+or `MEMBER_PROCESS`: they get no job.
 Throws an `ArgumentError` when `parent` does not exist.
 """
 function Base.get!(
@@ -334,6 +379,7 @@ function Base.get!(
             push!(collections, entry[3], value_label, parent, typeof(value))
             key = CollectionKey(length(collections))
             collections.status[key.index] = word(StageStatus(; absent=COLLECTION_PROCESS in absent))
+            collections.member_process[key.index] = !(MEMBER_PROCESS in absent)
             push!(collections.children[parent.index], key)
             collections.not_fresh[parent.index] += 1
             collections.lookup[entry] = key
@@ -421,6 +467,7 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
             key = get(items.lookup, entry.id, nothing)
             if key === nothing
                 key = ItemKey(length(push!(items, entry.id)))
+                items.status[key.index] = word(StageStatus(), StageStatus(; absent=member_absent(catalog, entry.collection)))
                 push!(items.labels, entry.label)
                 push!(items.inputs, ((source, SOURCE_EXPAND),))
                 push!(items.source, source)
@@ -450,6 +497,9 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
                     move!(key, previous, -1)
                     items.collection[key.index] = entry.collection
                     move!(key, entry.collection, 1)
+                    absent = member_absent(catalog, entry.collection)
+                    old = status(catalog, key, MEMBER_PROCESS)
+                    old.absent == absent || (catalog[key, MEMBER_PROCESS] = StageStatus(old; absent))
                 end
                 push!(surviving, key)
             end
@@ -532,7 +582,7 @@ function publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{Tar
         push!(items.type, entry.type)
         items.lookup[entry.id] = key
         foreach(input -> push!(get!(Vector{ItemKey}, items.readers, input), key), unique(inputs))
-        items.status[key.index] = word(StageStatus(; blocked))
+        items.status[key.index] = word(StageStatus(; blocked), StageStatus(; absent=member_absent(catalog, entry.collection)))
         push!(collections.items[entry.collection.index], key)
         collections.not_fresh[entry.collection.index] += 1
         add_nested!(collections, entry.collection, 1, 0)
@@ -747,6 +797,15 @@ end
 items(catalog::Catalog, collection::CollectionKey)::Vector{ItemKey} =
     @lock catalog.lock copy(catalog.collections.items[collection.index])
 
+"""The items at any depth below a collection: its own items, then those of each collection below it."""
+function nested_items(catalog::Catalog, collection::CollectionKey)::Vector{ItemKey}
+    @lock catalog.lock begin
+        found = items(catalog, collection)
+        foreach(child -> append!(found, nested_items(catalog, child)), catalog.collections.children[collection.index])
+        return found
+    end
+end
+
 """
     progress(catalog, collection) -> (done, total)
 
@@ -766,13 +825,13 @@ children(catalog::Catalog, collection::CollectionKey)::Vector{CollectionKey} =
     status(catalog, key, stage) -> StageStatus
 
 The status of one stage of a row. `stage` must be one of the row's stages: `SOURCE_READ` or
-`SOURCE_EXPAND` for a source item, `ITEM_PROCESS` for an item, `COLLECTION_PROCESS` for a
-collection.
+`SOURCE_EXPAND` for a source item, `ITEM_PROCESS` or `MEMBER_PROCESS` for an item,
+`COLLECTION_PROCESS` for a collection.
 """
 function status(catalog::Catalog, key::K, stage::PipelineStage)::StageStatus where {K<:RowKey}
     stage in stages(K) || throw(ArgumentError("a $(nameof(K)) row has no $stage stage"))
     bits = table(catalog, key).status[key.index]
-    return StageStatus((stage == SOURCE_EXPAND ? bits >> 32 : bits) % UInt32)
+    return StageStatus((stage == last(stages(K)) && length(stages(K)) == 2 ? bits >> 32 : bits) % UInt32)
 end
 
 """
@@ -780,7 +839,8 @@ end
 
 One layer of the metadata of an item or a collection. A stage as `layer` gives the metadata that
 the stage last produced: for an item, `SOURCE_EXPAND` gives the metadata of its entry in the source
-job, and `ITEM_PROCESS` the metadata of its process; for a collection, the stage is
+job, `ITEM_PROCESS` the metadata of its process, and `MEMBER_PROCESS` the metadata of its member
+process; for a collection, the stage is
 `COLLECTION_PROCESS`. That metadata stays when the stage
 becomes stale, until the stage produces new metadata.
 

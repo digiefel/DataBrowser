@@ -4,7 +4,7 @@ The typed pipeline stage contract.
 Source discovery belongs to the source (`items`). Everything after it is these stages:
 
 ```text
-read → (expand) → process → collection process
+read → (expand) → process → collection process → member process
 ```
 
 Each stage has a project-aware form, which the engine calls, and a context-free form, which
@@ -33,13 +33,16 @@ which the engine can supply without touching the origin.
 The stage identified by a scheduled job, cached payload, or cached completion record.
 Values follow pipeline order. `SOURCE_READ` records the result of `read`; `SOURCE_EXPAND` records
 the result of `expand` together with the creation of the item records: identity, labels and
-collection placement.
+collection placement. `ITEM_PROCESS` is the `process` of an item, `COLLECTION_PROCESS` the `process`
+of a collection with its members, and `MEMBER_PROCESS` the member `process` methods that the
+collections holding an item apply to it.
 """
 @enum PipelineStage::Int8 begin
     SOURCE_READ = 0
     SOURCE_EXPAND = 1
     ITEM_PROCESS = 2
     COLLECTION_PROCESS = 3
+    MEMBER_PROCESS = 4
 end
 
 # ---------------------------------------------------------------------------
@@ -101,41 +104,65 @@ metadata is supplied to later reconstruction.
 process(project::AbstractProject, item::AbstractDataItem) = process(item)
 
 """
-    process(project, collection, items) -> Vector{<:AbstractDataItem}
-    process(collection, items) -> Vector{<:AbstractDataItem}
+    process(project, collection, members) -> AbstractCollection
+    process(collection, members) -> AbstractCollection
 
-Rewrite one collection's members, returning exactly one output per input with matching ids. The
-default passes the members through unchanged.
+Process one collection with its members: every item below it, at any depth, each as its own
+`process` returned it. Return a later version of the collection, for example with metadata
+computed from the members. The default returns `collection` unchanged.
 
-An output may differ from its input in data, in `metadata(output)` and in its label. Each change
-is kept as this collection's version of the item, and the item's own processed data and metadata
-stay as they are. Views, queries and the collections above receive the changes, where the outermost collection replaces the values of the collections below it.
+The members are not changed here: a member `process` method changes them, and receives the
+collection this method returns.
 """
-process(project::AbstractProject, collection::AbstractCollection, items::AbstractVector) =
-    process(collection, items)
+process(project::AbstractProject, collection::AbstractCollection, members::AbstractVector) =
+    process(collection, members)
 
-process(::AbstractCollection, items::AbstractVector) = items
+process(collection::AbstractCollection, ::AbstractVector) = collection
+
+"""
+    process(project, member, collection) -> AbstractDataItem
+    process(member, collection) -> AbstractDataItem
+
+A member `process` method: process one item with a collection that holds it, directly or at any
+depth. `collection` is the value that the collection's own `process` returned. Return a later
+version of `member`, with the same id. The default returns `member` unchanged.
+
+Each collection above an item applies its member `process` method in turn, from the collection
+that holds the item directly up to the outermost one; each receives the result of the one below.
+The last result is the item's value: views, queries and the item list show it.
+"""
+process(project::AbstractProject, member::AbstractDataItem, collection::AbstractCollection) =
+    process(member, collection)
+
+process(member::AbstractDataItem, ::AbstractCollection) = member
 
 """
     has_stage(project, collection, stage) -> Bool
     has_stage(collection, stage) -> Bool
 
-Whether `stage`, `COLLECTION_PROCESS`, is defined for `collection`. A workspace runs no job for a
-stage that is not defined, and shows no work in progress for it. It asks once for each collection,
-when it first finds the collection.
+Whether `stage` is defined for `collection`: `COLLECTION_PROCESS` for the `process` of the
+collection, or `MEMBER_PROCESS` for a member `process` method of the collection. A workspace runs no
+job for a stage that is not defined, and shows no work in progress for it. It asks once for each
+collection, when it first finds the collection.
 
 The default answers from the methods: the stage is defined when a `process` method other than the
-default of this package applies to the collection. A project that decides in
-another way which collections have a stage adds a method; the default forwards to
-`has_stage(collection, stage)`.
+default of this package applies to the collection. A project that decides in another way which
+collections have a stage adds a method; the default forwards to `has_stage(collection, stage)`.
 """
 function has_stage(project::AbstractProject, collection::AbstractCollection, stage::PipelineStage)::Bool
-    signature = Tuple{typeof(project),typeof(collection),Vector{AbstractDataItem}}
-    return which(process, signature).module != (@__MODULE__) || has_stage(collection, stage)
+    P, C = typeof(project), typeof(collection)
+    signature = stage == MEMBER_PROCESS ? Tuple{P,AbstractDataItem,C} : Tuple{P,C,Vector{AbstractDataItem}}
+    return defines(signature) || has_stage(collection, stage)
 end
 
-has_stage(collection::AbstractCollection, ::PipelineStage)::Bool =
-    which(process, Tuple{typeof(collection),Vector{AbstractDataItem}}).module != (@__MODULE__)
+function has_stage(collection::AbstractCollection, stage::PipelineStage)::Bool
+    C = typeof(collection)
+    return defines(stage == MEMBER_PROCESS ? Tuple{AbstractDataItem,C} : Tuple{C,Vector{AbstractDataItem}})
+end
+
+# Whether a `process` method of another module can apply to arguments of these types. A member
+# `process` method usually names a narrower item type than `AbstractDataItem`.
+defines(signature) = any(method -> method.module != (@__MODULE__), methods(process, signature))
 
 # ---------------------------------------------------------------------------
 # stage_roots
@@ -145,7 +172,8 @@ has_stage(collection::AbstractCollection, ::PipelineStage)::Bool =
     stage_roots(project, stage, type) -> Vector
 
 The code that runs `stage` for values of `type`: a source item type for `SOURCE_READ`, which also
-covers `expand`; an item type for `ITEM_PROCESS`; a collection type for `COLLECTION_PROCESS`.
+covers `expand`; an item type for `ITEM_PROCESS`; a collection type for `COLLECTION_PROCESS`; an
+item type or a collection type for `MEMBER_PROCESS`, the member `process` methods for that type.
 
 A workspace asks again while it is open. When the answer changes, the results of `stage` for values
 of `type` are out of date and are computed again when they are needed. So a method defined or
@@ -166,10 +194,14 @@ function stage_roots(project::AbstractProject, stage::PipelineStage, type::Type)
             (expand, Tuple{P,type,Any}), (expand, Tuple{type,Any})] :
         stage == ITEM_PROCESS ? Any[
             (process, Tuple{P,type}), (process, Tuple{type}), (label, Tuple{P,type}), (label, Tuple{type})] :
-        stage == COLLECTION_PROCESS ? Any[(process, Tuple{P,type,Any}), (process, Tuple{type,Any})] :
+        stage == COLLECTION_PROCESS ? Any[(process, Tuple{P,type,AbstractVector}), (process, Tuple{type,AbstractVector})] :
+        stage == MEMBER_PROCESS ? Any[(process, member_signature(P, type)), (process, Base.tuple_type_tail(member_signature(P, type)))] :
         Any[]
     return Any[type; [method for (callback, signature) in signatures for method in methods(callback, signature)]]
 end
+
+# The arguments of the member `process` methods for an item type or a collection type.
+member_signature(P, T) = T <: AbstractCollection ? Tuple{P,AbstractDataItem,T} : Tuple{P,T,AbstractCollection}
 
 """
     which(project, stage, source_item) -> Union{Method,LineNumberNode,Nothing}
@@ -195,7 +227,8 @@ function Base.which(project::AbstractProject, stage::PipelineStage, value)::Unio
         stage == SOURCE_READ ? Any[(read, Tuple{P,Any,T}), (read, Tuple{Any,T})] :
         stage == SOURCE_EXPAND ? Any[(expand, Tuple{P,T,Any}), (expand, Tuple{T,Any})] :
         stage == ITEM_PROCESS ? Any[(process, Tuple{P,T}), (process, Tuple{T})] :
-        Any[(process, Tuple{P,T,Any}), (process, Tuple{T,Any})]
+        stage == MEMBER_PROCESS ? Any[(process, member_signature(P, T)), (process, Base.tuple_type_tail(member_signature(P, T)))] :
+        Any[(process, Tuple{P,T,AbstractVector}), (process, Tuple{T,AbstractVector})]
     for (callback, signature) in signatures
         for method in methods(callback, signature)
             # `methods` also lists the methods of Base that accept anything, such as `read(io, x)`.

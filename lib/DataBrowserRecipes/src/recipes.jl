@@ -27,12 +27,10 @@ end
 """
 One registered collection recipe for a kind.
 
-`process(data, metadata)` rewrites each member's data (one output per input).
-`analyze(data, metadata)` folds the post-process members into a `Dict` that every member gets.
+`analyze(data, metadata)` folds the processed members into a `Dict` that every member gets.
 """
-struct CollectionRecipe{Process,Analyze}
+struct CollectionRecipe{Analyze}
     kind::Symbol
-    process::Process
     analyze::Analyze
     registered::LineNumberNode
 end

@@ -34,6 +34,15 @@ function stage_computation(workspace::Workspace, key::SourceKey, stage::Pipeline
 end
 
 function stage_computation(workspace::Workspace, key::ItemKey, stage::PipelineStage)
+    if stage == MEMBER_PROCESS
+        # The member `process` of each collection above the item, from the one that holds it up.
+        value = version_computation(workspace, key; own=true)
+        for holder in reverse(ancestors(workspace, key))
+            workspace.catalog.collections.member_process[holder.index] || continue
+            value = Computation(process, workspace.project, value, processed_collection_computation(workspace, holder))
+        end
+        return value
+    end
     derived = get(workspace.computations, key, nothing)
     derived === nothing || return bound_computation(workspace, derived; owner=(key, stage))
     source = Catalogs.source(workspace.catalog, key)
@@ -45,14 +54,19 @@ function stage_computation(workspace::Workspace, key::ItemKey, stage::PipelineSt
 end
 
 function stage_computation(workspace::Workspace, key::CollectionKey, stage::PipelineStage)
-    arguments = Computation[version_computation(workspace, item; reader=(key, stage))
-        for item in members(workspace, key)]
+    arguments = Computation[version_computation(workspace, item; own=true)
+        for item in Catalogs.nested_items(workspace.catalog, key)]
     return Computation(process, workspace.project, collection_computation(workspace, key), arguments)
 end
 
 collection_computation(workspace, key) = Computation(native_collection,
     valuetype(workspace.catalog, key), id(workspace.catalog, key),
     metadata(workspace.catalog, key, :collection))
+
+# The value that the `process` of a collection returned, rebuilt from its metadata.
+processed_collection_computation(workspace, key) = Computation(native_collection,
+    valuetype(workspace.catalog, key), id(workspace.catalog, key),
+    merge(metadata(workspace.catalog, key, :collection), metadata(workspace.catalog, key, COLLECTION_PROCESS)))
 
 # Reconstruction supplies the collection argument; it is workspace input preparation, like
 # `native_value` for an item, rather than a project operation of its own.
@@ -115,34 +129,18 @@ function native_value(value::AbstractDataItem, known, given::MetadataDict, colle
     return adopt(something(rebuilt, value), known.label, given, collections)
 end
 
-function native_computation(workspace, key, value, through; above=CollectionKey[])
+function native_computation(workspace, key, value, through)
     known, collections = native_arguments(workspace, key)
-    return Computation(native_value, value, known,
-        metadata(workspace, key; through, above), collections)
+    return Computation(native_value, value, known, metadata(workspace, key; through), collections)
 end
 
-function collection_value(values::AbstractVector, ids::Vector{String}, item_id::String)
-    length(values) == length(ids) || error("Collection process must return one output for each input")
-    return values[something(findfirst(==(item_id), ids))]
-end
-
-function version_computation(workspace::Workspace, key::ItemKey; reader::Union{Nothing,Target}=nothing)
+# The computation of the value that `versions` gives for an item.
+function version_computation(workspace::Workspace, key::ItemKey; own::Bool=false)
     value = computation(workspace, key, ITEM_PROCESS)
     haskey(workspace.computations, key) && return value
-    own = reader !== nothing && first(reader) isa ItemKey
-    own && return native_computation(workspace, key, value, ITEM_PROCESS)
-    holders = ancestors(workspace, key)
-    if reader !== nothing
-        index = findfirst(==(first(reader)), holders) + (last(reader) == COLLECTION_PROCESS)
-        holders = holders[index:end]
-    end
-    for holder in reverse(holders)
-        Catalogs.status(workspace.catalog, holder, COLLECTION_PROCESS).validity == Catalogs.FRESH || continue
-        Catalogs.status(workspace.catalog, holder, COLLECTION_PROCESS).absent && continue
-        value = Computation(collection_value, computation(workspace, holder, COLLECTION_PROCESS),
-            String[id(workspace, item) for item in members(workspace, holder)], id(workspace, key))
-    end
-    return native_computation(workspace, key, value, ITEM_PROCESS; above=holders)
+    !own && member_current(workspace.catalog, key) && return native_computation(
+        workspace, key, computation(workspace, key, MEMBER_PROCESS), MEMBER_PROCESS)
+    return native_computation(workspace, key, value, ITEM_PROCESS)
 end
 
 """
@@ -186,13 +184,13 @@ function computation_result(workspace::Workspace, value::Computation)
         stage == SOURCE_READ || return nothing
         cached = read_payload(workspace.cache.db, cache_key(workspace, key))
         return cached === nothing || !keeps_result(workspace, something(cached)) ? nothing : cached
-    elseif key isa ItemKey && stage == ITEM_PROCESS
+    elseif key isa ItemKey
         haskey(workspace.computations, key) && return nothing
         result_store(workspace, valuetype(workspace, key)) === nothing && return nothing
-        payload = only(read_payload(workspace.cache.db, [id(workspace, key)]))
+        payload = only(read_payload(workspace.cache.db, [id(workspace, key)]; stage))
         payload === nothing && return nothing
         restored = reconstruct(valuetype(workspace, key), id(workspace, key), deepcopy(something(payload)),
-            metadata(workspace, key; above=CollectionKey[]))
+            metadata(workspace, key; through=stage))
         return restored === nothing ? nothing : Some(restored)
     end
     return nothing

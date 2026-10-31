@@ -74,14 +74,19 @@ reconstruct(::Type{<:RegisteredDataItem{K}}, id::AbstractString, data, metadata:
 
 """
 One collection that a `collection` callback names. `Level` is the name the callback gives the
-level, such as `:wafer`, and `name` is the value at that level, such as `"W1"`.
+level, such as `:wafer`, and `name` is the value at that level, such as `"W1"`. `metadata` holds
+what the collection `analyze` callbacks computed for it.
 """
 struct NamedCollection{Level} <: AbstractCollection
     name::String
+    metadata::MetadataDict
 end
+
+NamedCollection{Level}(name::AbstractString) where {Level} = NamedCollection{Level}(String(name), MetadataDict())
 
 id(collection::NamedCollection)::String = collection.name
 label(collection::NamedCollection)::String = collection.name
 label(::Type{NamedCollection{Level}}) where {Level} = Level
-reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, ::Dict) where {Level} =
-    NamedCollection{Level}(String(identity))
+metadata(collection::NamedCollection)::MetadataDict = collection.metadata
+reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, metadata::Dict) where {Level} =
+    NamedCollection{Level}(String(identity), metadata_dict(metadata))

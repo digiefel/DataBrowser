@@ -13,6 +13,7 @@ using DataBrowserAPI:
     SOURCE_READ,
     SOURCE_EXPAND,
     ITEM_PROCESS,
+    MEMBER_PROCESS,
     COLLECTION_PROCESS,
     fingerprint,
     id,

@@ -22,9 +22,13 @@ function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T
 end
 struct ComputationSource <: AbstractDataSource end
 struct ComputationFile <: AbstractDataSourceItem end
-struct ComputationCollection <: AbstractCollection end
+struct ComputationCollection <: AbstractCollection
+    metadata::Dict
+end
+ComputationCollection() = ComputationCollection(Dict())
 DataBrowserAPI.id(::ComputationCollection) = "group"
-DataBrowserAPI.reconstruct(::Type{ComputationCollection}, ::AbstractString, ::Dict) = ComputationCollection()
+DataBrowserAPI.metadata(collection::ComputationCollection) = collection.metadata
+DataBrowserAPI.reconstruct(::Type{ComputationCollection}, ::AbstractString, metadata::Dict) = ComputationCollection(metadata)
 struct ComputationItem <: AbstractDataItem
     name::String
     data::NamedTuple{(:signal,),Tuple{Vector{Int}}}
@@ -209,8 +213,10 @@ DataBrowserAPI.expand(::GroupComputationProject, file::ComputationFile, data) =
 DataBrowserAPI.process(::GroupComputationProject, value::ComputationItem) =
     process(ComputationProject(), value)
 DataBrowserAPI.process(::GroupComputationProject, ::ComputationCollection, values::AbstractVector) =
-    [GroupedComputationItem(id(value), (signal=value.data.signal .* 3, members=fill(length(values), length(value.data.signal))),
-        merge(metadata(value), Dict(:grouped => true))) for value in values]
+    ComputationCollection(Dict(:members => length(values)))
+DataBrowserAPI.process(::GroupComputationProject, value::ComputationItem, group::ComputationCollection) =
+    GroupedComputationItem(id(value), (signal=value.data.signal .* 3, members=fill(group.metadata[:members], length(value.data.signal))),
+        merge(metadata(value), Dict(:grouped => true)))
 
 @testset "collection computations replay the values supplied to views" begin
     workspace = CW.open_workspace(GroupComputationProject(), ComputationSource(); cache=false, background_processing=true)
@@ -228,7 +234,7 @@ DataBrowserAPI.process(::GroupComputationProject, ::ComputationCollection, value
     end
 end
 
-@testset "reopening supplies native collection outputs with a different item type" begin
+@testset "reopening supplies member process outputs with a different item type" begin
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
         try

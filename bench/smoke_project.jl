@@ -9,15 +9,13 @@ struct ToyCounters
     expand::Threads.Atomic{Int}
     processes::Threads.Atomic{Int}
     analyses::Threads.Atomic{Int}
-    collection_processes::Threads.Atomic{Int}
     collection_analyses::Threads.Atomic{Int}
 end
 
 ToyCounters() = ToyCounters(
     Dict(name => Threads.Atomic{Int}(0) for name in
         ("a.dbitem", "b.dbitem", "extra.dbitem")),
-    Threads.Atomic{Int}(0), Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
-    Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
+    Threads.Atomic{Int}(0), Threads.Atomic{Int}(0), Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
 )
 
 function toy_project(name::AbstractString, counters::ToyCounters)::Project
@@ -52,10 +50,6 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
         end,
     )
     register_collection_analysis!(project, :trace;
-        process=function (items, _metadata)
-            Threads.atomic_add!(counters.collection_processes, 1)
-            return [(; item..., members=fill(length(items), length(item.x))) for item in items]
-        end,
         analyze=function (items, _metadata)
             Threads.atomic_add!(counters.collection_analyses, 1)
             return Dict{Symbol,Any}(:members => length(items))

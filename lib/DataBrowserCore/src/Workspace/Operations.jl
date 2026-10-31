@@ -141,7 +141,7 @@ function _install_runtime!(
     empty!(workspace.stores.types)
     foreach(empty!, (
         workspace.source_items, workspace.source_locks, workspace.collection_keys,
-        workspace.changes, workspace.errors, workspace.wanted, workspace.computations,
+        workspace.errors, workspace.wanted, workspace.computations,
         workspace.results, workspace.executions, workspace.code, workspace.outdated_reads))
     workspace.next_collection_key = 1
     workspace.running = 0
@@ -260,17 +260,20 @@ cache_key(workspace::Workspace, item::ItemKey)::Int64 =
 The collection stages the project does not define for `value`. The catalog gives them no job. The
 caller holds the catalog lock.
 
-The code of collection `process` is recorded from here on, also when it is not defined, so that
-[`check_code!`](@ref) asks again after a change: a stage defined later gets its jobs.
+The code of collection `process` and of member `process` methods is recorded from here on, also
+when it is not defined, so that [`check_code!`](@ref) asks again after a change: a stage defined
+later gets its jobs.
 """
 function undefined(workspace::Workspace, value::AbstractCollection)::Vector{PipelineStage}
-    target = (COLLECTION_PROCESS, typeof(value))
-    if !haskey(workspace.code, target)
+    for stage in (COLLECTION_PROCESS, MEMBER_PROCESS)
+        target = (stage, typeof(value))
+        haskey(workspace.code, target) && continue
         code = Base.invokelatest(StageCode, workspace.project, target...)
         workspace.code[target] = code
         store_code_revision!(workspace.cache.db, target..., code.revision.hash)
     end
-    return has_stage(workspace.project, value, COLLECTION_PROCESS) ? PipelineStage[] : [COLLECTION_PROCESS]
+    return PipelineStage[stage for stage in (COLLECTION_PROCESS, MEMBER_PROCESS)
+        if !has_stage(workspace.project, value, stage)]
 end
 
 """
@@ -311,13 +314,6 @@ function forget_stale!(workspace::Workspace)::Nothing
         delete!(workspace.errors, (key, stage))
         # A source item's results are removed where its source reports the change.
         key isa SourceKey && continue
-        # The items lose what the collection changed in their metadata, also where queries read it.
-        if stage == COLLECTION_PROCESS
-            for item in keys(pop!(workspace.changes, key, Dict{ItemKey,MetadataDict}()))
-                item in catalog &&
-                    store_item_metadata!(cache, id(catalog, item), metadata(workspace, item))
-            end
-        end
         if key isa ItemKey
             clear_cached_result_state!(cache, stage, id(catalog, key))
         elseif key in catalog
@@ -704,8 +700,10 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
         item = lookup(catalog, ItemKey, saved.id)
         item === nothing && continue
         if result_store(workspace, saved.type) === nothing
-            delete_processed!(cache, saved.id; collection=0)
-            clear_cached_result_state!(cache, ITEM_PROCESS, saved.id)
+            for stage in (ITEM_PROCESS, MEMBER_PROCESS)
+                delete_processed!(cache, saved.id; stage)
+                clear_cached_result_state!(cache, stage, saved.id)
+            end
             continue
         end
         restore(item, ITEM_PROCESS, saved.id; metadata=saved.process)
@@ -713,20 +711,21 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     # A collection comes after its parent, so the reverse order restores members first.
     for saved in reverse(index.collections)
         collection = restored[saved.key]
-        if restore(collection, COLLECTION_PROCESS, saved.key)
-            workspace.changes[collection] = Dict{ItemKey,MetadataDict}(
-                lookup(catalog, ItemKey, item_id) => changed
-                for (item_id, changed) in saved.changes if lookup(catalog, ItemKey, item_id) !== nothing)
-        end
+        restore(collection, COLLECTION_PROCESS, saved.key; metadata=saved.process)
         # A collection whose items were all left to the scan is empty.
         delete!(catalog, collection)
+    end
+    # The member process of an item reads the process of its collections.
+    for saved in index.items
+        item = lookup(catalog, ItemKey, saved.id)
+        item === nothing || restore(item, MEMBER_PROCESS, saved.id; metadata=saved.member)
     end
     # The saved results were computed with the code of the saved revisions. The next check compares
     # them with the current code; a stage without a saved revision counts as changed.
     saved = code_revisions(cache)
     targets = union(keys(saved),
-        ((ITEM_PROCESS, item.type) for item in index.items),
-        ((COLLECTION_PROCESS, collection.type) for collection in index.collections))
+        ((stage, item.type) for item in index.items for stage in (ITEM_PROCESS, MEMBER_PROCESS)),
+        ((stage, collection.type) for collection in index.collections for stage in (COLLECTION_PROCESS, MEMBER_PROCESS)))
     for target in targets
         get!(workspace.code, target, StageCode(Any[], UInt(0), CodeRevision(get(saved, target, ""), [], [])))
     end
@@ -884,14 +883,16 @@ function check_code!(workspace::Workspace)::Nothing
         # A collection stage may be defined now, or no longer.
         for key in keys(catalog, CollectionKey)
             type = valuetype(catalog, key)
-            key != ROOT && (COLLECTION_PROCESS, type) in changed || continue
-            absent = !isempty(undefined(workspace, reconstruct(type, Catalogs.id(catalog, key), metadata(catalog, key, :collection))))
+            key != ROOT && ((COLLECTION_PROCESS, type) in changed || (MEMBER_PROCESS, type) in changed) || continue
+            absent = undefined(workspace, reconstruct(type, Catalogs.id(catalog, key), metadata(catalog, key, :collection)))
             old = Catalogs.status(catalog, key, COLLECTION_PROCESS)
-            old.absent == absent || (catalog[key, COLLECTION_PROCESS] = Catalogs.StageStatus(old; absent))
+            old.absent == (COLLECTION_PROCESS in absent) ||
+                (catalog[key, COLLECTION_PROCESS] = Catalogs.StageStatus(old; absent=COLLECTION_PROCESS in absent))
+            Catalogs.member_process!(catalog, key, !(MEMBER_PROCESS in absent))
         end
         Catalogs.invalidate!(catalog, Tuple{Any,PipelineStage}[
             (key, stage) for K in (ItemKey, CollectionKey) for key in keys(catalog, K)
-            for stage in instances(PipelineStage)
+            for stage in Catalogs.stages(K)
             if (stage, valuetype(catalog, key)) in changed])
         forget_stale!(workspace)
         finish_publish!(workspace)

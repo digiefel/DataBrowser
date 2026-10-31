@@ -24,9 +24,7 @@ function Base.show(io::IO, ::MIME"text/plain", project::Project)
     print(io, "\n  ", _plural(length(project.collections), "collection recipe"))
     isempty(project.collections) || print(io, ":")
     for recipe in values(project.collections)
-        stages = [name for (name, f) in
-            (("process", recipe.process), ("analyze", recipe.analyze)) if f !== nothing]
-        print(io, "\n    ", recipe.kind, " · ", join(stages, " · "))
+        print(io, "\n    ", recipe.kind, " · analyze")
     end
 end
 
@@ -91,18 +89,16 @@ end
 """
 Register (or replace) the collection recipe for one item kind.
 
-`process(data, metadata)` receives aligned vectors and returns one data value per input.
-`analyze(data, metadata)` receives the processed values and returns metadata that every member of
-the collection gets.
+`analyze(data, metadata)` receives the processed values and metadata of the members of that kind,
+and returns metadata that every member of the collection gets.
 Re-calling with the same registration name replaces the recipe.
 """
 function register_collection_analysis!(
     project::Project,
     kind::Symbol;
-    process=nothing,
-    analyze=nothing,
+    analyze,
 )::Project
-    project.collections[kind] = CollectionRecipe(kind, process, analyze, caller())
+    project.collections[kind] = CollectionRecipe(kind, analyze, caller())
     return project
 end
 

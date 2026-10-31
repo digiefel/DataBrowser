@@ -48,13 +48,12 @@ function browser_workload(root, opening, started_ns)
         opening_s = (time_ns() - started_ns) / 1e9
         finish_work(workspace)
         items = check_items(workspace, [4.0, 6.0, 9.0])
-        # "runs" holds every item and is the outermost collection, so its version is the latest.
-        [first(item_data(item).members) for item in items] == [3, 3, 3] ||
+        [metadata(item)[:members] for item in items] == [3, 3, 3] ||
             error("Collection processing did not reach the selected items")
         if opening == "reopen"
             all(count[] == 0 for count in values(counters.reads)) || error("Reopening reran source reads")
             counters.processes[] == counters.analyses[] == 0 || error("Reopening reran item callbacks")
-            counters.collection_processes[] == counters.collection_analyses[] == 0 ||
+            counters.collection_analyses[] == 0 ||
                 error("Reopening reran collection callbacks")
         end
         timer = gui_timings(session)
