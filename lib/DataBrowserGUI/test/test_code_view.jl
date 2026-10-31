@@ -18,7 +18,7 @@ include("fixtures/code_project.jl")
         @test [row.call.title for row in view.rows] == ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)"]
         before = (project.reads[], project.processes[])
         indexed_before = Workspace.query_items(workspace)
-        Workspace.select!(view, 1)
+        API.select!(view; row=1)
         chosen = output(code)
         @test chosen === output(code)
         @test (project.reads[], project.processes[]) == before
@@ -28,7 +28,7 @@ include("fixtures/code_project.jl")
         @test ready(linked)
         @test only(linked.visualizer.values).signal == [1, 2, 3]
         @test (project.reads[], project.processes[]) == before
-        Workspace.select!(view, 3)
+        API.select!(view; row=3)
         @test output(code) !== chosen
         @test ready(linked)
         @test only(linked.visualizer.values).signal == [10, 20, 30]
@@ -37,7 +37,7 @@ include("fixtures/code_project.jl")
         @test ready(linked)
         @test view.selected == 3
         @test sort([first(value.signal) for value in linked.visualizer.values]) == [10, 40]
-        Workspace.select!(view, 1)
+        API.select!(view; row=1)
         @test length(output(code)) == 1 # Siblings share one source read.
         input!(state, code, FixedItems(["signal"]))
         @test ready(code)

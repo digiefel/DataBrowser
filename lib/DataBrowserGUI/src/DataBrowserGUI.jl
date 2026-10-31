@@ -18,8 +18,8 @@ include("TableModel.jl")
 include("Browser.jl")
 
 using .Browser: open_browser, close_browser!, BrowserSession, gui_timings, reset_timings!
-using .Browser: select_columns!, selected_columns
-export select_columns!, selected_columns
+using .Browser: selected_columns
+export selected_columns
 using .Browser: wait_browser_ready
 export wait_browser_ready
 export open_browser, close_browser!, BrowserSession, gui_timings, reset_timings!

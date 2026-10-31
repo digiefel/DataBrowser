@@ -143,6 +143,7 @@ import DataBrowserAPI:
     open_source,
     project_name,
     items,
+    select!,
     watch_source
 
 

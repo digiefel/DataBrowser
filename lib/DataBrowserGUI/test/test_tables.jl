@@ -76,7 +76,7 @@ end
     returned = selection_of(("C", (I=[6.], V=[7.]), ()))
     view = only(filter(v -> DataBrowserAPI.label(v) == "Table", DataBrowserGUI.Browser.visualizers(typeof(first))))
     DataBrowserAPI.prepare!(view, first, nothing)
-    select_columns!(view, ["I"])
+    DataBrowserAPI.select!(view; columns=["I"])
     @test selected_columns(view; available=true) == ["I"]
     DataBrowserAPI.prepare!(view, missing, nothing)
     @test selected_columns(view) == ["I"]
@@ -84,11 +84,11 @@ end
     DataBrowserAPI.prepare!(view, returned, nothing)
     @test selected_columns(view; available=true) == ["I"]
     DataBrowserAPI.prepare!(view, missing, nothing)
-    select_columns!(view, ["V"])
+    DataBrowserAPI.select!(view; columns=["V"])
     DataBrowserAPI.prepare!(view, returned, nothing)
     @test selected_columns(view) == ["V"]
     @test selected_columns(view; available=true) == ["V"]
-    select_columns!(view, String[])
+    DataBrowserAPI.select!(view; columns=String[])
     DataBrowserAPI.prepare!(view, first, nothing)
     @test isempty(selected_columns(view))
     @test isempty(selected_columns(view; available=true))

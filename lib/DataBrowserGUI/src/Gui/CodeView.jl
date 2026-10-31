@@ -1,6 +1,6 @@
 import CImGui as ig
 
-import DataBrowserAPI: draw!, label, prepare!, output
+import DataBrowserAPI: draw!, label, prepare!, output, select!
 using DataBrowserAPI: Computation, cache_info, last_execution
 using Printf: @sprintf
 using DataBrowserAPI: AbstractVisualizer
@@ -41,15 +41,15 @@ label(::CodeView)::String = "Code"
 output(view::CodeView) = view.output
 
 """
-    select!(view::CodeView, index)
+    select!(view::CodeView; row)
 
-Select the row `index` of the code view. Its computations become the output of the view, without
-being evaluated.
+Select the row number `row` of the code view, counted from the top. Its computations become the
+output of the view, without being evaluated.
 """
-function Workspace.select!(view::CodeView, index::Integer)::Nothing
-    checkbounds(view.rows, index)
-    view.selected = index
-    call = view.rows[index].call
+function select!(view::CodeView; row::Integer)::Nothing
+    checkbounds(view.rows, row)
+    view.selected = row
+    call = view.rows[row].call
     next = Computation[call.computations[id] for id in sort!(collect(keys(call.computations)))]
     length(next) == length(view.output) && all(a === b for (a, b) in zip(next, view.output)) ||
         (view.output = next)
@@ -96,7 +96,7 @@ function prepare!(view::CodeView, selection::Workspace.Selection, ctx)::Nothing
         isempty(view.output) || (view.output = Computation[])
     else
         selected = findfirst(row -> call_identity(row.call) == previous, rows)
-        Workspace.select!(view, something(selected, length(rows)))
+        select!(view; row=something(selected, length(rows)))
     end
     return nothing
 end
@@ -127,7 +127,7 @@ function draw!(view::CodeView, ctx)::Nothing
             ig.PushID(index)
             corner = ig.GetCursorScreenPos()
             ig.Selectable("##step", index == view.selected, ig.ImGuiSelectableFlags_AllowOverlap,
-                ig.ImVec2(0, ig.GetFrameHeight())) && Workspace.select!(view, index)
+                ig.ImVec2(0, ig.GetFrameHeight())) && select!(view; row=index)
             ig.SetCursorScreenPos(corner)
             x(column) = corner.x + (column - 0.5f0) * width
             top, middle, bottom = corner.y, corner.y + height / 2, corner.y + height

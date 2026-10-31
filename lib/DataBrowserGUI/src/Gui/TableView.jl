@@ -4,7 +4,7 @@ import CImGui.CSyntax: @c
 import CSV
 using Printf: @sprintf
 
-import DataBrowserAPI: draw!, draw_header!, label, output, prepare!
+import DataBrowserAPI: draw!, draw_header!, label, output, prepare!, select!
 using DataBrowserAPI: AbstractVisualizer
 using DataBrowserCore: Selection, Workspace
 using ..DataBrowserGUI: ItemTable, TableSelection, _zoomable, merge_item_tables, value_table, zoom_value
@@ -155,18 +155,18 @@ function selected_columns(view::TableView; available::Bool=false)::Vector{String
 end
 
 """
-    select_columns!(view::TableView, names) -> TableView
+    select!(view::TableView; columns)
 
-Select columns by name. Missing names remain requested and are restored when available again.
-An empty list explicitly clears the selection.
+Select the columns with the names `columns`. A name that the current items lack stays selected,
+and its column is selected again when items have it. An empty list clears the selection.
 """
-function select_columns!(view::TableView, names::AbstractVector{<:AbstractString})::TableView
-    view.selected_column_names = unique(String.(names))
+function select!(view::TableView; columns::AbstractVector{<:AbstractString})::Nothing
+    view.selected_column_names = unique(String.(columns))
     if view.table !== nothing
-        view.grid.selected_columns = findall(in(names), view.table.columns)
+        view.grid.selected_columns = findall(in(columns), view.table.columns)
         _pass_on!(view)
     end
-    return view
+    return nothing
 end
 
 function _table_selection_changed!(view::TableView)::Nothing
