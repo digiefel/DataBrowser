@@ -1,14 +1,10 @@
 import CImGui as ig
 
-# ---------------------------------------------------------------------------
-# Shared multi-select helper
-# ---------------------------------------------------------------------------
-
 """
-Apply range, toggle, or replacement selection to a list of items.
+    _update_multi_selection!(selected, item, all, shift, ctrl)
 
-Generic over T so it can be used with item ids (String), row indices (Int), etc.
-`shift_held` extends the range from the last selected item; `ctrl_held` toggles the item.
+Change `selected` as a click on `item` does in a list of `all` items: Shift extends the selection
+from the last selected item to `item`, Ctrl toggles `item`, and a plain click selects only `item`.
 """
 function _update_multi_selection!(
     selected_items::Vector{T},
@@ -39,100 +35,30 @@ function _update_multi_selection!(
     return nothing
 end
 
-# ---------------------------------------------------------------------------
-# Render API
-# ---------------------------------------------------------------------------
-
-# NOTE: DataGridState is defined in Browser/State.jl (included before this file)
-# so the struct is available here without redefinition.
-
 """
-    _selected_cell_bounds(state, n_rows, n_cols) -> Union{Nothing,NTuple{4,Int}}
+    render_data_grid!(id, state; n_rows, columns, cell, ...)
 
-Return the selected `(first_row, last_row, first_column, last_column)` rectangle, clamped to the
-current grid, or `nothing` when cell mode has no selection.
-"""
-function _selected_cell_bounds(
-    state::DataGridState,
-    n_rows::Int,
-    n_cols::Int,
-)::Union{Nothing,NTuple{4,Int}}
-    anchor = state.cell_anchor
-    focus = state.cell_focus
-    (anchor === nothing || focus === nothing || n_rows == 0 || n_cols == 0) && return nothing
-    first_row, last_row = minmax(clamp(anchor[1], 1, n_rows), clamp(focus[1], 1, n_rows))
-    first_column, last_column =
-        minmax(clamp(anchor[2], 1, n_cols), clamp(focus[2], 1, n_cols))
-    return (first_row, last_row, first_column, last_column)
-end
+Draw a table of `n_rows` rows with the headers `columns`, in which the user selects rows and
+columns. The grid draws only the rows on screen.
 
-"""Return one clipboard-safe TSV field."""
-function _clipboard_field(value::String)::String
-    any(character -> character in ('\t', '\n', '\r', '"'), value) || return value
-    return "\"" * replace(value, '"' => "\"\"") * "\""
-end
-
-"""
-    selected_cell_text(state, n_rows, n_cols, cell) -> String
-
-Return the rectangular cell selection as spreadsheet-compatible tab-separated text.
-"""
-function selected_cell_text(
-    state::DataGridState,
-    n_rows::Int,
-    n_cols::Int,
-    cell::Function,
-)::String
-    bounds = _selected_cell_bounds(state, n_rows, n_cols)
-    bounds === nothing && return ""
-    first_row, last_row, first_column, last_column = bounds
-    lines = String[]
-    sizehint!(lines, last_row - first_row + 1)
-    for row in first_row:last_row
-        push!(lines, join(
-            (_clipboard_field(cell(row, column)) for column in first_column:last_column),
-            '\t',
-        ))
-    end
-    return join(lines, '\n')
-end
-
-"""Whether one cell belongs to the current rectangular selection."""
-function _cell_selected(
-    bounds::Union{Nothing,NTuple{4,Int}},
-    row::Int,
-    column::Int,
-)::Bool
-    bounds === nothing && return false
-    return bounds[1] <= row <= bounds[2] && bounds[3] <= column <= bounds[4]
-end
-
-"""
-Render a virtualized, multi-select table grid.
-
-Arguments:
-- `id`: stable ImGui identifier string (no `##` prefix needed; the function adds it)
-- `state`: mutable `DataGridState` owned by the consumer; written back each frame
-- `n_rows`: total number of data rows
-- `columns`: ordered column header names
-- `cell`: `(row::Int, col::Int) -> String` callback for cell text
-- `cell_link`: optional `(row::Int, col::Int) -> Union{Nothing,String}` callback for clickable URLs
+- `id`: the name of the grid for ImGui, which keeps the column widths under it in imgui.ini
+- `state`: the `DataGridState` of the grid, which the caller keeps from frame to frame
+- `n_rows`: the number of rows
+- `columns`: the names of the columns, in order
+- `cell`: `(row::Int, col::Int) -> String`, the text of a cell
 - `clickable`: `(row::Int, col::Int) -> Bool`, whether the text of the cell is a link. No cell is a
   link by default
 - `on_click`: called with `(row, col)` when the user clicks the link of a cell
 - `row_popup`: `(row::Int, col::Int) -> Nothing`, draws the menu that right-clicking a row opens,
-  in row mode. `col` is the column of the cell the user right-clicked, or 0 for a band. Right-clicking
+  `col` is the column of the cell the user right-clicked, or 0 for a band. Right-clicking
   a row that is not selected selects it first. The rows have no menu without it
 - `span`: `(row::Int, col::Int) -> Int`, the first row of the run of rows that one cell spans.
   Each row is its own cell by default
-- `frozen_columns`: how many columns on the left stay in place when the grid scrolls sideways
 - `align_right`: `(col::Int) -> Bool`, whether the text of the column's cells is right-aligned
 - `muted`: `(row::Int, col::Int) -> Bool`, whether the text of the cell is dimmed
-- `tooltip`: `(row::Int, col::Int) -> Union{Nothing,String}`, the text shown on hover over the
-  text of the cell
 - `band`: `(row::Int) -> Union{Nothing,String}`, the text of a row that is a band: one text across
   all columns, which stays at the left edge when the grid scrolls sideways, in place of the cells
-  of the row. In row mode only. No row is a band by default
+  of the row. No row is a band by default
 - `fold`: `(row::Int) -> Union{Nothing,Bool}`, whether a band starts with an arrow that folds
   something, open (`true`) or closed (`false`). No band has an arrow by default
 - `on_fold`: called with `row` when the user clicks the arrow of a band
@@ -165,20 +91,16 @@ Arguments:
   cannot move without it
 - `on_selection_change`: called with the selected rows, a `Vector{Int}`, whenever the selection of
   rows or of columns changes
-- `selection_mode`: `:rows` for multi-row selection or `:cells` for a spreadsheet rectangle
-- `height`: child height in pixels; 0.0f0 = fill available
 
 The grid fits its columns to the content of the rows on screen when `state.fit_columns` is set,
 which it is for a new state.
 
-Row mode: click = replace, Shift+click = extend range, Ctrl/Cmd+click = toggle,
-Ctrl/Cmd+A = select all, up/down = move (Shift extends), Escape = clear.
+A click selects a row, Shift-click extends the selection to the row, and Ctrl/Cmd-click adds or
+removes the row. Ctrl/Cmd-A selects all rows. The up and down arrows move the selection, and with
+Shift they extend it. Escape clears the selection.
 
 Clicking the header of a column selects the column, in `state.selected_columns`, with the same
 Shift and Ctrl/Cmd clicks as rows. Escape clears it too.
-
-Cell mode: click or drag selects a rectangular range, Shift+click/arrows extend it,
-Ctrl/Cmd+A selects the grid, Ctrl/Cmd+C copies TSV, and Escape clears it.
 """
 function render_data_grid!(
     id::String,
@@ -186,15 +108,12 @@ function render_data_grid!(
     n_rows::Int,
     columns::Vector{String},
     cell::Function,
-    cell_link::Function = (_, _) -> nothing,
     clickable::Function = (_, _) -> false,
     on_click::Function = (_, _) -> nothing,
     row_popup::Union{Nothing,Function} = nothing,
     span::Function = (row, _) -> row,
-    frozen_columns::Int = 0,
     align_right::Function = _ -> false,
     muted::Function = (_, _) -> false,
-    tooltip::Function = (_, _) -> nothing,
     band::Function = _ -> nothing,
     fold::Function = _ -> nothing,
     on_fold::Function = _ -> nothing,
@@ -208,14 +127,9 @@ function render_data_grid!(
     hidden::Function = _ -> false,
     on_move::Union{Nothing,Function} = nothing,
     on_selection_change::Function = identity,
-    selection_mode::Symbol = :rows,
-    height::Float32 = 0.0f0,
 )::Nothing
     isempty(columns) && return nothing
     columns_before = copy(state.selected_columns)
-    selection_mode in (:rows, :cells) || throw(ArgumentError(
-        "DataGrid selection_mode must be :rows or :cells; got $(repr(selection_mode))",
-    ))
     n_cols = length(columns)
 
     # The grid draws the lines between rows itself, so that a cell can span several rows, and the
@@ -230,13 +144,11 @@ function render_data_grid!(
             ig.ImGuiTableFlags_ScrollY        |
             ig.ImGuiTableFlags_SizingFixedFit
 
-    if !ig.BeginTable("##datagrid_$id", n_cols, flags, (0.0f0, height))
-        return nothing
-    end
+    ig.BeginTable("##datagrid_$id", n_cols, flags) || return nothing
 
-    # The header rows and the frozen columns stay in place.
+    # The header rows stay in place.
     levels = maximum(column -> length(column_groups(column)), 1:n_cols)
-    ig.TableSetupScrollFreeze(frozen_columns, levels + 1)
+    ig.TableSetupScrollFreeze(0, levels + 1)
 
     # Column headers — width 0 with SizingFixedFit = auto-fit on first appearance;
     # imgui.ini restores saved widths on subsequent opens.
@@ -279,7 +191,6 @@ function render_data_grid!(
         end
         group(column) = length(column_groups(column)) >= level ? column_groups(column)[1:level] : nothing
         # The background channel is above the lines that ImGui draws between the columns.
-        # TODO: with frozen columns, a group that scrolls under them covers them.
         ig.TablePushBackgroundChannel()
         first = 1
         while first <= length(shown_columns)
@@ -435,11 +346,9 @@ function render_data_grid!(
         state.fit_columns = false
     end
 
-    # Keyboard navigation, only when the grid has the keyboard focus. A scrolling table owns an
-    # internal child window. Query that child directly so several grids in one parent window do not
-    # all react to the same keyboard shortcut.
+    # The grid reacts to keys only when it has the keyboard focus. A scrolling table has a child
+    # window of its own, so several grids in one window do not all react to the same key.
     window_focused = ig.IsWindowFocused()
-    active = window_focused
     # The grid takes the keys it moves through its rows with from ImGui's keyboard navigation, which
     # would move through the rows and the links too, scroll on its own, and press a row with Space.
     if window_focused
@@ -451,83 +360,37 @@ function render_data_grid!(
 
     row_selection_changed = false
     selected = state.selected_rows
-    all_rows = selection_mode === :rows ? (1:n_rows) : (1:0)
+    all_rows = 1:n_rows
 
-    if active && n_rows > 0
+    if window_focused && n_rows > 0
         ctrl_held = unsafe_load(io.KeyCtrl)
         shift_held = unsafe_load(io.KeyShift)
 
-        if ig.IsKeyPressed(ig.ImGuiKey_A) && ctrl_held
-            if selection_mode === :rows && length(selected) != n_rows
-                state.selected_rows = collect(1:n_rows)
-                row_selection_changed = true
-            elseif selection_mode === :cells
-                state.cell_anchor = (1, 1)
-                state.cell_focus = (n_rows, n_cols)
-            end
+        if ig.IsKeyPressed(ig.ImGuiKey_A) && ctrl_held && length(selected) != n_rows
+            state.selected_rows = collect(1:n_rows)
+            row_selection_changed = true
         end
 
         if ig.IsKeyPressed(ig.ImGuiKey_Escape)
             empty!(state.selected_columns)
-            if selection_mode === :rows && !isempty(selected)
+            if !isempty(selected)
                 empty!(state.selected_rows)
                 row_selection_changed = true
-            elseif selection_mode === :cells
-                state.cell_anchor = nothing
-                state.cell_focus = nothing
             end
         end
 
-        if selection_mode === :rows
-            anchor = isempty(selected) ? 0 : selected[end]
-            if ig.IsKeyPressed(ig.ImGuiKey_DownArrow) && anchor < n_rows
-                new_anchor = anchor + 1
-                _update_multi_selection!(
-                    state.selected_rows, new_anchor, all_rows,
-                    shift_held, ctrl_held && !shift_held)
-                state.scroll_to_row = new_anchor
-                row_selection_changed = true
-            end
-            if ig.IsKeyPressed(ig.ImGuiKey_UpArrow) && anchor > 1
-                new_anchor = anchor - 1
-                _update_multi_selection!(
-                    state.selected_rows, new_anchor, all_rows,
-                    shift_held, ctrl_held && !shift_held)
-                state.scroll_to_row = new_anchor
-                row_selection_changed = true
-            end
-        else
-            focus = something(state.cell_focus, (1, 1))
-            row_delta = ig.IsKeyPressed(ig.ImGuiKey_DownArrow) ? 1 :
-                ig.IsKeyPressed(ig.ImGuiKey_UpArrow) ? -1 : 0
-            column_delta = ig.IsKeyPressed(ig.ImGuiKey_RightArrow) ? 1 :
-                ig.IsKeyPressed(ig.ImGuiKey_LeftArrow) ? -1 : 0
-            if row_delta != 0 || column_delta != 0
-                next_focus = (
-                    clamp(focus[1] + row_delta, 1, n_rows),
-                    clamp(focus[2] + column_delta, 1, n_cols),
-                )
-                if !shift_held
-                    state.cell_anchor = next_focus
-                end
-                state.cell_focus = next_focus
-                state.scroll_to_row = next_focus[1]
-            end
-            if ctrl_held && ig.IsKeyPressed(ig.ImGuiKey_C)
-                copied = selected_cell_text(state, n_rows, n_cols, cell)
-                isempty(copied) || ig.SetClipboardText(copied)
-            end
+        anchor = isempty(selected) ? 0 : selected[end]
+        for (key, step) in ((ig.ImGuiKey_DownArrow, 1), (ig.ImGuiKey_UpArrow, -1))
+            new_anchor = anchor + step
+            (ig.IsKeyPressed(key) && 1 <= new_anchor <= n_rows) || continue
+            _update_multi_selection!(state.selected_rows, new_anchor, all_rows,
+                shift_held, ctrl_held && !shift_held)
+            state.scroll_to_row = new_anchor
+            row_selection_changed = true
         end
     end
 
-    state.focused = window_focused
-
-    # Virtualized rows via ImGuiListClipper
-    selected = state.selected_rows
-    selected_set = selection_mode === :rows ? Set(selected) : Set{Int}()
-    cell_bounds = _selected_cell_bounds(state, n_rows, n_cols)
-    state.dragging_cells && !ig.IsMouseDown(ig.ImGuiMouseButton_Left) &&
-        (state.dragging_cells = false)
+    selected_set = Set(state.selected_rows)
     # ImGui tables cannot merge cells. A cell that spans several rows shows its text in the first
     # visible row of the span, has no line between its rows, and covers the stripes of the rows.
     padding = unsafe_load(ig.GetStyle().CellPadding)
@@ -651,13 +514,10 @@ function render_data_grid!(
             fieldoffset(ig.lib.ImGuiWindowTempData, Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
         content_bottom = unsafe_load(reach).y
         moved && ig.SetCursorScreenPos(ig.ImVec2(ig.GetCursorScreenPos().x, top))
-        link = cell_link(row, column)
-        if link !== nothing
-            ig.TextLinkOpenURL(cell(row, column), link)
-        elseif clickable(row, column)
+        if clickable(row, column)
             ig.TextLink("$(cell(row, column))##link_$column") && on_click(row, column)
             # The link takes the mouse from the row, so it opens the row's menu itself.
-            if selection_mode === :rows && row_popup !== nothing
+            if row_popup !== nothing
                 ig.IsItemClicked(ig.ImGuiMouseButton_Right) && right_click(row, column)
                 if ig.BeginPopupContextItem("##link_popup_$column")
                     row_popup(row, state.menu_column)
@@ -677,12 +537,6 @@ function render_data_grid!(
             # for right-aligned text: the cell reaches only as far as its text would from the left.
             align_right(column) && unsafe_store!(reach,
                 ig.ImVec2(max(widest, left + ig.CalcTextSize(text).x), unsafe_load(reach).y))
-            hint = tooltip(row, column)
-            if hint !== nothing && ig.IsItemHovered(ig.ImGuiHoveredFlags_AllowWhenOverlappedByItem)
-                ig.BeginTooltip()
-                ig.TextUnformatted(hint)
-                ig.EndTooltip()
-            end
         end
         if moved
             unsafe_store!(reach, ig.ImVec2(unsafe_load(reach).x, content_bottom))
@@ -725,101 +579,70 @@ function render_data_grid!(
                     end
                 end
 
-                if selection_mode === :rows
-                    ig.TableSetColumnIndex(first_column - 1)
-                    position = ig.GetCursorScreenPos()
-                    row_top = position.y - padding.y
-                    full_height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
-                    # The clipper draws the rows from the top down, after a first row it measures.
-                    if pinned == -1 && row_top + full_height > ig.GetClipRectMin(ig.GetWindowDrawList()).y
-                        view_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y
-                        view_bottom = ig.GetClipRectMax(ig.GetWindowDrawList()).y
-                        pinned = band_of(row)
-                        pinned == row && row_top >= view_top - 1 && (pinned = 0)
-                        if pinned != 0
-                            # A band in the next row pushes it up.
-                            pushed = row < n_rows && band(row + 1) !== nothing
-                            pinned_x = position.x
-                            pinned_top = (pushed ? row_top : view_top) + padding.y
-                            body_top[] = pinned_top - padding.y + full_height
-                        end
-                    end
-                    text = band(row)
-                    if text !== nothing && row_top < ig.GetClipRectMin(ig.GetWindowDrawList()).y - 1
-                        # Room for the band, which stays at the top of the view or is out of view.
-                        ig.Dummy(ig.ImVec2(0.0f0, ig.GetTextLineHeightWithSpacing()))
-                        ig.PopID()
-                        continue
-                    end
-                    clicked, color = select_row(row)
-                    clicked && (selected_set = Set(state.selected_rows); row_selection_changed = true)
-                    if text !== nothing
-                        band_button(row, position.y)
-                        # Items in the background channel may be anywhere in the grid, not only in
-                        # their column. The band covers the lines between the columns, which ImGui
-                        # draws below this channel.
-                        ig.TablePushBackgroundChannel()
-                        paint_band(row, text, color, position.y)
-                        ig.TablePopBackgroundChannel()
-                    else
-                        ig.SameLine()
-                        draw_cell(row, first_column, position, end_idx, row_height)
-                        for column in 1:n_cols
-                            (column == first_column || hidden(column)) && continue
-                            ig.TableSetColumnIndex(column - 1)
-                            draw_cell(row, column, ig.GetCursorScreenPos(), end_idx, row_height)
-                        end
-                    end
-                    # The band at the top comes with the last row in view, after the rows below it.
-                    if pinned > 0 && !pinned_added && (row == n_rows ||
-                            row_top + full_height >= ig.GetClipRectMax(ig.GetWindowDrawList()).y)
-                        pinned_added = true
-                        ig.TableSetColumnIndex(first_column - 1)
-                        back = ig.GetCursorScreenPos()
-                        reach = Ptr{ig.ImVec2}(ig.GetCurrentWindow().DC + fieldoffset(ig.lib.ImGuiWindowTempData,
-                            Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
-                        kept = unsafe_load(reach)
-                        ig.PopID()
-                        ig.PushID(pinned)
-                        ig.SetCursorScreenPos(ig.ImVec2(pinned_x, pinned_top))
-                        clicked, pinned_color = select_row(pinned)
-                        clicked && (selected_set = Set(state.selected_rows); row_selection_changed = true)
-                        band_button(pinned, pinned_top)
-                        ig.PopID()
-                        ig.PushID(row)
-                        ig.SetCursorScreenPos(back)
-                        unsafe_store!(reach, kept)
-                    end
-                else
-                    for column in 1:n_cols
-                        ig.TableSetColumnIndex(column - 1)
-                        position = ig.GetCursorScreenPos()
-                        selected_cell = _cell_selected(cell_bounds, row, column)
-                        ig.Selectable(
-                            "##cell_$(row)_$(column)",
-                            selected_cell,
-                            ig.ImGuiSelectableFlags_AllowOverlap,
-                            (ig.GetContentRegionAvail().x, ig.GetTextLineHeightWithSpacing()),
-                        )
-                        hovered = ig.IsItemHovered()
-                        if hovered && ig.IsMouseClicked(ig.ImGuiMouseButton_Left)
-                            shift_held = unsafe_load(io.KeyShift)
-                            if !shift_held || state.cell_anchor === nothing
-                                state.cell_anchor = (row, column)
-                            end
-                            state.cell_focus = (row, column)
-                            state.dragging_cells = true
-                            cell_bounds = _selected_cell_bounds(state, n_rows, n_cols)
-                        elseif state.dragging_cells && hovered &&
-                               ig.IsMouseDown(ig.ImGuiMouseButton_Left)
-                            state.cell_focus = (row, column)
-                            cell_bounds = _selected_cell_bounds(state, n_rows, n_cols)
-                        end
-                        ig.SetCursorScreenPos(position)
-                        draw_cell(row, column, position, end_idx, row_height)
+                ig.TableSetColumnIndex(first_column - 1)
+                position = ig.GetCursorScreenPos()
+                row_top = position.y - padding.y
+                full_height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
+                # The clipper draws the rows from the top down, after a first row it measures.
+                if pinned == -1 && row_top + full_height > ig.GetClipRectMin(ig.GetWindowDrawList()).y
+                    view_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y
+                    view_bottom = ig.GetClipRectMax(ig.GetWindowDrawList()).y
+                    pinned = band_of(row)
+                    pinned == row && row_top >= view_top - 1 && (pinned = 0)
+                    if pinned != 0
+                        # A band in the next row pushes it up.
+                        pushed = row < n_rows && band(row + 1) !== nothing
+                        pinned_x = position.x
+                        pinned_top = (pushed ? row_top : view_top) + padding.y
+                        body_top[] = pinned_top - padding.y + full_height
                     end
                 end
-
+                text = band(row)
+                if text !== nothing && row_top < ig.GetClipRectMin(ig.GetWindowDrawList()).y - 1
+                    # Room for the band, which stays at the top of the view or is out of view.
+                    ig.Dummy(ig.ImVec2(0.0f0, ig.GetTextLineHeightWithSpacing()))
+                    ig.PopID()
+                    continue
+                end
+                clicked, color = select_row(row)
+                clicked && (selected_set = Set(state.selected_rows); row_selection_changed = true)
+                if text !== nothing
+                    band_button(row, position.y)
+                    # Items in the background channel may be anywhere in the grid, not only in
+                    # their column. The band covers the lines between the columns, which ImGui
+                    # draws below this channel.
+                    ig.TablePushBackgroundChannel()
+                    paint_band(row, text, color, position.y)
+                    ig.TablePopBackgroundChannel()
+                else
+                    ig.SameLine()
+                    draw_cell(row, first_column, position, end_idx, row_height)
+                    for column in 1:n_cols
+                        (column == first_column || hidden(column)) && continue
+                        ig.TableSetColumnIndex(column - 1)
+                        draw_cell(row, column, ig.GetCursorScreenPos(), end_idx, row_height)
+                    end
+                end
+                # The band at the top comes with the last row in view, after the rows below it.
+                if pinned > 0 && !pinned_added && (row == n_rows ||
+                        row_top + full_height >= ig.GetClipRectMax(ig.GetWindowDrawList()).y)
+                    pinned_added = true
+                    ig.TableSetColumnIndex(first_column - 1)
+                    back = ig.GetCursorScreenPos()
+                    reach = Ptr{ig.ImVec2}(ig.GetCurrentWindow().DC + fieldoffset(ig.lib.ImGuiWindowTempData,
+                        Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
+                    kept = unsafe_load(reach)
+                    ig.PopID()
+                    ig.PushID(pinned)
+                    ig.SetCursorScreenPos(ig.ImVec2(pinned_x, pinned_top))
+                    clicked, pinned_color = select_row(pinned)
+                    clicked && (selected_set = Set(state.selected_rows); row_selection_changed = true)
+                    band_button(pinned, pinned_top)
+                    ig.PopID()
+                    ig.PushID(row)
+                    ig.SetCursorScreenPos(back)
+                    unsafe_store!(reach, kept)
+                end
                 ig.PopID()
             end
         end

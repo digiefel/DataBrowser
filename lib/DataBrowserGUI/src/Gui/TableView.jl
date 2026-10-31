@@ -671,6 +671,12 @@ end
 # A value as text to copy: as Julia prints it, and empty for `missing`.
 _copy_text(value)::String = ismissing(value) ? "" : sprint(print, value)
 
+# A cell as a field of tab-separated text, in quotes when it holds a tab, a line break or a quote.
+function _clipboard_field(value::String)::String
+    any(character -> character in ('\t', '\n', '\r', '"'), value) || return value
+    return "\"" * replace(value, '"' => "\"\"") * "\""
+end
+
 # The rows of a table as text to copy, one line for each row, with a tab between the cells.
 _copy_text(table::ItemTable)::String = join(
     (join((_clipboard_field(_copy_text(table.getvalue(row, column))) for column in eachindex(table.columns)), '\t')
