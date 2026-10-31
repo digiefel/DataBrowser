@@ -58,11 +58,14 @@ function computation_identity(workspace::Workspace, value::Computation)
     end
 end
 
+# Whether a call prepares a stage's input from kept values.
+prepares_input(value::Computation) = value.f in (expanded_value, native_value, native_collection)
+
 function result_item(workspace::Workspace, catalog::Catalog, value::Computation, args::Tuple, result)
     # A view, and a selection, are parts of the workspace's values: never kept, and made again when needed.
     (value.f === view || result isa Selection) && return nothing
     # Preparing a stage's input only relabels a kept value; another copy would evict kept results.
-    value.f in (expanded_value, native_value, native_collection) && return nothing
+    prepares_input(value) && return nothing
     result isa AbstractDataItem && return result
     workspace.catalog === catalog || return nothing
     identity, title = computation_identity(workspace, value)
@@ -185,6 +188,8 @@ The result of a computation that a store kept in an earlier opening, while its c
 the ones it was computed from.
 """
 function restored_result(workspace::Workspace, value::Computation)
+    # Never kept (see `result_item`), so there is no id to build and look up.
+    prepares_input(value) && return nothing
     lasting = lasting_revision(workspace, value)
     lasting === nothing && return nothing
     key = stored_id(workspace, value)
