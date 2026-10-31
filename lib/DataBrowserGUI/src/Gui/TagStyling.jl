@@ -85,7 +85,7 @@ function _render_tag_menu!(
         ig.TextDisabled("Fix tags.txt and rescan to edit")
         return nothing
     end
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     ig.Separator()
     for tag in tags(workspace)
         own = all(key -> tag in tags(workspace, key; inherited=false), keys)

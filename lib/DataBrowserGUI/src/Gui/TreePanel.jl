@@ -119,7 +119,7 @@ function _render_hierarchy_tree_panel(
     _render_tag_state_error!(state)
     _render_tag_visibility!(state)
 
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     parameter_keys = Workspace.metadata_keys(workspace)
     selected_collections, _, _ = _project_visible_selection(state)
 
@@ -577,7 +577,7 @@ function _render_items_panel(
 )::Nothing
     ig.BeginChild("Items", (0, 0), true)
     ig.SeparatorText("Item Selection")
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     selected_collections, selected_items, selected_path =
         _project_visible_selection(state)
     root_selected = Workspace.CollectionPath() in workspace.selection.collections
@@ -745,7 +745,7 @@ function render_selection_window(state::BrowserState)::Nothing
         ig.Columns(2, "main_layout")
         # Both panels read many rows of the catalog. Holding its lock for the two panels keeps them
         # from waiting for the workers at every row.
-        @lock (state.workspace::Workspace.Workspace).catalog.lock begin
+        @lock state.workspace.catalog.lock begin
             @timed "collection_tree" begin
                 _render_hierarchy_tree_panel(state, filter_tree)
             end

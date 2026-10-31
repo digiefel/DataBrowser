@@ -65,7 +65,7 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
             input!(state, window, LiveSelection())
         else
             # Keep the items the window shows now.
-            workspace = state.workspace::Workspace.Workspace
+            workspace = state.workspace
             ids = [id(workspace, item) for item in itemkeys(window.input, state)]
             input!(state, window, FixedItems(ids))
         end

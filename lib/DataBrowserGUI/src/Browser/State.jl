@@ -288,7 +288,7 @@ The workspace owns items, selection, cache state, data, and background work. Thi
 only controls, windows, local persistence, annotations, and rendering state.
 """
 Base.@kwdef mutable struct BrowserState
-    workspace::Union{Nothing,Workspace.Workspace} = nothing
+    workspace::Workspace.Workspace
     tree_cache::Union{Nothing,TreeCache} = nothing
     item_list::Union{Nothing,ItemList} = nothing
     visible_items::Union{Nothing,VisibleItems} = nothing
@@ -348,10 +348,10 @@ struct BrowserSession
 end
 
 # The state holds GPU handles, buffers and every window; printing only names what is open.
-Base.show(io::IO, state::BrowserState) = print(io, "BrowserState(", something(state.workspace, "no workspace"), ")")
+Base.show(io::IO, state::BrowserState) = print(io, "BrowserState(", state.workspace, ")")
 Base.show(io::IO, session::BrowserSession) = print(
     io, "BrowserSession(", istaskdone(session.task) ? "closed" : "open", ", ",
-    something(session.state.workspace, "no workspace"), ")")
+    session.state.workspace, ")")
 
 """Call `shutdown!` on every extension instance."""
 function _shutdown_extensions!(state::BrowserState)::Nothing

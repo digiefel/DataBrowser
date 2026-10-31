@@ -4,7 +4,7 @@ using DataBrowserAPI: id, label
 using DataBrowserCore.Catalogs: CollectionKey, ItemKey, ROOT
 
 """Whether the workspace read its tags; they cannot be shown or changed otherwise."""
-_tags_ready(state::BrowserState)::Bool = isempty((state.workspace::Workspace.Workspace).tags.error)
+_tags_ready(state::BrowserState)::Bool = isempty(state.workspace.tags.error)
 
 """
 Return whether an item or collection remains visible under the visibility chosen for each tag.
@@ -13,7 +13,7 @@ Everything stays visible when tags cannot be loaded, so a broken `tags.txt` neve
 function _is_visible(state::BrowserState, key::Union{ItemKey,CollectionKey})::Bool
     visibility = state.tag_visibility
     (isempty(visibility) || !_tags_ready(state)) && return true
-    found = tags(state.workspace::Workspace.Workspace, key)
+    found = tags(state.workspace, key)
     any(tag -> get(visibility, tag.name, :shown) == :hidden, found) && return false
     # TODO: `:only` filters items; a collection without any such item stays in the tree.
     key isa ItemKey && :only in values(visibility) &&
@@ -30,7 +30,7 @@ the next calls: do not change them.
 function _project_visible_selection(
     state::BrowserState,
 )::Tuple{Vector{CollectionKey},Vector{ItemKey},Vector{String}}
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     # The panels and every window ask at each frame; looking up each selected id costs time and
     # memory in proportion to the selection. The selection revision stands for the selected ids.
     key = hash((objectid(workspace), Workspace.generation(workspace), workspace.selection.collections,
@@ -75,7 +75,7 @@ item that produced it. Items whose source item gives no time come last. Items th
 not order follow the natural order of their labels: `run2` comes before `run10`.
 """
 function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     key = hash((
         objectid(workspace), workspace.selection.collections, hash(state.tag_visibility),
         workspace.tags.revision))

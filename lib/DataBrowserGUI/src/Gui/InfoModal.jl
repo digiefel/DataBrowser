@@ -6,7 +6,7 @@ import DataBrowserCore.Workspace
 
 """Draw the information panel: the metadata of the selected collection and of the selected item."""
 function render_info_window(state::BrowserState)::Nothing
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     selected_collections, selected_items, selected_path = _project_visible_selection(state)
     flags = ig.ImGuiTableFlags_Borders | ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY
     if ig.Begin("Information Panel") && ig.BeginTable("info_cols", 2, flags)
@@ -96,7 +96,7 @@ function render_cache_rebuild_modal(state::BrowserState)::Nothing
             state.cache_rebuild_modal = false
             state.cache_rebuild_error = ""
             ig.CloseCurrentPopup()
-            Workspace.modify_workspace!(state.workspace::Workspace.Workspace; rebuild=true)
+            Workspace.modify_workspace!(state.workspace; rebuild=true)
         end
         ig.EndPopup()
     end

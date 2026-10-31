@@ -14,7 +14,7 @@ abstract type GuiExtension end
 """The name under which the browser saves the view of `ext`: the name of its type."""
 extension_id(ext::GuiExtension)::String = String(nameof(typeof(ext)))
 
-"""Called once when the browser opens, before it draws anything; `state.workspace` is not set yet."""
+"""Called once when the browser opens, before it draws anything."""
 init!(ext::GuiExtension, state) = nothing
 
 """Called at each frame inside the menu bar of the main window, to add menus."""

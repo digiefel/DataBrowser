@@ -49,7 +49,6 @@ function select_source_item!(
     source_item_id::AbstractString,
 )::Bool
     workspace = state.workspace
-    workspace isa Workspace.Workspace || return false
     # TODO(scale): goes through every item of the workspace; ask Core for the items of the source item.
     items = [
         item for item in Workspace.items(workspace)
@@ -61,7 +60,7 @@ end
 
 """Reveal the current workspace selection in the tree and item panel."""
 function _reveal_selected_items!(state::BrowserState)::Nothing
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     items = _items_for_ids(state, workspace.selection.item_ids)
     isempty(items) && return nothing
     holders = unique(Workspace.collection(workspace, item) for item in items)

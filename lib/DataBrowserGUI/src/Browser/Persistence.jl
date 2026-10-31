@@ -123,7 +123,6 @@ function _items_for_ids(
     ids::Vector{String},
 )::Vector{ItemKey}
     workspace = state.workspace
-    workspace isa Workspace.Workspace || return ItemKey[]
     return ItemKey[
         item for item in (Workspace.item(workspace, id) for id in ids) if item !== nothing]
 end
@@ -131,10 +130,8 @@ end
 """Capture the browser controls that belong in the source-root state file."""
 function _project_view_from_browser(
     state::BrowserState,
-)::Union{Nothing,PersistedProjectView}
+)::PersistedProjectView
     workspace = state.workspace
-    workspace isa Workspace.Workspace || return nothing
-
     return PersistedProjectView(
         project=project_name(workspace.project),
         tree=PersistedTreeView(
@@ -246,7 +243,7 @@ function _apply_project_view!(
     state::BrowserState,
     view::PersistedProjectView,
 )::Nothing
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     state.expanded_collections = copy(view.tree.expanded)
     workspace.selection.collections = copy(view.tree.selected)
     # The items replaced since the view was saved are selected by their new ids.
@@ -278,10 +275,9 @@ function _save_project_view_if_changed!(state::BrowserState; every::Real=0.5)::N
     time() - state.project_view_checked < every && return nothing
     state.project_view_checked = time()
     view = _project_view_from_browser(state)
-    view === nothing && return nothing
     _project_view_to_toml(state.saved_project_view) ==
         _project_view_to_toml(view) && return nothing
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     hasproperty(workspace.source, :root_path) || return nothing
     _save_project_view(workspace.source.root_path, view)
     state.saved_project_view = view
