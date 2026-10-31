@@ -27,8 +27,8 @@ The visualizer that shows the code that made a selection of items, as a timeline
 at the top and the last at the bottom. Each row names a function, where its code is, and the
 number of items that went through it; items made by the same code share a row. Lines join each
 call to the calls that read its result, and ↗ opens the code in the editor. Select a row to see
-its execution and cache information below the list. Its computations are the window's output;
-a linked visualizer receives their results through ordinary window composition.
+its execution and cache information below the list. The computations of the selected row are the
+output of the window, so a window that takes this window as input shows their results.
 """
 Base.@kwdef mutable struct CodeView <: AbstractVisualizer
     rows::Vector{CodeRow} = CodeRow[]
@@ -43,8 +43,8 @@ output(view::CodeView) = view.output
 """
     select_step!(view::CodeView, index)
 
-Select one row of Code. Its computations become the visualizer's output for linked windows.
-This changes the selection without evaluating the computations.
+Select the row `index` of the code view. Its computations become the output of the view, without
+being evaluated.
 """
 function select_step!(view::CodeView, index::Integer)::Nothing
     checkbounds(view.rows, index)
@@ -56,14 +56,14 @@ function select_step!(view::CodeView, index::Integer)::Nothing
     return nothing
 end
 
-# Selection follows the same step when the input items or their revisions change.
-function step_identity(call::Call)
+# The selected row stays on the same call when the items or their code change.
+function call_identity(call::Call)
     code = call.code isa Method ? call.code.sig : call.code isa LineNumberNode ? call.code.file : nothing
-    return (call.title, code, map(step_identity, call.inputs))
+    return (call.title, code, map(call_identity, call.inputs))
 end
 
 function prepare!(view::CodeView, selection::Workspace.Selection, ctx)::Nothing
-    previous = 1 <= view.selected <= length(view.rows) ? step_identity(view.rows[view.selected].call) : nothing
+    previous = 1 <= view.selected <= length(view.rows) ? call_identity(view.rows[view.selected].call) : nothing
     last_calls = Workspace.calls(ctx.workspace, selection)
     # Each call comes after the calls whose results it reads.
     order, seen = Call[], Set{Call}()
@@ -95,7 +95,7 @@ function prepare!(view::CodeView, selection::Workspace.Selection, ctx)::Nothing
         view.selected = 0
         isempty(view.output) || (view.output = Computation[])
     else
-        selected = findfirst(row -> step_identity(row.call) == previous, rows)
+        selected = findfirst(row -> call_identity(row.call) == previous, rows)
         select_step!(view, something(selected, length(rows)))
     end
     return nothing
@@ -121,7 +121,7 @@ function draw!(view::CodeView, ctx)::Nothing
     line, dot = ig.GetColorU32(ig.ImGuiCol_Text, 0.4f0), ig.GetColorU32(ig.ImGuiCol_Text)
     width, height = ig.GetFontSize(), ig.GetFrameHeightWithSpacing()
     available = ig.GetContentRegionAvail()
-    if ig.BeginChild("##steps", ig.ImVec2(0, max(height, 0.58f0 * available.y)))
+    if ig.BeginChild("##calls", ig.ImVec2(0, max(height, 0.58f0 * available.y)))
         draw_list = ig.GetWindowDrawList()
         for (index, row) in enumerate(view.rows)
             ig.PushID(index)
@@ -183,9 +183,9 @@ function draw!(view::CodeView, ctx)::Nothing
     end
     ig.EndChild()
     ig.Separator()
-    if ig.BeginChild("##step_information", ig.ImVec2(0, 0))
+    if ig.BeginChild("##call_information", ig.ImVec2(0, 0))
         if view.selected == 0
-            ig.TextDisabled("No process steps")
+            ig.TextDisabled("No calls")
         else
             call = view.rows[view.selected].call
             for id in sort!(collect(keys(call.computations)))
@@ -202,7 +202,7 @@ function draw!(view::CodeView, ctx)::Nothing
                         @sprintf("%.3g s", execution.duration)
                     date = replace(string(execution.finished_at), 'T' => ' ')
                     ig.TextUnformatted("Last execution: $duration ($date)")
-                    ig.SetItemTooltip("Elapsed call time, including first-call compilation and waiting on other Julia work. Input evaluation and result storage are excluded.")
+                    ig.SetItemTooltip("The time the call took, with the compilation of its first run and waits for other Julia work, but without evaluating its inputs or storing its result.")
                     execution.succeeded || ig.TextUnformatted("Execution failed")
                 end
                 failure = get(call.failed, id, nothing)
