@@ -12,6 +12,7 @@ module DataBrowserGLMakieExt
 
 using DataBrowser
 using DataBrowser: _precompile_engine, _precompile_project
+using DataBrowserPlots: registered_plots
 using GLMakie: Axis, Figure, axislegend, cgrad, contents, lines!, linkxaxes!, scatter!
 using PrecompileTools: @compile_workload
 
