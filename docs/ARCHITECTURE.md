@@ -218,10 +218,11 @@ Interactive computations evaluate their input graph directly, replacing their fo
 input-filling and result dictionaries. Unindexed nodes use the same type-selected stores and
 execution records as scheduled project calls. Their input revisions invalidate their cached results.
 Results from stale work are discarded, and invalidated results are not reused. Replacing a result
-releases its stored value; closing the workspace keeps it. A stage result is stored under its
-stage, its kind and its id, for example `ITEM_PROCESS/ItemKey/sample`, so a store that keeps
-values on disk, such as `DuckDBStore`, supplies it again after a reopen while the cache records the
-stage as current. Interactive computations are stored under keys of one opening.
+releases its stored value; closing the workspace keeps it. A store keeps the current value of each
+item under its id: the result of its member `process`, or else of its own `process`. A store that
+keeps values on disk, such as `DuckDBStore`, supplies it again after a reopen while the cache
+records the stage as current. Earlier values of an item are computed again when needed.
+Interactive computations are stored under keys of one opening.
 
 The scheduler, publication jobs and cache addressing still use the fixed stages described below.
 Their project calls use the same computation invocation. Materialization evaluates the computation

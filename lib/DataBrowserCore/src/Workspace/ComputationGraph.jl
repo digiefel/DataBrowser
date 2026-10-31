@@ -187,7 +187,8 @@ function computation_result(workspace::Workspace, value::Computation)
         # The value kept in an earlier opening. A process result of another item type is not
         # found here and runs again.
         # TODO: record the item type of each kept result in the workspace file.
-        stored = stored_key(workspace, target)
+        @lock(catalog.lock, current_value(catalog, target)) || return nothing
+        stored = id(workspace, key)
         if haskey(store, stored)
             try
                 return Some(read(store, type, stored))

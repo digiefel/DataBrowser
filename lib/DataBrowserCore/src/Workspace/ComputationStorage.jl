@@ -102,10 +102,18 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     item = result_item(workspace, catalog, value, args, result)
     item === nothing && return result
     store = result_store(workspace, typeof(item))
-    # A stage result keeps its name across openings, so a store on disk finds it again.
-    # TODO: name interactive computations so that their results are found again too.
-    key = address isa Target ? stored_key(workspace, address) :
+    # Under its id, so that a store on disk finds it again after a reopen.
+    key = if !(address isa Target)
+        # TODO: computations are kept for one opening. Their id prints every argument, which
+        # evaluation avoids; they need a stable key that costs little to build.
         string(objectid(catalog), '/', objectid(value), '/', revision)
+    elseif first(address) isa SourceKey
+        # TODO: source reads and expanded items are kept for one opening, under these keys.
+        string(objectid(catalog), '/', objectid(value), '/', revision)
+    else
+        @lock(catalog.lock, current_value(catalog, address)) || (store = nothing)
+        id(catalog, first(address))
+    end
     stored = ComputationResult(value, revision, typeof(result), typeof(item), store, key, Dict{Symbol,Any}(deepcopy(metadata(item))))
     store === nothing || write(store, key, deepcopy(item))
     kept, previous = @lock catalog.lock begin
@@ -129,8 +137,14 @@ current_execution(workspace, catalog, value, revision) =
     workspace.catalog === catalog && !workspace.stopping && !workspace.closed &&
     computation_revision(catalog, value) == revision
 
-stored_key(workspace::Workspace, (key, stage)::Target) =
-    string(stage, '/', nameof(typeof(key)), '/', id(workspace.catalog, key))
+"""
+Whether a stage gives the current value of its item or collection, the one that a store keeps
+under its id. The result of an item's own `process` is not kept when a member `process` follows
+it; a project that wants such a value kept gives it a type of its own. The caller holds the
+catalog lock.
+"""
+current_value(catalog::Catalog, (key, stage)::Target) =
+    !(key isa ItemKey && stage == ITEM_PROCESS && !Catalogs.status(catalog, key, MEMBER_PROCESS).absent)
 
 function stored_result(value::ComputationResult)
     value.store === nothing && return nothing
@@ -190,7 +204,8 @@ function cache_info(workspace::Workspace, value::Computation)
         has_payload(workspace.cache.db, cache_key(workspace, key))
     elseif key isa ItemKey && !haskey(workspace.computations, key)
         store = result_store(workspace, valuetype(workspace, key))
-        store !== nothing && haskey(store, stored_key(workspace, address))
+        store !== nothing && @lock(catalog.lock, current_value(catalog, address)) &&
+            haskey(store, id(workspace, key))
     else
         false
     end
