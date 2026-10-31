@@ -1,14 +1,19 @@
 # API
 
-At the centre of DataBrowser is the runtime, DataBrowserCore. It opens a project on a source as a
-workspace. In the background it asks the source for its source items, calls the project's `read`,
-`expand` and `process` methods on them, and keeps the results. Code on either side of the runtime
-uses the API:
+DataBrowserCore is the runtime: the part of DataBrowser that does the work. You give it two things:
+where your data comes from, such as a lab database, an instrument or a folder of files, and code
+that says how to read and process that data. The runtime reads the data with your code, processes
+it when something asks for it, such as when you select it in the browser, and keeps the results.
 
-- **Providers** are code that the runtime calls. They tell it how to find data, read it, process
-  it, store it and display it.
-- **Clients** are code that calls the runtime. They open a workspace, select items, read their data
-  and open the browser.
+In DataBrowser's terms, your code is a *project*, where the data comes from is a *source*, and a
+project opened on a source is a *workspace*.
+
+Code on both sides of the runtime uses the API:
+
+- **Providers** are code that the runtime calls, such as your project, or a visualizer that
+  displays your data.
+- **Clients** are code that calls the runtime, such as a script that asks for the processed data,
+  or the browser.
 
 The API is divided into surfaces: groups of functions and types that are used together. Each
 surface is a provider surface or a client surface.
@@ -141,9 +146,8 @@ DataBrowserGUI.CodeFile
 
 ### Workspace
 
-A workspace is one project opened on one source. While it is open, the runtime asks the source for
-its source items, calls the project's `read`, `expand` and `process` methods on them in the
-background, and keeps the results.
+`open_workspace(project, source)` gives the runtime your project and your source, and returns a
+workspace. You use the workspace to select items and get their data.
 
 ```@docs
 DataBrowserCore.open_workspace
