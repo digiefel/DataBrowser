@@ -1,5 +1,5 @@
-# Build the source documentation: one page per Julia file, made with Literate, and the architecture
-# page. Run `julia --project=docs docs/make.jl`; the site appears in `docs/build`.
+# Build the documentation: the home, architecture and API pages, and one page per Julia file, made
+# with Literate. Run `julia --project=docs docs/make.jl`; the site appears in `docs/build`.
 using Documenter
 using DocumenterMermaid
 using Literate
@@ -19,13 +19,7 @@ rm(GENERATED; recursive=true, force=true)
 mkpath(GENERATED)
 cp(joinpath(@__DIR__, "ARCHITECTURE.md"), joinpath(GENERATED, "ARCHITECTURE.md"))
 cp(joinpath(@__DIR__, "api.md"), joinpath(GENERATED, "api.md"))
-write(joinpath(GENERATED, "index.md"), """
-    # DataBrowser source
-
-    Each page shows one Julia file of the repository: its comments as text, and its code.
-    [Architecture](ARCHITECTURE.md) describes how the packages work together, and [API](api.md)
-    lists the public functions and types.
-    """)
+cp(joinpath(@__DIR__, "index.md"), joinpath(GENERATED, "index.md"))
 
 # The Julia files that git tracks and that exist, and the new ones that it does not ignore.
 files = readlines(Cmd(`git ls-files --cached --others --exclude-standard -- '*.jl'`; dir=ROOT))
@@ -56,7 +50,7 @@ makedocs(
     source="generated",
     build="build",
     clean=true,
-    sitename="DataBrowser source",
+    sitename="DataBrowser",
     format=Documenter.HTML(prettyurls=false),
     doctest=false,
     checkdocs=:none,
@@ -65,5 +59,5 @@ makedocs(
     # TODO: an error again once `AbstractDataItem` has a docstring and the public docstrings link
     # only to public names.
     warnonly=[:cross_references, :docs_block],
-    pages=["Source" => "index.md", "Architecture" => "ARCHITECTURE.md", "API" => "api.md", sections...],
+    pages=["Home" => "index.md", "Architecture" => "ARCHITECTURE.md", "API" => "api.md", sections...],
 )

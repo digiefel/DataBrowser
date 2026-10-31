@@ -1,19 +1,10 @@
 # API
 
-DataBrowserCore is the runtime: the part of DataBrowser that does the work. You give it two things:
-where your data comes from, such as a lab database, an instrument or a folder of files, and code
-that says how to read and process that data. The runtime reads the data with your code, processes
-it when something asks for it, such as when you select it in the browser, and keeps the results.
+DataBrowserCore is the runtime: it reads the data of a source with the code of a project, processes
+it and keeps the results. The API is used by code on two sides of the runtime:
 
-In DataBrowser's terms, your code is a *project*, where the data comes from is a *source*, and a
-project opened on a source is a *workspace*.
-
-Code on both sides of the runtime uses the API:
-
-- **Providers** are code that the runtime calls, such as your project, or a visualizer that
-  displays your data.
-- **Clients** are code that calls the runtime, such as a script that asks for the processed data,
-  or the browser.
+- **Providers** are code that the runtime calls, such as a project or a visualizer.
+- **Clients** are code that calls the runtime, such as a script or the browser.
 
 The API is divided into surfaces: groups of functions and types that are used together. Each
 surface is a provider surface or a client surface.
