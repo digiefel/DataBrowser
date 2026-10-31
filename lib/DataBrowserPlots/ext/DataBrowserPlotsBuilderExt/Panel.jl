@@ -15,7 +15,7 @@ const AXIS_SETTINGS = [:label, :scale, :limits, :reversed, :ticks, :tickformat, 
 const CATEGORY_SETTINGS = [:label, :palette, :categories, :legend]
 const NUMBER_SETTINGS = Dict(:color => [:label, :legend, :colormap, :colorrange, :scale, :lowclip, :highclip, :nan_color],
     :markersize => [:label, :legend, :sizerange, :ticks, :tickformat], :linewidth => [:label, :legend, :sizerange, :ticks, :tickformat])
-# What the settings of a scale change, shown by the info button beside them.
+# What a setting of `legend` or of a scale changes, shown by the info button beside it.
 const LEGEND_INFO = Dict(
     :merge => "The mappings that share a section, such as (:color, :linestyle), or true for all of them.",
 )
@@ -207,7 +207,8 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     return change
 end
 
-# Analysis kinds and argument editing live in the tag's popup, rather than a second panel row.
+# The menu of an analysis tag: the analyses to choose and, for an analysis the layer has, a field
+# for its expression and its removal. Returns the changes to the code that the user picked.
 function analysis_menu!(view::BuilderView, layer::Int, index::Int; adding::Bool=false)::Vector{Function}
     changes = Function[]
     for choice in ANALYSES
@@ -282,10 +283,10 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         with_font(() -> ig.TextDisabled("$(line.name) ="), :code)
     end
     ig.SameLine()
-    if ig.SmallButton(something(plottype, "Choose visual") * "##type")
+    if ig.SmallButton(something(plottype, "Plot type") * "##type")
         ig.OpenPopup("visual_type")
     end
-    ig.SetItemTooltip("Choose the layer's visual type")
+    ig.SetItemTooltip("Change the plot type of the layer")
     if ig.BeginPopup("visual_type")
         for type in PLOT_TYPES
             ig.Selectable(type, type == plottype) && push!(changes,
@@ -447,9 +448,19 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 row = ig.GetCursorScreenPos()
                 row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
                 numbers = get(NUMBER_SETTINGS, scale.name, Symbol[])
-                kinds = (scale.name === :x || DataBrowserPlots.is_y_scale(scale.name)) ? (scale.name === :x ? setdiff(AXIS_SETTINGS, [:position]) : AXIS_SETTINGS) : get(view.scale_kinds, scale.name, nothing) === :categorical ? CATEGORY_SETTINGS :
-                    get(view.scale_kinds, scale.name, nothing) === :continuous ? numbers : union(CATEGORY_SETTINGS, numbers)
-                offered = settings === nothing ? String[] : String.(setdiff(kinds, [entry.name for entry in present]))
+                kind = get(view.scale_kinds, scale.name, nothing)
+                settable = if scale.name === :x
+                    setdiff(AXIS_SETTINGS, [:position])
+                elseif DataBrowserPlots.is_y_scale(scale.name)
+                    AXIS_SETTINGS
+                elseif kind === :categorical
+                    CATEGORY_SETTINGS
+                elseif kind === :continuous
+                    numbers
+                else
+                    union(CATEGORY_SETTINGS, numbers)
+                end
+                offered = settings === nothing ? String[] : String.(setdiff(settable, [entry.name for entry in present]))
                 picked = heading!(view, "scale", entry_name(scale.name), offered; role=:plain, tooltip="Add a setting of this scale")
                 picked === nothing || start_edit!(view, (:scale, k), Symbol(picked), "")
                 if ig.IsMouseHoveringRect(row, row_end)
