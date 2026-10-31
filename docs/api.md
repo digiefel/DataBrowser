@@ -1,7 +1,11 @@
 # API
 
-DataBrowserCore is the runtime: it reads the data of a source with the code of a project, processes
-it and keeps the results. The API is used by code on two sides of the runtime:
+This page lists the public functions and types of DataBrowser. You implement some of them so that
+DataBrowser can work with your own data, sources and displays. You call others to work with your
+data from a script, the REPL or another program.
+
+The difference between the two lies in their relation to the runtime, DataBrowserCore: the package
+that reads the data of a source with the code of a project, processes it and keeps the results.
 
 - **Providers** are code that the runtime calls, such as a project or a visualizer.
 - **Clients** are code that calls the runtime, such as a script or the browser.
