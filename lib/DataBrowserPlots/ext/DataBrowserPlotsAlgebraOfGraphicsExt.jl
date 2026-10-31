@@ -880,8 +880,6 @@ Base.:+(a::AoG.AbstractAlgebraic, b::Result) = a + drawable(b)
 
 figure(result::Result, args...; options...) = figure(drawable(result), args...; options...)
 
-_precompile_line(x; offset, slope) = offset + slope * x
-
 @setup_workload begin
     rows = [(x=x, y=2x + offset, chip=chip)
         for (chip, offset) in (("A", 1.0), ("B", 3.0)) for x in (1.0, 2.0, 3.0)]
@@ -893,12 +891,6 @@ _precompile_line(x; offset, slope) = offset + slope * x
             legend(color = "chip $(:chip)")
         end
         figure(ordinary)
-        fitted_plot = @plot data(rows) * mapping(:x, :y; color=:chip) begin
-            visual(Scatter)
-            fitted = fit(_precompile_line, (offset=0.0, slope=1.0))
-            fitted * visual(Lines)
-        end
-        figure(fitted_plot)
     end
 end
 

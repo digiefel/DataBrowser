@@ -23,22 +23,15 @@ function Base.show(io::IO, parameter::Parameter)
     print(io, shown(value), " ± ", shown(error))
 end
 
-# The least-squares estimates of the parameters named in `starts`, each with one standard error
-# from the covariance, scaled by the residuals. The residuals are measured after `scale`, the
-# function of the y axis, such as `log10`.
+# The least-squares estimates of the parameters named in `starts`, each with one standard error.
+# The residuals are measured after `scale`, the function of the y axis, such as `log10`.
+# The solver loads on the first fit of a session: a session without fits then does not load
+# NonlinearSolve and ForwardDiff, about 115 packages and 2.5 s.
 # TODO: known errors, weights, bounds and fixed parameters (plans/fitting.md).
 function solve_fit(curve, x::Vector{Float64}, y::Vector{Float64}, starts::NamedTuple; scale=identity)::NamedTuple
-    names = keys(starts)
-    residual(p, _) = scale.(curve.(x; NamedTuple{names}(Tuple(p))...)) .- scale.(y)
-    problem = NonlinearLeastSquaresProblem(residual, collect(Float64, values(starts)))
-    solution = solve(problem, LevenbergMarquardt())
-    SciMLBase.successful_retcode(solution) || error("the fit did not converge ($(solution.retcode))")
-    free = length(x) - length(names)
-    free > 0 || error("$(length(x)) points cannot fit $(length(names)) parameters")
-    J = ForwardDiff.jacobian(p -> residual(p, nothing), solution.u)
-    covariance = inv(J' * J) * sum(abs2, solution.resid) / free
-    errors = sqrt.(max.(diag(covariance), 0.0))
-    return NamedTuple{names}(Tuple(Parameter.(solution.u, errors)))
+    fitting = Base.require(@__MODULE__, :DataBrowserFitting)
+    estimates, errors = Base.invokelatest(fitting.least_squares, curve, x, y, starts; scale)
+    return NamedTuple{keys(starts)}(Tuple(Parameter.(estimates, errors)))
 end
 
 # One fit for each group of `rows`, a Tables.jl table: the rows with equal values in the `group`

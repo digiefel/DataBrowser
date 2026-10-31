@@ -1,0 +1,15 @@
+name = "DataBrowserFitting"
+uuid = "ffed4914-3e78-4db9-85fa-c0de1962d06e"
+version = "0.1.0"
+authors = ["Davide Lombardo <dlombardo32@gmail.com>"]
+
+[deps]
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+NonlinearSolve = "8913a72c-1f9b-4ce2-8d82-65094dcecaec"
+
+[compat]
+ForwardDiff = "1"
+LinearAlgebra = "1"
+NonlinearSolve = "4"
+julia = "1.13"
