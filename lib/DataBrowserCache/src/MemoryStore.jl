@@ -7,13 +7,13 @@ than the limit remains available until another value arrives. Reads return the s
 Core makes the copies required by the storage contract.
 
 Each default item-type store belongs to one workspace opening. To configure an item type, define
-`DataBrowserAPI.storage(workspace, ::Type{MyItem}) = MemoryStore(; max_bytes=...)`.
+`DataBrowserAPI.storage(project, ::Type{MyItem}) = MemoryStore(; max_bytes=...)`.
 """
 function MemoryStore(; max_bytes::Integer=64 * 1024^2)
     return MemoryStore{String,Any}(; capacity=Int(max_bytes), weight=Base.summarysize)
 end
 
-DataBrowserAPI.storage(workspace, ::Type{<:DataBrowserAPI.AbstractDataItem}) = MemoryStore()
+DataBrowserAPI.storage(::Type{<:DataBrowserAPI.AbstractDataItem}) = MemoryStore()
 
 function Base.read(store::MemoryStore{String,Any}, ::Type{T}, id::AbstractString)::T where {T}
     found = read_hit(store, String(id))

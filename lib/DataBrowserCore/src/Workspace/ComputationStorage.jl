@@ -3,7 +3,7 @@ function result_store(workspace::Workspace, type::Type{<:AbstractDataItem})
     registry = workspace.stores
     return lock(registry.lock) do
         get!(registry.types, type) do
-            Base.invokelatest(DataBrowserAPI.storage, workspace, type)
+            Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
         end
     end
 end

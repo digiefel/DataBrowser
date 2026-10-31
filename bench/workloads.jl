@@ -44,7 +44,7 @@ Base.@kwdef struct BenchProject <: API.AbstractProject
 end
 # The cache-hit workload retains both native read and process results for its 128 MiB of tables.
 # Its budget includes those copies and their metadata; eviction has separate coverage.
-API.storage(workspace, ::Type{BenchItem}) = MemoryStore(; max_bytes=512 * 1024^2)
+API.storage(::BenchProject, ::Type{BenchItem}) = MemoryStore(; max_bytes=512 * 1024^2)
 
 function API.read(project::BenchProject, ::PreparedSource, item::BenchSourceItem)
     Threads.atomic_add!(project.reads, 1)
