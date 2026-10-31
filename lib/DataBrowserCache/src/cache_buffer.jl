@@ -1181,20 +1181,19 @@ function _read_direct(store::TabularFamilyStore, table::String, storage_id::UInt
         for seq in seqs)
     selected = join([MB_SEQ_COLUMN; MB_ROW_COLUMN; _quote_identifier.(collect(names))], ", ")
     placeholders = join(fill("?", length(seqs)), ", ")
+    runs = Run[]
     complete = lock(store.read_lock) do
         result = _execute_on_duckdb_threads(store.read_connection,
             "SELECT $selected FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)", seqs)
         try
             while (chunk = DuckDB.nextDataChunk(result)) !== missing
                 try
-                    size = DuckDB.get_size(chunk)
+                    size = Int(DuckDB.get_size(chunk))
                     all(index -> DuckDB.all_valid(chunk, index + 2), eachindex(element_types)) || return false
-                    seq_values = view(DuckDB.get_array(chunk, 1, UInt32), 1:size)
-                    row_values = view(DuckDB.get_array(chunk, 2, UInt64), 1:size)
+                    # The chunk's own memory, of which the first `size` values are its rows.
+                    _runs!(runs, columns, DuckDB.get_array(chunk, 1, UInt32), DuckDB.get_array(chunk, 2, UInt64), size)
                     for (index, T) in enumerate(element_types)
-                        # The chunk's own memory, of which the first `size` values are its rows.
-                        values = DuckDB.get_array(chunk, index + 2, T)
-                        _scatter!(columns, index, values, seq_values, row_values)
+                        _scatter!(runs, index, DuckDB.get_array(chunk, index + 2, T))
                     end
                 finally
                     DuckDB.destroy_data_chunk(chunk)
@@ -1228,8 +1227,9 @@ function _read_converted(store::TabularFamilyStore, table::String, storage_id::U
     columns = Dict{UInt32,Vector{AbstractVector}}(
         seq => AbstractVector[similar(result[name], store.rows[(storage_id, seq)]) for name in data_names]
         for seq in seqs)
+    runs = _runs!(Run[], columns, seq_column, row_column, length(seq_column))
     for (index, name) in enumerate(data_names)
-        _scatter!(columns, index, result[name], seq_column, row_column)
+        _scatter!(runs, index, result[name])
     end
     return Dict(seq => NamedTuple{data_names}(Tuple(map(columns[seq]) do column
         # The database reports a column as one that allows missing values when any row of the
@@ -1265,19 +1265,31 @@ function _execute_on_duckdb_threads(connection::DuckDB.Connection, sql::Abstract
     end
 end
 
-# Put the values at the positions of `seqs` and `rows` in the column `index` of their payloads.
-# The rows of one payload mostly follow each other, so each run of them is one `copyto!`.
-function _scatter!(columns, index::Int, values::AbstractVector{T}, seqs::AbstractVector, rows::AbstractVector) where {T}
-    position, last_position = firstindex(seqs), lastindex(seqs)
-    while position <= last_position
+# Consecutive query rows that go to consecutive rows of one payload: the payload's columns, the
+# first row there, the first query row and the number of rows.
+const Run = Tuple{Vector{AbstractVector},Int,Int,Int}
+
+# The runs of the first `count` query rows, whose payloads and rows are in `seqs` and `rows`. The
+# rows of one payload mostly follow each other, so a chunk of query rows has few runs.
+function _runs!(runs::Vector{Run}, columns::Dict{UInt32,Vector{AbstractVector}}, seqs::AbstractVector, rows::AbstractVector, count::Int)
+    empty!(runs)
+    checkbounds(seqs, 1:count); checkbounds(rows, 1:count)
+    position = 1
+    @inbounds while position <= count
         run_end = position
-        while run_end < last_position && seqs[run_end+1] == seqs[position] &&
-                rows[run_end+1] == rows[run_end] + 1
+        while run_end < count && seqs[run_end+1] == seqs[position] && rows[run_end+1] == rows[run_end] + 1
             run_end += 1
         end
-        target = columns[seqs[position]][index]::Vector{T}
-        copyto!(target, rows[position], values, position, run_end - position + 1)
+        push!(runs, (columns[seqs[position]], Int(rows[position]), position, run_end - position + 1))
         position = run_end + 1
+    end
+    return runs
+end
+
+# Copy each run of `values` to the column `index` of its payload.
+function _scatter!(runs::Vector{Run}, index::Int, values::AbstractVector{T}) where {T}
+    for (payload, row, position, count) in runs
+        copyto!(payload[index]::Vector{T}, row, values, position, count)
     end
     return nothing
 end
