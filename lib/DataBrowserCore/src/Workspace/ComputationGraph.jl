@@ -173,7 +173,7 @@ function computation_result(workspace::Workspace, value::Computation)
     if native !== nothing && native.computation === value && native.revision == revision
         return stored_result(native)
     end
-    target isa Target || return nothing
+    target isa Target || return restored_result(workspace, value)
     key, stage = target
     if key isa SourceKey
         stage == SOURCE_READ || return nothing

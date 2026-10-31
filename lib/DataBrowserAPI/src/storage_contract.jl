@@ -16,7 +16,8 @@ Core chooses storage from a returned native item's type. Ordinary Julia results 
 `AbstractDataItem` of the type selected by this hook. Evaluation unwraps workspace-owned result
 items before passing values to functions; project items keep their native types.
 
-Results of `process` are stored under the same key in every opening of the workspace, so a store
+Results of `process` and of computations are stored under the same key in every opening of the
+workspace, so a store
 that keeps values on disk, such as `DuckDBStore(path)`, supplies them again after a reopen. The
 default `MemoryStore` keeps them for one opening.
 """

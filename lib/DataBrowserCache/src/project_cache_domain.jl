@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 33
+const PROJECT_CACHE_SCHEMA_VERSION = 34
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -85,6 +85,9 @@ struct CachedResultState
     status::Int8
     source_item_key::Int64
     message::Union{Nothing,String}
+    # A new number each time the stage finishes, so that values computed from its result can
+    # tell, after a reopen, whether they were computed from the result that is current.
+    version::UInt64
 end
 
 CachedResultState(row)::CachedResultState = CachedResultState(
@@ -93,6 +96,7 @@ CachedResultState(row)::CachedResultState = CachedResultState(
     Int8(row.status),
     Int64(row.source_item_key),
     _null_to_nothing(row.message),
+    UInt64(row.version),
 )
 
 """One persisted source or collection result, identified by its stage and private integer key."""
@@ -412,6 +416,19 @@ end
 CollectionProcessRow(row)::CollectionProcessRow =
     CollectionProcessRow(Int64(row.collection_key), String(row.metadata_hex))
 
+"""
+The revision of the inputs and code of the stored result of one computation, by its id, and the
+item type under which its store keeps it.
+"""
+struct ComputationRevisionRow
+    id::String
+    revision::UInt64
+    type_hex::String
+end
+
+ComputationRevisionRow(row)::ComputationRevisionRow =
+    ComputationRevisionRow(String(row.id), UInt64(row.revision), String(row.type_hex))
+
 """The revision of the code that one stage ran for one type of item, collection or source item."""
 struct CodeRevisionRow
     stage::Int8
@@ -506,6 +523,9 @@ mutable struct CacheDB
     collection_process::RowStore{Int64,CollectionProcessRow}
     code_revisions::RowStore{Tuple{Int8,String},CodeRevisionRow}
     stage_metadata::RowStore{Tuple{Int8,Int64},StageMetadataRow}
+    computation_revision_rows::RowStore{String,ComputationRevisionRow}
+    # The same revisions, read at opening, so that a lookup does not read the table.
+    computation_revisions::Dict{String,ComputationRevisionRow}
     payload::TabularFamilyStore
     source_reads::MemoryStore{Int64,Any}
     unprocessed::MemoryStore{String,Any}
@@ -623,6 +643,8 @@ function open_cache_db(
             db, "code_revisions", ("stage", "type_hex")))
         stage_metadata = started(RowStore{Tuple{Int8,Int64},StageMetadataRow}(
             db, "item_stage_metadata", ("stage", "item_key")))
+        computation_revision_rows = started(RowStore{String,ComputationRevisionRow}(
+            db, "computation_revisions", ("id",)))
         payload = started(TabularFamilyStore(db; row_limit=CACHE_BUFFER_ROW_LIMIT))
         item_keys, next_item_key = _load_item_keys(db)
         source_item_keys, source_item_ids, next_source_item_key = _load_source_item_keys(db)
@@ -648,6 +670,8 @@ function open_cache_db(
             collection_process,
             code_revisions,
             stage_metadata,
+            computation_revision_rows,
+            Dict{String,ComputationRevisionRow}(row.id => row for row in values(read(computation_revision_rows))),
             payload,
             MemoryStore{Int64,Any}(; capacity=256 * 1024^2, weight=Base.summarysize),
             MemoryStore{String,Any}(;
@@ -779,6 +803,8 @@ function ensure_schema!(connection)::Nothing
         create_table_sql(CollectionProcessRow, "collection_process", (:collection_key,)))
     DBInterface.execute(connection,
         create_table_sql(CodeRevisionRow, "code_revisions", (:stage, :type_hex)))
+    DBInterface.execute(connection,
+        create_table_sql(ComputationRevisionRow, "computation_revisions", (:id,)))
     DBInterface.execute(connection,
         create_table_sql(StageMetadataRow, "item_stage_metadata", (:stage, :item_key)))
     DBInterface.execute(connection, """
@@ -934,18 +960,49 @@ expanded_data_full(cache::CacheDB)::Bool =
 
 Record that a stage of an item finished: its own `process` for `ITEM_PROCESS`, or the member
 `process` methods of its collections for `MEMBER_PROCESS`. The value itself is kept by the store
-of its item type.
+of its item type. Return the new version of the result.
 """
 function store_result_ready!(
     cache::CacheDB,
     id::AbstractString,
     source_key::Int64;
     stage::PipelineStage=ITEM_PROCESS,
-)::Nothing
-    state = CachedResultState(Int8(stage), String(id), Int8(RESULT_READY), source_key, nothing)
+)::UInt64
+    version = rand(UInt64)
+    state = CachedResultState(Int8(stage), String(id), Int8(RESULT_READY), source_key, nothing, version)
     edit!(cache.result_states, (Int8(stage), String(id)), state)
     _stage_ledger_result!(cache.stage_ledger, (Int8(stage), String(id)), state)
+    return version
+end
+
+"""
+    store_computation_revision!(cache, id, revision, type)
+
+Record the revision of the inputs and code from which the stored result of the computation `id`
+was computed, and the item type under which its store keeps it.
+"""
+function store_computation_revision!(cache::CacheDB, id::AbstractString, revision::UInt64, type::Type)::Nothing
+    row = ComputationRevisionRow(String(id), revision, _serialize_type(type))
+    @lock cache.key_lock cache.computation_revisions[row.id] = row
+    edit!(cache.computation_revision_rows, row.id, row)
     return nothing
+end
+
+"""
+    recorded_revision(cache, id) -> Union{Nothing,Tuple{UInt64,Type}}
+
+The revision and the item type that [`store_computation_revision!`](@ref) recorded for `id`, or
+`nothing`. A type that no longer exists counts as no record.
+"""
+function recorded_revision(cache::CacheDB, id::AbstractString)::Union{Nothing,Tuple{UInt64,Type}}
+    row = @lock cache.key_lock get(cache.computation_revisions, String(id), nothing)
+    row === nothing && return nothing
+    type = try
+        _deserialize_type(row.type_hex)
+    catch
+        return nothing
+    end
+    return (row.revision, type)
 end
 
 # The processed data of an item for one stage: 0 for its own `process`, 1 for its member `process`.
@@ -965,7 +1022,7 @@ function store_result_failure!(cache::CacheDB, kind::PipelineStage,
         message::AbstractString)::Nothing
     entity_value = String(entity)
     state = CachedResultState(Int8(kind), entity_value, Int8(RESULT_FAILED),
-        Int64(source_item_key), String(message))
+        Int64(source_item_key), String(message), UInt64(0))
     edit!(cache.result_states, (Int8(kind), entity_value), state)
     _stage_ledger_result!(cache.stage_ledger, (Int8(kind), entity_value), state)
     return nothing
@@ -1140,7 +1197,7 @@ function cache_pending_counts(cache::CacheDB)::NamedTuple{(:items, :rows),Tuple{
     buffers = (cache.source_items, cache.collections, cache.items, cache.source_item_metadata,
         cache.item_metadata, cache.failures, cache.result_states,
         cache.keyed_result_states, cache.collection_process, cache.code_revisions, cache.stage_metadata,
-        cache.payload)
+        cache.computation_revision_rows, cache.payload)
     # Every store is locked before any is read. No other code holds two of these locks.
     foreach(buffer -> lock(buffer.flush_condition), buffers)
     try
@@ -1278,7 +1335,7 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.item_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.collection_process,
-         cachedb.code_revisions, cachedb.stage_metadata, cachedb.payload,
+         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows, cachedb.payload,
          cachedb.unprocessed, cachedb.source_reads)
         try
             close!(buffer)
@@ -1340,7 +1397,7 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.item_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.collection_process,
-         cachedb.code_revisions, cachedb.stage_metadata, cachedb.payload,
+         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows, cachedb.payload,
          cachedb.unprocessed, cachedb.source_reads)
         clear!(buffer)
     end
@@ -1350,6 +1407,7 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
         empty!(cachedb.source_item_keys)
         empty!(cachedb.source_item_ids)
         cachedb.next_source_item_key = Int64(1)
+        empty!(cachedb.computation_revisions)
         empty!(cachedb.persisted_collection_keys)
     end
     _reset_stage_ledger!(cachedb.stage_ledger)

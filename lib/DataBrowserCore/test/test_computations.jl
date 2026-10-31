@@ -1,5 +1,5 @@
 using Test, DataBrowserAPI, DataBrowserCore
-using DataBrowserCache: MemoryStore
+using DataBrowserCache: DuckDBStore, MemoryStore
 import DataBrowserCore.Workspace as CW
 
 struct ComputationProject <: AbstractProject
@@ -442,8 +442,7 @@ code_increment(value) = (code_calls[] += 1; value + 1)
 end
 
 unindexed_increment(value) = value + 1
-DataBrowserAPI.id(::Computation{typeof(unindexed_increment)}) = error("Evaluating a node must not print its identity")
-@testset "consuming a node needs no browsable identity" begin
+@testset "consuming a node adds no browsable item" begin
     workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
     try
         CW.wait_workspace_idle!(workspace)
@@ -454,5 +453,38 @@ DataBrowserAPI.id(::Computation{typeof(unindexed_increment)}) = error("Evaluatin
         @test cache_info(workspace, value).cached
     finally
         CW.close_workspace!(workspace)
+    end
+end
+
+struct KeptProject <: AbstractProject
+    values::String
+end
+DataBrowserAPI.project_name(::KeptProject) = "kept-computations"
+DataBrowserAPI.read(::KeptProject, source::ComputationSource, file::ComputationFile) =
+    read(ComputationProject(), source, file)
+DataBrowserAPI.expand(::KeptProject, file::ComputationFile, data) = expand(ComputationProject(), file, data)
+DataBrowserAPI.process(::KeptProject, value::ComputationItem) = process(ComputationProject(), value)
+DataBrowserAPI.storage(project::KeptProject, ::Type{<:AbstractDataItem}) = DuckDBStore(project.values)
+const KEPT_CALLS = Threads.Atomic{Int}(0)
+kept_total(value) = (Threads.atomic_add!(KEPT_CALLS, 1); sum(item_data(value).signal))
+
+@testset "a computation result kept on disk is not computed again after a reopen" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            project = KeptProject(joinpath(depot, "values.duckdb"))
+            for _ in 1:2
+                workspace = CW.open_workspace(project, ComputationSource(); background_processing=true)
+                try
+                    CW.wait_workspace_idle!(workspace)
+                    @test evaluate(workspace, Computation(kept_total, computation(workspace, "sample"))) == 12
+                finally
+                    CW.close_workspace!(workspace)
+                end
+            end
+            @test KEPT_CALLS[] == 1
+        finally
+            popfirst!(DEPOT_PATH)
+        end
     end
 end

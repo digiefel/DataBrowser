@@ -97,6 +97,8 @@ using DataBrowserCache:
     store_item_metadata!,
     store_item_stage_metadata!,
     store_result_ready!,
+    store_computation_revision!,
+    recorded_revision,
     store_result_failure!,
     store_source_identity!,
     store_source_read!,

@@ -222,7 +222,9 @@ releases its stored value; closing the workspace keeps it. A store keeps the cur
 item under its id: the result of its member `process`, or else of its own `process`. A store that
 keeps values on disk, such as `DuckDBStore`, supplies it again after a reopen while the cache
 records the stage as current. Earlier values of an item are computed again when needed.
-Interactive computations are stored under keys of one opening.
+A computation's result is stored under its id with each item input written as the item's id, for
+example `fit(sample)`. The cache records the revision of the code and of the item results it was
+computed from, and supplies it after a reopen only while that revision is current.
 
 The scheduler, publication jobs and cache addressing still use the fixed stages described below.
 Their project calls use the same computation invocation. Materialization evaluates the computation

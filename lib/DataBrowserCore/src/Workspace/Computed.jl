@@ -5,8 +5,10 @@
 # session to session; name it by the content of its code (docs/plans/processing.md).
 function_name(f) = string(nameof(f))
 
-id(value::Computation) = string(function_name(value.f), "(",
-    join(map(argument_id, value.args), ", "),
+id(value::Computation) = call_id(value, argument_id)
+# The function, then each argument as `name` writes it, then the settings.
+call_id(value::Computation, name) = string(function_name(value.f), "(",
+    join(map(name, value.args), ", "),
     isempty(value.settings) ? "" : "; " * join(("$name = $(repr(setting))" for (name, setting) in pairs(value.settings)), ", "),
     ")")
 argument_id(x::AbstractDataItem) = id(x)

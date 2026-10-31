@@ -87,6 +87,8 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     address, revision = @lock catalog.lock (
         computation_address(catalog, value), computation_revision(catalog, value))
     revision === nothing && error("A computation input was removed")
+    # Read before running, so that it names the inputs the result is computed from.
+    lasting = address isa Target ? nothing : lasting_revision(workspace, value)
     beginning = time_ns()
     succeeded = false
     result = try
@@ -104,9 +106,7 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     store = result_store(workspace, typeof(item))
     # Under its id, so that a store on disk finds it again after a reopen.
     key = if !(address isa Target)
-        # TODO: computations are kept for one opening. Their id prints every argument, which
-        # evaluation avoids; they need a stable key that costs little to build.
-        string(objectid(catalog), '/', objectid(value), '/', revision)
+        stored_id(workspace, value)
     elseif first(address) isa SourceKey
         # TODO: source reads and expanded items are kept for one opening, under these keys.
         string(objectid(catalog), '/', objectid(value), '/', revision)
@@ -126,11 +126,89 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
         end
     end
     kept || store === nothing || delete!(store, key)
+    kept && store !== nothing && lasting !== nothing &&
+        store_computation_revision!(workspace.cache.db, key, lasting, typeof(item))
     if previous !== nothing && previous.store !== nothing &&
             (previous.store !== store || previous.key != key)
         delete!(previous.store, previous.key)
     end
     return result
+end
+
+"""
+The revision of a computation that stays the same after a reopen: the code it runs and the
+versions of the item results it reads. `nothing` when an input has no recorded version.
+"""
+function lasting_revision(workspace::Workspace, value::Computation)::Union{Nothing,UInt64}
+    catalog = workspace.catalog
+    address = @lock catalog.lock begin
+        address = computation_address(catalog, value)
+        address isa Target ? resolve_target(catalog, address) : address
+    end
+    address === nothing && return nothing
+    if address isa Target
+        key, stage = address
+        # TODO: results of source items and collections have no recorded version yet.
+        key isa ItemKey || return nothing
+        state = cached_result_state(workspace.cache.db, stage, id(workspace, key))
+        (state === nothing || CacheResultStatus(state.status) !== RESULT_READY) && return nothing
+        return hash(state.version)
+    end
+    revision = hash(code_hash(value.f))
+    for input in inputs(value)
+        current = lasting_revision(workspace, input)
+        current === nothing && return nothing
+        revision = hash(current, revision)
+    end
+    return revision
+end
+
+"""
+The id under which a store keeps the result of a computation: its [`id`](@ref), with each input
+that supplies an item, a collection or a source item written as their id, for example
+`fit(sample)`.
+"""
+stored_id(workspace::Workspace, value::Computation) = call_id(value, x -> stored_argument(workspace, x))
+function stored_argument(workspace::Workspace, value::Computation)
+    # The current value of an item is its `process` result, with its label and metadata.
+    value.f === native_value && return stored_argument(workspace, first(value.args))
+    catalog = workspace.catalog
+    address = @lock catalog.lock computation_address(catalog, value)
+    address isa Target && return @lock(catalog.lock, id(catalog, first(address)))
+    return stored_id(workspace, value)
+end
+stored_argument(workspace::Workspace, values::Union{AbstractVector,Tuple}) =
+    "[" * join(map(x -> stored_argument(workspace, x), values), ", ") * "]"
+stored_argument(_, value) = argument_id(value)
+
+"""
+The result of a computation that a store kept in an earlier opening, while its code and inputs are
+the ones it was computed from.
+"""
+function restored_result(workspace::Workspace, value::Computation)
+    lasting = lasting_revision(workspace, value)
+    lasting === nothing && return nothing
+    key = stored_id(workspace, value)
+    recorded = recorded_revision(workspace.cache.db, key)
+    (recorded === nothing || first(recorded) != lasting) && return nothing
+    type = last(recorded)
+    store = result_store(workspace, type)
+    (store === nothing || !haskey(store, key)) && return nothing
+    item = try
+        read(store, type, key)
+    catch error
+        error isa KeyError || rethrow()
+        return nothing
+    end
+    result = type <: ResultItem ? item_data(item) : item
+    # Later evaluations find it by its address, without building its id again.
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        revision = computation_revision(catalog, value)
+        revision === nothing || (workspace.results[value] = ComputationResult(
+            value, revision, typeof(result), type, store, key, Dict{Symbol,Any}(metadata(item))))
+    end
+    return Some(result)
 end
 
 current_execution(workspace, catalog, value, revision) =
