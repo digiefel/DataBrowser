@@ -550,6 +550,10 @@ deps = ["DBInterface", "DataBrowserAPI", "Dates", "DuckDB", "OrderedCollections"
 path = "../lib/DataBrowserCache"
 uuid = "c7d8e9f0-1a2b-3c4d-5e6f-708192a3b4c5"
 version = "0.1.0"
+weakdeps = ["DataFrames"]
+
+    [deps.DataBrowserCache.extensions]
+    DataBrowserCacheDataFramesExt = "DataFrames"
 
 [[deps.DataBrowserCore]]
 deps = ["CancellationTokens", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserSources", "Dates", "InteractiveUtils", "PrettyTables", "Printf", "SHA", "Serialization", "StructArrays", "TOML", "Tables"]

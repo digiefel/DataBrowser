@@ -1310,8 +1310,12 @@ function _materialize_payload(store::TabularFamilyStore, location::Tuple{UInt16,
     catch
         return nothing
     end
-    return Tables.materializer(container)(columns)
+    return materialized(container, columns)
 end
+
+# The columns of a payload just read, as a `container`. The columns are new arrays that nothing
+# else holds, so a container type may take them without copying them.
+materialized(container, columns) = Tables.materializer(container)(columns)
 
 function Base.read(
     store::TabularFamilyStore,
