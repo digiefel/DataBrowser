@@ -40,7 +40,8 @@ Project code should not touch cache files, background jobs, or UI state. It is u
 never to be thought about or optimized.
 
 When a workspace opens, the package works through a dependency graph with multiple stages: 
-read source items into data items, process each item, analyze each item, then process and analyze at the collection level.
+read each source item, expand what it holds into data items, process each item, process each collection from its items,
+then process each item again from the collections above it (member `process`).
 If the user selects items that are still processing, that work gets higher priority. 
 Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
