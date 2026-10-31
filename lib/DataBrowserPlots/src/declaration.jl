@@ -239,8 +239,7 @@ workspace, under `Computed`, and a fit's parameters are its metadata. The worksp
 again when one of its items changes, or when the code that gives the result changes: the `fit` or
 `aggregate` call and the functions it calls, such as the curve, the values mapped to x, y and the
 roles that form the groups, and the limits and function of the axes. A change of visuals, palette or legend draws the result again without
-computing it. When the plot of a file is drawn again, the items it drew before and no plot draws
-now, such as the fit of a group no longer selected, leave the workspace. Closing the plot keeps them.
+computing it. The items stay in the workspace until it closes.
 
 `aggregate` applies functions to the y values of the points that share x and their groups: it
 splits the points into one group for each x and each value of the categorical roles, such as
@@ -468,30 +467,5 @@ struct Points{T<:Function}
     step::String
     texts::Dict{Symbol,String}
     table::T
-end
-
-# The ids of the computed items that the drawing in progress adds to the workspace, when the plot
-# that draws keeps them (`drawing`).
-const DRAWN = Base.ScopedValues.ScopedValue{Union{Nothing,Set{String}}}(nothing)
-
-# The computed items that each plot file drew last, by the file's path. Plots draw in background
-# tasks, so the lock covers it.
-const DRAWN_BY_FILE = Dict{String,Set{String}}()
-const DRAWN_LOCK = ReentrantLock()
-
-# `draw()`, the drawing of the plot of the file at `path` for `selection`. The computed items the
-# file drew last time and that no file draws now, such as the fit of a group that is gone or of
-# code that changed, leave the workspace of `selection`.
-function drawing(draw, selection, path::AbstractString)
-    drawn = Set{String}()
-    result = Base.ScopedValues.with(draw, DRAWN => drawn)
-    selection isa Selection || return result
-    workspace = getfield(selection.data, :workspace)
-    @lock DRAWN_LOCK begin
-        others = reduce(union, (ids for (other, ids) in DRAWN_BY_FILE if other != path); init=Set{String}())
-        foreach(id -> delete!(workspace, id), setdiff(get(DRAWN_BY_FILE, path, Set{String}()), drawn, others))
-        DRAWN_BY_FILE[path] = drawn
-    end
-    return result
 end
 

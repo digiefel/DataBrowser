@@ -739,8 +739,6 @@ function computed(analysis::Analysis, columns, items::Selection, workspace)::Res
         push!(workspace, value)
         return value
     end
-    drawn = DataBrowserPlots.DRAWN[]
-    drawn === nothing || union!(drawn, id.(values))
     groups = @timed_dbg "plot_results" reduce(vcat, Workspace.results(workspace, id.(values)); init=Group[])
     return Result(analysis.step, groups, positional, roles; scale=setting(analysis, :y, :scale, identity))
 end

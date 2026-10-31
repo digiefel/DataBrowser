@@ -264,8 +264,7 @@ function build!(view::BuilderView, ctx)::Nothing
         # the types of the selection's values. Any other plot has its own data.
         if plot isa DataBrowserPlots.Declaration
             view.scale_kinds = scale_kinds(plot, selection)
-            path = code_path(view)
-            plot = @timed_dbg "builder_layers" DataBrowserPlots.drawing(() -> Base.invokelatest(plot.layers, selection), selection, path)
+            plot = @timed_dbg "builder_layers" Base.invokelatest(plot.layers, selection)
         else
             view.scale_kinds = scale_kinds(plot)
         end
