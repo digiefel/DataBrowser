@@ -66,14 +66,13 @@ end
 One file found in a directory source.
 
 `filepath` is the absolute path, `filename` the name with its extension, and `relative_path` the
-path below the source root, which is also the `id` and the `label`. `timestamp` is the time read
-from the file name, or `nothing`; when present it is also the `:timestamp` metadata of the file.
+path below the source root, which is also the `id` and the `label`. The metadata of the file is its
+`:filename`.
 """
 struct SourceFile <: AbstractDataSourceItem
     filepath::String
     filename::String
     relative_path::String
-    timestamp::Union{DateTime,Nothing}
     fingerprint::FileFingerprint
 end
 
@@ -82,37 +81,10 @@ end
 id(file::SourceFile)::String = file.relative_path
 label(file::SourceFile)::String = file.relative_path
 fingerprint(file::SourceFile)::FileFingerprint = file.fingerprint
-function metadata(file::SourceFile)::Dict
-    values = Dict{Symbol,Any}(:filename => file.filename)
-    file.timestamp === nothing || (values[:timestamp] = file.timestamp)
-    return values
-end
+metadata(file::SourceFile)::Dict = Dict{Symbol,Any}(:filename => file.filename)
 
 id(source::DirectorySource)::String = source.root_path
 label(source::DirectorySource)::String = basename(source.root_path)
-
-"""Extract a source-item timestamp from the supported filename conventions."""
-function parse_timestamp(filename::AbstractString)::Union{DateTime,Nothing}
-    if (result = match(
-        r"; (\d{4}-\d{2}-\d{2}) (\d{2})_(\d{2})_(\d{2})\]",
-        filename,
-    )) !== nothing
-        date, hour, minute, second = result.captures
-        return try
-            DateTime("$date $hour:$minute:$second", "yyyy-mm-dd HH:MM:SS")
-        catch
-            nothing
-        end
-    end
-    result = match(r"_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_", filename)
-    result === nothing && return nothing
-    year, month, day, hour, minute, second = result.captures
-    return try
-        DateTime("$year-$month-$day $hour:$minute:$second", "yyyy-mm-dd HH:MM:SS")
-    catch
-        nothing
-    end
-end
 
 function file_fingerprint(
     path::AbstractString;
@@ -136,7 +108,6 @@ function index_source_file(path::AbstractString, source_root::AbstractString)::S
         normalized,
         filename,
         relpath(normalized, root),
-        parse_timestamp(filename),
         file_fingerprint(normalized; normalized=true),
     )
 end
