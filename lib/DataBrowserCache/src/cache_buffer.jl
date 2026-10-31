@@ -1182,7 +1182,7 @@ function _read_direct(store::TabularFamilyStore, table::String, storage_id::UInt
     selected = join([MB_SEQ_COLUMN; MB_ROW_COLUMN; _quote_identifier.(collect(names))], ", ")
     placeholders = join(fill("?", length(seqs)), ", ")
     complete = lock(store.read_lock) do
-        result = DBInterface.execute(store.read_connection,
+        result = _execute_on_duckdb_threads(store.read_connection,
             "SELECT $selected FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)", seqs)
         try
             while (chunk = DuckDB.nextDataChunk(result)) !== missing
@@ -1220,7 +1220,7 @@ function _read_converted(store::TabularFamilyStore, table::String, storage_id::U
     # One materialized query, which DuckDB runs on all threads. Its rows come in no order; each
     # value goes to its place from the seq and row columns.
     result = lock(store.read_lock) do
-        Tables.columntable(DBInterface.execute(store.read_connection,
+        Tables.columntable(_execute_on_duckdb_threads(store.read_connection,
             "SELECT * FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)", seqs))
     end
     data_names = Tuple(name for name in keys(result) if name ∉ (seq_name, row_name))
@@ -1237,6 +1237,32 @@ function _read_converted(store::TabularFamilyStore, table::String, storage_id::U
         Missing <: eltype(column) && !any(ismissing, column) ?
             convert(Vector{nonmissingtype(eltype(column))}, column) : column
     end)) for seq in seqs)
+end
+
+# Run a query whose result is materialized. DuckDB.jl's `execute` runs the query's work on one
+# Julia task per Julia thread, which wait for work by yielding in a loop; when other work takes
+# those threads, the query slows down several times. Here the calling task runs DuckDB's tasks
+# one by one while DuckDB's own threads run the others (the store opens the file with
+# `external_threads = 1`).
+# TODO(maintenance): uses DuckDB.jl internals (`Stmt`, `PendingQueryResult`, `QueryResult`).
+function _execute_on_duckdb_threads(connection::DuckDB.Connection, sql::AbstractString, parameters)
+    statement = DuckDB.Stmt(connection, sql, DuckDB.MaterializedResult)
+    try
+        DuckDB.bind_parameters(statement, parameters)
+        pending = DuckDB.PendingQueryResult(statement)
+        if !pending.success || !DuckDB.pending_execute_tasks(pending)
+            throw(DuckDB.QueryException(DuckDB.get_error(statement, pending)))
+        end
+        handle = Ref{DuckDB.duckdb_result}()
+        if DuckDB.duckdb_execute_pending(pending.handle, handle) != DuckDB.DuckDBSuccess
+            message = DuckDB.fetch_error(sql, DuckDB.duckdb_result_error(handle))
+            DuckDB.duckdb_destroy_result(handle)
+            throw(DuckDB.QueryException(message))
+        end
+        return DuckDB.QueryResult(handle)
+    finally
+        DuckDB._close_stmt(statement)
+    end
 end
 
 # Put the values at the positions of `seqs` and `rows` in the column `index` of their payloads.
