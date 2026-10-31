@@ -551,11 +551,11 @@ function _render_selection_toolbar!(
         ig.TextDisabled("($total_count total)")
     end
     ig.SameLine()
-    _helpmarker("Multi-select: Shift+click=range, Ctrl+click=toggle, Ctrl+A=all")
+    _helpmarker("Shift+click selects a range, Ctrl+click adds or removes one item, Ctrl+A selects all.")
 
     ig.Text("Filter")
     ig.SameLine()
-    _helpmarker("incl,-excl")
+    _helpmarker("Words separated by commas. A word that starts with - hides what it matches: run,-old")
     ig.SameLine()
     ig.SetNextItemShortcut(
         ig.ImGuiMod_Ctrl | ig.ImGuiKey_F,
@@ -689,6 +689,9 @@ function _render_items_panel(
                             selected_count = length(target_items)
                             selected_count > 1 && ig.TextDisabled("Apply to $selected_count items")
 
+                            # FIXME: the menu says it applies to every selected item, but an
+                            # extension gets only the clicked one. Giving it the ids of all
+                            # selected items at each frame costs time in proportion to the selection.
                             for ext in state.extensions
                                 item_context_menu!(
                                     ext,
