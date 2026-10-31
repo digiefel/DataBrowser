@@ -220,21 +220,19 @@ end
 
 """
     metadata(workspace, collection) -> MetadataDict
-    metadata(workspace, item; through=ITEM_ANALYZE, above=ancestors(workspace, item)) -> MetadataDict
+    metadata(workspace, item; through=ITEM_PROCESS, above=ancestors(workspace, item)) -> MetadataDict
 
 The metadata of a collection or an item, as a new dictionary.
 
 For a collection: for each collection above it and then for the collection itself, the metadata of
-its value and then the metadata its source provides for it; then the result of its collection
-`analyze`. For an item: what project code receives with the item, which is the metadata of its
-collections, then the metadata its source item and `expand` gave it, then the results of `process`
-and `analyze`, then what the `process` of each collection above it changed, from the collection
-that holds the item up to the top-level one. Later values replace earlier values with the same key.
+its value and then the metadata its source provides for it. For an item: what project code
+receives with the item, which is the metadata of its collections, then the metadata its source item
+and `expand` gave it, then the result of `process`, then what the `process` of each collection
+above it changed, from the collection that holds the item up to the top-level one. Later values
+replace earlier values with the same key.
 
-`through` leaves out the results of the stages after it: `SOURCE_EXPAND` gives the metadata that
-`process` receives, and `ITEM_PROCESS` the metadata that `analyze` receives. `above` limits the
-collections whose changes are included; a collection whose `process` result is not current is
-always left out.
+`through=SOURCE_EXPAND` gives the metadata that `process` receives. `above` limits the collections
+whose changes are included; a collection whose `process` result is not current is always left out.
 """
 function metadata(workspace::Workspace, collection::CollectionKey)::MetadataDict
     catalog = workspace.catalog
@@ -244,14 +242,13 @@ function metadata(workspace::Workspace, collection::CollectionKey)::MetadataDict
             key == ROOT && continue
             merge!(merged, metadata(catalog, key, :collection), metadata(catalog, key, :source))
         end
-        collection == ROOT || merge!(merged, metadata(catalog, collection, COLLECTION_ANALYZE))
         return merged
     end
 end
 
 function metadata(
     workspace::Workspace, item::ItemKey;
-    through::PipelineStage=ITEM_ANALYZE, above::Vector{CollectionKey}=ancestors(workspace, item),
+    through::PipelineStage=ITEM_PROCESS, above::Vector{CollectionKey}=ancestors(workspace, item),
 )::MetadataDict
     catalog = workspace.catalog
     @lock catalog.lock begin
@@ -259,11 +256,9 @@ function metadata(
         for key in ancestors(workspace, item)
             merge!(merged, metadata(catalog, key, :collection), metadata(catalog, key, :source))
         end
-        for stage in (SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE)
-            merge!(merged, metadata(catalog, item, stage))
-            stage == through && break
-        end
-        through == ITEM_ANALYZE || return merged
+        merge!(merged, metadata(catalog, item, SOURCE_EXPAND))
+        through == SOURCE_EXPAND && return merged
+        merge!(merged, metadata(catalog, item, ITEM_PROCESS))
         for holder in reverse(above)
             Catalogs.status(catalog, holder, COLLECTION_PROCESS).validity == Catalogs.FRESH || continue
             changed = get(workspace.changes, holder, nothing)
@@ -277,9 +272,8 @@ end
 How far the work for one item or one collection is. See [`readiness`](@ref).
 
 - `CURRENT`: every stage is done.
-- `PARTIAL`: its own data is ready and a later stage is not, and nothing is queued for it. For an
-  item, a later stage is its `analyze` or the `process` of a collection above it, so views show
-  the item without the changes of that collection.
+- `PARTIAL`: its own data is ready and the `process` of a collection above it is not, and nothing
+  is queued for it, so views show the item without the changes of that collection.
 - `WORKING`: a stage that is not done is queued or runs, or waits for one that is.
 - `UNPROCESSED`: its own data is not ready and nothing is queued for it.
 - `FAILED`: a stage failed, or waits for one that failed.
@@ -290,8 +284,8 @@ How far the work for one item or one collection is. See [`readiness`](@ref).
     readiness(workspace, item) -> Readiness
     readiness(workspace, collection) -> Readiness
 
-How far the work is for an item, from its `process`, its `analyze` and the `process` of each
-collection above it; or for a collection, from its `process` and its `analyze`.
+How far the work is for an item, from its `process` and the `process` of each collection above it;
+or for a collection, from its `process`.
 """
 function readiness(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Readiness
     catalog = workspace.catalog
@@ -303,9 +297,9 @@ function readiness(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Rea
     end
     # Rows of the browser ask at every frame: the stages are visited without building lists.
     @lock catalog.lock begin
-        # The first stage gives the row its own data.
+        # Its own process gives the row its own data.
         first_flags = flags(key, key isa ItemKey ? ITEM_PROCESS : COLLECTION_PROCESS)
-        all_flags = first_flags .| flags(key, key isa ItemKey ? ITEM_ANALYZE : COLLECTION_ANALYZE)
+        all_flags = first_flags
         holder = key isa ItemKey ? Catalogs.collection(catalog, key) : ROOT
         while holder != ROOT
             all_flags = all_flags .| flags(holder, COLLECTION_PROCESS)

@@ -36,8 +36,6 @@ end
 function stage_computation(workspace::Workspace, key::ItemKey, stage::PipelineStage)
     derived = get(workspace.computations, key, nothing)
     derived === nothing || return bound_computation(workspace, derived; owner=(key, stage))
-    stage == ITEM_ANALYZE && return Computation(analyze, workspace.project,
-        native_computation(workspace, key, computation(workspace, key, ITEM_PROCESS), ITEM_PROCESS))
     source = Catalogs.source(workspace.catalog, key)
     source === nothing && error("The item has no producing computation")
     expanded = computation(workspace, source, SOURCE_EXPAND)
@@ -49,8 +47,7 @@ end
 function stage_computation(workspace::Workspace, key::CollectionKey, stage::PipelineStage)
     arguments = Computation[version_computation(workspace, item; reader=(key, stage))
         for item in members(workspace, key)]
-    return Computation(stage == COLLECTION_PROCESS ? process : analyze,
-        workspace.project, collection_computation(workspace, key), arguments)
+    return Computation(process, workspace.project, collection_computation(workspace, key), arguments)
 end
 
 collection_computation(workspace, key) = Computation(native_collection,
@@ -124,10 +121,6 @@ function native_computation(workspace, key, value, through; above=CollectionKey[
         metadata(workspace, key; through, above), collections)
 end
 
-function analyzed_value(value::AbstractDataItem, analysis, known, given, collections)
-    return native_value(value, known, merge(given, metadata_dict(analysis)), collections)
-end
-
 function collection_value(values::AbstractVector, ids::Vector{String}, item_id::String)
     length(values) == length(ids) || error("Collection process must return one output for each input")
     return values[something(findfirst(==(item_id), ids))]
@@ -138,12 +131,6 @@ function version_computation(workspace::Workspace, key::ItemKey; reader::Union{N
     haskey(workspace.computations, key) && return value
     own = reader !== nothing && first(reader) isa ItemKey
     own && return native_computation(workspace, key, value, ITEM_PROCESS)
-    analyzed = Catalogs.status(workspace.catalog, key, ITEM_ANALYZE).validity == Catalogs.FRESH
-    if analyzed
-        known, collections = native_arguments(workspace, key)
-        value = Computation(analyzed_value, value, computation(workspace, key, ITEM_ANALYZE),
-            known, metadata(workspace, key; through=ITEM_PROCESS), collections)
-    end
     holders = ancestors(workspace, key)
     if reader !== nothing
         index = findfirst(==(first(reader)), holders) + (last(reader) == COLLECTION_PROCESS)
@@ -155,7 +142,7 @@ function version_computation(workspace::Workspace, key::ItemKey; reader::Union{N
         value = Computation(collection_value, computation(workspace, holder, COLLECTION_PROCESS),
             String[id(workspace, item) for item in members(workspace, holder)], id(workspace, key))
     end
-    return native_computation(workspace, key, value, analyzed ? ITEM_ANALYZE : ITEM_PROCESS; above=holders)
+    return native_computation(workspace, key, value, ITEM_PROCESS; above=holders)
 end
 
 """
@@ -205,7 +192,7 @@ function computation_result(workspace::Workspace, value::Computation)
         payload = only(read_payload(workspace.cache.db, [id(workspace, key)]))
         payload === nothing && return nothing
         restored = reconstruct(valuetype(workspace, key), id(workspace, key), deepcopy(something(payload)),
-            metadata(workspace, key; through=ITEM_PROCESS))
+            metadata(workspace, key; above=CollectionKey[]))
         return restored === nothing ? nothing : Some(restored)
     end
     return nothing

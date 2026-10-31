@@ -39,8 +39,8 @@ function DataBrowserAPI.read(p::EngineProject, ::EngineSource, s::EngineSourceIt
 end
 DataBrowserAPI.expand(::EngineProject, ::EngineSourceItem, version) =
     [EngineItem(string(n), (x=[version],), Dict(:input => version, :total => -1)) for n in 1:version]
-DataBrowserAPI.process(::EngineProject, i::EngineItem) = EngineItem(i.key, (x=i.data.x .* 2,), merge(i.meta, Dict(:total => -2)))
-DataBrowserAPI.analyze(::EngineProject, i::EngineItem) = Dict(:total => sum(i.data.x))
+DataBrowserAPI.process(::EngineProject, i::EngineItem) =
+    EngineItem(i.key, (x=i.data.x .* 2,), merge(i.meta, Dict(:total => sum(i.data.x .* 2))))
 
 mutable struct ControlledSource <: AbstractDataSource
     release::Channel{Nothing}
@@ -60,7 +60,7 @@ struct TypedProject <: AbstractProject end
 DataBrowserAPI.project_name(::TypedProject) = "typed"
 DataBrowserAPI.read(::TypedProject, ::EngineSource, s::EngineSourceItem) =
     EngineItem("only", (x=[s.version],), Dict(:input => s.version))
-DataBrowserAPI.analyze(::TypedProject, i::EngineItem) = Dict(:total => sum(i.data.x))
+DataBrowserAPI.process(::TypedProject, i::EngineItem) = EngineItem(i.key, i.data, merge(i.meta, Dict(:total => sum(i.data.x))))
 DataBrowserAPI.label(::TypedProject, i::EngineItem) =
     "$(id(i)) · total $(get(metadata(i), :total, "?"))"
 
@@ -103,9 +103,6 @@ DataBrowserAPI.process(::NestedProject, ::Inner, items::AbstractVector) =
     [NestedItem(i.key, (x=i.data.x .+ 1,), Dict(:step => 1, :name => "inner $(i.key)")) for i in items]
 DataBrowserAPI.process(::NestedProject, ::Outer, items::AbstractVector) =
     [NestedItem(i.key, (x=i.data.x .* 10,), merge(i.metadata, Dict(:step => get(i.metadata, :step, 0) + 1))) for i in items]
-DataBrowserAPI.analyze(::NestedProject, ::NestedItem) = Dict(:step => 0)
-DataBrowserAPI.analyze(::NestedProject, ::Inner, items::AbstractVector) =
-    Dict(:seen => only(only(items).data.x))
 
 struct RootedSource <: AbstractDataSource
     root_path::String
@@ -168,7 +165,6 @@ end
         @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
         @test metadata(only(W.materialize_items(ws, ["a"])))[:step] == 2
         @test W.label(ws, W.item(ws, "a")) == "inner a"
-        @test W.metadata(ws, holder("a"))[:seen] == 2
         # Two collections with the same id and parent differ by type.
         @test holder("a") != holder("b")
         @test all(key -> W.collection(ws, W.path(ws, holder(key))) == holder(key), ("a", "b"))
@@ -179,7 +175,6 @@ end
         settled(ws)
         @test x("a") == 60
         @test x("b") == 50
-        @test W.metadata(ws, holder("a"))[:seen] == 6
     finally
         W.close_workspace!(ws)
     end
@@ -367,11 +362,11 @@ DataBrowserAPI.expand(::LateCollectionProject, ::EngineSourceItem, count) = [Lat
     ws = W.open_workspace(LateCollectionProject(), EngineSource("source", 1, false); cache=false, background_processing=true)
     try
         settled(ws)
-        late = only(W.collections(ws))
-        @test !haskey(W.metadata(ws, late), :members)
-        @eval DataBrowserAPI.analyze(::LateCollectionProject, ::LateCollection, items::AbstractVector) =
-            Dict(:members => length(items))
-        @test timedwait(() -> get(W.metadata(ws, late), :members, 0) == 2, 10) === :ok
+        x() = only(item_data(only(W.materialize_items(ws, ["1"]))).x)
+        @test x() == 1
+        @eval DataBrowserAPI.process(::LateCollectionProject, ::LateCollection, items::AbstractVector) =
+            [LateItem(i.key, (x=i.data.x .* 10,)) for i in items]
+        @test timedwait(() -> x() == 10, 10) === :ok
     finally
         W.close_workspace!(ws)
     end

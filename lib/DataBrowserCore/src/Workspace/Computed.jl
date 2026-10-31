@@ -83,7 +83,7 @@ function Base.delete!(workspace::Workspace, id::AbstractString)::Workspace
         key === nothing && return workspace
         delete!(catalog, key)
         delete!(workspace.computations, key)
-        foreach(stage -> forget_result!(workspace, (key, stage)), (ITEM_PROCESS, ITEM_ANALYZE))
+        forget_result!(workspace, (key, ITEM_PROCESS))
         filter!(entry -> first(entry.first) != key, workspace.errors)
         delete!(workspace.wanted, key)
     end
@@ -113,7 +113,7 @@ function _register_computation!(workspace::Workspace, value::Computation)::ItemK
         end; init=Target[])
     end
     @lock catalog.lock begin
-        none = [COLLECTION_PROCESS, COLLECTION_ANALYZE]
+        none = [COLLECTION_PROCESS]
         holder = get!(catalog, get!(catalog, ROOT, COMPUTED; absent=none),
             ComputedCollection(function_name(value.f)); absent=none)
         title = target === nothing ? label(value) :
@@ -153,8 +153,6 @@ function compute!(workspace::Workspace, job::Job{ItemKey})::Nothing
     # result or its metadata, such as the parameters of a fit.
     # A computed item that reads one item, such as the selected rows of an item, has all of that
     # item's metadata, with the named parts of its result on top.
-    # TODO: metadata the item gets later, such as from its `analyze`, reaches the computed item only
-    # when it is computed again.
     definition = workspace.computations[job.key]
     origin = get(catalog.computation_targets, definition, nothing)
     exposed = origin !== nothing && origin != (job.key, ITEM_PROCESS)
@@ -181,7 +179,7 @@ keeps the items it reads, through other computed items, as members.
 function computed_version(workspace::Workspace, key::ItemKey)::AbstractDataItem
     catalog = workspace.catalog
     value, given = @lock catalog.lock (
-        workspace.computations[key], metadata(workspace, key; through=ITEM_PROCESS))
+        workspace.computations[key], metadata(workspace, key))
     result = evaluate(workspace, computation(workspace, key, ITEM_PROCESS))
     result isa AbstractDataItem || return ResultItem(
         id(value), label(workspace, key), Dict{Symbol,Any}(given), result)

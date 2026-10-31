@@ -38,21 +38,13 @@ function calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vec
         key = item(workspace, id)
         key === nothing && continue
         push!(definitions, computation(workspace, key))
-        for holder in ancestors(workspace, key)
-            Catalogs.status(workspace.catalog, holder, COLLECTION_ANALYZE).absent && continue
-            push!(definitions, computation(workspace, holder, COLLECTION_ANALYZE))
-        end
     end
     return calls(workspace, definitions)
 end
 
 """The calls producing a selection, including unindexed computation results."""
-function calls(workspace::Workspace, selection::Selection)
-    # Catalog selections also expose collection analyses, which contribute metadata without
-    # replacing the item's value. A selection of view results follows its own node references.
-    getfield(selection.data, :items) isa Vector{ItemKey} && return calls(workspace, selection.id)
-    return calls(workspace, Computation[computation(selection, i) for i in eachindex(selection)])
-end
+calls(workspace::Workspace, selection::Selection) =
+    calls(workspace, Computation[computation(selection, i) for i in eachindex(selection)])
 
 """Inspect computation references without evaluating them or adding catalog entries."""
 function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})::Vector{Call}
@@ -135,7 +127,7 @@ end
 
 stage_name(stage::PipelineStage)::String =
     stage == SOURCE_READ ? "read" : stage == SOURCE_EXPAND ? "expand" :
-    stage in (ITEM_PROCESS, COLLECTION_PROCESS) ? "process" : "analyze"
+    "process"
 
 # A computed argument is passed as its result, whose type is known only once it is computed.
 argument_types(value::Computation)::Type{<:Tuple} = Tuple{map(x -> x isa Computation ? Any : typeof(x), value.args)...}

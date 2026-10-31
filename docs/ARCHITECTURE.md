@@ -74,7 +74,7 @@ flowchart TB
     userpkg --> api
     prof --> api
 
-    core -.->|"read<br/>expand<br/>process<br/>analyze"| projects
+    core -.->|"read<br/>expand<br/>process"| projects
     gui -.->|"draw!<br/>menu!<br/>init!"| plots
     cache -.->|"@timed_dbg"| prof
     core -.->|"@timed_dbg"| prof
@@ -119,12 +119,9 @@ flowchart LR
     unprocessed[("unprocessed payload<br/>memory cache")]
     item_process["item process"]
     processed[("processed payload<br/>cache store")]
-    item_analyze["item analyze"]
     item_metadata[("item metadata<br/>cache store")]
     collection_process["collection process"]
     collection_payload[("each collection's version<br/>of its items")]
-    collection_analyze["collection analyze"]
-    collection_metadata[("collection metadata<br/>cache store")]
     views["views and inspectors"]
 
     source --> read
@@ -136,21 +133,17 @@ flowchart LR
     index --> unprocessed
     unprocessed --> item_process
     item_process --> processed
-    processed --> item_analyze
-    item_analyze --> item_metadata
+    item_process --> item_metadata
     processed --> collection_process
     collection_process --> collection_payload
-    collection_payload --> collection_analyze
-    processed -.->|"items no collection changed"| collection_analyze
-    collection_analyze --> collection_metadata
     processed --> views
     collection_payload --> views
 
     classDef stage fill:#bcd4f0,stroke:#3f6fb0,color:#111
     classDef state fill:#f5d6a8,stroke:#c08a3f,color:#111
     classDef output fill:#c9e4c5,stroke:#5a9a52,color:#111
-    class source,read,expand,item_process,item_analyze,collection_process,collection_analyze,views stage
-    class read_cache,unprocessed,processed,item_metadata,collection_payload,collection_metadata state
+    class source,read,expand,item_process,collection_process,views stage
+    class read_cache,unprocessed,processed,item_metadata,collection_payload state
     class index output
 ```
 
@@ -173,7 +166,7 @@ because its inputs are chosen elsewhere, such as the groups of a fit in a plot. 
 `Computation(f, args...; settings...)` value. Its row is
 in a collection named after `f`, below the collection `Computed`. Its `process` runs `f` once every
 item it reads is processed, and again whenever one of them becomes stale. A computed
-item has no `analyze`; the named single values of its result are its metadata, on top of the
+item's named single values of its result are its metadata, on top of the
 metadata of the item it reads when it reads one. When a source item
 changes, its items are removed and added again with new keys: a computed item that read one waits,
 and reads the new item with the same id. Computed results stay in memory and are not saved in the
@@ -260,8 +253,7 @@ until the `process` of the item has used it. When that data reaches half its mem
 (`expanded_data_limit` of `open_workspace`), items are processed before more source items are read, so that a
 source item normally does not need a second read/expand while processing that batch. This pacing
 does not guarantee exactly-once source access: reconstruction can call `read` again after its input
-was evicted. The `analyze` of an item runs right after its
-`process`, in the same worker.
+was evicted.
 
 The source items that are not read yet (`unread`) are in the collection tree of the browser from
 the moment the source lists them. Their ids, split at `/`, give folders. A folder with the label of
@@ -274,22 +266,22 @@ of its value. An item goes where `collection(item)` says, or where `collection(s
 when that is empty. A collection contains every item below it, at any depth. Collection `process`
 receives all of them and returns the collection's own version of each; the cache keeps that version
 next to the item's own processed data and never replaces it. A collection receives each item in the
-version the collections below gave it. Views and collection `analyze` use an item's latest version:
+version the collections below gave it. Views use an item's latest version:
 the one of the outermost collection that changed it. The same holds for the metadata values and
 the label that a collection's `process` changes: views, queries and the item list show them, and
 the outermost collection replaces the values of the collections below it.
 
 A collection stage that the project does not define for a collection has no job: nothing is queued
 or shown as in progress for it, and it counts as done once everything below the collection is done.
-`has_stage(project, collection, stage)` decides, and by default answers from the `process` and
-`analyze` methods that apply to the collection.
+`has_stage(project, collection, stage)` decides, and by default answers from the `process`
+methods that apply to the collection.
 
 It defines:
 
 - reading each source item
 - expanding the loaded value into logical data items, when a source item holds several
 - processing one data item
-- computing per-item and per-collection metadata (item/collection `analyze`, collection `process`)
+- changing the items of a collection together (collection `process`)
 - defining project-specific visualizers when generic ones are not enough
 
 The workspace owns:
@@ -340,7 +332,7 @@ flowchart LR
     cache -->|"payloads and stage state"| payloads
     payloads --> core
     core -->|"store_source_read!<br/>store_source_items!<br/>store_processed!"| cache
-    source -->|"read / expand / process / analyze"| core
+    source -->|"read / expand / process"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111
     classDef cacheC fill:#f5d6a8,stroke:#c08a3f,color:#111

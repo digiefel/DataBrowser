@@ -1,6 +1,6 @@
 using DataBrowserAPI: AbstractDataSourceItem, AbstractDataItem
 using Test, DataBrowserCache, DataBrowserAPI, Tables
-using DataBrowserAPI: SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE
+using DataBrowserAPI: SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS
 
 struct CacheSourceItem <: AbstractDataSourceItem end
 DataBrowserAPI.id(::CacheSourceItem) = "source"
@@ -43,7 +43,7 @@ end
             source_key = source_item_key!(cache, "source"; mint=true)
             store_fixture_item!(cache, source_key, (x=[1],))
             store_processed!(cache, "item", source_key, (x=[2],))
-            store_item_metadata!(cache, "item", source_key, Dict(:total => 2))
+            store_item_metadata!(cache, "item", Dict(:total => 2))
             @test Tables.columntable(something(only(read_payload(cache, ["item"]; stage=ITEM_PROCESS)))).x == [2]
             @test delivered(cache)[:total] == 2
             @test timedwait(() -> !cache_has_pending_writes(cache), 20) === :ok
@@ -71,7 +71,7 @@ end
             store_fixture_item!(cache, source_key, (x=[1, 2],))
             store_processed!(cache, "item", source_key, (x=[3, 4],))
             store_processed!(cache, "item", source_key, (x=[5],))
-            store_item_metadata!(cache, "item", source_key, Dict(:total => 5))
+            store_item_metadata!(cache, "item", Dict(:total => 5))
         finally
             close_cache_db!(cache)
         end

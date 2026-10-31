@@ -44,9 +44,7 @@ using DataBrowserAPI:
     MetadataDict,
     metadata_value,
     PipelineStage,
-    COLLECTION_ANALYZE,
     COLLECTION_PROCESS,
-    ITEM_ANALYZE,
     ITEM_PROCESS,
     SOURCE_READ,
     SOURCE_EXPAND,
@@ -86,7 +84,6 @@ using DataBrowserCache:
     project_cache_identity,
     read_payload,
     reset_build_metrics!,
-    store_collection_metadata!,
     store_collection!,
     store_collection_process_result!,
     store_code_revision!,
@@ -95,9 +92,8 @@ using DataBrowserCache:
     release_item_payload!,
     expanded_data_full,
     default_expanded_data_limit,
-    store_item_metadata!,
     store_item_label!,
-    store_item_metadata_layer!,
+    store_item_metadata!,
     store_item_stage_metadata!,
     store_processed!,
     store_result_failure!,
@@ -131,7 +127,6 @@ import DataBrowserAPI:
     SourceChanges,
     SourceError,
     adopt,
-    analyze,
     close_source!,
     collection,
     expand,
@@ -242,7 +237,7 @@ cached value instead of rebuilding strings every frame.
   `:error`.
 - `label` is a short word for a button or chip ("Building", "Fresh", "Errors").
 - `detail` is the one merged human line: the live activity while `busy`, otherwise a short state.
-- `busy` is true while any scan, analysis, or cache work runs.
+- `busy` is true while any scan, processing, or cache work runs.
 - `progress` is a determinate fraction when counts are known, or `nothing` for an indeterminate or
   absent bar.
 - `counts` carries the cache/source numbers shown by status watchers.
@@ -303,7 +298,7 @@ mutable struct Workspace{P<:AbstractProject}
     changes::Dict{CollectionKey,Dict{ItemKey,MetadataDict}}
     # The message of each failed stage, and of each stage whose metadata the cache stored in part.
     errors::Dict{Target,String}
-    # Items that were delivered. Their analyze is requested, so their metadata becomes complete.
+    # Items that were delivered. Their process is requested, so their metadata becomes complete.
     wanted::Set{ItemKey}
     # Interactive definitions, and the native result location of each project or interactive call.
     computations::Dict{ItemKey,AbstractDataItem}
@@ -363,7 +358,7 @@ expanded data waiting for `process` fills its memory limit. Collections come las
 function Catalog(background_processing::Bool)::Catalog
     eager = Dict{PipelineStage,Int}(SOURCE_EXPAND => SOURCES_FIRST)
     background_processing && merge!(eager, Dict(
-        ITEM_PROCESS => 3, ITEM_ANALYZE => 3, COLLECTION_PROCESS => 1, COLLECTION_ANALYZE => 1))
+        ITEM_PROCESS => 3, COLLECTION_PROCESS => 1))
     return Catalog(; eager)
 end
 

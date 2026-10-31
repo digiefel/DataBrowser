@@ -27,7 +27,6 @@ function API.process(project::CodeProject, value::CodeSignal)
     project.processes[] += 1
     return CodeSignal(API.id(value), (signal=10 .* value.data.signal,))
 end
-API.analyze(::CodeProject, value::CodeSignal) = Dict(:total => sum(value.data.signal))
 
 Base.@kwdef mutable struct CodeConsumer <: API.AbstractVisualizer
     values::Vector = []

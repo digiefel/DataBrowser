@@ -15,9 +15,7 @@ using DataBrowserAPI:
     SOURCE_READ,
     SOURCE_EXPAND,
     ITEM_PROCESS,
-    ITEM_ANALYZE,
     COLLECTION_PROCESS,
-    COLLECTION_ANALYZE,
     metadata_dict
 
 # Keys
@@ -45,10 +43,13 @@ const Target = Tuple{RowKey,PipelineStage}
 """The root collection: it holds the items and top-level collections that have no other."""
 const ROOT = CollectionKey(1)
 
-"""The two stages of a row of kind `K`: the first lives in the lower half of its status word."""
+"""
+The stages of a row of kind `K`, in the halves of its status word from the lower one up: a source
+item has read and expand, an item and a collection have their process.
+"""
 stages(::Type{SourceKey}) = (SOURCE_READ, SOURCE_EXPAND)
-stages(::Type{ItemKey}) = (ITEM_PROCESS, ITEM_ANALYZE)
-stages(::Type{CollectionKey}) = (COLLECTION_PROCESS, COLLECTION_ANALYZE)
+stages(::Type{ItemKey}) = (ITEM_PROCESS,)
+stages(::Type{CollectionKey}) = (COLLECTION_PROCESS,)
 
 include("Catalogs/Columns.jl")
 include("Catalogs/Rows.jl")

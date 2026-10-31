@@ -268,7 +268,7 @@ DataBrowserRecipes → API : the callback dialect (define_project, register_*) i
 DataBrowserCache   → API : persistence (DuckDB where it fits); keyed by PROJECT, not workspace
 DataBrowserCore    → API, Sources, Cache : the workspace, the index, background work,
                    command execution, project save/load, provenance, REPL, and the runtime that
-                   drives a project's callbacks through read → process → analyze; base support
+                   drives a project's callbacks through read → process; base support
                    for common data shapes such as tables, vectors, arrays, and image-like data; shapes
                    needing heavy dependencies (audio, say) live in extension packages
 DataBrowserGUI     → API, Core (+ CImGui/GLFW) : the host shell, panels, browser, shared widgets,

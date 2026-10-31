@@ -23,10 +23,7 @@ function stop_workers!(workspace::Workspace)::Nothing
     return nothing
 end
 
-"""
-Take and run jobs until the workspace stops. The `analyze` of an item runs right after its
-`process` in the same worker, while the processed data is still in memory.
-"""
+"""Take and run jobs until the workspace stops."""
 function work!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
     while true
@@ -40,40 +37,35 @@ function work!(workspace::Workspace)::Nothing
             job
         end
         try
-            while job !== nothing
-                changed!(workspace)
-                try
-                    # The code the stage runs with, the first time it runs for its type, so that
-                    # `check_code!` notices any later change.
-                    target, known = @lock catalog.lock begin
-                        target = job.key isa SourceKey ?
-                            (SOURCE_READ, typeof(get(workspace.source_items, job.key, nothing))) :
-                            (job.stage, valuetype(catalog, job.key))
-                        target, haskey(workspace.code, target)
-                    end
-                    if !known
-                        code = Base.invokelatest(StageCode, workspace.project, target...)
-                        @lock catalog.lock if !haskey(workspace.code, target)
-                            warn_untracked(target, code)
-                            workspace.code[target] = code
-                            store_code_revision!(workspace.cache.db, target..., code.revision.hash)
-                        end
-                    end
-                    # The latest world, so a worker runs project code defined after it started.
-                    Base.invokelatest(run!, workspace, job)
-                catch error
-                    # A job that already finished failed while it saved its result.
-                    job.finished ?
-                        @error("Could not save the result of a job", stage=job.stage, exception=(error, catch_backtrace())) :
-                        fail!(workspace, job, error, catch_backtrace())
+            changed!(workspace)
+            try
+                # The code the stage runs with, the first time it runs for its type, so that
+                # `check_code!` notices any later change.
+                target, known = @lock catalog.lock begin
+                    target = job.key isa SourceKey ?
+                        (SOURCE_READ, typeof(get(workspace.source_items, job.key, nothing))) :
+                        (job.stage, valuetype(catalog, job.key))
+                    target, haskey(workspace.code, target)
                 end
-                job = @lock catalog.lock begin
-                    workspace.completed += 1
-                    finish_publish!(workspace)
-                    job.stage == ITEM_PROCESS && job.key in catalog &&
-                        Catalogs.priority(catalog, job.key, ITEM_ANALYZE) > 0 ?
-                        Catalogs.start!(catalog, job.key, ITEM_ANALYZE) : nothing
+                if !known
+                    code = Base.invokelatest(StageCode, workspace.project, target...)
+                    @lock catalog.lock if !haskey(workspace.code, target)
+                        warn_untracked(target, code)
+                        workspace.code[target] = code
+                        store_code_revision!(workspace.cache.db, target..., code.revision.hash)
+                    end
                 end
+                # The latest world, so a worker runs project code defined after it started.
+                Base.invokelatest(run!, workspace, job)
+            catch error
+                # A job that already finished failed while it saved its result.
+                job.finished ?
+                    @error("Could not save the result of a job", stage=job.stage, exception=(error, catch_backtrace())) :
+                    fail!(workspace, job, error, catch_backtrace())
+            end
+            @lock catalog.lock begin
+                workspace.completed += 1
+                finish_publish!(workspace)
             end
         catch error
             # The failure of a job could not be recorded, for example because the cache stopped
@@ -421,7 +413,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
             clear_cached_result_state!(cache, ITEM_PROCESS, item_id)
         end
         store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, computed)
-        dropped = store_item_metadata_layer!(cache, item_id, delivered)
+        dropped = store_item_metadata!(cache, item_id, delivered)
     end
     @lock catalog.lock begin
         if finish!(catalog, job; metadata=computed)
@@ -431,37 +423,6 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
             conflicts!(workspace, item, ITEM_PROCESS, dropped)
         else
             clear_cached_result_state!(cache, ITEM_PROCESS, item_id)
-        end
-    end
-    return nothing
-end
-
-"""Run `analyze` for one item on its processed version, and save its metadata and its label."""
-function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_ANALYZE})::Nothing
-    catalog = workspace.catalog
-    cache = workspace.cache.db
-    item = job.key
-    input = only(versions(workspace, [item]; reader=(item, ITEM_ANALYZE)))
-    known, given, saved = @lock catalog.lock (
-        row(workspace, item), metadata(workspace, item; through=ITEM_PROCESS), cache_key(workspace, item))
-    analysis = @timed_dbg "analyze" metadata_dict(execute(workspace, item, ITEM_ANALYZE, workspace.project, input))
-    delivered = merge(given, analysis)
-    # An item type that does not rebuild from a payload keeps the item that analyze received.
-    analyzed = something(reconstruct(known.type, known.id, item_data(input), delivered), input)
-    new_label = label(workspace.project, adopt(analyzed, known.label, delivered, known.collections))
-    # Saved outside the lock, as in `process`.
-    item_id = known.id
-    dropped = String[]
-    if iscurrent(catalog, job)
-        store_item_stage_metadata!(cache, item_id, ITEM_ANALYZE, analysis)
-        dropped = store_item_metadata!(cache, item_id, saved, delivered)
-    end
-    @lock catalog.lock begin
-        if finish!(catalog, job; metadata=analysis)
-            relabel!(workspace, item, new_label)
-            conflicts!(workspace, item, ITEM_ANALYZE, dropped)
-        else
-            clear_cached_result_state!(cache, ITEM_ANALYZE, item_id)
         end
     end
     return nothing
@@ -491,9 +452,8 @@ Each collection whose `process` changed an item keeps its own version of it. An 
 version of the outermost collection that has one and whose `process` result is fresh, or in its
 own processed data. Its metadata includes what the same collections changed in it. `reader` is the stage that receives the items, and limits what it may read:
 
-- `(item, ITEM_ANALYZE)`: the item's own processed data, with the metadata `analyze` receives.
+- `(item, ITEM_PROCESS)`: the item's own processed data.
 - `(collection, COLLECTION_PROCESS)`: the versions of the collections below `collection`.
-- `(collection, COLLECTION_ANALYZE)`: the versions of `collection` and the collections below it.
 - `nothing`, for views: the versions of every collection.
 
 The caller makes sure that item `process` is fresh for every item.
@@ -544,7 +504,7 @@ function versions(
                 saved != 0 && has_payload(cache, item_id; collection=saved) && (version = saved; break)
             end
             push!(chosen, version)
-            push!(given, metadata(workspace, item; through=own ? ITEM_PROCESS : ITEM_ANALYZE, above=holders))
+            push!(given, metadata(workspace, item; above=holders))
         end
         known, chosen, given
     end
@@ -616,23 +576,9 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
             new_label = label(workspace.project, output)
             new_label == label(workspace.project, input) || relabel!(workspace, item, new_label)
             haskey(changes, item) && append!(dropped,
-                store_item_metadata_layer!(cache, id(catalog, item), metadata(workspace, item)))
+                store_item_metadata!(cache, id(catalog, item), metadata(workspace, item)))
         end
         conflicts!(workspace, job.key, COLLECTION_PROCESS, dropped)
-    end
-    return nothing
-end
-
-"""Run collection `analyze` over every item below one collection, each in the version this collection has of it."""
-function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_ANALYZE})::Nothing
-    catalog = workspace.catalog
-    value = last(values(workspace, job.key))
-    inputs = versions(workspace, members(workspace, job.key); reader=(job.key, COLLECTION_ANALYZE))
-    analysis = metadata_dict(execute(workspace, job.key, COLLECTION_ANALYZE, workspace.project, value, inputs))
-    @lock catalog.lock begin
-        finish!(catalog, job; metadata=analysis) || return nothing
-        conflicts!(workspace, job.key, COLLECTION_ANALYZE, store_collection_metadata!(
-            workspace.cache.db, workspace.collection_keys[job.key], analysis))
     end
     return nothing
 end

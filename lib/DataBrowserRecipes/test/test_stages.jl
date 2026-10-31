@@ -1,4 +1,4 @@
-using DataBrowserAPI: AbstractDataSource, AbstractDataSourceItem, expand, process, analyze, reconstruct, id, label, item_data, metadata
+using DataBrowserAPI: AbstractDataSource, AbstractDataSourceItem, expand, process, reconstruct, id, label, item_data, metadata
 using Test, DataBrowserRecipes, DataBrowserAPI
 import DataBrowserSources
 using DataBrowserSources: DirectorySource
@@ -22,7 +22,7 @@ DataBrowserAPI.label(f::RecipeFile) = basename(f.filepath)
         file = RecipeFile("trace.dat")
         item = only(expand(project, file, read(project, RecipeSource(), file)))
         @test metadata(item)[:length] == 5
-        @test analyze(project, item) == Dict(:length => 5)
+        @test metadata(process(project, item))[:length] == 5
     end
 end
 
@@ -41,7 +41,7 @@ end
         processed = process(project, item)
         @test id(processed) == id(item)
         @test item_data(processed).x == [3, 6]
-        @test analyze(project, processed)[:total] == 9
+        @test metadata(processed)[:total] == 9
         restored = reconstruct(typeof(processed), id(processed), item_data(processed), metadata(processed))
         @test metadata(restored) == metadata(processed)
     end

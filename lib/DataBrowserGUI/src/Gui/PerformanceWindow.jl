@@ -160,7 +160,7 @@ function _render_throughput_tab!(state::BrowserState)::Nothing
     _sample_throughput!(state)
     h = state.performance.history
 
-    _sparkline("Items analyzed", h.items_per_s, " /s")
+    _sparkline("Jobs completed", h.items_per_s, " /s")
     ig.Separator()
     ig.TextDisabled("Backlog")
     _sparkline("Active tasks", h.active, "")

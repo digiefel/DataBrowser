@@ -41,7 +41,6 @@ API.items(source::PreparedSource; kwargs...) = source.items
 Base.@kwdef struct BenchProject <: API.AbstractProject
     reads::Threads.Atomic{Int} = Threads.Atomic{Int}(0)
     processes::Threads.Atomic{Int} = Threads.Atomic{Int}(0)
-    analyses::Threads.Atomic{Int} = Threads.Atomic{Int}(0)
 end
 # The cache-hit workload retains both native read and process results for its 128 MiB of tables.
 # Its budget includes those copies and their metadata; eviction has separate coverage.
@@ -55,11 +54,7 @@ function API.process(project::BenchProject, item::BenchItem)
     Threads.atomic_add!(project.processes, 1)
     return item
 end
-function API.analyze(project::BenchProject, ::BenchItem)
-    Threads.atomic_add!(project.analyses, 1)
-    return Dict{Symbol,Any}(:analyzed => true)
-end
-callback_counts(project::BenchProject) = (project.reads[], project.processes[], project.analyses[])
+callback_counts(project::BenchProject) = (project.reads[], project.processes[])
 
 """Fixed four-column Float64 tables, prepared before timing and shared by source items."""
 function prepared_source(n, rows)
@@ -124,7 +119,7 @@ function measure_index(source)
                 sort(Workspace.query_items(ws)) == sort(API.id.(source.items)) || error("Incorrect indexed items")
                 Workspace.close_workspace!(ws)
             end
-            callback_counts(project) == (length(source.items), 0, 0) || error("Unexpected indexing callbacks")
+            callback_counts(project) == (length(source.items), 0) || error("Unexpected indexing callbacks")
             return elapsed * 1e6 / length(source.items)
         finally
             ws === nothing || Workspace.close_workspace!(ws)
@@ -132,7 +127,7 @@ function measure_index(source)
     end
 end
 
-"""Cache throughput and materialization latency, with identity processing and constant analysis."""
+"""Cache throughput and materialization latency, with identity processing."""
 function measure_cache(source)
     with_benchmark_cache() do
         project = BenchProject()
@@ -160,7 +155,6 @@ function measure_cache(source)
             written_items = fetch(bulk)
             bulk = nothing
             project.processes[] == length(ids) || error("Expected $(length(ids)) process calls, got $(project.processes[])")
-            project.analyses[] == length(ids) || error("Expected $(length(ids)) analyze calls, got $(project.analyses[])")
             Workspace.close_workspace!(ws)
             ws = nothing
             write_s = (time_ns() - started) / 1e9

@@ -194,24 +194,20 @@ function _render_stage_counts!(status::WorkspaceStatus)::Nothing
     _stage_count_cell("$(cache.created_items) items", [
         "$(cache.created_items) items created and cached",
     ]; align=:center)
-    _stage_count_cell("$(cache.analyzed) analyzed", [
+    _stage_count_cell("$(cache.processed) processed", [
         "$(cache.processed) processed",
-        # Item analysis can be cached before a processed payload is stored when background
-        # processing is off; the cache reports each stage independently.
-        "$(cache.analyzed) analyzed",
     ]; align=:center)
     stage_failures = cache.failed_read + cache.failed_expand + cache.failed_process +
-        cache.failed_analyze + cache.failed_collection
-    extra_analyze_issues = max(length(status.errors) - stage_failures, 0)
-    analyze_issues = cache.failed_analyze + extra_analyze_issues
-    issues = cache.failed_read + cache.failed_expand + cache.failed_process + analyze_issues +
         cache.failed_collection
+    # Errors that no stage count holds, such as metadata the cache could store only in part.
+    other_issues = max(length(status.errors) - stage_failures, 0)
+    issues = stage_failures + other_issues
     issue_word = issues == 1 ? "issue" : "issues"
     _stage_count_cell("$(issues) $issue_word", [
         "$(cache.failed_read) read",
         "$(cache.failed_expand) item creation",
         "$(cache.failed_process) process",
-        "$analyze_issues analyze",
+        "$other_issues other",
         "$(cache.failed_collection) collection",
     ]; align=:center)
     ig.EndTable()

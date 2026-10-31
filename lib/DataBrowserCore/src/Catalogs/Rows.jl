@@ -59,7 +59,7 @@ function ItemTable()
         Union{SourceKey,Nothing}[],
         CollectionKey[],
         Type{<:AbstractDataItem}[],
-        Dict(stage => MetadataColumns() for stage in (SOURCE_EXPAND, ITEM_PROCESS, ITEM_ANALYZE)),
+        Dict(stage => MetadataColumns() for stage in (SOURCE_EXPAND, ITEM_PROCESS)),
     )
 end
 
@@ -73,13 +73,13 @@ struct CollectionTable <: Table
     parent::Vector{CollectionKey}
     items::Vector{Vector{ItemKey}}
     children::Vector{Vector{CollectionKey}}
-    # Direct members whose consumed stage is not fresh: analyze for an item, collection analyze for
-    # a subcollection. Collection process can run only when this is zero.
+    # Direct members, items and subcollections, whose process is not fresh. Collection process can
+    # run only when this is zero.
     not_fresh::Vector{Int}
-    # Direct members whose consumed stage failed or is blocked. Collection process is blocked while
+    # Direct members whose process failed or is blocked. Collection process is blocked while
     # this is above zero.
     stuck::Vector{Int}
-    # Items at any depth below the collection, and those of them whose analyze is fresh.
+    # Items at any depth below the collection, and those of them whose process is fresh.
     nested_items::Vector{Int}
     nested_done::Vector{Int}
     type::Vector{Type{<:AbstractCollection}}
@@ -105,7 +105,7 @@ function CollectionTable()
         Type{<:AbstractCollection}[],
         Dict{MetadataLayer,MetadataColumns}(
             layer => MetadataColumns()
-            for layer in (:collection, :source, COLLECTION_PROCESS, COLLECTION_ANALYZE)),
+            for layer in (:collection, :source, COLLECTION_PROCESS)),
     )
 end
 
@@ -333,9 +333,7 @@ function Base.get!(
         if key === nothing
             push!(collections, entry[3], value_label, parent, typeof(value))
             key = CollectionKey(length(collections))
-            collections.status[key.index] = word(
-                StageStatus(; absent=COLLECTION_PROCESS in absent),
-                StageStatus(; absent=COLLECTION_ANALYZE in absent))
+            collections.status[key.index] = word(StageStatus(; absent=COLLECTION_PROCESS in absent))
             push!(collections.children[parent.index], key)
             collections.not_fresh[parent.index] += 1
             collections.lookup[entry] = key
@@ -410,11 +408,11 @@ function publish!(catalog::Catalog, source::SourceKey, entries::AbstractVector{I
         new_keys = ItemKey[]
         # Put an item into a collection (`sign = 1`) or take it out (`sign = -1`), with its counters.
         function move!(key::ItemKey, collection::CollectionKey, sign::Int)
-            analyze = status(catalog, key, ITEM_ANALYZE)
-            fresh = analyze.validity == FRESH
+            processed = status(catalog, key, ITEM_PROCESS)
+            fresh = processed.validity == FRESH
             collections.not_fresh[collection.index] += sign * !fresh
             add_nested!(collections, collection, sign, sign * fresh)
-            add_stuck!(catalog, collection, sign * (analyze.failed || analyze.blocked))
+            add_stuck!(catalog, collection, sign * (processed.failed || processed.blocked))
             push!(changed, collection)
             sign > 0 ? push!(collections.items[collection.index], key) :
                 push!(get!(Set{ItemKey}, leaving, collection), key)
@@ -496,7 +494,7 @@ The key of the computed value with the id of `entry`, made from `inputs`: item k
 processed results; explicit `(key, stage)` targets consume that exact result. A new row is added in the
 collection of `entry` when the catalog has none, or the row of that id, which now reads `inputs`.
 Its `process` runs once every input target is fresh, and runs again whenever an input changes or it
-reads other inputs. Its analyze is absent. A missing collection or input throws an `ArgumentError`
+reads other inputs. A missing collection or input throws an `ArgumentError`
 and leaves the catalog unchanged.
 """
 publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{ItemKey}) =
@@ -534,9 +532,7 @@ function publish!(catalog::Catalog, entry::ItemEntry, inputs::AbstractVector{Tar
         push!(items.type, entry.type)
         items.lookup[entry.id] = key
         foreach(input -> push!(get!(Vector{ItemKey}, items.readers, input), key), unique(inputs))
-        # Its analyze is absent.
-        # TODO: analyze leaves Core; then an item has only process.
-        items.status[key.index] = word(StageStatus(; blocked), StageStatus(; absent=true, blocked))
+        items.status[key.index] = word(StageStatus(; blocked))
         push!(collections.items[entry.collection.index], key)
         collections.not_fresh[entry.collection.index] += 1
         add_nested!(collections, entry.collection, 1, 0)
@@ -582,11 +578,11 @@ function Base.delete!(catalog::Catalog, key::ItemKey)::Catalog
         source(catalog, key) === nothing ||
             throw(ArgumentError("item \"$(items.ids[key.index])\" is removed with its source item"))
         collection = items.collection[key.index]
-        analyze = status(catalog, key, ITEM_ANALYZE)
-        fresh = analyze.validity == FRESH
+        processed = status(catalog, key, ITEM_PROCESS)
+        fresh = processed.validity == FRESH
         collections.not_fresh[collection.index] -= !fresh
         add_nested!(collections, collection, -1, -fresh)
-        add_stuck!(catalog, collection, -(analyze.failed || analyze.blocked))
+        add_stuck!(catalog, collection, -(processed.failed || processed.blocked))
         filter!(!=(key), collections.items[collection.index])
         for input in unique(view(items.inputs, key.index))
             filter!(!=(key), get(items.readers, input, ItemKey[]))
@@ -631,9 +627,9 @@ function Base.delete!(catalog::Catalog, collection::CollectionKey)::Catalog
               isempty(collections.children[collection.index])
             parent = collections.parent[collection.index]
             filter!(!=(collection), collections.children[parent.index])
-            analyze = status(catalog, collection, COLLECTION_ANALYZE)
-            collections.not_fresh[parent.index] -= analyze.validity != FRESH
-            add_stuck!(catalog, parent, -(analyze.failed || analyze.blocked))
+            processed = status(catalog, collection, COLLECTION_PROCESS)
+            collections.not_fresh[parent.index] -= processed.validity != FRESH
+            add_stuck!(catalog, parent, -(processed.failed || processed.blocked))
             remove_readers!(catalog, collection)
             forget_computations!(catalog, collection)
             delete!(collections, collection)
@@ -754,7 +750,7 @@ items(catalog::Catalog, collection::CollectionKey)::Vector{ItemKey} =
 """
     progress(catalog, collection) -> (done, total)
 
-The items at any depth below `collection`: `total` counts them, and `done` counts those whose analyze
+The items at any depth below `collection`: `total` counts them, and `done` counts those whose process
 is fresh.
 """
 progress(catalog::Catalog, collection::CollectionKey)::Tuple{Int,Int} = @lock catalog.lock begin
@@ -769,16 +765,14 @@ children(catalog::Catalog, collection::CollectionKey)::Vector{CollectionKey} =
 """
     status(catalog, key, stage) -> StageStatus
 
-The status of one stage of a row. `stage` must be one of the row's two stages: `SOURCE_READ` or
-`SOURCE_EXPAND` for a source item, `ITEM_PROCESS` or `ITEM_ANALYZE` for an item,
-`COLLECTION_PROCESS` or `COLLECTION_ANALYZE` for a collection.
+The status of one stage of a row. `stage` must be one of the row's stages: `SOURCE_READ` or
+`SOURCE_EXPAND` for a source item, `ITEM_PROCESS` for an item, `COLLECTION_PROCESS` for a
+collection.
 """
 function status(catalog::Catalog, key::K, stage::PipelineStage)::StageStatus where {K<:RowKey}
-    first, second = stages(K)
-    stage == first || stage == second ||
-        throw(ArgumentError("a $(nameof(K)) row has no $stage stage"))
+    stage in stages(K) || throw(ArgumentError("a $(nameof(K)) row has no $stage stage"))
     bits = table(catalog, key).status[key.index]
-    return StageStatus((stage == first ? bits : bits >> 32) % UInt32)
+    return StageStatus((stage == SOURCE_EXPAND ? bits >> 32 : bits) % UInt32)
 end
 
 """
@@ -786,8 +780,8 @@ end
 
 One layer of the metadata of an item or a collection. A stage as `layer` gives the metadata that
 the stage last produced: for an item, `SOURCE_EXPAND` gives the metadata of its entry in the source
-job, and `ITEM_PROCESS` and `ITEM_ANALYZE` give the metadata of those stages; for a collection, the
-stages are `COLLECTION_PROCESS` and `COLLECTION_ANALYZE`. That metadata stays when the stage
+job, and `ITEM_PROCESS` the metadata of its process; for a collection, the stage is
+`COLLECTION_PROCESS`. That metadata stays when the stage
 becomes stale, until the stage produces new metadata.
 
 A collection has two more layers: `:collection` gives the metadata of its value, and `:source` the

@@ -209,18 +209,10 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 ### 0.2.4 Public API tiers
 
-- [ ] Collection `analyze` receives `analyze(project, collection, items, subcollections)`: all
-  items below the collection, with data loaded on access, and the child collections carrying their
-  own analysis results.
-- [ ] `analyze` returns an updated value instead of a `Dict`, for items and collections. The engine
-  stores `metadata` of the returned value, and reconstruction restores it. Recipes keeps its
-  `Dict`-returning callbacks and adapts them.
-- [ ] Extend the common reconstruction contract to collection analysis metadata. Collection
-  reconstruction currently receives only `own_metadata`, without analysis results. User types
-  decide which results to retain and how to represent them. Remove the registration adapter's
-  reliance on the internal `adopt` hook for labels and collections;
-  it must consume the same public contract as any other extension. Item payload and metadata
-  delivery belongs to 0.2.2.
+- [x] Core has no `analyze` stage. An item's metadata is `metadata` of its processed value;
+  DataBrowserRecipes keeps its `analyze` callbacks and runs them inside its `process` methods.
+- [ ] Remove the registration adapter's reliance on the internal `adopt` hook for labels and
+  collections; it must consume the same public contract as any other extension.
 - [x] Preserve member metadata and label changes returned by collection `process`, including
   changes with unchanged payloads. Cover
   cumulative device history: successive measurements need different wakeup/fatigue counts even
@@ -279,7 +271,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] Group `CacheDB` (25 fields) into index stores, metadata stores, payload store, and runtime
   state. Inline `load_cache_index_body` and `_report_loaded_cache_index`.
 - [x] Use one `PipelineStage` for scheduling and cache results, ordered from source read through
-  collection analyze. Source read and interpretation have independent outcomes.
+  collection process. Source read and interpretation have independent outcomes.
 - [ ] Settle on one of `cache`/`cachedb`/`cache_db` during the interface changes.
 - [x] Track code/environment revisions in derived-result validity. Each stage records a code
   revision per type, also in the cache; a changed revision invalidates only that stage's results,
@@ -288,7 +280,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
   `eval`/`invokelatest`. Show the "not tracked" warning in the browser, and check the walk against
   a tracing run (`research_notes/code-change-detection/design.md`, step 7).
 - [ ] Define and test persistence at every expensive pipeline boundary (discovery, read, expand,
-  item and collection process/analyze). A valid persisted stage satisfies downstream work without
+  item and collection process). A valid persisted stage satisfies downstream work without
   rerunning earlier user code.
 - [ ] Support expensive or non-repeatable sources (simulations, compressed inputs, streams) through
   durable handles or retained upstream output. Specify recovery, recording, and eviction independently
@@ -367,7 +359,7 @@ Every change keeps `tags.txt` human-readable and recoverable independently of th
   collections: `Tag`, `tags`, `tag!` and `untag!`.
 - [x] Find the items with or without a tag: `items(workspace, Tag("bad"))` and
   `items(workspace, !Tag("bad"))`.
-- [ ] A tag can leave its items out of collection `process` and `analyze`.
+- [ ] A tag can leave its items out of collection `process`.
 - [x] Provide GUI controls to assign and unassign tags, including multi-selection: the context
   menu of items and collections lists the tags, and a click toggles one. A field in the menu
   defines a new tag.

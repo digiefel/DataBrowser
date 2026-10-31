@@ -50,9 +50,9 @@ DataBrowserAPI.expand(::ComputationProject, ::ComputationFile, data) =
     [ComputationItem("sample", (signal=data,), Dict{Symbol,Any}(:step => "read"))]
 function DataBrowserAPI.process(project::ComputationProject, value::ComputationItem)
     project.processes[] += 1
-    return ComputationItem(id(value), (signal=value.data.signal .* 2,), Dict{Symbol,Any}(:step => "process"), 2.0)
+    signal = value.data.signal .* 2
+    return ComputationItem(id(value), (; signal), Dict{Symbol,Any}(:step => "process", :total => sum(signal)), 2.0)
 end
-DataBrowserAPI.analyze(::ComputationProject, value::ComputationItem) = Dict(:total => sum(value.data.signal))
 
 @testset "ordinary computations retain their inputs and pass native values" begin
     first = Computation(+, 2, 3)
@@ -79,8 +79,6 @@ DataBrowserAPI.expand(project::UncachedComputationProject, file::ComputationFile
     expand(project.project, file, data)
 DataBrowserAPI.process(project::UncachedComputationProject, value::ComputationItem) =
     process(project.project, value)
-DataBrowserAPI.analyze(project::UncachedComputationProject, value::ComputationItem) =
-    analyze(project.project, value)
 
 @testset "native item type chooses caching for scheduled work and replay" begin
     for cached in (true, false)
@@ -138,7 +136,6 @@ DataBrowserAPI.read(project::PolicyProject, ::PolicySource, file::ComputationFil
     read(project.project, ComputationSource(), file)
 DataBrowserAPI.expand(project::PolicyProject, file::ComputationFile, data) = expand(project.project, file, data)
 DataBrowserAPI.process(project::PolicyProject, value::ComputationItem) = process(project.project, value)
-DataBrowserAPI.analyze(project::PolicyProject, value::ComputationItem) = analyze(project.project, value)
 
 @testset "disabling type storage also bypasses an earlier persisted payload" begin
     mktempdir() do depot
@@ -211,8 +208,6 @@ DataBrowserAPI.expand(::GroupComputationProject, file::ComputationFile, data) =
     expand(ComputationProject(), file, data)
 DataBrowserAPI.process(::GroupComputationProject, value::ComputationItem) =
     process(ComputationProject(), value)
-DataBrowserAPI.analyze(::GroupComputationProject, value::ComputationItem) =
-    analyze(ComputationProject(), value)
 DataBrowserAPI.process(::GroupComputationProject, ::ComputationCollection, values::AbstractVector) =
     [GroupedComputationItem(id(value), (signal=value.data.signal .* 3, members=fill(length(values), length(value.data.signal))),
         merge(metadata(value), Dict(:grouped => true))) for value in values]
@@ -261,11 +256,9 @@ end
         CW.wait_workspace_idle!(workspace)
         key = only(CW.items(workspace))
         processed = computation(workspace, key, DataBrowserAPI.ITEM_PROCESS)
-        analyzed = computation(workspace, key, DataBrowserAPI.ITEM_ANALYZE)
-        # The analysis consumes the native processed item, and its graph keeps that exact call.
+        # The item's value is made from the processed item, and its graph keeps that exact call.
         @test processed.f === DataBrowserAPI.process
-        @test analyzed.f === DataBrowserAPI.analyze
-        pending = inputs(analyzed)
+        pending = inputs(computation(workspace, key))
         ancestors = Computation[]
         while !isempty(pending)
             node = pop!(pending)
@@ -277,7 +270,6 @@ end
         reader = only(filter(node -> node.f === DataBrowserAPI.read, ancestors))
         @test evaluate(workspace, reader) == [1, 2, 3]
         @test item_data(evaluate(workspace, processed)).signal == [2, 4, 6]
-        @test evaluate(workspace, analyzed) == Dict(:total => 12)
         latest = evaluate(workspace, computation(workspace, "sample"))
         @test latest isa ComputationItem
         @test id(latest) == "sample"
@@ -325,7 +317,7 @@ end
         before = project.processes[]
         calls = CW.calls(workspace, ["sample"])
         @test project.processes[] == before
-        @test only(values(only(calls).computations)) === computation(workspace, item, DataBrowserAPI.ITEM_ANALYZE)
+        @test only(values(only(calls).computations)) === process_step
         info = cache_info(workspace, process_step)
         @test info.cached
         @test info.bytes > 0

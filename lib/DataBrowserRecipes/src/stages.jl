@@ -2,8 +2,8 @@
 The dialect's implementation of the typed stage contract.
 
 Every registration callback runs through these adapter methods over the same stage runners and work
-keys as a typed project's methods. Nothing here is privileged: the engine calls `read`, `expand`,
-`process`, and `analyze`, and this file answers them.
+keys as a typed project's methods. Nothing here is privileged: the engine calls `read`, `expand` and
+`process`, and this file answers them. A registered `analyze` callback runs inside `process`.
 """
 
 """Split the documented `(data=..., metadata=Dict(...))` result form."""
@@ -17,6 +17,10 @@ end
 function _with_data(item::RegisteredDataItem, data)::RegisteredDataItem
     return RegisteredDataItem(item, data)
 end
+
+# The item with `analysis` merged over its metadata.
+_with_metadata(item::RegisteredDataItem{K}, analysis::MetadataDict) where {K} = RegisteredDataItem{K}(
+    item.id, item.label, item.collection, item.data, merge(item.metadata, analysis))
 
 
 """
@@ -98,11 +102,16 @@ function _processed_item(
     recipe::ItemRecipe,
     item::RegisteredDataItem,
 )::RegisteredDataItem
-    recipe.process === nothing && return item
-    return _with_data(item, recipe.process(item.data, item.metadata))
+    processed = recipe.process === nothing ? item : _with_data(item, recipe.process(item.data, item.metadata))
+    recipe.analyze === nothing && return processed
+    analysis = @timed_dbg "recipe.analyze" metadata_dict(recipe.analyze(processed.data, processed.metadata))
+    return _with_metadata(processed, analysis)
 end
 
-"""Process one registered item through its `process` callback."""
+"""
+Process one registered item through its `process` callback, then its `analyze` callback, whose
+metadata the processed item gets.
+"""
 function process(project::Project, item::RegisteredDataItem{K})::AbstractDataItem where {K}
     recipe = _recipe(project, K)
     recipe === nothing && error("Missing registration $K")
@@ -148,11 +157,12 @@ end
 
 
 """
-Rewrite one collection's members through each kind's registered collection `process`.
+Rewrite one collection's members through each kind's registered collection `process`, then give
+each member the metadata of the kind's collection `analyze`.
 
-Members are grouped by kind; a kind without a registered `process` falls through to the typed
-`process(collection, items)`, whose default passes them along unchanged. The callback returns one
-output per input; the adapter validates ids and count.
+Members are grouped by kind; a kind without a registered callback falls through to the typed
+`process(collection, items)`, whose default passes them along unchanged. The `process` callback
+returns one output per input; the adapter validates ids and count.
 """
 function process(
     project::Project,
@@ -164,11 +174,12 @@ function process(
         group = items[positions]
         recipe = first(group) isa RegisteredDataItem ?
             get(project.collections, label(typeof(first(group))), nothing) : nothing
-        if recipe === nothing || recipe.process === nothing
+        if recipe === nothing || recipe.process === nothing && recipe.analyze === nothing
             append!(rewritten, process(collection_value, group))
             continue
         end
-        output_data = recipe.process(item_data.(group), metadata.(group))
+        output_data = recipe.process === nothing ? item_data.(group) :
+            recipe.process(item_data.(group), metadata.(group))
         output_data isa AbstractVector || error(
             "collection process for kind $(label(typeof(first(group)))) must return a vector; " *
             "got $(typeof(output_data))",
@@ -188,6 +199,10 @@ function process(
                 "'$(id(output))'",
             )
         end
+        if recipe.analyze !== nothing
+            analysis = metadata_dict(recipe.analyze(item_data.(outputs), metadata.(outputs)))
+            outputs = AbstractDataItem[_with_metadata(output, analysis) for output in outputs]
+        end
         append!(rewritten, outputs)
     end
     return rewritten
@@ -201,17 +216,15 @@ depends on all of them.
 function stage_roots(project::Project, stage::DataBrowserAPI.PipelineStage, type::Type)::Vector
     # The methods that apply, as for any project: typed items and collections may have their own.
     roots = invoke(stage_roots, Tuple{AbstractProject,DataBrowserAPI.PipelineStage,Type}, project, stage, type)
-    field = stage in (DataBrowserAPI.ITEM_PROCESS, DataBrowserAPI.COLLECTION_PROCESS) ? :process : :analyze
     if stage == DataBrowserAPI.SOURCE_READ
         append!(roots, getfield(recipe, name) for recipe in project.recipes
             for name in (:detect, :read, :expand, :label, :collection, :id))
-    elseif stage in (DataBrowserAPI.ITEM_PROCESS, DataBrowserAPI.ITEM_ANALYZE)
+    elseif stage == DataBrowserAPI.ITEM_PROCESS
         recipe = type <: RegisteredDataItem ? _recipe(project, label(type)) : nothing
-        recipe === nothing || push!(roots, getfield(recipe, field))
         # Labels are made again after processing.
-        recipe === nothing || stage != DataBrowserAPI.ITEM_PROCESS || push!(roots, recipe.label)
+        recipe === nothing || append!(roots, (recipe.process, recipe.analyze, recipe.label))
     else
-        append!(roots, getfield(recipe, field) for recipe in values(project.collections))
+        append!(roots, getfield(recipe, name) for recipe in values(project.collections) for name in (:process, :analyze))
     end
     return roots
 end
@@ -223,15 +236,15 @@ function Base.which(project::Project, stage::DataBrowserAPI.PipelineStage, value
         recipe = _detect_recipe(project, value)
         recipe === nothing && return nothing
         return stage == A.SOURCE_READ || recipe.expand !== nothing ? recipe.registered : nothing
-    elseif value <: RegisteredDataItem && stage in (A.ITEM_PROCESS, A.ITEM_ANALYZE)
+    elseif value <: RegisteredDataItem && stage == A.ITEM_PROCESS
         recipe = _recipe(project, label(value))
         recipe === nothing && return nothing
-        return getfield(recipe, stage == A.ITEM_PROCESS ? :process : :analyze) === nothing ? nothing : recipe.registered
-    elseif stage in (A.COLLECTION_PROCESS, A.COLLECTION_ANALYZE)
+        return recipe.process === nothing && recipe.analyze === nothing ? nothing : recipe.registered
+    elseif stage == A.COLLECTION_PROCESS
         # TODO: a collection recipe belongs to the kind of its members, which the collection type
         # does not say; with several, the browser shows none.
-        field = stage == A.COLLECTION_PROCESS ? :process : :analyze
-        recipes = [recipe for recipe in values(project.collections) if getfield(recipe, field) !== nothing]
+        recipes = [recipe for recipe in values(project.collections)
+            if recipe.process !== nothing || recipe.analyze !== nothing]
         length(recipes) == 1 && return only(recipes).registered
     end
     # Typed items and collections may have their own methods.
@@ -241,29 +254,8 @@ end
 """A collection stage is defined when any kind registered it, or the collection type has a method."""
 has_stage(project::Project, collection_value::AbstractCollection, stage::DataBrowserAPI.PipelineStage)::Bool =
     any(values(project.collections)) do recipe
-        (stage == DataBrowserAPI.COLLECTION_PROCESS ? recipe.process : recipe.analyze) !== nothing
+        recipe.process !== nothing || recipe.analyze !== nothing
     end || has_stage(collection_value, stage)
-
-"""Fold one collection's post-process members into collection-node metadata."""
-function analyze(
-    project::Project,
-    collection_value::AbstractCollection,
-    items::AbstractVector,
-)::Dict{Symbol,Any}
-    merged = Dict{Symbol,Any}()
-    for positions in _group_positions_by_kind(items)
-        group = items[positions]
-        recipe = first(group) isa RegisteredDataItem ?
-            get(project.collections, label(typeof(first(group))), nothing) : nothing
-        if recipe === nothing || recipe.analyze === nothing
-            merge!(merged, metadata_dict(analyze(collection_value, group)))
-            continue
-        end
-        merge!(merged, metadata_dict(recipe.analyze(
-            item_data.(group), metadata.(group))))
-    end
-    return merged
-end
 
 """Group item positions by kind, preserving first-seen kind order."""
 function _group_positions_by_kind(items::AbstractVector)::Vector{Vector{Int}}
@@ -276,12 +268,3 @@ function _group_positions_by_kind(items::AbstractVector)::Vector{Vector{Int}}
     end
     return Vector{Int}[groups[key] for key in order]
 end
-
-"""Analyze one registered item through its `analyze` callback."""
-function analyze(project::Project, item::RegisteredDataItem{K})::Dict{Symbol,Any} where {K}
-    recipe = _recipe(project, K)
-    recipe === nothing && error("Missing registration $K")
-    recipe.analyze === nothing && return Dict{Symbol,Any}()
-    return @timed_dbg "recipe.analyze" metadata_dict(recipe.analyze(item_data(item), metadata(item)))
-end
-

@@ -13,24 +13,24 @@ const STATUS_WRITES = Threads.Atomic{Int}(0)
 Write the status of one stage of a row that is not removed, and wake the tasks waiting for a
 request. The caller holds the lock.
 
-When an item's analyze or a collection's collection analyze turns fresh or stops being fresh, the
-counters of the collections that hold it follow. When a stage fails or becomes blocked, the stages
+When the process of an item or of a collection turns fresh or stops being fresh, the counters of
+the collections that hold it follow. When a stage fails or becomes blocked, the stages
 that read it become blocked, and they are unblocked when it recovers.
 
 This is the one place where a status change queues jobs: for the stage itself, and for the stages
 that read it when it turns fresh.
 """
 function Base.setindex!(catalog::Catalog, new::StageStatus, key::K, stage::PipelineStage) where {K<:RowKey}
-    first, second = stages(K)
     old = status(catalog, key, stage)
-    table(catalog, key).status[key.index] = stage == first ?
-        word(new, status(catalog, key, second)) : word(status(catalog, key, first), new)
-    member = stage == ITEM_ANALYZE || stage == COLLECTION_ANALYZE && key != ROOT
+    table(catalog, key).status[key.index] =
+        stage == SOURCE_READ ? word(new, status(catalog, key, SOURCE_EXPAND)) :
+        stage == SOURCE_EXPAND ? word(status(catalog, key, SOURCE_READ), new) : word(new)
+    member = key isa ItemKey || key isa CollectionKey && key != ROOT
     if member
         holder = key isa ItemKey ?
             catalog.items.collection[key.index] : catalog.collections.parent[key.index]
         catalog.collections.not_fresh[holder.index] += (old.validity == FRESH) - (new.validity == FRESH)
-        stage == ITEM_ANALYZE &&
+        key isa ItemKey &&
             add_nested!(catalog.collections, holder, 0, (new.validity == FRESH) - (old.validity == FRESH))
     end
     stuck = new.failed || new.blocked
@@ -63,11 +63,7 @@ function dependents(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector
     elseif stage == SOURCE_EXPAND
         Target[(item, ITEM_PROCESS) for item in items(catalog, key)]
     elseif stage == ITEM_PROCESS
-        Target[(key, ITEM_ANALYZE)]
-    elseif stage == ITEM_ANALYZE
         Target[(collection(catalog, key), COLLECTION_PROCESS)]
-    elseif stage == COLLECTION_PROCESS
-        Target[(key, COLLECTION_ANALYZE)]
     else
         key == ROOT ? Target[] : Target[(parent(catalog, key), COLLECTION_PROCESS)]
     end
@@ -83,11 +79,9 @@ function inputs(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector{Tar
     stage == SOURCE_READ && return Target[]
     stage == SOURCE_EXPAND && return Target[(key, SOURCE_READ)]
     stage == ITEM_PROCESS && return collect(view(catalog.items.inputs, key.index))
-    stage == ITEM_ANALYZE && return Target[(key, ITEM_PROCESS)]
-    stage == COLLECTION_PROCESS && return Target[
-        [(item, ITEM_ANALYZE) for item in items(catalog, key)];
-        [(child, COLLECTION_ANALYZE) for child in children(catalog, key)]]
-    return Target[(key, COLLECTION_PROCESS)]
+    return Target[
+        [(item, ITEM_PROCESS) for item in items(catalog, key)];
+        [(child, COLLECTION_PROCESS) for child in children(catalog, key)]]
 end
 
 """
@@ -100,9 +94,7 @@ function ready(catalog::Catalog, key::RowKey, stage::PipelineStage)::Bool
     stage == ITEM_PROCESS && return all(
         ((input, input_stage),) -> input in catalog && status(catalog, input, input_stage).validity == FRESH,
         inputs(catalog, key, stage))
-    stage == ITEM_ANALYZE && return status(catalog, key, ITEM_PROCESS).validity == FRESH
-    stage == COLLECTION_PROCESS && return catalog.collections.not_fresh[key.index] == 0
-    return status(catalog, key, COLLECTION_PROCESS).validity == FRESH
+    return catalog.collections.not_fresh[key.index] == 0
 end
 
 """
@@ -134,7 +126,7 @@ finished(old::StageStatus, failed::Bool)::StageStatus = failed ?
     invalidate!(catalog, targets)
 
 Mark `stage` on `key`, or each `(key, stage)` in `targets`, and every stage downstream as stale: the
-second stage of the row, the items of a source item, the computed values that read an item, the
+expand of a source item after its read, the items of a source item, the computed values that read an item, the
 collection that holds an item, and each collection up to the root. Every stage reached gets one new revision, so a job running for it
 cannot publish, and loses its failure. A stage that was never computed stays missing.
 

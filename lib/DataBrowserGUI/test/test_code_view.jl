@@ -15,7 +15,7 @@ include("fixtures/code_project.jl")
         ready(window) = timedwait(() -> (refresh!(state, window); !preparing(code) && !preparing(window) && window.has_value && isempty(window.waiting) && isempty(window.error) && isempty(window.failed)), 60) === :ok
         @test ready(code)
         view = code.visualizer
-        @test [row.call.title for row in view.rows] == ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "analyze(::CodeSignal)"]
+        @test [row.call.title for row in view.rows] == ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)"]
         before = (project.reads[], project.processes[])
         indexed_before = Workspace.query_items(workspace)
         select_step!(view, 1)
@@ -33,7 +33,6 @@ include("fixtures/code_project.jl")
         @test ready(linked)
         @test only(linked.visualizer.values).signal == [10, 20, 30]
         @test (project.reads[], project.processes[]) == before
-        @test !hasproperty(linked.value, :total)
         input!(state, code, FixedItems(["signal", "other"]))
         @test ready(linked)
         @test view.selected == 3
@@ -43,9 +42,6 @@ include("fixtures/code_project.jl")
         input!(state, code, FixedItems(["signal"]))
         @test ready(code)
         @test view.selected == 1
-        select_step!(view, 4)
-        @test ready(linked)
-        @test only(linked.visualizer.values) == Dict(:total => 60)
         @test Workspace.query_items(workspace) == indexed_before
         # Following a table keeps the original pipeline, rather than starting at a payload
         # detached from its producing computations.
@@ -53,7 +49,7 @@ include("fixtures/code_project.jl")
         history = open_window!(state, CodeView(); input=WindowOutput(table.id))
         @test ready(history)
         @test [row.call.title for row in history.visualizer.rows] ==
-            ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "analyze(::CodeSignal)", "view"]
+            ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "view"]
         @test (project.reads[], project.processes[]) == before
         @test Workspace.query_items(workspace) == indexed_before
         close_window!(state, history)

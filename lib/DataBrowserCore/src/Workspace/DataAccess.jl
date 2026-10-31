@@ -26,13 +26,11 @@ end
 function want!(workspace::Workspace, items::Vector{ItemKey})::Nothing
     catalog = workspace.catalog
     @lock catalog.lock for item in setdiff(items, workspace.wanted)
-        # A computed item has no analyze.
-        # TODO: analyze leaves Core; then process is the last stage of every item.
-        last_stage = Catalogs.status(catalog, item, ITEM_ANALYZE).absent ? ITEM_PROCESS : ITEM_ANALYZE
-        request(catalog, item, last_stage; priority=VIEWED_ITEM)
+        request(catalog, item, ITEM_PROCESS; priority=VIEWED_ITEM)
         # The collections above the item are queued and not waited for.
-        for holder in ancestors(workspace, item), stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
-            Catalogs.status(catalog, holder, stage).absent || request(catalog, holder, stage; priority=VIEWED_COLLECTION)
+        for holder in ancestors(workspace, item)
+            Catalogs.status(catalog, holder, COLLECTION_PROCESS).absent ||
+                request(catalog, holder, COLLECTION_PROCESS; priority=VIEWED_COLLECTION)
         end
         push!(workspace.wanted, item)
     end
@@ -117,7 +115,7 @@ end
     revision(workspace, items) -> UInt
 
 A number that changes when `materialize_items` would deliver different versions of `items`: an item
-was processed or analyzed again, or the `process` of a collection above one became current or
+was processed again, or the `process` of a collection above one became current or
 stopped being so. A view keeps the number it drew with and draws again when it differs.
 """
 function revision(workspace::Workspace, items::Vector{ItemKey})::UInt
@@ -130,7 +128,7 @@ function revision(workspace::Workspace, items::Vector{ItemKey})::UInt
     @lock catalog.lock begin
         seed = UInt(0)
         for item in items
-            seed = add(add(seed, item, ITEM_PROCESS), item, ITEM_ANALYZE)
+            seed = add(seed, item, ITEM_PROCESS)
             holder = Catalogs.collection(catalog, item)
             while holder != ROOT
                 seed = add(seed, holder, COLLECTION_PROCESS)

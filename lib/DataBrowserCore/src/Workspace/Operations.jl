@@ -260,20 +260,17 @@ cache_key(workspace::Workspace, item::ItemKey)::Int64 =
 The collection stages the project does not define for `value`. The catalog gives them no job. The
 caller holds the catalog lock.
 
-The code of both stages is recorded from here on, also for a stage that is not defined, so that
+The code of collection `process` is recorded from here on, also when it is not defined, so that
 [`check_code!`](@ref) asks again after a change: a stage defined later gets its jobs.
 """
 function undefined(workspace::Workspace, value::AbstractCollection)::Vector{PipelineStage}
-    for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
-        target = (stage, typeof(value))
-        haskey(workspace.code, target) && continue
+    target = (COLLECTION_PROCESS, typeof(value))
+    if !haskey(workspace.code, target)
         code = Base.invokelatest(StageCode, workspace.project, target...)
         workspace.code[target] = code
         store_code_revision!(workspace.cache.db, target..., code.revision.hash)
     end
-    return PipelineStage[
-        stage for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
-        if !has_stage(workspace.project, value, stage)]
+    return has_stage(workspace.project, value, COLLECTION_PROCESS) ? PipelineStage[] : [COLLECTION_PROCESS]
 end
 
 """
@@ -318,7 +315,7 @@ function forget_stale!(workspace::Workspace)::Nothing
         if stage == COLLECTION_PROCESS
             for item in keys(pop!(workspace.changes, key, Dict{ItemKey,MetadataDict}()))
                 item in catalog &&
-                    store_item_metadata_layer!(cache, id(catalog, item), metadata(workspace, item))
+                    store_item_metadata!(cache, id(catalog, item), metadata(workspace, item))
             end
         end
         if key isa ItemKey
@@ -711,8 +708,7 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
             clear_cached_result_state!(cache, ITEM_PROCESS, saved.id)
             continue
         end
-        restore(item, ITEM_PROCESS, saved.id; metadata=saved.process) &&
-            restore(item, ITEM_ANALYZE, saved.id; metadata=saved.analysis)
+        restore(item, ITEM_PROCESS, saved.id; metadata=saved.process)
     end
     # A collection comes after its parent, so the reverse order restores members first.
     for saved in reverse(index.collections)
@@ -721,7 +717,6 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
             workspace.changes[collection] = Dict{ItemKey,MetadataDict}(
                 lookup(catalog, ItemKey, item_id) => changed
                 for (item_id, changed) in saved.changes if lookup(catalog, ItemKey, item_id) !== nothing)
-            restore(collection, COLLECTION_ANALYZE, saved.key; metadata=saved.analysis)
         end
         # A collection whose items were all left to the scan is empty.
         delete!(catalog, collection)
@@ -730,9 +725,8 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     # them with the current code; a stage without a saved revision counts as changed.
     saved = code_revisions(cache)
     targets = union(keys(saved),
-        ((stage, item.type) for item in index.items for stage in (ITEM_PROCESS, ITEM_ANALYZE)),
-        ((stage, collection.type) for collection in index.collections
-            for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)))
+        ((ITEM_PROCESS, item.type) for item in index.items),
+        ((COLLECTION_PROCESS, collection.type) for collection in index.collections))
     for target in targets
         get!(workspace.code, target, StageCode(Any[], UInt(0), CodeRevision(get(saved, target, ""), [], [])))
     end
@@ -890,12 +884,10 @@ function check_code!(workspace::Workspace)::Nothing
         # A collection stage may be defined now, or no longer.
         for key in keys(catalog, CollectionKey)
             type = valuetype(catalog, key)
-            key != ROOT && ((COLLECTION_PROCESS, type) in changed || (COLLECTION_ANALYZE, type) in changed) || continue
-            absent = undefined(workspace, reconstruct(type, Catalogs.id(catalog, key), metadata(catalog, key, :collection)))
-            for stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE)
-                old = Catalogs.status(catalog, key, stage)
-                old.absent == (stage in absent) || (catalog[key, stage] = Catalogs.StageStatus(old; absent=stage in absent))
-            end
+            key != ROOT && (COLLECTION_PROCESS, type) in changed || continue
+            absent = !isempty(undefined(workspace, reconstruct(type, Catalogs.id(catalog, key), metadata(catalog, key, :collection))))
+            old = Catalogs.status(catalog, key, COLLECTION_PROCESS)
+            old.absent == absent || (catalog[key, COLLECTION_PROCESS] = Catalogs.StageStatus(old; absent))
         end
         Catalogs.invalidate!(catalog, Tuple{Any,PipelineStage}[
             (key, stage) for K in (ItemKey, CollectionKey) for key in keys(catalog, K)

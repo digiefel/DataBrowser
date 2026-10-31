@@ -4,7 +4,7 @@ The typed pipeline stage contract.
 Source discovery belongs to the source (`items`). Everything after it is these stages:
 
 ```text
-read → (expand) → process → analyze → collection process → collection analyze
+read → (expand) → process → collection process
 ```
 
 Each stage has a project-aware form, which the engine calls, and a context-free form, which
@@ -34,15 +34,12 @@ The stage identified by a scheduled job, cached payload, or cached completion re
 Values follow pipeline order. `SOURCE_READ` records the result of `read`; `SOURCE_EXPAND` records
 the result of `expand` together with the creation of the item records: identity, labels and
 collection placement.
-Analysis stages produce metadata.
 """
 @enum PipelineStage::Int8 begin
     SOURCE_READ = 0
     SOURCE_EXPAND = 1
     ITEM_PROCESS = 2
-    ITEM_ANALYZE = 3
-    COLLECTION_PROCESS = 4
-    COLLECTION_ANALYZE = 5
+    COLLECTION_PROCESS = 3
 end
 
 # ---------------------------------------------------------------------------
@@ -90,7 +87,7 @@ expand(project::AbstractProject, item::AbstractDataSourceItem, loaded) = expand(
 expand(::AbstractDataSourceItem, loaded) = [loaded]
 
 # ---------------------------------------------------------------------------
-# process and analyze
+# process
 # ---------------------------------------------------------------------------
 
 """
@@ -99,18 +96,9 @@ expand(::AbstractDataSourceItem, loaded) = [loaded]
 Process one data item. The default forwards to the context-free `process(item)`.
 
 Metadata returned by `metadata(processed_item)` is merged over the item's metadata. The merged
-metadata is supplied to later reconstruction and analysis.
+metadata is supplied to later reconstruction.
 """
 process(project::AbstractProject, item::AbstractDataItem) = process(item)
-
-"""
-    analyze(project, item) -> Dict
-
-Analyze one processed item into additional metadata. The returned metadata is merged over the
-processed item's metadata and supplied to later reconstruction. The default forwards to
-`analyze(item)`.
-"""
-analyze(project::AbstractProject, item::AbstractDataItem) = analyze(item)
 
 """
     process(project, collection, items) -> Vector{<:AbstractDataItem}
@@ -121,8 +109,7 @@ default passes the members through unchanged.
 
 An output may differ from its input in data, in `metadata(output)` and in its label. Each change
 is kept as this collection's version of the item, and the item's own processed data and metadata
-stay as they are. Views, queries, collection `analyze` and the collections above receive the
-changes, where the outermost collection replaces the values of the collections below it.
+stay as they are. Views, queries and the collections above receive the changes, where the outermost collection replaces the values of the collections below it.
 """
 process(project::AbstractProject, collection::AbstractCollection, items::AbstractVector) =
     process(collection, items)
@@ -130,40 +117,25 @@ process(project::AbstractProject, collection::AbstractCollection, items::Abstrac
 process(::AbstractCollection, items::AbstractVector) = items
 
 """
-    analyze(project, collection, items) -> Dict
-    analyze(collection, items) -> Dict
-
-Fold one collection's processed members into metadata attached to the collection. The default is
-empty.
-"""
-analyze(project::AbstractProject, collection::AbstractCollection, items::AbstractVector) =
-    analyze(collection, items)
-
-analyze(::AbstractCollection, items::AbstractVector)::Dict = Dict()
-
-"""
     has_stage(project, collection, stage) -> Bool
     has_stage(collection, stage) -> Bool
 
-Whether `stage`, `COLLECTION_PROCESS` or `COLLECTION_ANALYZE`, is defined for `collection`. A
-workspace runs no job for a stage that is not defined, and shows no work in progress for it. It
-asks once for each collection, when it first finds the collection.
+Whether `stage`, `COLLECTION_PROCESS`, is defined for `collection`. A workspace runs no job for a
+stage that is not defined, and shows no work in progress for it. It asks once for each collection,
+when it first finds the collection.
 
-The default answers from the methods: a stage is defined when a `process` or `analyze` method
-other than the defaults of this package applies to the collection. A project that decides in
+The default answers from the methods: the stage is defined when a `process` method other than the
+default of this package applies to the collection. A project that decides in
 another way which collections have a stage adds a method; the default forwards to
 `has_stage(collection, stage)`.
 """
 function has_stage(project::AbstractProject, collection::AbstractCollection, stage::PipelineStage)::Bool
-    callback = stage == COLLECTION_PROCESS ? process : analyze
     signature = Tuple{typeof(project),typeof(collection),Vector{AbstractDataItem}}
-    return which(callback, signature).module != (@__MODULE__) || has_stage(collection, stage)
+    return which(process, signature).module != (@__MODULE__) || has_stage(collection, stage)
 end
 
-function has_stage(collection::AbstractCollection, stage::PipelineStage)::Bool
-    callback = stage == COLLECTION_PROCESS ? process : analyze
-    return which(callback, Tuple{typeof(collection),Vector{AbstractDataItem}}).module != (@__MODULE__)
-end
+has_stage(collection::AbstractCollection, ::PipelineStage)::Bool =
+    which(process, Tuple{typeof(collection),Vector{AbstractDataItem}}).module != (@__MODULE__)
 
 # ---------------------------------------------------------------------------
 # stage_roots
@@ -173,8 +145,7 @@ end
     stage_roots(project, stage, type) -> Vector
 
 The code that runs `stage` for values of `type`: a source item type for `SOURCE_READ`, which also
-covers `expand`; an item type for `ITEM_PROCESS` and `ITEM_ANALYZE`; a collection type for
-`COLLECTION_PROCESS` and `COLLECTION_ANALYZE`.
+covers `expand`; an item type for `ITEM_PROCESS`; a collection type for `COLLECTION_PROCESS`.
 
 A workspace asks again while it is open. When the answer changes, the results of `stage` for values
 of `type` are out of date and are computed again when they are needed. So a method defined or
@@ -195,10 +166,7 @@ function stage_roots(project::AbstractProject, stage::PipelineStage, type::Type)
             (expand, Tuple{P,type,Any}), (expand, Tuple{type,Any})] :
         stage == ITEM_PROCESS ? Any[
             (process, Tuple{P,type}), (process, Tuple{type}), (label, Tuple{P,type}), (label, Tuple{type})] :
-        stage == ITEM_ANALYZE ? Any[(analyze, Tuple{P,type}), (analyze, Tuple{type})] :
-        stage in (COLLECTION_PROCESS, COLLECTION_ANALYZE) ? Any[
-            (stage == COLLECTION_PROCESS ? process : analyze, Tuple{P,type,Any}),
-            (stage == COLLECTION_PROCESS ? process : analyze, Tuple{type,Any})] :
+        stage == COLLECTION_PROCESS ? Any[(process, Tuple{P,type,Any}), (process, Tuple{type,Any})] :
         Any[]
     return Any[type; [method for (callback, signature) in signatures for method in methods(callback, signature)]]
 end
@@ -227,9 +195,7 @@ function Base.which(project::AbstractProject, stage::PipelineStage, value)::Unio
         stage == SOURCE_READ ? Any[(read, Tuple{P,Any,T}), (read, Tuple{Any,T})] :
         stage == SOURCE_EXPAND ? Any[(expand, Tuple{P,T,Any}), (expand, Tuple{T,Any})] :
         stage == ITEM_PROCESS ? Any[(process, Tuple{P,T}), (process, Tuple{T})] :
-        stage == ITEM_ANALYZE ? Any[(analyze, Tuple{P,T}), (analyze, Tuple{T})] :
-        Any[(stage == COLLECTION_PROCESS ? process : analyze, Tuple{P,T,Any}),
-            (stage == COLLECTION_PROCESS ? process : analyze, Tuple{T,Any})]
+        Any[(process, Tuple{P,T,Any}), (process, Tuple{T,Any})]
     for (callback, signature) in signatures
         for method in methods(callback, signature)
             # `methods` also lists the methods of Base that accept anything, such as `read(io, x)`.
@@ -247,8 +213,8 @@ end
     reconstruct(::Type{T}, id, data, metadata::Dict) -> Union{Nothing,T}
 
 Rebuild one concrete item from its stored id, cached payload, and the metadata available at the
-calling stage. The engine can call this method before item analysis, after item analysis, or while
-preparing collection input. The item id, payload, and metadata must therefore contain everything
+calling stage. The engine can call this method before or after item processing, or while preparing
+collection input. The item id, payload, and metadata must therefore contain everything
 the method needs at that point.
 
 The default returns the payload when it is already a `T`, preserving the identity of custom items

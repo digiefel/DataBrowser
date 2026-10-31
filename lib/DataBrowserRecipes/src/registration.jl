@@ -56,9 +56,11 @@ by `Dict`. Keys are converted to symbols and values must be supported metadata v
 names each level from the top down, such as `(wafer = metadata[:wafer], device = metadata[:device])`.
 Without it, the item goes where its source item is: for a directory source, the file's directories.
 
-`label(data, metadata)` runs when the item is created, and again after `process` and after
-`analyze` with the metadata those stages added, so a label can show analysis results once they
-exist.
+`analyze(data, metadata)` runs right after `process` on the processed data, and returns metadata
+that the processed item gets.
+
+`label(data, metadata)` runs when the item is created, and again after `process` and `analyze` with
+the metadata they added, so a label can show analysis results once they exist.
 
 Calling the unnamed form again replaces the project's unnamed registration. Calling the named form
 again with the same name replaces that registration in place.
@@ -90,7 +92,8 @@ end
 Register (or replace) the collection recipe for one item kind.
 
 `process(data, metadata)` receives aligned vectors and returns one data value per input.
-`analyze(data, metadata)` receives the processed values and returns metadata for the collection.
+`analyze(data, metadata)` receives the processed values and returns metadata that every member of
+the collection gets.
 Re-calling with the same registration name replaces the recipe.
 """
 function register_collection_analysis!(

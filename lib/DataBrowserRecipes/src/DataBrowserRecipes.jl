@@ -23,7 +23,6 @@ using DataBrowserAPI:
     AbstractProject,
     @timed_dbg
 import DataBrowserAPI:
-    analyze,
     adopt,
     expand,
     has_stage,

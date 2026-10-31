@@ -48,8 +48,8 @@ id(item::AbstractDataItem)::String = error(
 
 Human-readable label for an item.
 
-The workspace calls `label` when the item is created, and again after `process` and after
-`analyze`, each time on the item with its metadata so far. A label can therefore use metadata that
+The workspace calls `label` when the item is created, and again after `process`, each time on the
+item with its metadata so far. A label can therefore use metadata that
 only a later stage adds; until then, `get(metadata(item), key, nothing)` returns `nothing`. From
 `process` on, the metadata includes the metadata inherited from the item's collections.
 
@@ -107,9 +107,6 @@ item_data(item::AbstractDataItem) = item
 
 """Process an item. Optional; default identity."""
 process(item::AbstractDataItem) = item
-
-"""Analyze a processed item into additional metadata. Optional; default empty `Dict`."""
-analyze(::AbstractDataItem)::Dict = Dict()
 
 # ---------------------------------------------------------------------------
 # Internal workspace hooks

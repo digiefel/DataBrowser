@@ -60,8 +60,8 @@ Base.UInt32(status::StageStatus) =
     UInt32(status.blocked) << 6 |
     (status.revision & 0x00ff_ffff) << 8
 
-"""The status word of a row whose two stages have the given status."""
-word(first::StageStatus, second::StageStatus)::UInt64 =
+"""The status word of a row whose stages have the given status."""
+word(first::StageStatus, second::StageStatus=StageStatus())::UInt64 =
     UInt64(UInt32(first)) | UInt64(UInt32(second)) << 32
 
 """
