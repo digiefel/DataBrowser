@@ -397,21 +397,12 @@ end
 
 Replace one layer of the metadata of `collection`: `:source` for the metadata its source gives it,
 or `:collection` for the metadata of its value, which [`get!`](@ref) sets. When the layer changes,
-process becomes stale for the collection and for every item below it, at any depth.
+the process of the collection becomes stale, and so do the member `process` methods that read it.
 """
 function metadata!(catalog::Catalog, collection::CollectionKey, layer::Symbol, values::AbstractDict{Symbol})::Nothing
     @lock catalog.lock begin
-        collections = catalog.collections
         store!(catalog, collection, layer, values) || return nothing
-        # The collection itself is named because it may hold no items.
-        below = Target[(collection, COLLECTION_PROCESS)]
-        pending = [collection]
-        while !isempty(pending)
-            next = pop!(pending)
-            append!(below, (item, ITEM_PROCESS) for item in collections.items[next.index])
-            append!(pending, collections.children[next.index])
-        end
-        invalidate!(catalog, below)
+        invalidate!(catalog, collection, COLLECTION_PROCESS)
     end
     return nothing
 end

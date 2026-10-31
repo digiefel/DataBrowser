@@ -61,7 +61,7 @@ end
 
 collection_computation(workspace, key) = Computation(native_collection,
     valuetype(workspace.catalog, key), id(workspace.catalog, key),
-    metadata(workspace.catalog, key, :collection))
+    merge(metadata(workspace.catalog, key, :collection), metadata(workspace.catalog, key, :source)))
 
 # Reconstruction supplies the collection argument; it is workspace input preparation, like
 # `native_value` for an item, rather than a project operation of its own.
@@ -190,7 +190,7 @@ function computation_result(workspace::Workspace, value::Computation)
     elseif key isa CollectionKey && stage == COLLECTION_PROCESS
         # The value that the `process` of a collection returned, rebuilt from its data and metadata.
         payload = read_payload(workspace.cache.db, workspace.collection_keys[key]; stage)
-        given = merge(metadata(catalog, key, :collection), metadata(catalog, key, COLLECTION_PROCESS))
+        given = metadata(workspace, key)
         return Some(reconstruct(valuetype(catalog, key), id(catalog, key),
             payload === nothing ? nothing : deepcopy(something(payload)), given))
     end

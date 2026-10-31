@@ -277,6 +277,8 @@ collection above it that defines one, from the innermost collection to the outer
 receives the version of the previous one. The cache keeps the last version next to the item's own
 processed data and never replaces that. Views, queries and the item list use the last version, with
 its metadata and label, once it is current, and the item's own processed version until then.
+An item's metadata is its own: it does not include the metadata of the collections above it, and a
+member `process` copies what the item needs.
 
 A collection stage that the project does not define for a collection has no job: nothing is queued
 or shown as in progress for it, and it counts as done once everything below the collection is done.
