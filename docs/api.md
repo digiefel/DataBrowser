@@ -15,14 +15,19 @@ surface is a provider surface or a client surface.
 |:----------------------------------|:---------|:--------------------------------------------------------------------------|:-------------------|
 | [Type API](#Type-API)             | provider | Types and methods that describe a project: its items, collections, processing and storage | DataBrowserAPI |
 | [Sources](#Sources)               | provider | Types and methods that find source items and report their changes        | DataBrowserAPI, DataBrowserSources |
-| [Recipes](#Recipes)               | provider | Describe a project with plain functions of data and metadata, without defining types | DataBrowserRecipes |
-| [Plots](#Plots)                   | provider | Plot definitions in AlgebraOfGraphics syntax, drawn with Makie            | DataBrowserPlots   |
 | [Visualizers](#Visualizers)       | provider | Types that display data and metadata in the browser, in any form the data needs | DataBrowserAPI   |
 | [GUI extensions](#GUI-extensions) | provider | Types that add windows and menus to the browser                           | DataBrowserGUI     |
 | [Workspace](#Workspace)           | client   | Functions that open a project on a source, select items and return their data | DataBrowserCore |
 | [Browser](#Browser)               | client   | Functions that open and close the browser on a workspace                  | DataBrowserGUI     |
 
-`using DataBrowser` loads every package and exports the names of every surface.
+Two packages implement a provider surface and add functions of their own:
+
+| Package                           | Implements  | Contents                                                                    |
+|:----------------------------------|:------------|:----------------------------------------------------------------------------|
+| [DataBrowserRecipes](#Recipes)    | Type API    | Functions that describe a project with plain functions of data and metadata, without defining types |
+| [DataBrowserPlots](#Plots)        | Visualizers | A plot visualizer, and functions that define plots in AlgebraOfGraphics syntax, drawn with Makie |
+
+`using DataBrowser` loads every package and exports the names of every surface and of both packages.
 
 ## Provider surfaces
 
@@ -98,29 +103,6 @@ DataBrowserSources implements this contract for a directory of files.
 ```@docs
 DataBrowserSources.DirectorySource
 DataBrowserSources.SourceFile
-```
-
-### Recipes
-
-A project made with functions: each function receives data and metadata, and DataBrowserRecipes
-implements the type API for it.
-
-```@docs
-DataBrowserRecipes.define_project
-DataBrowserRecipes.register_item!
-DataBrowserRecipes.register_collection!
-DataBrowserRecipes.register_csv!
-```
-
-### Plots
-
-```@docs
-DataBrowserPlots.figure
-DataBrowserPlots.@plot
-DataBrowserPlots.@invisible
-DataBrowserPlots.register_plot!
-DataBrowserPlots.add_layer!
-DataBrowserPlots.set_analysis!
 ```
 
 ### Visualizers
@@ -211,4 +193,29 @@ DataBrowserGUI.open_browser
 DataBrowserGUI.close_browser!
 DataBrowserGUI.BrowserSession
 DataBrowserGUI.wait_browser_ready
+```
+
+## Built on the surfaces
+
+### Recipes
+
+A project made with functions: each function receives data and metadata, and DataBrowserRecipes
+implements the type API for it.
+
+```@docs
+DataBrowserRecipes.define_project
+DataBrowserRecipes.register_item!
+DataBrowserRecipes.register_collection!
+DataBrowserRecipes.register_csv!
+```
+
+### Plots
+
+```@docs
+DataBrowserPlots.figure
+DataBrowserPlots.@plot
+DataBrowserPlots.@invisible
+DataBrowserPlots.register_plot!
+DataBrowserPlots.add_layer!
+DataBrowserPlots.set_analysis!
 ```
