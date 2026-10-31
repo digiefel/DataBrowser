@@ -1136,7 +1136,8 @@ function _read_tabular_locations(
         push!(get!(() -> UInt32[], by_storage, storage_id), seq)
     end
     rows_by_location = Dict{Tuple{UInt16,UInt32},Any}()
-    seq_name, row_name = Symbol(MB_SEQ_COLUMN), Symbol(MB_ROW_COLUMN)
+    # The column names and DuckDB column types of each payload table.
+    shapes = lock(() -> Dict(storage_id => shape for (shape, storage_id) in store.payload_schemas), store.flush_condition)
     for (storage_id, seqs) in by_storage
         table = _quote_identifier(_payload_table_name(storage_id))
         remaining = sort!(seqs)
@@ -1148,48 +1149,109 @@ function _read_tabular_locations(
                 batch_values += locations[(storage_id, remaining[batch])]
             end
             batch_seqs = splice!(remaining, 1:batch)
-            placeholders = join(fill("?", length(batch_seqs)), ", ")
-            # One materialized query, which DuckDB runs on all threads. Its rows come in no order;
-            # each value goes to its place from the seq and row columns.
-            result = lock(store.read_lock) do
-                Tables.columntable(DBInterface.execute(store.read_connection, """
-                    SELECT * FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)
-                """, batch_seqs))
-            end
-            data_names = Tuple(name for name in keys(result) if name ∉ (seq_name, row_name))
-            seq_column, row_column = result[seq_name], result[row_name]
-            columns = Dict{UInt32,Vector{AbstractVector}}(
-                seq => AbstractVector[similar(result[name], store.rows[(storage_id, seq)]) for name in data_names]
-                for seq in batch_seqs)
-            for (index, name) in enumerate(data_names)
-                _scatter!(columns, index, result[name], seq_column, row_column)
-            end
+            names, types = shapes[storage_id]
+            payloads = all(type -> haskey(DIRECT_READ_TYPES, type), types) ?
+                _read_direct(store, table, storage_id, batch_seqs, names, types) : nothing
+            payloads === nothing && (payloads = _read_converted(store, table, storage_id, batch_seqs))
             for seq in batch_seqs
-                # The database reports a column as one that allows missing values when any row of
-                # the query has one; a payload column without missing values comes back without it.
-                payload = map(columns[seq]) do column
-                    Missing <: eltype(column) && !any(ismissing, column) ?
-                        convert(Vector{nonmissingtype(eltype(column))}, column) : column
-                end
-                rows_by_location[(storage_id, seq)] = NamedTuple{data_names}(Tuple(payload))
+                rows_by_location[(storage_id, seq)] = payloads[seq]
             end
         end
     end
     return rows_by_location
 end
 
-# Put each value of `values` at its row in the column `index` of its payload. A function of its
-# own, so that the loop is compiled for the type of `values`; rows of one payload mostly follow
-# each other, so the payload is looked up again only when the seq changes.
-function _scatter!(columns, index::Int, values::V, seqs::AbstractVector, rows::AbstractVector) where {V<:AbstractVector}
-    current = first(seqs)
-    target = columns[current][index]::V
-    for position in eachindex(values, seqs, rows)
-        if seqs[position] != current
-            current = seqs[position]
-            target = columns[current][index]::V
+# The Julia element type of each DuckDB column type that a read copies straight from the query
+# result, with no conversion.
+const DIRECT_READ_TYPES = Dict{String,DataType}(
+    "BOOLEAN" => Bool, "TINYINT" => Int8, "SMALLINT" => Int16, "INTEGER" => Int32, "BIGINT" => Int64,
+    "UTINYINT" => UInt8, "USMALLINT" => UInt16, "UINTEGER" => UInt32, "UBIGINT" => UInt64,
+    "FLOAT" => Float32, "DOUBLE" => Float64)
+
+"""
+Read the payloads `seqs` of one payload table whose column types are all in `DIRECT_READ_TYPES`.
+Each value is copied from the chunks of the query result to its row in its payload, with no other
+copy. `nothing` when a column has a missing value; the caller reads those payloads with
+`_read_converted`.
+"""
+function _read_direct(store::TabularFamilyStore, table::String, storage_id::UInt16, seqs::Vector{UInt32}, names, types)
+    element_types = [DIRECT_READ_TYPES[type] for type in types]
+    columns = Dict{UInt32,Vector{AbstractVector}}(
+        seq => AbstractVector[Vector{T}(undef, store.rows[(storage_id, seq)]) for T in element_types]
+        for seq in seqs)
+    selected = join([MB_SEQ_COLUMN; MB_ROW_COLUMN; _quote_identifier.(collect(names))], ", ")
+    placeholders = join(fill("?", length(seqs)), ", ")
+    complete = lock(store.read_lock) do
+        result = DBInterface.execute(store.read_connection,
+            "SELECT $selected FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)", seqs)
+        try
+            while (chunk = DuckDB.nextDataChunk(result)) !== missing
+                try
+                    size = DuckDB.get_size(chunk)
+                    all(index -> DuckDB.all_valid(chunk, index + 2), eachindex(element_types)) || return false
+                    seq_values = view(DuckDB.get_array(chunk, 1, UInt32), 1:size)
+                    row_values = view(DuckDB.get_array(chunk, 2, UInt64), 1:size)
+                    for (index, T) in enumerate(element_types)
+                        # The chunk's own memory, of which the first `size` values are its rows.
+                        values = DuckDB.get_array(chunk, index + 2, T)
+                        _scatter!(columns, index, values, seq_values, row_values)
+                    end
+                finally
+                    DuckDB.destroy_data_chunk(chunk)
+                end
+            end
+            return true
+        finally
+            DBInterface.close!(result)
         end
-        target[rows[position]] = values[position]
+    end
+    complete || return nothing
+    data_names = Tuple(Symbol.(names))
+    return Dict(seq => NamedTuple{data_names}(Tuple(columns[seq])) for seq in seqs)
+end
+
+"""
+Read the payloads `seqs` of one payload table through DuckDB.jl's conversion of the query result to
+Julia columns, which handles every column type and missing values.
+"""
+function _read_converted(store::TabularFamilyStore, table::String, storage_id::UInt16, seqs::Vector{UInt32})
+    seq_name, row_name = Symbol(MB_SEQ_COLUMN), Symbol(MB_ROW_COLUMN)
+    placeholders = join(fill("?", length(seqs)), ", ")
+    # One materialized query, which DuckDB runs on all threads. Its rows come in no order; each
+    # value goes to its place from the seq and row columns.
+    result = lock(store.read_lock) do
+        Tables.columntable(DBInterface.execute(store.read_connection,
+            "SELECT * FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)", seqs))
+    end
+    data_names = Tuple(name for name in keys(result) if name ∉ (seq_name, row_name))
+    seq_column, row_column = result[seq_name], result[row_name]
+    columns = Dict{UInt32,Vector{AbstractVector}}(
+        seq => AbstractVector[similar(result[name], store.rows[(storage_id, seq)]) for name in data_names]
+        for seq in seqs)
+    for (index, name) in enumerate(data_names)
+        _scatter!(columns, index, result[name], seq_column, row_column)
+    end
+    return Dict(seq => NamedTuple{data_names}(Tuple(map(columns[seq]) do column
+        # The database reports a column as one that allows missing values when any row of the
+        # query has one; a payload column without missing values comes back without it.
+        Missing <: eltype(column) && !any(ismissing, column) ?
+            convert(Vector{nonmissingtype(eltype(column))}, column) : column
+    end)) for seq in seqs)
+end
+
+# Put the values at the positions of `seqs` and `rows` in the column `index` of their payloads.
+# The rows of one payload mostly follow each other, so each run of them is one `copyto!`.
+function _scatter!(columns, index::Int, values::AbstractVector{T}, seqs::AbstractVector, rows::AbstractVector) where {T}
+    position, last_position = firstindex(seqs), lastindex(seqs)
+    while position <= last_position
+        run_end = position
+        while run_end < last_position && seqs[run_end+1] == seqs[position] &&
+                rows[run_end+1] == rows[run_end] + 1
+            run_end += 1
+        end
+        target = columns[seqs[position]][index]::Vector{T}
+        copyto!(target, rows[position], values, position, run_end - position + 1)
+        position = run_end + 1
     end
     return nothing
 end
