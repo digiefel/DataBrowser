@@ -26,12 +26,10 @@ end
 
 const PRECOMPILE_FIXTURES = joinpath(@__DIR__, "..", "test", "fixtures", "TASE")
 
-# Open a workspace of `project` on the fixtures, select every item, and call
-# `selected(workspace, items)` with the processed items. Package extensions pass `selected` to
-# compile their own code on the same workspace.
-function _precompile_engine(
-    project=_precompile_project(); selected::Function=(workspace, items) -> nothing,
-)::Nothing
+# Open a workspace of the precompile project on the fixtures, read its processed items and select
+# every item; then open it again from the cache.
+function _precompile_engine()::Nothing
+    project = _precompile_project()
     # A workspace keeps its cache in the first depot. A temporary depot keeps the user's depot clean.
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
@@ -41,7 +39,7 @@ function _precompile_engine(
         wait_workspace_idle!(workspace)
         workspace_status(workspace)
         ids = query_items(workspace)
-        selected(workspace, materialize_items(workspace, ids))
+        materialize_items(workspace, ids)
         select!(workspace, ids)
         selection(workspace)
         close_workspace!(workspace)

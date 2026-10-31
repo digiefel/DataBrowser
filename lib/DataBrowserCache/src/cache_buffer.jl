@@ -147,7 +147,8 @@ function can_store_payload(data)::Bool
     data isa NamedTuple && !all(value -> value isa AbstractVector, values(data)) && return false
     Tables.istable(data) || return false
     columns = Tables.columns(data)
-    names = Tables.columnnames(columns)
+    # Typed: `any` and `all` on a vector of unknown type are calls that a package loaded later can invalidate.
+    names = collect(Symbol, Tables.columnnames(columns))::Vector{Symbol}
     any(name -> String(name) in (MB_SEQ_COLUMN, MB_ROW_COLUMN), names) && return false
     return all(name -> _duckdb_sql_type_maybe(eltype(Tables.getcolumn(columns, name))) !== nothing, names)
 end
@@ -610,7 +611,9 @@ function read_hit(store::MemoryStore{K,R}, key::K)::Union{Nothing,Some} where {K
         store.closed && error("memory store is closed")
         haskey(store.entries, key) ? Some(store.entries[key]) : nothing
     end
-    return found === nothing ? nothing : Some(deepcopy(something(found)))
+    # `deepcopy` of a value of any type is a dynamic call: a `deepcopy` method of a package loaded later then
+    # does not invalidate the compiled code here.
+    return found === nothing ? nothing : Some(Base.invokelatest(deepcopy, something(found)))
 end
 
 function Base.haskey(store::MemoryStore{K}, key::K)::Bool where {K}
@@ -902,7 +905,7 @@ function Base.append!(
 )::Bool
     any(
         name -> String(name) in (MB_SEQ_COLUMN, MB_ROW_COLUMN),
-        Tables.columnnames(Tables.columns(body)),
+        collect(Symbol, Tables.columnnames(Tables.columns(body)))::Vector{Symbol},
     ) && error(
         "Tabular item '$(payload_key[1])' uses a reserved cache column name " *
         "'$MB_SEQ_COLUMN' or '$MB_ROW_COLUMN'",
@@ -1098,10 +1101,10 @@ function _pending_tabular_body(
 )::Tuple{Bool,Any}
     queued = _read_mutation(store.queued, location)
     # A payload that waits to be written is handed out as a copy, as one read from the database is new.
-    queued[1] && return (true, queued[2] === nothing ? nothing : deepcopy(queued[2].body))
+    queued[1] && return (true, queued[2] === nothing ? nothing : Base.invokelatest(deepcopy, queued[2].body))
     writing = _read_mutation(store.writing, location)
     return writing[1] ?
-        (true, writing[2] === nothing ? nothing : deepcopy(writing[2].body)) :
+        (true, writing[2] === nothing ? nothing : Base.invokelatest(deepcopy, writing[2].body)) :
         (false, nothing)
 end
 
@@ -1214,7 +1217,8 @@ function Base.read(
     store::TabularFamilyStore,
     payload_keys::Vector{PayloadKey},
 )::Dict{PayloadKey,Any}
-    remaining = unique(payload_keys)
+    # Typed, as each pass replaces it: a captured variable that changes is otherwise of unknown type.
+    remaining::Vector{PayloadKey} = unique(payload_keys)
     results = Dict{PayloadKey,Any}()
     while !isempty(remaining)
         locations = Dict{PayloadKey,Tuple{UInt16,UInt32}}()

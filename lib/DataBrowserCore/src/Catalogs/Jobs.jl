@@ -76,7 +76,9 @@ function dependents(catalog::Catalog, key::RowKey, stage::PipelineStage)::Vector
         Target[key == ROOT ? Target[] : [(parent(catalog, key), COLLECTION_PROCESS)];
             catalog.collections.member_process[key.index] ? [(item, MEMBER_PROCESS) for item in nested_items(catalog, key)] : Target[]]
     end
-    return unique!([pipeline; Target[(reader, ITEM_PROCESS) for reader in readers(catalog, key, stage)]])
+    # `unique`, not `unique!`: on these tuples, `unique!` calls `hash` on a value of any type, and a `hash`
+    # method of a package loaded later then invalidates this compiled code.
+    return unique([pipeline; Target[(reader, ITEM_PROCESS) for reader in readers(catalog, key, stage)]])
 end
 
 """

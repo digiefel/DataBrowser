@@ -182,7 +182,9 @@ function process(
             outputs isa AbstractVector && length(outputs) == length(group) || error(
                 "collection process for level $level must return a vector with one value per member; " *
                 "got $(typeof(outputs)) for $(length(group)) members")
-            merge!(by_member, Dict(id(item) => output for (item, output) in zip(group, outputs)))
+            for (item, output) in zip(group, outputs)
+                by_member[id(item)] = output
+            end
         end
         recipe.analyze === nothing ||
             merge!(analysis, metadata_dict(recipe.analyze(outputs, metadata.(group))))

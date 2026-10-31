@@ -51,7 +51,9 @@ function computation_identity(workspace::Workspace, value::Computation)
             title = key isa SourceKey ? id(catalog, key) : label(catalog, key)
             return string(stage, ':', nameof(typeof(key)), ':', id(catalog, key)), title
         end
-        title = label(value)
+        # A dynamic call: packages add `label` methods for their computations when they load, and a static
+        # call would make each of them invalidate the compiled code here.
+        title = Base.invokelatest(label, value)::String
         if length(value.args) == 1 && only(value.args) isa Computation
             _, input_title = computation_identity(workspace, only(value.args))
             title *= "(" * input_title * ")"
@@ -103,8 +105,10 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     item === nothing && return result
     store = result_store(workspace, typeof(item))
     key = string(objectid(catalog), '/', objectid(value), '/', revision)
-    stored = ComputationResult(value, revision, typeof(result), typeof(item), store, key, Dict{Symbol,Any}(deepcopy(metadata(item))))
-    store === nothing || write(store, key, deepcopy(item))
+    # `deepcopy` of a value of any type is a dynamic call: a `deepcopy` method of a package loaded later then
+    # does not invalidate the compiled code here.
+    stored = ComputationResult(value, revision, typeof(result), typeof(item), store, key, Dict{Symbol,Any}(Base.invokelatest(deepcopy, metadata(item))))
+    store === nothing || write(store, key, Base.invokelatest(deepcopy, item))
     kept, previous = @lock catalog.lock begin
         if current_execution(workspace, catalog, value, revision)
             previous = get(workspace.results, address, nothing)

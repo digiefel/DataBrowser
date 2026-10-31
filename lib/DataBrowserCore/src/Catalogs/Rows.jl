@@ -752,7 +752,7 @@ The rows an item is made from: the source item whose `expand` gave it, or the it
 value reads.
 """
 inputs(catalog::Catalog, item::ItemKey)::Vector{RowKey} =
-    @lock catalog.lock unique(first.(view(catalog.items.inputs, item.index)))
+    @lock catalog.lock unique(RowKey[first(input) for input in view(catalog.items.inputs, item.index)])
 
 """The source item whose `expand` gave an item, or `nothing` for a computed value."""
 function source(catalog::Catalog, item::ItemKey)::Union{SourceKey,Nothing}

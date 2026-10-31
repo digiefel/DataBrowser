@@ -96,7 +96,7 @@ function path(workspace::Workspace, collection::CollectionKey)::CollectionPath
     @lock catalog.lock begin
         return Tuple{String,String}[
             (string(valuetype(catalog, key)), Catalogs.id(catalog, key))
-            for key in [ancestors(workspace, collection); collection] if key != ROOT]
+            for key in push!(ancestors(workspace, collection), collection) if key != ROOT]
     end
 end
 
@@ -162,7 +162,7 @@ end
 
 function ancestors(workspace::Workspace, item::ItemKey)::Vector{CollectionKey}
     holder = collection(workspace, item)
-    return holder == ROOT ? CollectionKey[] : [ancestors(workspace, holder); holder]
+    return holder == ROOT ? CollectionKey[] : push!(ancestors(workspace, holder), holder)
 end
 
 """The public id of an item or a collection."""
@@ -335,6 +335,6 @@ function Base.values(workspace::Workspace, collection::CollectionKey)::Vector{Ab
     @lock catalog.lock begin
         return AbstractCollection[
             reconstruct(valuetype(catalog, key), Catalogs.id(catalog, key), metadata(catalog, key, :collection))
-            for key in [ancestors(workspace, collection); collection] if key != ROOT]
+            for key in push!(ancestors(workspace, collection), collection) if key != ROOT]
     end
 end

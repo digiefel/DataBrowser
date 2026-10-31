@@ -22,8 +22,7 @@ GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 
 [extensions]
 DataBrowserPlotsAlgebraOfGraphicsExt = "AlgebraOfGraphics"
-DataBrowserPlotsBuilderExt = ["AlgebraOfGraphics", "GLMakie"]
-DataBrowserPlotsGLMakieExt = "GLMakie"
+DataBrowserPlotsGLMakieExt = ["AlgebraOfGraphics", "GLMakie"]
 
 [compat]
 AlgebraOfGraphics = "0.13"

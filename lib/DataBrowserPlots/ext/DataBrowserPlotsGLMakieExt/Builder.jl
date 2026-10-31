@@ -1,5 +1,5 @@
-"""The plot builder window of the browser. Loaded when AlgebraOfGraphics and GLMakie are loaded."""
-module DataBrowserPlotsBuilderExt
+"""The plot builder window of the browser."""
+module Builder
 
 import AlgebraOfGraphics
 import CImGui as ig
@@ -12,11 +12,9 @@ using DataBrowserGUI: CODE_COLORS, CodeFile, code_text, draw_code, edit!, ischan
 using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!, guarded_draw, draw_colors
 import DataBrowserAPI: draw!, prepare!, settings
 using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mapping_order, mappings, scale_categories, scale_kinds
-# Julia loads the GLMakie extension first, as its triggers are a part of this extension's.
-const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
-using .GLMakieExt: DARK, FigureView
-import .GLMakieExt: theme_button
-import .GLMakieExt: build!
+using ..DataBrowserPlotsGLMakieExt: DARK, FigureView
+import ..DataBrowserPlotsGLMakieExt: theme_button
+import ..DataBrowserPlotsGLMakieExt: build!
 
 # Icons of the Lucide font that DataBrowserGUI loads with the interface font.
 const ICON_EYE = "\ue0ba"

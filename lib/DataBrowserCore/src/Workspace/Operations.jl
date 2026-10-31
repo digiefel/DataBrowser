@@ -648,7 +648,7 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     catalog = workspace.catalog
     cache = workspace.cache.db
     state(stage, entity) = get(index.result_states, CacheResultKey(stage, entity), nothing)
-    failed(saved) = saved !== nothing && CacheResultStatus(saved.status) === RESULT_FAILED
+    failed(saved) = saved !== nothing && CacheResultStatus(saved.status::Int8) === RESULT_FAILED
     # Give one stage its saved result, and return whether it is fresh now.
     function restore(key, stage, entity; metadata=nothing)::Bool
         saved = state(stage, entity)
@@ -723,7 +723,7 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     # The saved results were computed with the code of the saved revisions. The next check compares
     # them with the current code; a stage without a saved revision counts as changed.
     saved = code_revisions(cache)
-    targets = union(keys(saved),
+    targets = union!(Set{Tuple{PipelineStage,Type}}(keys(saved)),
         ((stage, item.type) for item in index.items for stage in (ITEM_PROCESS, MEMBER_PROCESS)),
         ((stage, collection.type) for collection in index.collections for stage in (COLLECTION_PROCESS, MEMBER_PROCESS)))
     for target in targets
@@ -772,7 +772,7 @@ function publish_cache_state!(
 )::Nothing
     # Select stores before taking the catalog lock: custom stores may perform setup.
     if index !== nothing
-        foreach(type -> result_store(workspace, type), unique(item.type for item in index.items))
+        foreach(type -> result_store(workspace, type), Set{Type}(item.type for item in index.items))
     end
     @lock workspace.catalog.lock begin
         scan_epoch == workspace.scan.epoch || return nothing
@@ -863,7 +863,7 @@ function check_code!(workspace::Workspace)::Nothing
     isempty(current) && return nothing
     @lock catalog.lock begin
         is_cancellation_requested(get_token(workspace.cancel_source)) && return nothing
-        changed = Set(target for (target, code) in current
+        changed = Set{Tuple{PipelineStage,Type}}(target for (target, code) in current
             if code.revision.hash != workspace.code[target].revision.hash)
         for target in changed
             before, after = workspace.code[target].revision.parts, current[target].revision.parts

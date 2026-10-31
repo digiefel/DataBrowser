@@ -97,15 +97,16 @@ artifacts are shared, and Julia's bundled resources remain available. Subsequent
 benchmarks use the compiled cache. Test-only and documentation edits do not trigger clean
 compilation.
 
-The plotting extension compiles representative grouped table plots, item-selection plots, fits and
-legends by building figures without opening a window. This moves compilation from first use into
-package preparation; it increases preparation time and does not eliminate compilation of user
-callbacks or every combination of plot options.
+The figures extension of DataBrowserPlots, loaded with AoG, compiles a grouped table plot with a
+legend by building its figure without opening a window. The plot-window extension, loaded with AoG
+and GLMakie, compiles the Makie calls that a registered plot usually makes. This moves compilation
+from first use into package preparation; it increases preparation time and does not eliminate
+compilation of user callbacks or every combination of plot options.
 
-When both GLMakie and AoG are installed, a combined extension prepares engine and browser startup
-with both packages loaded, including the default CSV reader. This retains code for their combined
-method definitions. Browser workloads exercise single-item and multiple-item selection through
-public item IDs. The combined workload does not run when either plotting package is absent.
+The engine workload of DataBrowser runs without GLMakie and AoG. Code that loading them would
+invalidate is written so that it does not depend on their methods: for example, it calls `deepcopy`
+on a value of any type dynamically. Browser workloads exercise single-item and multiple-item
+selection through public item IDs.
 
 All runner workloads use `bench/results/depot`; Julia builds missing compiled caches there normally.
 Package/file tests and benchmark-only runs never request clean compilation. Use those while editing. Run full

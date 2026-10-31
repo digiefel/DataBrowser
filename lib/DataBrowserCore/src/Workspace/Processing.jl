@@ -166,7 +166,9 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             return nothing
         end
         retain = keeps_result(workspace, value)
-        snapshot = retain ? deepcopy(value) : nothing
+        # `deepcopy` of a value of any type is a dynamic call: a `deepcopy` method of a package loaded later then
+        # does not invalidate the compiled code here.
+        snapshot = retain ? Base.invokelatest(deepcopy, value) : nothing
         @lock catalog.lock iscurrent(catalog, job) && store_source_read!(cache, saved, snapshot; retain)
         value
     else
@@ -208,7 +210,7 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             ItemOutput(
                 entry.id, entry.label, entry.type,
                 entry.collection == ROOT ? nothing : workspace.collection_keys[entry.collection],
-                entry.metadata, keep ? deepcopy(data(item.item)) : nothing)
+                entry.metadata, keep ? Base.invokelatest(deepcopy, data(item.item)) : nothing)
             for (item, entry, keep) in zip(expanded, entries, retain)]; retain)
         pace!(workspace)
         # The items the source item no longer produces leave the selection. When it produces as
@@ -257,7 +259,7 @@ function read_again(workspace::Workspace, source::SourceKey, source_item::Abstra
     cached === nothing || !keeps_result(workspace, something(cached)) || return something(cached)
     loaded = execute(workspace, source, SOURCE_READ, workspace.project, workspace.source, source_item)
     retain = keeps_result(workspace, loaded)
-    store_source_read!(cache, saved, retain ? deepcopy(loaded) : nothing; retain)
+    store_source_read!(cache, saved, retain ? Base.invokelatest(deepcopy, loaded) : nothing; retain)
     return loaded
 end
 
@@ -308,7 +310,7 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
                 sibling = lookup(catalog, ItemKey, produced.id)
                 sibling === nothing && continue
                 keep && Catalogs.status(catalog, sibling, ITEM_PROCESS).validity != Catalogs.FRESH &&
-                    store_item_payload!(workspace.cache.db, produced.id, deepcopy(data(produced.item)))
+                    store_item_payload!(workspace.cache.db, produced.id, Base.invokelatest(deepcopy, data(produced.item)))
             end
             pace!(workspace)
         end
@@ -399,7 +401,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     dropped = String[]
     if iscurrent(catalog, job)
         if retain
-            @timed_dbg store_processed!(cache, item_id, saved, deepcopy(payload))
+            @timed_dbg store_processed!(cache, item_id, saved, Base.invokelatest(deepcopy, payload))
         else
             delete_processed!(cache, item_id; stage=ITEM_PROCESS)
             clear_cached_result_state!(cache, ITEM_PROCESS, item_id)
@@ -492,9 +494,9 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
     output isa typeof(given) || error(
         "process(::$(typeof(workspace.project)), ::$(typeof(given)), members) must return a " *
         "$(typeof(given)); got $(typeof(output))")
-    before = metadata_dict(metadata(given))
+    before = metadata_dict(metadata(given))::MetadataDict
     computed = MetadataDict(
-        name => value for (name, value) in metadata_dict(metadata(output))
+        name => value for (name, value) in metadata_dict(metadata(output))::MetadataDict
         if !haskey(before, name) || !isequal(before[name], value))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=computed) || return nothing
@@ -503,7 +505,7 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
         payload = data(output)
         DataBrowserCache.can_store_payload(payload) || (payload = nothing)
         store_collection_process_result!(
-            workspace.cache.db, workspace.collection_keys[job.key], computed, deepcopy(payload))
+            workspace.cache.db, workspace.collection_keys[job.key], computed, Base.invokelatest(deepcopy, payload))
     end
     return nothing
 end
@@ -527,7 +529,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
     dropped = String[]
     if iscurrent(catalog, job)
         if retain
-            @timed_dbg store_processed!(cache, known.id, saved, deepcopy(payload); stage=MEMBER_PROCESS)
+            @timed_dbg store_processed!(cache, known.id, saved, Base.invokelatest(deepcopy, payload); stage=MEMBER_PROCESS)
         else
             delete_processed!(cache, known.id; stage=MEMBER_PROCESS)
             clear_cached_result_state!(cache, MEMBER_PROCESS, known.id)
