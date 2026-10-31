@@ -31,11 +31,13 @@ using Dates
 include("build_metrics.jl")
 include("cache_buffer.jl")
 include("MemoryStore.jl")
+include("DuckDBStore.jl")
 include("project_cache_domain.jl")
 include("source_stages.jl")
 
 export BuildMetrics,
     MemoryStore,
+    DuckDBStore,
     can_store_payload,
     CacheResultKey,
     CacheResultStatus,

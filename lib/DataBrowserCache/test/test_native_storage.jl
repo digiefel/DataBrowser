@@ -58,3 +58,19 @@ API.fingerprint(::RetentionSourceItem) = 1
         end
     end
 end
+
+@testset "DuckDB storage keeps values after closing" begin
+    mktempdir() do dir
+        path = joinpath(dir, "values.duckdb")
+        store = DuckDBStore(path)
+        write(store, "one", (signal=[1.0, 2.0], label="a"))
+        write(store, "two", "removed")
+        delete!(store, "two")
+        close(store)
+        store = DuckDBStore(path)
+        @test read(store, NamedTuple, "one") == (signal=[1.0, 2.0], label="a")
+        @test !haskey(store, "two")
+        @test_throws KeyError read(store, String, "two")
+        close(store)
+    end
+end
