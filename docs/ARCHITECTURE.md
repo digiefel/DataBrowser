@@ -194,7 +194,8 @@ native result stores where available and replaying missing inputs. `storage(proj
 the store for a native `AbstractDataItem` type; the project form defaults to `storage(T)`. Ordinary
 Julia results are stored as workspace-owned `ResultItem{T}` items, with `T` the result's type.
 Stores receive this complete item; evaluation unwraps it for ordinary function calls. Returning
-`nothing` leaves that result uncached. The default `MemoryStore` uses the same bounded memory buffer as the source
+`nothing` leaves that result uncached. A store is an `AbstractStore`; its docstring lists the
+methods it implements. The default `MemoryStore` uses the same bounded memory buffer as the source
 cache, with one 64 MiB store per item type per workspace opening. Store selection runs once per
 item type. Complete results are copied when written and when supplied from storage.
 

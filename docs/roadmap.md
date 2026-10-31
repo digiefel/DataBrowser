@@ -230,6 +230,10 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] Store the results of item and member `process` in the store that `storage(project, T)`
   chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
   one copy of data that a member `process` returned unchanged.
+- [ ] A `DuckDBStore <: AbstractStore` replaces the cache's payload tables and becomes the default
+  store. The rest of the cache becomes the workspace file next to the project: items, collections,
+  metadata and result states, no results. Its `source_reads` and `unprocessed` buffers go away.
+- [ ] Let a store hand out a kept value without copying it, for callers that do not change it.
 - [ ] Sort every exported name into the project-author or extension-author tier and stop exporting
   the rest: `SourceFile`, the concrete `Project`, `gui_timings`,
   `reset_timings!`, `plot_kinds`, `CollectionRecipe`, `ItemRecipe`, `NoMatch`,

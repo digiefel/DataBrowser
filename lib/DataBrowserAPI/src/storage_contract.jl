@@ -1,24 +1,30 @@
 """
-    storage(project, ::Type{T})
-    storage(::Type{T})
+    AbstractStore
 
-Choose storage for computation results whose item type is `T <: AbstractDataItem`.
-The project form defaults to `storage(T)`. Return `nothing` to leave results uncached.
-The supplied default is a bounded `DataBrowserCache.MemoryStore`.
+A place that keeps computation results: one value for each id. A store implements
 
-A store implements `write(store, id, value)`, `read(store, typeof(value), id)`,
-`haskey(store, id)` and `delete!(store, id)`. Store complete native values, including their
-metadata. Core supplies a copy when writing. `read` returns a copy, which the caller may change.
-Missing reads throw `KeyError`; other storage errors propagate to the caller.
+- `write(store, id, value)`: keep `value` under `id`, in place of any value kept there before;
+- `read(store, T, id)`: the value kept under `id`, of type `T`. It returns a copy, which the caller
+  may change. A missing id throws `KeyError`;
+- `haskey(store, id)`: whether a value is kept under `id`;
+- `delete!(store, id)`: remove the value kept under `id`, if any;
+- `stored_size(store, id)`: optionally, the size in bytes of the kept value.
 
-Core chooses storage from a returned native item's type. Ordinary Julia results are wrapped in
-`DataBrowserCore.ResultItem{typeof(value)}` before storage. Stores always receive an
-`AbstractDataItem` of the type selected by this hook. Evaluation unwraps workspace-owned result
-items before passing values to functions; project items keep their native types.
+Values are complete `AbstractDataItem`s, metadata included. Core gives `write` a copy, so a store
+may keep the value it receives. Storage errors propagate to the caller.
+"""
+abstract type AbstractStore end
 
-Normal materialization and the existing stage payload paths follow this policy too. Native
-result stores currently cover one workspace opening. Supported table payloads can also use the
-existing persistent cache; native restoration across openings is still being implemented.
+"""
+    storage(project, ::Type{T}) -> Union{Nothing,AbstractStore}
+    storage(::Type{T}) -> Union{Nothing,AbstractStore}
+
+The store for computation results whose item type is `T <: AbstractDataItem`. The project form
+defaults to `storage(T)`. Return `nothing` to keep no results of type `T`. The default is a
+bounded `DataBrowserCache.MemoryStore`. Core calls this once per item type and workspace opening.
+
+Results that are not `AbstractDataItem`s are kept as `DataBrowserCore.ResultItem{typeof(value)}`,
+so `storage(project, ResultItem{V})` chooses their store.
 """
 function storage end
 
@@ -27,10 +33,10 @@ storage(::AbstractProject, type::Type{<:AbstractDataItem}) = storage(type)
 """
     stored_size(store, id) -> Union{Nothing,Int}
 
-The recorded size in bytes of a stored value, without reading it. The default is `nothing` when
-size information is unavailable. Implementations should report the size counted by their store.
+The size in bytes of the value `store` keeps under `id`, without reading it. The default is
+`nothing`: the store does not know it.
 """
-stored_size(store, id) = nothing
+stored_size(::AbstractStore, id) = nothing
 
 """
     cache_info(workspace, computation) -> NamedTuple

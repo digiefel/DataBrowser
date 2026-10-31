@@ -554,7 +554,7 @@ Weights are recorded on insertion so later mutation cannot corrupt eviction acco
 larger than the capacity remains usable until another value arrives. Cache eviction only releases
 its reference; values held by running consumers remain alive.
 """
-mutable struct MemoryStore{K,R}
+mutable struct MemoryStore{K,R} <: DataBrowserAPI.AbstractStore
     lock::ReentrantLock
     entries::Dict{K,R}
     weights::Dict{K,Int}

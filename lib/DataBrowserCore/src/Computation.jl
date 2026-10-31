@@ -70,9 +70,9 @@ evaluate_argument(value, _, _, _) = value
 """One workspace's store choices, initialized once per native item type."""
 struct ComputationStores
     lock::ReentrantLock
-    types::IdDict{Type,Any}
+    types::IdDict{Type,Union{Nothing,AbstractStore}}
 end
-ComputationStores() = ComputationStores(ReentrantLock(), IdDict{Type,Any}())
+ComputationStores() = ComputationStores(ReentrantLock(), IdDict{Type,Union{Nothing,AbstractStore}}())
 
 """The native result location of one completed computation revision; no payload lives here."""
 struct ComputationResult
@@ -80,7 +80,7 @@ struct ComputationResult
     revision::UInt
     value_type::Type
     item_type::Type
-    store::Any
+    store::Union{Nothing,AbstractStore}
     key::String
     metadata::Dict{Symbol,Any}
 end

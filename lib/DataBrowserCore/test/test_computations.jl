@@ -10,7 +10,7 @@ end
 ComputationProject() = ComputationProject(Ref(0), Type[])
 
 # A project store can accept only the native item type it was configured for.
-struct NativeItemStore{T<:AbstractDataItem}
+struct NativeItemStore{T<:AbstractDataItem} <: AbstractStore
     values::MemoryStore{String,Any}
 end
 Base.haskey(store::NativeItemStore, id::AbstractString) = haskey(store.values, id)
