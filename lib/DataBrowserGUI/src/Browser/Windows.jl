@@ -94,6 +94,8 @@ are counted. The header of the window names the visualizer.
 """
 function title(state::BrowserState, window::Window)::String
     workspace = state.workspace::Workspace.Workspace
+    # TODO(scale): the browser asks for the title at each frame, and the items of fixed ids are
+    # looked up again each time; keep the title until the input or the workspace changes.
     items = itemkeys(window.input, state)
     isempty(items) && return "No items"
     length(items) > 3 && return "$(length(items)) items"
