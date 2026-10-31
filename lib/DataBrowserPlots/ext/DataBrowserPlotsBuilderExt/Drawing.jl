@@ -61,12 +61,8 @@ function draw_field!(view::BuilderView, buffer::Vector{UInt8}=view.editing.buffe
         return text
     elseif done && !isempty(text)
         # Text that Julia cannot read is not written; Julia's message says why.
-        edit.problem = try
-            Meta.parse(text)
-            nothing
-        catch error
-            error isa Meta.ParseError ? error.msg : rethrow()
-        end
+        parsed = Meta.parse(text; raise=false)
+        edit.problem = Meta.isexpr(parsed, (:error, :incomplete)) ? only(parsed.args).msg : nothing
         edit.problem === nothing || (edit.focus = true; return nothing)
         view.editing = nothing
         return text

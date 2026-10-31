@@ -173,13 +173,13 @@ function part_field!(view::BuilderView, key::String, shown::String, width::Float
     code || return text
     text = String(strip(text))
     # Text that Julia cannot read leaves the code as it is.
-    isempty(text) || try Meta.parse(text) catch; return nothing end
+    Meta.isexpr(Meta.parse(text; raise=false), (:error, :incomplete)) && return nothing
     return text
 end
 
 function widget_parts(::Words, value::String)::Union{Nothing,Vector{String}}
     isempty(strip(value)) && return [""]
-    text = try Meta.parse(value) catch; nothing end
+    text = Meta.parse(value; raise=false)
     return text isa String ? [text] : nothing
 end
 
@@ -220,7 +220,7 @@ end
 # Each value written, and its name in the legend, empty for none.
 function widget_parts(::Categories, value::String)::Union{Nothing,Vector{Pair{Any,String}}}
     isempty(strip(value)) && return Pair{Any,String}[]
-    list = try Meta.parse(value) catch; return nothing end
+    list = Meta.parse(value; raise=false)
     Meta.isexpr(list, :vect) || return nothing
     literal(e) = e isa Union{String,Number} ? e : e isa QuoteNode && e.value isa Symbol ? e.value : nothing
     parts = map(list.args) do e
@@ -349,9 +349,15 @@ end
 
 # The color written as a literal in `text`, such as `:red` or `"#ff0000"`, or `nothing`.
 function written_color(text::AbstractString)::Union{Nothing,ig.ImVec4}
-    expression = try Meta.parse(text) catch; return nothing end
+    expression = Meta.parse(text; raise=false)
     value = expression isa QuoteNode ? expression.value : expression isa String ? expression : return nothing
-    return try imcolor(value) catch; nothing end
+    # Makie refuses a name or a text that is not a color.
+    return try
+        imcolor(value)
+    catch err
+        err isa ArgumentError || rethrow()
+        nothing
+    end
 end
 
 # The code of a color, such as `"#e69f00"`, with its alpha when it is not 1.

@@ -137,12 +137,9 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
                 ig.ImGuiWindowFlags_NoScrollbar)
             ig.PopStyleVar()
             ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (style.FramePadding.x, style.FramePadding.y - room))
-            written = try
-                draw_widget!(view, widget, target, name, drawn, editing && edit.focus)
-            finally
-                ig.PopStyleVar()
-                ig.EndChild()
-            end
+            written = draw_widget!(view, widget, target, name, drawn, editing && edit.focus)
+            ig.PopStyleVar()
+            ig.EndChild()
             ig.AddRectFilled(ig.GetWindowDrawList(), ig.GetItemRectMin(), ig.GetItemRectMax(), ig.GetColorU32(ig.ImGuiCol_FrameBg, 0.4f0),
                 style.FrameRounding, ig.ImDrawFlags_RoundRight)
             written

@@ -83,9 +83,9 @@ function build!(view::PlotView, ctx)::Nothing
             @timed_dbg plot_data!(workspace, plot, selection, figure)
             figure
         end
-        figure === nothing && error("The plot returned no figure.")
+        # The window shows the figure with `embed`, which a plot backend defines for its figure type.
         hasmethod(embed, Tuple{typeof(figure),String}) ||
-            error("No loaded plot backend can show a $(typeof(figure))")
+            error("The plot's setup returned $(summary(figure)), which no loaded plot backend can show")
         view.figure = figure
         view.message = ""
         view.error_details = ""
