@@ -175,13 +175,9 @@ function computation_result(workspace::Workspace, value::Computation)
         (key isa ItemKey ? type : ResultItem{type}), id(catalog, key)
     end
     store = result_store(workspace, type)
-    (store === nothing || !haskey(store, stored)) && return nothing
-    kept = try
-        read(store, type, stored)
-    catch error
-        error isa KeyError || rethrow()
-        return nothing
-    end
+    store === nothing && return nothing
+    kept = only(read(store, type, [stored]))
+    kept === nothing && return nothing
     return Some(key isa ItemKey ? kept : data(kept))
 end
 

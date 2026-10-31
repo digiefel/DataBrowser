@@ -116,7 +116,8 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
         @lock(catalog.lock, current_value(catalog, address)) || (store = nothing)
         id(catalog, first(address))
     end
-    stored = ComputationResult(value, revision, typeof(result), typeof(item), store, key, Dict{Symbol,Any}(deepcopy(metadata(item))))
+    type = typeof(item)
+    stored = ComputationResult(value, revision, typeof(result), type, store, key, Dict{Symbol,Any}(deepcopy(metadata(item))))
     store === nothing || write(store, key, deepcopy(item))
     kept, previous = @lock catalog.lock begin
         if current_execution(workspace, catalog, value, revision)
@@ -127,12 +128,12 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
             false, nothing
         end
     end
-    kept || store === nothing || delete!(store, key)
+    kept || store === nothing || delete!(store, type, key)
     kept && store !== nothing && lasting !== nothing &&
-        store_computation_revision!(workspace.cache.db, key, lasting, typeof(item))
+        store_computation_revision!(workspace.cache.db, key, lasting, type)
     if previous !== nothing && previous.store !== nothing &&
-            (previous.store !== store || previous.key != key)
-        delete!(previous.store, previous.key)
+            (previous.store !== store || previous.item_type !== type || previous.key != key)
+        delete!(previous.store, previous.item_type, previous.key)
     end
     return result
 end
@@ -197,13 +198,9 @@ function restored_result(workspace::Workspace, value::Computation)
     (recorded === nothing || first(recorded) != lasting) && return nothing
     type = last(recorded)
     store = result_store(workspace, type)
-    (store === nothing || !haskey(store, key)) && return nothing
-    item = try
-        read(store, type, key)
-    catch error
-        error isa KeyError || rethrow()
-        return nothing
-    end
+    store === nothing && return nothing
+    item = only(read(store, type, [key]))
+    item === nothing && return nothing
     result = type <: ResultItem ? data(item) : item
     # Later evaluations find it by its address, without building its id again.
     catalog = workspace.catalog
@@ -230,20 +227,15 @@ current_value(catalog::Catalog, (key, stage)::Target) =
 
 function stored_result(value::ComputationResult)
     value.store === nothing && return nothing
-    haskey(value.store, value.key) || return nothing
-    try
-        item = @timed_dbg "result.read" read(value.store, value.item_type, value.key)
-        return Some(value.value_type <: AbstractDataItem ? item : data(item))
-    catch error
-        error isa KeyError && isequal(error.key, value.key) || rethrow()
-        return nothing
-    end
+    item = @timed_dbg "result.read" only(read(value.store, value.item_type, [value.key]))
+    item === nothing && return nothing
+    return Some(value.value_type <: AbstractDataItem ? item : data(item))
 end
 
 function forget_result!(workspace::Workspace, address)
     delete!(workspace.executions, address)
     value = pop!(workspace.results, address, nothing)
-    value === nothing || value.store === nothing || delete!(value.store, value.key)
+    value === nothing || value.store === nothing || delete!(value.store, value.item_type, value.key)
     return nothing
 end
 
@@ -277,15 +269,16 @@ function cache_info(workspace::Workspace, value::Computation)
     if record !== nothing
         record.computation === value && record.revision == computation_revision(catalog, value) &&
             record.store !== nothing || return (cached=false, bytes=nothing)
-        cached = haskey(record.store, record.key)
-        return (cached=cached, bytes=cached ? DataBrowserAPI.stored_size(record.store, record.key) : nothing)
+        cached = haskey(record.store, record.item_type, record.key)
+        return (cached=cached, bytes=cached ? DataBrowserAPI.stored_size(record.store, record.item_type, record.key) : nothing)
     end
     address isa Target || return (cached=false, bytes=nothing)
     key, stage = address
     cached = if key isa ItemKey && !haskey(workspace.computations, key)
-        store = result_store(workspace, valuetype(workspace, key))
+        type = valuetype(workspace, key)
+        store = result_store(workspace, type)
         store !== nothing && @lock(catalog.lock, current_value(catalog, address)) &&
-            haskey(store, id(workspace, key))
+            haskey(store, type, id(workspace, key))
     else
         false
     end

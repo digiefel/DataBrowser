@@ -11,12 +11,14 @@ ComputationProject() = ComputationProject(Ref(0), Type[])
 
 # A project store can accept only the native item type it was configured for.
 struct NativeItemStore{T<:AbstractDataItem} <: AbstractStore
-    values::MemoryStore{String,Any}
+    values::typeof(MemoryStore())
 end
-Base.haskey(store::NativeItemStore, id::AbstractString) = haskey(store.values, id)
-Base.write(store::NativeItemStore{T}, id::AbstractString, value::T) where {T} = write(store.values, id, value)
-Base.read(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = read(store.values, T, id)
-Base.delete!(store::NativeItemStore, id::AbstractString) = delete!(store.values, id)
+Base.haskey(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = haskey(store.values, T, id)
+Base.write(store::NativeItemStore{T}, id::AbstractString, item::T) where {T} = write(store.values, id, item)
+Base.read(store::NativeItemStore{T}, ::Type{T}, ids::AbstractVector) where {T} = read(store.values, T, ids)
+Base.delete!(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = delete!(store.values, T, id)
+DataBrowserAPI.stored_size(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} =
+    DataBrowserAPI.stored_size(store.values, T, id)
 function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T<:ResultItem}
     push!(project.store_types, T)
     return NativeItemStore{T}(MemoryStore())

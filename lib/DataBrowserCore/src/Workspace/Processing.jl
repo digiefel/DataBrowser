@@ -170,12 +170,8 @@ holds it; otherwise `nothing`.
 function kept_expanded(workspace::Workspace, item_id::String, type::Type, given::MetadataDict)
     @lock(workspace.catalog.lock, haskey(workspace.expanded, item_id)) || return nothing
     store = result_store(workspace, type)
-    stored = try
-        read(store, type, item_id)
-    catch error
-        error isa KeyError || rethrow()
-        return nothing
-    end
+    stored = only(read(store, type, [item_id]))
+    stored === nothing && return nothing
     return reconstruct(type, item_id, data(stored), given)
 end
 
