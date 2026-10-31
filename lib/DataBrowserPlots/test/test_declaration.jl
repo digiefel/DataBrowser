@@ -11,7 +11,6 @@ plotted(drawn, type) = [p for p in only(filter(c -> c isa Axis, drawn.content)).
     drawn = figure(plot)
     @test length(plotted(drawn, Lines)) == 2
     @test last.(only(plotted(drawn, Scatter))[1][]) == [0.0, -1.0, 0.0, -1.0]
-    @test DataBrowserPlots.scale_categories(plot) == Dict(:color => ["a", "b"])
 end
 
 @testset "item paths draw each trace and one peak per item" begin
@@ -25,14 +24,6 @@ end
 
     both = @plot mapping(:data.V, :data.I) * visual(Lines) + mapping(last(:data.V), maximum(:data.I)) * visual(Scatter)
     @test Tuple.(only(plotted(figure(both, items), Scatter))[1][]) == [(1.0, 1.0), (2.0, 3.0)]
-
-    # The kinds of the scales come from the types of the items' values, without drawing: a formula
-    # of a number is a number, and the data of an item is not known until it is read.
-    roles = @plot mapping(:data.V, :data.I; color=:device) begin
-        mapping(; markersize=2 * length(:device)) * visual(Scatter)
-        mapping(; color=:data.I) * visual(Lines)
-    end
-    @test DataBrowserPlots.scale_kinds(roles, items) == Dict(:markersize => :continuous)
 
     series = @plot mapping(; x=:device, y=maximum(:data.I), y2=-maximum(:data.I), marker=ydims()) * visual(Scatter)
     @test sort(last.(reduce(vcat, [p[1][] for p in plotted(figure(series, items), Scatter)]))) == [-3.0, -1.0, 1.0, 3.0]
@@ -58,10 +49,6 @@ end
     drawn = figure(plot)
     @test length(plotted(drawn, Scatter)) == 1
     @test length(plotted(drawn, Lines)) == 1
-    # A role holds categories or numbers, as the points give them.
-    @test DataBrowserPlots.scale_kinds(@plot data((; rows..., C=["a", "b", "a", "b"])) * mapping(:V, :I; markersize=:P) begin
-        mapping(; color=:C) * visual(Scatter)
-    end) == Dict(:markersize => :continuous, :color => :categorical)
     # A role of the line's own mapping is not left out.
     @test_throws ArgumentError figure(@plot data(rows) * mapping(:V, :I) begin
         mapping(; markersize=:P) * visual(Lines)

@@ -1,5 +1,3 @@
-using InteractiveUtils: subtypes
-
 using DataBrowserAPI: AbstractProject
 
 """One plot registered for an item kind with [`register_plot!`](@ref)."""
@@ -37,11 +35,35 @@ it applies to and the label that distinguishes plots for that kind.
 """
 struct RegisteredPlot{Kind,Label} <: PlotKind end
 
-"""Create the figure layout a plot kind requires for the given items."""
-function setup_plot end
+"""
+    setup_plot(workspace, plot::Type{<:RegisteredPlot}, selection)
 
-"""Draw the given items into an existing figure."""
-function plot_data! end
+Create the figure of a registered plot for `selection`, with the `setup` function of the plot.
+"""
+function setup_plot(
+    workspace::Workspace.Workspace,
+    ::Type{RegisteredPlot{Kind,Label}},
+    selection::Selection,
+) where {Kind,Label}
+    recipe = _plot_recipes(workspace.project)[Kind][String(Label)]
+    return @timed_dbg "setup_plot" recipe.setup(selection)
+end
+
+"""
+    plot_data!(workspace, plot::Type{<:RegisteredPlot}, selection, figure)
+
+Draw `selection` into `figure`, the figure of a registered plot, with the `draw` function of the plot.
+"""
+function plot_data!(
+    workspace::Workspace.Workspace,
+    ::Type{RegisteredPlot{Kind,Label}},
+    selection::Selection,
+    figure,
+)::Nothing where {Kind,Label}
+    recipe = _plot_recipes(workspace.project)[Kind][String(Label)]
+    @timed_dbg "draw_plot" recipe.draw(selection, figure)
+    return nothing
+end
 
 """
     embed(figure, id)
@@ -103,22 +125,4 @@ end
 """Human label for a registered plot kind, taken from its recipe."""
 function plot_kind_label(project, ::Type{RegisteredPlot{Kind,Label}})::String where {Kind,Label}
     return _plot_recipes(project)[Kind][String(Label)].label
-end
-
-"""
-Return every loaded concrete visualizer type.
-
-Visualizers are discovered from Julia's type hierarchy, so external project packages require no
-registration with the browser engine.
-"""
-function plot_kinds()::Vector{Type{<:PlotKind}}
-    kinds = Type{<:PlotKind}[]
-    pending = Type[PlotKind]
-    while !isempty(pending)
-        for child in subtypes(pop!(pending))
-            isabstracttype(child) ? push!(pending, child) : push!(kinds, child)
-        end
-    end
-    sort!(kinds; by=kind -> String(nameof(kind)))
-    return kinds
 end

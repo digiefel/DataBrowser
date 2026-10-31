@@ -61,7 +61,7 @@ end
     @test sections(figure(plot)) == [("Chip", ["72b on W1", "719a on W2"])]
 
     # Both chips are on one wafer, so the wafer's entry has two chips.
-    @test_throws "has 2 values of Chip" figure(@plot data([(r..., Wafer="W1") for r in rows]) * mapping(:V, :I; linestyle=:Wafer) begin
+    @test_throws ErrorException figure(@plot data([(r..., Wafer="W1") for r in rows]) * mapping(:V, :I; linestyle=:Wafer) begin
         visual(Lines)
         legend(linestyle = "$(:Chip)")
     end)

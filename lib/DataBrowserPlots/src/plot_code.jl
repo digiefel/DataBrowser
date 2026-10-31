@@ -39,8 +39,9 @@ end
 
 """
 The parts of the last `@plot` of some code, each with its bytes in the code: the mapping of the
-header, the lines that are layers, and the last `scales(...)`, `legend(...)` and `theme(...)` lines. The plot builder reads them to
-show the plot's mappings, layers and scales, and changes the code at those bytes.
+header, the lines that are layers, and the last `scales(...)`, `legend(...)` and `theme(...)`
+lines. The plot builder reads them to show the plot's mappings, layers and scales, and changes the
+code at those bytes.
 """
 struct PlotCode
     mapping::Union{Nothing,CallCode}
@@ -183,11 +184,13 @@ function call_code(text::String, node::SyntaxNode)::Union{Nothing,CallCode}
 end
 
 """
-    add_layer!(code::CodeFile, visual::Symbol) -> CodeFile
+    add_layer!(code::CodeFile, type::Symbol) -> CodeFile
 
-Insert a visual layer into the last `@plot` in `code`, preserving surrounding source and comments.
-A declaration without a block acquires one with its original visual as the first layer.
-The file is not saved or evaluated; use `DataBrowserGUI.save!` to save the change.
+Add the layer `visual(type)`, such as `visual(Scatter)` for `:Scatter`, at the end of the block of
+the last `@plot` in `code`. A `@plot` without a block gets one, with its own `visual` as the first
+layer. The rest of the code, comments included, stays as it is.
+
+`add_layer!` changes the text of `code` only: `DataBrowserGUI.save!` writes it to its file.
 """
 function add_layer!(code::CodeFile, type::Symbol)::CodeFile
     plot = tryparse(PlotCode, code)
@@ -223,10 +226,12 @@ end
 """
     set_analysis!(code::CodeFile, layer::Integer, analysis; index=1) -> CodeFile
 
-Replace one analysis factor of a layer in the last `@plot`. `analysis` is Julia source such as
-`"expectation()"`, or `nothing` to remove the factor. If the layer has no analysis at `index`,
-append it before its visual. Mappings, other factors and surrounding source are preserved.
-The file is not saved or evaluated.
+Set the analysis at `index` of layer `layer` of the last `@plot` in `code`. `analysis` is Julia code,
+such as `"expectation()"`, or `nothing`, which removes the analysis. An `index` after the layer's
+last analysis adds `analysis` before the layer's `visual`. The mappings, the other analyses and the
+rest of the code stay as they are.
+
+`set_analysis!` changes the text of `code` only: `DataBrowserGUI.save!` writes it to its file.
 """
 function set_analysis!(code::CodeFile, layer::Integer, analysis::Union{Nothing,AbstractString}; index::Integer=1)::CodeFile
     plot = tryparse(PlotCode, code)
