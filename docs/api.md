@@ -15,7 +15,7 @@ Each kind has several surfaces: groups of functions and types that are used toge
 | [Sources](#Sources)               | provider | Ready-made source types, such as `DirectorySource`                        | DataBrowserSources |
 | [Recipes](#Recipes)               | provider | Describe a project with plain functions of data and metadata, without defining types | DataBrowserRecipes |
 | [Plots](#Plots)                   | provider | Plot definitions in AlgebraOfGraphics syntax, drawn with Makie            | DataBrowserPlots   |
-| [Visualizers](#Visualizers)       | provider | Types that display a value in the browser, for example as a table or a plot | DataBrowserAPI   |
+| [Visualizers](#Visualizers)       | provider | Types that display data and metadata in the browser, in any form the data needs | DataBrowserAPI   |
 | [GUI extensions](#GUI-extensions) | provider | Types that add windows and menus to the browser                           | DataBrowserGUI     |
 | [Workspace](#Workspace)           | client   | Functions that open a project on a source, select items and return their data | DataBrowserCore |
 | [Browser](#Browser)               | client   | Functions that open and close the browser on a workspace                  | DataBrowserGUI     |
@@ -120,8 +120,9 @@ DataBrowserPlots.set_analysis!
 
 ### Visualizers
 
-A visualizer displays a value, for example as a table or a plot. The browser calls `prepare!`
-when the value changes and `draw!` in every frame.
+A visualizer displays data and metadata in any form the data needs: a table of measurements, a
+plot, a 3D view of a simulation mesh of the Earth, an image, a dashboard. The browser calls
+`prepare!` when the value changes and `draw!` in every frame.
 
 ```@docs
 DataBrowserAPI.AbstractVisualizer
