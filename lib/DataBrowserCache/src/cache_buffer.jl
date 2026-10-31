@@ -1115,8 +1115,8 @@ function _pending_tabular_body(
         (false, nothing)
 end
 
-# The most values that one query of a read returns, about 20 MiB of numbers. The query sorts its
-# result, so the database holds one batch in memory while the reader takes it.
+# The most values that one query of a read returns, about 20 MiB of numbers, which the reader holds
+# in memory once more while it places them.
 const READ_BATCH_VALUES = 2_500_000
 const READ_BATCH_PAYLOADS = 1024
 
@@ -1125,8 +1125,7 @@ Read the stored payloads at `locations`, each as a `NamedTuple` of columns. `loc
 number of values of each payload, rows times columns.
 
 A read is split into queries of at most `READ_BATCH_VALUES` values, and a payload larger than that
-has a query of its own. The result of a query is taken one chunk at a time and appended to the
-columns of each payload, so no table of the whole result exists.
+has a query of its own.
 """
 function _read_tabular_locations(
     store::TabularFamilyStore,
@@ -1150,58 +1149,49 @@ function _read_tabular_locations(
             end
             batch_seqs = splice!(remaining, 1:batch)
             placeholders = join(fill("?", length(batch_seqs)), ", ")
-            # A streamed result uses the connection until it is closed, so the lock covers it.
-            lock(store.read_lock) do
-                statement = DuckDB.Stmt(store.read_connection, """
-                    SELECT *
-                    FROM $table
-                    WHERE $MB_SEQ_COLUMN IN ($placeholders)
-                    ORDER BY $MB_SEQ_COLUMN, $MB_ROW_COLUMN
-                """, DuckDB.StreamResult)
-                result = DuckDB.execute(statement, Tuple(batch_seqs))
-                try
-                    data = findall(name -> name ∉ (seq_name, row_name), result.names)
-                    data_names = Tuple(result.names[data])
-                    # The columns of each payload, in the order of `data_names`.
-                    columns = Dict{UInt32,Vector{AbstractVector}}()
-                    for chunk in Tables.partitions(result)
-                        seq_column = chunk.tbl[seq_name]
-                        # The query orders by seq, so one payload is contiguous runs of the seq column.
-                        run_start = 1
-                        while run_start <= length(seq_column)
-                            run_end = something(
-                                findnext(!=(seq_column[run_start]), seq_column, run_start),
-                                length(seq_column) + 1) - 1
-                            target = get!(columns, seq_column[run_start]) do
-                                AbstractVector[similar(chunk.tbl[name], 0) for name in data_names]
-                            end
-                            for (index, name) in enumerate(data_names)
-                                rows = view(chunk.tbl[name], run_start:run_end)
-                                # A chunk without missing values has a narrower element type than one with them.
-                                target[index] = eltype(rows) <: eltype(target[index]) ?
-                                    append!(target[index], rows) : vcat(target[index], rows)
-                            end
-                            run_start = run_end + 1
-                        end
-                    end
-                    for seq in batch_seqs
-                        # A zero-row payload has a pointer and schema but no physical rows; it
-                        # reconstructs as an empty value with the correct columns. The database
-                        # reports every column as one that allows missing values; a column with
-                        # rows and no missing value comes back without `Missing`, and so does this.
-                        payload = get(columns, seq) do
-                            AbstractVector[nonmissingtype(type)[] for type in result.types[data]]
-                        end
-                        rows_by_location[(storage_id, seq)] = NamedTuple{data_names}(Tuple(payload))
-                    end
-                finally
-                    DBInterface.close!(result)
-                    DBInterface.close!(statement)
+            # One materialized query, which DuckDB runs on all threads. Its rows come in no order;
+            # each value goes to its place from the seq and row columns.
+            result = lock(store.read_lock) do
+                Tables.columntable(DBInterface.execute(store.read_connection, """
+                    SELECT * FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)
+                """, batch_seqs))
+            end
+            data_names = Tuple(name for name in keys(result) if name ∉ (seq_name, row_name))
+            seq_column, row_column = result[seq_name], result[row_name]
+            columns = Dict{UInt32,Vector{AbstractVector}}(
+                seq => AbstractVector[similar(result[name], store.rows[(storage_id, seq)]) for name in data_names]
+                for seq in batch_seqs)
+            for (index, name) in enumerate(data_names)
+                _scatter!(columns, index, result[name], seq_column, row_column)
+            end
+            for seq in batch_seqs
+                # The database reports a column as one that allows missing values when any row of
+                # the query has one; a payload column without missing values comes back without it.
+                payload = map(columns[seq]) do column
+                    Missing <: eltype(column) && !any(ismissing, column) ?
+                        convert(Vector{nonmissingtype(eltype(column))}, column) : column
                 end
+                rows_by_location[(storage_id, seq)] = NamedTuple{data_names}(Tuple(payload))
             end
         end
     end
     return rows_by_location
+end
+
+# Put each value of `values` at its row in the column `index` of its payload. A function of its
+# own, so that the loop is compiled for the type of `values`; rows of one payload mostly follow
+# each other, so the payload is looked up again only when the seq changes.
+function _scatter!(columns, index::Int, values::V, seqs::AbstractVector, rows::AbstractVector) where {V<:AbstractVector}
+    current = first(seqs)
+    target = columns[current][index]::V
+    for position in eachindex(values, seqs, rows)
+        if seqs[position] != current
+            current = seqs[position]
+            target = columns[current][index]::V
+        end
+        target[rows[position]] = values[position]
+    end
+    return nothing
 end
 
 """
