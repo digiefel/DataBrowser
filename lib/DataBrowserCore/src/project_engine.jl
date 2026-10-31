@@ -89,29 +89,15 @@ function expanded_items(project, source, source_item, loaded, items)::Vector{Exp
 end
 
 """
-    items_for_file(project, filepath; meta=nothing) -> Vector{AbstractDataItem}
+    items_for_file(project, filepath) -> Vector{AbstractDataItem}
 
-Read one file into the data items that project code produces for it, outside any workspace. Each
-item carries the metadata of its collections under its own. `meta` gives `metadata.txt` entries by
-directory path, as a directory source would read them.
+Read one file into the data items that project code produces for it, outside any workspace.
 """
-function items_for_file(
-    project::AbstractProject,
-    filepath::AbstractString;
-    meta::Union{Nothing,Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}}=nothing,
-)::Vector{AbstractDataItem}
+function items_for_file(project::AbstractProject, filepath::AbstractString)::Vector{AbstractDataItem}
     source = DirectorySource(dirname(filepath); metadata_file=nothing)
-    if meta !== nothing
-        source.collection_metadata_entries = meta
-        source.has_metadata = true
-    end
     source_item = index_source_file(filepath, dirname(filepath))
     loaded = read(project, source, source_item)
     return map(expand(project, source, source_item, loaded)) do expanded
-        inherited = MetadataDict()
-        for (value, provided) in zip(expanded.collections, expanded.source_metadata)
-            merge!(inherited, metadata_dict(metadata(value)), provided)
-        end
-        adopt(expanded.item, expanded.label, merge!(inherited, expanded.metadata), expanded.collections)
+        adopt(expanded.item, expanded.label, expanded.metadata, expanded.collections)
     end
 end

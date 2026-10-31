@@ -224,12 +224,12 @@ end
 
 The metadata of a collection or an item, as a new dictionary.
 
-For a collection: for each collection above it and then for the collection itself, the metadata of
-its value and then the metadata its source provides for it; then the metadata of the value its own
-`process` returned. For an item: what project code receives with the item, which is the metadata of
-its collections, then the metadata its source item and `expand` gave it, then the result of
-`process`, then the result of the member `process` methods of its collections while that result is
-current. Later values replace earlier values with the same key.
+For a collection: the metadata of its value, then the metadata its source provides for it, then
+the metadata of the value its `process` returned. For an item: the metadata its source item and
+`expand` gave it, then the result of `process`, then the result of the member `process` methods of
+its collections while that result is current. Neither includes the metadata of the collections
+above it: a member `process` method can copy it into an item. Later values replace earlier values
+with the same key.
 
 `through=SOURCE_EXPAND` gives the metadata that `process` receives, and `through=ITEM_PROCESS` the
 metadata that the member `process` methods receive.
@@ -237,24 +237,16 @@ metadata that the member `process` methods receive.
 function metadata(workspace::Workspace, collection::CollectionKey)::MetadataDict
     catalog = workspace.catalog
     @lock catalog.lock begin
-        merged = MetadataDict()
-        for key in [ancestors(workspace, collection); collection]
-            key == ROOT && continue
-            merge!(merged, metadata(catalog, key, :collection), metadata(catalog, key, :source))
-        end
-        collection == ROOT || merge!(merged, metadata(catalog, collection, COLLECTION_PROCESS))
-        return merged
+        collection == ROOT && return MetadataDict()
+        return merge(metadata(catalog, collection, :collection), metadata(catalog, collection, :source),
+            metadata(catalog, collection, COLLECTION_PROCESS))
     end
 end
 
 function metadata(workspace::Workspace, item::ItemKey; through::PipelineStage=MEMBER_PROCESS)::MetadataDict
     catalog = workspace.catalog
     @lock catalog.lock begin
-        merged = MetadataDict()
-        for key in ancestors(workspace, item)
-            merge!(merged, metadata(catalog, key, :collection), metadata(catalog, key, :source))
-        end
-        merge!(merged, metadata(catalog, item, SOURCE_EXPAND))
+        merged = copy(metadata(catalog, item, SOURCE_EXPAND))
         through == SOURCE_EXPAND && return merged
         merge!(merged, metadata(catalog, item, ITEM_PROCESS))
         through == ITEM_PROCESS && return merged

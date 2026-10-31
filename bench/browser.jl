@@ -47,7 +47,7 @@ function browser_workload(root, opening, started_ns)
         wait_browser_ready(session)
         opening_s = (time_ns() - started_ns) / 1e9
         finish_work(workspace)
-        items = check_items(workspace, [4.0, 6.0, 9.0])
+        items = check_items(workspace, [4.0, 6.0, 6.0])
         # "runs" holds every item: its callbacks see three members.
         all(first(item_data(item).members) == metadata(item)[:members] == 3 for item in items) ||
             error("Collection processing did not reach the selected items")
@@ -68,24 +68,16 @@ function browser_workload(root, opening, started_ns)
             cp(joinpath(PUBLIC_VARIANTS, "a_changed.dbitem"), joinpath(root, "a.dbitem"); force=true)
             wait_for(() -> counters.reads["a.dbitem"][] == 1, session)
             finish_work(workspace)
-            check_items(workspace, [9.0, 40.0, 42.0])
-            reads_before = Dict(name => count[] for (name, count) in counters.reads)
-            processed_before = counters.processes[]
-            cp(joinpath(PUBLIC_VARIANTS, "metadata_changed.txt"), joinpath(root, "metadata.txt"); force=true)
-            wait_for(() -> counters.processes[] >= processed_before + 2, session)
-            finish_work(workspace)
-            check_items(workspace, [9.0, 80.0, 84.0])
-            Dict(name => count[] for (name, count) in counters.reads) == reads_before ||
-                error("Metadata updates reread unchanged source files")
+            check_items(workspace, [6.0, 40.0, 42.0])
             extra = joinpath(root, "extra.dbitem")
             cp(joinpath(PUBLIC_VARIANTS, "extra.dbitem"), extra)
             wait_for(() -> length(query_items(workspace)) == 4, session)
             finish_work(workspace)
-            check_items(workspace, [9.0, 20.0, 80.0, 84.0])
+            check_items(workspace, [6.0, 10.0, 40.0, 42.0])
             rm(extra)
             wait_for(() -> length(query_items(workspace)) == 3, session)
             finish_work(workspace)
-            check_items(workspace, [9.0, 80.0, 84.0])
+            check_items(workspace, [6.0, 40.0, 42.0])
         end
         return Dict("browser_$(opening)_s" => opening_s, "frame_ui_ms" => frame_ms)
     finally

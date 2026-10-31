@@ -222,8 +222,12 @@ workloads, completed disk writes, cache reads and process memory measurements.
   each member is the data of the collection, and a member `process` takes its own part.
 - [ ] Run collection and member `process` again until the members stop changing, with an error
   after a maximum number of rounds. Today each runs once.
-- [ ] Items carry all their metadata: remove the collection metadata layer that items inherit,
-  and `native_value`/`adopt`, so that `reconstruct` gives back the stored value.
+- [x] Items carry all their metadata: they no longer inherit the metadata of their collections. A
+  member `process` method copies it when needed; the Recipes one does.
+- [ ] Remove `native_value` and `adopt`, so that `reconstruct` gives back the stored value.
+- [ ] Store the results of item and member `process` in the store that `storage(project, T)`
+  chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
+  one copy of data that a member `process` returned unchanged.
 - [ ] Sort every exported name into the project-author or extension-author tier and stop exporting
   the rest: `items_for_file`, `SourceFile`, the concrete `Project`, `gui_timings`,
   `reset_timings!`, `plot_kinds`, `CollectionRecipe`, `ItemRecipe`, `NoMatch`,
