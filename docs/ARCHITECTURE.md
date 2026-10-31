@@ -190,8 +190,8 @@ a function, arguments and settings. `computation(workspace, item)` describes the
 for an item; `computation(workspace, key, stage)` describes one pipeline call. `inputs(value)`
 returns the directly preceding computations. Reading these definitions does not load payloads
 or run project functions. `evaluate(workspace, value)` obtains the native result, reusing existing
-native result stores where available and replaying missing inputs. `storage(project, T)` chooses
-the store for a native `AbstractDataItem` type; the project form defaults to `storage(T)`. Ordinary
+native result stores where available and replaying missing inputs. `storage(workspace, T)` chooses
+the store for a native `AbstractDataItem` type. Ordinary
 Julia results are stored as workspace-owned `ResultItem{T}` items, with `T` the result's type.
 Stores receive this complete item; evaluation unwraps it for ordinary function calls. Returning
 `nothing` leaves that result uncached. The default `MemoryStore` uses the same bounded memory buffer as the source

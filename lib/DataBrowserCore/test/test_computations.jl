@@ -16,8 +16,8 @@ Base.haskey(store::NativeItemStore, id::AbstractString) = haskey(store.values, i
 Base.write(store::NativeItemStore{T}, id::AbstractString, value::T) where {T} = write(store.values, id, value)
 Base.read(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = read(store.values, T, id)
 Base.delete!(store::NativeItemStore, id::AbstractString) = delete!(store.values, id)
-function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T<:ResultItem}
-    push!(project.store_types, T)
+function DataBrowserAPI.storage(workspace::CW.Workspace{ComputationProject}, ::Type{T}) where {T<:ResultItem}
+    push!(workspace.project.store_types, T)
     return NativeItemStore{T}(MemoryStore())
 end
 struct ComputationSource <: AbstractDataSource end
@@ -74,9 +74,11 @@ struct UncachedComputationProject <: AbstractProject
     project::ComputationProject
 end
 DataBrowserAPI.project_name(::UncachedComputationProject) = "uncached-computation-graph"
-DataBrowserAPI.storage(::UncachedComputationProject, ::Type{ComputationItem}) = nothing
-DataBrowserAPI.storage(project::UncachedComputationProject, ::Type{T}) where {T<:ResultItem} =
-    storage(project.project, T)
+DataBrowserAPI.storage(::CW.Workspace{UncachedComputationProject}, ::Type{ComputationItem}) = nothing
+function DataBrowserAPI.storage(workspace::CW.Workspace{UncachedComputationProject}, ::Type{T}) where {T<:ResultItem}
+    push!(workspace.project.project.store_types, T)
+    return NativeItemStore{T}(MemoryStore())
+end
 DataBrowserAPI.read(project::UncachedComputationProject, source::ComputationSource, file::ComputationFile) =
     read(project.project, source, file)
 DataBrowserAPI.expand(project::UncachedComputationProject, file::ComputationFile, data) =
@@ -135,7 +137,8 @@ DataBrowserAPI.project_name(::PolicyProject) = "type-policy-reopen"
 DataBrowserAPI.id(::PolicySource) = "policy-source"
 DataBrowserAPI.label(::PolicySource) = "policy-source"
 DataBrowserAPI.items(source::PolicySource; kwargs...) = (source.scans[] += 1; [ComputationFile()])
-DataBrowserAPI.storage(project::PolicyProject, ::Type{ComputationItem}) = project.retain[] ? MemoryStore() : nothing
+DataBrowserAPI.storage(workspace::CW.Workspace{PolicyProject}, ::Type{ComputationItem}) =
+    workspace.project.retain[] ? MemoryStore() : nothing
 DataBrowserAPI.read(project::PolicyProject, ::PolicySource, file::ComputationFile) =
     read(project.project, ComputationSource(), file)
 DataBrowserAPI.expand(project::PolicyProject, file::ComputationFile, data) = expand(project.project, file, data)

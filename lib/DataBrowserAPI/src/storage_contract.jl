@@ -1,10 +1,10 @@
 """
-    storage(project, ::Type{T})
-    storage(::Type{T})
+    storage(workspace, ::Type{T})
 
-Choose storage for computation results whose item type is `T <: AbstractDataItem`.
-The project form defaults to `storage(T)`. Return `nothing` to leave results uncached.
-The supplied default is a bounded `DataBrowserCache.MemoryStore`.
+Choose how `workspace` keeps computation results whose item type is `T <: AbstractDataItem`.
+Return `nothing` to keep none. Without a method for `T`, DataBrowserCache supplies its default
+store. Define a method for your own item type, for example
+`storage(workspace, ::Type{Spectrum}) = MemoryStore(; max_bytes=2 * 1024^3)`.
 
 A store implements `write(store, id, value)`, `read(store, typeof(value), id)`,
 `haskey(store, id)` and `delete!(store, id)`. Store complete native values, including their
@@ -21,8 +21,6 @@ result stores currently cover one workspace opening. Supported table payloads ca
 existing persistent cache; native restoration across openings is still being implemented.
 """
 function storage end
-
-storage(::AbstractProject, type::Type{<:AbstractDataItem}) = storage(type)
 
 """
     stored_size(store, id) -> Union{Nothing,Int}
