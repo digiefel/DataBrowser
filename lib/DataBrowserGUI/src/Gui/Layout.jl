@@ -461,7 +461,8 @@ function _run_browser(
             # windows stay in the list, so that they are saved and open again next time.
             # Finish handovers while the graphics context and workspace are still available.
             for window in Iterators.flatten((state.windows, state.closing_windows))
-                preparing(window) && wait(window.preparation.task)
+                # `wait` is this function's keyword here.
+                preparing(window) && Base.wait(window.preparation.task)
                 _finish_preparation!(window)
             end
             _finish_closed_windows!(state)
