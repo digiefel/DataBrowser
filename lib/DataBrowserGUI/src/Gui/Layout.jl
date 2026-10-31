@@ -26,15 +26,9 @@ function status_color(level::Symbol)::NTuple{4,Float64}
     return (0.34, 0.34, 0.34, 1.0)
 end
 
-"""The workspace status snapshot, or a neutral placeholder when no source is open."""
-current_status(state::BrowserState)::WorkspaceStatus =
-    state.workspace isa Workspace.Workspace ? Workspace.workspace_status(state.workspace) :
-    WorkspaceStatus(:none, "No Project", "No workspace is open.",
-        false, nothing, Workspace.WorkspaceStageCounts(), Pair{String,String}[])
-
 """Render the cache status button and its control popup, colored by the workspace status."""
 function _render_cache_toolbar_button!(state::BrowserState)::Nothing
-    status = current_status(state)
+    status = Workspace.workspace_status(state.workspace)
     color = status_color(status.level)
     ig.PushStyleColor(ig.ImGuiCol_Button, color)
     ig.PushStyleColor(ig.ImGuiCol_ButtonHovered, shifted_color(color, 0.10))
@@ -66,11 +60,7 @@ function render_menu_bar(state::BrowserState)::Nothing
     workspace = state.workspace
     if ig.BeginMenuBar()
         if ig.BeginMenu("Project")
-            ig.TextDisabled(
-                workspace isa Workspace.Workspace ?
-                "Active: $(label(workspace.source))" :
-                "No project loaded",
-            )
+            ig.TextDisabled("Active: $(label(workspace.source))")
             ig.Separator()
 
             if ig.MenuItem("Project Settings", C_NULL, state.show_project_window)
@@ -106,9 +96,8 @@ end
 """Draw the workspace status line, progress, source identity, errors, and scan controls."""
 function _render_cache_controls!(state::BrowserState)::Nothing
     workspace = state.workspace
-    status = current_status(state)
+    status = Workspace.workspace_status(workspace)
 
-    workspace isa Workspace.Workspace || return nothing
     identity = workspace.cache.identity
     if identity isa ProjectCacheIdentity
         alt_held = unsafe_load(ig.GetIO().KeyAlt)
@@ -242,12 +231,7 @@ function render_project_window(state::BrowserState)::Nothing
 
     open_ref = Ref(true)
     if ig.Begin("Project Settings###project_window", open_ref, ig.ImGuiWindowFlags_AlwaysAutoResize)
-        workspace = state.workspace
-        if workspace isa Workspace.Workspace
-            ig.Text("Active: $(label(workspace.source))")
-        else
-            ig.TextDisabled("No workspace open")
-        end
+        ig.Text("Active: $(label(state.workspace.source))")
     end
     open_ref[] || (state.show_project_window = false)
     ig.End()
@@ -461,7 +445,8 @@ function _run_browser(
             # windows stay in the list, so that they are saved and open again next time.
             # Finish handovers while the graphics context and workspace are still available.
             for window in Iterators.flatten((state.windows, state.closing_windows))
-                preparing(window) && wait(window.preparation.task)
+                # `wait` is this function's keyword here.
+                preparing(window) && Base.wait(window.preparation.task)
                 _finish_preparation!(window)
             end
             _finish_closed_windows!(state)
@@ -495,20 +480,18 @@ function _run_browser(
         end
         state.performance.ready |= full_frame_submitted[]
         workspace = state.workspace
-        held = workspace isa Workspace.Workspace && trylock(workspace.lifecycle_lock)
+        held = trylock(workspace.lifecycle_lock)
         try
-            if workspace isa Workspace.Workspace && !held
+            if !held
                 _render_workspace_updating!()
                 return nothing
             end
-            if workspace isa Workspace.Workspace
-                _check_source_identity!(state, workspace)
-                _check_cache_error!(state, workspace)
-                # Reveal a selection made through the workspace, from the REPL or by an action.
-                if workspace.selection.revision != state.selection_revision
-                    state.selection_revision = workspace.selection.revision
-                    _reveal_selected_items!(state)
-                end
+            _check_source_identity!(state, workspace)
+            _check_cache_error!(state, workspace)
+            # Reveal a selection made through the workspace, from the REPL or by an action.
+            if workspace.selection.revision != state.selection_revision
+                state.selection_revision = workspace.selection.revision
+                _reveal_selected_items!(state)
             end
             exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
                 return :imgui_exit_loop
@@ -603,13 +586,12 @@ function open_browser(
     workspace.closed && error("The workspace is closed. Open it again with `open_workspace`.")
     Threads.threadpool(1) === :interactive && Threads.threadpoolsize(:default) > 0 ||
         error("The browser needs a UI thread and background workers. Start Julia with --threads=auto,1.")
-    state = BrowserState()
+    state = BrowserState(; workspace)
     state.extensions = _instantiate_extensions()
     for ext in state.extensions
         init!(ext, state)
     end
     ctx, fonts = _init_browser_context!()
-    state.workspace = workspace
     result = ScopedValues.with(_CURRENT_FONTS => fonts, _WINDOW_PREVIEWS => WindowPreviewCache()) do
         _run_browser(state, ctx; engine, spawn, wait, window_start=window_start)
     end

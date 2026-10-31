@@ -15,8 +15,7 @@ using DataBrowserAPI:
     AbstractProject,
     MetadataDict,
     metadata_dict
-using DataBrowserSources: DirectorySource, index_source_file
-import DataBrowserAPI: adopt, collection, expand, id, label, metadata, read
+import DataBrowserAPI: collection, expand, id, label, metadata, read
 
 """
 One item that a source item produced, with what the workspace stores for it.
@@ -35,8 +34,10 @@ struct ExpandedItem
 end
 
 """The collection values of `item` from the top down, or those of its source item when it has none."""
-function collections(source_item::AbstractDataSourceItem, item::AbstractDataItem)::Vector{AbstractCollection}
-    values = collection(item)
+function collections(
+    project::AbstractProject, source_item::AbstractDataSourceItem, item::AbstractDataItem,
+)::Vector{AbstractCollection}
+    values = collection(project, item)
     (values isa AbstractVector && all(value -> value isa AbstractCollection, values)) ||
         throw(ArgumentError(
             "collection(::$(typeof(item))) must return a vector of AbstractCollection values; " *
@@ -75,7 +76,7 @@ function expanded_items(project, source, source_item, loaded, items)::Vector{Exp
             "$(typeof(item)) from it, which is not an AbstractDataItem. Return a data item from " *
             "read, or define expand(::$(typeof(source_item)), ::$(typeof(loaded))).",
         )
-        values = collections(source_item, item)
+        values = collections(project, source_item, item)
         ExpandedItem(
             item,
             id(item),
@@ -85,33 +86,5 @@ function expanded_items(project, source, source_item, loaded, items)::Vector{Exp
             MetadataDict[
                 metadata_dict(metadata(source, values[1:depth])) for depth in eachindex(values)],
         )
-    end
-end
-
-"""
-    items_for_file(project, filepath; meta=nothing) -> Vector{AbstractDataItem}
-
-Read one file into the data items that project code produces for it, outside any workspace. Each
-item carries the metadata of its collections under its own. `meta` gives `metadata.txt` entries by
-directory path, as a directory source would read them.
-"""
-function items_for_file(
-    project::AbstractProject,
-    filepath::AbstractString;
-    meta::Union{Nothing,Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}}=nothing,
-)::Vector{AbstractDataItem}
-    source = DirectorySource(dirname(filepath); metadata_file=nothing)
-    if meta !== nothing
-        source.collection_metadata_entries = meta
-        source.has_metadata = true
-    end
-    source_item = index_source_file(filepath, dirname(filepath))
-    loaded = read(project, source, source_item)
-    return map(expand(project, source, source_item, loaded)) do expanded
-        inherited = MetadataDict()
-        for (value, provided) in zip(expanded.collections, expanded.source_metadata)
-            merge!(inherited, metadata_dict(metadata(value)), provided)
-        end
-        adopt(expanded.item, expanded.label, merge!(inherited, expanded.metadata), expanded.collections)
     end
 end

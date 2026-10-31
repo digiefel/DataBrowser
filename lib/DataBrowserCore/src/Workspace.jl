@@ -121,13 +121,12 @@ import DataBrowserAPI:
     AbstractProject,
     SourceChanges,
     SourceError,
-    adopt,
     close_source!,
     collection,
     expand,
     fingerprint,
     id,
-    item_data,
+    data,
     label,
     metadata,
     process,
@@ -138,6 +137,8 @@ import DataBrowserAPI:
     open_source,
     project_name,
     items,
+    select!,
+    selection,
     watch_source
 
 
@@ -504,7 +505,6 @@ function open_workspace(
     project::AbstractProject,
     root_path::AbstractString;
     recursive::Bool=true,
-    metadata_file::Union{Nothing,AbstractString}=DataBrowserSources.DEFAULT_DIRECTORY_METADATA_FILE,
     rebuild::Bool=false,
     cache::Bool=true,
     background_processing::Bool=false,
@@ -512,7 +512,7 @@ function open_workspace(
 )::Workspace
     return open_workspace(
         project,
-        DataBrowserSources.DirectorySource(root_path; recursive, metadata_file);
+        DataBrowserSources.DirectorySource(root_path; recursive);
         rebuild,
         cache,
         background_processing,

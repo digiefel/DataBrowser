@@ -29,7 +29,7 @@ struct TableItem <: API.AbstractDataItem
     data::NamedTuple
     metadata::Dict{Symbol,Any}
 end
-API.item_data(item::TableItem) = item.data
+API.data(item::TableItem) = item.data
 API.metadata(item::TableItem) = item.metadata
 API.reconstruct(::Type{TableItem}, id::AbstractString, data, metadata::Dict) =
     TableItem(id, NamedTuple(pairs(data)), metadata)

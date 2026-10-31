@@ -8,7 +8,7 @@ using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_categories, scale_kinds
 using DataBrowserPlots: YScaleLayers, is_y_scale, @plot, Aggregate, Declaration, Fit, ITEM, LegendEntry, PlotLine, PlotLines, PlotTheme, Points, Scaled, Result, category, column, grouping
 import DataBrowserAPI
-using DataBrowserAPI: id, item_data, metadata
+using DataBrowserAPI: id, metadata
 import DataBrowserCore.Workspace
 import DataBrowserPlots
 using DataBrowserCore: Group, Selection, select
@@ -141,8 +141,7 @@ function scaled_y_figure(plot::PlotLines, yscales, args...; legend=(;), texts=Pa
         key = ROLE_SCALES[role]
         scale_options = get(shared, key, (;))
         haskey(scale_options, :categories) && continue
-        categories = try sort(unique(categories)) catch; unique(categories) end
-        shared[key] = (; pairs(scale_options)..., categories)
+        shared[key] = (; pairs(scale_options)..., categories=category_order(categories))
     end
     pieces(role) = AoG.ProcessedLayers([p for ps in processed[role] for (p, _) in ps])
     left = pieces(:y)
@@ -240,8 +239,19 @@ function scale_categories(plot::PlotLines)::Dict{Symbol,Vector{Any}}
     for layers in processed_lines(plot), (p, _) in layers, (key, values) in pairs(p.primary)
         key isa Symbol && append!(get!(Vector{Any}, found, key), values)
     end
-    # Values that do not sort together, such as numbers and text, keep the order they come in.
-    return Dict(key => (try sort(unique(values)) catch; unique(values) end) for (key, values) in found)
+    return Dict(key => category_order(values) for (key, values) in found)
+end
+
+# The values of a scale of categories, each once, in order. Values that do not sort together, such
+# as numbers and text, keep the order they come in.
+function category_order(values::Vector)::Vector
+    values = unique(values)
+    try
+        return sort(values)
+    catch err
+        err isa MethodError || rethrow()
+        return values
+    end
 end
 scale_categories(plot::Scaled) = scale_categories(plot.layers)
 
@@ -554,13 +564,10 @@ function Base.:*(result::Result, layer::AoG.Layer)
                 append!(places, [Symbol(name, "[", i, "]") => getindex.(computed, i) for i in eachindex(first(computed))]) :
                 push!(places, name => computed)
         end
-        # A third place of `Lines` or `Scatter` is z, which this axis does not draw.
-        kinds = try
-            AoG.aesthetic_mapping(plottype, ntuple(_ -> AoG.Continuous(), length(places) + 1)...)
-        catch err
-            err isa MethodError || rethrow()
-        end
-        (kinds isa MethodError || any(==(AoG.AesZ), values(kinds))) &&
+        # A third place of `Lines` or `Scatter` is z, which this axis does not draw. AlgebraOfGraphics
+        # fails with its own message for a plot type that takes no such number of places.
+        kinds = AoG.aesthetic_mapping(plottype, ntuple(_ -> AoG.Continuous(), length(places) + 1)...)
+        any(==(AoG.AesZ), values(kinds)) &&
             error("$(plottype) cannot draw the $(length(places)) values of this aggregate at each x: " *
                 join(first.(places), ", "))
         # The first value is drawn as the points' y, under its title.
@@ -571,13 +578,12 @@ function Base.:*(result::Result, layer::AoG.Layer)
     # each role.
     positional = getfield(result, :positional)
     # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
-    shown = hasmethod(AoG.aesthetic_mapping, Tuple{Type{plottype},Int}) ?
-        keys(AoG.aesthetic_mapping(plottype, length(positional))) : keys(Dict(getfield(result, :named)))
+    shown = keys(AoG.aesthetic_mapping(plottype, ntuple(_ -> AoG.Continuous(), length(positional))...))
     roles = [(role, value, column(value)) for (role, value) in getfield(result, :named) if role in shown]
     drawn = column.(positional)
     columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [drawn; [c for (_, _, c) in roles]])
     for group in getfield(result, :groups)
-        values = item_data(group)
+        values = DataBrowserAPI.data(group)
         for (name, value) in zip(drawn, values)
             append!(columns[name], value)
         end
@@ -733,8 +739,6 @@ function computed(analysis::Analysis, columns, items::Selection, workspace)::Res
         push!(workspace, value)
         return value
     end
-    drawn = DataBrowserPlots.DRAWN[]
-    drawn === nothing || union!(drawn, id.(values))
     groups = @timed_dbg "plot_results" reduce(vcat, Workspace.results(workspace, id.(values)); init=Group[])
     return Result(analysis.step, groups, positional, roles; scale=setting(analysis, :y, :scale, identity))
 end

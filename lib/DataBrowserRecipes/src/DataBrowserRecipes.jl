@@ -23,13 +23,12 @@ using DataBrowserAPI:
     AbstractProject,
     @timed_dbg
 import DataBrowserAPI:
-    adopt,
     expand,
     has_stage,
     stage_roots,
     collection,
     id,
-    item_data,
+    data,
     label,
     metadata,
     process,
@@ -46,8 +45,7 @@ include("registration.jl")
 include("stages.jl")
 include("premade.jl")
 
-export Project,
-    define_project,
+export define_project,
     register_collection!,
     register_csv!,
     register_item!

@@ -56,12 +56,12 @@ end
 function Browser.item_context_menu!(
     ::PlotsExtension,
     state::Browser.BrowserState;
-    item_ids::Vector{String},
+    item_ids::Function,
     label::String,
     kind::Union{Nothing,Symbol},
 )
     if ig.MenuItem("Open Plot in New Window")
-        Browser.open_window!(state, PlotView(); input=Browser.FixedItems(item_ids))
+        Browser.open_window!(state, PlotView(); input=Browser.FixedItems(item_ids()))
     end
     return nothing
 end

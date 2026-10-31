@@ -193,7 +193,8 @@ native result stores where available and replaying missing inputs. `storage(proj
 the store for a native `AbstractDataItem` type; the project form defaults to `storage(T)`. Ordinary
 Julia results are stored as workspace-owned `ResultItem{T}` items, with `T` the result's type.
 Stores receive this complete item; evaluation unwraps it for ordinary function calls. Returning
-`nothing` leaves that result uncached. The default `MemoryStore` uses the same bounded memory buffer as the source
+`nothing` leaves that result uncached. A store is an `AbstractStore`; its docstring lists the
+methods it implements. The default `MemoryStore` uses the same bounded memory buffer as the source
 cache, with one 64 MiB store per item type per workspace opening. Store selection runs once per
 item type. Complete results are copied when written and when supplied from storage.
 
@@ -208,7 +209,7 @@ its `bytes` field uses the store's optional `stored_size` report.
 Code displays these computations as selectable rows. Each row retains the actual computations
 for its items, and selection passes those definitions through `output`. Linked windows use the
 same reference-evaluation path as table selections. `ComputationItem` keeps a prepared native
-value with its origin; `item_data` exposes its payload, and `computation` follows its origin.
+value with its origin; `data` exposes its payload, and `computation` follows its origin.
 Scientific transforms receive the native result of the preceding call. Neither selection nor
 window refresh registers a browsable item or builds an identity by printing the input graph.
 
@@ -269,16 +270,18 @@ Selecting such a collection, or clicking a gray row, reads the source items belo
 other (`read_first!`).
 
 A collection is one node of the collection tree, identified by its parent and by the type and `id`
-of its value. An item goes where `collection(item)` says, or where `collection(source_item)` says
-when that is empty. A collection contains every item below it, at any depth. Collection
+of its value. An item goes where `collection(project, item)` says, or where `collection(source_item)`
+says when that is empty. A collection contains every item below it, at any depth. Collection
 `process(project, collection, members)` receives each of them as its own `process` returned it,
 and returns a later version of the collection; the cache keeps the metadata and the data
-(`item_data`) of that version. Member
+(`data`) of that version. Member
 `process(project, member, collection)` then returns a later version of each item, once for each
 collection above it that defines one, from the innermost collection to the outermost; each call
 receives the version of the previous one. The cache keeps the last version next to the item's own
 processed data and never replaces that. Views, queries and the item list use the last version, with
 its metadata and label, once it is current, and the item's own processed version until then.
+An item's metadata is its own: it does not include the metadata of the collections above it, and a
+member `process` copies what the item needs.
 
 A collection stage that the project does not define for a collection has no job: nothing is queued
 or shown as in progress for it, and it counts as done once everything below the collection is done.
@@ -380,10 +383,6 @@ classDiagram
     class DirectorySource {
         String root_path
         Bool recursive
-        String_or_Nothing metadata_file
-        Dict collection_metadata_entries
-        Bool has_metadata
-        ReentrantLock metadata_lock
         Task_or_Nothing watcher_task
         CancellationTokenSource_or_Nothing watcher_cancel
     }
@@ -391,7 +390,6 @@ classDiagram
         String filepath
         String filename
         String relative_path
-        DateTime_or_Nothing timestamp
         FileFingerprint fingerprint
     }
     class FileFingerprint {
@@ -426,23 +424,7 @@ classDiagram
 flowchart TD
     subgraph sgScan["scan"]
         si("items(source)")
-        csf("collect_source_files")
-        asf("append_source_files!")
         isf("index_source_file")
-        ffp("file_fingerprint")
-        isfn("is_source_filename")
-        pts("parse_timestamp")
-    end
-
-    subgraph sgMeta["metadata.txt"]
-        lcm("load_collection_metadata!")
-        lcme("load_collection_metadata_entries")
-        cmfp("collection_metadata_file_path")
-        pmv("parse_metadata_value")
-        ocm("own_collection_metadata")
-        csi("collection(::SourceFile)")
-        msc("metadata(::DirectorySource, collections)")
-        MD[("collection_metadata_entries")]
     end
 
     subgraph sgLife["watch / lifecycle"]
@@ -457,6 +439,7 @@ flowchart TD
         lblsf("label(::SourceFile) → String")
         fpsf("fingerprint(::SourceFile) → FileFingerprint")
         metasf("metadata(::SourceFile) → Dict")
+        csi("collection(::SourceFile)")
         sid("id(::DirectorySource) → String")
         slbl("label(::DirectorySource) → String")
         iddc("id(::DirectoryCollection) → String")
@@ -477,29 +460,12 @@ flowchart TD
         CT["CancellationTokens"]
     end
 
-    si -->|"SourceFile[]"| csf
-    csf --> asf
-    asf -->|"SourceFile"| isf
-    asf -->|"Bool"| isfn
-    isf -->|"FileFingerprint"| ffp
-    isf -->|"DateTime?"| pts
-    csf -->|"String?"| cmfp
-    csf -->|"walkdir"| FSYS
-    ffp -->|"stat"| FSYS
+    si -->|"SourceFile"| isf
+    si -->|"readdir"| FSYS
+    isf -->|"stat"| FSYS
 
-    lcm -->|"String?"| cmfp
-    lcm -->|"Dict"| lcme
-    lcm -.->|"writes"| MD
-    lcme -->|"Any"| pmv
-    lcme -->|"readlines"| FSYS
-    msc -->|"Dict"| ocm
-    msc -.->|"reads"| MD
-    msc -->|"String"| iddc
-
-    osrc -->|"Bool"| lcm
     osrc -->|"isdir"| FSYS
-    wsrc -->|"SourceFile[]"| csf
-    wsrc -->|"Bool"| lcm
+    wsrc -->|"SourceFile[]"| si
     wsrc -->|"String"| idsf
     wsrc -->|"FileFingerprint"| fpsf
     wsrc -->|"watch_folder"| BFW
@@ -510,9 +476,7 @@ flowchart TD
     extCore ==> si
     extCore ==> wsrc
     extCore ==> csrc
-    extCore ==> isf
     extCore ==> csi
-    extCore ==> msc
     extCore ==> sid
     extCore ==> idsf
     extCore ==> lblsf
@@ -529,7 +493,7 @@ flowchart TD
 
     wsrc -.->|"SourceChanges<br/>SourceError"| extCore
 
-    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ sid ~~~ slbl ~~~ iddc ~~~ lbldc ~~~ recon ~~~ eqfp
+    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ csi ~~~ sid ~~~ slbl ~~~ iddc ~~~ lbldc ~~~ recon
 
     classDef srcExp fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111;
     classDef srcInt fill:#c9e4c5,stroke:#5a9a52,stroke-width:1px,color:#111;
@@ -541,8 +505,8 @@ flowchart TD
     classDef guiC fill:#d9c6ec,stroke:#7d54b0,color:#111;
     classDef plotsC fill:#f2c6d4,stroke:#b0466a,color:#111;
 
-    class isf,ffp srcExp;
-    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,csi,msc,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl,iddc,lbldc,recon,eqfp srcInt;
+    class isf srcExp;
+    class si,csi,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl,iddc,lbldc,recon srcInt;
     class extCore coreC;
     class extAPI apiC;
     class extCache cacheC;
@@ -551,5 +515,5 @@ flowchart TD
     class extPlots plotsC;
     class FSYS,BFW,CT ext;
 
-    linkStyle 2,4,8 stroke:#d1495b,stroke-width:3px;
+    linkStyle 0,2 stroke:#d1495b,stroke-width:3px;
 ```

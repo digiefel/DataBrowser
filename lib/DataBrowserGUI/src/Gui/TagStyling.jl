@@ -1,8 +1,8 @@
 import CImGui as ig
 
-"""Show the tag-loading failure without blocking the rest of the browser."""
+"""Show why the workspace could not read its tags, when it could not."""
 function _render_tag_state_error!(state::BrowserState)::Nothing
-    (_tags_ready(state) || !(state.workspace isa Workspace.Workspace)) && return nothing
+    _tags_ready(state) && return nothing
     ig.TextColored((1.0, 0.5, 0.5, 1.0), "tags error")
     if ig.BeginItemTooltip()
         ig.PushTextWrapPos(ig.GetFontSize() * 35.0)
@@ -13,7 +13,7 @@ function _render_tag_state_error!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Apply the colour of the tag with the highest priority and report whether the caller must pop it."""
+"""Draw text in the color of the first tag of `key`, the one with the highest priority. Return whether the caller must pop the color."""
 function _push_tag_text_style!(
     workspace::Workspace.Workspace,
     key::Union{ItemKey,CollectionKey},
@@ -74,7 +74,7 @@ function _render_tag_visibility!(state::BrowserState)::Nothing
 end
 
 """
-Draw the tags as entries of an open context menu, each in its colour, with a check mark when every
+Draw the tags as entries of an open context menu, each in its color, with a check mark when every
 key has the tag. A click puts the tag on every key, or takes it off when every key has it. A tag
 that comes from a collection above cannot be taken off here.
 """
@@ -85,7 +85,7 @@ function _render_tag_menu!(
         ig.TextDisabled("Fix tags.txt and rescan to edit")
         return nothing
     end
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     ig.Separator()
     for tag in tags(workspace)
         own = all(key -> tag in tags(workspace, key; inherited=false), keys)
@@ -102,7 +102,7 @@ function _render_tag_menu!(
         end
         clicked && (own ? untag!(workspace, keys, tag) : tag!(workspace, keys, tag))
     end
-    # TODO: choose the colour and the priority of a new tag here.
+    # TODO: choose the color and the priority of a new tag here.
     ig.SetNextItemWidth(max(ig.GetContentRegionAvail().x, ig.GetFontSize() * 10))
     if ig.InputTextWithHint("##new_tag", "New tag", state.new_tag, length(state.new_tag),
             ig.ImGuiInputTextFlags_EnterReturnsTrue)

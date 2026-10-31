@@ -33,7 +33,7 @@ metadata(::AbstractCollection)::Dict = Dict()
 The data of a collection value, such as what its `process` computed from its members. The default
 is `nothing`: a collection has only metadata.
 """
-item_data(::AbstractCollection) = nothing
+data(::AbstractCollection) = nothing
 
 """
     id(item)::String
@@ -56,8 +56,7 @@ Human-readable label for an item.
 
 The workspace calls `label` when the item is created, and again after `process`, each time on the
 item with its metadata so far. A label can therefore use metadata that
-only a later stage adds; until then, `get(metadata(item), key, nothing)` returns `nothing`. From
-`process` on, the metadata includes the metadata inherited from the item's collections.
+only a later stage adds; until then, `get(metadata(item), key, nothing)` returns `nothing`.
 
 The default is the item's id. Define `label(item)` for a more descriptive label, or the project form
 when the label depends on the project.
@@ -70,17 +69,23 @@ label(item::AbstractDataItem)::String = id(item)
 label(T::Type{<:AbstractDataItem})::Symbol = nameof(T)
 
 """
+    collection(project, item) -> Vector{AbstractCollection}
     collection(item) -> Vector{AbstractCollection}
     collection(source_item) -> Vector{AbstractCollection}
 
-The collection that holds an item, as its collection values from the top down.
+The collection that holds an item, as its collection values from the top down. The workspace asks
+when `expand` creates the item.
 
 An item whose answer is empty goes where its source item is: `collection(source_item)`. The default
-for both is empty, which places the item at the root.
+for both is empty, which places the item at the root. Define `collection(item)`, or the project form
+when the collection depends on the project.
 """
+collection(project::AbstractProject, item::AbstractDataItem)::Vector{AbstractCollection} = collection(item)
 collection(::AbstractDataItem)::Vector{AbstractCollection} = AbstractCollection[]
 collection(::AbstractDataSourceItem)::Vector{AbstractCollection} = AbstractCollection[]
 
+# TODO: adapt to groups. When sources form groups in place of collections, this is the metadata a
+# source gives to one group.
 """
     metadata(source, collections) -> Dict
 
@@ -109,21 +114,7 @@ function members end
 metadata(::AbstractDataItem)::Dict = Dict()
 
 """The data represented by an item. A custom item is its own data by default."""
-item_data(item::AbstractDataItem) = item
+data(item::AbstractDataItem) = item
 
 """Process an item. Optional; default identity."""
 process(item::AbstractDataItem) = item
-
-# ---------------------------------------------------------------------------
-# Internal workspace hooks
-# ---------------------------------------------------------------------------
-
-"""
-    adopt(item, label, metadata, collections) -> AbstractDataItem
-
-Let an item take the label, the metadata and the collection values the workspace holds for it.
-Internal workspace hook; the default keeps the item unchanged, because a typed item derives all
-three from its own state. Package-owned carriers adopt them.
-"""
-adopt(item::AbstractDataItem, label::AbstractString, metadata::AbstractDict, collections::AbstractVector) =
-    item

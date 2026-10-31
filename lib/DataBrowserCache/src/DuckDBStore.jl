@@ -21,7 +21,7 @@ share one file. `close` closes it for all of them.
 A value that the running Julia version cannot read back counts as missing, so Core computes it
 again.
 """
-mutable struct DuckDBStore
+mutable struct DuckDBStore <: DataBrowserAPI.AbstractStore
     path::String
     # Held for `serialized`, `serialized_ids` and `shells`; the table store has its own lock.
     lock::ReentrantLock
@@ -60,7 +60,7 @@ end
 
 function Base.write(store::DuckDBStore, id::AbstractString, value)
     id = String(id)
-    data = value isa DataBrowserAPI.AbstractDataItem ? DataBrowserAPI.item_data(value) : nothing
+    data = value isa DataBrowserAPI.AbstractDataItem ? DataBrowserAPI.data(value) : nothing
     table = value isa DataBrowserAPI.AbstractDataItem && can_store_payload(data)
     @lock store.lock begin
         if table
@@ -88,7 +88,7 @@ function Base.read(store::DuckDBStore, ::Type{T}, id::AbstractString)::T where {
     shell = @lock store.lock get(store.shells, id, nothing)
     value = shell === nothing ? _read_serialized(store, id) : _read_table(store, id, shell)
     value isa T || throw(ArgumentError("Stored value '$id' has type $(typeof(value)), expected $T"))
-    write(store.recent, id, value)
+    # A value read from the file is new, so the caller may change it; it is not kept in memory.
     return value
 end
 

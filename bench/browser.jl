@@ -1,6 +1,7 @@
 include("smoke_project.jl")
 using DataBrowserPlots
-using DataBrowserGUI: merge_item_tables
+using DataBrowserAPI: data
+using DataBrowserGUI: merge_item_tables, gui_timings
 using DataBrowserGUI.Browser: TimerOutputs
 
 function wait_for(predicate, session; timeout=120)
@@ -25,12 +26,12 @@ function check_items(ws, expected_peaks)
     select!(ws, ids)
     items = materialize_items(ws, ids)
     sort([metadata(item)[:peak] for item in items]) == expected_peaks || error("Incorrect analysis results")
-    collect(selection(ws).data) == item_data.(items) || error("Selection did not deliver the selected payloads")
+    collect(selection(ws).data) == data.(items) || error("Selection did not deliver the selected payloads")
     table, warnings = merge_item_tables(selection(ws))
     isempty(warnings) || error("Table preparation skipped selected data")
     y = findfirst(==("y"), table.columns)
     [table.getvalue(row, y) for row in 1:table.rows] ==
-        reduce(vcat, [item_data(item).y for item in items]) ||
+        reduce(vcat, [data(item).y for item in items]) ||
         error("Table views did not receive the selected processed payloads")
     return items
 end
@@ -47,9 +48,9 @@ function browser_workload(root, opening, started_ns)
         wait_browser_ready(session)
         opening_s = (time_ns() - started_ns) / 1e9
         finish_work(workspace)
-        items = check_items(workspace, [4.0, 6.0, 9.0])
+        items = check_items(workspace, [4.0, 6.0, 6.0])
         # "runs" holds every item: its callbacks see three members.
-        all(first(item_data(item).members) == metadata(item)[:members] == 3 for item in items) ||
+        all(first(data(item).members) == metadata(item)[:members] == 3 for item in items) ||
             error("Collection processing did not reach the selected items")
         if opening == "reopen"
             all(count[] == 0 for count in values(counters.reads)) || error("Reopening reran source reads")
@@ -68,24 +69,16 @@ function browser_workload(root, opening, started_ns)
             cp(joinpath(PUBLIC_VARIANTS, "a_changed.dbitem"), joinpath(root, "a.dbitem"); force=true)
             wait_for(() -> counters.reads["a.dbitem"][] == 1, session)
             finish_work(workspace)
-            check_items(workspace, [9.0, 40.0, 42.0])
-            reads_before = Dict(name => count[] for (name, count) in counters.reads)
-            processed_before = counters.processes[]
-            cp(joinpath(PUBLIC_VARIANTS, "metadata_changed.txt"), joinpath(root, "metadata.txt"); force=true)
-            wait_for(() -> counters.processes[] >= processed_before + 2, session)
-            finish_work(workspace)
-            check_items(workspace, [9.0, 80.0, 84.0])
-            Dict(name => count[] for (name, count) in counters.reads) == reads_before ||
-                error("Metadata updates reread unchanged source files")
+            check_items(workspace, [6.0, 40.0, 42.0])
             extra = joinpath(root, "extra.dbitem")
             cp(joinpath(PUBLIC_VARIANTS, "extra.dbitem"), extra)
             wait_for(() -> length(query_items(workspace)) == 4, session)
             finish_work(workspace)
-            check_items(workspace, [9.0, 20.0, 80.0, 84.0])
+            check_items(workspace, [6.0, 10.0, 40.0, 42.0])
             rm(extra)
             wait_for(() -> length(query_items(workspace)) == 3, session)
             finish_work(workspace)
-            check_items(workspace, [9.0, 80.0, 84.0])
+            check_items(workspace, [6.0, 40.0, 42.0])
         end
         return Dict("browser_$(opening)_s" => opening_s, "frame_ui_ms" => frame_ms)
     finally

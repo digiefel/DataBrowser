@@ -62,6 +62,8 @@ label(collection::ComputedCollection) = collection.name
 
 const COMPUTED = ComputedCollection("Computed")
 
+# TODO: a rule for when the workspace drops a computed item. Today it keeps each one until it
+# closes, also when nothing uses it any more.
 """
 Add `value` to the workspace as an item, with each `Computation` value it reads. Each is an item of the
 collection of its function, below the collection `Computed`, and its `process` computes it once the
@@ -186,6 +188,5 @@ function computed_version(workspace::Workspace, key::ItemKey)::AbstractDataItem
     result isa AbstractDataItem || return ResultItem(
         id(value), label(workspace, key), Dict{Symbol,Any}(given), result)
     read = ItemKey[something(item(workspace, i)) for i in member_ids(value)]
-    data = result isa AbstractDataItem ? item_data(result) : result
-    return Group(id(value), Dict{Symbol,Any}(given), data, versions(workspace, read))
+    return Group(id(value), Dict{Symbol,Any}(given), data(result), versions(workspace, read))
 end

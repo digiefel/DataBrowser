@@ -238,7 +238,7 @@ drawn at 10⁻¹⁰; a column mapped as the half-length of `Errorbars` is a widt
 
 The current package exports `figure` and `@plot`. Its AlgebraOfGraphics extension and declaration
 implementation support the shared-header path and a named `linear` result. See the
-[package README](../../lib/DataBrowserPlots/README.md),
+[package docstring](../../lib/DataBrowserPlots/src/DataBrowserPlots.jl),
 [declaration implementation](../../lib/DataBrowserPlots/src/declaration.jl) and
 [roadmap](../roadmap.md#0110--core-visualizers).
 

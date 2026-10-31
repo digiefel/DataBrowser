@@ -12,7 +12,7 @@ end
 DataBrowserAPI.id(device::FitTestDevice) = device.name
 DataBrowserAPI.metadata(device::FitTestDevice) =
     Dict{Symbol,Any}(:Chip => device.chip, :Wafer => "W$(device.chip)", :gap => device.gap)
-DataBrowserAPI.item_data(device::FitTestDevice) = (R=[device.R],)
+DataBrowserAPI.data(device::FitTestDevice) = (R=[device.R],)
 
 DataBrowserAPI.reconstruct(::Type{FitTestDevice}, name::AbstractString, data, metadata::Dict) =
     FitTestDevice(name, metadata[:Chip], metadata[:gap], only(data.R))
@@ -83,17 +83,12 @@ twice(device::FitTestDevice) = FitTestDevice(device.name, device.chip, device.ga
         # A new curve, R = Rc + Rsh * gap, gives each chip twice the Rc.
         @eval counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; Rc + Rsh * gap)
         @test timedwait(() -> sort(round.(W.select(workspace, fits.id).Rc)) == [100.0, 600.0], 20) === :ok
-        # A plot file drawn again for chip A alone no longer keeps the fit of chip B.
-        draw(selection) = DataBrowserPlots.drawing(() -> figure(plot([:red, :blue]), selection), selection, "fits.jl")
-        draw(devices)
-        draw(filter(device -> device.Chip == "A", devices))
-        @test length(filter(startswith("fit("), W.query_items(workspace))) == 1
         # Values a window prepared keep their items' ids, and their fits are items too: twice each
         # device's R gives each chip twice the Rc.
         doubled = W.select(workspace, [W.Computation(twice, W.computation(devices, i)) for i in eachindex(devices)])
         @test doubled.id == devices.id
         figure(plot([:red, :blue]), doubled)
-        @test sort(round.(W.select(workspace, filter(startswith("fit("), W.query_items(workspace))).Rc)) == [200.0, 600.0, 1200.0]
+        @test sort(round.(W.select(workspace, filter(startswith("fit("), W.query_items(workspace))).Rc)) == [100.0, 200.0, 600.0, 1200.0]
     end
 end
 

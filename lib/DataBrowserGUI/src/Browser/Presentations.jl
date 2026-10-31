@@ -1,4 +1,6 @@
-# One window owns the settings; per-item instances own prepared data and drawing state.
+# How a window shows a selection: one visualizer for all items (Overlay), or one cell for each item
+# (Stack and Grid). The visualizer of the window holds the settings; the visualizer of each cell
+# holds what it prepared for its item and its drawing state.
 
 function _close_cells!(window::Window)::Nothing
     for cell in window.cells
@@ -20,10 +22,15 @@ function _sync_cell_settings!(window::Window)::Nothing
     return nothing
 end
 
-# Accepting a Selection is the visualizer's existing declaration of whole-selection support.
+# A visualizer with a `prepare!` method for a whole selection shows all items together.
 _can_overlay(window::Window, ctx) = window.value isa Workspace.Selection &&
     applicable(prepare!, window.visualizer, window.value, ctx)
 
+"""
+    arrangement!(window, mode)
+
+Show the items of `window` in one of the arrangements "stack", "grid" or "overlay".
+"""
 function arrangement!(window::Window, mode::String)::Nothing
     _require_available(window)
     mode in ("stack", "grid", "overlay") || throw(ArgumentError("Unknown arrangement: $mode"))
@@ -35,6 +42,11 @@ function arrangement!(window::Window, mode::String)::Nothing
     return nothing
 end
 
+"""
+    active_item!(window, id)
+
+Show the item with the public `id` in a window arranged as a stack.
+"""
 function active_item!(window::Window, id::String)::Nothing
     _require_available(window)
     window.active_item == id && return nothing
@@ -119,7 +131,8 @@ function _prepare_presentations_value!(window::Window, ctx::WindowContext, retir
             _retire_cells!(window, retired)
             return nothing
         end
-        # Existing selection-only views, e.g. Table and registered plots, stay combined.
+        # A visualizer that takes the data of one item shows each item in a cell of a stack. One
+        # that takes only a whole selection, such as the table, shows all items together.
         native = applicable(prepare!, visualizer, first(given.data), ctx)
         window.arrangement = !native && _can_overlay(window, ctx) ? "overlay" : "stack"
     end
@@ -158,7 +171,8 @@ function _prepare_presentations_value!(window::Window, ctx::WindowContext, retir
         try
             child_ctx = _cell_context(ctx, cell)
             value = data === nothing ? given.data[i] : data[i]
-            # Selection-only visualizers still get the metadata of this one item.
+            # A visualizer that takes only a selection gets a selection of this one item, with its
+            # metadata.
             applicable(prepare!, cell.visualizer, value, child_ctx) || (value = given[[i]])
             prepare!(cell.visualizer, value, child_ctx)
             cell.error = cell.draw_error = ""

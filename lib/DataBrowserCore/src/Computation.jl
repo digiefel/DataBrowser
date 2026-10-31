@@ -18,7 +18,7 @@ computation_inputs(_) = Computation[]
     ResultItem(id, label, metadata, data)
 
 A workspace-owned item for a computation returning an ordinary Julia value. Project data items
-keep their own types. `item_data(item)` returns `data`; `metadata(item)` contains the named
+keep their own types. `data(item)` returns `data`; `metadata(item)` contains the named
 scalar results and any metadata inherited by the computed item.
 
 Storage is selected for `ResultItem{typeof(data)}` and receives this complete item. Evaluation
@@ -34,7 +34,7 @@ end
 DataBrowserAPI.id(item::ResultItem) = item.id
 DataBrowserAPI.label(item::ResultItem) = item.label
 DataBrowserAPI.metadata(item::ResultItem) = item.metadata
-DataBrowserAPI.item_data(item::ResultItem) = item.data
+DataBrowserAPI.data(item::ResultItem) = item.data
 
 """
     evaluate(computation)
@@ -49,7 +49,7 @@ evaluate(value::Computation, result, invoke) = evaluate(value, result, invoke, i
 function evaluate(value::Computation, result, invoke, resolve)
     value = resolve(value)
     found = result(value)
-    found === nothing || return @timed_dbg "result.copy" deepcopy(something(found))
+    found === nothing || return something(found)
     args = map(x -> evaluate_argument(x, result, invoke, resolve), value.args)
     return invoke(value, args)
 end
@@ -67,9 +67,9 @@ evaluate_argument(value, _, _, _) = value
 """One workspace's store choices, initialized once per native item type."""
 struct ComputationStores
     lock::ReentrantLock
-    types::IdDict{Type,Any}
+    types::IdDict{Type,Union{Nothing,AbstractStore}}
 end
-ComputationStores() = ComputationStores(ReentrantLock(), IdDict{Type,Any}())
+ComputationStores() = ComputationStores(ReentrantLock(), IdDict{Type,Union{Nothing,AbstractStore}}())
 
 """The native result location of one completed computation revision; no payload lives here."""
 struct ComputationResult
@@ -77,7 +77,7 @@ struct ComputationResult
     revision::UInt
     value_type::Type
     item_type::Type
-    store::Any
+    store::Union{Nothing,AbstractStore}
     key::String
     metadata::Dict{Symbol,Any}
 end

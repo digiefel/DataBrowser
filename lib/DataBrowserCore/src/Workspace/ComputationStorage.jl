@@ -59,7 +59,7 @@ function computation_identity(workspace::Workspace, value::Computation)
 end
 
 # Whether a call prepares a stage's input from kept values.
-prepares_input(value::Computation) = value.f in (expanded_value, native_value, native_collection)
+prepares_input(value::Computation) = value.f in (expanded_value, process_input, native_collection)
 
 function result_item(workspace::Workspace, catalog::Catalog, value::Computation, args::Tuple, result)
     # A view, and a selection, are parts of the workspace's values: never kept, and made again when needed.
@@ -173,7 +173,7 @@ that supplies an item, a collection or a source item written as their id, for ex
 stored_id(workspace::Workspace, value::Computation) = call_id(value, x -> stored_argument(workspace, x))
 function stored_argument(workspace::Workspace, value::Computation)
     # The current value of an item is its `process` result, with its label and metadata.
-    value.f === native_value && return stored_argument(workspace, first(value.args))
+    value.f === process_input && return stored_argument(workspace, first(value.args))
     catalog = workspace.catalog
     address = @lock catalog.lock computation_address(catalog, value)
     address isa Target && return @lock(catalog.lock, id(catalog, first(address)))
@@ -204,7 +204,7 @@ function restored_result(workspace::Workspace, value::Computation)
         error isa KeyError || rethrow()
         return nothing
     end
-    result = type <: ResultItem ? item_data(item) : item
+    result = type <: ResultItem ? data(item) : item
     # Later evaluations find it by its address, without building its id again.
     catalog = workspace.catalog
     @lock catalog.lock begin
@@ -233,7 +233,7 @@ function stored_result(value::ComputationResult)
     haskey(value.store, value.key) || return nothing
     try
         item = @timed_dbg "result.read" read(value.store, value.item_type, value.key)
-        return Some(value.value_type <: AbstractDataItem ? item : item_data(item))
+        return Some(value.value_type <: AbstractDataItem ? item : data(item))
     catch error
         error isa KeyError && isequal(error.key, value.key) || rethrow()
         return nothing

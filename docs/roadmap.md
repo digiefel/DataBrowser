@@ -211,8 +211,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 - [x] Core has no `analyze` stage. An item's metadata is `metadata` of its processed value;
   DataBrowserRecipes keeps its `analyze` callbacks and runs them inside its `process` methods.
-- [ ] Remove the registration adapter's reliance on the internal `adopt` hook for labels and
-  collections; it must consume the same public contract as any other extension.
+- [x] The registration adapter uses the same public contract as any other extension: labels and
+  collections come from `label(project, item)` and `collection(project, item)`.
 - [x] A collection `process` returns a later version of the collection, and a member
   `process(project, member, collection)` returns a later version of each member, with its metadata
   and label, also when its payload is unchanged. This covers cumulative device history: successive
@@ -222,13 +222,23 @@ workloads, completed disk writes, cache reads and process memory measurements.
   each member is the data of the collection, and a member `process` takes its own part.
 - [ ] Run collection and member `process` again until the members stop changing, with an error
   after a maximum number of rounds. Today each runs once.
-- [ ] Items carry all their metadata: remove the collection metadata layer that items inherit,
-  and `native_value`/`adopt`, so that `reconstruct` gives back the stored value.
-- [ ] Sort every exported name into the project-author or extension-author tier and stop exporting
-  the rest: `items_for_file`, `SourceFile`, the concrete `Project`, `gui_timings`,
-  `reset_timings!`, `plot_kinds`, `CollectionRecipe`, `ItemRecipe`, `NoMatch`,
-  `RegisteredReadResult`. Export what extension authors need and cannot reach today:
-  `GuiExtension`, `register_gui_extension!`, `NamedCollection`.
+- [x] Items carry all their metadata: they no longer inherit the metadata of their collections. A
+  member `process` method copies it when needed; the Recipes one does.
+- [x] The workspace hands out each item as its `process` returned it, without rebuilding it.
+- [x] The metadata of an item is the metadata of its latest value, not merged over the metadata
+  its `process` received, so that `reconstruct` gets the metadata the value had when it was stored.
+- [ ] Store the results of item and member `process` in the store that `storage(project, T)`
+  chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
+  one copy of data that a member `process` returned unchanged.
+- [ ] A `DuckDBStore <: AbstractStore` replaces the cache's payload tables and becomes the default
+  store. The rest of the cache becomes the workspace file next to the project: items, collections,
+  metadata and result states, no results. Its `source_reads` and `unprocessed` buffers go away.
+- [ ] Let a store hand out a kept value without copying it, for callers that do not change it.
+- [x] Stop exporting names that neither project authors nor extension authors use: the concrete
+  `Project` of Recipes, `gui_timings`, `reset_timings!` and `registered_plots`. Export
+  `GuiExtension` and `register_gui_extension!` for GUI extension authors. `SourceFile` stays
+  exported: a type API project dispatches its `read` on it. `NamedCollection` stays internal to
+  Recipes, whose users never name a collection type.
 - [ ] Generate the umbrella's `using`/`export` lists from one table instead of two hand-kept blocks.
 - [ ] One selector concept — `ItemKey`, id, or current selection — implemented once and shared by
   `select_items!`, `materialize_items`, `read_item_data`; delete the runtime-typed
@@ -305,18 +315,13 @@ workloads, completed disk writes, cache reads and process memory measurements.
   independent of source type; production transport and instrument implementations follow separately.
 - [x] Replace `default_collection_path(source, source_item)` with `collection(source_item)`, and
   `annotate_collection_path` with `metadata(source, collections)`, where `collections` are one
-  collection's values from the top down. DirectorySource owns `metadata.txt` parsing and matching;
-  Core owns composition and invalidation. A collection's own metadata and the source's are stored
-  separately, and the source's part is replaced on item publication, refresh and reopen, so removed
-  keys reveal the collection's own values beneath them.
+  collection's values from the top down. Core owns composition and invalidation. A collection's own
+  metadata and the source's are stored separately, and the source's part is replaced on item
+  publication, refresh and reopen, so removed keys reveal the collection's own values beneath them.
 - [ ] Test `metadata(source, collections)` with a source other than DirectorySource.
-- [ ] Split `DirectorySource` into scan, `metadata.txt`, and watcher files. The watcher rescans
-  the whole tree and fingerprints every file three times on each event; `.git` is skipped by the
-  watcher but traversed by the scan; `readdir` order is not sorted; `metadata_lock` is held while
-  calling user `reconstruct`; two concurrent `watch_source` calls race and a crashed watcher task is
-  reported as "already watching".
-- [ ] `metadata.txt`: decide whether values may be quoted; validate metadata value types at parse
-  time instead of failing downstream.
+- [ ] The `DirectorySource` watcher rescans the whole tree and fingerprints every file on each
+  event; `readdir` order is not sorted; two concurrent `watch_source` calls race and a crashed
+  watcher task is reported as "already watching".
 - [x] `tags.txt` lives in the source root, as the vision states. The GUI read it from the cache
   folder under `DEPOT_PATH`.
 - [ ] The GUI uses
@@ -530,10 +535,13 @@ the table as a first-class view.
   after "from", to choose the selection or another window. The table passes on the selected rows
   as items: each item that has some, with only those rows and the columns it shows. Another window
   shows them as it shows any items, and its function receives them one by one.
-- [x] "Export" in the header of every window calls `export!(visualizer, ctx)`. The default saves a
-  picture of what the visualizer draws as PNG, without the title and header of the window.
+- [x] "Export" in the header of every window offers the MIME types the visualizer can `show`, and
+  calls `export!(visualizer, path)`. Without one, it saves a picture of what the visualizer draws
+  as PNG, without the title and header of the window.
 - [x] The table exports its rows as CSV, with the columns it shows.
-- [x] A figure exports as PNG, PDF or SVG through CairoMakie when the session has loaded it.
+- [x] A figure exports in the MIME types that Makie's `showable` allows with the current backend:
+  PNG and JPEG with GLMakie; PNG and EPS with CairoMakie, and also PDF and SVG after
+  `CairoMakie.activate!(type="svg")`.
 - [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
   another window. Names for windows, so that the input menu can tell two tables apart.
 - [x] Save the windows with the view in `databrowser.toml`: their visualizer, input, transform
@@ -553,8 +561,8 @@ the table as a first-class view.
   Separate loading, warm presentation, interaction, copies, and work repeated after display-only
   edits. Choose workloads from actual use; illustrative dataset sizes are not product requirements.
 - [x] Accept AlgebraOfGraphics declarations through `DataBrowserPlots.figure` as an optional
-  integration. The [AoG example](../lib/DataBrowserPlots/examples/aog.jl) probes result-driven fitting;
-  preserving category identity in computed guide labels and GUI/code editing remain open.
+  integration. Preserving category identity in computed guide labels and GUI/code editing remain
+  open.
 - [x] `@plot header begin ... end` declares one panel: a header that every layer shares, and one
   layer per line. Named layers, whose results later lines use, remain open.
 - [ ] Review the standalone graphics grammar, statistical results, shared attribute schemas, and
@@ -748,7 +756,8 @@ opens the workspace. Reopening means rerunning the same entry code.
   code or in the file, never in both, so rerunning entry code never undoes browser changes.
 - [ ] Load or create the config from Julia and Python entry code.
 - [ ] Edit project settings through the API and GUI and write them back predictably.
-- [ ] Place `tags.txt` and the notes file beside `dbproject.toml`.
+- [ ] Place `tags.txt` and the notes file beside `dbproject.toml`: one set per project, not one per
+  data folder. The directory scan then no longer skips their names.
 - [ ] Reopen the last workspace file when the same entry code reopens the project.
 - [ ] Keep cache reuse and source changes correct across repeated openings.
 

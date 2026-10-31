@@ -53,7 +53,7 @@ end
 # when what it is read from changed: the input and the object it names (kept items, ids or an
 # output, compared by identity), the scan, the status of any stage, or a method definition.
 function stamp(window::Window, state::BrowserState)
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     input = window.input
     named = input isa LiveSelection ? itemkeys(input, state) :
         input isa FixedItems ? input.ids : output(source(input, state))
@@ -66,7 +66,7 @@ function stamp(window::Window, state::BrowserState)
 end
 # Item keys are never reused, so their hash tells the items apart without building their ids.
 function stamp(input::Union{LiveSelection,FixedItems}, state::BrowserState)
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     items = itemkeys(input, state)
     return (workspace.scan.epoch, hash(items), Workspace.revision(workspace, items))
 end
@@ -85,7 +85,7 @@ end
 # The value `input` gives now: the items as a `Selection`. This runs in the calling task and waits
 # for items that are not processed yet.
 value(input::Union{LiveSelection,FixedItems}, state::BrowserState) =
-    Workspace.select(state.workspace::Workspace.Workspace, itemkeys(input, state))
+    Workspace.select(state.workspace, itemkeys(input, state))
 value(input::WindowOutput, state::BrowserState) = output(source(input, state))
 
 """
@@ -93,7 +93,9 @@ The title of `window`: what it shows, not how. Up to three items are named by th
 are counted. The header of the window names the visualizer.
 """
 function title(state::BrowserState, window::Window)::String
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
+    # TODO(scale): the browser asks for the title at each frame, and the items of fixed ids are
+    # looked up again each time; keep the title until the input or the workspace changes.
     items = itemkeys(window.input, state)
     isempty(items) && return "No items"
     length(items) > 3 && return "$(length(items)) items"
@@ -297,7 +299,7 @@ function _refresh_window!(state::BrowserState, window::Window)::Nothing
             return nothing
         end
     end
-    workspace = state.workspace::Workspace.Workspace
+    workspace = state.workspace
     current = @timed_dbg "window.stamp" (stamp(window, state), window.transform, code(window))
     if current == window.stamp
         window.presentation_dirty && _prepare_presentations!(state, window)
@@ -325,8 +327,8 @@ function _refresh_window!(state::BrowserState, window::Window)::Nothing
     return nothing
 end
 
-# Data evaluation belongs to the preparation task. A view holds node references; creating an
-# indexed computed item is a separate workspace operation, never part of following a window.
+# The value a window shows: its input passed through its function, evaluated on the preparation
+# task. Also return why computations failed, one line each; the value leaves out their items.
 function _resolve_window_input(workspace, given, transform)
     failures = String[]
     function resolve(values)
@@ -335,6 +337,7 @@ function _resolve_window_input(workspace, given, transform)
             try
                 append!(items, Workspace.materialize_items(workspace, [value]))
             catch err
+                # The workspace reports a failed computation as an `ErrorException` with its message.
                 err isa ErrorException || rethrow()
                 push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
             end

@@ -176,7 +176,7 @@ function kept_expanded(workspace::Workspace, item_id::String, type::Type, given:
         error isa KeyError || rethrow()
         return nothing
     end
-    return reconstruct(type, item_id, deepcopy(item_data(stored)), given)
+    return reconstruct(type, item_id, data(stored), given)
 end
 
 """
@@ -346,22 +346,17 @@ end
 # Items
 
 """
-What the workspace holds for an item apart from its data and metadata: its id, its item type, its
-label and the values of its collections. One call reads them under one hold of the catalog lock,
-which every worker needs.
+What the workspace holds for an item apart from its data and metadata: its id and its item type.
+One call reads them under one hold of the catalog lock, which every worker needs.
 """
 function row(workspace::Workspace, item::ItemKey)
     catalog = workspace.catalog
-    @lock catalog.lock begin
-        return (
-            id=id(catalog, item), type=valuetype(catalog, item), label=label(catalog, item),
-            collections=values(workspace, Catalogs.collection(catalog, item)))
-    end
+    @lock catalog.lock (id=id(catalog, item), type=valuetype(catalog, item))
 end
 
 """
-The item that `process` receives: the value `expand` gave it, with `given`, the metadata of its
-collections and its source item. `known` is the [`row`](@ref) of the item. When the store of its
+The item that `process` receives: the value `expand` gave it, with `given`, the metadata of the item
+and its source item. `known` is the [`row`](@ref) of the item. When the store of its
 type no longer holds that value, or the item type does not rebuild from its data, `expand` runs
 again.
 """
@@ -369,9 +364,9 @@ function unprocessed(workspace::Workspace, item::ItemKey, known, given::Metadata
     value = kept_expanded(workspace, known.id, known.type, given)
     if value === nothing
         value = expand_again(workspace, item)
-        value = something(reconstruct(known.type, known.id, item_data(value), given), value)
+        value = something(reconstruct(known.type, known.id, data(value), given), value)
     end
-    return adopt(value, known.label, given, known.collections)
+    return value
 end
 
 """Run `process` of the project on `input` and check what it returns."""
@@ -405,24 +400,21 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     known, given, saved = @lock catalog.lock (
         row(workspace, item), metadata(workspace, item; through=SOURCE_EXPAND), cache_key(workspace, item))
     output = processed(workspace, unprocessed(workspace, item, known, given))
-    delivered = merge(given, metadata_dict(metadata(output)))
-    computed = MetadataDict(
-        name => value for (name, value) in delivered
-        if !haskey(given, name) || !isequal(given[name], value))
+    delivered = metadata_dict(metadata(output))
     # The results are saved outside the lock: saving takes time, and every other worker needs the
     # lock. A job that turns out not to be current drops the record that its result is ready.
     item_id = known.id
     dropped = String[]
     if iscurrent(catalog, job)
         store_result_ready!(cache, item_id, saved; stage=ITEM_PROCESS)
-        store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, computed)
+        store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, delivered)
         dropped = store_item_metadata!(cache, item_id, delivered)
     end
     @lock catalog.lock begin
         # `process` has replaced the expanded value in the store, or removed it.
         release_expanded!(workspace, item_id)
         pace!(workspace)
-        if finish!(catalog, job; metadata=computed)
+        if finish!(catalog, job; metadata=delivered)
             relabel!(workspace, item, label(workspace.project, output))
             conflicts!(workspace, item, ITEM_PROCESS, dropped)
         else
@@ -489,23 +481,19 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
     catalog = workspace.catalog
     cache = workspace.cache.db
     item = job.key
-    known, given, saved = @lock catalog.lock (
-        row(workspace, item), metadata(workspace, item; through=ITEM_PROCESS), cache_key(workspace, item))
+    known, saved = @lock catalog.lock (row(workspace, item), cache_key(workspace, item))
     output = evaluate(workspace, computation(workspace, item, MEMBER_PROCESS))
     output isa AbstractDataItem || error(
         "A member process method for $(known.type) must return an AbstractDataItem; got $(typeof(output))")
-    delivered = merge(given, metadata_dict(metadata(output)))
-    computed = MetadataDict(
-        name => value for (name, value) in delivered
-        if !haskey(given, name) || !isequal(given[name], value))
+    delivered = metadata_dict(metadata(output))
     dropped = String[]
     if iscurrent(catalog, job)
         store_result_ready!(cache, known.id, saved; stage=MEMBER_PROCESS)
-        store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, computed)
+        store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, delivered)
         dropped = store_item_metadata!(cache, known.id, delivered)
     end
     @lock catalog.lock begin
-        if finish!(catalog, job; metadata=computed)
+        if finish!(catalog, job; metadata=delivered)
             relabel!(workspace, item, label(workspace.project, output))
             conflicts!(workspace, item, MEMBER_PROCESS, dropped)
         else

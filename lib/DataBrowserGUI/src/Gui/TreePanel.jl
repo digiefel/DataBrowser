@@ -42,7 +42,7 @@ function _render_readiness_mark!(readiness::Workspace.Readiness)::Nothing
     return nothing
 end
 
-"""Destroy text-filter widgets before their saved text is replaced."""
+"""Destroy the text filters of both panels, so that they are made again from the saved text."""
 function _reset_project_filter_widgets!(state::BrowserState)::Nothing
     state.tree_filter_widget === nothing || ig.Destroy(state.tree_filter_widget)
     state.item_filter_widget === nothing ||
@@ -52,11 +52,8 @@ function _reset_project_filter_widgets!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Read the current text from a CImGui filter widget."""
-function _imgui_text_filter_text(
-    filter::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}},
-)::String
-    filter === nothing && return ""
+"""The text the user typed in an ImGui text filter."""
+function _imgui_text_filter_text(filter::Ptr{ig.lib.ImGuiTextFilter})::String
     bytes = UInt8[]
     for char in unsafe_load(filter).InputBuf
         char == 0 && break
@@ -65,7 +62,7 @@ function _imgui_text_filter_text(
     return String(bytes)
 end
 
-"""Return whether an item's visible labels pass the item filter."""
+"""Whether the label or the kind of `item` passes the filter of the item panel."""
 function _item_matches_filter(
     workspace::Workspace.Workspace,
     item::ItemKey,
@@ -112,7 +109,7 @@ function _visible_items(
     return visible
 end
 
-"""Render the collection hierarchy and write collection selection into the workspace."""
+"""Draw the tree of collections, and change the collections the workspace selects on a click."""
 function _render_hierarchy_tree_panel(
     state::BrowserState,
     filter_tree::Ptr{ig.lib.ImGuiTextFilter},
@@ -123,16 +120,12 @@ function _render_hierarchy_tree_panel(
     _render_tag_visibility!(state)
 
     workspace = state.workspace
-    parameter_keys = workspace isa Workspace.Workspace ?
-        Workspace.metadata_keys(workspace) :
-        Symbol[]
+    parameter_keys = Workspace.metadata_keys(workspace)
     selected_collections, _, _ = _project_visible_selection(state)
 
-    cache_key = workspace isa Workspace.Workspace ? hash((
-        objectid(workspace), _imgui_text_filter_text(filter_tree),
-        hash(state.tag_visibility), workspace.tags.revision,
-    )) : UInt(0)
-    generation = workspace isa Workspace.Workspace ? Workspace.generation(workspace) : 0
+    cache_key = hash((objectid(workspace), _imgui_text_filter_text(filter_tree),
+        hash(state.tag_visibility), workspace.tags.revision))
+    generation = Workspace.generation(workspace)
     cache = state.tree_cache
     if cache === nothing || cache.key != cache_key ||
        (cache.generation != generation && time() - cache.built >= TREE_REFRESH_SECONDS)
@@ -140,9 +133,7 @@ function _render_hierarchy_tree_panel(
             cache_key, generation, time(),
             Dict{CollectionKey,Vector{CollectionKey}}(), Dict{CollectionKey,Bool}(),
             Dict{CollectionKey,Bool}(), CollectionKey[], -1,
-            workspace isa Workspace.Workspace ?
-                sort!([String.(split(id, '/')) for id in Workspace.unread(workspace)]) :
-                Vector{String}[],
+            sort!([String.(split(id, '/')) for id in Workspace.unread(workspace)]),
             Dict{CollectionKey,Workspace.CollectionPath}(), Dict{CollectionKey,MetadataDict}())
     end
     unread = cache.unread
@@ -150,19 +141,15 @@ function _render_hierarchy_tree_panel(
     # A collection is selected and expanded by its path.
     visible_collection_ids_ref = Ref{Union{Nothing,Vector{Workspace.CollectionPath}}}(nothing)
     expanded_collection_id_set = Set(state.expanded_collections)
-    selected_collection_id_set = workspace isa Workspace.Workspace ?
-        Set(workspace.selection.collections) :
-        Set{Workspace.CollectionPath}()
+    selected_collection_id_set = Set(workspace.selection.collections)
     all_collection_count = Ref(0)
     filter_active = ig.ImGuiTextFilter_IsActive(filter_tree)
 
-    has_root_items = workspace isa Workspace.Workspace &&
-        !isempty(Workspace.items(workspace, ROOT))
+    has_root_items = !isempty(Workspace.items(workspace, ROOT))
     # The top-level collections, kept with the tree: listing every collection at each frame to see
     # whether there is one costs memory in proportion to the collections.
-    roots = workspace isa Workspace.Workspace ?
-        get!(() -> Workspace.children(workspace, ROOT), cache.children, ROOT) : CollectionKey[]
-    if workspace isa Workspace.Workspace && (!isempty(roots) || has_root_items || !isempty(unread))
+    roots = get!(() -> Workspace.children(workspace, ROOT), cache.children, ROOT)
+    if !isempty(roots) || has_root_items || !isempty(unread)
         has_visible_leaf_cache = cache.has_visible_leaf
         subtree_matches_cache = cache.subtree_matches
 
@@ -170,7 +157,7 @@ function _render_hierarchy_tree_panel(
             Workspace.children(workspace, collection_record)
         end
 
-        """Return whether this subtree contains a visible collection."""
+        # Whether this collection or a collection below it is visible.
         function has_visible_leaf(collection_record::CollectionKey)::Bool
             return get!(has_visible_leaf_cache, collection_record) do
                 children = child_records(collection_record)
@@ -184,7 +171,7 @@ function _render_hierarchy_tree_panel(
             end
         end
 
-        """Return whether this collection record or one of its descendants matches the filter."""
+        # Whether the label of this collection or of a collection below it passes the filter.
         function subtree_matches(collection_record::CollectionKey)::Bool
             return get!(subtree_matches_cache, collection_record) do
                 ig.ImGuiTextFilter_PassFilter(
@@ -196,7 +183,8 @@ function _render_hierarchy_tree_panel(
             end
         end
 
-        """Collect visible leaf collections while respecting inherited filter matches."""
+        # Collect the visible leaf collections below this one. A collection whose label passes the
+        # filter shows all of its children.
         function collect_visible_collections!(
             collection_record::CollectionKey,
             force_show::Bool=false,
@@ -217,7 +205,7 @@ function _render_hierarchy_tree_panel(
             return nothing
         end
 
-        """Count leaf collections below one collection record."""
+        # The number of leaf collections below this one.
         function count_leaf_collections(collection_record::CollectionKey)::Int
             children = child_records(collection_record)
             if isempty(children)
@@ -270,7 +258,7 @@ function _render_hierarchy_tree_panel(
             hash(id(workspace, collection_record), parent_id)
         to_imgui_id(row_id::UInt64) = Int32(row_id % UInt64(typemax(Int32)))
 
-        """Render the GUI-only selector for items attached directly to the source root."""
+        # The row of the items directly in the source, outside any collection.
         function render_root_items()::Nothing
             root_visible || return nothing
             state.performance.node_count += 1
@@ -323,12 +311,10 @@ function _render_hierarchy_tree_panel(
             return range[start]:range[findlast(inside, range)]
         end
 
-        """
-        Render the source items of `range` that are not read yet, and their folders, as gray rows.
-        `depth` is the position in their ids of the names to show, and the folders in `shown` are
-        left out: they are the collections with the same label. A click on a row asks the
-        workspace to read what is below it first.
-        """
+        # Draw the source items of `range` that are not read yet, and their folders, as gray rows.
+        # `depth` is the position in their ids of the names to show, and the folders in `shown` are
+        # left out: they are the collections with the same label. A click on a row asks the
+        # workspace to read what is below it first.
         function render_unread(range::UnitRange{Int}, depth::Int, shown)::Nothing
             # TODO: mark the source items that were asked for.
             (isempty(range) || filter_active) && return nothing
@@ -364,11 +350,9 @@ function _render_hierarchy_tree_panel(
             return nothing
         end
 
-        """
-        Render one hierarchy row and recursively render its open descendants. `unread_below` are
-        the source items not read yet in the folders with the labels of this collection and of
-        the collections above it; `depth` is the number of those folders.
-        """
+        # Draw the row of one collection, then the rows of its children while it is open.
+        # `unread_below` are the source items not read yet in the folders with the labels of this
+        # collection and of the collections above it; `depth` is the number of those folders.
         function render_collection(
             collection_record::CollectionKey,
             row_id::UInt64,
@@ -542,31 +526,10 @@ function _render_hierarchy_tree_panel(
     ig.EndChild()
 end
 
-"""Render selection counts shared by the collection and item panels."""
-function _render_selection_status!(
-    selected_count::Int,
-    filtered_count::Int,
-    total_count::Int,
-    item_type::String,
-)::Nothing
-    if selected_count > 1
-        ig.TextColored((0.2, 0.8, 0.2, 1.0), "$selected_count/$filtered_count $item_type selected")
-    elseif selected_count == 1
-        ig.TextColored((0.6, 0.8, 1.0, 1.0), "1/$filtered_count $item_type selected")
-    else
-        ig.TextDisabled("0/$filtered_count $item_type selected")
-    end
-
-    if filtered_count != total_count
-        ig.SameLine()
-        ig.TextDisabled("($total_count total)")
-    end
-    ig.SameLine()
-    _helpmarker("Multi-select: Shift+click=range, Ctrl+click=toggle, Ctrl+A=all")
-    return nothing
-end
-
-"""Render filtering and select-all controls shared by both selection panels."""
+"""
+Draw the top of a selection panel: how many of the rows are selected, and the filter of the rows.
+Ctrl-A calls `on_select_all!`.
+"""
 function _render_selection_toolbar!(
     selected_count::Int,
     visible_count::Int,
@@ -576,11 +539,23 @@ function _render_selection_toolbar!(
     item_label::String,
     filter_id::String,
 )::Nothing
-    _render_selection_status!(selected_count, visible_count, total_count, item_label)
+    if selected_count > 1
+        ig.TextColored((0.2, 0.8, 0.2, 1.0), "$selected_count/$visible_count $item_label selected")
+    elseif selected_count == 1
+        ig.TextColored((0.6, 0.8, 1.0, 1.0), "1/$visible_count $item_label selected")
+    else
+        ig.TextDisabled("0/$visible_count $item_label selected")
+    end
+    if visible_count != total_count
+        ig.SameLine()
+        ig.TextDisabled("($total_count total)")
+    end
+    ig.SameLine()
+    _helpmarker("Shift+click selects a range, Ctrl+click adds or removes one item, Ctrl+A selects all.")
 
     ig.Text("Filter")
     ig.SameLine()
-    _helpmarker("incl,-excl")
+    _helpmarker("Words separated by commas. A word that starts with - hides what it matches: run,-old")
     ig.SameLine()
     ig.SetNextItemShortcut(
         ig.ImGuiMod_Ctrl | ig.ImGuiKey_F,
@@ -595,8 +570,7 @@ function _render_selection_toolbar!(
     return nothing
 end
 
-# Right panel (items list) rendering
-"""Render items for the selected collections and update workspace selection."""
+"""Draw the items of the selected collections, and change the items the workspace selects on a click."""
 function _render_items_panel(
     state::BrowserState,
     filter_item::Ptr{ig.lib.ImGuiTextFilter},
@@ -604,12 +578,6 @@ function _render_items_panel(
     ig.BeginChild("Items", (0, 0), true)
     ig.SeparatorText("Item Selection")
     workspace = state.workspace
-    if !(workspace isa Workspace.Workspace)
-        ig.TextDisabled("No workspace open")
-        ig.EndChild()
-        return nothing
-    end
-
     selected_collections, selected_items, selected_path =
         _project_visible_selection(state)
     root_selected = Workspace.CollectionPath() in workspace.selection.collections
@@ -701,22 +669,13 @@ function _render_items_panel(
                         grayed && ig.PopStyleColor()
                         if clicked
                             io = ig.GetIO()
-                            shift_held = unsafe_load(io.KeyShift)
-                            ctrl_held = unsafe_load(io.KeyCtrl)
-                            selected_ids = copy(workspace.selection.item_ids)
-                            # TODO(scale): each click builds the ids of all visible items; work on item keys.
-                            visible_ids = [id(workspace, visible) for visible in visible_items]
-                            _update_multi_selection!(
-                                selected_ids,
-                                id(workspace, item),
-                                visible_ids,
-                                shift_held,
-                                ctrl_held,
-                            )
                             # The selection may name items the workspace does not have yet, as after
                             # reopening; `select!` takes only items it has.
-                            filter!(id -> Workspace.item(workspace, id) !== nothing, selected_ids)
-                            Workspace.select!(workspace, selected_ids)
+                            selected_keys = ItemKey[key for key in Workspace.item.(Ref(workspace), workspace.selection.item_ids)
+                                                    if key !== nothing]
+                            _update_multi_selection!(selected_keys, item, visible_items,
+                                unsafe_load(io.KeyShift), unsafe_load(io.KeyCtrl))
+                            Workspace.select!(workspace, selected_keys)
                             state.selection_revision = workspace.selection.revision
                         end
                         if state.scroll_to_item_id !== nothing && state.scroll_to_item_id == id(workspace, item)
@@ -730,11 +689,13 @@ function _render_items_panel(
                             selected_count = length(target_items)
                             selected_count > 1 && ig.TextDisabled("Apply to $selected_count items")
 
+                            # The ids are gathered only when an entry is clicked: the selection
+                            # can be large, and the menu draws in every frame while it is open.
                             for ext in state.extensions
                                 item_context_menu!(
                                     ext,
                                     state;
-                                    item_ids=[id(workspace, item)],
+                                    item_ids=() -> [id(workspace, key) for key in target_items],
                                     label=item_label,
                                     kind=label(Workspace.valuetype(workspace, item)),
                                 )
@@ -761,7 +722,7 @@ function _render_items_panel(
     return nothing
 end
 
-"""Render both selection panels and keep their text filters in browser state."""
+"""Draw the window with the collection tree and the item panel, and keep the text of their filters."""
 function render_selection_window(state::BrowserState)::Nothing
     state.performance.node_count = 0
     if state.reset_project_filters
@@ -784,8 +745,7 @@ function render_selection_window(state::BrowserState)::Nothing
         ig.Columns(2, "main_layout")
         # Both panels read many rows of the catalog. Holding its lock for the two panels keeps them
         # from waiting for the workers at every row.
-        workspace = state.workspace
-        @lock (workspace isa Workspace.Workspace ? workspace.catalog.lock : ReentrantLock()) begin
+        @lock state.workspace.catalog.lock begin
             @timed "collection_tree" begin
                 _render_hierarchy_tree_panel(state, filter_tree)
             end

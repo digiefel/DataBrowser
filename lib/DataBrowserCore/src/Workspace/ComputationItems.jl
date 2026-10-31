@@ -2,7 +2,7 @@
     ComputationItem
 
 A value prepared for a view, together with the computation that produced it. This reference is
-not a catalog entry. `item_data` exposes its native data; `computation(item)` exposes its origin.
+not a catalog entry. `data` exposes its native data; `computation(item)` exposes its origin.
 """
 struct ComputationItem{C<:Computation,T} <: AbstractDataItem
     id::String
@@ -14,7 +14,7 @@ end
 id(item::ComputationItem) = item.id
 label(item::ComputationItem) = item.label
 metadata(item::ComputationItem) = item.metadata
-item_data(item::ComputationItem) = item.value isa AbstractDataItem ? item_data(item.value) : item.value
+data(item::ComputationItem) = item.value isa AbstractDataItem ? data(item.value) : item.value
 computation(item::ComputationItem) = item.computation
 computation(::Workspace, item::ComputationItem) = item.computation
 

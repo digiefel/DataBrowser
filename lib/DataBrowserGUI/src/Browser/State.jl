@@ -31,6 +31,8 @@ Base.@kwdef struct PersistedWindow
     # The name of a function in `Main`, or empty.
     transform::String = ""
     settings::Dict{String,Any} = Dict{String,Any}()
+    # What `selection` gave, for `select!` when the window opens again.
+    selection::Dict{String,Any} = Dict{String,Any}()
     arrangement::String = "auto"
     active_item::String = ""
 end
@@ -54,18 +56,14 @@ Transient selection and scroll state for a DataGrid widget.
 
 Owned by the consumer of the grid (e.g. `TableView`); passed by reference each frame.
 The grid fits its columns to their content when it first draws, and again when `fit_columns` is set.
-Column widths the user sets are kept in the imgui.ini file, keyed by the grid `id`. Row mode uses `selected_rows`. Cell mode stores the opposite corners of one rectangular selection in
-`cell_anchor` and `cell_focus`. Use `scroll_to_row` to request a programmatic scroll on the next frame.
+Column widths the user sets are kept in the imgui.ini file, keyed by the grid `id`. `selected_rows`
+holds the selected rows. Use `scroll_to_row` to request a programmatic scroll on the next frame.
 `selected_columns` holds the columns whose headers the user clicked. `sort` holds the columns that
 the arrows of the headers show the rows sorted by.
 """
 Base.@kwdef mutable struct DataGridState
     selected_rows::Vector{Int}           = Int[]
     scroll_to_row::Union{Nothing,Int}    = nothing
-    cell_anchor::Union{Nothing,Tuple{Int,Int}} = nothing
-    cell_focus::Union{Nothing,Tuple{Int,Int}} = nothing
-    dragging_cells::Bool                 = false
-    focused::Bool                        = false
     fit_columns::Bool                    = true
     selected_columns::Vector{Int}        = Int[]
     # The columns the rows are sorted by, as `(column, ascending)` pairs from the first to the last.
@@ -286,7 +284,7 @@ The workspace owns items, selection, cache state, data, and background work. Thi
 only controls, windows, local persistence, annotations, and rendering state.
 """
 Base.@kwdef mutable struct BrowserState
-    workspace::Union{Nothing,Workspace.Workspace} = nothing
+    workspace::Workspace.Workspace
     tree_cache::Union{Nothing,TreeCache} = nothing
     item_list::Union{Nothing,ItemList} = nothing
     visible_items::Union{Nothing,VisibleItems} = nothing
@@ -346,10 +344,10 @@ struct BrowserSession
 end
 
 # The state holds GPU handles, buffers and every window; printing only names what is open.
-Base.show(io::IO, state::BrowserState) = print(io, "BrowserState(", something(state.workspace, "no workspace"), ")")
+Base.show(io::IO, state::BrowserState) = print(io, "BrowserState(", state.workspace, ")")
 Base.show(io::IO, session::BrowserSession) = print(
     io, "BrowserSession(", istaskdone(session.task) ? "closed" : "open", ", ",
-    something(session.state.workspace, "no workspace"), ")")
+    session.state.workspace, ")")
 
 """Call `shutdown!` on every extension instance."""
 function _shutdown_extensions!(state::BrowserState)::Nothing

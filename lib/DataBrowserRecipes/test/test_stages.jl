@@ -1,4 +1,4 @@
-using DataBrowserAPI: AbstractDataSource, AbstractDataSourceItem, expand, process, reconstruct, id, label, item_data, metadata
+using DataBrowserAPI: AbstractDataSource, AbstractDataSourceItem, expand, process, reconstruct, id, label, data, metadata
 using Test, DataBrowserRecipes, DataBrowserAPI
 import DataBrowserSources
 using DataBrowserSources: DirectorySource
@@ -40,9 +40,9 @@ end
     for item in items
         processed = process(project, item)
         @test id(processed) == id(item)
-        @test item_data(processed).x == [3, 6]
+        @test data(processed).x == [3, 6]
         @test metadata(processed)[:total] == 9
-        restored = reconstruct(typeof(processed), id(processed), item_data(processed), metadata(processed))
+        restored = reconstruct(typeof(processed), id(processed), data(processed), metadata(processed))
         @test metadata(restored) == metadata(processed)
     end
 end
@@ -60,9 +60,9 @@ end
     items = [process(project, item) for item in expand(project, file, read(project, RecipeSource(), file))]
     device = process(project, DataBrowserRecipes.NamedCollection{:device}("A"), items)
     # The collection is rebuilt from what the cache keeps of it.
-    device = reconstruct(typeof(device), id(device), item_data(device), metadata(device))
+    device = reconstruct(typeof(device), id(device), data(device), metadata(device))
     members = [process(project, item, device) for item in items]
-    @test [item_data(member).x for member in members] == [[3], [4]]
+    @test [data(member).x for member in members] == [[3], [4]]
     @test all(metadata(member)[:count] == 2 for member in members)
 end
 
@@ -73,8 +73,8 @@ end
         file = only(items(source; cancel_token=get_token(CancellationTokenSource())))
         project = register_csv!(define_project("csv"))
         item = only(expand(project, file, read(project, source, file)))
-        @test item_data(item).x == [1, 3]
-        @test item_data(item).y == [2, 4]
+        @test data(item).x == [1, 3]
+        @test data(item).y == [2, 4]
         @test label(project, item) == file.filename
 
         register_csv!(project; label=(_, meta) -> splitext(meta[:filename])[1])
@@ -90,12 +90,12 @@ end
 
 @testset "read returns the callback value without a transport carrier" begin
     project = define_project("native read output")
-    data = (signal=[1.0, 2.0],)
-    register_item!(project, :trace; read=_ -> data)
+    signal = (signal=[1.0, 2.0],)
+    register_item!(project, :trace; read=_ -> signal)
     file = RecipeFile("trace.dat")
-    @test read(project, RecipeSource(), file) === data
-    @test item_data(only(expand(project, file, data))) === data
-    envelope = (data=data, metadata=Dict(:scale => 2))
+    @test read(project, RecipeSource(), file) === signal
+    @test data(only(expand(project, file, signal))) === signal
+    envelope = (data=signal, metadata=Dict(:scale => 2))
     register_item!(project, :trace; read=_ -> envelope)
     @test read(project, RecipeSource(), file) === envelope
     @test metadata(only(expand(project, file, envelope)))[:scale] == 2

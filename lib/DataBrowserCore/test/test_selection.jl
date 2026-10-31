@@ -33,7 +33,7 @@ struct Sweep <: AbstractDataItem
 end
 DataBrowserAPI.id(sweep::Sweep) = sweep.name
 DataBrowserAPI.label(sweep::Sweep) = sweep.name
-DataBrowserAPI.item_data(sweep::Sweep) = sweep.data
+DataBrowserAPI.data(sweep::Sweep) = sweep.data
 DataBrowserAPI.metadata(sweep::Sweep) = sweep.meta
 DataBrowserAPI.collection(sweep::Sweep) = AbstractCollection[Chip(level) for level in split(sweep.chip, '/')]
 DataBrowserAPI.reconstruct(::Type{Sweep}, name::AbstractString, data, meta::Dict) = Sweep(name, "", data, meta)
@@ -81,7 +81,7 @@ end
     try
         W.wait_workspace_idle!(workspace; timeout=20)
         sweeps = W.materialize_items(workspace, ["IV_A", "IV_B"])
-        top(xs; scale) = (top = scale * maximum(maximum(DataBrowserAPI.item_data(x).V) for x in xs), count = length(xs))
+        top(xs; scale) = (top = scale * maximum(maximum(DataBrowserAPI.data(x).V) for x in xs), count = length(xs))
         # TODO: build it through the fit of a plot, its first producer, once that exists.
         value = W.Computation(top, sweeps; scale=2)
         push!(workspace, value)

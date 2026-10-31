@@ -556,7 +556,7 @@ larger than the capacity remains usable until another value arrives. Cache evict
 its reference; values held by running consumers remain alive. Writing, reading and removing a value
 take the same time for any number of entries.
 """
-mutable struct MemoryStore{K,R}
+mutable struct MemoryStore{K,R} <: DataBrowserAPI.AbstractStore
     lock::ReentrantLock
     # Each value with its weight, the least recently used first.
     entries::OrderedDict{K,Tuple{R,Int}}
@@ -597,8 +597,9 @@ function Base.delete!(store::MemoryStore{K}, key::K)::Nothing where {K}
 end
 
 """Return a cache hit marker and its value atomically, or `nothing` on a miss."""
+# A hit is a copy, which the caller may change.
 function read_hit(store::MemoryStore{K,R}, key::K)::Union{Nothing,Some} where {K,R}
-    return lock(store.lock) do
+    found = lock(store.lock) do
         store.closed && error("memory store is closed")
         found = pop!(store.entries, key, nothing)
         found === nothing && return nothing
@@ -606,6 +607,7 @@ function read_hit(store::MemoryStore{K,R}, key::K)::Union{Nothing,Some} where {K
         store.entries[key] = found
         return Some(first(found))
     end
+    return found === nothing ? nothing : Some(deepcopy(something(found)))
 end
 
 function Base.haskey(store::MemoryStore{K}, key::K)::Bool where {K}
@@ -1105,10 +1107,11 @@ function _pending_tabular_body(
     location::Tuple{UInt16,UInt32},
 )::Tuple{Bool,Any}
     queued = _read_mutation(store.queued, location)
-    queued[1] && return (true, queued[2] === nothing ? nothing : queued[2].body)
+    # A payload that waits to be written is handed out as a copy, as one read from the database is new.
+    queued[1] && return (true, queued[2] === nothing ? nothing : deepcopy(queued[2].body))
     writing = _read_mutation(store.writing, location)
     return writing[1] ?
-        (true, writing[2] === nothing ? nothing : writing[2].body) :
+        (true, writing[2] === nothing ? nothing : deepcopy(writing[2].body)) :
         (false, nothing)
 end
 

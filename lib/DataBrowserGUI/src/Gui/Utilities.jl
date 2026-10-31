@@ -1,6 +1,6 @@
 import CImGui as ig
 
-"""Render a small question mark with explanatory hover text."""
+"""Draw a grey question mark that shows `description` while the mouse is over it."""
 function _helpmarker(description::String)::Nothing
     ig.TextDisabled("(?)")
     if ig.BeginItemTooltip()

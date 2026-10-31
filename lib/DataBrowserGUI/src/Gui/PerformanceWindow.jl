@@ -46,7 +46,6 @@ end
 """Sample the active workspace's throughput counters into `state.performance.history`."""
 function _sample_throughput!(state::BrowserState)::Nothing
     workspace = state.workspace
-    workspace isa Workspace.Workspace || return nothing
     completed, _total, active = Workspace.work_counts(workspace)
     _record_throughput!(
         state.performance.history,
@@ -150,13 +149,8 @@ function _sparkline(label::String, values::Vector{Float32}, unit::String)::Nothi
     return nothing
 end
 
-"""Render live item-throughput sparklines. Samples on entry; needs an open workspace."""
+"""Render live item-throughput sparklines. Samples on entry."""
 function _render_throughput_tab!(state::BrowserState)::Nothing
-    workspace = state.workspace
-    if !(workspace isa Workspace.Workspace)
-        ig.TextDisabled("Open a workspace to see throughput.")
-        return nothing
-    end
     _sample_throughput!(state)
     h = state.performance.history
 
@@ -187,14 +181,13 @@ end
 
 """
 Render the Performance window: the main-task section tree (Timings), live item throughput
-(Throughput), and, when a workspace is open, its pipeline counters (Workspace). Toggled from the
+(Throughput), and the pipeline counters of the workspace (Workspace). Toggled from the
 Debug menu. All figures come from data the render loop already collects.
 """
 function render_perf_window(state::BrowserState)::Nothing
     state.show_performance_window || return nothing
 
     if ig.Begin("Performance###perf_window", C_NULL, ig.ImGuiWindowFlags_HorizontalScrollbar)
-        workspace = state.workspace
         if ig.BeginTabBar("##perf_tabs")
             if ig.BeginTabItem("Timings")
                 ig.Spacing()
@@ -206,9 +199,9 @@ function render_perf_window(state::BrowserState)::Nothing
                 _render_throughput_tab!(state)
                 ig.EndTabItem()
             end
-            if workspace isa Workspace.Workspace && ig.BeginTabItem("Workspace")
+            if ig.BeginTabItem("Workspace")
                 ig.Spacing()
-                _render_workspace_tab!(workspace)
+                _render_workspace_tab!(state.workspace)
                 ig.EndTabItem()
             end
             ig.EndTabBar()

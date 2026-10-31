@@ -9,18 +9,11 @@ using DataBrowserAPI: @timed_dbg
 import DataBrowserGUI
 const Browser = DataBrowserGUI.Browser
 
-using DataBrowserPlots:
-    RegisteredPlot,
-    plot_kind_label,
-    plot_data!,
-    registered_plot_kinds,
-    setup_plot
-import DataBrowserPlots: embed
+using DataBrowserPlots: registered_plots
 
 include("MakieIntegration.jl")
 using .MakieImguiIntegration
 
-embed(figure::Figure, id::String) = MakieFigure(id, figure; auto_resize_x=true, auto_resize_y=true)
 include("FigureView.jl")
 include("PlotView.jl")
 include("PlotsExtension.jl")

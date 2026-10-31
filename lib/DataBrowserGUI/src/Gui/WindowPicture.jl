@@ -1,15 +1,11 @@
 import CImGui as ig
 import ModernGL as GL
-using NativeFileDialog: save_file
 using Zlib_jll: libz
 
-import DataBrowserAPI: export!
-using DataBrowserAPI: AbstractVisualizer, label
-
-# The default of `export!` saves a picture of what the visualizer draws, without the title and the
-# header of its window. `export!` asks for the file; the browser then measures the area `draw!`
-# draws in, ImGui reads that area from the screen once it has drawn the window, and the browser
-# saves the picture in the next frame.
+# "Export" saves a picture of what the visualizer draws, without the title and the header of its
+# window, when the visualizer saves no file type. "Export" asks for the file; the browser then
+# measures the area `draw!` draws in, ImGui reads that area from the screen once it has drawn the
+# window, and the browser saves the picture in the next frame.
 mutable struct WindowPicture
     window::String
     path::String
@@ -24,14 +20,6 @@ mutable struct WindowPicture
 end
 
 const WINDOW_PICTURE = Ref{Union{Nothing,WindowPicture}}(nothing)
-
-function export!(visualizer::AbstractVisualizer, ctx)::Nothing
-    path = save_file("$(label(visualizer)).png"; filterlist="png")
-    isempty(path) && return nothing
-    isempty(splitext(path)[2]) && (path *= ".png")
-    WINDOW_PICTURE[] = WindowPicture(ctx.id, path, 0, 0, 0, 0, UInt8[])
-    return nothing
-end
 
 # Called by ImGui while it draws, with the screen of the window as the current framebuffer.
 function _read_window_picture(_draw_list::Ptr{Cvoid}, _command::Ptr{Cvoid})::Cvoid

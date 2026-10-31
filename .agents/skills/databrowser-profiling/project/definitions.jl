@@ -12,6 +12,7 @@ import DataBrowser: collection, id, item_data, kind, metadata
 using CSV
 using DataFrames
 using Statistics: mean
+using Dates: DateTime
 
 include("data/pund.jl")       # PUND readers and table normalization
 include("data/cv.jl")         # C-V reader
@@ -64,7 +65,9 @@ function ruo2_file_metadata(file)::Dict{Symbol,Any}
     end
     temp = match(r"_(\d+(?:\.\d+)?)K(?:_|\.|$)", file.filename)
     temp === nothing || (md[:temperature_K] = parse(Float64, temp.captures[1]))
-    file.timestamp === nothing || (md[:timestamp] = file.timestamp)
+    # The file name holds the measurement time, as in `_20251128_175954_`.
+    stamp = match(r"_(\d{8}_\d{6})_", file.filename)
+    stamp === nothing || (md[:timestamp] = DateTime(stamp.captures[1], "yyyymmdd_HHMMSS"))
     return md
 end
 

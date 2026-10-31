@@ -1,4 +1,5 @@
 using Test, DataBrowserAPI, DataBrowserCore
+using DataBrowserAPI: data
 using DataBrowserCache: DuckDBStore, MemoryStore
 import DataBrowserCore.Workspace as CW
 
@@ -9,7 +10,7 @@ end
 ComputationProject() = ComputationProject(Ref(0), Type[])
 
 # A project store can accept only the native item type it was configured for.
-struct NativeItemStore{T<:AbstractDataItem}
+struct NativeItemStore{T<:AbstractDataItem} <: AbstractStore
     values::MemoryStore{String,Any}
 end
 Base.haskey(store::NativeItemStore, id::AbstractString) = haskey(store.values, id)
@@ -44,7 +45,7 @@ DataBrowserAPI.id(::ComputationFile) = "input"
 DataBrowserAPI.label(::ComputationFile) = "input"
 DataBrowserAPI.fingerprint(::ComputationFile) = 1
 DataBrowserAPI.id(value::ComputationItem) = value.name
-DataBrowserAPI.item_data(value::ComputationItem) = value.data
+DataBrowserAPI.data(value::ComputationItem) = value.data
 DataBrowserAPI.metadata(value::ComputationItem) = value.metadata
 DataBrowserAPI.collection(::ComputationItem) = [ComputationCollection()]
 DataBrowserAPI.reconstruct(::Type{ComputationItem}, id::AbstractString, data, metadata::Dict) =
@@ -176,7 +177,7 @@ struct VectorValueItem <: AbstractDataItem
 end
 DataBrowserAPI.project_name(::VectorValueProject) = "native-vector"
 DataBrowserAPI.id(::VectorValueItem) = "vector"
-DataBrowserAPI.item_data(value::VectorValueItem) = value.data
+DataBrowserAPI.data(value::VectorValueItem) = value.data
 DataBrowserAPI.read(::VectorValueProject, ::ComputationSource, ::ComputationFile) =
     VectorValueItem([1.0, 2.0, 3.0], 2.5)
 
@@ -201,7 +202,7 @@ struct GroupedComputationItem <: AbstractDataItem
     metadata::Dict{Symbol,Any}
 end
 DataBrowserAPI.id(value::GroupedComputationItem) = value.name
-DataBrowserAPI.item_data(value::GroupedComputationItem) = value.data
+DataBrowserAPI.data(value::GroupedComputationItem) = value.data
 DataBrowserAPI.metadata(value::GroupedComputationItem) = value.metadata
 DataBrowserAPI.reconstruct(::Type{GroupedComputationItem}, id::AbstractString, data, metadata::Dict) =
     GroupedComputationItem(String(id), data, metadata)
@@ -227,7 +228,7 @@ DataBrowserAPI.process(::GroupComputationProject, value::ComputationItem, group:
         @test metadata(result)[:total] == 12
         @test metadata(result)[:grouped] == true
         supplied = only(materialize_items(workspace, ["sample"]))
-        @test item_data(result) == item_data(supplied)
+        @test data(result) == data(supplied)
         @test metadata(result) == metadata(supplied)
     finally
         CW.close_workspace!(workspace)
@@ -262,9 +263,9 @@ end
         CW.wait_workspace_idle!(workspace)
         key = only(CW.items(workspace))
         processed = computation(workspace, key, DataBrowserAPI.ITEM_PROCESS)
-        # The item's value is made from the processed item, and its graph keeps that exact call.
+        # The item's value is the processed item, and its graph keeps that exact call.
         @test processed.f === DataBrowserAPI.process
-        pending = inputs(computation(workspace, key))
+        pending = Computation[computation(workspace, key)]
         ancestors = Computation[]
         while !isempty(pending)
             node = pop!(pending)
@@ -275,7 +276,7 @@ end
         @test any(node -> node === processed, ancestors)
         reader = only(filter(node -> node.f === DataBrowserAPI.read, ancestors))
         @test evaluate(workspace, reader) == [1, 2, 3]
-        @test item_data(evaluate(workspace, processed)).signal == [2, 4, 6]
+        @test data(evaluate(workspace, processed)).signal == [2, 4, 6]
         latest = evaluate(workspace, computation(workspace, "sample"))
         @test latest isa ComputationItem
         @test id(latest) == "sample"
@@ -466,7 +467,7 @@ DataBrowserAPI.expand(::KeptProject, file::ComputationFile, data) = expand(Compu
 DataBrowserAPI.process(::KeptProject, value::ComputationItem) = process(ComputationProject(), value)
 DataBrowserAPI.storage(project::KeptProject, ::Type{<:AbstractDataItem}) = DuckDBStore(project.values)
 const KEPT_CALLS = Threads.Atomic{Int}(0)
-kept_total(value) = (Threads.atomic_add!(KEPT_CALLS, 1); sum(item_data(value).signal))
+kept_total(value) = (Threads.atomic_add!(KEPT_CALLS, 1); sum(data(value).signal))
 
 @testset "a computation result kept on disk is not computed again after a reopen" begin
     mktempdir() do depot

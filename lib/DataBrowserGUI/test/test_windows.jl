@@ -26,7 +26,7 @@ DataBrowserAPI.expand(::WindowTestProject, ::WindowTestFile, ::Nothing) = [Windo
 DataBrowserAPI.id(number::WindowTestNumber) = number.name
 DataBrowserAPI.metadata(number::WindowTestNumber) = Dict{Symbol,Any}(:number => number.value)
 DataBrowserAPI.label(number::WindowTestNumber) = number.name
-DataBrowserAPI.item_data(number::WindowTestNumber) = (; value=[number.value])
+DataBrowserAPI.data(number::WindowTestNumber) = (; value=[number.value])
 DataBrowserAPI.reconstruct(::Type{WindowTestNumber}, name::AbstractString, data, ::Dict) = WindowTestNumber(name, only(data.value))
 
 # A visualizer that keeps the value it is given.

@@ -97,7 +97,7 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem}; sectio
     end
 
     if isempty(matches)
-        ig.TextDisabled("No name matches.")
+        ig.TextDisabled("No match")
     else
         # TODO: rank the names that match, for example those with the letters next to each other first.
         line = ig.GetTextLineHeightWithSpacing()

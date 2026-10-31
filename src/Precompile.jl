@@ -1,13 +1,9 @@
 using CSV
 using DataFrames: DataFrame, nrow
 
-"""
-Minimal fixture project used only to exercise engine pipelines during precompilation.
-
-User project callbacks are not precompilable for other projects; this registry exists solely to
-drive scan, read, process, analyze, collection analysis and cache writes through the package
-machinery using bundled test fixtures.
-"""
+# A project for the precompile workload, on the CSV files of `PRECOMPILE_FIXTURES`. The functions of
+# a user's project compile when the project first runs; this project runs the package code around
+# them: scan, read, process, analyze, collection analysis and the cache.
 function _precompile_project()
     project = define_project("Precompile")
     register_item!(project, :iv;
@@ -28,69 +24,36 @@ function _precompile_project()
     return project
 end
 
-const PRECOMPILE_FIXTURES = normpath(joinpath(@__DIR__, "..", "test", "fixtures", "TASE"))
+const PRECOMPILE_FIXTURES = joinpath(@__DIR__, "..", "test", "fixtures", "TASE")
 
-"""
-Open a workspace of `project` on the bundled fixtures in a temporary depot, wait for it, and call
-`use(workspace, items)` with every item loaded.
-"""
-function _precompile_workspace(use::Function, project)::Nothing
-    precompile_depot = mktempdir()
-    pushfirst!(DEPOT_PATH, precompile_depot)
-    workspace = nothing
-    try
-        # The browser saves its view beside the data, so the workspace opens a copy of the fixtures.
-        fixtures = cp(PRECOMPILE_FIXTURES, joinpath(precompile_depot, "fixtures"))
-        workspace = open_workspace(project, fixtures)
-        Workspace.wait_workspace_idle!(workspace; timeout=45)
-        records = collect(Workspace.items(workspace))
-        isempty(records) || use(workspace, Workspace.materialize_items(workspace, records))
-    finally
-        workspace === nothing || close_workspace!(workspace)
-        popfirst!(DEPOT_PATH)
-        rm(precompile_depot; force=true, recursive=true)
-    end
-    return nothing
-end
-
-"""
-Run `project` through the engine and the browser state, as a precompilation workload. `selected`
-receives the workspace and every item loaded.
-"""
+# Open a workspace of `project` on the fixtures, select every item, and call
+# `selected(workspace, items)` with the processed items. Package extensions pass `selected` to
+# compile their own code on the same workspace.
 function _precompile_engine(
     project=_precompile_project(); selected::Function=(workspace, items) -> nothing,
 )::Nothing
-    foreach(path -> items_for_file(project, path), readdir(PRECOMPILE_FIXTURES; join=true))
-    _precompile_workspace(project) do workspace, items
-        selected(workspace, items)
-        Workspace.workspace_status(workspace)
-        select!(workspace, collect(Workspace.items(workspace)))
+    # A workspace keeps its cache in the first depot. A temporary depot keeps the user's depot clean.
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        # The browser saves its view beside the data, so the workspace opens a copy of the fixtures.
+        folder = cp(PRECOMPILE_FIXTURES, joinpath(depot, "fixtures"))
+        workspace = open_workspace(project, folder)
+        wait_workspace_idle!(workspace)
+        workspace_status(workspace)
+        ids = query_items(workspace)
+        selected(workspace, materialize_items(workspace, ids))
+        select!(workspace, ids)
         selection(workspace)
-        Workspace.query_items(workspace)
-        Workspace.workspace_memory_snapshot(workspace)
-        Cache.load_cache_index(workspace.cache.db)
-
-        state = Browser.BrowserState(workspace=workspace)
-        Browser.current_status(state)
-        Browser._project_visible_selection(state)
-        # Draw the browser with the items selected, in a hidden window. A machine without a
-        # display cannot create the window, and then only the code above is compiled.
-        try
-            session = open_browser(workspace; wait=false, window_start=:hidden)
-            wait_browser_ready(session)
-            ids = Workspace.query_items(workspace)
-            for selected in (ids[1:1], ids)
-                select!(workspace, selected)
-                drawn = session.state.performance.frame
-                while session.state.performance.frame < drawn + 15 && !istaskdone(session.task)
-                    sleep(0.01)
-                end
-            end
-            close_browser!(session)
-        catch error
-            @debug "The browser window was not drawn during precompilation" exception=error
-        end
+        close_workspace!(workspace)
+        # Open the folder again: now the items come from the cache.
+        workspace = open_workspace(project, folder)
+        wait_workspace_idle!(workspace)
+        materialize_items(workspace, query_items(workspace))
+        close_workspace!(workspace)
+        popfirst!(DEPOT_PATH)
     end
+    # FIXME: draw the browser in a hidden window too, so that its first frames are compiled.
+    # `open_browser` needs an interactive thread, and the precompile process has only one thread.
     return nothing
 end
 
