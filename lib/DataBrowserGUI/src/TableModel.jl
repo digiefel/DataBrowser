@@ -5,7 +5,7 @@ using DataBrowserAPI: AbstractDataItem, id, item_data, items, label, metadata
 using DataBrowserCore: Selection
 
 """
-Table view over the data of one or more items.
+The data of one or more items as one table.
 
 `columns` is the union of all item columns in stable order. Each column has a path, `paths[col]`,
 which names it inside the item's data, from the outside in, such as `["fit", "slope"]`. Its name in
@@ -15,9 +15,9 @@ tuple, that is not split into columns.
 `row_item[r]` is the 1-based index into `item_labels` for row `r`, and `item_row[r]` is the row
 within that item. `item_index[i]` is the place of item `i` in the selection the table was built
 from, which also has the items whose data could not be read; it is empty for the table of a value.
-`getcell(row, col)` returns display text for any cell; `getvalue(row, col)` returns the raw
-typed value (`missing` when the row's item lacks that column). Consumers that compute — plotting,
-fitting, export — must read `getvalue`, never parse display text. `spans_item(row, col)` tells
+`getcell(row, col)` returns the text a cell shows, and `getvalue(row, col)` the value itself, or
+`missing` when the item of the row lacks the column. Code that computes with the table, such as
+plots and fits, reads `getvalue`, never the text. `spans_item(row, col)` tells
 whether the cell holds one value for the whole item, rather than one value for its row.
 
 When only one item is selected, `item_labels` has one entry and all `row_item` values are 1.
@@ -48,12 +48,12 @@ _parts(value::AbstractDict) = sort!([string(key) => part for (key, part) in valu
 _is_table(value) = _is_block(value) ? !isempty(value) && all(part -> part isa AbstractVector, values(value)) :
     Tables.istable(value)
 
-# A dictionary can contain table columns even when its declared value type is Any. Present a
-# typed column view rather than asking Tables.jl to interpret that dictionary's declared type.
+# The columns of a dictionary, typed by their values. Tables.jl would go by the declared value type
+# of the dictionary, which can be `Any`.
 _table_columns(value::AbstractDict) = NamedTuple(Symbol(name) => column for (name, column) in _parts(value))
 _table_columns(value) = Tables.columns(value)
 
-"""Return display text for one table cell value."""
+"""The text a table cell shows for `value`."""
 function _cell_text(value::Any)::String
     _is_block(value) && return length(value) == 1 ? "1 field" : "$(length(value)) fields"
     value isa AbstractArray && return summary(value)
@@ -229,25 +229,6 @@ function zoom_value(value, row::Int, path::Vector{String})::Union{Nothing,Some}
     per_row || return Some(cell)
     return 1 <= row <= rows ? Some(cell[row]) : nothing
 end
-
-"""
-    table[rows]
-
-The rows `rows` of `table` as an `ItemTable`, in the order given.
-"""
-Base.getindex(table::ItemTable, rows::AbstractVector{Int})::ItemTable = ItemTable(
-    table.columns,
-    table.paths,
-    table.groups,
-    length(rows),
-    table.row_item[rows],
-    table.item_row[rows],
-    table.item_labels,
-    table.item_index,
-    (row, col) -> table.getcell(rows[row], col),
-    (row, col) -> table.getvalue(rows[row], col),
-    (row, col) -> table.spans_item(rows[row], col),
-)
 
 """
     table[rows, columns]
