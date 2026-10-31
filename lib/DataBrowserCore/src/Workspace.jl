@@ -68,6 +68,7 @@ using DataBrowserCache:
     cache_has_pending_writes,
     cache_pending_counts,
     cached_result_state,
+    stored_type,
     clear_cache_index!,
     clear_cached_result_state!,
     close_cache_db!,

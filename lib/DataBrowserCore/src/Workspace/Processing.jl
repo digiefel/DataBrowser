@@ -401,7 +401,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     item_id = known.id
     dropped = String[]
     if iscurrent(catalog, job)
-        store_result_ready!(cache, item_id, saved; stage=ITEM_PROCESS)
+        store_result_ready!(cache, item_id, saved, typeof(output); stage=ITEM_PROCESS)
         store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, delivered)
         dropped = store_item_metadata!(cache, item_id, delivered)
     end
@@ -488,7 +488,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
     delivered = metadata_dict(metadata(output))
     dropped = String[]
     if iscurrent(catalog, job)
-        store_result_ready!(cache, known.id, saved; stage=MEMBER_PROCESS)
+        store_result_ready!(cache, known.id, saved, typeof(output); stage=MEMBER_PROCESS)
         store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, delivered)
         dropped = store_item_metadata!(cache, known.id, delivered)
     end

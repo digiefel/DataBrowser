@@ -189,14 +189,18 @@ function result_location(workspace::Workspace, value::Computation)::Union{Nothin
     # The read and expand results of a source item are not kept.
     key isa SourceKey && return nothing
     key isa ItemKey && haskey(workspace.computations, key) && return nothing
-    # The value kept in an earlier opening. A process result of another item type is not found
-    # here and runs again.
-    # TODO: record the item type of each kept result in the workspace file.
+    # The value kept in an earlier opening, under the item type that its stage recorded, since a
+    # `process` method may return another type than the item it receives.
     type, stored = @lock catalog.lock begin
         current_value(catalog, target) || return nothing
         type = valuetype(catalog, key)
         # A collection value is kept as a `ResultItem`, since it is not an item.
         (key isa ItemKey ? type : ResultItem{type}), id(catalog, key)
+    end
+    if key isa ItemKey
+        state = cached_result_state(workspace.cache.db, stage, stored)
+        recorded = state === nothing ? nothing : stored_type(state)
+        recorded === nothing || (type = recorded)
     end
     store = result_store(workspace, type)
     store === nothing && return nothing

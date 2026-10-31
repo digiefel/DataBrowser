@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 35
+const PROJECT_CACHE_SCHEMA_VERSION = 36
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -80,6 +80,9 @@ struct CachedResultState
     # A new number each time the stage finishes, so that values computed from its result can
     # tell, after a reopen, whether they were computed from the result that is current.
     version::UInt64
+    # The serialized item type under which the store keeps the result; empty when none is kept.
+    # A `process` method may return another type than the item it receives.
+    type_hex::String
 end
 
 CachedResultState(row)::CachedResultState = CachedResultState(
@@ -89,6 +92,7 @@ CachedResultState(row)::CachedResultState = CachedResultState(
     Int64(row.source_item_key),
     _null_to_nothing(row.message),
     UInt64(row.version),
+    String(row.type_hex),
 )
 
 """One persisted source or collection result, identified by its stage and private integer key."""
@@ -889,20 +893,22 @@ function store_collection!(
 end
 
 """
-    store_result_ready!(cache, id, source_key; stage=ITEM_PROCESS)
+    store_result_ready!(cache, id, source_key, type; stage=ITEM_PROCESS)
 
 Record that a stage of an item finished: its own `process` for `ITEM_PROCESS`, or the member
 `process` methods of its collections for `MEMBER_PROCESS`. The value itself is kept by the store
-of its item type. Return the new version of the result.
+of its item type `type`. Return the new version of the result.
 """
 function store_result_ready!(
     cache::CacheDB,
     id::AbstractString,
-    source_key::Int64;
+    source_key::Int64,
+    type::Type;
     stage::PipelineStage=ITEM_PROCESS,
 )::UInt64
     version = rand(UInt64)
-    state = CachedResultState(Int8(stage), String(id), Int8(RESULT_READY), source_key, nothing, version)
+    state = CachedResultState(Int8(stage), String(id), Int8(RESULT_READY), source_key, nothing, version,
+        _serialize_type(type))
     edit!(cache.result_states, (Int8(stage), String(id)), state)
     _stage_ledger_result!(cache.stage_ledger, (Int8(stage), String(id)), state)
     return version
@@ -944,7 +950,7 @@ function store_result_failure!(cache::CacheDB, kind::PipelineStage,
         message::AbstractString)::Nothing
     entity_value = String(entity)
     state = CachedResultState(Int8(kind), entity_value, Int8(RESULT_FAILED),
-        Int64(source_item_key), String(message), UInt64(0))
+        Int64(source_item_key), String(message), UInt64(0), "")
     edit!(cache.result_states, (Int8(kind), entity_value), state)
     _stage_ledger_result!(cache.stage_ledger, (Int8(kind), entity_value), state)
     return nothing
@@ -1186,6 +1192,19 @@ end
 function cache_has_pending_writes(cache::CacheDB)::Bool
     pending = cache_pending_counts(cache)
     return pending.items > 0 || pending.rows > 0
+end
+
+"""
+The item type under which the store keeps the result of `state`; `nothing` when none was recorded
+or the type no longer exists.
+"""
+function stored_type(state::CachedResultState)::Union{Nothing,Type}
+    isempty(state.type_hex) && return nothing
+    return try
+        _deserialize_type(state.type_hex)
+    catch
+        nothing
+    end
 end
 
 """Return the current result-ledger entry for one pipeline stage, or `nothing`."""
