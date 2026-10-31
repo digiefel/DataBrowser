@@ -175,11 +175,8 @@ function computation_result(workspace::Workspace, value::Computation)
     end
     target isa Target || return restored_result(workspace, value)
     key, stage = target
-    if key isa SourceKey
-        stage == SOURCE_READ || return nothing
-        cached = read_payload(workspace.cache.db, cache_key(workspace, key))
-        return cached === nothing || !keeps_result(workspace, something(cached)) ? nothing : cached
-    elseif key isa ItemKey
+    # The read and expand results of a source item are not kept.
+    if key isa ItemKey
         haskey(workspace.computations, key) && return nothing
         type = valuetype(workspace, key)
         store = result_store(workspace, type)

@@ -18,14 +18,6 @@ function set_cache_memory_limit!(mib::Integer)::Int
     return CACHE_MEMORY_LIMIT_MIB[] = Int(mib)
 end
 
-"""
-    default_expanded_data_limit() -> Int
-
-The default of `expanded_data_limit` in [`open_cache_db`](@ref), in MiB: 512, or a quarter of the
-memory of the machine when that is less.
-"""
-default_expanded_data_limit()::Int = min(512, Sys.total_memory() ÷ 4 ÷ 1024^2)
-
 """Error raised when a project cache is missing or does not match the current project."""
 struct ProjectCacheError <: Exception
     path::String
@@ -527,8 +519,6 @@ mutable struct CacheDB
     # The same revisions, read at opening, so that a lookup does not read the table.
     computation_revisions::Dict{String,ComputationRevisionRow}
     payload::TabularFamilyStore
-    source_reads::MemoryStore{Int64,Any}
-    unprocessed::MemoryStore{String,Any}
     # One integer surrogate per item id, shared with the payload store; minted when items are published.
     item_keys::Dict{String,Int64}
     next_item_key::Int64
@@ -569,9 +559,6 @@ limit to a temporary directory of its own. The supplied cache path is untouched,
 
 A cache file can be open only once in a Julia session: opening it again before
 [`close_cache_db!`](@ref) is an error.
-
-`expanded_data_limit` is the memory limit, in MiB, for the data that `expand` gave each item and
-that is kept until the `process` of the item has used it.
 """
 function open_cache_db(
     identity::ProjectCacheIdentity,
@@ -579,10 +566,7 @@ function open_cache_db(
     ;
     rebuild::Bool=false,
     persistent::Bool=true,
-    expanded_data_limit::Integer=default_expanded_data_limit(),
 )::CacheDB
-    expanded_data_limit >= 1 ||
-        throw(ArgumentError("the limit for expanded data must be at least 1 MiB"))
     path = abspath(identity.cache_path)
     persistent && @lock OPEN_FILES_LOCK begin
         haskey(OPEN_FILES, path) && error(
@@ -673,9 +657,6 @@ function open_cache_db(
             computation_revision_rows,
             Dict{String,ComputationRevisionRow}(row.id => row for row in values(read(computation_revision_rows))),
             payload,
-            MemoryStore{Int64,Any}(; capacity=256 * 1024^2, weight=Base.summarysize),
-            MemoryStore{String,Any}(;
-                capacity=Int(expanded_data_limit) * 1024^2, weight=Base.summarysize),
             item_keys,
             next_item_key,
             source_item_keys,
@@ -845,7 +826,7 @@ end
 
 """
 One item that a source item produced, in the form the cache stores: its row, the metadata its
-source item gave it, and its expanded data. `collection_key` is `nothing` for an item at the root.
+source item gave it. `collection_key` is `nothing` for an item at the root.
 """
 struct ItemOutput
     id::String
@@ -853,7 +834,6 @@ struct ItemOutput
     type::Type
     collection_key::Union{Nothing,Int64}
     metadata::MetadataDict
-    payload::Any
 end
 
 """
@@ -864,22 +844,17 @@ result made from them are deleted, `outputs` are stored, and the expand stage of
 recorded as finished. An id in both lists is a new item: its earlier results do not survive.
 `outputs` may be empty.
 
-`retain` chooses which outputs keep an unprocessed payload. Identity and metadata are recorded
-for every output, independently of payload retention.
-
 Returns type-conflict messages for metadata keys that could not be stored.
 """
 function replace_source_output!(
     cache::CacheDB,
     source_key::Int64,
     previous::Vector{String},
-    outputs::Vector{ItemOutput};
-    retain::AbstractVector{Bool}=trues(length(outputs)),
+    outputs::Vector{ItemOutput},
 )::Vector{String}
-    length(retain) == length(outputs) || throw(DimensionMismatch("One retention choice is required per output"))
     isempty(previous) || delete_source_output!(cache, source_key, previous)
     dropped = WideConflict[]
-    for (output, keep) in zip(outputs, retain)
+    for output in outputs
         started = time_ns()
         key = item_key!(cache, output.id; mint=true)
         append!(cache.items, output.id, ItemRow(
@@ -887,7 +862,6 @@ function replace_source_output!(
         _stage_ledger_item!(cache.stage_ledger, output.id, true)
         append!(dropped, edit!(cache.source_item_metadata, key, output.metadata))
         record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
-        keep ? store_item_payload!(cache, output.id, output.payload) : release_item_payload!(cache, output.id)
     end
     store_source_result!(cache, SOURCE_EXPAND, source_key)
     return _conflict_messages(unique(dropped))
@@ -935,25 +909,6 @@ function store_collection!(
     end
     return nothing
 end
-
-"""
-Keep the expanded data of one item in memory. When the limit of the cache is exceeded, the data
-kept longest is dropped.
-"""
-function store_item_payload!(cache::CacheDB, id::AbstractString, payload)::Nothing
-    append!(cache.unprocessed, String(id), payload)
-    return nothing
-end
-
-"""Drop the expanded data of one item, after its `process` has used it."""
-function release_item_payload!(cache::CacheDB, id::AbstractString)::Nothing
-    delete!(cache.unprocessed, String(id))
-    return nothing
-end
-
-"""Whether the expanded data kept in memory has reached half its limit."""
-expanded_data_full(cache::CacheDB)::Bool =
-    lock(() -> 2 * cache.unprocessed.size >= cache.unprocessed.capacity, cache.unprocessed.lock)
 
 """
     store_result_ready!(cache, id, source_key; stage=ITEM_PROCESS)
@@ -1151,7 +1106,6 @@ function delete_source_output!(
             delete!(cache.result_states, (Int8(stage), id))
             _stage_ledger_result!(cache.stage_ledger, (Int8(stage), id), nothing)
         end
-        delete!(cache.unprocessed, id)
         delete!(cache.failures, (id, source_key))
         _stage_ledger_failure!(cache.stage_ledger, (id, source_key), false)
     end
@@ -1286,48 +1240,6 @@ function cached_result_state(
     end
 end
 
-"""
-Return whether an item has a cached payload without loading the payload: its unprocessed data for
-`SOURCE_EXPAND`, its own processed data for `ITEM_PROCESS`, or the result of the member `process`
-methods of its collections for `MEMBER_PROCESS`.
-
-Unprocessed payloads are resident and processed payloads use the database payload store.
-The payload-store check covers queued and committed writes.
-"""
-function has_payload(
-    cache::CacheDB, item_id::AbstractString; stage::PipelineStage=ITEM_PROCESS,
-)::Bool
-    id_value = String(item_id)
-    stage === SOURCE_EXPAND && return haskey(cache.unprocessed, id_value)
-    key = lock(cache.key_lock) do
-        get(cache.item_keys, id_value, nothing)
-    end
-    key === nothing && return false
-    return haskey(cache.payload, payload_key(key, stage))
-end
-
-"""
-Read cached item payloads: unprocessed data for `SOURCE_EXPAND`, processed data for `ITEM_PROCESS`,
-and the result of the member `process` methods for `MEMBER_PROCESS`.
-
-The returned vector aligns with `ids`. Each entry is `Some(payload)` on a hit and `nothing` on
-a miss, so `nothing` remains a valid payload value. Unprocessed payloads are resident only;
-processed payloads come from the DuckDB-backed payload store.
-"""
-function read_payload(
-    cache::CacheDB,
-    ids::Vector{String};
-    stage::PipelineStage=ITEM_PROCESS,
-)::Vector{Any}
-    isempty(ids) && return Any[]
-    stage === SOURCE_EXPAND && return Any[read_hit(cache.unprocessed, id) for id in ids]
-    keys = PayloadKey[payload_key(item_key!(cache, id), stage) for id in ids]
-    stored_data = read(cache.payload, unique(keys))
-    return Any[
-        (data = get(stored_data, key, nothing); data === nothing ? nothing : Some(data))
-        for key in keys]
-end
-
 """Flush and close cache stores, then checkpoint and close the database."""
 function close_cache_db!(cachedb::CacheDB)::Nothing
     failures = Any[]
@@ -1335,8 +1247,7 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.item_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.collection_process,
-         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows, cachedb.payload,
-         cachedb.unprocessed, cachedb.source_reads)
+         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows, cachedb.payload)
         try
             close!(buffer)
         catch error
@@ -1397,8 +1308,7 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.item_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.collection_process,
-         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows, cachedb.payload,
-         cachedb.unprocessed, cachedb.source_reads)
+         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows, cachedb.payload)
         clear!(buffer)
     end
     lock(cachedb.key_lock) do

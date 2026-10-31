@@ -113,10 +113,9 @@ flowchart TB
 flowchart LR
     source["source item"]
     read["read"]
-    read_cache[("read input<br/>memory cache")]
     expand["expand<br/>(optional)"]
     index[("catalog<br/>source items, items, collections")]
-    unprocessed[("unprocessed payload<br/>memory cache")]
+    expanded[("expanded item<br/>store of its type")]
     item_process["item process"]
     processed[("processed item<br/>store of its type")]
     item_metadata[("item metadata<br/>cache store")]
@@ -129,11 +128,9 @@ flowchart LR
     source --> read
     read -->|"one item"| index
     read -->|"loaded value"| expand
-    read --> read_cache
-    read_cache -.->|"reused input"| expand
     expand -->|"items and identities"| index
-    index --> unprocessed
-    unprocessed --> item_process
+    expand -->|"item values"| expanded
+    expanded --> item_process
     item_process --> processed
     item_process --> item_metadata
     processed --> collection_process
@@ -148,15 +145,17 @@ flowchart LR
     classDef state fill:#f5d6a8,stroke:#c08a3f,color:#111
     classDef output fill:#c9e4c5,stroke:#5a9a52,color:#111
     class source,read,expand,item_process,collection_process,member_process,views stage
-    class read_cache,unprocessed,processed,item_metadata,collection_payload,member_payload state
+    class expanded,processed,item_metadata,collection_payload,member_payload state
     class index output
 ```
 
 A project/source implementation defines the callbacks behind the stages. `read` is the only stage
 that receives the source. When a source item holds one data item, `read` returns that item. When it
-holds zero or several, `read` returns the loaded value and `expand` turns it into data items; `expand`
-may run again with the cached read input. Both run in one source job, which records whether reading
-succeeded (`SOURCE_READ`) and whether the items were created (`SOURCE_EXPAND`).
+holds zero or several, `read` returns the loaded value and `expand` turns it into data items. Both run
+in one source job, which records whether reading succeeded (`SOURCE_READ`) and whether the items were
+created (`SOURCE_EXPAND`). The loaded value is not kept. The value of each item is kept in the store
+of its item type, under its id, until its `process` replaces it with the processed value. When that
+store no longer holds it, `read` and `expand` run again.
 
 The catalog (`DataBrowserCore.Catalogs`) holds one row for each source item, item and collection,
 and the status of each stage of each row. A row is named by a key (`SourceKey`, `ItemKey`,
@@ -256,12 +255,12 @@ cannot follow: a non-constant global, a call through `eval`, `invokelatest` or a
 generated function, and a value it cannot read; the warning names the way from the stage to it (`research_notes/code-change-detection/design.md`).
 
 Jobs run in this order: what a view asks for, then source items, then the background work on items,
-then the background work on collections. The data that `expand` gives each item stays in memory
-until the `process` of the item has used it. When that data reaches half its memory limit
+then the background work on collections. The data that `expand` gives each item stays in the store
+of its item type until the `process` of the item has used it. When that data reaches half its limit
 (`expanded_data_limit` of `open_workspace`), items are processed before more source items are read, so that a
 source item normally does not need a second read/expand while processing that batch. This pacing
-does not guarantee exactly-once source access: reconstruction can call `read` again after its input
-was evicted.
+does not guarantee exactly-once source access: `read` runs again when a store no longer holds the
+expanded value of an item.
 
 The source items that are not read yet (`unread`) are in the collection tree of the browser from
 the moment the source lists them. Their ids, split at `/`, give folders. A folder with the label of
@@ -319,8 +318,7 @@ private buffer helpers.
 Both persistent and in-memory workspaces use the same DuckDB stores and cache operations.
 `cache=false` opens a private `:memory:` database that moves data it cannot hold in memory to a
 temporary directory of its own; closing the workspace discards it without changing the project's
-cache file. Source-read and unprocessed
-payloads use resident `MemoryStore` buffers in both modes.
+cache file. The values of items are in the stores of their item types, not in the cache.
 
 ```mermaid
 flowchart LR
@@ -338,11 +336,11 @@ flowchart LR
     scan -->|"cached_source_fingerprints"| cache
     cache -->|"Dict of source ids and fingerprints"| fingerprints
     fingerprints --> scan
-    core -->|"read_payload / has_payload"| cache
+    core -->|"read_payload"| cache
     core -->|"cached_result_state"| cache
     cache -->|"payloads and stage state"| payloads
     payloads --> core
-    core -->|"store_source_read!<br/>store_source_items!<br/>store_result_ready!"| cache
+    core -->|"store_source_result!<br/>replace_source_output!<br/>store_result_ready!"| cache
     source -->|"read / expand / process"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111

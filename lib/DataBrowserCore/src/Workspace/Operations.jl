@@ -2,12 +2,12 @@
 Start cache loading and source scanning for one new workspace.
 With `cache=false`, keep the cache in memory and discard it on close; the project cache file is untouched.
 
-`expanded_data_limit` is the memory limit, in MiB, for expanded data: the data that `expand` gave
-each item, kept until the `process` of the item has used it. The default is 512, or a quarter of
-the memory of the machine when that is less. While the expanded data is under half the limit, the
-workspace reads its source items first. Above that, it processes items first, which releases their
-expanded data. A lower limit uses less memory and lists the items of all source items later. The
-size of the data is estimated.
+`expanded_data_limit` is the limit, in MiB, for expanded data: the data that `expand` gave each
+item, kept in the store of its item type until the `process` of the item has used it. The default
+is 512, or a quarter of the memory of the machine when that is less. While the expanded data is
+under half the limit, the workspace reads its source items first. Above that, it processes items
+first, which replaces their expanded data. A lower limit keeps less expanded data and lists the
+items of all source items later. The size of the data is estimated.
 
 Close the workspace with [`close_workspace!`](@ref). A workspace that is still open when Julia exits
 is closed then.
@@ -137,7 +137,7 @@ function _install_runtime!(
 )::Nothing
     metrics = BuildMetrics()
     cache_db, disk_error, identity = _open_workspace_cache(
-        workspace.project, source, metrics; rebuild, cache, expanded_data_limit)
+        workspace.project, source, metrics; rebuild, cache)
     workspace.source = source
     workspace.tags = WorkspaceTags(source)
     workspace.catalog = Catalog(background_processing)
@@ -145,7 +145,9 @@ function _install_runtime!(
     foreach(empty!, (
         workspace.source_items, workspace.source_locks, workspace.collection_keys,
         workspace.errors, workspace.wanted, workspace.computations,
-        workspace.results, workspace.executions, workspace.code, workspace.outdated_reads))
+        workspace.results, workspace.executions, workspace.code, workspace.outdated_reads,
+        workspace.expanded))
+    workspace.expanded_bytes = 0
     workspace.next_collection_key = 1
     workspace.running = 0
     workspace.completed = 0

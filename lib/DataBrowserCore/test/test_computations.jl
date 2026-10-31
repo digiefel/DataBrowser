@@ -365,12 +365,12 @@ DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueIte
             @test only(CW.results(workspace, [id(step)])).data == [1.0, 2.0]
             write(path, "3 4")
             current() = try
-                only(CW.results(workspace, [id(step)])).data == [3.0, 4.0]
+                only(materialize_items(workspace, ["vector"])).data == [6.0, 8.0]
             catch
                 false
             end
             @test timedwait(current, 60) === :ok
-            @test only(materialize_items(workspace, ["vector"])).data == [6.0, 8.0]
+            @test only(CW.results(workspace, [id(step)])).data == [3.0, 4.0]
         finally
             CW.close_workspace!(workspace)
         end

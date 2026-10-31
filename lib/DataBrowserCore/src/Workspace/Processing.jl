@@ -136,18 +136,55 @@ end
 
 """
 Choose what runs first in the background. While the expanded data that waits for `process` is
-under half its memory limit, source items are read first, so that all items appear soon. Above
-that, items are processed first, which releases their expanded data.
+under half its limit, source items are read first, so that all items appear soon. Above that,
+items are processed first, which replaces their expanded data. The caller holds the catalog lock.
 """
 pace!(workspace::Workspace)::Nothing = eager!(
     workspace.catalog, SOURCE_EXPAND,
-    expanded_data_full(workspace.cache.db) ? ITEMS_FIRST : SOURCES_FIRST)
+    2 * workspace.expanded_bytes >= workspace.expanded_data_limit * 1024^2 ? ITEMS_FIRST : SOURCES_FIRST)
 
 """
-Read one source item, or reuse its saved read result, turn it into items and publish them.
+Keep the value that `expand` gave an item in the store of its item type, under its id, until
+`process` uses it. The caller holds the catalog lock.
+"""
+function keep_expanded!(workspace::Workspace, item_id::String, value::AbstractDataItem)::Nothing
+    store = result_store(workspace, typeof(value))
+    store === nothing && return nothing
+    # TODO(scale): a DuckDBStore writes here while the catalog lock is held.
+    write(store, item_id, deepcopy(value))
+    bytes = Base.summarysize(value)
+    workspace.expanded_bytes += bytes - get(workspace.expanded, item_id, 0)
+    workspace.expanded[item_id] = bytes
+    return nothing
+end
 
-The outcome of `read` is saved as soon as `read` returns or throws. A later failure is then a
-failure to create items, and the read result stays available when the job runs again.
+"""Forget that the store of an item holds its expanded value. The caller holds the catalog lock."""
+# TODO: the expanded value of an item removed before its `process` ran stays in the store.
+release_expanded!(workspace::Workspace, item_id::String)::Nothing =
+    (workspace.expanded_bytes -= pop!(workspace.expanded, item_id, 0); nothing)
+
+"""
+The value that `expand` gave an item, with the metadata `given`, while the store of its item type
+holds it; otherwise `nothing`.
+"""
+function kept_expanded(workspace::Workspace, item_id::String, type::Type, given::MetadataDict)
+    @lock(workspace.catalog.lock, haskey(workspace.expanded, item_id)) || return nothing
+    store = result_store(workspace, type)
+    stored = try
+        read(store, type, item_id)
+    catch error
+        error isa KeyError || rethrow()
+        return nothing
+    end
+    return reconstruct(type, item_id, deepcopy(item_data(stored)), given)
+end
+
+"""
+Read one source item, turn it into items and publish them. The value of each item is kept in the
+store of its item type until its `process` runs.
+
+The outcome of `read` is recorded as soon as `read` returns or throws. A later failure is then a
+failure to create items.
 """
 function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
     catalog = workspace.catalog
@@ -156,25 +193,15 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
     source_item === nothing &&
         error("The source has not reported source item '$(id(catalog, job.key))' in this session")
     saved = cache_key(workspace, job.key)
-    cached = read_payload(cache, saved)
-    cached === nothing || keeps_result(workspace, something(cached)) || (cached = nothing)
-    loaded = if cached === nothing
-        value = try
-            execute(workspace, job.key, SOURCE_READ, workspace.project, workspace.source, source_item)
-        catch error
-            fail!(workspace, job, error, catch_backtrace(); stage=SOURCE_READ)
-            return nothing
-        end
-        retain = keeps_result(workspace, value)
-        snapshot = retain ? deepcopy(value) : nothing
-        @lock catalog.lock iscurrent(catalog, job) && store_source_read!(cache, saved, snapshot; retain)
-        value
-    else
-        deepcopy(something(cached))
+    loaded = try
+        execute(workspace, job.key, SOURCE_READ, workspace.project, workspace.source, source_item)
+    catch error
+        fail!(workspace, job, error, catch_backtrace(); stage=SOURCE_READ)
+        return nothing
     end
+    @lock catalog.lock iscurrent(catalog, job) && store_source_result!(cache, SOURCE_READ, saved)
     native_items = execute(workspace, job.key, SOURCE_EXPAND, workspace.project, source_item, loaded)
     expanded = expanded_items(workspace.project, workspace.source, source_item, loaded, native_items)
-    retain = Bool[keeps_result(workspace, value.item) for value in expanded]
     @lock catalog.lock begin
         # A job whose result is discarded adds no collections.
         iscurrent(catalog, job) || (finish!(catalog, job, ItemEntry[]); return nothing)
@@ -208,9 +235,8 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             ItemOutput(
                 entry.id, entry.label, entry.type,
                 entry.collection == ROOT ? nothing : workspace.collection_keys[entry.collection],
-                entry.metadata, keep ? deepcopy(item_data(item.item)) : nothing)
-            for (item, entry, keep) in zip(expanded, entries, retain)]; retain)
-        pace!(workspace)
+                entry.metadata)
+            for entry in entries])
         # The items the source item no longer produces leave the selection. When it produces as
         # many new items in their place, each new item replaces the one at the same place.
         before = unique!([pop!(workspace.produced_before, job.key, String[]); previous])
@@ -239,13 +265,17 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
         (renamed || length(selected) != count) && (workspace.selection.revision += 1)
         conflicts!(workspace, job.key, SOURCE_EXPAND, conflicts)
         forget_stale!(workspace)
+        # After `forget_stale!`, which removes the earlier values of these items from the stores.
+        foreach(id -> release_expanded!(workspace, id), previous)
+        foreach((item, entry) -> keep_expanded!(workspace, entry.id, item.item), expanded, entries)
+        pace!(workspace)
     end
     return nothing
 end
 
 """
-The read result of a source item outside its job: the saved one, or a new `read`. A saved read
-failure is thrown again without calling `read`.
+The read result of a source item outside its job, from a new `read`. A recorded read failure is
+thrown again without calling `read`.
 """
 function read_again(workspace::Workspace, source::SourceKey, source_item::AbstractDataSourceItem)
     cache = workspace.cache.db
@@ -253,11 +283,8 @@ function read_again(workspace::Workspace, source::SourceKey, source_item::Abstra
     state = cached_result_state(cache, SOURCE_READ, saved)
     state !== nothing && CacheResultStatus(state.status) === RESULT_FAILED &&
         error(something(state.message, "Source read failed"))
-    cached = read_payload(cache, saved)
-    cached === nothing || !keeps_result(workspace, something(cached)) || return deepcopy(something(cached))
     loaded = execute(workspace, source, SOURCE_READ, workspace.project, workspace.source, source_item)
-    retain = keeps_result(workspace, loaded)
-    store_source_read!(cache, saved, retain ? deepcopy(loaded) : nothing; retain)
+    store_source_result!(cache, SOURCE_READ, saved)
     return loaded
 end
 
@@ -282,7 +309,7 @@ end
 Run `expand` for the source item of `item` again and return the item it produces now.
 
 This runs inside the job that needs the item, because a worker must not wait for another job. One
-task at a time does it for each source item. It keeps the payload of every item it produces that
+task at a time does it for each source item. It keeps the value of every item it produces that
 is not processed yet, so the jobs of those items do not run `expand` again.
 """
 function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
@@ -293,22 +320,19 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
         source_id_value = id(catalog, source)
         source_item = reported_source_item(workspace, source)
         # Another task may have expanded this source item while this one waited.
-        retain_item = result_store(workspace, valuetype(catalog, item)) !== nothing
-        kept = retain_item ? only(read_payload(workspace.cache.db, [id(catalog, item)]; stage=SOURCE_EXPAND)) : nothing
-        value = kept === nothing ? nothing : reconstruct(
-            valuetype(catalog, item), id(catalog, item), deepcopy(something(kept)),
+        value = kept_expanded(workspace, id(catalog, item), valuetype(catalog, item),
             metadata(workspace, item; through=SOURCE_EXPAND))
         value === nothing || return value
         loaded = read_again(workspace, source, source_item)
         native_items = execute(workspace, source, SOURCE_EXPAND, workspace.project, source_item, loaded)
         expanded = expanded_items(workspace.project, workspace.source, source_item, loaded, native_items)
-        retain = Bool[keeps_result(workspace, produced.item) for produced in expanded]
         @lock catalog.lock begin
-            for (produced, keep) in zip(expanded, retain)
+            for produced in expanded
                 sibling = lookup(catalog, ItemKey, produced.id)
                 sibling === nothing && continue
-                keep && Catalogs.status(catalog, sibling, ITEM_PROCESS).validity != Catalogs.FRESH &&
-                    store_item_payload!(workspace.cache.db, produced.id, deepcopy(item_data(produced.item)))
+                # The store of a processed item holds its processed value.
+                Catalogs.status(catalog, sibling, ITEM_PROCESS).validity != Catalogs.FRESH &&
+                    keep_expanded!(workspace, produced.id, produced.item)
             end
             pace!(workspace)
         end
@@ -336,14 +360,13 @@ function row(workspace::Workspace, item::ItemKey)
 end
 
 """
-The item that `process` receives: rebuilt from the payload `expand` gave it, with `given`, the
-metadata of its collections and its source item. `known` is the [`row`](@ref) of the item. When
-the payload is gone, or the item type does not rebuild from a payload, `expand` runs again.
+The item that `process` receives: the value `expand` gave it, with `given`, the metadata of its
+collections and its source item. `known` is the [`row`](@ref) of the item. When the store of its
+type no longer holds that value, or the item type does not rebuild from its data, `expand` runs
+again.
 """
 function unprocessed(workspace::Workspace, item::ItemKey, known, given::MetadataDict)::AbstractDataItem
-    cached = result_store(workspace, known.type) === nothing ? nothing :
-        only(read_payload(workspace.cache.db, [known.id]; stage=SOURCE_EXPAND))
-    value = cached === nothing ? nothing : reconstruct(known.type, known.id, deepcopy(something(cached)), given)
+    value = kept_expanded(workspace, known.id, known.type, given)
     if value === nothing
         value = expand_again(workspace, item)
         value = something(reconstruct(known.type, known.id, item_data(value), given), value)
@@ -396,9 +419,10 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
         dropped = store_item_metadata!(cache, item_id, delivered)
     end
     @lock catalog.lock begin
+        # `process` has replaced the expanded value in the store, or removed it.
+        release_expanded!(workspace, item_id)
+        pace!(workspace)
         if finish!(catalog, job; metadata=computed)
-            release_item_payload!(cache, item_id)
-            pace!(workspace)
             relabel!(workspace, item, label(workspace.project, output))
             conflicts!(workspace, item, ITEM_PROCESS, dropped)
         else

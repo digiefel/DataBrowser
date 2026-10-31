@@ -8,8 +8,6 @@ function result_store(workspace::Workspace, type::Type{<:AbstractDataItem})
     end
 end
 
-keeps_result(workspace::Workspace, value) = result_store(workspace, result_item_type(value)) !== nothing
-
 computation_address(catalog::Catalog, value::Computation) =
     get(catalog.computation_targets, value, value)
 
@@ -108,8 +106,9 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     key = if !(address isa Target)
         stored_id(workspace, value)
     elseif first(address) isa SourceKey
-        # TODO: source reads and expanded items are kept for one opening, under these keys.
-        string(objectid(catalog), '/', objectid(value), '/', revision)
+        # A source item's read and expand results only lead to its items, which are kept instead.
+        store = nothing
+        ""
     else
         @lock(catalog.lock, current_value(catalog, address)) || (store = nothing)
         id(catalog, first(address))
@@ -278,9 +277,7 @@ function cache_info(workspace::Workspace, value::Computation)
     end
     address isa Target || return (cached=false, bytes=nothing)
     key, stage = address
-    cached = if key isa SourceKey && stage == SOURCE_READ
-        has_payload(workspace.cache.db, cache_key(workspace, key))
-    elseif key isa ItemKey && !haskey(workspace.computations, key)
+    cached = if key isa ItemKey && !haskey(workspace.computations, key)
         store = result_store(workspace, valuetype(workspace, key))
         store !== nothing && @lock(catalog.lock, current_value(catalog, address)) &&
             haskey(store, id(workspace, key))

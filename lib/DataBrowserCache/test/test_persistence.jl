@@ -8,29 +8,13 @@ DataBrowserAPI.label(::CacheSourceItem) = "source"
 DataBrowserAPI.fingerprint(::CacheSourceItem) = 1
 struct CacheItem <: AbstractDataItem end
 
-"""Store the item "item" of the source item "source" with its unprocessed payload."""
-function store_fixture_item!(cache, source_key, payload)
+"""Store the item "item" of the source item "source"."""
+function store_fixture_item!(cache, source_key)
     store_source_identity!(cache, CacheSourceItem(), "source")
     replace_source_output!(cache, source_key, String[],
-        [ItemOutput("item", "item", CacheItem, nothing, DataBrowserAPI.MetadataDict(), payload)])
+        [ItemOutput("item", "item", CacheItem, nothing, DataBrowserAPI.MetadataDict())])
 end
 delivered(cache) = only(load_cache_index(cache).items).delivered
-
-@testset "expanded memory storage accepts nested values without a table encoding" begin
-    mktempdir() do dir
-        identity = ProjectCacheIdentity("nested", "source", "source", joinpath(dir, "cache.duckdb"))
-        cache = open_cache_db(identity; persistent=false)
-        try
-            data = (iv=(V=[1, 2],), fit=(slope=2.0, intercept=1.0))
-            @test !can_store_payload(data)
-            store_item_payload!(cache, "nested", data)
-            @test has_payload(cache, "nested"; stage=SOURCE_EXPAND)
-            @test something(only(read_payload(cache, ["nested"]; stage=SOURCE_EXPAND))) == data
-        finally
-            close_cache_db!(cache)
-        end
-    end
-end
 
 @testset "in-memory storage supports payloads and queries without touching the cache file" begin
     mktempdir() do dir
@@ -41,7 +25,7 @@ end
         cache = open_cache_db(identity; persistent=false, rebuild=true)
         try
             source_key = source_item_key!(cache, "source"; mint=true)
-            store_fixture_item!(cache, source_key, (x=[1],))
+            store_fixture_item!(cache, source_key)
             store_item_metadata!(cache, "item", Dict(:total => 2))
             @test delivered(cache)[:total] == 2
             @test timedwait(() -> !cache_has_pending_writes(cache), 20) === :ok
@@ -66,7 +50,7 @@ end
         source_key = source_item_key!(cache, "source"; mint=true)
         try
             @test isempty(load_cache_index(cache).items)
-            store_fixture_item!(cache, source_key, (x=[1, 2],))
+            store_fixture_item!(cache, source_key)
             store_item_metadata!(cache, "item", Dict(:total => 5))
         finally
             close_cache_db!(cache)
@@ -85,7 +69,7 @@ end
         cache = open_cache_db(identity)
         try
             @test isempty(load_cache_index(cache).items)
-            store_fixture_item!(cache, source_key, (x=[1],))
+            store_fixture_item!(cache, source_key)
             clear_cache_index!(cache)
             @test isempty(load_cache_index(cache).items)
         finally
@@ -105,22 +89,6 @@ end
             close_cache_db!(cache)
         end
         @test_throws ProjectCacheError open_cache_db(identity)
-    end
-end
-
-@testset "read values distinguish nothing from a cache miss" begin
-    mktempdir() do dir
-        identity = ProjectCacheIdentity("read", "source", "source", joinpath(dir, "cache.duckdb"))
-        cache = open_cache_db(identity)
-        try
-            key = source_item_key!(cache, "source"; mint=true)
-            store_source_read!(cache, key, nothing)
-            @test read_payload(cache, key) === Some(nothing)
-            delete_source_item!(cache, key, String[])
-            @test read_payload(cache, key) === nothing
-        finally
-            close_cache_db!(cache)
-        end
     end
 end
 

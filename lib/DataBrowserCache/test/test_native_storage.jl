@@ -33,32 +33,6 @@ end
     @test !can_store_payload((__mb_seq=[1],))
 end
 
-struct RetentionSourceItem <: API.AbstractDataSourceItem end
-struct RetentionItem <: API.AbstractDataItem end
-API.id(::RetentionSourceItem) = "source"
-API.label(::RetentionSourceItem) = "source"
-API.fingerprint(::RetentionSourceItem) = 1
-
-@testset "source completion and metadata do not require cached data" begin
-    mktempdir() do dir
-        identity = ProjectCacheIdentity("retention", "source", "source", joinpath(dir, "cache.duckdb"))
-        cache = open_cache_db(identity; persistent=false)
-        try
-            store_source_identity!(cache, RetentionSourceItem())
-            key = source_item_key!(cache, "source")
-            store_source_read!(cache, key, [1, 2]; retain=false)
-            @test read_payload(cache, key) === nothing
-            output = ItemOutput("item", "item", RetentionItem, nothing, API.MetadataDict(:n => 2), (x=[1, 2],))
-            replace_source_output!(cache, key, String[], [output]; retain=[false])
-            @test only(load_cache_index(cache).items).id == "item"
-            @test only(read_payload(cache, ["item"]; stage=API.SOURCE_EXPAND)) === nothing
-            @test source_complete(cache, key)
-        finally
-            close_cache_db!(cache)
-        end
-    end
-end
-
 @testset "DuckDB storage keeps values after closing" begin
     mktempdir() do dir
         path = joinpath(dir, "values.duckdb")

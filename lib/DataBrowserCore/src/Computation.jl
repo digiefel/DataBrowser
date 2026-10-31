@@ -36,9 +36,6 @@ DataBrowserAPI.label(item::ResultItem) = item.label
 DataBrowserAPI.metadata(item::ResultItem) = item.metadata
 DataBrowserAPI.item_data(item::ResultItem) = item.data
 
-result_item_type(value::AbstractDataItem) = typeof(value)
-result_item_type(value) = ResultItem{typeof(value)}
-
 """
     evaluate(computation)
 
