@@ -148,6 +148,8 @@ function _render_export_button!(window::Window, ctx::WindowContext)::Nothing
     ig.SetItemTooltip("Save what the window shows")
     try
         if clicked
+            # A grid shows several cells, so it saves a picture of all of them, as the default of
+            # `export!` does.
             if window.arrangement == "grid"
                 invoke(export!, Tuple{DataBrowserAPI.AbstractVisualizer,Any}, window.visualizer, ctx)
             else
@@ -158,9 +160,7 @@ function _render_export_button!(window::Window, ctx::WindowContext)::Nothing
         save_window_picture!(window.id)
         clicked && (window.export_error = "")
     catch err
-        summary = first(split(sprint(showerror, err), '\n'; limit=2))
-        window.export_error = "Export failed: $summary. See the console for full details."
-        @error("Export failed", exception=(err, catch_backtrace()))
+        window.export_error, _ = DataBrowserAPI.report_error("Export failed", err, catch_backtrace())
     end
     return nothing
 end
