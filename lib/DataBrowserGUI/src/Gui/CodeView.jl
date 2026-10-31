@@ -41,12 +41,12 @@ label(::CodeView)::String = "Code"
 output(view::CodeView) = view.output
 
 """
-    select_step!(view::CodeView, index)
+    select!(view::CodeView, index)
 
 Select the row `index` of the code view. Its computations become the output of the view, without
 being evaluated.
 """
-function select_step!(view::CodeView, index::Integer)::Nothing
+function Workspace.select!(view::CodeView, index::Integer)::Nothing
     checkbounds(view.rows, index)
     view.selected = index
     call = view.rows[index].call
@@ -96,7 +96,7 @@ function prepare!(view::CodeView, selection::Workspace.Selection, ctx)::Nothing
         isempty(view.output) || (view.output = Computation[])
     else
         selected = findfirst(row -> call_identity(row.call) == previous, rows)
-        select_step!(view, something(selected, length(rows)))
+        Workspace.select!(view, something(selected, length(rows)))
     end
     return nothing
 end
@@ -127,7 +127,7 @@ function draw!(view::CodeView, ctx)::Nothing
             ig.PushID(index)
             corner = ig.GetCursorScreenPos()
             ig.Selectable("##step", index == view.selected, ig.ImGuiSelectableFlags_AllowOverlap,
-                ig.ImVec2(0, ig.GetFrameHeight())) && select_step!(view, index)
+                ig.ImVec2(0, ig.GetFrameHeight())) && Workspace.select!(view, index)
             ig.SetCursorScreenPos(corner)
             x(column) = corner.x + (column - 0.5f0) * width
             top, middle, bottom = corner.y, corner.y + height / 2, corner.y + height
