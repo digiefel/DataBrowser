@@ -930,30 +930,18 @@ expanded_data_full(cache::CacheDB)::Bool =
     lock(() -> 2 * cache.unprocessed.size >= cache.unprocessed.capacity, cache.unprocessed.lock)
 
 """
-    store_processed!(cache, id, source_key, payload; stage=ITEM_PROCESS)
+    store_result_ready!(cache, id, source_key; stage=ITEM_PROCESS)
 
-Store processed data of an item: the result of its `process` for `ITEM_PROCESS`, or the result of
-the member `process` methods of its collections for `MEMBER_PROCESS`. Each is kept separately, and
-records that its stage finished.
-
-The cache passes every payload to its payload store. That store defines the accepted Tables.jl
-shape and column types and reports unsupported values through its normal write errors.
+Record that a stage of an item finished: its own `process` for `ITEM_PROCESS`, or the member
+`process` methods of its collections for `MEMBER_PROCESS`. The value itself is kept by the store
+of its item type.
 """
-function store_processed!(
+function store_result_ready!(
     cache::CacheDB,
     id::AbstractString,
-    source_key::Int64,
-    payload;
+    source_key::Int64;
     stage::PipelineStage=ITEM_PROCESS,
 )::Nothing
-    key = item_key!(cache, id)
-    started = time_ns()
-    append!(cache.payload, payload_key(key, stage), payload)
-    record_cache_phase!(
-        cache.metrics.processed_write_ns,
-        cache.metrics.processed_writes,
-        started,
-    )
     state = CachedResultState(Int8(stage), String(id), Int8(RESULT_READY), source_key, nothing)
     edit!(cache.result_states, (Int8(stage), String(id)), state)
     _stage_ledger_result!(cache.stage_ledger, (Int8(stage), String(id)), state)
@@ -1502,10 +1490,6 @@ function load_cache_index(cache::CacheDB)::ProjectCacheIndex
     sort!(items; by=item -> (item.source_key, item.id))
     result_states = Dict{CacheResultKey,AnyCachedResultState}()
     for state in values(read(cache.result_states))
-        # A processed payload that was evicted or never flushed leaves nothing to deliver.
-        stage = PipelineStage(state.kind)
-        stage in (ITEM_PROCESS, MEMBER_PROCESS) && CacheResultStatus(state.status) === RESULT_READY &&
-            !has_payload(cache, state.entity; stage) && continue
         result_states[CacheResultKey(PipelineStage(state.kind), state.entity)] = state
     end
     for state in values(read(cache.keyed_result_states))

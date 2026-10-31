@@ -115,7 +115,10 @@ function _stop_runtime!(workspace::Workspace)::Nothing
     empty!(workspace.background_tasks)
     stop_workers!(workspace)
     try
-        forget_results!(workspace)
+        # Kept results stay in their stores for the next opening; only this opening's records go.
+        # TODO: values of items removed while the workspace was closed stay in the stores.
+        empty!(workspace.results)
+        empty!(workspace.executions)
         close_cache_db!(workspace.cache.db)
     finally
         close_source!(workspace.source)

@@ -2,8 +2,6 @@
 mutable struct BuildMetrics
     item_write_ns::Base.Threads.Atomic{Int64}
     item_writes::Base.Threads.Atomic{Int64}
-    processed_write_ns::Base.Threads.Atomic{Int64}
-    processed_writes::Base.Threads.Atomic{Int64}
     metadata_write_ns::Base.Threads.Atomic{Int64}
     metadata_writes::Base.Threads.Atomic{Int64}
 end
@@ -11,7 +9,7 @@ end
 """Construct zeroed build metrics."""
 function BuildMetrics()::BuildMetrics
     counter() = Base.Threads.Atomic{Int64}(0)
-    return BuildMetrics(counter(), counter(), counter(), counter(), counter(), counter())
+    return BuildMetrics(counter(), counter(), counter(), counter())
 end
 
 """Reset all aggregate counters before one workspace build."""
@@ -19,8 +17,6 @@ function reset_build_metrics!(metrics::BuildMetrics)::Nothing
     for counter in (
         metrics.item_write_ns,
         metrics.item_writes,
-        metrics.processed_write_ns,
-        metrics.processed_writes,
         metrics.metadata_write_ns,
         metrics.metadata_writes,
     )

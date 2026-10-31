@@ -361,18 +361,6 @@ function processed(workspace::Workspace, input::AbstractDataItem)::AbstractDataI
     return output
 end
 
-"""
-The item for one saved payload of a processed version of `item`, with `delivered` as its metadata. `known` is the
-[`row`](@ref) of the item. When the item type does not rebuild from a payload, `expand` and
-`process` run again.
-"""
-function rebuilt(workspace::Workspace, item::ItemKey, known, payload, delivered::MetadataDict)::AbstractDataItem
-    value = reconstruct(known.type, known.id, deepcopy(payload), delivered)
-    value === nothing && (value = processed(workspace, unprocessed(
-        workspace, item, known, metadata(workspace, item; through=SOURCE_EXPAND))))
-    return adopt(value, known.label, delivered, known.collections)
-end
-
 """Replace the label of an item in the catalog and the cache. The caller holds the catalog lock."""
 function relabel!(workspace::Workspace, item::ItemKey, new::String)::Nothing
     catalog = workspace.catalog
@@ -394,9 +382,6 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     known, given, saved = @lock catalog.lock (
         row(workspace, item), metadata(workspace, item; through=SOURCE_EXPAND), cache_key(workspace, item))
     output = processed(workspace, unprocessed(workspace, item, known, given))
-    payload = item_data(output)
-    retain = keeps_result(workspace, output) && typeof(output) == known.type &&
-        DataBrowserCache.can_store_payload(payload)
     delivered = merge(given, metadata_dict(metadata(output)))
     computed = MetadataDict(
         name => value for (name, value) in delivered
@@ -406,12 +391,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     item_id = known.id
     dropped = String[]
     if iscurrent(catalog, job)
-        if retain
-            @timed_dbg store_processed!(cache, item_id, saved, deepcopy(payload))
-        else
-            delete_processed!(cache, item_id; stage=ITEM_PROCESS)
-            clear_cached_result_state!(cache, ITEM_PROCESS, item_id)
-        end
+        store_result_ready!(cache, item_id, saved; stage=ITEM_PROCESS)
         store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, computed)
         dropped = store_item_metadata!(cache, item_id, delivered)
     end
@@ -433,7 +413,8 @@ end
 """
     versions(workspace, items; own=false) -> Vector{AbstractDataItem}
 
-The processed values of `items`, each built from saved data with its label and its metadata. This
+The processed values of `items`, each with its label and its metadata, from the stores or computed
+again. This
 is the only place that decides which value of an item a stage or a view receives: the result of its
 member `process` while that result is current, and otherwise the result of its own `process`. With
 `own`, always the result of its own `process`, which is what collection `process` and member
@@ -443,47 +424,12 @@ The caller makes sure that item `process` is fresh for every item.
 """
 function versions(workspace::Workspace, items::Vector{ItemKey}; own::Bool=false)::Vector{AbstractDataItem}
     catalog = workspace.catalog
-    cache = workspace.cache.db
-    computed, types, stages = @lock catalog.lock (
-        [haskey(workspace.computations, item) for item in items],
-        [valuetype(catalog, item) for item in items],
-        [own || !member_current(catalog, item) ? ITEM_PROCESS : MEMBER_PROCESS for item in items])
-    native = @lock catalog.lock [haskey(workspace.results, (item, stage)) for (item, stage) in zip(items, stages)]
-    graph = [!iscomputed && (hasnative || result_store(workspace, type) === nothing)
-        for (iscomputed, hasnative, type) in zip(computed, native, types)]
-    if any(computed) || any(graph)
-        found = Vector{AbstractDataItem}(undef, length(items))
-        legacy = .!computed .& .!graph
-        found[legacy] = versions(workspace, items[legacy]; own)
-        found[computed] = [computed_version(workspace, item) for item in items[computed]]
-        for index in findall(graph)
-            item = items[index]
-            source = Catalogs.source(catalog, item)
-            source === nothing || reported_source_item(workspace, source)
-            found[index] = evaluate(workspace, version_computation(workspace, item; own))
-        end
-        return found
+    return map(items) do item
+        @lock(catalog.lock, haskey(workspace.computations, item)) && return computed_version(workspace, item)
+        source = Catalogs.source(catalog, item)
+        source === nothing || reported_source_item(workspace, source)
+        return evaluate(workspace, version_computation(workspace, item; own))
     end
-    known, given = @lock catalog.lock (
-        [row(workspace, item) for item in items],
-        [metadata(workspace, item; through=stage) for (item, stage) in zip(items, stages)])
-    item_ids = String[getproperty.(known, :id)...]
-    payloads = Vector{Any}(nothing, length(items))
-    for stage in (ITEM_PROCESS, MEMBER_PROCESS)
-        chosen = findall(==(stage), stages)
-        isempty(chosen) || (payloads[chosen] = read_payload(cache, item_ids[chosen]; stage))
-    end
-    # A member job that runs at the same time may have removed the result just chosen.
-    for index in findall(isnothing, payloads)
-        stages[index] == MEMBER_PROCESS || continue
-        payloads[index] = only(read_payload(cache, item_ids[index:index]))
-        given[index] = metadata(workspace, items[index]; through=ITEM_PROCESS)
-    end
-    missing = findfirst(isnothing, payloads)
-    missing === nothing || error("The processed data of item '$(item_ids[missing])' is missing")
-    return AbstractDataItem[
-        rebuilt(workspace, item, facts, something(payload), metadata)
-        for (item, facts, payload, metadata) in zip(items, known, payloads, given)]
 end
 
 """
@@ -529,21 +475,13 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
     output = evaluate(workspace, computation(workspace, item, MEMBER_PROCESS))
     output isa AbstractDataItem || error(
         "A member process method for $(known.type) must return an AbstractDataItem; got $(typeof(output))")
-    payload = item_data(output)
-    retain = keeps_result(workspace, output) && typeof(output) == known.type &&
-        DataBrowserCache.can_store_payload(payload)
     delivered = merge(given, metadata_dict(metadata(output)))
     computed = MetadataDict(
         name => value for (name, value) in delivered
         if !haskey(given, name) || !isequal(given[name], value))
     dropped = String[]
     if iscurrent(catalog, job)
-        if retain
-            @timed_dbg store_processed!(cache, known.id, saved, deepcopy(payload); stage=MEMBER_PROCESS)
-        else
-            delete_processed!(cache, known.id; stage=MEMBER_PROCESS)
-            clear_cached_result_state!(cache, MEMBER_PROCESS, known.id)
-        end
+        store_result_ready!(cache, known.id, saved; stage=MEMBER_PROCESS)
         store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, computed)
         dropped = store_item_metadata!(cache, known.id, delivered)
     end

@@ -16,9 +16,9 @@ Core chooses storage from a returned native item's type. Ordinary Julia results 
 `AbstractDataItem` of the type selected by this hook. Evaluation unwraps workspace-owned result
 items before passing values to functions; project items keep their native types.
 
-Normal materialization and the existing stage payload paths follow this policy too. Native
-result stores currently cover one workspace opening. Supported table payloads can also use the
-existing persistent cache; native restoration across openings is still being implemented.
+Results of `process` are stored under the same key in every opening of the workspace, so a store
+that keeps values on disk, such as `DuckDBStore(path)`, supplies them again after a reopen. The
+default `MemoryStore` keeps them for one opening.
 """
 function storage end
 

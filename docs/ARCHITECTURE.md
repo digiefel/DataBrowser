@@ -118,12 +118,12 @@ flowchart LR
     index[("catalog<br/>source items, items, collections")]
     unprocessed[("unprocessed payload<br/>memory cache")]
     item_process["item process"]
-    processed[("processed payload<br/>cache store")]
+    processed[("processed item<br/>store of its type")]
     item_metadata[("item metadata<br/>cache store")]
     collection_process["collection process"]
     collection_payload[("collection data and metadata<br/>cache store")]
     member_process["member process"]
-    member_payload[("member payload<br/>cache store")]
+    member_payload[("member result<br/>store of its type")]
     views["views and inspectors"]
 
     source --> read
@@ -218,16 +218,16 @@ Interactive computations evaluate their input graph directly, replacing their fo
 input-filling and result dictionaries. Unindexed nodes use the same type-selected stores and
 execution records as scheduled project calls. Their input revisions invalidate their cached results.
 Results from stale work are discarded, and invalidated results are not reused. Replacing a result
-or closing the workspace releases its stored value. Store keys currently identify a
-computation revision within one workspace opening; native restoration across openings is pending.
+releases its stored value; closing the workspace keeps it. A stage result is stored under its
+stage, its kind and its id, for example `ITEM_PROCESS/ItemKey/sample`, so a store that keeps
+values on disk, such as `DuckDBStore`, supplies it again after a reopen while the cache records the
+stage as current. Interactive computations are stored under keys of one opening.
 
 The scheduler, publication jobs and cache addressing still use the fixed stages described below.
-Their project calls use the same computation invocation. Normal materialization uses native
-computation results while available and replays uncached results. The older stage payload paths
-also honor the type policy, retain copies and store identity and metadata independently of data
-retention. Supported table payloads can still be restored from the existing persistent cache;
-values that it cannot encode stay in their native result store. Fixed-stage scheduling, native
-restoration across openings remain on the [roadmap](roadmap.md).
+Their project calls use the same computation invocation. Materialization evaluates the computation
+of an item's current version: it uses stored results and runs again what no store keeps. The cache
+records which stages finished and the metadata they delivered, independently of the stored values.
+Source reads, expanded items and collection data still use the older cache payload paths.
 
 Workers run project code in the latest world, so a method defined after the workspace opened is
 used. Each stage has a code revision for each type it runs for: a content hash of the code it can
@@ -339,7 +339,7 @@ flowchart LR
     core -->|"cached_result_state"| cache
     cache -->|"payloads and stage state"| payloads
     payloads --> core
-    core -->|"store_source_read!<br/>store_source_items!<br/>store_processed!"| cache
+    core -->|"store_source_read!<br/>store_source_items!<br/>store_result_ready!"| cache
     source -->|"read / expand / process"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111

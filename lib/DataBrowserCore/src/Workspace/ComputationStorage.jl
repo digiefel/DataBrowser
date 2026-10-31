@@ -102,7 +102,10 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     item = result_item(workspace, catalog, value, args, result)
     item === nothing && return result
     store = result_store(workspace, typeof(item))
-    key = string(objectid(catalog), '/', objectid(value), '/', revision)
+    # A stage result keeps its name across openings, so a store on disk finds it again.
+    # TODO: name interactive computations so that their results are found again too.
+    key = address isa Target ? stored_key(workspace, address) :
+        string(objectid(catalog), '/', objectid(value), '/', revision)
     stored = ComputationResult(value, revision, typeof(result), typeof(item), store, key, Dict{Symbol,Any}(deepcopy(metadata(item))))
     store === nothing || write(store, key, deepcopy(item))
     kept, previous = @lock catalog.lock begin
@@ -126,6 +129,9 @@ current_execution(workspace, catalog, value, revision) =
     workspace.catalog === catalog && !workspace.stopping && !workspace.closed &&
     computation_revision(catalog, value) == revision
 
+stored_key(workspace::Workspace, (key, stage)::Target) =
+    string(stage, '/', nameof(typeof(key)), '/', id(workspace.catalog, key))
+
 function stored_result(value::ComputationResult)
     value.store === nothing && return nothing
     haskey(value.store, value.key) || return nothing
@@ -142,13 +148,6 @@ function forget_result!(workspace::Workspace, address)
     delete!(workspace.executions, address)
     value = pop!(workspace.results, address, nothing)
     value === nothing || value.store === nothing || delete!(value.store, value.key)
-    return nothing
-end
-
-function forget_results!(workspace::Workspace)
-    for address in union(keys(workspace.results), keys(workspace.executions))
-        forget_result!(workspace, address)
-    end
     return nothing
 end
 
@@ -189,8 +188,9 @@ function cache_info(workspace::Workspace, value::Computation)
     key, stage = address
     cached = if key isa SourceKey && stage == SOURCE_READ
         has_payload(workspace.cache.db, cache_key(workspace, key))
-    elseif key isa ItemKey && stage == ITEM_PROCESS && !haskey(workspace.computations, key)
-        has_payload(workspace.cache.db, id(workspace, key))
+    elseif key isa ItemKey && !haskey(workspace.computations, key)
+        store = result_store(workspace, valuetype(workspace, key))
+        store !== nothing && haskey(store, stored_key(workspace, address))
     else
         false
     end

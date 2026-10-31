@@ -42,9 +42,7 @@ end
         try
             source_key = source_item_key!(cache, "source"; mint=true)
             store_fixture_item!(cache, source_key, (x=[1],))
-            store_processed!(cache, "item", source_key, (x=[2],))
             store_item_metadata!(cache, "item", Dict(:total => 2))
-            @test Tables.columntable(something(only(read_payload(cache, ["item"]; stage=ITEM_PROCESS)))).x == [2]
             @test delivered(cache)[:total] == 2
             @test timedwait(() -> !cache_has_pending_writes(cache), 20) === :ok
             @test query_items(cache, "total = 2") == ["item"]
@@ -69,8 +67,6 @@ end
         try
             @test isempty(load_cache_index(cache).items)
             store_fixture_item!(cache, source_key, (x=[1, 2],))
-            store_processed!(cache, "item", source_key, (x=[3, 4],))
-            store_processed!(cache, "item", source_key, (x=[5],))
             store_item_metadata!(cache, "item", Dict(:total => 5))
         finally
             close_cache_db!(cache)
@@ -81,7 +77,6 @@ end
         @test_throws ProjectCacheError open_cache_db(other_project)
         cache = open_cache_db(identity)
         try
-            @test Tables.columntable(something(only(read_payload(cache, ["item"]; stage=ITEM_PROCESS)))).x == [5]
             @test delivered(cache)[:total] == 5
             delete_source_output!(cache, source_key, ["item"])
         finally
@@ -89,7 +84,6 @@ end
         end
         cache = open_cache_db(identity)
         try
-            @test !has_payload(cache, "item"; stage=ITEM_PROCESS)
             @test isempty(load_cache_index(cache).items)
             store_fixture_item!(cache, source_key, (x=[1],))
             clear_cache_index!(cache)
@@ -124,39 +118,6 @@ end
             @test read_payload(cache, key) === Some(nothing)
             delete_source_item!(cache, key, String[])
             @test read_payload(cache, key) === nothing
-        finally
-            close_cache_db!(cache)
-        end
-    end
-end
-
-@testset "payloads with missing values, with no rows and of many rows are read back unchanged" begin
-    mktempdir() do dir
-        identity = ProjectCacheIdentity("payloads", "source", "source", joinpath(dir, "cache.duckdb"))
-        rows = 5000
-        payloads = Dict(
-            "plain" => (x=Float64.(1:rows), name=string.(1:rows)),
-            "missing at the end" => (x=[i > 4500 ? missing : Float64(i) for i in 1:rows], name=string.(1:rows)),
-            "empty" => (x=Float64[], name=String[]))
-        cache = open_cache_db(identity; rebuild=true)
-        source_key = source_item_key!(cache, "source"; mint=true)
-        store_source_identity!(cache, CacheSourceItem(), "source")
-        replace_source_output!(cache, source_key, String[], [
-            ItemOutput(id, id, CacheItem, nothing, DataBrowserAPI.MetadataDict(), payload)
-            for (id, payload) in payloads])
-        for (id, payload) in payloads
-            store_processed!(cache, id, source_key, payload)
-        end
-        close_cache_db!(cache)
-        cache = open_cache_db(identity)
-        try
-            ids = collect(keys(payloads))
-            for (id, read) in zip(ids, read_payload(cache, ids; stage=ITEM_PROCESS))
-                table = Tables.columntable(something(read))
-                @test isequal(table.x, payloads[id].x)
-                @test eltype(table.x) == eltype(payloads[id].x)
-                @test table.name == payloads[id].name
-            end
         finally
             close_cache_db!(cache)
         end

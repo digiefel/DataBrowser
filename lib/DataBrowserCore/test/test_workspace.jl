@@ -1,11 +1,15 @@
 using DataBrowserAPI: AbstractProject, AbstractDataSource, AbstractDataSourceItem, AbstractDataItem, id, item_data, metadata
 using Test, DataBrowserAPI, DataBrowserCore
+using DataBrowserCache: DuckDBStore, MemoryStore
 import DataBrowserCore.Workspace as W
 
 mutable struct EngineProject <: AbstractProject
     name::String
     reads::Int
+    # The file that keeps processed items across openings, or `nothing` to keep them in memory.
+    values::Union{Nothing,String}
 end
+EngineProject(name, reads) = EngineProject(name, reads, nothing)
 DataBrowserAPI.project_name(p::EngineProject) = p.name
 struct EngineSource <: AbstractDataSource
     name::String
@@ -32,6 +36,8 @@ DataBrowserAPI.id(i::EngineItem) = i.key
 DataBrowserAPI.item_data(i::EngineItem) = i.data
 DataBrowserAPI.metadata(i::EngineItem) = i.meta
 DataBrowserAPI.reconstruct(::Type{EngineItem}, key::AbstractString, data, meta::Dict) = EngineItem(key, data, meta)
+DataBrowserAPI.storage(p::EngineProject, ::Type{EngineItem}) =
+    p.values === nothing ? MemoryStore() : DuckDBStore(p.values)
 function DataBrowserAPI.read(p::EngineProject, ::EngineSource, s::EngineSourceItem)
     p.reads += 1
     s.fail && error("fixture read failed")
@@ -396,6 +402,7 @@ function DataBrowserAPI.read(::ClosedProject, ::EngineSource, ::EngineSourceItem
 end
 DataBrowserAPI.expand(::ClosedProject, ::EngineSourceItem, count) =
     [EngineItem(string(n), (x=[n],), Dict()) for n in 1:count]
+DataBrowserAPI.storage(::ClosedProject, ::Type{EngineItem}) = DuckDBStore(joinpath(first(DEPOT_PATH), "values.duckdb"))
 DataBrowserAPI.process(::ClosedProject, i::EngineItem) =
     EngineItem(id(i), (x=i.data.x .* closed_scale(),), metadata(i))
 
@@ -431,7 +438,7 @@ end
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
         try
-            project = EngineProject("engine", 0)
+            project = EngineProject("engine", 0, joinpath(depot, "values.duckdb"))
             ws = W.open_workspace(project, EngineSource("source", 2, false); cache, background_processing=true)
             try
                 settled(ws)

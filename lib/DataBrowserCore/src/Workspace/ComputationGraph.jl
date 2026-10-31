@@ -181,12 +181,21 @@ function computation_result(workspace::Workspace, value::Computation)
         return cached === nothing || !keeps_result(workspace, something(cached)) ? nothing : cached
     elseif key isa ItemKey
         haskey(workspace.computations, key) && return nothing
-        result_store(workspace, valuetype(workspace, key)) === nothing && return nothing
-        payload = only(read_payload(workspace.cache.db, [id(workspace, key)]; stage))
-        payload === nothing && return nothing
-        restored = reconstruct(valuetype(workspace, key), id(workspace, key), deepcopy(something(payload)),
-            metadata(workspace, key; through=stage))
-        return restored === nothing ? nothing : Some(restored)
+        type = valuetype(workspace, key)
+        store = result_store(workspace, type)
+        store === nothing && return nothing
+        # The value kept in an earlier opening. A process result of another item type is not
+        # found here and runs again.
+        # TODO: record the item type of each kept result in the workspace file.
+        stored = stored_key(workspace, target)
+        if haskey(store, stored)
+            try
+                return Some(read(store, type, stored))
+            catch error
+                error isa KeyError || rethrow()
+            end
+        end
+        return nothing
     elseif key isa CollectionKey && stage == COLLECTION_PROCESS
         # The value that the `process` of a collection returned, rebuilt from its data and metadata.
         payload = read_payload(workspace.cache.db, workspace.collection_keys[key]; stage)
