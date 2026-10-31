@@ -6,14 +6,7 @@ import DataBrowserCore.Workspace
 
 """Render collection and item details for the visible workspace selection."""
 function render_info_window(state::BrowserState)::Nothing
-    workspace = state.workspace
-    if !(workspace isa Workspace.Workspace)
-        if ig.Begin("Information Panel")
-            ig.TextDisabled("No workspace open")
-        end
-        ig.End()
-        return nothing
-    end
+    workspace = state.workspace::Workspace.Workspace
     selected_collections, selected_items, selected_path =
         _project_visible_selection(state)
     if ig.Begin("Information Panel")

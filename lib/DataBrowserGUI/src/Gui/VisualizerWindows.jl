@@ -170,7 +170,6 @@ Draw every window that shows a value with a visualizer, and remove those the use
 that is not visible, for example behind another tab, is not brought up to date.
 """
 function render_windows!(state::BrowserState)::Nothing
-    state.workspace isa Workspace.Workspace || return nothing
     # The plots drawn with ImPlot need its context.
     _init_implot_context!(state)
     _release_retired_window_previews!()

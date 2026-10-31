@@ -2,7 +2,7 @@ import CImGui as ig
 
 """Show the tag-loading failure without blocking the rest of the browser."""
 function _render_tag_state_error!(state::BrowserState)::Nothing
-    (_tags_ready(state) || !(state.workspace isa Workspace.Workspace)) && return nothing
+    _tags_ready(state) && return nothing
     ig.TextColored((1.0, 0.5, 0.5, 1.0), "tags error")
     if ig.BeginItemTooltip()
         ig.PushTextWrapPos(ig.GetFontSize() * 35.0)
