@@ -25,31 +25,39 @@ const CODE_ROOM = 64 * 1024
 The plot builder: a plot written as code, drawn for the selection.
 
 The user names the plot in the window's header: the name `tlm` is the file `plots/tlm.jl`, and a
-name ending in `.jl` is a path. A new plot starts with code that draws the selection's columns. The
-code is shown under the figure and edited there or, once the plot has a name, in any other editor.
+name ending in `.jl` is a path. A name that has no file yet saves the code under it; a name that
+has a file opens it. A new plot starts with code that draws the selection's columns. The code is
+shown under the figure and edited there or, once the plot has a name, in any other editor. "Save"
+(or Ctrl+S in the code) writes the file and draws the plot again; without a name, "Draw" only
+draws. A change to the file from another editor shows at once, unless the code in the window has
+changes that are not saved; then "Reload" in the window shows it.
+
 The panel at the left shows the parts of `@plot` as the code names them: its `mapping`, its layers
-with the `mapping` and `visual` of each, and its `scales`. A click on a value edits it, and Enter
-writes it into the code. Some values have their own fields: a marker or a line style is picked
-from a menu that draws them, the `limits` of an axis are two numbers, and its `ticks` are a kind of
-ticks with their count or their values. A palette of colors, markers or line styles is a row of
-chips: a click on one changes it, a drag moves it, a right click removes it, and "+" adds one; the
-button after the colors picks a color scheme. A colormap is drawn as its gradient. The ƒ before such
-a value switches it to code and back. The
-"+" at the end of a title adds a value, a layer or a scale, offering only what the plot can use; "×",
-shown while the mouse is on a value, a layer or a scale, removes it.
-The eye button hides a layer, writing [`@invisible`](@ref) before its line, and draws it again.
-The border between the panel and the figure can be dragged.
-Giving a name that has no file yet saves the code under it; a name that has a file opens it. It
-is ordinary Julia, and its last value is the plot: an AlgebraOfGraphics declaration such as one
-written with `@plot`, or a Makie figure. The file runs from the start in a module of its own, which
-uses AlgebraOfGraphics, Makie and DataBrowserPlots and has `selection` set to the selected items.
-It runs again when the code changes; a declaration of `@plot` is drawn again for each selection
-without running the file. Code that names `selection` itself runs again for each selection.
-A declaration and its figure are prepared in the background. The window pauses interaction and
-shows "Preparing" until preparation returns control to the UI.
-Other packages are loaded with `using` in the file. Names defined in `Main`, such as the functions
-of the project script or the REPL, are reached by name; a name that the file defines takes their
-place.
+with the `mapping` and `visual` of each, its `scales`, its `legend` and its `theme`. A click on a
+value edits it, and Enter writes it into the code. Some values have their own fields: a marker or a
+line style is picked from a menu that draws them, the `limits` of an axis are two numbers, and its
+`ticks` are a kind of ticks with their count or their values. A palette of colors, markers or line
+styles is a row of chips: a click on one changes it, a drag moves it, a right click removes it, and
+"+" adds one; the button after the colors picks a color scheme. A colormap is drawn as its gradient.
+The badge before a value shows its kind, or ƒ when the value is code; a click on it switches the
+value to code and back.
+
+The "+" at the end of a title adds a value, a layer or a scale, and offers only what the plot can
+use; "×", shown while the mouse is on a value, a layer or a scale, removes it. A click on the plot
+type of a layer changes it. A click on the tag of an analysis changes the analysis, edits its
+arguments or removes it, and the "+" after the tags adds an analysis. The eye button hides a layer,
+writing [`@invisible`](@ref) before its line, and draws it again. The user drags the border between
+the panel and the figure to resize them.
+
+The code is ordinary Julia, and its last value is the plot: an AlgebraOfGraphics declaration such
+as one written with `@plot`, or a Makie figure. The file runs from the start in a module of its
+own, which uses AlgebraOfGraphics, Makie and DataBrowserPlots and has `selection` set to the
+selected items, as [`select`](@ref) gives them. The file runs again when the code changes. A
+declaration of `@plot` is drawn again for each selection without running the file; code that names
+`selection` itself runs again for each selection. The window prepares a declaration and its figure
+in the background, and pauses interaction until they are ready. Other packages are loaded with
+`using` in the file. Names defined in `Main`, such as the functions of the project script or the
+REPL, are reached by name; a name that the file defines takes their place.
 
     @plot mapping(:data.V, :data.I; color=:device) begin
         visual(Scatter)
@@ -57,11 +65,7 @@ place.
     end
 
 The names in `mapping` are paths into the selected items, as [`@plot`](@ref) describes: `:device`
-is a metadata value of each item, `:data.V` a column of each item's data. `selection` is the
-selected items, as [`select`](@ref) gives them. "Save" (or Ctrl+S in the code) writes the file and
-draws the plot again; without a name, "Draw" only draws. A change to the file from another editor is
-shown at once, unless the code in the window has changes that are not saved; then "Reload" in the
-window shows it.
+is a metadata value of each item, `:data.V` a column of each item's data.
 """
 Base.@kwdef mutable struct BuilderView <: FigureView
     # The name of the plot, which the user gives: the file `plots/<name>.jl`, or a path to a `.jl`
@@ -258,13 +262,14 @@ function build!(view::BuilderView, ctx)::Nothing
             view.ran = run
         end
         plot = view.value
-        # A declaration of paths is drawn for the selection, any other for its own data.
-        # The kinds of a declaration's scales come from the types of the selection's values, before
-        # it is drawn.
-        view.scale_kinds = plot isa DataBrowserPlots.Declaration ? scale_kinds(plot, selection) : scale_kinds(plot)
+        # A declaration of paths is drawn for the selection, and the kinds of its scales come from
+        # the types of the selection's values. Any other plot has its own data.
         if plot isa DataBrowserPlots.Declaration
+            view.scale_kinds = scale_kinds(plot, selection)
             path = code_path(view)
             plot = @timed_dbg "builder_layers" DataBrowserPlots.drawing(() -> Base.invokelatest(plot.layers, selection), selection, path)
+        else
+            view.scale_kinds = scale_kinds(plot)
         end
         figure!(view, plot)
     catch err

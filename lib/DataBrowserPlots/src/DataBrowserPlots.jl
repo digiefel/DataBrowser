@@ -27,6 +27,13 @@ Makie `Figure`. `specification` may be an AoG layer, a composition of layers, or
 Optional scales and the `axis`, `figure`, `facet` and `colorbar` settings are passed to AoG's
 `draw`.
 
+```julia
+using DataBrowserPlots, AlgebraOfGraphics, GLMakie
+
+table = (x=[1, 2, 3], y=[2, 3, 5])
+fig = figure(data(table) * mapping(:x, :y) * (visual(Scatter) + visual(Lines)); legend=(position=:bottom,))
+```
+
 The legend has a section for each categorical role, such as `color`; roles share a section when one
 of them determines the others. The `legend` settings are `position` (`:right`, `:left`, `:top` or
 `:bottom`), `show`, `merge`, and those of Makie's `Legend`. `merge = (:color, :linestyle)` puts
@@ -34,7 +41,8 @@ those roles in one section, with one entry for each combination of their values 
 `merge = true` puts all roles in one.
 
 Load AlgebraOfGraphics, and a Makie backend such as GLMakie or CairoMakie to display or save the
-figure. This works with ordinary Julia data and needs no workspace.
+figure. This works with ordinary Julia data and needs no workspace. The `setup` function of a plot
+that [`register_plot!`](@ref) adds can also return the figure.
 """
 function figure end
 include("fitting.jl")
