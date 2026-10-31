@@ -1,15 +1,13 @@
 """
-Tags and notes persistence keyed on item and collection IDs.
+Files in which the user annotates items and collections: [`Tags`](@ref) in `tags.txt` and
+[`Notes`](@ref) in `notes.txt`. Both name an item by its id, and a collection by the labels of the
+collections from the top down, joined with `/`.
 """
 module DataBrowserAnnotations
 
-using DataBrowserAPI: AbstractDataItem
-
-include("identity.jl")
 include("tags.jl")
 include("notes.jl")
 
 export Tags, Notes
-export AnnotationKey, item_annotation_key, collection_annotation_key, ancestor_annotation_keys
 
 end # module

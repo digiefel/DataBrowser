@@ -1,5 +1,5 @@
 """
-Concrete data sources: directory scanning.
+The data sources that DataBrowser provides. [`DirectorySource`](@ref) reads the files of a folder.
 """
 module DataBrowserSources
 

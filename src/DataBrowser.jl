@@ -1,4 +1,8 @@
-"""DataBrowser umbrella: public API re-exports and default wiring."""
+"""
+DataBrowser and all its parts. `using DataBrowser` loads DataBrowserAPI, DataBrowserRecipes,
+DataBrowserSources, DataBrowserCore, DataBrowserPlots and DataBrowserGUI, and exports the names
+that each of them exports.
+"""
 module DataBrowser
 
 using PrecompileTools
@@ -10,11 +14,6 @@ using Reexport
 @reexport using DataBrowserCore
 @reexport using DataBrowserPlots
 @reexport using DataBrowserGUI
-
-using DataBrowserAPI: project_name
-import DataBrowserCache as Cache
-import DataBrowserCore.Workspace as Workspace
-import DataBrowserGUI: Browser
 
 include("Precompile.jl")
 

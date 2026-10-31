@@ -1,32 +1,28 @@
 """
-Tags — catalog of named tags plus per-key assignments stored at `<root>/tags.txt`.
+Tags: named labels that the user puts on items and collections. [`load`](@ref) and
+[`save`](@ref) keep them in the file `tags.txt` of a folder. The file has two sections, each after
+a header in brackets. `\\t` stands for a tab:
 
-The file has two sections, each introduced by a bracketed header:
-
+    # Lines that start with `#` are comments.
     [catalog]
     bad\\tff3030\\t100
     todo\\t30c0ff\\t50
 
     [assignments]
-    RuO2test/A9/VI/D1                                          bad
-    /Users/davide/data/RuO2test/A9/VI/D1/3V FE PUND.csv        bad
-    RuO2test/A10/VI                                            todo
+    A9/VI/D1\\tbad
+    A10/VI\\ttodo
+    A9/VI/D1/3V FE PUND.csv\\tbad
 
-Assignment rows are `<key>\\t<tag_name>`. Keys are registration collection-path strings
-(slash-joined segments, e.g. `RuO2test/A9/VI/D1`), typed collection IDs prefixed with
-`@collection/`, or item ids from [`id`](@ref).
-The two namespaces never overlap, so no kind prefix is needed. Fields are
-tab-separated on write; whitespace-tolerant on read. Lines starting with `#`
-are comments. Malformed rows raise `TagsParseError`.
+A catalog row is `<name>\\t<color>\\t<priority>`: it defines one [`Tag`](@ref). An assignment row
+is `<key>\\t<name>`: it puts the tag `name` on `key`. A key is the id of an item, or the path of a
+collection: the labels of the collections from the top down, joined with `/`.
 
-`Tags.load` and `Tags.save` only use `tags.txt`.
+[`save`](@ref) separates fields with tabs. [`load`](@ref) also accepts spaces between fields, when
+a row has no tab. A row that does not follow this format raises a `TagsParseError`.
 """
 module Tags
 
-using ..DataBrowserAnnotations: AnnotationKey, collection_annotation_key
-
-export Tag, Untagged, TagState, load, save,
-       tags_path, TAGS_FILENAME
+export Tag, Untagged, TagState, load, save, tags_path, TAGS_FILENAME
 
 const TAGS_FILENAME = "tags.txt"
 
@@ -37,9 +33,9 @@ tags_path(root::AbstractString) = joinpath(String(root), TAGS_FILENAME)
 
 A label that the user puts on items and collections, for example `Tag("bad")`.
 
-The name identifies the tag. `color` is six hexadecimal digits, and is the colour of tagged rows
+The name identifies the tag. `color` is six hexadecimal digits, and is the color of tagged rows
 in the browser. When several tags apply to one row, the tag with the highest `priority` gives the
-colour.
+color.
 """
 struct Tag
     name::String
@@ -52,7 +48,7 @@ function Tag(name::AbstractString; color::AbstractString="808080", priority::Int
         throw(ArgumentError("a tag name is text on one line without tabs, got \"$(escape_string(name))\""))
     digits = lstrip(color, '#')
     length(digits) == 6 && all(isxdigit, digits) ||
-        throw(ArgumentError("a tag colour is six hexadecimal digits, got \"$color\""))
+        throw(ArgumentError("a tag color is six hexadecimal digits, got \"$color\""))
     return Tag(name, ntuple(i -> parse(UInt8, digits[2i-1:2i]; base=16), 3), priority)
 end
 
@@ -72,20 +68,18 @@ Base.show(io::IO, tag::Tag) =
 """
     TagState
 
-Catalog of `Tag`s plus a single `assignments` map.
+The content of `tags.txt`: the `catalog` of defined tags, and the `assignments` from each key to
+the names of the tags put on it.
 
-Keys are [`AnnotationKey`](@ref) values — either collection paths or item ids.
-The two namespaces never overlap.
-
-Only explicitly attached tags are stored; a reader applies the tags of a collection to
+Only the tags put on a key itself are stored. A reader applies the tags of a collection to
 everything below it.
 """
 struct TagState
     catalog::Vector{Tag}
-    assignments::Dict{AnnotationKey,Set{String}}
+    assignments::Dict{String,Set{String}}
 end
 
-TagState() = TagState(Tag[], Dict{AnnotationKey,Set{String}}())
+TagState() = TagState(Tag[], Dict{String,Set{String}}())
 
 struct TagsParseError <: Exception
     path::String
@@ -97,19 +91,6 @@ function Base.showerror(io::IO, err::TagsParseError)
     print(io, "Invalid $(basename(err.path)) at line $(err.line_number): $(err.message)")
 end
 
-function _parse_color_hex(path::String, line_number::Int, raw::AbstractString)
-    s = strip(raw)
-    startswith(s, '#') && (s = s[2:end])
-    length(s) == 6 || throw(TagsParseError(path, line_number,
-        "expected 6-digit hex color, got '$raw'"))
-    r = tryparse(UInt8, s[1:2]; base=16)
-    g = tryparse(UInt8, s[3:4]; base=16)
-    b = tryparse(UInt8, s[5:6]; base=16)
-    (r === nothing || g === nothing || b === nothing) &&
-        throw(TagsParseError(path, line_number, "bad hex color '$raw'"))
-    return (r, g, b)
-end
-
 function _split_row(line::AbstractString)
     if occursin('\t', line)
         return [strip(p) for p in split(line, '\t') if !isempty(strip(p))]
@@ -117,58 +98,50 @@ function _split_row(line::AbstractString)
     return [strip(p) for p in split(line) if !isempty(strip(p))]
 end
 
+"""
+    load(root) -> TagState
+
+Read `tags.txt` in the folder `root`. A folder without the file has no tags.
+"""
 function load(root::AbstractString)::TagState
     path = tags_path(root)
-
-    catalog = Tag[]
-    assignments = Dict{AnnotationKey,Set{String}}()
-
-    if isfile(path)
-        section = :none
-        for (line_number, raw) in enumerate(eachline(path))
-            body = strip(raw)
-            isempty(body) && continue
-            startswith(body, '#') && continue
-            if startswith(body, '[') && endswith(body, ']')
-                header = strip(body[2:end-1])
-                if header == "catalog"
-                    section = :catalog
-                elseif header == "assignments"
-                    section = :assignments
-                else
-                    throw(TagsParseError(path, line_number, "unknown section '[$header]'"))
-                end
-                continue
+    state = TagState()
+    isfile(path) || return state
+    section = :none
+    for (line_number, raw) in enumerate(eachline(path))
+        body = strip(raw)
+        (isempty(body) || startswith(body, '#')) && continue
+        if startswith(body, '[') && endswith(body, ']')
+            header = strip(body[2:end-1])
+            header in ("catalog", "assignments") ||
+                throw(TagsParseError(path, line_number, "unknown section '[$header]'"))
+            section = Symbol(header)
+            continue
+        end
+        fields = _split_row(body)
+        if section == :catalog
+            length(fields) == 3 || throw(TagsParseError(path, line_number,
+                "expected '<name>\\t<color>\\t<priority>'"))
+            priority = tryparse(Int, fields[3])
+            priority === nothing && throw(TagsParseError(path, line_number,
+                "bad priority '$(fields[3])'"))
+            tag = try
+                Tag(fields[1]; color=fields[2], priority)
+            catch error
+                error isa ArgumentError || rethrow()
+                throw(TagsParseError(path, line_number, error.msg))
             end
-
-            fields = _split_row(body)
-            if section == :catalog
-                length(fields) == 3 || throw(TagsParseError(path, line_number,
-                    "expected '<name>\\t<color>\\t<priority>'"))
-                name = String(fields[1])
-                isempty(name) && throw(TagsParseError(path, line_number, "empty tag name"))
-                color = _parse_color_hex(path, line_number, fields[2])
-                priority = tryparse(Int, fields[3])
-                priority === nothing && throw(TagsParseError(path, line_number,
-                    "bad priority '$(fields[3])'"))
-                push!(catalog, Tag(name, color, priority))
-            elseif section == :assignments
-                length(fields) == 2 || throw(TagsParseError(path, line_number,
-                    "expected '<key>\\t<tag_name>'"))
-                key = collection_annotation_key(fields[1])
-                tag = String(fields[2])
-                (isempty(key) || isempty(tag)) &&
-                    throw(TagsParseError(path, line_number, "empty key or tag name"))
-                set = get!(() -> Set{String}(), assignments, key)
-                push!(set, tag)
-            else
-                throw(TagsParseError(path, line_number,
-                    "row outside of any section; expected '[catalog]' or '[assignments]' header first"))
-            end
+            push!(state.catalog, tag)
+        elseif section == :assignments
+            length(fields) == 2 || throw(TagsParseError(path, line_number,
+                "expected '<key>\\t<tag_name>'"))
+            push!(get!(() -> Set{String}(), state.assignments, String(fields[1])), String(fields[2]))
+        else
+            throw(TagsParseError(path, line_number,
+                "row outside of any section; expected '[catalog]' or '[assignments]' header first"))
         end
     end
-
-    return TagState(catalog, assignments)
+    return state
 end
 
 function _format_color(color::NTuple{3,UInt8})
@@ -179,6 +152,11 @@ function _format_color(color::NTuple{3,UInt8})
     )
 end
 
+"""
+    save(root, state::TagState)
+
+Write `state` to `tags.txt` in the folder `root`. Without tags, the file is removed.
+"""
 function save(root::AbstractString, state::TagState)
     path = tags_path(root)
     if isempty(state.catalog) && isempty(state.assignments)
