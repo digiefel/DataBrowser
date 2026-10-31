@@ -8,7 +8,7 @@ const Browser = DataBrowserGUI.Browser
 
 using DataBrowserAPI: AbstractVisualizer
 import DataBrowserAPI: draw!, draw_header!, export!
-using .MakieImguiIntegration: destroy_figure!, inspect!, plot_theme
+using .MakieImguiIntegration: MakieFigure, destroy_figure!, inspect!, plot_theme
 
 # Every figure of the browser uses the dark theme, or the light one. The theme button of any window
 # with a figure changes it for all of them.
@@ -111,8 +111,6 @@ function export!(view::FigureView, ctx)::Nothing
     return nothing
 end
 
-embed_figure(view::FigureView) = embed(view.figure, view.figure_id)
-
 function draw!(view::FigureView, ctx)::Nothing
     figure_id = "plot_$(ctx.id)"
     if view.figure_id != figure_id
@@ -141,7 +139,7 @@ function draw!(view::FigureView, ctx)::Nothing
     end
     view.figure isa Figure && inspect!(view.figure, view.inspect)
     Browser.@timed "makie_fig" begin
-        embed_figure(view)
+        MakieFigure(view.figure_id, view.figure; auto_resize_x=true, auto_resize_y=true)
     end
     return nothing
 end

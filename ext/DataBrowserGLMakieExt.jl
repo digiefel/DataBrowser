@@ -42,9 +42,9 @@ using PrecompileTools: @compile_workload
             nothing
         end)
     _precompile_engine(project; selected=function (workspace, items)
-        plot_kind = only(registered_plot_kinds(project, :iv))
+        plot = only(registered_plots(project, :iv))
         selection = select(workspace, id.(items))
-        plot_data!(workspace, plot_kind, selection, setup_plot(workspace, plot_kind, selection))
+        plot.draw(selection, plot.setup(selection))
     end)
 end
 

@@ -53,12 +53,6 @@ include("plot_code.jl")
 
 export figure, @plot, @invisible, add_layer!, set_analysis!
 
-export PlotKind,
-    RegisteredPlot,
-    register_plot!,
-    setup_plot,
-    plot_data!,
-    registered_plot_kinds,
-    plot_kind_label
+export register_plot!, registered_plots
 
 end

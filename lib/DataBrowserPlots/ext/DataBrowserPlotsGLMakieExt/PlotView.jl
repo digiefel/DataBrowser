@@ -52,8 +52,7 @@ function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
     kind === view.kind || (view.plot = kind === nothing ? "" : get(view.chosen, kind, ""))
     view.kind = kind
     project = ctx.workspace.project
-    view.plots = kind === nothing ? String[] :
-        [plot_kind_label(project, plot) for plot in registered_plot_kinds(project, kind)]
+    view.plots = kind === nothing ? String[] : [plot.label for plot in registered_plots(project, kind)]
 
     if isempty(view.plots)
         view.error_details = ""
@@ -74,18 +73,17 @@ end
 # Keep the short report in the window and the full report behind "Show details".
 function build!(view::PlotView, ctx)::Nothing
     workspace = ctx.workspace::Workspace.Workspace
-    plot = RegisteredPlot{view.kind,Symbol(view.plot)}
+    plot = only(plot for plot in registered_plots(workspace.project, view.kind) if plot.label == view.plot)
     selection = view.selection::Selection
     view.dark = DARK[]
     try
         figure = Makie.with_theme(plot_theme(view.dark)) do
-            figure = @timed_dbg setup_plot(workspace, plot, selection)
-            @timed_dbg plot_data!(workspace, plot, selection, figure)
+            figure = @timed_dbg "setup_plot" plot.setup(selection)
+            @timed_dbg "draw_plot" plot.draw(selection, figure)
             figure
         end
-        # The window shows the figure with `embed`, which a plot backend defines for its figure type.
-        hasmethod(embed, Tuple{typeof(figure),String}) ||
-            error("The plot's setup returned $(summary(figure)), which no loaded plot backend can show")
+        figure isa Figure ||
+            error("The setup function of the plot returned $(summary(figure)), not a Makie Figure")
         view.figure = figure
         view.message = ""
         view.error_details = ""
