@@ -156,12 +156,14 @@ end
 
 _run_with(connection, sql, parameters) = (DBInterface.execute(connection, sql, parameters); nothing)
 
-# TODO: Core does not close stores yet; queued tables are written when the store is closed.
+# Queued tables are written, then the write-ahead log is moved into the file, so the next opening
+# does not replay it.
 function Base.close(store::DuckDBStore)
     @lock OPEN_STORES.lock delete!(OPEN_STORES.paths, store.path)
     @lock store.lock begin
         close!(store.tables)
         close!(store.shell_rows)
+        _run(store.serialized, "CHECKPOINT")
         DBInterface.close!(store.serialized)
         DBInterface.close!(store.database)
     end
