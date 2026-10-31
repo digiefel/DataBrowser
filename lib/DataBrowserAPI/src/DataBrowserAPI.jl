@@ -37,6 +37,7 @@ export AbstractProject,
     computation,
     inputs,
     evaluate,
+    AbstractStore,
     storage,
     stored_size,
     cache_info,
@@ -63,6 +64,7 @@ export AbstractProject,
     export!,
     draw!,
     output,
-    select!
+    select!,
+    selection
 
 end

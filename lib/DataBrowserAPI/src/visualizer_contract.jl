@@ -27,8 +27,9 @@ It may also have:
   header of the window saves, such as `MIME"application/pdf"`, and `showable(mime, visualizer::V)`
   when those types depend on the state of the visualizer. See [`export!`](@ref);
 - a method `output(visualizer::V)`, the value the window passes on to other windows;
-- a method `select!(visualizer::V; keywords...)`, to select from code what the user selects in the
-  window, such as some rows. See [`select!`](@ref);
+- methods `select!(visualizer::V; keywords...)` and `selection(visualizer::V)`, to select from code
+  what the user selects in the window, such as some rows. The browser saves the selection with the
+  window. See [`select!`](@ref);
 - a method `Base.close(visualizer::V)`, to release what the visualizer holds outside Julia's
   memory, such as a figure on the graphics card. The browser calls it when the window closes or
   changes to another visualizer, on the UI thread and after any preparation has finished;
@@ -233,6 +234,18 @@ output(::AbstractVisualizer) = nothing
 Select part of what `visualizer` shows, as the user does in its window. Each visualizer names its
 own keywords, such as `columns` for a table. When the window passes on what is selected, its
 [`output`](@ref) changes too.
+
+The browser also calls `select!` before the first `prepare!`, to open a saved window again with what
+[`selection`](@ref) returned. The visualizer then keeps the selection until its data arrives.
 """
 function select! end
+
+"""
+    selection(visualizer) -> NamedTuple
+
+What `visualizer` has selected, under the names of the keywords of [`select!`](@ref): for example
+`(columns=["I"],)` for a table. The browser saves it with the window, so each value is text, a
+number, a boolean or a list of them. The default, `(;)`, is for a visualizer without a selection.
+"""
+selection(::AbstractVisualizer) = (;)
 

@@ -144,6 +144,7 @@ import DataBrowserAPI:
     project_name,
     items,
     select!,
+    selection,
     watch_source
 
 

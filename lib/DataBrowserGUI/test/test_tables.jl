@@ -75,23 +75,25 @@ end
     missing = selection_of(("B", (V=[5.],), ()))
     returned = selection_of(("C", (I=[6.], V=[7.]), ()))
     view = only(filter(v -> DataBrowserAPI.label(v) == "Table", DataBrowserGUI.Browser.visualizers(typeof(first))))
+    # The columns the table passes on: the selected ones, or all when none of them is there.
+    passed_on(view) = keys(DataBrowserAPI.data(DataBrowserAPI.evaluate(only(DataBrowserAPI.output(view)))))
     DataBrowserAPI.prepare!(view, first, nothing)
     DataBrowserAPI.select!(view; columns=["I"])
-    @test selected_columns(view; available=true) == ["I"]
+    @test passed_on(view) == (:I,)
     DataBrowserAPI.prepare!(view, missing, nothing)
-    @test selected_columns(view) == ["I"]
-    @test isempty(selected_columns(view; available=true))
+    @test DataBrowserAPI.selection(view) == (columns=["I"],)
+    @test passed_on(view) == (:V,)
     DataBrowserAPI.prepare!(view, returned, nothing)
-    @test selected_columns(view; available=true) == ["I"]
+    @test passed_on(view) == (:I,)
     DataBrowserAPI.prepare!(view, missing, nothing)
     DataBrowserAPI.select!(view; columns=["V"])
     DataBrowserAPI.prepare!(view, returned, nothing)
-    @test selected_columns(view) == ["V"]
-    @test selected_columns(view; available=true) == ["V"]
+    @test DataBrowserAPI.selection(view) == (columns=["V"],)
+    @test passed_on(view) == (:V,)
     DataBrowserAPI.select!(view; columns=String[])
     DataBrowserAPI.prepare!(view, first, nothing)
-    @test isempty(selected_columns(view))
-    @test isempty(selected_columns(view; available=true))
+    @test DataBrowserAPI.selection(view) == (columns=String[],)
+    @test passed_on(view) == (:V, :I)
 end
 
 @testset "dictionary columns use their values rather than their declared Any type" begin

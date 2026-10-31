@@ -4,7 +4,7 @@ import CImGui.CSyntax: @c
 import CSV
 using Printf: @sprintf
 
-import DataBrowserAPI: draw!, draw_header!, label, output, prepare!, select!
+import DataBrowserAPI: draw!, draw_header!, label, output, prepare!, select!, selection
 using DataBrowserAPI: AbstractVisualizer
 using DataBrowserCore: Selection, Workspace
 using ..DataBrowserGUI: ItemTable, TableSelection, _zoomable, merge_item_tables, value_table, zoom_value
@@ -135,24 +135,16 @@ Base.@kwdef mutable struct TableView <: AbstractVisualizer
     grid::DataGridState = DataGridState()
     # Names the grid for ImGui: the table of the items, or of the cell it zooms into.
     grid_id::String = "table"
-    # Retain requested columns even when an updated table temporarily lacks them. This belongs
-    # to the instance, so preparation never shares a mutable registry with another window.
-    selected_column_names::Union{Nothing,Vector{String}} = nothing
+    # The names of the selected columns, kept also while an updated table lacks them.
+    selected_column_names::Vector{String} = String[]
 end
 
 """
-    selected_columns(view::TableView; available=false) -> Vector{String}
+    selection(view::TableView) -> (; columns)
 
-The column names the user selected, including names absent from the current items.
-With `available=true`, return only the selected columns available in the current table.
+The names of the selected columns, also those that the current items lack.
 """
-function selected_columns(view::TableView; available::Bool=false)::Vector{String}
-    available && return view.table === nothing ? String[] : copy(view.table.columns[view.grid.selected_columns])
-    if view.selected_column_names === nothing
-        view.selected_column_names = view.table === nothing ? String[] : view.table.columns[view.grid.selected_columns]
-    end
-    return copy(view.selected_column_names)
-end
+selection(view::TableView) = (columns=copy(view.selected_column_names),)
 
 """
     select!(view::TableView; columns)
@@ -160,7 +152,7 @@ end
 Select the columns with the names `columns`. A name that the current items lack stays selected,
 and its column is selected again when items have it. An empty list clears the selection.
 """
-function select!(view::TableView; columns::AbstractVector{<:AbstractString})::Nothing
+function select!(view::TableView; columns::AbstractVector)::Nothing
     view.selected_column_names = unique(String.(columns))
     if view.table !== nothing
         view.grid.selected_columns = findall(in(columns), view.table.columns)
@@ -171,7 +163,7 @@ end
 
 function _table_selection_changed!(view::TableView)::Nothing
     current = view.table.columns[view.grid.selected_columns]
-    expected = view.table.columns[findall(in(selected_columns(view)), view.table.columns)]
+    expected = view.table.columns[findall(in(view.selected_column_names), view.table.columns)]
     Set(current) == Set(expected) || (view.selected_column_names = current)
     _pass_on!(view)
     return nothing
@@ -186,7 +178,7 @@ output(view::TableView) = view.output
 # selected columns stay, as long as the table has their columns.
 function _order!(view::TableView)::Nothing
     built = view.built::ItemTable
-    selected = selected_columns(view)
+    selected = view.selected_column_names
     order = collect(eachindex(built.columns))
     order[findall(in(view.column_order), built.columns)] =
         [findfirst(==(name), built.columns) for name in view.column_order if name in built.columns]
@@ -231,7 +223,6 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     table, warnings = @timed_dbg "table.merge" isempty(view.zoom) ?
         merge_item_tables(selection; item_column=true, metadata, view.unfolded) :
         (value_table(view.zoom_item, value; view.unfolded), String[])
-    selected_columns(view) # capture the current request before replacing the grid
     view.built = table
     # The first column `item` holds the labels of several items.
     view.item_column = length(table.item_labels) > 1

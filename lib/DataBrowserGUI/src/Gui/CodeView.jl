@@ -1,6 +1,6 @@
 import CImGui as ig
 
-import DataBrowserAPI: draw!, label, prepare!, output, select!
+import DataBrowserAPI: draw!, label, prepare!, output, select!, selection
 using DataBrowserAPI: Computation, cache_info, last_execution
 using Printf: @sprintf
 using DataBrowserAPI: AbstractVisualizer
@@ -47,6 +47,11 @@ Select the row number `row` of the code view, counted from the top. Its computat
 output of the view, without being evaluated.
 """
 function select!(view::CodeView; row::Integer)::Nothing
+    if isempty(view.rows)
+        # `prepare!` selects the row when the rows arrive.
+        view.selected = row
+        return nothing
+    end
     checkbounds(view.rows, row)
     view.selected = row
     call = view.rows[row].call
@@ -55,6 +60,13 @@ function select!(view::CodeView; row::Integer)::Nothing
         (view.output = next)
     return nothing
 end
+
+"""
+    selection(view::CodeView) -> (; row)
+
+The number of the selected row, counted from the top.
+"""
+selection(view::CodeView) = (row=view.selected,)
 
 # The selected row stays on the same call when the items or their code change.
 function call_identity(call::Call)
@@ -96,6 +108,8 @@ function prepare!(view::CodeView, selection::Workspace.Selection, ctx)::Nothing
         isempty(view.output) || (view.output = Computation[])
     else
         selected = findfirst(row -> call_identity(row.call) == previous, rows)
+        # A row selected before the first rows arrived keeps its number.
+        previous === nothing && 1 <= view.selected <= length(rows) && (selected = view.selected)
         select!(view; row=something(selected, length(rows)))
     end
     return nothing
