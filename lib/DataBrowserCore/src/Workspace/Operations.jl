@@ -692,8 +692,8 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
                 item.collection_key === nothing ? ROOT : restored[item.collection_key],
                 item.type, item.metadata)
             for item in produced])
-        # The cache keeps a read result in memory only, so a read that did not fail counts as
-        # fresh: the job reads again when it has to.
+        # Read results are not kept, so a read that did not fail counts as fresh: the job reads
+        # again when it has to.
         if failed(state(SOURCE_READ, saved))
             restore(source, SOURCE_READ, saved)
         else
@@ -706,7 +706,6 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
         item === nothing && continue
         if result_store(workspace, saved.type) === nothing
             for stage in (ITEM_PROCESS, MEMBER_PROCESS)
-                delete_processed!(cache, saved.id; stage)
                 clear_cached_result_state!(cache, stage, saved.id)
             end
             continue

@@ -17,17 +17,6 @@ function store_source_result!(cache::CacheDB, stage::PipelineStage, source_key::
     return nothing
 end
 
-"""
-Read the data that the `process` of a collection returned, by the private key of the collection;
-`Some(value)` is a hit, `nothing` a miss.
-"""
-function read_payload(cache::CacheDB, key::Integer; stage::PipelineStage=COLLECTION_PROCESS)
-    stage === COLLECTION_PROCESS || throw(ArgumentError("Collection payloads are available at COLLECTION_PROCESS"))
-    stored = payload_key(Int64(key), COLLECTION_PROCESS)
-    data = get(read(cache.payload, [stored]), stored, nothing)
-    return data === nothing ? nothing : Some(data)
-end
-
 """Whether a source has published its items or failed at either source stage."""
 function source_complete(cache::CacheDB, source_key::Integer)::Bool
     items = cached_result_state(cache, SOURCE_EXPAND, source_key)

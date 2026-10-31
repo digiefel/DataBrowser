@@ -396,7 +396,7 @@ function relabel!(workspace::Workspace, item::ItemKey, new::String)::Nothing
     return nothing
 end
 
-"""Run `process` for one item and save its payload, its label and the metadata it changed."""
+"""Run `process` for one item and save its value, its label and the metadata it changed."""
 function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Nothing
     catalog = workspace.catalog
     @lock(catalog.lock, haskey(workspace.computations, job.key)) && return compute!(workspace, job)
@@ -458,7 +458,7 @@ end
 
 """
 Run collection `process` with every item below one collection, each as its own `process` returned
-it, and keep the metadata and the data of the collection value it returns.
+it, and record the metadata of the collection value it returns.
 """
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PROCESS})::Nothing
     catalog = workspace.catalog
@@ -476,19 +476,14 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
         if !haskey(before, name) || !isequal(before[name], value))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=computed) || return nothing
-        # TODO: data that the cache cannot store is lost on reopening, and member `process`
-        # methods that run again then receive the collection without it.
-        payload = item_data(output)
-        DataBrowserCache.can_store_payload(payload) || (payload = nothing)
-        store_collection_process_result!(
-            workspace.cache.db, workspace.collection_keys[job.key], computed, deepcopy(payload))
+        store_collection_process_result!(workspace.cache.db, workspace.collection_keys[job.key], computed)
     end
     return nothing
 end
 
 """
 Run the member `process` methods of the collections above one item, from the collection that holds
-it up to the outermost one, and save the payload, the label and the metadata of the result.
+it up to the outermost one, and save the value, the label and the metadata of the result.
 """
 function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::Nothing
     catalog = workspace.catalog

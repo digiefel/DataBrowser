@@ -24,15 +24,6 @@ import DataBrowserAPI as API
     @test_throws ArgumentError MemoryStore(; max_bytes=-1)
 end
 
-@testset "payload encoding is independent of native storage" begin
-    @test can_store_payload((x=[1.0, 2.0],))
-    @test can_store_payload((x=Union{Missing,Float64}[missing, 1.0],))
-    @test !can_store_payload([1.0, 2.0])
-    @test !can_store_payload(ones(2, 2))
-    @test !can_store_payload((x=fill(missing, 2),))
-    @test !can_store_payload((__mb_seq=[1],))
-end
-
 @testset "DuckDB storage keeps values after closing" begin
     mktempdir() do dir
         path = joinpath(dir, "values.duckdb")

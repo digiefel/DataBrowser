@@ -16,7 +16,7 @@ function store_fixture_item!(cache, source_key)
 end
 delivered(cache) = only(load_cache_index(cache).items).delivered
 
-@testset "in-memory storage supports payloads and queries without touching the cache file" begin
+@testset "in-memory storage supports queries without touching the cache file" begin
     mktempdir() do dir
         path = joinpath(dir, "cache.duckdb")
         existing = "existing cache file"
@@ -43,7 +43,7 @@ delivered(cache) = only(load_cache_index(cache).items).delivered
     end
 end
 
-@testset "payload replacement and deletion survive reopening" begin
+@testset "item records survive reopening" begin
     mktempdir() do dir
         identity = ProjectCacheIdentity("test", "source", "source", joinpath(dir, "cache.duckdb"))
         cache = open_cache_db(identity)

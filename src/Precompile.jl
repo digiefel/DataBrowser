@@ -66,9 +66,7 @@ function _precompile_engine(
         Workspace.workspace_status(workspace)
         select!(workspace, collect(Workspace.items(workspace)))
         selection(workspace)
-        ids = Workspace.query_items(workspace)
-        Cache.read_payload(workspace.cache.db, ids; stage=DataBrowserAPI.SOURCE_EXPAND)
-        Cache.read_payload(workspace.cache.db, ids; stage=DataBrowserAPI.ITEM_PROCESS)
+        Workspace.query_items(workspace)
         Workspace.workspace_memory_snapshot(workspace)
         Cache.load_cache_index(workspace.cache.db)
 

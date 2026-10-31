@@ -176,32 +176,26 @@ function computation_result(workspace::Workspace, value::Computation)
     target isa Target || return restored_result(workspace, value)
     key, stage = target
     # The read and expand results of a source item are not kept.
-    if key isa ItemKey
-        haskey(workspace.computations, key) && return nothing
-        type = valuetype(workspace, key)
-        store = result_store(workspace, type)
-        store === nothing && return nothing
-        # The value kept in an earlier opening. A process result of another item type is not
-        # found here and runs again.
-        # TODO: record the item type of each kept result in the workspace file.
-        @lock(catalog.lock, current_value(catalog, target)) || return nothing
-        stored = id(workspace, key)
-        if haskey(store, stored)
-            try
-                return Some(read(store, type, stored))
-            catch error
-                error isa KeyError || rethrow()
-            end
-        end
-        return nothing
-    elseif key isa CollectionKey && stage == COLLECTION_PROCESS
-        # The value that the `process` of a collection returned, rebuilt from its data and metadata.
-        payload = read_payload(workspace.cache.db, workspace.collection_keys[key]; stage)
-        given = merge(metadata(catalog, key, :collection), metadata(catalog, key, COLLECTION_PROCESS))
-        return Some(reconstruct(valuetype(catalog, key), id(catalog, key),
-            payload === nothing ? nothing : deepcopy(something(payload)), given))
+    key isa SourceKey && return nothing
+    key isa ItemKey && haskey(workspace.computations, key) && return nothing
+    # The value kept in an earlier opening. A process result of another item type is not found
+    # here and runs again.
+    # TODO: record the item type of each kept result in the workspace file.
+    type, stored = @lock catalog.lock begin
+        current_value(catalog, target) || return nothing
+        type = valuetype(catalog, key)
+        # A collection value is kept as a `ResultItem`, since it is not an item.
+        (key isa ItemKey ? type : ResultItem{type}), id(catalog, key)
     end
-    return nothing
+    store = result_store(workspace, type)
+    (store === nothing || !haskey(store, stored)) && return nothing
+    kept = try
+        read(store, type, stored)
+    catch error
+        error isa KeyError || rethrow()
+        return nothing
+    end
+    return Some(key isa ItemKey ? kept : item_data(kept))
 end
 
 # Execute a scheduled call with the inputs already materialized by its publication job. The
