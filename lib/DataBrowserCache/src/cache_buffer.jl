@@ -545,20 +545,21 @@ _clear_db!(store::WideRowStore)::Nothing =
 
 _reset_memory!(::WideRowStore)::Nothing = nothing
 
-# Memory-only FIFO
+# Memory-only least-recently-used store
 
 """
-A memory-only FIFO cache. `weight(value)` measures each entry against `capacity`.
+A memory-only cache that drops the least recently used values first. `weight(value)` measures each
+entry against `capacity`.
 
 Weights are recorded on insertion so later mutation cannot corrupt eviction accounting. One value
 larger than the capacity remains usable until another value arrives. Cache eviction only releases
-its reference; values held by running consumers remain alive.
+its reference; values held by running consumers remain alive. Writing, reading and removing a value
+take the same time for any number of entries.
 """
 mutable struct MemoryStore{K,R}
     lock::ReentrantLock
-    entries::Dict{K,R}
-    weights::Dict{K,Int}
-    order::Vector{K}
+    # Each value with its weight, the least recently used first.
+    entries::OrderedDict{K,Tuple{R,Int}}
     size::Int
     capacity::Int
     weight::Function
@@ -567,26 +568,20 @@ end
 
 function MemoryStore{K,R}(; capacity::Int, weight::Function=_buffer_rows)::MemoryStore{K,R} where {K,R}
     capacity > 0 || throw(ArgumentError("memory cache capacity must be positive"))
-    return MemoryStore{K,R}(ReentrantLock(), Dict{K,R}(), Dict{K,Int}(), K[],
-        0, capacity, weight, false)
+    return MemoryStore{K,R}(ReentrantLock(), OrderedDict{K,Tuple{R,Int}}(), 0, capacity, weight, false)
 end
 
 function Base.append!(store::MemoryStore{K,R}, key::K, row::R)::Bool where {K,R}
     cost = max(1, store.weight(row))
     lock(store.lock) do
         store.closed && error("memory store is closed")
-        if haskey(store.entries, key)
-            store.size -= pop!(store.weights, key)
-            deleteat!(store.order, something(findfirst(isequal(key), store.order)))
-        end
-        store.entries[key] = row
-        store.weights[key] = cost
-        push!(store.order, key)
+        replaced = pop!(store.entries, key, nothing)
+        replaced === nothing || (store.size -= last(replaced))
+        store.entries[key] = (row, cost)
         store.size += cost
-        while store.size > store.capacity && length(store.order) > 1
-            evicted_key = popfirst!(store.order)
-            delete!(store.entries, evicted_key)
-            store.size -= pop!(store.weights, evicted_key)
+        while store.size > store.capacity && length(store.entries) > 1
+            _, (_, evicted) = popfirst!(store.entries)
+            store.size -= evicted
         end
     end
     return true
@@ -595,10 +590,8 @@ end
 function Base.delete!(store::MemoryStore{K}, key::K)::Nothing where {K}
     lock(store.lock) do
         store.closed && error("memory store is closed")
-        haskey(store.entries, key) || return
-        delete!(store.entries, key)
-        store.size -= pop!(store.weights, key)
-        deleteat!(store.order, something(findfirst(isequal(key), store.order)))
+        removed = pop!(store.entries, key, nothing)
+        removed === nothing || (store.size -= last(removed))
     end
     return nothing
 end
@@ -607,7 +600,11 @@ end
 function read_hit(store::MemoryStore{K,R}, key::K)::Union{Nothing,Some} where {K,R}
     return lock(store.lock) do
         store.closed && error("memory store is closed")
-        haskey(store.entries, key) ? Some(store.entries[key]) : nothing
+        found = pop!(store.entries, key, nothing)
+        found === nothing && return nothing
+        # The value read becomes the most recently used.
+        store.entries[key] = found
+        return Some(first(found))
     end
 end
 
@@ -618,12 +615,18 @@ function Base.haskey(store::MemoryStore{K}, key::K)::Bool where {K}
     end
 end
 
+"""The recorded weight of the value under `key`, or `nothing` when there is none."""
+function stored_weight(store::MemoryStore{K}, key::K)::Union{Nothing,Int} where {K}
+    return lock(store.lock) do
+        found = get(store.entries, key, nothing)
+        found === nothing ? nothing : last(found)
+    end
+end
+
 function clear!(store::MemoryStore)::Nothing
     lock(store.lock) do
         store.closed && error("memory store is closed")
         empty!(store.entries)
-        empty!(store.weights)
-        empty!(store.order)
         store.size = 0
     end
     return nothing
@@ -634,8 +637,6 @@ function close!(store::MemoryStore)::Nothing
         store.closed && error("memory store is already closed")
         store.closed = true
         empty!(store.entries)
-        empty!(store.weights)
-        empty!(store.order)
         store.size = 0
     end
     return nothing

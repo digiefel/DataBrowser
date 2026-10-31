@@ -22,6 +22,7 @@ using DataBrowserAPI:
 using DataBrowserAPI: @timed_dbg
 
 using DuckDB
+using OrderedCollections: OrderedDict
 using DBInterface
 import Tables
 using Serialization

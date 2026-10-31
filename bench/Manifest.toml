@@ -1,6 +1,6 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.13.2"
+julia_version = "1.13.3"
 manifest_format = "2.1"
 project_hash = "d7d839f9924e6057b18cc63b8cc32380603b08a2"
 
@@ -552,7 +552,7 @@ uuid = "f3b8c1a2-4d5e-6f70-8192-a3b4c5d6e7f8"
 version = "0.1.0"
 
 [[deps.DataBrowserCache]]
-deps = ["DBInterface", "DataBrowserAPI", "Dates", "DuckDB", "Serialization", "Tables"]
+deps = ["DBInterface", "DataBrowserAPI", "Dates", "DuckDB", "OrderedCollections", "Serialization", "Tables"]
 path = "../lib/DataBrowserCache"
 uuid = "c7d8e9f0-1a2b-3c4d-5e6f-708192a3b4c5"
 version = "0.1.0"
@@ -1875,7 +1875,7 @@ version = "0.3.4"
 
 [[deps.MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
-version = "2026.8.13"
+version = "2026.10.20"
 
 [[deps.MuladdMacro]]
 deps = ["PrecompileTools"]
@@ -2107,7 +2107,7 @@ version = "2.0.3"
 [[deps.PCRE2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "efcefdf7-47ab-520b-bdef-62a2eaa19f15"
-version = "10.46.0+0"
+version = "10.47.0+0"
 
 [[deps.PDMats]]
 deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse"]
