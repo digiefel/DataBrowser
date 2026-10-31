@@ -1,15 +1,17 @@
 # API
 
-DataBrowser has two kinds of API.
+At the centre of DataBrowser is the runtime, DataBrowserCore, which runs workspaces. Code on either
+side of it uses the API:
 
-- The **provider API** is the functions and types that DataBrowser calls. You implement them to
-  tell DataBrowser how to find your data, read it, process it, save it and show it.
-- The **client API** is the functions that you call to work with that data: open a workspace,
-  select items, read their data and open the browser.
+- **Providers** are code that the runtime calls. They tell it how to find data, read it, process
+  it, store it and display it.
+- **Clients** are code that calls the runtime. They open a workspace, select items, read their data
+  and open the browser.
 
-Each kind has several surfaces: groups of functions and types that are used together.
+The API is divided into surfaces: groups of functions and types that are used together. Each
+surface is a provider surface or a client surface.
 
-| Surface                           | Kind     | Contents                                                                  | Package            |
+| Surface                           | Side     | Contents                                                                  | Package            |
 |:----------------------------------|:---------|:--------------------------------------------------------------------------|:-------------------|
 | [Type API](#Type-API)             | provider | Types and methods that describe a project: its items, collections, processing and storage | DataBrowserAPI |
 | [Sources](#Sources)               | provider | Types and methods that find source items and report their changes        | DataBrowserAPI, DataBrowserSources |
@@ -22,7 +24,7 @@ Each kind has several surfaces: groups of functions and types that are used toge
 
 `using DataBrowser` loads every package and exports the names of every surface.
 
-## Provider API
+## Provider surfaces
 
 ### Type API
 
@@ -151,7 +153,7 @@ DataBrowserGUI.with_font
 DataBrowserGUI.CodeFile
 ```
 
-## Client API
+## Client surfaces
 
 ### Workspace
 
