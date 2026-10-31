@@ -165,7 +165,8 @@ function watch_source(
     )
     cancel_source = CancellationTokenSource(cancel_token)
     watch_token = get_token(cancel_source)
-    known = Dict(id(file) => fingerprint(file) for file in items(source; cancel_token=watch_token))
+    # Typed, as the watcher replaces it: a captured variable that changes is otherwise of unknown type.
+    known::Dict{String,FileFingerprint} = Dict(id(file) => fingerprint(file) for file in items(source; cancel_token=watch_token))
     # Ignore what `items` does not read: hidden files and folders, and the folders below a source
     # that is not recursive.
     ignore(path::AbstractString)::Bool =

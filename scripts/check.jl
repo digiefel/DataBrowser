@@ -139,11 +139,8 @@ function check(args=ARGS)
             using Pkg
             Pkg.precompile(; strict=true)
             using DataBrowser, DataBrowserPlots, GLMakie, AlgebraOfGraphics
-            for (package, extensions) in (
-                (DataBrowser, (:DataBrowserGLMakieExt, :DataBrowserGLMakieAlgebraOfGraphicsExt)),
-                (DataBrowserPlots, (:DataBrowserPlotsGLMakieExt, :DataBrowserPlotsAlgebraOfGraphicsExt, :DataBrowserPlotsBuilderExt)),
-            ), extension in extensions
-                Base.get_extension(package, extension) === nothing && error("Extension failed to load: \$extension")
+            for extension in (:DataBrowserPlotsGLMakieExt, :DataBrowserPlotsAlgebraOfGraphicsExt)
+                Base.get_extension(DataBrowserPlots, extension) === nothing && error("Extension failed to load: \$extension")
             end
             """
         command = julia_command(["--compiled-modules=strict", "-e", prepare]; depot)

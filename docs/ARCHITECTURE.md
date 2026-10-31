@@ -35,6 +35,7 @@ A dotted arrow from A to B means A calls functions whose methods live in B throu
 flowchart TB
     db["<b>DataBrowser</b><br/>install target<br/>defines the public API"]
     prof["<b>DataBrowserProfiling</b><br/>internal tooling"]
+    fitting["<b>DataBrowserFitting</b><br/>least-squares solver of fit<br/>loads on the first fit"]
 
     subgraph projects["Project packages"]
         recipes["<b>DataBrowserRecipes</b><br/>user-friendly register_*! API"]
@@ -63,6 +64,7 @@ flowchart TB
     gui --> cache
     plots -->|"GUI extension hooks<br/>ItemTable<br/>merge_item_tables"| gui
     plots -->|"materialize_items"| core
+    plots --> fitting
     core --> src
     core --> cache
     core --> ann
@@ -97,6 +99,7 @@ flowchart TB
     class userpkg ghostC
     class db umbrellaC
     class plots plotsC
+    class fitting plotsC
     class gui guiC
     class core coreC
     class recipes recipesC

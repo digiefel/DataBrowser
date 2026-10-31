@@ -12,9 +12,6 @@ import DataBrowserAPI: @timed_dbg, metadata_value
 using DataBrowserAPI: AbstractDataItem, id, metadata
 import DataBrowserCore.Workspace
 using DataBrowserCore: Group, Selection
-import ForwardDiff
-using LinearAlgebra: diag
-using NonlinearSolve: LevenbergMarquardt, NonlinearLeastSquaresProblem, SciMLBase, solve
 import Tables
 
 include("plots.jl")

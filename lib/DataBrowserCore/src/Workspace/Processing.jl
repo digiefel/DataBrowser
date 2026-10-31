@@ -462,9 +462,9 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
     output isa typeof(given) || error(
         "process(::$(typeof(workspace.project)), ::$(typeof(given)), members) must return a " *
         "$(typeof(given)); got $(typeof(output))")
-    before = metadata_dict(metadata(given))
+    before = metadata_dict(metadata(given))::MetadataDict
     computed = MetadataDict(
-        name => value for (name, value) in metadata_dict(metadata(output))
+        name => value for (name, value) in metadata_dict(metadata(output))::MetadataDict
         if !haskey(before, name) || !isequal(before[name], value))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=computed) || return nothing

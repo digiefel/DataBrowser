@@ -208,14 +208,14 @@ end
 IdLookup{K}(ids::IdColumn) where {K} = IdLookup{K}(ids, Dict{UInt64,K}(), Dict{String,K}())
 
 function Base.get(lookup::IdLookup, id::AbstractString, default)
-    key = get(lookup.by_hash, hash(id), nothing)
+    key = get(lookup.by_hash, hash(id)::UInt64, nothing)
     key !== nothing && view(lookup.ids, key.index) == codeunits(id) && return key
     isempty(lookup.collisions) && return default
     return get(lookup.collisions, id, default)
 end
 
 function Base.setindex!(lookup::IdLookup{K}, key::K, id::AbstractString) where {K}
-    slot = hash(id)
+    slot = hash(id)::UInt64
     if haskey(lookup.by_hash, slot)
         lookup.collisions[String(id)] = key
     else
@@ -229,7 +229,7 @@ function Base.delete!(lookup::IdLookup, id::AbstractString)
         delete!(lookup.collisions, id)
         return lookup
     end
-    slot = hash(id)
+    slot = hash(id)::UInt64
     delete!(lookup.by_hash, slot)
     # An id with the same hash moves from the side table into the freed place.
     for (other, key) in lookup.collisions

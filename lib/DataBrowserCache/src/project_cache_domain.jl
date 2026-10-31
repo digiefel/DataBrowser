@@ -1268,7 +1268,9 @@ _serialize_hex(value) = value === nothing ? nothing : bytes2hex(_serialize_bytes
 """Deserialize a hex-text cell back to its value (or `nothing` for SQL NULL)."""
 function _deserialize_hex(value)
     (value === nothing || ismissing(value)) && return nothing
-    return deserialize(IOBuffer(hex2bytes(String(value))))
+    # A dynamic call: a package loaded later that invalidates `deserialize` then does not invalidate the
+    # compiled code that reads the cache.
+    return Base.invokelatest(deserialize, IOBuffer(hex2bytes(String(value))))
 end
 
 # Records hold the type itself; only the cache needs it as text. Julia's serializer stores a type by

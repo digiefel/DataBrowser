@@ -56,11 +56,12 @@ function fraction(axis::Makie.Axis, dim::Int, position)::Float64
 end
 
 """
-Make each axis show a window of what it shows now. `windows(axis)[dim]` gives the new lower and
-upper limits as fractions of the current ones: `(0, 1)` changes nothing, `(0.25, 0.75)` shows the
-middle half. Fractions are taken on the scale of the axis, so a logarithmic axis zooms evenly.
+Make each axis show a window of what it shows now, and add the axes to `zoomed_axes`.
+`windows(axis)[dim]` gives the new lower and upper limits as fractions of the current ones: `(0, 1)`
+changes nothing, `(0.25, 0.75)` shows the middle half. Fractions are taken on the scale of the axis,
+so a logarithmic axis zooms evenly.
 """
-function reframe!(windows::Function, axes::Vector{Makie.Axis})::Nothing
+function reframe!(windows::Function, axes::Vector{Makie.Axis}, zoomed_axes::Vector{Makie.Axis})::Nothing
     # Every new limit is computed before any is set: setting the limits of an axis also moves
     # the axes linked to it.
     framed = map(axes) do axis
@@ -77,6 +78,7 @@ function reframe!(windows::Function, axes::Vector{Makie.Axis})::Nothing
     for (axis, limits) in zip(axes, framed)
         all(isfinite, limits.origin) && all(isfinite, limits.widths) && (axis.targetlimits[] = limits)
     end
+    union!(zoomed_axes, axes)
     return nothing
 end
 
@@ -86,10 +88,12 @@ zoomed(center::Float64, share::Float64) = (center * (1 - share), center + (1 - c
 """
 Handle the mouse for the axes of `figure` during one frame. `position` is the mouse in pixels of
 the figure and `hovered` says whether the mouse is over the figure. `to_screen` converts a position
-to the coordinates ImGui draws in. Returns the gesture in progress, or `nothing`.
+to the coordinates ImGui draws in. `zoomed_axes` holds the axes that a gesture zoomed or panned and
+that no Ctrl-click has reset since. Returns the gesture in progress, or `nothing`.
 """
 function axis_gestures!(
     gesture::Union{Nothing,AxisGesture},
+    zoomed_axes::Vector{Makie.Axis},
     figure::Makie.Figure,
     position::Tuple{Float64,Float64},
     hovered::Bool,
@@ -107,7 +111,7 @@ function axis_gestures!(
     if gesture !== nothing
         if ig.IsMouseDown(gesture.button)
             if gesture.kind == :pan
-                reframe!(gesture.axes) do axis
+                reframe!(gesture.axes, zoomed_axes) do axis
                     ntuple(2) do dim
                         dim in gesture.dims || return (0.0, 1.0)
                         moved = fraction(axis, dim, position) - fraction(axis, dim, gesture.last)
@@ -130,7 +134,7 @@ function axis_gestures!(
             drawn = [dim for dim in free if abs(gesture.last[dim] - gesture.start[dim]) >= MIN_RECTANGLE]
             # Every direction that is not held to its full span must be drawn.
             if drawn == free
-                reframe!(gesture.axes) do axis
+                reframe!(gesture.axes, zoomed_axes) do axis
                     ntuple(2) do dim
                         dim in free || return (0.0, 1.0)
                         ends = clamp.(fraction.(Ref(axis), dim, (gesture.start, gesture.last)), 0, 1)
@@ -156,7 +160,7 @@ function axis_gestures!(
     steps = unsafe_load(io.MouseWheel)
     if steps != 0
         share = Float64((1 - ZOOM_PER_STEP)^steps)
-        reframe!(targets) do axis
+        reframe!(targets, zoomed_axes) do axis
             ntuple(dim -> dim in dims ? zoomed(fraction(axis, dim, position), share) : (0.0, 1.0), 2)
         end
     end
@@ -165,6 +169,7 @@ function axis_gestures!(
         (ig.IsMouseClicked(1) && unsafe_load(io.MouseCtrlLeftAsRightClick))
     if control_click
         foreach(Makie.reset_limits!, targets)
+        setdiff!(zoomed_axes, targets)
     elseif ig.IsMouseClicked(0)
         kind = length(targets) == 1 && !inside(position, only(targets).scene.viewport[]) ? :pan : :rectangle
         return AxisGesture(kind, 0, targets, dims, position, position)

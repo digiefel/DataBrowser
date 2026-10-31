@@ -17,7 +17,7 @@ function metadata_value(value)::MetadataValue
     value isa Integer && return Int64(value)
     value isa AbstractFloat && return Float64(value)
     value isa AbstractString && return String(value)
-    value isa AbstractVector{Bool} && return Vector{Bool}(value)
+    value isa AbstractVector{Bool} && return collect(Bool, value)
     value isa AbstractVector{<:Integer} && return Int64.(value)
     value isa AbstractVector{<:AbstractFloat} && return Float64.(value)
     value isa AbstractVector{<:AbstractString} && return String.(value)

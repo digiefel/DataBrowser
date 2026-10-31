@@ -54,7 +54,9 @@ function evaluate(value::Computation, result, invoke, resolve)
     return invoke(value, args)
 end
 
-invoke_computation(value::Computation, args::Tuple) = value.f(args...; value.settings...)
+# A dynamic call: the compiled code of the engine then does not include the project's code, and a
+# package loaded later that invalidates the project's code does not invalidate the engine.
+invoke_computation(value::Computation, args::Tuple) = Base.invokelatest(value.f, args...; value.settings...)
 
 evaluate_argument(value::Computation, result, invoke, resolve) = evaluate(value, result, invoke, resolve)
 evaluate_argument(values::Tuple, result, invoke, resolve) = map(x -> evaluate_argument(x, result, invoke, resolve), values)

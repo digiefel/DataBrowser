@@ -136,9 +136,10 @@ end
 """Write one lowered statement without slot names or line numbers, and collect what it names."""
 function write_statement!(io::IO, names::Vector{Any}, untracked::Vector{String}, code, @nospecialize(x))
     if x isa Expr
-        if x.head === :call && !isempty(x.args) && haskey(DYNAMIC, x.args[1]) &&
-                !(x.args[1].name === :getglobal && length(x.args) == 3 && literal(x.args[3]))
-            push!(untracked, "calls $(DYNAMIC[x.args[1]])")
+        callee = isempty(x.args) ? nothing : x.args[1]
+        if x.head === :call && callee isa GlobalRef && haskey(DYNAMIC, callee) &&
+                !(callee.name === :getglobal && length(x.args) == 3 && literal(x.args[3]))
+            push!(untracked, "calls $(DYNAMIC[callee])")
         end
         # `Module.name` lowers to `getproperty(Module, :name)`: it names `Module.name`.
         if x.head === :call && length(x.args) == 3 && x.args[1] == GlobalRef(Base, :getproperty) &&
@@ -505,10 +506,12 @@ function contents!(walk::Walk, context, @nospecialize(x), seen::IdDict{Any,Nothi
     put(text) = context === nothing || update!(context, codeunits(string(text, '\x1f')))
     if x isa Array && isbitstype(eltype(x))
         put(string(typeof(x), size(x)))
-        context === nothing || update!(context, reinterpret(UInt8, vec(x)))
+        # A dynamic call: hashing the bytes of an array whose type is known only at run time is code that a
+        # package loaded later can invalidate.
+        context === nothing || Base.invokelatest(array -> update!(context, reinterpret(UInt8, vec(array))), x)
     elseif x isa AbstractDict
         put(typeof(x))
-        foreach(put, sort!([value_hash(walk, key) * value_hash(walk, value) for (key, value) in x]))
+        foreach(put, sort!(String[value_hash(walk, key) * value_hash(walk, value) for (key, value) in x]))
     elseif x isa AbstractArray
         put(string(typeof(x), size(x)))
         for i in eachindex(x)

@@ -2,7 +2,7 @@
 
 julia_version = "1.13.3"
 manifest_format = "2.1"
-project_hash = "9d62089337bbe76b4ee8b6daf240cb809f38e5df"
+project_hash = "db293396c06f98875fa69e0c4834edb5e4cfa95c"
 
 [[deps.ADTypes]]
 deps = ["PrecompileTools"]
@@ -312,18 +312,10 @@ uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.16.0"
 
 [[deps.DataBrowser]]
-deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "GLFW", "ModernGL", "PrecompileTools", "Reexport"]
+deps = ["CSV", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserFitting", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "PrecompileTools", "Reexport"]
 path = "."
 uuid = "a11ddd67-7e33-4db9-a4a8-4453f6eb9e68"
 version = "0.1.0-alpha.1"
-
-    [deps.DataBrowser.extensions]
-    DataBrowserGLMakieAlgebraOfGraphicsExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL", "AlgebraOfGraphics"]
-    DataBrowserGLMakieExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL"]
-
-    [deps.DataBrowser.weakdeps]
-    AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
-    GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 
 [[deps.DataBrowserAPI]]
 deps = ["CancellationTokens", "Dates"]
@@ -348,6 +340,12 @@ path = "lib/DataBrowserCore"
 uuid = "d1e2f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f6a"
 version = "0.1.0"
 
+[[deps.DataBrowserFitting]]
+deps = ["ForwardDiff", "LinearAlgebra", "NonlinearSolve"]
+path = "lib/DataBrowserFitting"
+uuid = "ffed4914-3e78-4db9-85fa-c0de1962d06e"
+version = "0.1.0"
+
 [[deps.DataBrowserGUI]]
 deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserCache", "DataBrowserCore", "GLFW", "JuliaSyntax", "ModernGL", "NativeFileDialog", "Printf", "TOML", "Tables", "TimerOutputs", "Zlib_jll"]
 path = "lib/DataBrowserGUI"
@@ -355,15 +353,14 @@ uuid = "f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"
 version = "0.1.0"
 
 [[deps.DataBrowserPlots]]
-deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserGUI", "ForwardDiff", "GLFW", "LinearAlgebra", "ModernGL", "NativeFileDialog", "NonlinearSolve", "PrecompileTools", "Tables"]
+deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserFitting", "DataBrowserGUI", "GLFW", "ModernGL", "NativeFileDialog", "PrecompileTools", "Tables"]
 path = "lib/DataBrowserPlots"
 uuid = "e2f3a4b5-c6d7-8e9f-0a1b-2c3d4e5f6a7b"
 version = "0.1.0"
 
     [deps.DataBrowserPlots.extensions]
     DataBrowserPlotsAlgebraOfGraphicsExt = "AlgebraOfGraphics"
-    DataBrowserPlotsBuilderExt = ["AlgebraOfGraphics", "GLMakie"]
-    DataBrowserPlotsGLMakieExt = "GLMakie"
+    DataBrowserPlotsGLMakieExt = ["AlgebraOfGraphics", "GLMakie"]
 
     [deps.DataBrowserPlots.weakdeps]
     AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"

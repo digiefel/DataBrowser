@@ -276,7 +276,11 @@ DataBrowserGUI     → API, Core (+ CImGui/GLFW) : the host shell, panels, brows
 DataBrowserPlots   → API, Core, GUI : plot registration and high-level plot APIs. Registering a
                    plot needs no backend; its setup function returns a Makie figure. The plot
                    windows (Makie embedding, enhanced default visualizers) are a package
-                   extension that loads when GLMakie is loaded: `using DataBrowser, GLMakie`
+                   extension that loads when AlgebraOfGraphics and GLMakie are loaded:
+                   `using DataBrowser, AlgebraOfGraphics, GLMakie`
+DataBrowserFitting (+ NonlinearSolve, ForwardDiff) : the least-squares solver of `fit`. It has
+                   no dependency on the other packages, and DataBrowserPlots loads it on the
+                   first fit, so a session without fits does not load the solver
 DataBrowserCLI     → API, Core : a command-line frontend over the same commands (may come later)
 DataBrowser        → GUI, default extensions : umbrella / install target; re-exports the API
                    and the recipes dialect, and wires defaults

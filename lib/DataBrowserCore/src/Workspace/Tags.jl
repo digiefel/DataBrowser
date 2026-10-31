@@ -99,7 +99,7 @@ tag_key(workspace::Workspace, item::ItemKey)::String = id(workspace, item)
 tag_key(workspace::Workspace, item::Union{AbstractString,AbstractDataItem})::String =
     id(workspace, key(workspace, item))
 tag_key(workspace::Workspace, collection::CollectionKey)::String =
-    join((label(workspace, key) for key in [ancestors(workspace, collection); collection]), '/')
+    join((label(workspace, key) for key in push!(ancestors(workspace, collection), collection)), '/')
 
 """The name of a defined tag, given the tag or its name."""
 function tag_name(workspace::Workspace, tag::Union{Tag,AbstractString})::String
