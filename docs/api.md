@@ -7,18 +7,18 @@ DataBrowser has two kinds of API.
 - The **client API** is the functions that you call to work with that data: open a workspace,
   select items, read their data and open the browser.
 
-Each kind has several surfaces. A surface is the part of the API that one kind of user works with.
+Each kind has several surfaces: groups of functions and types that are used together.
 
-| Surface                           | Kind     | For                                                        | Package            |
-|:----------------------------------|:---------|:-----------------------------------------------------------|:-------------------|
-| [Type API](#Type-API)             | provider | developers who define the item types of a project          | DataBrowserAPI     |
-| [Sources](#Sources)               | provider | projects that read files from a folder                     | DataBrowserSources |
-| [Recipes](#Recipes)               | provider | scientists who describe a project with functions, without defining types | DataBrowserRecipes |
-| [Plots](#Plots)                   | provider | scientists who draw their own plots                        | DataBrowserPlots   |
-| [Visualizers](#Visualizers)       | provider | developers who add a kind of browser window, such as a table | DataBrowserAPI   |
-| [GUI extensions](#GUI-extensions) | provider | developers who add windows and menus to the browser        | DataBrowserGUI     |
-| [Workspace](#Workspace)           | client   | scripts, the REPL and other programs that use a project's data | DataBrowserCore |
-| [Browser](#Browser)               | client   | scripts that open the browser on a workspace               | DataBrowserGUI     |
+| Surface                           | Kind     | Contents                                                                  | Package            |
+|:----------------------------------|:---------|:--------------------------------------------------------------------------|:-------------------|
+| [Type API](#Type-API)             | provider | Types and methods that describe a project: its sources, items, collections, processing and storage | DataBrowserAPI |
+| [Sources](#Sources)               | provider | Ready-made source types, such as `DirectorySource`                        | DataBrowserSources |
+| [Recipes](#Recipes)               | provider | Describe a project with plain functions of data and metadata, without defining types | DataBrowserRecipes |
+| [Plots](#Plots)                   | provider | Plot definitions in AlgebraOfGraphics syntax, drawn with Makie            | DataBrowserPlots   |
+| [Visualizers](#Visualizers)       | provider | Types that display a value in the browser, for example as a table or a plot | DataBrowserAPI   |
+| [GUI extensions](#GUI-extensions) | provider | Types that add windows and menus to the browser                           | DataBrowserGUI     |
+| [Workspace](#Workspace)           | client   | Functions that open a project on a source, select items and return their data | DataBrowserCore |
+| [Browser](#Browser)               | client   | Functions that open and close the browser on a workspace                  | DataBrowserGUI     |
 
 `using DataBrowser` loads every package and exports the names of every surface.
 
@@ -37,8 +37,8 @@ DataBrowserAPI.AbstractProject
 
 #### Sources and source items
 
-A source finds source items, such as the files of a folder. Each source item is read into data
-items.
+A source finds source items and reports when they change. A source item is one unit that `read`
+loads, such as a file or a database record.
 
 ```@docs
 DataBrowserAPI.AbstractDataSource
@@ -120,8 +120,8 @@ DataBrowserPlots.set_analysis!
 
 ### Visualizers
 
-A visualizer shows a value in a browser window. The browser calls `prepare!` when the value
-changes and `draw!` in every frame.
+A visualizer displays a value, for example as a table or a plot. The browser calls `prepare!`
+when the value changes and `draw!` in every frame.
 
 ```@docs
 DataBrowserAPI.AbstractVisualizer
