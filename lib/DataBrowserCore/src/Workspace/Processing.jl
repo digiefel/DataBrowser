@@ -289,6 +289,19 @@ function reported_source_item(workspace::Workspace, source::SourceKey)
 end
 
 """
+Wait until the current source scan ends, so that it has reported every source item. A workspace
+that opens again restores items from the cache before the scan reports their source items, and the
+computation of a collection names the source items of all items below it.
+"""
+function wait_scanned(workspace::Workspace)::Nothing
+    catalog = workspace.catalog
+    @lock catalog.lock while source_scan_running(workspace) && !workspace.stopping
+        wait(catalog.changed)
+    end
+    return nothing
+end
+
+"""
 Run `expand` for the source item of `item` again and return the item it produces now.
 
 This runs inside the job that needs the item, because a worker must not wait for another job. One
@@ -494,6 +507,7 @@ it, and keep the metadata and the data of the collection value it returns.
 """
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PROCESS})::Nothing
     catalog = workspace.catalog
+    wait_scanned(workspace)
     # TODO: pass each member's latest value and run again until the values converge
     # (docs/plans/processing.md). Members are passed as their own `process` returned them.
     inputs = versions(workspace, Catalogs.nested_items(catalog, job.key); own=true)
@@ -527,6 +541,8 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
     cache = workspace.cache.db
     item = job.key
     known, saved = @lock catalog.lock (row(workspace, item), cache_key(workspace, item))
+    # The computation reads the process of each collection above the item.
+    wait_scanned(workspace)
     output = evaluate(workspace, computation(workspace, item, MEMBER_PROCESS))
     output isa AbstractDataItem || error(
         "A member process method for $(known.type) must return an AbstractDataItem; got $(typeof(output))")
