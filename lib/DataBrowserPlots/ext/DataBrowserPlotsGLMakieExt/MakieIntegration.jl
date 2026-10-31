@@ -22,6 +22,8 @@ mutable struct ImMakieFigure
     display_texture::gl.GLuint
     display_size::Tuple{Int,Int}
     gesture::Union{Nothing,AxisGesture}
+    # The axes the user zoomed or panned. A figure that replaces this one keeps their limits.
+    zoomed::Vector{Makie.Axis}
 end
 
 const MAKIE_CONTEXT = Dict{String,ImMakieFigure}()
@@ -262,29 +264,18 @@ function _draw_axis_popup!(axis::Makie.Axis)::Nothing
     return nothing
 end
 
-"""Display a figure, optionally keeping the visible ranges after a layer edit."""
-function _display_figure!(screen, figure; preserve_zoom::Bool=false)
-    limits = preserve_zoom ?
-        [(axis, axis.targetlimits[]) for axis in figure.content if axis isa Makie.Axis] : []
-    display(screen, figure)
-    for (axis, range) in limits
-        axis.targetlimits[] = range
-    end
-    return nothing
-end
-
 """
 Render one Makie figure as an interactive CImGui image.
 
-Screens are reused by `title_id`; replacing the figure preserves the OpenGL context.
-Set `preserve_zoom` when the figure carries axis ranges from a layer edit.
+Screens are reused by `title_id`; replacing the figure preserves the OpenGL context. The axes of the
+new figure keep the limits that the user zoomed or panned the axes of the old one to, matched in the
+order of the figure's content.
 """
 function MakieFigure(
     title_id::String,
     figure::GLMakie.Figure;
     auto_resize_x::Bool=true,
     auto_resize_y::Bool=false,
-    preserve_zoom::Bool=false,
 )::Bool
     ig.PushID(title_id)
     id = title_id
@@ -299,7 +290,16 @@ function MakieFigure(
             old_figure = imf.figure
             scene = Makie.get_scene(figure)
             scene.events.window_open[] = true
-            _display_figure!(imf.screen, figure; preserve_zoom)
+            display(imf.screen, figure)
+            old_axes = [content for content in old_figure.content if content isa Makie.Axis]
+            new_axes = [content for content in figure.content if content isa Makie.Axis]
+            zoomed = Makie.Axis[]
+            for (old, new) in zip(old_axes, new_axes)
+                old in imf.zoomed || continue
+                new.targetlimits[] = old.targetlimits[]
+                push!(zoomed, new)
+            end
+            imf.zoomed = zoomed
             empty!(old_figure)
             imf.figure = figure
             @debug "replaced figure for " id
@@ -308,10 +308,10 @@ function MakieFigure(
         window = ig.current_window()
         makie_window = ImMakieWindow(window)
         screen = GLMakie.Screen(; window=makie_window, start_renderloop=false)
-        MAKIE_CONTEXT[id] = ImMakieFigure(figure, screen, false, gl.GLuint(0), (0, 0), nothing)
+        MAKIE_CONTEXT[id] = ImMakieFigure(figure, screen, false, gl.GLuint(0), (0, 0), nothing, Makie.Axis[])
         scene = Makie.get_scene(figure)
         scene.events.window_open[] = true
-        _display_figure!(screen, figure; preserve_zoom)
+        display(screen, figure)
         @debug "created context for " id
     end
 
@@ -363,7 +363,7 @@ function MakieFigure(
     io = ig.GetIO()
     hovered = ig.IsItemHovered()
     position = _imgui_mouse_to_makie(ig.GetMousePos(), cursor_pos, image_size)
-    imfigure.gesture = axis_gestures!(imfigure.gesture, imfigure.figure, position, hovered,
+    imfigure.gesture = axis_gestures!(imfigure.gesture, imfigure.zoomed, imfigure.figure, position, hovered,
         point -> (cursor_pos.x + point[1], cursor_pos.y + image_size[2] - point[2]))
 
     # Makie receives the mouse for everything the axis gestures leave to it, such as legends,
