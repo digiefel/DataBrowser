@@ -1,3 +1,5 @@
+# TODO: move this file to DataBrowserRecipes, the package of the registration dialect, beside
+# `register_item!`. The plot window would then read `registered_plots` from there.
 using DataBrowserAPI: AbstractProject
 
 """

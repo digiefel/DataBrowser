@@ -53,6 +53,7 @@ include("plot_code.jl")
 
 export figure, @plot, @invisible, add_layer!, set_analysis!
 
+# TODO: move to DataBrowserRecipes with plots.jl.
 export register_plot!, registered_plots
 
 end
