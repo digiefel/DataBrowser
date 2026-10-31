@@ -21,6 +21,19 @@ import DataBrowserAPI:
 
 const DEFAULT_DIRECTORY_METADATA_FILE = "metadata.txt"
 
+# Files that DataBrowser keeps in the folder of a source. They are never source files.
+# TODO: tags and notes belong to DataBrowserAnnotations and the saved view to DataBrowserGUI. Keep
+# them where this package does not need their names, for example in one hidden folder.
+const DIRECTORY_SOURCE_SIDECARS = Set([
+    DEFAULT_DIRECTORY_METADATA_FILE,
+    "tags.txt",
+    "notes.txt",
+    "databrowser.toml",
+])
+
+"""The rows of a metadata file: the folder names in the first column, and the metadata of the row."""
+const MetadataEntries = Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}
+
 """
 Fingerprint used to decide whether a physical source file has changed.
 """
@@ -31,13 +44,42 @@ struct FileFingerprint
 end
 
 """
-Directory-backed source scanned into `SourceFile` source items.
+    DirectorySource(root_path; recursive=true, metadata_file="metadata.txt")
+
+A data source that reads the files in the folder `root_path`. Each file is one source item, a
+[`SourceFile`](@ref). With `recursive=true`, the files in the folders below `root_path` are source
+items too, and the folders of a file are its collections, from the top down.
+
+Hidden files and folders, whose names start with `.`, are not source items. Nor are the metadata
+file and the files that DataBrowser keeps in a folder: `metadata.txt`, `tags.txt`, `notes.txt` and
+`databrowser.toml`, in upper or lower case.
+
+The metadata file, at `metadata_file` relative to `root_path`, gives metadata to folders. Its
+first row names the columns. In each further row, the first column names a folder, and each other
+column gives the value of one metadata key:
+
+    folder,temperature_K,operator
+    A9,300,Ada
+    A9/VI,4,
+
+A row names a folder by the last names of its path: `A9` is every folder called `A9`, and `A9/VI`
+is every folder `VI` inside a folder `A9`. When several rows name one folder, the row with more
+names gives the value of a key that both rows give. An empty cell gives no value, and cells cannot
+contain commas. The items below a folder have its metadata.
+
+A value is read as `true` (`true`, `t`, `yes`, `y`) or `false` (`false`, `f`, `no`, `n`), in upper
+or lower case; as an `Int`; as a `Float64`; as a `Date` (`2025-10-01` or `2025/10/01`); as a
+`DateTime` (`2025-10-01 17:12:33` or `2025-10-01T17:12:33`); and otherwise as text. Use
+`metadata_file=nothing` for a source without a metadata file.
+
+While a workspace has the source open, the source watches the folder. It reports files that are
+added, changed or removed, and changes to the metadata file.
 """
 mutable struct DirectorySource <: AbstractDataSource
     root_path::String
     recursive::Bool
     metadata_file::Union{Nothing,String}
-    collection_metadata_entries::Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}
+    collection_metadata_entries::MetadataEntries
     has_metadata::Bool
     metadata_lock::ReentrantLock
     watcher_task::Union{Nothing,Task}
@@ -49,12 +91,14 @@ function DirectorySource(
     recursive::Bool=true,
     metadata_file::Union{Nothing,AbstractString}=DEFAULT_DIRECTORY_METADATA_FILE,
 )::DirectorySource
-    normalized = normpath(abspath(expanduser(String(root_path))))
+    # `dirname(joinpath(path, ""))` removes a trailing `/`. With it, the same folder would have
+    # another id, and so another cache.
+    root = dirname(joinpath(abspath(expanduser(root_path)), ""))
     return DirectorySource(
-        normalized,
+        root,
         recursive,
         metadata_file === nothing ? nothing : String(metadata_file),
-        Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}(),
+        MetadataEntries(),
         false,
         ReentrantLock(),
         nothing,
@@ -63,11 +107,11 @@ function DirectorySource(
 end
 
 """
-One file found in a directory source.
+One file of a [`DirectorySource`](@ref).
 
-`filepath` is the absolute path, `filename` the name with its extension, and `relative_path` the
-path below the source root, which is also the `id` and the `label`. The metadata of the file is its
-`:filename`.
+`filepath` is the absolute path of the file, and `filename` is its name with the extension.
+`relative_path` is the path below the folder of the source. It is the `id` and the `label` of the
+file. The metadata of the file is its `:filename`.
 """
 struct SourceFile <: AbstractDataSourceItem
     filepath::String
@@ -86,99 +130,20 @@ metadata(file::SourceFile)::Dict = Dict{Symbol,Any}(:filename => file.filename)
 id(source::DirectorySource)::String = source.root_path
 label(source::DirectorySource)::String = basename(source.root_path)
 
-function file_fingerprint(
-    path::AbstractString;
-    normalized::Bool=false,
-)::FileFingerprint
-    normalized_path = normalized ? String(path) : normpath(abspath(expanduser(String(path))))
-    stat_info = stat(normalized_path)
-    return FileFingerprint(
-        normalized_path,
-        Int64(stat_info.size),
-        Int64(stat_info.mtime * 1_000_000_000),
-    )
-end
+"""
+    index_source_file(path, root) -> SourceFile
 
-"""Index one file as a source item, identified by its path relative to `source_root`."""
-function index_source_file(path::AbstractString, source_root::AbstractString)::SourceFile
-    normalized = normpath(abspath(expanduser(String(path))))
-    filename = basename(normalized)
-    root = normpath(abspath(expanduser(String(source_root))))
+The source item of the file at `path`, identified by its path relative to the folder `root`.
+"""
+function index_source_file(path::AbstractString, root::AbstractString)::SourceFile
+    filepath = abspath(expanduser(path))
+    info = stat(filepath)
     return SourceFile(
-        normalized,
-        filename,
-        relpath(normalized, root),
-        file_fingerprint(normalized; normalized=true),
+        filepath,
+        basename(filepath),
+        relpath(filepath, expanduser(root)),
+        FileFingerprint(filepath, info.size, Int64(info.mtime * 1_000_000_000)),
     )
-end
-
-"""DirectorySource sidecars that are never candidate source files."""
-const DIRECTORY_SOURCE_SIDECARS = Set([
-    DEFAULT_DIRECTORY_METADATA_FILE,
-    "tags.txt",
-    "notes.txt",
-    "layout.txt",
-    "databrowser.toml",
-])
-
-function is_source_filename(name::AbstractString)::Bool
-    startswith(name, ".") && return false
-    return !(lowercase(name) in DIRECTORY_SOURCE_SIDECARS)
-end
-
-function collect_source_files(
-    source::DirectorySource;
-    on_progress::Union{Nothing,Function}=nothing,
-    on_item::Union{Nothing,Function}=nothing,
-    cancel_token::CancellationToken,
-)::Vector{SourceFile}
-    source_files = SourceFile[]
-    metadata_path = collection_metadata_file_path(source)
-    found = Ref(0)
-    if source.recursive
-        for (root, _, names) in walkdir(source.root_path)
-            append_source_files!(
-                source_files, root, names, source.root_path, metadata_path;
-                on_progress, on_item, found, cancel_token,
-            )
-        end
-    else
-        names = readdir(source.root_path)
-        append_source_files!(
-            source_files, source.root_path, names, source.root_path, metadata_path;
-            on_progress, on_item, found, cancel_token,
-        )
-    end
-    on_progress === nothing || on_progress(found[])
-    return source_files
-end
-
-function append_source_files!(
-    source_files::Vector{SourceFile},
-    root::AbstractString,
-    names::Vector{String},
-    source_root::AbstractString,
-    metadata_path::Union{Nothing,String}=nothing,
-    ;
-    on_progress::Union{Nothing,Function}=nothing,
-    on_item::Union{Nothing,Function}=nothing,
-    found::Base.RefValue{Int}=Ref(0),
-    cancel_token::CancellationToken,
-)::Nothing
-    for name in names
-        is_cancellation_requested(cancel_token) &&
-            throw(OperationCanceledException(cancel_token))
-        is_source_filename(name) || continue
-        path = joinpath(root, name)
-        metadata_path !== nothing && normpath(path) == metadata_path && continue
-        isfile(path) || continue
-        file = index_source_file(path, source_root)
-        push!(source_files, file)
-        found[] += 1
-        on_item === nothing || on_item(file)
-        on_progress !== nothing && found[] % 256 == 0 && on_progress(found[])
-    end
-    return nothing
 end
 
 function parse_metadata_value(text::AbstractString)::Any
@@ -205,11 +170,9 @@ function parse_metadata_value(text::AbstractString)::Any
     return value
 end
 
-function load_collection_metadata_entries(
-    path::AbstractString,
-)::Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}
+function load_collection_metadata_entries(path::AbstractString)::MetadataEntries
     lines = readlines(path)
-    isempty(lines) && return Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}()
+    isempty(lines) && return MetadataEntries()
     header = strip.(split(first(lines), ','))
     length(header) >= 2 ||
         throw(ArgumentError(
@@ -217,7 +180,7 @@ function load_collection_metadata_entries(
             "at least one metadata column",
         ))
     metadata_names = header[2:end]
-    entries = Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}()
+    entries = MetadataEntries()
     for line in Iterators.drop(lines, 1)
         isempty(strip(line)) && continue
         cells = split(line, ',')
@@ -240,12 +203,11 @@ function collection_metadata_file_path(source::DirectorySource)::Union{Nothing,S
     return normpath(joinpath(source.root_path, source.metadata_file))
 end
 
+"""Read the metadata file again, and tell whether it changed."""
 function load_collection_metadata!(source::DirectorySource)::Bool
     path = collection_metadata_file_path(source)
     present = path !== nothing && isfile(path)
-    entries = present ?
-        load_collection_metadata_entries(path::String) :
-        Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}()
+    entries = present ? load_collection_metadata_entries(path::String) : MetadataEntries()
     return lock(source.metadata_lock) do
         changed = source.has_metadata != present ||
             source.collection_metadata_entries != entries
@@ -253,21 +215,6 @@ function load_collection_metadata!(source::DirectorySource)::Bool
         source.has_metadata = present
         changed
     end
-end
-
-"""Metadata owned by the final collection level in `location`."""
-function own_collection_metadata(
-    entries::Dict{Tuple{Vararg{String}},Dict{Symbol,Any}},
-    location::AbstractVector{<:AbstractString},
-)::Dict{Symbol,Any}
-    isempty(location) && return Dict{Symbol,Any}()
-    own = Dict{Symbol,Any}()
-    # Short fragments apply first; longer, more specific fragments ending at this level win.
-    for start in reverse(eachindex(location))
-        values = get(entries, Tuple(location[start:end]), nothing)
-        values === nothing || merge!(own, values)
-    end
-    return own
 end
 
 """One collection level of a directory tree, identified by the directory's name."""
@@ -281,22 +228,29 @@ label(::Type{DirectoryCollection})::Symbol = :folder
 reconstruct(::Type{DirectoryCollection}, identity::AbstractString, ::Dict) =
     DirectoryCollection(String(identity))
 
-"""The items of a file go under the file's directories, relative to the root of the source."""
+"""The folders of a file, from the top down, below the folder of the source."""
 function collection(file::SourceFile)::Vector{DataBrowserAPI.AbstractCollection}
     # A file at the root has the directory "", which `splitpath` returns as one empty name.
     return DataBrowserAPI.AbstractCollection[
         DirectoryCollection(name) for name in splitpath(dirname(file.relative_path)) if !isempty(name)]
 end
 
-"""The `metadata.txt` entries of the directory that `collections` names from the top down."""
+"""The metadata file entries of the folder that `collections` names from the top down."""
 function metadata(
     source::DirectorySource,
     collections::AbstractVector{<:DataBrowserAPI.AbstractCollection},
 )::Dict
     names = String[id(level) for level in collections]
-    return lock(source.metadata_lock) do
-        own_collection_metadata(source.collection_metadata_entries, names)
+    values = Dict{Symbol,Any}()
+    lock(source.metadata_lock) do
+        # A row names the last folders of a path. Rows with fewer names apply first, so that a row
+        # with more names gives the value of a key that both give.
+        for start in reverse(eachindex(names))
+            row = get(source.collection_metadata_entries, Tuple(names[start:end]), nothing)
+            row === nothing || merge!(values, row)
+        end
     end
+    return values
 end
 
 function items(
@@ -305,7 +259,29 @@ function items(
     on_item::Union{Nothing,Function}=nothing,
     cancel_token::CancellationToken,
 )::Vector{SourceFile}
-    return collect_source_files(source; on_progress, on_item, cancel_token)
+    files = SourceFile[]
+    metadata_path = collection_metadata_file_path(source)
+    folders = [source.root_path]
+    while !isempty(folders)
+        folder = popfirst!(folders)
+        for name in readdir(folder)
+            is_cancellation_requested(cancel_token) && throw(OperationCanceledException(cancel_token))
+            # Hidden files and folders, such as `.git`, hold no source files.
+            startswith(name, ".") && continue
+            path = joinpath(folder, name)
+            if isdir(path)
+                # A link to a folder can point to a folder above it, so links are not followed.
+                source.recursive && !islink(path) && push!(folders, path)
+            elseif isfile(path) && path != metadata_path && !(lowercase(name) in DIRECTORY_SOURCE_SIDECARS)
+                file = index_source_file(path, source.root_path)
+                push!(files, file)
+                on_item === nothing || on_item(file)
+                on_progress !== nothing && length(files) % 256 == 0 && on_progress(length(files))
+            end
+        end
+    end
+    on_progress === nothing || on_progress(length(files))
+    return files
 end
 
 function open_source(source::DirectorySource)::DirectorySource
@@ -320,18 +296,19 @@ function watch_source(
     source::DirectorySource,
     on_change::Function;
     cancel_token::CancellationToken,
-)::Union{Nothing,Task}
+)::Task
     source.watcher_task === nothing || error(
         "DirectorySource '$(source.root_path)' is already being watched",
     )
     cancel_source = CancellationTokenSource(cancel_token)
     watch_token = get_token(cancel_source)
-    known = Dict(
-        id(file) => fingerprint(file)
-        for file in collect_source_files(source; cancel_token=watch_token)
-    )
-    ignore(rel::AbstractString)::Bool =
-        ".git" in split(String(rel), '/') || (!source.recursive && occursin('/', String(rel)))
+    known = Dict(id(file) => fingerprint(file) for file in items(source; cancel_token=watch_token))
+    # Ignore what `items` does not read: hidden files and folders, and the folders below a source
+    # that is not recursive. The metadata file is watched in any case.
+    function ignore(path::AbstractString)::Bool
+        path == source.metadata_file && return false
+        return any(startswith('.'), split(path, '/')) || (!source.recursive && occursin('/', path))
+    end
     task = Base.Threads.@spawn begin
         errored = false
         try
@@ -344,7 +321,7 @@ function watch_source(
                     on_change(SourceError(sprint(showerror, error)))
                     return
                 end
-                files = collect_source_files(source; cancel_token=watch_token)
+                files = items(source; cancel_token=watch_token)
                 is_cancellation_requested(watch_token) && return
                 current = Dict(id(file) => fingerprint(file) for file in files)
                 upserts = SourceFile[
@@ -353,6 +330,7 @@ function watch_source(
                        !isequal(known[id(file)], fingerprint(file))
                 ]
                 removals = String[file_id for file_id in keys(known) if !haskey(current, file_id)]
+                # After an error, report even an empty change, so that the error is cleared.
                 isempty(upserts) && isempty(removals) && !metadata_changed && !errored && return
                 known = current
                 errored = false
@@ -371,7 +349,7 @@ end
 """
     copy(source::DirectorySource) -> DirectorySource
 
-Unopened directory source with the same root, scan depth, and metadata sidecar. Does not copy the
+Unopened directory source with the same root, scan depth, and metadata file. Does not copy the
 watcher.
 """
 Base.copy(source::DirectorySource) = DirectorySource(
@@ -382,10 +360,8 @@ Base.copy(source::DirectorySource) = DirectorySource(
 
 function close_source!(source::DirectorySource)::Nothing
     source.watcher_cancel === nothing || cancel(source.watcher_cancel)
-    task = source.watcher_task
-    if task !== nothing
-        wait(task)
-    end
+    # The task reports its own errors through `on_change`, so waiting for it does not throw.
+    source.watcher_task === nothing || wait(source.watcher_task)
     source.watcher_task = nothing
     source.watcher_cancel = nothing
     return nothing

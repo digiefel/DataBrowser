@@ -10,9 +10,12 @@ using DataBrowserAPI: collection, metadata
         write(joinpath(dir, "nested", "b.dat"), "2")
         write(joinpath(dir, "notes.txt"), "annotation")
         write(joinpath(dir, ".hidden"), "hidden")
+        mkpath(joinpath(dir, ".git"))
+        write(joinpath(dir, ".git", "HEAD"), "hidden")
         write(joinpath(dir, "metadata.txt"), "collection_path,scale\nnested,3\n")
         cancel_token = get_token(CancellationTokenSource())
         source = open_source(DirectorySource(dir))
+        @test id(DirectorySource(dir * "/")) == id(source)
         try
             files = items(source; cancel_token)
             @test Set(id.(files)) == Set(["a.dat", joinpath("nested", "b.dat")])
