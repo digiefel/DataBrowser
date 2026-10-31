@@ -382,10 +382,6 @@ classDiagram
     class DirectorySource {
         String root_path
         Bool recursive
-        String_or_Nothing metadata_file
-        Dict collection_metadata_entries
-        Bool has_metadata
-        ReentrantLock metadata_lock
         Task_or_Nothing watcher_task
         CancellationTokenSource_or_Nothing watcher_cancel
     }
@@ -393,7 +389,6 @@ classDiagram
         String filepath
         String filename
         String relative_path
-        DateTime_or_Nothing timestamp
         FileFingerprint fingerprint
     }
     class FileFingerprint {
@@ -428,23 +423,7 @@ classDiagram
 flowchart TD
     subgraph sgScan["scan"]
         si("items(source)")
-        csf("collect_source_files")
-        asf("append_source_files!")
         isf("index_source_file")
-        ffp("file_fingerprint")
-        isfn("is_source_filename")
-        pts("parse_timestamp")
-    end
-
-    subgraph sgMeta["metadata.txt"]
-        lcm("load_collection_metadata!")
-        lcme("load_collection_metadata_entries")
-        cmfp("collection_metadata_file_path")
-        pmv("parse_metadata_value")
-        ocm("own_collection_metadata")
-        csi("collection(::SourceFile)")
-        msc("metadata(::DirectorySource, collections)")
-        MD[("collection_metadata_entries")]
     end
 
     subgraph sgLife["watch / lifecycle"]
@@ -459,6 +438,7 @@ flowchart TD
         lblsf("label(::SourceFile) → String")
         fpsf("fingerprint(::SourceFile) → FileFingerprint")
         metasf("metadata(::SourceFile) → Dict")
+        csi("collection(::SourceFile)")
         sid("id(::DirectorySource) → String")
         slbl("label(::DirectorySource) → String")
         iddc("id(::DirectoryCollection) → String")
@@ -479,29 +459,12 @@ flowchart TD
         CT["CancellationTokens"]
     end
 
-    si -->|"SourceFile[]"| csf
-    csf --> asf
-    asf -->|"SourceFile"| isf
-    asf -->|"Bool"| isfn
-    isf -->|"FileFingerprint"| ffp
-    isf -->|"DateTime?"| pts
-    csf -->|"String?"| cmfp
-    csf -->|"walkdir"| FSYS
-    ffp -->|"stat"| FSYS
+    si -->|"SourceFile"| isf
+    si -->|"readdir"| FSYS
+    isf -->|"stat"| FSYS
 
-    lcm -->|"String?"| cmfp
-    lcm -->|"Dict"| lcme
-    lcm -.->|"writes"| MD
-    lcme -->|"Any"| pmv
-    lcme -->|"readlines"| FSYS
-    msc -->|"Dict"| ocm
-    msc -.->|"reads"| MD
-    msc -->|"String"| iddc
-
-    osrc -->|"Bool"| lcm
     osrc -->|"isdir"| FSYS
-    wsrc -->|"SourceFile[]"| csf
-    wsrc -->|"Bool"| lcm
+    wsrc -->|"SourceFile[]"| si
     wsrc -->|"String"| idsf
     wsrc -->|"FileFingerprint"| fpsf
     wsrc -->|"watch_folder"| BFW
@@ -512,9 +475,7 @@ flowchart TD
     extCore ==> si
     extCore ==> wsrc
     extCore ==> csrc
-    extCore ==> isf
     extCore ==> csi
-    extCore ==> msc
     extCore ==> sid
     extCore ==> idsf
     extCore ==> lblsf
@@ -531,7 +492,7 @@ flowchart TD
 
     wsrc -.->|"SourceChanges<br/>SourceError"| extCore
 
-    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ sid ~~~ slbl ~~~ iddc ~~~ lbldc ~~~ recon ~~~ eqfp
+    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ csi ~~~ sid ~~~ slbl ~~~ iddc ~~~ lbldc ~~~ recon
 
     classDef srcExp fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111;
     classDef srcInt fill:#c9e4c5,stroke:#5a9a52,stroke-width:1px,color:#111;
@@ -543,8 +504,8 @@ flowchart TD
     classDef guiC fill:#d9c6ec,stroke:#7d54b0,color:#111;
     classDef plotsC fill:#f2c6d4,stroke:#b0466a,color:#111;
 
-    class isf,ffp srcExp;
-    class si,csf,asf,isfn,pts,lcm,lcme,cmfp,pmv,ocm,csi,msc,MD,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl,iddc,lbldc,recon,eqfp srcInt;
+    class isf srcExp;
+    class si,csi,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl,iddc,lbldc,recon srcInt;
     class extCore coreC;
     class extAPI apiC;
     class extCache cacheC;
@@ -553,5 +514,5 @@ flowchart TD
     class extPlots plotsC;
     class FSYS,BFW,CT ext;
 
-    linkStyle 2,4,8 stroke:#d1495b,stroke-width:3px;
+    linkStyle 0,2 stroke:#d1495b,stroke-width:3px;
 ```

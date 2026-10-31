@@ -315,18 +315,13 @@ workloads, completed disk writes, cache reads and process memory measurements.
   independent of source type; production transport and instrument implementations follow separately.
 - [x] Replace `default_collection_path(source, source_item)` with `collection(source_item)`, and
   `annotate_collection_path` with `metadata(source, collections)`, where `collections` are one
-  collection's values from the top down. DirectorySource owns `metadata.txt` parsing and matching;
-  Core owns composition and invalidation. A collection's own metadata and the source's are stored
-  separately, and the source's part is replaced on item publication, refresh and reopen, so removed
-  keys reveal the collection's own values beneath them.
+  collection's values from the top down. Core owns composition and invalidation. A collection's own
+  metadata and the source's are stored separately, and the source's part is replaced on item
+  publication, refresh and reopen, so removed keys reveal the collection's own values beneath them.
 - [ ] Test `metadata(source, collections)` with a source other than DirectorySource.
-- [ ] Split `DirectorySource` into scan, `metadata.txt`, and watcher files. The watcher rescans
-  the whole tree and fingerprints every file three times on each event; `.git` is skipped by the
-  watcher but traversed by the scan; `readdir` order is not sorted; `metadata_lock` is held while
-  calling user `reconstruct`; two concurrent `watch_source` calls race and a crashed watcher task is
-  reported as "already watching".
-- [ ] `metadata.txt`: decide whether values may be quoted; validate metadata value types at parse
-  time instead of failing downstream.
+- [ ] The `DirectorySource` watcher rescans the whole tree and fingerprints every file on each
+  event; `readdir` order is not sorted; two concurrent `watch_source` calls race and a crashed
+  watcher task is reported as "already watching".
 - [x] `tags.txt` lives in the source root, as the vision states. The GUI read it from the cache
   folder under `DEPOT_PATH`.
 - [ ] The GUI uses
