@@ -31,6 +31,8 @@ Base.@kwdef struct PersistedWindow
     # The name of a function in `Main`, or empty.
     transform::String = ""
     settings::Dict{String,Any} = Dict{String,Any}()
+    # What `selection` gave, for `select!` when the window opens again.
+    selection::Dict{String,Any} = Dict{String,Any}()
     arrangement::String = "auto"
     active_item::String = ""
 end

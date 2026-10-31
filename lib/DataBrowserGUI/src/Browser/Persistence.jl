@@ -1,6 +1,6 @@
 using TOML
 
-using DataBrowserAPI: AbstractVisualizer, prepare!, project_name, settings
+using DataBrowserAPI: AbstractVisualizer, prepare!, project_name, select!, selection, settings
 using DataBrowserCore.Catalogs: ItemKey
 import DataBrowserCore.Workspace
 
@@ -175,6 +175,7 @@ function _persisted_window(window::Window)::PersistedWindow
         ids=input isa FixedItems ? copy(input.ids) : input isa WindowOutput ? [input.window] : String[],
         transform=window.transform === nothing ? "" : String(window.transform.name),
         settings=values,
+        selection=Dict{String,Any}(String(name) => value for (name, value) in pairs(selection(visualizer))),
     )
 end
 
@@ -210,7 +211,9 @@ function _restore_windows!(state::BrowserState, saved::Vector{PersistedWindow}):
         replaced = state.workspace.selection.replaced
         input = window.input == "items" ? FixedItems([get(replaced, id, id) for id in window.ids]) :
             window.input == "window" ? WindowOutput(only(window.ids)) : LiveSelection()
-        opened = open_window!(state, V(; values...); input)
+        visualizer = V(; values...)
+        isempty(window.selection) || select!(visualizer; (Symbol(name) => value for (name, value) in window.selection)...)
+        opened = open_window!(state, visualizer; input)
         opened.id = window.id
         opened.arrangement = window.arrangement
         opened.active_item = window.active_item
