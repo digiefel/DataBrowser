@@ -1,7 +1,9 @@
 # API
 
-At the centre of DataBrowser is the runtime, DataBrowserCore, which runs workspaces. Code on either
-side of it uses the API:
+At the centre of DataBrowser is the runtime, DataBrowserCore. It opens a project on a source as a
+workspace. In the background it asks the source for its source items, calls the project's `read`,
+`expand` and `process` methods on them, and keeps the results. Code on either side of the runtime
+uses the API:
 
 - **Providers** are code that the runtime calls. They tell it how to find data, read it, process
   it, store it and display it.
@@ -139,8 +141,9 @@ DataBrowserGUI.CodeFile
 
 ### Workspace
 
-A workspace is one project opened on one source. It finds the source items, runs the stages in the
-background and keeps their results.
+A workspace is one project opened on one source. While it is open, the runtime asks the source for
+its source items, calls the project's `read`, `expand` and `process` methods on them in the
+background, and keeps the results.
 
 ```@docs
 DataBrowserCore.open_workspace
