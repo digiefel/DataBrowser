@@ -23,10 +23,10 @@ function Base.show(io::IO, ::MIME"text/plain", project::Project)
 
     print(io, "\n  ", _plural(length(project.collections), "collection recipe"))
     isempty(project.collections) || print(io, ":")
-    for recipe in values(project.collections)
-        stages = [name for (name, f) in
-            (("process", recipe.process), ("analyze", recipe.analyze)) if f !== nothing]
-        print(io, "\n    ", recipe.kind, " · ", join(stages, " · "))
+    for recipe in project.collections
+        callbacks = [name for (name, f) in (("process", recipe.process), ("analyze", recipe.analyze)) if f !== nothing]
+        members = recipe.members === nothing ? "" : " ($(recipe.members))"
+        print(io, "\n    ", recipe.level, members, " · ", join(callbacks, " · "))
     end
 end
 
@@ -36,7 +36,7 @@ function define_project(name::AbstractString; description::AbstractString="")::P
         String(name),
         String(description),
         ItemRecipe[],
-        Dict{Symbol,CollectionRecipe}(),
+        CollectionRecipe[],
     )
 end
 
@@ -89,20 +89,30 @@ function register_item!(project::Project; kwargs...)::Project
 end
 
 """
-Register (or replace) the collection recipe for one item kind.
+    register_collection!(project, level; members=nothing, process=nothing, analyze=nothing) -> project
 
-`process(data, metadata)` receives aligned vectors and returns one data value per input.
-`analyze(data, metadata)` receives the processed values and returns metadata that every member of
-the collection gets.
-Re-calling with the same registration name replaces the recipe.
+Register the callbacks that run in every collection of one level, such as `:device`: a level that
+the `collection` callback of [`register_item!`](@ref) names.
+
+`process(data, metadata)` receives the data and the metadata of the collection's members, as
+vectors, and returns new data for each member, in the same order. `analyze(data, metadata)`
+receives the data that `process` returned and the members' metadata, and returns metadata that the
+collection and each of its members get.
+
+The members of a collection are all the items below it. `members` limits both callbacks to the items
+of one registration, such as `:trace`; by default they receive every item. Registering the same
+level and `members` again replaces the callbacks.
 """
-function register_collection_analysis!(
+function register_collection!(
     project::Project,
-    kind::Symbol;
+    level::Symbol;
+    members::Union{Nothing,Symbol}=nothing,
     process=nothing,
     analyze=nothing,
 )::Project
-    project.collections[kind] = CollectionRecipe(kind, process, analyze, caller())
+    recipe = CollectionRecipe(level, members, process, analyze, caller())
+    index = findfirst(r -> r.level === level && r.members === members, project.collections)
+    index === nothing ? push!(project.collections, recipe) : (project.collections[index] = recipe)
     return project
 end
 

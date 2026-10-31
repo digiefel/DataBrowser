@@ -75,12 +75,21 @@ function DataBrowserAPI.process(project::ObservedProject, item::EngineItem)
     return item
 end
 
-struct Outer <: DataBrowserAPI.AbstractCollection end
-struct Inner <: DataBrowserAPI.AbstractCollection end
-struct Other <: DataBrowserAPI.AbstractCollection end
+struct Outer <: DataBrowserAPI.AbstractCollection
+    metadata::Dict
+end
+struct Inner <: DataBrowserAPI.AbstractCollection
+    metadata::Dict
+end
+struct Other <: DataBrowserAPI.AbstractCollection
+    metadata::Dict
+end
+const NestedCollection = Union{Outer,Inner,Other}
+(::Type{T})() where {T<:NestedCollection} = T(Dict())
 DataBrowserAPI.id(::Outer) = "outer"
 DataBrowserAPI.id(::Union{Inner,Other}) = "same"
-DataBrowserAPI.reconstruct(::Type{T}, ::AbstractString, ::Dict) where {T<:Union{Outer,Inner,Other}} = T()
+DataBrowserAPI.metadata(collection::NestedCollection) = collection.metadata
+DataBrowserAPI.reconstruct(::Type{T}, ::AbstractString, metadata::Dict) where {T<:NestedCollection} = T(metadata)
 struct NestedItem <: AbstractDataItem
     key::String
     data::Any
@@ -99,10 +108,13 @@ DataBrowserAPI.project_name(::NestedProject) = "nested"
 DataBrowserAPI.read(::NestedProject, ::EngineSource, s::EngineSourceItem) = s.version
 DataBrowserAPI.expand(::NestedProject, ::EngineSourceItem, version) =
     [NestedItem(key, (x=[version],)) for key in ("a", "b")]
-DataBrowserAPI.process(::NestedProject, ::Inner, items::AbstractVector) =
-    [NestedItem(i.key, (x=i.data.x .+ 1,), Dict(:step => 1, :name => "inner $(i.key)")) for i in items]
-DataBrowserAPI.process(::NestedProject, ::Outer, items::AbstractVector) =
-    [NestedItem(i.key, (x=i.data.x .* 10,), merge(i.metadata, Dict(:step => get(i.metadata, :step, 0) + 1))) for i in items]
+# Each collection counts its members, and each member takes one step per collection above it.
+DataBrowserAPI.process(::NestedProject, ::T, items::AbstractVector) where {T<:Union{Inner,Outer}} =
+    T(Dict(:size => length(items)))
+DataBrowserAPI.process(::NestedProject, i::NestedItem, inner::Inner) =
+    NestedItem(i.key, (x=i.data.x .+ inner.metadata[:size],), Dict(:step => 1, :name => "inner $(i.key)"))
+DataBrowserAPI.process(::NestedProject, i::NestedItem, ::Outer) =
+    NestedItem(i.key, (x=i.data.x .* 10,), merge(i.metadata, Dict(:step => get(i.metadata, :step, 0) + 1)))
 
 struct RootedSource <: AbstractDataSource
     root_path::String
@@ -158,9 +170,10 @@ end
         settled(ws)
         x(key) = only(item_data(only(W.materialize_items(ws, [key]))).x)
         holder(key) = W.collection(ws, W.item(ws, key))
-        # The outer collection receives the inner collection's version, and views get the outer one.
+        # Members take the inner collection's step first, then the outer one.
         @test (x("a"), x("b")) == (20, 10)
-        # The metadata and the label that collection `process` changed reach every reader.
+        @test W.metadata(ws, holder("a"))[:size] == 1
+        # The metadata and the label that a member `process` changed reach every reader.
         @test W.metadata(ws, W.item(ws, "a"))[:step] == 2
         @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
         @test metadata(only(W.materialize_items(ws, ["a"])))[:step] == 2
@@ -364,8 +377,8 @@ DataBrowserAPI.expand(::LateCollectionProject, ::EngineSourceItem, count) = [Lat
         settled(ws)
         x() = only(item_data(only(W.materialize_items(ws, ["1"]))).x)
         @test x() == 1
-        @eval DataBrowserAPI.process(::LateCollectionProject, ::LateCollection, items::AbstractVector) =
-            [LateItem(i.key, (x=i.data.x .* 10,)) for i in items]
+        @eval DataBrowserAPI.process(::LateCollectionProject, i::LateItem, ::LateCollection) =
+            LateItem(i.key, (x=i.data.x .* 10,))
         @test timedwait(() -> x() == 10, 10) === :ok
     finally
         W.close_workspace!(ws)

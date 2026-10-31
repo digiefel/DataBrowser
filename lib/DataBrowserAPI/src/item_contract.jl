@@ -30,6 +30,12 @@ label(T::Type{<:AbstractCollection})::Symbol = nameof(T)
 metadata(::AbstractCollection)::Dict = Dict()
 
 """
+The data of a collection value, such as what its `process` computed from its members. The default
+is `nothing`: a collection has only metadata.
+"""
+item_data(::AbstractCollection) = nothing
+
+"""
     id(item)::String
 
 What identifies one item. Stored, displayed in messages, and used for selection, annotation, and

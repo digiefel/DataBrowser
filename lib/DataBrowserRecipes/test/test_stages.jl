@@ -47,6 +47,25 @@ end
     end
 end
 
+@testset "collection callbacks give members new data and metadata" begin
+    project = define_project("collections")
+    register_item!(project, :trace;
+        read=_ -> [1, 2],
+        expand=(data, _) -> [(data=(x=[n],), metadata=Dict(:channel => n)) for n in data],
+        id=(_, meta) -> meta[:channel])
+    register_collection!(project, :device; members=:trace,
+        process=(data, _) -> [(x=d.x .+ length(data),) for d in data],
+        analyze=(data, _) -> Dict(:count => length(data)))
+    file = RecipeFile("trace.dat")
+    items = [process(project, item) for item in expand(project, file, read(project, RecipeSource(), file))]
+    device = process(project, DataBrowserRecipes.NamedCollection{:device}("A"), items)
+    # The collection is rebuilt from what the cache keeps of it.
+    device = reconstruct(typeof(device), id(device), item_data(device), metadata(device))
+    members = [process(project, item, device) for item in items]
+    @test [item_data(member).x for member in members] == [[3], [4]]
+    @test all(metadata(member)[:count] == 2 for member in members)
+end
+
 @testset "CSV recipe reads the files of a directory source" begin
     mktempdir() do dir
         write(joinpath(dir, "sample.csv"), "x,y\n1,2\n3,4\n")

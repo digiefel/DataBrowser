@@ -113,7 +113,7 @@ function _register_computation!(workspace::Workspace, value::Computation)::ItemK
         end; init=Target[])
     end
     @lock catalog.lock begin
-        none = [COLLECTION_PROCESS]
+        none = [COLLECTION_PROCESS, MEMBER_PROCESS]
         holder = get!(catalog, get!(catalog, ROOT, COMPUTED; absent=none),
             ComputedCollection(function_name(value.f)); absent=none)
         title = target === nothing ? label(value) :

@@ -74,14 +74,25 @@ reconstruct(::Type{<:RegisteredDataItem{K}}, id::AbstractString, data, metadata:
 
 """
 One collection that a `collection` callback names. `Level` is the name the callback gives the
-level, such as `:wafer`, and `name` is the value at that level, such as `"W1"`.
+level, such as `:wafer`, and `name` is the value at that level, such as `"W1"`. `data` holds the
+new data of each member, by id, that the collection `process` callbacks returned, and `metadata`
+what the collection `analyze` callbacks computed.
 """
 struct NamedCollection{Level} <: AbstractCollection
     name::String
+    data::Dict{String,Any}
+    metadata::MetadataDict
 end
+
+NamedCollection{Level}(name::AbstractString) where {Level} =
+    NamedCollection{Level}(String(name), Dict{String,Any}(), MetadataDict())
 
 id(collection::NamedCollection)::String = collection.name
 label(collection::NamedCollection)::String = collection.name
 label(::Type{NamedCollection{Level}}) where {Level} = Level
-reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, ::Dict) where {Level} =
-    NamedCollection{Level}(String(identity))
+metadata(collection::NamedCollection)::MetadataDict = collection.metadata
+item_data(collection::NamedCollection) = isempty(collection.data) ? nothing : collection.data
+reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, metadata::Dict) where {Level} =
+    NamedCollection{Level}(String(identity), Dict{String,Any}(), metadata_dict(metadata))
+reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, data, metadata::Dict) where {Level} =
+    NamedCollection{Level}(String(identity), something(data, Dict{String,Any}()), metadata_dict(metadata))

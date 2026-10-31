@@ -51,7 +51,7 @@ function toy_project(name::AbstractString, counters::ToyCounters)::Project
             return Dict{Symbol,Any}(:peak => maximum(data.y))
         end,
     )
-    register_collection_analysis!(project, :trace;
+    register_collection!(project, :set;
         process=function (items, _metadata)
             Threads.atomic_add!(counters.collection_processes, 1)
             return [(; item..., members=fill(length(items), length(item.x))) for item in items]

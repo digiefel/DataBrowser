@@ -220,19 +220,19 @@ end
 
 """
     metadata(workspace, collection) -> MetadataDict
-    metadata(workspace, item; through=ITEM_PROCESS, above=ancestors(workspace, item)) -> MetadataDict
+    metadata(workspace, item; through=MEMBER_PROCESS) -> MetadataDict
 
 The metadata of a collection or an item, as a new dictionary.
 
 For a collection: for each collection above it and then for the collection itself, the metadata of
-its value and then the metadata its source provides for it. For an item: what project code
-receives with the item, which is the metadata of its collections, then the metadata its source item
-and `expand` gave it, then the result of `process`, then what the `process` of each collection
-above it changed, from the collection that holds the item up to the top-level one. Later values
-replace earlier values with the same key.
+its value and then the metadata its source provides for it; then the metadata of the value its own
+`process` returned. For an item: what project code receives with the item, which is the metadata of
+its collections, then the metadata its source item and `expand` gave it, then the result of
+`process`, then the result of the member `process` methods of its collections while that result is
+current. Later values replace earlier values with the same key.
 
-`through=SOURCE_EXPAND` gives the metadata that `process` receives. `above` limits the collections
-whose changes are included; a collection whose `process` result is not current is always left out.
+`through=SOURCE_EXPAND` gives the metadata that `process` receives, and `through=ITEM_PROCESS` the
+metadata that the member `process` methods receive.
 """
 function metadata(workspace::Workspace, collection::CollectionKey)::MetadataDict
     catalog = workspace.catalog
@@ -242,14 +242,12 @@ function metadata(workspace::Workspace, collection::CollectionKey)::MetadataDict
             key == ROOT && continue
             merge!(merged, metadata(catalog, key, :collection), metadata(catalog, key, :source))
         end
+        collection == ROOT || merge!(merged, metadata(catalog, collection, COLLECTION_PROCESS))
         return merged
     end
 end
 
-function metadata(
-    workspace::Workspace, item::ItemKey;
-    through::PipelineStage=ITEM_PROCESS, above::Vector{CollectionKey}=ancestors(workspace, item),
-)::MetadataDict
+function metadata(workspace::Workspace, item::ItemKey; through::PipelineStage=MEMBER_PROCESS)::MetadataDict
     catalog = workspace.catalog
     @lock catalog.lock begin
         merged = MetadataDict()
@@ -259,21 +257,27 @@ function metadata(
         merge!(merged, metadata(catalog, item, SOURCE_EXPAND))
         through == SOURCE_EXPAND && return merged
         merge!(merged, metadata(catalog, item, ITEM_PROCESS))
-        for holder in reverse(above)
-            Catalogs.status(catalog, holder, COLLECTION_PROCESS).validity == Catalogs.FRESH || continue
-            changed = get(workspace.changes, holder, nothing)
-            changed === nothing || merge!(merged, get(changed, item, MetadataDict()))
-        end
+        through == ITEM_PROCESS && return merged
+        member_current(catalog, item) && merge!(merged, metadata(catalog, item, MEMBER_PROCESS))
         return merged
     end
+end
+
+"""
+Whether the result of the member `process` of an item is current, so that views and queries receive
+it. The caller holds the catalog lock.
+"""
+function member_current(catalog::Catalog, item::ItemKey)::Bool
+    status = Catalogs.status(catalog, item, MEMBER_PROCESS)
+    return !status.absent && status.validity == Catalogs.FRESH
 end
 
 """
 How far the work for one item or one collection is. See [`readiness`](@ref).
 
 - `CURRENT`: every stage is done.
-- `PARTIAL`: its own data is ready and the `process` of a collection above it is not, and nothing
-  is queued for it, so views show the item without the changes of that collection.
+- `PARTIAL`: its own data is ready and its member `process` is not, and nothing is queued for it,
+  so views show the item without the changes of its collections.
 - `WORKING`: a stage that is not done is queued or runs, or waits for one that is.
 - `UNPROCESSED`: its own data is not ready and nothing is queued for it.
 - `FAILED`: a stage failed, or waits for one that failed.
@@ -284,8 +288,9 @@ How far the work for one item or one collection is. See [`readiness`](@ref).
     readiness(workspace, item) -> Readiness
     readiness(workspace, collection) -> Readiness
 
-How far the work is for an item, from its `process` and the `process` of each collection above it;
-or for a collection, from its `process`.
+How far the work is for an item, from its `process` and its member `process`, which waits for the
+`process` of each collection above it that has member `process` methods; or for a collection, from
+its `process`.
 """
 function readiness(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Readiness
     catalog = workspace.catalog
@@ -300,10 +305,14 @@ function readiness(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Rea
         # Its own process gives the row its own data.
         first_flags = flags(key, key isa ItemKey ? ITEM_PROCESS : COLLECTION_PROCESS)
         all_flags = first_flags
-        holder = key isa ItemKey ? Catalogs.collection(catalog, key) : ROOT
-        while holder != ROOT
-            all_flags = all_flags .| flags(holder, COLLECTION_PROCESS)
-            holder = parent(catalog, holder)
+        if key isa ItemKey
+            all_flags = all_flags .| flags(key, MEMBER_PROCESS)
+            holder = Catalogs.collection(catalog, key)
+            while holder != ROOT
+                catalog.collections.member_process[holder.index] &&
+                    (all_flags = all_flags .| flags(holder, COLLECTION_PROCESS))
+                holder = parent(catalog, holder)
+            end
         end
         pending, failed, working = all_flags
         pending || return CURRENT

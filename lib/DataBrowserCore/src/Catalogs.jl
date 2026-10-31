@@ -16,6 +16,7 @@ using DataBrowserAPI:
     SOURCE_EXPAND,
     ITEM_PROCESS,
     COLLECTION_PROCESS,
+    MEMBER_PROCESS,
     metadata_dict
 
 # Keys
@@ -45,10 +46,11 @@ const ROOT = CollectionKey(1)
 
 """
 The stages of a row of kind `K`, in the halves of its status word from the lower one up: a source
-item has read and expand, an item and a collection have their process.
+item has read and expand, an item has its process and the member process of the collections above
+it, and a collection has its process.
 """
 stages(::Type{SourceKey}) = (SOURCE_READ, SOURCE_EXPAND)
-stages(::Type{ItemKey}) = (ITEM_PROCESS,)
+stages(::Type{ItemKey}) = (ITEM_PROCESS, MEMBER_PROCESS)
 stages(::Type{CollectionKey}) = (COLLECTION_PROCESS,)
 
 include("Catalogs/Columns.jl")

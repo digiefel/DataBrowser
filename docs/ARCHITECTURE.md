@@ -121,7 +121,9 @@ flowchart LR
     processed[("processed payload<br/>cache store")]
     item_metadata[("item metadata<br/>cache store")]
     collection_process["collection process"]
-    collection_payload[("each collection's version<br/>of its items")]
+    collection_payload[("collection data and metadata<br/>cache store")]
+    member_process["member process"]
+    member_payload[("member payload<br/>cache store")]
     views["views and inspectors"]
 
     source --> read
@@ -136,14 +138,17 @@ flowchart LR
     item_process --> item_metadata
     processed --> collection_process
     collection_process --> collection_payload
+    processed --> member_process
+    collection_payload --> member_process
+    member_process --> member_payload
     processed --> views
-    collection_payload --> views
+    member_payload --> views
 
     classDef stage fill:#bcd4f0,stroke:#3f6fb0,color:#111
     classDef state fill:#f5d6a8,stroke:#c08a3f,color:#111
     classDef output fill:#c9e4c5,stroke:#5a9a52,color:#111
-    class source,read,expand,item_process,collection_process,views stage
-    class read_cache,unprocessed,processed,item_metadata,collection_payload state
+    class source,read,expand,item_process,collection_process,member_process,views stage
+    class read_cache,unprocessed,processed,item_metadata,collection_payload,member_payload state
     class index output
 ```
 
@@ -263,13 +268,15 @@ other (`read_first!`).
 
 A collection is one node of the collection tree, identified by its parent and by the type and `id`
 of its value. An item goes where `collection(item)` says, or where `collection(source_item)` says
-when that is empty. A collection contains every item below it, at any depth. Collection `process`
-receives all of them and returns the collection's own version of each; the cache keeps that version
-next to the item's own processed data and never replaces it. A collection receives each item in the
-version the collections below gave it. Views use an item's latest version:
-the one of the outermost collection that changed it. The same holds for the metadata values and
-the label that a collection's `process` changes: views, queries and the item list show them, and
-the outermost collection replaces the values of the collections below it.
+when that is empty. A collection contains every item below it, at any depth. Collection
+`process(project, collection, members)` receives each of them as its own `process` returned it,
+and returns a later version of the collection; the cache keeps the metadata and the data
+(`item_data`) of that version. Member
+`process(project, member, collection)` then returns a later version of each item, once for each
+collection above it that defines one, from the innermost collection to the outermost; each call
+receives the version of the previous one. The cache keeps the last version next to the item's own
+processed data and never replaces that. Views, queries and the item list use the last version, with
+its metadata and label, once it is current, and the item's own processed version until then.
 
 A collection stage that the project does not define for a collection has no job: nothing is queued
 or shown as in progress for it, and it counts as done once everything below the collection is done.
@@ -281,7 +288,8 @@ It defines:
 - reading each source item
 - expanding the loaded value into logical data items, when a source item holds several
 - processing one data item
-- changing the items of a collection together (collection `process`)
+- computing a collection from its items (collection `process`), and a later version of each item
+  from its collections (member `process`)
 - defining project-specific visualizers when generic ones are not enough
 
 The workspace owns:

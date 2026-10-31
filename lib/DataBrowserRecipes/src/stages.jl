@@ -157,56 +157,41 @@ end
 
 
 """
-Rewrite one collection's members through each kind's registered collection `process`, then give
-each member the metadata of the kind's collection `analyze`.
-
-Members are grouped by kind; a kind without a registered callback falls through to the typed
-`process(collection, items)`, whose default passes them along unchanged. The `process` callback
-returns one output per input; the adapter validates ids and count.
+Run the callbacks registered for the level of a collection: the new data of each member goes into
+the collection's data, by member id, and the analysis into its metadata. A collection that a
+`collection` callback did not name falls through to its typed `process`.
 """
 function process(
     project::Project,
     collection_value::AbstractCollection,
     items::AbstractVector,
-)::Vector{<:AbstractDataItem}
-    rewritten = AbstractDataItem[]
-    for positions in _group_positions_by_kind(items)
-        group = items[positions]
-        recipe = first(group) isa RegisteredDataItem ?
-            get(project.collections, label(typeof(first(group))), nothing) : nothing
-        if recipe === nothing || recipe.process === nothing && recipe.analyze === nothing
-            append!(rewritten, process(collection_value, group))
-            continue
+)::AbstractCollection
+    collection_value isa NamedCollection || return process(collection_value, items)
+    level = label(typeof(collection_value))
+    data = Dict{String,Any}()
+    analysis = MetadataDict()
+    for recipe in project.collections
+        recipe.level === level || continue
+        group = recipe.members === nothing ? items :
+            filter(item -> item isa RegisteredDataItem && label(typeof(item)) === recipe.members, items)
+        isempty(group) && continue
+        outputs = item_data.(group)
+        if recipe.process !== nothing
+            outputs = recipe.process(outputs, metadata.(group))
+            outputs isa AbstractVector && length(outputs) == length(group) || error(
+                "collection process for level $level must return a vector with one value per member; " *
+                "got $(typeof(outputs)) for $(length(group)) members")
+            merge!(data, Dict(id(item) => output for (item, output) in zip(group, outputs)))
         end
-        output_data = recipe.process === nothing ? item_data.(group) :
-            recipe.process(item_data.(group), metadata.(group))
-        output_data isa AbstractVector || error(
-            "collection process for kind $(label(typeof(first(group)))) must return a vector; " *
-            "got $(typeof(output_data))",
-        )
-        outputs = AbstractDataItem[
-            _with_data(input::RegisteredDataItem, data)
-            for (input, data) in zip(group, output_data)
-        ]
-        length(outputs) == length(group) || error(
-            "collection process for kind $(label(typeof(first(group)))) must return one item per input; " *
-            "got $(length(outputs)) for $(length(group)) members",
-        )
-        input_ids = Set(id(item) for item in group)
-        for output in outputs
-            id(output) in input_ids || error(
-                "collection process for kind $(label(typeof(first(group)))) returned unknown item id " *
-                "'$(id(output))'",
-            )
-        end
-        if recipe.analyze !== nothing
-            analysis = metadata_dict(recipe.analyze(item_data.(outputs), metadata.(outputs)))
-            outputs = AbstractDataItem[_with_metadata(output, analysis) for output in outputs]
-        end
-        append!(rewritten, outputs)
+        recipe.analyze === nothing ||
+            merge!(analysis, metadata_dict(recipe.analyze(outputs, metadata.(group))))
     end
-    return rewritten
+    return typeof(collection_value)(collection_value.name, data, merge(metadata(collection_value), analysis))
 end
+
+"""A registered item gets its new data and the metadata of each collection above it."""
+process(::Project, member::RegisteredDataItem, collection_value::NamedCollection)::RegisteredDataItem =
+    _with_metadata(_with_data(member, get(collection_value.data, id(member), member.data)), metadata(collection_value))
 
 """
 The registered callbacks that run `stage`. Registering a name again replaces them, so an open
@@ -224,7 +209,7 @@ function stage_roots(project::Project, stage::DataBrowserAPI.PipelineStage, type
         # Labels are made again after processing.
         recipe === nothing || append!(roots, (recipe.process, recipe.analyze, recipe.label))
     else
-        append!(roots, getfield(recipe, name) for recipe in values(project.collections) for name in (:process, :analyze))
+        append!(roots, getfield(recipe, name) for recipe in project.collections for name in (:process, :analyze))
     end
     return roots
 end
@@ -240,22 +225,22 @@ function Base.which(project::Project, stage::DataBrowserAPI.PipelineStage, value
         recipe = _recipe(project, label(value))
         recipe === nothing && return nothing
         return recipe.process === nothing && recipe.analyze === nothing ? nothing : recipe.registered
-    elseif stage == A.COLLECTION_PROCESS
-        # TODO: a collection recipe belongs to the kind of its members, which the collection type
-        # does not say; with several, the browser shows none.
-        recipes = [recipe for recipe in values(project.collections)
-            if recipe.process !== nothing || recipe.analyze !== nothing]
-        length(recipes) == 1 && return only(recipes).registered
+    elseif value isa Type && value <: NamedCollection && isconcretetype(value)
+        index = findfirst(recipe -> recipe.level === label(value), project.collections)
+        index === nothing || return project.collections[index].registered
     end
     # Typed items and collections may have their own methods.
     return invoke(which, Tuple{AbstractProject,A.PipelineStage,Any}, project, stage, value)
 end
 
-"""A collection stage is defined when any kind registered it, or the collection type has a method."""
+"""
+A collection stage is defined when its level has registered callbacks, or the collection type has a
+method.
+"""
 has_stage(project::Project, collection_value::AbstractCollection, stage::DataBrowserAPI.PipelineStage)::Bool =
-    any(values(project.collections)) do recipe
-        recipe.process !== nothing || recipe.analyze !== nothing
-    end || has_stage(collection_value, stage)
+    collection_value isa NamedCollection &&
+        any(recipe -> recipe.level === label(typeof(collection_value)), project.collections) ||
+    has_stage(collection_value, stage)
 
 """Group item positions by kind, preserving first-seen kind order."""
 function _group_positions_by_kind(items::AbstractVector)::Vector{Vector{Int}}

@@ -409,7 +409,7 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
         if retain
             @timed_dbg store_processed!(cache, item_id, saved, deepcopy(payload))
         else
-            delete_processed!(cache, item_id; collection=0)
+            delete_processed!(cache, item_id; stage=ITEM_PROCESS)
             clear_cached_result_state!(cache, ITEM_PROCESS, item_id)
         end
         store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, computed)
@@ -430,89 +430,54 @@ end
 
 # Collections
 
-"""Every item below a collection, at any depth: its own items, then those of each collection below it."""
-function members(workspace::Workspace, collection::CollectionKey)::Vector{ItemKey}
-    catalog = workspace.catalog
-    @lock catalog.lock begin
-        found = Catalogs.items(catalog, collection)
-        for child in Catalogs.children(catalog, collection)
-            append!(found, members(workspace, child))
-        end
-        return found
-    end
-end
-
 """
-    versions(workspace, items; reader=nothing) -> Vector{AbstractDataItem}
+    versions(workspace, items; own=false) -> Vector{AbstractDataItem}
 
-The processed versions of `items`, each built from saved data with its label and its metadata.
-This is the only place that decides which version of an item a stage or a view receives.
-
-Each collection whose `process` changed an item keeps its own version of it. An item comes in the
-version of the outermost collection that has one and whose `process` result is fresh, or in its
-own processed data. Its metadata includes what the same collections changed in it. `reader` is the stage that receives the items, and limits what it may read:
-
-- `(item, ITEM_PROCESS)`: the item's own processed data.
-- `(collection, COLLECTION_PROCESS)`: the versions of the collections below `collection`.
-- `nothing`, for views: the versions of every collection.
+The processed values of `items`, each built from saved data with its label and its metadata. This
+is the only place that decides which value of an item a stage or a view receives: the result of its
+member `process` while that result is current, and otherwise the result of its own `process`. With
+`own`, always the result of its own `process`, which is what collection `process` and member
+`process` receive.
 
 The caller makes sure that item `process` is fresh for every item.
 """
-function versions(
-    workspace::Workspace, items::Vector{ItemKey}; reader::Union{Target,Nothing}=nothing,
-)::Vector{AbstractDataItem}
+function versions(workspace::Workspace, items::Vector{ItemKey}; own::Bool=false)::Vector{AbstractDataItem}
     catalog = workspace.catalog
     cache = workspace.cache.db
-    computed = @lock catalog.lock [haskey(workspace.computations, item) for item in items]
-    types, native = @lock catalog.lock (
+    computed, types, stages = @lock catalog.lock (
+        [haskey(workspace.computations, item) for item in items],
         [valuetype(catalog, item) for item in items],
-        [haskey(workspace.results, (item, ITEM_PROCESS)) || any(ancestors(workspace, item)) do holder
-            Catalogs.status(catalog, holder, COLLECTION_PROCESS).validity == Catalogs.FRESH &&
-                haskey(workspace.results, (holder, COLLECTION_PROCESS))
-        end for item in items])
+        [own || !member_current(catalog, item) ? ITEM_PROCESS : MEMBER_PROCESS for item in items])
+    native = @lock catalog.lock [haskey(workspace.results, (item, stage)) for (item, stage) in zip(items, stages)]
     graph = [!iscomputed && (hasnative || result_store(workspace, type) === nothing)
         for (iscomputed, hasnative, type) in zip(computed, native, types)]
     if any(computed) || any(graph)
         found = Vector{AbstractDataItem}(undef, length(items))
         legacy = .!computed .& .!graph
-        found[legacy] = versions(workspace, items[legacy]; reader)
+        found[legacy] = versions(workspace, items[legacy]; own)
         found[computed] = [computed_version(workspace, item) for item in items[computed]]
         for index in findall(graph)
             item = items[index]
             source = Catalogs.source(catalog, item)
             source === nothing || reported_source_item(workspace, source)
-            found[index] = evaluate(workspace, version_computation(workspace, item; reader))
+            found[index] = evaluate(workspace, version_computation(workspace, item; own))
         end
         return found
     end
-    own = reader !== nothing && first(reader) isa ItemKey
-    # For each item, the saved key of the collection whose version to read; 0 is the item's own.
-    known, chosen, given = @lock catalog.lock begin
-        known = [row(workspace, item) for item in items]
-        chosen, given = Int64[], MetadataDict[]
-        for (item, item_id) in zip(items, getproperty.(known, :id))
-            # The collections whose version and changes the reader may receive, from the top down.
-            holders = own ? CollectionKey[] : ancestors(workspace, item)
-            if !own && reader !== nothing
-                first_allowed = findfirst(==(first(reader)), holders) + (last(reader) == COLLECTION_PROCESS)
-                holders = holders[first_allowed:end]
-            end
-            version = Int64(0)
-            for holder in holders
-                Catalogs.status(catalog, holder, COLLECTION_PROCESS).validity == Catalogs.FRESH || continue
-                saved = get(workspace.collection_keys, holder, Int64(0))
-                saved != 0 && has_payload(cache, item_id; collection=saved) && (version = saved; break)
-            end
-            push!(chosen, version)
-            push!(given, metadata(workspace, item; above=holders))
-        end
-        known, chosen, given
-    end
+    known, given = @lock catalog.lock (
+        [row(workspace, item) for item in items],
+        [metadata(workspace, item; through=stage) for (item, stage) in zip(items, stages)])
     item_ids = String[getproperty.(known, :id)...]
-    payloads = read_payload(cache, item_ids; collections=chosen)
-    # A collection job that runs at the same time may have removed the version just chosen.
+    payloads = Vector{Any}(nothing, length(items))
+    for stage in (ITEM_PROCESS, MEMBER_PROCESS)
+        chosen = findall(==(stage), stages)
+        isempty(chosen) || (payloads[chosen] = read_payload(cache, item_ids[chosen]; stage))
+    end
+    # A member job that runs at the same time may have removed the result just chosen.
     for index in findall(isnothing, payloads)
-        chosen[index] == 0 || (payloads[index] = only(read_payload(cache, item_ids[index:index])))
+        stages[index] == MEMBER_PROCESS || continue
+        payloads[index] = only(read_payload(cache, item_ids[index:index]))
+        given[index] = metadata(workspace, items[index]; through=ITEM_PROCESS)
     end
     missing = findfirst(isnothing, payloads)
     missing === nothing || error("The processed data of item '$(item_ids[missing])' is missing")
@@ -522,63 +487,73 @@ function versions(
 end
 
 """
-Run collection `process` over every item below one collection, each in the version the collections
-below this one gave it. The collection keeps its own version of each item it changed: an item
-counts as changed when its data is not the same object as before. It also keeps the metadata values
-it changed, and gives the item the label of the output when that differs from the label of the input.
+Run collection `process` with every item below one collection, each as its own `process` returned
+it, and keep the metadata and the data of the collection value it returns.
 """
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PROCESS})::Nothing
     catalog = workspace.catalog
+    # TODO: pass each member's latest value and run again until the values converge
+    # (docs/plans/processing.md). Members are passed as their own `process` returned them.
+    inputs = versions(workspace, Catalogs.nested_items(catalog, job.key); own=true)
+    given = last(values(workspace, job.key))
+    output = execute(workspace, job.key, COLLECTION_PROCESS, workspace.project, given, inputs)
+    output isa typeof(given) || error(
+        "process(::$(typeof(workspace.project)), ::$(typeof(given)), members) must return a " *
+        "$(typeof(given)); got $(typeof(output))")
+    before = metadata_dict(metadata(given))
+    computed = MetadataDict(
+        name => value for (name, value) in metadata_dict(metadata(output))
+        if !haskey(before, name) || !isequal(before[name], value))
+    @lock catalog.lock begin
+        finish!(catalog, job; metadata=computed) || return nothing
+        # TODO: data that the cache cannot store is lost on reopening, and member `process`
+        # methods that run again then receive the collection without it.
+        payload = item_data(output)
+        DataBrowserCache.can_store_payload(payload) || (payload = nothing)
+        store_collection_process_result!(
+            workspace.cache.db, workspace.collection_keys[job.key], computed, deepcopy(payload))
+    end
+    return nothing
+end
+
+"""
+Run the member `process` methods of the collections above one item, from the collection that holds
+it up to the outermost one, and save the payload, the label and the metadata of the result.
+"""
+function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::Nothing
+    catalog = workspace.catalog
     cache = workspace.cache.db
-    saved = workspace.collection_keys[job.key]
-    items = members(workspace, job.key)
-    inputs = versions(workspace, items; reader=(job.key, COLLECTION_PROCESS))
-    # The metadata each input came with: what the collections below this one changed is included.
-    given = map(items) do item
-        holders = ancestors(workspace, item)
-        metadata(workspace, item; above=holders[findfirst(==(job.key), holders)+1:end])
-    end
-    outputs = execute(workspace, job.key, COLLECTION_PROCESS, workspace.project, last(values(workspace, job.key)), inputs)
-    length(outputs) == length(inputs) || error(
-        "Collection process for '$(label(catalog, job.key))' returned $(length(outputs)) items " *
-        "for $(length(inputs)); it must return one output for each input, in order",
-    )
-    retain = Bool[keeps_result(workspace, output) && typeof(output) == valuetype(workspace, item) &&
-        DataBrowserCache.can_store_payload(item_data(output)) for (item, output) in zip(items, outputs)]
-    restorable = all(retain)
-    # Outputs match inputs by position, because an item type need not hold its id.
+    item = job.key
+    known, given, saved = @lock catalog.lock (
+        row(workspace, item), metadata(workspace, item; through=ITEM_PROCESS), cache_key(workspace, item))
+    output = evaluate(workspace, computation(workspace, item, MEMBER_PROCESS))
+    output isa AbstractDataItem || error(
+        "A member process method for $(known.type) must return an AbstractDataItem; got $(typeof(output))")
+    payload = item_data(output)
+    retain = keeps_result(workspace, output) && typeof(output) == known.type &&
+        DataBrowserCache.can_store_payload(payload)
+    delivered = merge(given, metadata_dict(metadata(output)))
+    computed = MetadataDict(
+        name => value for (name, value) in delivered
+        if !haskey(given, name) || !isequal(given[name], value))
+    dropped = String[]
     if iscurrent(catalog, job)
-        for (item, input, output, keep) in zip(items, inputs, outputs, retain)
-            if !keep || item_data(output) === item_data(input)
-                delete_processed!(cache, id(catalog, item); collection=saved)
-            else
-                store_processed!(
-                    cache, id(catalog, item), cache_key(workspace, item), deepcopy(item_data(output));
-                    collection=saved)
-            end
+        if retain
+            @timed_dbg store_processed!(cache, known.id, saved, deepcopy(payload); stage=MEMBER_PROCESS)
+        else
+            delete_processed!(cache, known.id; stage=MEMBER_PROCESS)
+            clear_cached_result_state!(cache, MEMBER_PROCESS, known.id)
         end
-    end
-    changes = Dict{ItemKey,MetadataDict}()
-    for (item, before, output) in zip(items, given, outputs)
-        changed = MetadataDict(
-            name => value for (name, value) in metadata_dict(metadata(output))
-            if !haskey(before, name) || !isequal(before[name], value))
-        isempty(changed) || (changes[item] = changed)
+        store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, computed)
+        dropped = store_item_metadata!(cache, known.id, delivered)
     end
     @lock catalog.lock begin
-        finish!(catalog, job) || return nothing
-        workspace.changes[job.key] = changes
-        store_collection_process_result!(cache, saved, Dict{String,MetadataDict}(
-            id(catalog, item) => changed for (item, changed) in changes))
-        restorable || clear_cached_result_state!(cache, COLLECTION_PROCESS, saved)
-        dropped = String[]
-        for (item, input, output) in zip(items, inputs, outputs)
-            new_label = label(workspace.project, output)
-            new_label == label(workspace.project, input) || relabel!(workspace, item, new_label)
-            haskey(changes, item) && append!(dropped,
-                store_item_metadata!(cache, id(catalog, item), metadata(workspace, item)))
+        if finish!(catalog, job; metadata=computed)
+            relabel!(workspace, item, label(workspace.project, output))
+            conflicts!(workspace, item, MEMBER_PROCESS, dropped)
+        else
+            clear_cached_result_state!(cache, MEMBER_PROCESS, known.id)
         end
-        conflicts!(workspace, job.key, COLLECTION_PROCESS, dropped)
     end
     return nothing
 end

@@ -25,13 +25,16 @@ struct ItemRecipe{Detect,Read,Expand,Process,Analyze,Label,Collection,Id}
 end
 
 """
-One registered collection recipe for a kind.
+The callbacks that run in every collection of one level, over its members of one item kind, or of
+every kind when `members` is `nothing`.
 
-`process(data, metadata)` rewrites each member's data (one output per input).
-`analyze(data, metadata)` folds the post-process members into a `Dict` that every member gets.
+`process(data, metadata)` returns new data for each member, one output per input.
+`analyze(data, metadata)` folds the processed members into a `Dict` that the collection and every
+member get.
 """
 struct CollectionRecipe{Process,Analyze}
-    kind::Symbol
+    level::Symbol
+    members::Union{Nothing,Symbol}
     process::Process
     analyze::Analyze
     registered::LineNumberNode
@@ -52,5 +55,5 @@ mutable struct Project <: AbstractProject
     name::String
     description::String
     recipes::Vector{ItemRecipe}
-    collections::Dict{Symbol,CollectionRecipe}
+    collections::Vector{CollectionRecipe}
 end

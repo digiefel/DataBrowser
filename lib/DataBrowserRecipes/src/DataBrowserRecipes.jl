@@ -1,5 +1,5 @@
 """
-The registration dialect: `define_project`, `register_item!`, `register_collection_analysis!`.
+The registration dialect: `define_project`, `register_item!`, `register_collection!`.
 
 This is a convenience layer written over ordinary `(data, metadata)` values, and nothing more. It
 holds no privileged position in the engine: its recipes become methods of the same typed stage
@@ -48,7 +48,7 @@ include("premade.jl")
 
 export Project,
     define_project,
-    register_collection_analysis!,
+    register_collection!,
     register_csv!,
     register_item!
 

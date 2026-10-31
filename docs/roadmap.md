@@ -83,7 +83,7 @@ workspace internals.
 - [x] Extract the registration dialect into `DataBrowserRecipes`, a package built purely on the
   type API and re-exported by the `DataBrowser` umbrella. Move the recipe-holding `Project` there,
   declare `AbstractProject` in `DataBrowserAPI`, make `register_item!` and
-  `register_collection_analysis!` adapter methods over the shared stage contract, and remove every
+  `register_collection!` adapter methods over the shared stage contract, and remove every
   registration reference from Core, Cache, Sources, and the GUI packages. Ship `register_csv!` as
   the first premade recipe.
 - [x] Clean-up and rename/file organization pass of DataBrowserAPI. `interface.jl` is gone: its
@@ -213,10 +213,17 @@ workloads, completed disk writes, cache reads and process memory measurements.
   DataBrowserRecipes keeps its `analyze` callbacks and runs them inside its `process` methods.
 - [ ] Remove the registration adapter's reliance on the internal `adopt` hook for labels and
   collections; it must consume the same public contract as any other extension.
-- [x] Preserve member metadata and label changes returned by collection `process`, including
-  changes with unchanged payloads. Cover
-  cumulative device history: successive measurements need different wakeup/fatigue counts even
-  when their waveform payloads are unchanged.
+- [x] A collection `process` returns a later version of the collection, and a member
+  `process(project, member, collection)` returns a later version of each member, with its metadata
+  and label, also when its payload is unchanged. This covers cumulative device history: successive
+  measurements need different wakeup/fatigue counts even when their waveform payloads are unchanged.
+- [x] Recipes: `register_collection!(project, level; members, process, analyze)` registers the
+  callbacks of one collection level, optionally for the items of one registration. The new data of
+  each member is the data of the collection, and a member `process` takes its own part.
+- [ ] Run collection and member `process` again until the members stop changing, with an error
+  after a maximum number of rounds. Today each runs once.
+- [ ] Items carry all their metadata: remove the collection metadata layer that items inherit,
+  and `native_value`/`adopt`, so that `reconstruct` gives back the stored value.
 - [ ] Sort every exported name into the project-author or extension-author tier and stop exporting
   the rest: `items_for_file`, `SourceFile`, the concrete `Project`, `gui_timings`,
   `reset_timings!`, `plot_kinds`, `CollectionRecipe`, `ItemRecipe`, `NoMatch`,
@@ -234,8 +241,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] Replace the single-reader `status_dirty` flag with `generation(ws)`, a counter every watcher
   can compare, and let `workspace_status(ws)` recompute only when it moved.
 - [ ] Add the remaining workspace accessors: `selection(ws)` and `errors(ws)`.
-- [ ] Recipes: rename `register_collection_analysis!` to `register_collection!` (it registers
-  `process` too); look the recipe up once per stage chain instead of three linear scans.
+- [ ] Recipes: look the recipe up once per stage chain instead of three linear scans.
 - [ ] Strengthen internal module boundaries and import hygiene across the package family.
 - [ ] Run every example entirely through the documented public APIs and remove any remaining public
   callback dependency on cache, index, scheduler, or browser values.
