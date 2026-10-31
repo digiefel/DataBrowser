@@ -327,8 +327,8 @@ function _refresh_window!(state::BrowserState, window::Window)::Nothing
     return nothing
 end
 
-# Data evaluation belongs to the preparation task. A view holds node references; creating an
-# indexed computed item is a separate workspace operation, never part of following a window.
+# The value a window shows: its input passed through its function, evaluated on the preparation
+# task. Also return why computations failed, one line each; the value leaves out their items.
 function _resolve_window_input(workspace, given, transform)
     failures = String[]
     function resolve(values)
@@ -337,6 +337,7 @@ function _resolve_window_input(workspace, given, transform)
             try
                 append!(items, Workspace.materialize_items(workspace, [value]))
             catch err
+                # The workspace reports a failed computation as an `ErrorException` with its message.
                 err isa ErrorException || rethrow()
                 push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
             end

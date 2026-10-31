@@ -1,6 +1,6 @@
 import CImGui.CSyntax: @c
 
-"""Toggle one boolean Dear ImGui runtime option and return its new value."""
+"""Draw a menu entry that turns one option of ImGui on or off, and return the value of the option."""
 function _debug_io_option!(label::String, option::Ptr{Bool})::Bool
     value = unsafe_load(option)
     if ig.MenuItem(label, C_NULL, value)
@@ -10,16 +10,14 @@ function _debug_io_option!(label::String, option::Ptr{Bool})::Bool
     return value
 end
 
-"""Create the browser's ImPlot context the first time an ImPlot tool is used."""
+"""Create the ImPlot context of the browser, if it has none yet."""
 function _init_implot_context!(state::BrowserState)::Nothing
     state.implot_context == C_NULL || return nothing
-    context = ig.lib.ImPlot_CreateContext()
-    context == C_NULL && error("ImPlot failed to create its context")
-    state.implot_context = context
+    state.implot_context = ig.lib.ImPlot_CreateContext()
     return nothing
 end
 
-"""Destroy the browser-owned ImPlot context, if it was created."""
+"""Destroy the ImPlot context of the browser, if it has one."""
 function _shutdown_implot_context!(state::BrowserState)::Nothing
     state.implot_context == C_NULL && return nothing
     ig.lib.ImPlot_DestroyContext(state.implot_context)
@@ -27,7 +25,7 @@ function _shutdown_implot_context!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Render Dear ImGui's runtime diagnostic switches inside the open Debug menu."""
+"""Draw the debugging options of ImGui inside the open Debug menu."""
 function _render_debug_options_menu!()::Nothing
     ig.BeginMenu("Debug Options") || return nothing
     io = ig.GetIO()
@@ -56,7 +54,7 @@ function _render_debug_options_menu!()::Nothing
     return nothing
 end
 
-"""Render the built-in Dear ImGui and ImPlot development tools inside the open Debug menu."""
+"""Draw the entries that open the tools of ImGui and ImPlot inside the open Debug menu."""
 function render_debug_tools_menu!(state::BrowserState)::Nothing
     if ig.MenuItem("Metrics / Debugger", C_NULL, state.show_imgui_metrics)
         state.show_imgui_metrics = !state.show_imgui_metrics
@@ -119,7 +117,7 @@ function render_debug_tools_menu!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Render Dear ImGui's style and font tools in one closable window."""
+"""Draw the style and font editor of ImGui in its own window, while it is open."""
 function _render_imgui_style_editor!(state::BrowserState)::Nothing
     state.show_imgui_style_editor || return nothing
     visible = @c ig.Begin("Dear ImGui Style / Font Editor", &state.show_imgui_style_editor)
@@ -133,7 +131,7 @@ function _render_imgui_style_editor!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Render Dear ImGui's interaction guide in a closable window."""
+"""Draw the user guide of ImGui in its own window, while it is open."""
 function _render_imgui_user_guide!(state::BrowserState)::Nothing
     state.show_imgui_user_guide || return nothing
     visible = @c ig.Begin("Dear ImGui User Guide", &state.show_imgui_user_guide)
@@ -142,7 +140,7 @@ function _render_imgui_user_guide!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Render ImPlot's configuration and style tools in one closable window."""
+"""Draw the style editor of ImPlot in its own window, while it is open."""
 function _render_implot_style_editor!(state::BrowserState)::Nothing
     state.show_implot_style_editor || return nothing
     visible = @c ig.Begin("ImPlot Style Editor", &state.show_implot_style_editor)
@@ -157,7 +155,7 @@ function _render_implot_style_editor!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Render ImPlot's interaction guide in a closable window."""
+"""Draw the user guide of ImPlot in its own window, while it is open."""
 function _render_implot_user_guide!(state::BrowserState)::Nothing
     state.show_implot_user_guide || return nothing
     visible = @c ig.Begin("ImPlot User Guide", &state.show_implot_user_guide)
@@ -166,7 +164,7 @@ function _render_implot_user_guide!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Render every open development tool and the optional Dear ImGui demo."""
+"""Draw each tool of ImGui and ImPlot that the Debug menu opened."""
 function render_debug_tools!(state::BrowserState)::Nothing
     state.show_imgui_metrics && @c ig.ShowMetricsWindow(&state.show_imgui_metrics)
     state.show_imgui_debug_log && @c ig.ShowDebugLogWindow(&state.show_imgui_debug_log)
