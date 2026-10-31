@@ -534,10 +534,13 @@ the table as a first-class view.
   after "from", to choose the selection or another window. The table passes on the selected rows
   as items: each item that has some, with only those rows and the columns it shows. Another window
   shows them as it shows any items, and its function receives them one by one.
-- [x] "Export" in the header of every window calls `export!(visualizer, ctx)`. The default saves a
-  picture of what the visualizer draws as PNG, without the title and header of the window.
+- [x] "Export" in the header of every window offers the MIME types the visualizer can `show`, and
+  calls `export!(visualizer, path)`. Without one, it saves a picture of what the visualizer draws
+  as PNG, without the title and header of the window.
 - [x] The table exports its rows as CSV, with the columns it shows.
-- [x] A figure exports as PNG, PDF or SVG through CairoMakie when the session has loaded it.
+- [x] A figure exports in the MIME types that Makie's `showable` allows with the current backend:
+  PNG and JPEG with GLMakie; PNG and EPS with CairoMakie, and also PDF and SVG after
+  `CairoMakie.activate!(type="svg")`.
 - [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
   another window. Names for windows, so that the input menu can tell two tables apart.
 - [x] Save the windows with the view in `databrowser.toml`: their visualizer, input, transform
@@ -752,7 +755,8 @@ opens the workspace. Reopening means rerunning the same entry code.
   code or in the file, never in both, so rerunning entry code never undoes browser changes.
 - [ ] Load or create the config from Julia and Python entry code.
 - [ ] Edit project settings through the API and GUI and write them back predictably.
-- [ ] Place `tags.txt` and the notes file beside `dbproject.toml`.
+- [ ] Place `tags.txt` and the notes file beside `dbproject.toml`: one set per project, not one per
+  data folder. The directory scan then no longer skips their names.
 - [ ] Reopen the last workspace file when the same entry code reopens the project.
 - [ ] Keep cache reuse and source changes correct across repeated openings.
 
