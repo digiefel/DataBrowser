@@ -83,7 +83,7 @@ workspace internals.
 - [x] Extract the registration dialect into `DataBrowserRecipes`, a package built purely on the
   type API and re-exported by the `DataBrowser` umbrella. Move the recipe-holding `Project` there,
   declare `AbstractProject` in `DataBrowserAPI`, make `register_item!` and
-  `register_collection_analysis!` adapter methods over the shared stage contract, and remove every
+  `register_collection!` adapter methods over the shared stage contract, and remove every
   registration reference from Core, Cache, Sources, and the GUI packages. Ship `register_csv!` as
   the first premade recipe.
 - [x] Clean-up and rename/file organization pass of DataBrowserAPI. `interface.jl` is gone: its
@@ -217,6 +217,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
   `process(project, member, collection)` returns a later version of each member, with its metadata
   and label, also when its payload is unchanged. This covers cumulative device history: successive
   measurements need different wakeup/fatigue counts even when their waveform payloads are unchanged.
+- [x] Recipes: `register_collection!(project, level; members, process, analyze)` registers the
+  callbacks of one collection level, optionally for the items of one registration. The new data of
+  each member is the data of the collection, and a member `process` takes its own part.
 - [ ] Run collection and member `process` again until the members stop changing, with an error
   after a maximum number of rounds. Today each runs once.
 - [ ] Items carry all their metadata: remove the collection metadata layer that items inherit,

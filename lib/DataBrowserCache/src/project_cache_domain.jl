@@ -961,7 +961,9 @@ function store_processed!(
 end
 
 # The processed data of an item for one stage: 0 for its own `process`, 1 for its member `process`.
-payload_key(key::Int64, stage::PipelineStage)::PayloadKey = (key, Int64(stage == MEMBER_PROCESS))
+# Items and collections have separate keys; the second part tells them apart.
+payload_key(key::Int64, stage::PipelineStage)::PayloadKey =
+    (key, stage == COLLECTION_PROCESS ? Int64(2) : Int64(stage == MEMBER_PROCESS))
 
 """Delete the processed data that one stage stored for an item."""
 function delete_processed!(cache::CacheDB, id::AbstractString; stage::PipelineStage)::Nothing
@@ -1060,12 +1062,15 @@ function code_revisions(cache::CacheDB)::Dict{Tuple{PipelineStage,Type},String}
 end
 
 """
-Record that the `process` of one collection finished, with the metadata of the value it returned.
+Record that the `process` of one collection finished, with the metadata and the data of the value
+it returned. Data that is `nothing` is not stored.
 """
 function store_collection_process_result!(
-    cache::CacheDB, collection_key::Integer, metadata::MetadataDict,
+    cache::CacheDB, collection_key::Integer, metadata::MetadataDict, payload,
 )::Nothing
     entity = Int64(collection_key)
+    payload === nothing ? delete!(cache.payload, payload_key(entity, COLLECTION_PROCESS)) :
+        append!(cache.payload, payload_key(entity, COLLECTION_PROCESS), payload)
     edit!(cache.collection_process, entity, CollectionProcessRow(entity, _serialize_hex(metadata)))
     state = CachedKeyedResultState(
         Int8(COLLECTION_PROCESS), entity, Int8(RESULT_READY), 0, nothing)
@@ -1132,6 +1137,7 @@ function delete_collection_metadata!(
     for collection_key in unique(collection_keys)
         delete!(cache.keyed_result_states, (Int8(COLLECTION_PROCESS), collection_key))
         delete!(cache.collection_process, collection_key)
+        delete!(cache.payload, payload_key(collection_key, COLLECTION_PROCESS))
         _stage_ledger_result!(
             cache.stage_ledger, (Int8(COLLECTION_PROCESS), collection_key), nothing)
     end

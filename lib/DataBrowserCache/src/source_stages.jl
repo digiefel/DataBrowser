@@ -34,10 +34,18 @@ function store_source_read!(cache::CacheDB, source_key::Int64, value; retain::Bo
     return nothing
 end
 
-"""Read a source-stage payload by private source key; `Some(value)` is a hit, `nothing` a miss."""
-function read_payload(cache::CacheDB, source_key::Integer; stage::PipelineStage=SOURCE_READ)
+"""
+Read the payload of a source item at `SOURCE_READ`, or of a collection at `COLLECTION_PROCESS`, by
+its private key; `Some(value)` is a hit, `nothing` a miss.
+"""
+function read_payload(cache::CacheDB, key::Integer; stage::PipelineStage=SOURCE_READ)
+    if stage === COLLECTION_PROCESS
+        stored = payload_key(Int64(key), COLLECTION_PROCESS)
+        data = get(read(cache.payload, [stored]), stored, nothing)
+        return data === nothing ? nothing : Some(data)
+    end
     stage === SOURCE_READ || throw(ArgumentError("Source payloads are available at SOURCE_READ"))
-    return read_hit(cache.source_reads, Int64(source_key))
+    return read_hit(cache.source_reads, Int64(key))
 end
 
 """Whether the memory cache retains a source read result, without loading it."""

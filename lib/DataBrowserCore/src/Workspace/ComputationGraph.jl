@@ -39,7 +39,7 @@ function stage_computation(workspace::Workspace, key::ItemKey, stage::PipelineSt
         value = version_computation(workspace, key; own=true)
         for holder in reverse(ancestors(workspace, key))
             workspace.catalog.collections.member_process[holder.index] || continue
-            value = Computation(process, workspace.project, value, processed_collection_computation(workspace, holder))
+            value = Computation(process, workspace.project, value, computation(workspace, holder, COLLECTION_PROCESS))
         end
         return value
     end
@@ -62,11 +62,6 @@ end
 collection_computation(workspace, key) = Computation(native_collection,
     valuetype(workspace.catalog, key), id(workspace.catalog, key),
     metadata(workspace.catalog, key, :collection))
-
-# The value that the `process` of a collection returned, rebuilt from its metadata.
-processed_collection_computation(workspace, key) = Computation(native_collection,
-    valuetype(workspace.catalog, key), id(workspace.catalog, key),
-    merge(metadata(workspace.catalog, key, :collection), metadata(workspace.catalog, key, COLLECTION_PROCESS)))
 
 # Reconstruction supplies the collection argument; it is workspace input preparation, like
 # `native_value` for an item, rather than a project operation of its own.
@@ -192,6 +187,12 @@ function computation_result(workspace::Workspace, value::Computation)
         restored = reconstruct(valuetype(workspace, key), id(workspace, key), deepcopy(something(payload)),
             metadata(workspace, key; through=stage))
         return restored === nothing ? nothing : Some(restored)
+    elseif key isa CollectionKey && stage == COLLECTION_PROCESS
+        # The value that the `process` of a collection returned, rebuilt from its data and metadata.
+        payload = read_payload(workspace.cache.db, workspace.collection_keys[key]; stage)
+        given = merge(metadata(catalog, key, :collection), metadata(catalog, key, COLLECTION_PROCESS))
+        return Some(reconstruct(valuetype(catalog, key), id(catalog, key),
+            payload === nothing ? nothing : deepcopy(something(payload)), given))
     end
     return nothing
 end

@@ -267,8 +267,8 @@ reconstruct(::Type{T}, id::AbstractString, data, metadata::Dict) where {T} =
 """
     reconstruct(::Type{T}, id, metadata::Dict) -> T
 
-Rebuild one collection value from its stored id and its own metadata. Collections hold no payload,
-so those two are everything the row keeps about the value.
+Rebuild one collection value from its stored id and its own metadata. These two are everything the
+row keeps about a collection before its `process`.
 
 Unlike the item method there is no default and no way to opt out: an item that cannot be rebuilt is
 recreated by rerunning `read` and `expand`, but a collection has no such path, so a project that
@@ -277,3 +277,12 @@ items are first published, not only after reopening, so a missing method fails i
 """
 reconstruct(::Type{T}, id::AbstractString, metadata::Dict) where {T<:AbstractCollection} =
     error("Collection type $T must implement reconstruct(::Type{$T}, id, metadata)")
+
+"""
+    reconstruct(::Type{T}, id, data, metadata::Dict) -> T
+
+Rebuild the collection value that `process` returned, from its id, its `item_data` and its metadata.
+The default ignores `data` and calls `reconstruct(T, id, metadata)`.
+"""
+reconstruct(::Type{T}, id::AbstractString, data, metadata::Dict) where {T<:AbstractCollection} =
+    reconstruct(T, id, metadata)

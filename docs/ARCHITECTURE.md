@@ -121,7 +121,7 @@ flowchart LR
     processed[("processed payload<br/>cache store")]
     item_metadata[("item metadata<br/>cache store")]
     collection_process["collection process"]
-    collection_payload[("collection metadata<br/>cache store")]
+    collection_payload[("collection data and metadata<br/>cache store")]
     member_process["member process"]
     member_payload[("member payload<br/>cache store")]
     views["views and inspectors"]
@@ -270,7 +270,8 @@ A collection is one node of the collection tree, identified by its parent and by
 of its value. An item goes where `collection(item)` says, or where `collection(source_item)` says
 when that is empty. A collection contains every item below it, at any depth. Collection
 `process(project, collection, members)` receives each of them as its own `process` returned it,
-and returns a later version of the collection; the cache keeps the metadata of that version. Member
+and returns a later version of the collection; the cache keeps the metadata and the data
+(`item_data`) of that version. Member
 `process(project, member, collection)` then returns a later version of each item, once for each
 collection above it that defines one, from the innermost collection to the outermost; each call
 receives the version of the previous one. The cache keeps the last version next to the item's own

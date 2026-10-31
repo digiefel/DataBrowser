@@ -22,7 +22,7 @@ function _precompile_project()
         end,
         analyze=(data, metadata) -> Dict{Symbol,Any}(:rows => nrow(data)),
     )
-    register_collection_analysis!(project, :iv;
+    register_collection!(project, :file;
         analyze=(data, metadata) -> Dict{Symbol,Any}(:items => length(data)),
     )
     return project

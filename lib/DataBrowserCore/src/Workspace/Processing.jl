@@ -488,7 +488,7 @@ end
 
 """
 Run collection `process` with every item below one collection, each as its own `process` returned
-it, and keep the metadata of the collection value it returns.
+it, and keep the metadata and the data of the collection value it returns.
 """
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PROCESS})::Nothing
     catalog = workspace.catalog
@@ -506,7 +506,12 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
         if !haskey(before, name) || !isequal(before[name], value))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=computed) || return nothing
-        store_collection_process_result!(workspace.cache.db, workspace.collection_keys[job.key], computed)
+        # TODO: data that the cache cannot store is lost on reopening, and member `process`
+        # methods that run again then receive the collection without it.
+        payload = item_data(output)
+        DataBrowserCache.can_store_payload(payload) || (payload = nothing)
+        store_collection_process_result!(
+            workspace.cache.db, workspace.collection_keys[job.key], computed, deepcopy(payload))
     end
     return nothing
 end
