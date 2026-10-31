@@ -16,7 +16,7 @@ using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure,
 const GLMakieExt = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt)
 using .GLMakieExt: DARK, FigureView
 import .GLMakieExt: theme_button
-import .GLMakieExt: build!, export_name
+import .GLMakieExt: build!
 
 # Icons of the Lucide font that DataBrowserGUI loads with the interface font.
 const ICON_EYE = "\ue0ba"

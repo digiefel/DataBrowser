@@ -3,9 +3,8 @@ import CImGui.CSyntax: @c
 
 import CSV
 using Printf: @sprintf
-using NativeFileDialog: save_file
 
-import DataBrowserAPI: draw!, draw_header!, export!, label, output, prepare!
+import DataBrowserAPI: draw!, draw_header!, label, output, prepare!
 using DataBrowserAPI: AbstractVisualizer
 using DataBrowserCore: Selection, Workspace
 using ..DataBrowserGUI: ItemTable, TableSelection, _zoomable, merge_item_tables, value_table, zoom_value
@@ -252,15 +251,13 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
 end
 
 # "Export" saves every row of the table, with the columns it shows, as CSV.
-function export!(view::TableView, ctx)::Nothing
-    table = view.table
-    table === nothing && error("the window shows no table")
-    path = save_file("$(label(view)).csv"; filterlist="csv")
-    isempty(path) && return nothing
-    isempty(splitext(path)[2]) && (path *= ".csv")
+Base.showable(::MIME"text/csv", view::TableView) = view.table !== nothing
+
+function Base.show(io::IO, ::MIME"text/csv", view::TableView)
+    table = view.table::ItemTable
     columns = (Symbol(table.columns[column]) => [table.getvalue(row, column) for row in 1:table.rows]
                for column in _shown_columns(view))
-    CSV.write(path, (; columns...))
+    CSV.write(io, (; columns...))
     return nothing
 end
 

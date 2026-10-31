@@ -23,8 +23,9 @@ It may also have:
 - a method `settings(visualizer::V)`, the settings the user may change;
 - a method `initial_size(visualizer::V)`, the default width and height of a new window;
 - a method `draw_header!(visualizer::V, ctx)`, for buttons in the header of the window;
-- a method `export!(visualizer::V, ctx)`, for what "Export" in the header of the window does. The
-  default saves a picture of what `draw!` draws;
+- a method `show(io, mime, visualizer::V)` for each MIME type that the Export button in the
+  header of the window saves, such as `MIME"application/pdf"`, and `showable(mime, visualizer::V)`
+  when those types depend on the state of the visualizer. See [`export!`](@ref);
 - a method `output(visualizer::V)`, the value the window passes on to other windows;
 - a method `Base.close(visualizer::V)`, to release what the visualizer holds outside Julia's
   memory, such as a figure on the graphics card. The browser calls it when the window closes or
@@ -151,20 +152,46 @@ one row.
 """
 draw_header!(::AbstractVisualizer, ctx) = nothing
 
+# The MIME type of each file extension that `export!` saves, in the order the Export button
+# offers them.
+# TODO: let a visualizer that saves another type of file add its extension.
+const MIME_TYPES = [
+    ".png" => MIME("image/png"),
+    ".pdf" => MIME("application/pdf"),
+    ".svg" => MIME("image/svg+xml"),
+    ".eps" => MIME("application/postscript"),
+    ".jpg" => MIME("image/jpeg"),
+    ".csv" => MIME("text/csv"),
+]
+
 """
-    export!(visualizer, ctx)
+    export!(visualizer, path; options...)
 
-Save what the window of `visualizer` shows. The browser calls `export!` when the user clicks
-"Export", which every window has in its header.
+Save what `visualizer` shows to the file at `path`, in the MIME type of its extension: `.png`,
+`.pdf`, `.svg`, `.eps`, `.jpg` or `.csv`. The method `show(io, mime, visualizer; options...)` of
+the visualizer writes the file. As with Makie's `save`, the options reach that method:
 
-The default asks for a file and saves there, as PNG, a picture of what [`draw!`](@ref) draws,
-without the title and the header of the window. A visualizer that can
-save its value better has its own method: a table saves CSV, a plot saves PDF or SVG. Most
-methods ask for a file, but `export!` may do anything that saves the value.
+```julia
+export!(visualizer, "iv.pdf")
+export!(visualizer, "iv.pdf"; backend=CairoMakie)
+```
 
-`export!` may throw. The window then shows the error above its value.
+The Export button in the header of a window offers the MIME types for which
+`showable(mime, visualizer)` holds, and calls `export!` with the file the user chooses. Without
+such a type, it saves a picture of what [`draw!`](@ref) draws as PNG, without the title and the
+header of the window.
 """
-function export! end
+function export!(visualizer::AbstractVisualizer, path::AbstractString; options...)::Nothing
+    extension = lowercase(splitext(path)[2])
+    index = findfirst(type -> first(type) == extension, MIME_TYPES)
+    index === nothing && error("Export saves $(join(first.(MIME_TYPES), ", ")) files, not \"$extension\"")
+    mime = last(MIME_TYPES[index])
+    # Write the file only once `show` has finished, so that an error leaves no partial file.
+    buffer = IOBuffer()
+    show(buffer, mime, visualizer; options...)
+    write(path, take!(buffer))
+    return nothing
+end
 
 """
     draw!(visualizer, ctx)

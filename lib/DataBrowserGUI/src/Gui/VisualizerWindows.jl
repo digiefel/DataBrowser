@@ -1,5 +1,6 @@
 import CImGui as ig
 import CImGui.CSyntax: @c
+using NativeFileDialog: save_file
 
 using DataBrowserAPI: Setting, draw_header!, export!, id, initial_size, label, settings
 import DataBrowserCore.Workspace
@@ -143,20 +144,29 @@ end
 """
 Draw "Export", which every window has, and save what the window shows when the user clicks it.
 """
-function _render_export_button!(window::Window, ctx::WindowContext)::Nothing
+function _render_export_button!(state::BrowserState, window::Window)::Nothing
     clicked = ig.Button("Export")
     ig.SetItemTooltip("Save what the window shows")
     try
         if clicked
-            # A grid shows several cells, so it saves a picture of all of them, as the default of
-            # `export!` does.
-            if window.arrangement == "grid"
-                invoke(export!, Tuple{DataBrowserAPI.AbstractVisualizer,Any}, window.visualizer, ctx)
-            else
-                export!(window.visualizer, ctx)
+            visualizer = window.visualizer
+            # The file types the visualizer saves. Without one, and for a grid of several cells,
+            # the browser saves a picture of the window.
+            extensions = [extension[2:end] for (extension, mime) in DataBrowserAPI.MIME_TYPES
+                          if window.arrangement != "grid" && showable(mime, visualizer)]
+            picture = isempty(extensions)
+            picture && push!(extensions, "png")
+            path = save_file("$(title(state, window)).$(first(extensions))"; filterlist=join(extensions, ","))
+            if !isempty(path)
+                isempty(splitext(path)[2]) && (path *= ".$(first(extensions))")
+                if picture
+                    WINDOW_PICTURE[] = WindowPicture(window.id, path, 0, 0, 0, 0, UInt8[])
+                else
+                    export!(visualizer, path)
+                end
             end
         end
-        # The picture of the window, when the default of `export!` asked for one in the last frame.
+        # The picture of the window, when "Export" asked for one in the last frame.
         save_window_picture!(window.id)
         clicked && (window.export_error = "")
     catch err
@@ -200,7 +210,7 @@ function render_windows!(state::BrowserState)::Nothing
                 _render_arrangement!(state, window)
                 _render_window_settings!(window)
                 ig.SameLine()
-                _render_export_button!(window, ctx)
+                _render_export_button!(state, window)
                 # A group is one item of the row, also when the visualizer draws no button.
                 ig.SameLine()
                 ig.BeginGroup()

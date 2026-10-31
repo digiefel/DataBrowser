@@ -40,11 +40,6 @@ function settings(view::PlotView)
     )
 end
 
-function export_name(view::PlotView)::String
-    ids = view.selection.id
-    return length(ids) == 1 ? "$(only(ids))-$(view.plot)" : "$(length(ids))-items-$(view.plot)"
-end
-
 function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
     view.selection = selection
     kinds = unique(label(typeof(item)) for item in items(selection))

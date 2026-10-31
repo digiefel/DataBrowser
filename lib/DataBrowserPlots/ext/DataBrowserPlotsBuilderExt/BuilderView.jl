@@ -130,8 +130,6 @@ DataBrowserAPI.label(::BuilderView) = "Plot builder"
 
 settings(::BuilderView) = (file=Setting("Plot name"), inspect=Setting("Inspect"; prepare=false))
 
-export_name(view::BuilderView) = isempty(view.file) ? "plot" : splitext(basename(view.file))[1]
-
 # The file of the code, or "" while the plot has no name.
 code_path(view::BuilderView)::String =
     isempty(view.file) || endswith(view.file, ".jl") ? view.file : joinpath("plots", view.file * ".jl")
@@ -290,8 +288,8 @@ end
 
 function failed!(view::BuilderView, err, bt)::Nothing
     view.figure = nothing
-    view.message, view.error_details = DataBrowserAPI.report_error(
-        "Plot builder: $(export_name(view)) failed", err, bt)
+    name = isempty(view.file) ? "plot" : splitext(basename(view.file))[1]
+    view.message, view.error_details = DataBrowserAPI.report_error("Plot builder: $name failed", err, bt)
     return nothing
 end
 

@@ -1,13 +1,12 @@
 using GLMakie: Figure
 import GLMakie.Makie as Makie
 import CImGui as ig
-using NativeFileDialog: save_file
 
 import DataBrowserGUI
 const Browser = DataBrowserGUI.Browser
 
 using DataBrowserAPI: AbstractVisualizer
-import DataBrowserAPI: draw!, draw_header!, export!
+import DataBrowserAPI: draw!, draw_header!
 using .MakieImguiIntegration: MakieFigure, destroy_figure!, inspect!, plot_theme
 
 # Every figure of the browser uses the dark theme, or the light one. The theme button of any window
@@ -21,8 +20,9 @@ const PLOT_HELP_TEXT = "Export saves the figure.\nScroll zooms, drag zooms to a 
 
 """
 A visualizer that shows one figure. Its window has the theme button and the help button in its
-header, and "Inspect" for the values under the mouse. "Export" saves the figure: as PNG, PDF or SVG
-when the session has loaded CairoMakie, and as PNG otherwise.
+header, and "Inspect" for the values under the mouse. The Export button offers the MIME types
+that Makie's `showable` allows with the current backend: PNG and JPEG with GLMakie; PNG and EPS
+with CairoMakie, and also PDF and SVG after `CairoMakie.activate!(type="svg")`.
 
 A subtype has these fields:
 
@@ -37,8 +37,7 @@ And these methods:
 
 - `build!(view, ctx)`: build a new, unattached `view.figure` during preparation, in the theme
   `DARK[]`, and record the theme in `view.dark`. On failure, clear `view.figure` and set
-  `view.message`. Graphics attachment and cleanup belong to the UI;
-- `export_name(view)`: the file name "Export" proposes, without its extension.
+  `view.message`. Graphics attachment and cleanup belong to the UI.
 
 A subtype whose figures set their own theme defines `theme_button(view) = false` to leave out the
 theme button.
@@ -46,7 +45,6 @@ theme button.
 abstract type FigureView <: AbstractVisualizer end
 
 function build! end
-function export_name end
 theme_button(::FigureView) = true
 
 function Base.close(view::FigureView)::Nothing
@@ -93,23 +91,12 @@ function draw_header!(view::FigureView, ctx)::Nothing
     return nothing
 end
 
-const CAIROMAKIE = Base.PkgId(Base.UUID("13f3f980-e62b-5c42-98c6-ff1f3baf88f0"), "CairoMakie")
+Base.showable(mime::MIME, view::FigureView) = view.figure !== nothing && showable(mime, view.figure)
 
-# "Export" saves the figure with CairoMakie as PNG, PDF or SVG when the session has loaded CairoMakie,
-# and with GLMakie as PNG otherwise.
-function export!(view::FigureView, ctx)::Nothing
-    view.figure === nothing && error("the window shows no figure")
-    cairomakie = get(Base.loaded_modules, CAIROMAKIE, nothing)
-    path = save_file("$(export_name(view)).png"; filterlist=cairomakie === nothing ? "png" : "png,pdf,svg")
-    isempty(path) && return nothing
-    isempty(splitext(path)[2]) && (path *= ".png")
-    if cairomakie === nothing
-        Makie.save(path, view.figure)
-    else
-        Makie.save(path, view.figure; backend=cairomakie)
-    end
-    return nothing
-end
+Base.show(io::IO, mime::MIME, view::FigureView; backend=Makie.current_backend()) =
+    show(io, mime, view.figure; backend)
+# Base's `show` for text/plain would conflict with the method above, as it does for Makie's figures.
+Base.show(io::IO, ::MIME"text/plain", view::FigureView) = summary(io, view)
 
 function draw!(view::FigureView, ctx)::Nothing
     figure_id = "plot_$(ctx.id)"

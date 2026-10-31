@@ -90,6 +90,11 @@ These are not yet agreed.
   A stand-in app built with PackageCompiler compiles new code and installs packages
   ([check](../../work/runtime-app-check/README.md)).
 - **A boundary test:** a check that fails when the GUI uses a Core name that is not public.
+- **A runtime visualizer has representations, as a value does:** `show(io, mime, visualizer)` and
+  `showable(mime, visualizer)` in Julia, a MIME type and bytes across the protocol. The same
+  representations then serve "Export" in any client, the picture a client shows when it cannot
+  draw the visualizer, and the PNG an agent asks for. A client visualizer exports with the
+  technology of its client.
 
 ## Open questions
 
