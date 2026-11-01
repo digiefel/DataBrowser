@@ -50,9 +50,27 @@ function _precompile_engine()::Nothing
         close_workspace!(workspace)
         popfirst!(DEPOT_PATH)
     end
-    # FIXME: draw the browser in a hidden window too, so that its first frames are compiled.
-    # `open_browser` needs an interactive thread, and the precompile process has only one thread.
     return nothing
 end
 
 @compile_workload _precompile_engine()
+
+# The parts of a browser frame, compiled without drawing: the browser needs an interactive thread, and
+# the precompile process has only one thread. Code that the parts reach only through dynamic calls
+# still compiles on the first frames.
+let Browser = DataBrowserGUI.Browser, State = DataBrowserGUI.Browser.BrowserState,
+        ProjectWorkspace = DataBrowserCore.Workspace.Workspace{DataBrowserRecipes.Project}
+    for part in (
+        Browser._reveal_selected_items!, Browser._add_new_extensions!, Browser._extensions_ready,
+        Browser.render_selection_window, Browser.render_project_window, Browser.render_info_window,
+        Browser.render_windows!, Browser.render_perf_window, Browser.render_debug_tools!,
+        Browser._save_project_view_if_changed!, Browser.render_cache_rebuild_modal,
+    )
+        precompile(part, (State,))
+    end
+    precompile(Browser._check_source_identity!, (State, ProjectWorkspace))
+    precompile(Browser._check_cache_error!, (State, ProjectWorkspace))
+    precompile(Browser._load_project_view, (ProjectWorkspace,))
+    precompile(Browser._render_workspace_updating!, ())
+    precompile(Browser._render_startup_preparation!, ())
+end
