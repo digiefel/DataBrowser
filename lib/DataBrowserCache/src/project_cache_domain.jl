@@ -121,10 +121,10 @@ const SavedCollection = @NamedTuple{
     id::String,
     label::String,
     type::Type,
-    metadata::MetadataDict,
-    source_metadata::MetadataDict,
+    metadata::Dict{Symbol,Any},
+    source_metadata::Dict{Symbol,Any},
     # The metadata of the value that the `process` of the collection returned.
-    process::MetadataDict,
+    process::Dict{Symbol,Any},
 }
 
 """
@@ -140,10 +140,10 @@ const SavedItem = @NamedTuple{
     label::String,
     type::Type,
     collection_key::Union{Nothing,Int64},
-    metadata::MetadataDict,
-    process::MetadataDict,
-    member::MetadataDict,
-    delivered::MetadataDict,
+    metadata::Dict{Symbol,Any},
+    process::Dict{Symbol,Any},
+    member::Dict{Symbol,Any},
+    delivered::Dict{Symbol,Any},
 }
 
 """
@@ -387,8 +387,6 @@ struct CollectionRow
     parent_key::Union{Nothing,Int64}
     identity::String
     label::String
-    metadata_hex::String
-    source_metadata_hex::String
     type_hex::String
 end
 
@@ -397,19 +395,8 @@ CollectionRow(row)::CollectionRow = CollectionRow(
     _null_to_nothing(row.parent_key),
     String(row.identity),
     String(row.label),
-    String(row.metadata_hex),
-    String(row.source_metadata_hex),
     String(row.type_hex),
 )
-
-"""The metadata of the value that the `process` of one collection returned."""
-struct CollectionProcessRow
-    collection_key::Int64
-    metadata_hex::String
-end
-
-CollectionProcessRow(row)::CollectionProcessRow =
-    CollectionProcessRow(Int64(row.collection_key), String(row.metadata_hex))
 
 """
 The revision of the inputs and code of the stored result of one computation, by its id, and the
@@ -433,16 +420,6 @@ end
 
 CodeRevisionRow(row)::CodeRevisionRow =
     CodeRevisionRow(Int8(row.stage), String(row.type_hex), String(row.revision))
-
-"""The metadata that one stage of one item produced."""
-struct StageMetadataRow
-    stage::Int8
-    item_key::Int64
-    metadata_hex::String
-end
-
-StageMetadataRow(row)::StageMetadataRow =
-    StageMetadataRow(Int8(row.stage), Int64(row.item_key), String(row.metadata_hex))
 
 struct ItemRow
     id::String
@@ -507,6 +484,9 @@ mutable struct CacheDB
     metrics::BuildMetrics
     source_items::RowStore{String,SourceItemRow}
     collections::RowStore{Int64,CollectionRow}
+    # The metadata of each collection value, and the metadata its source provides for it.
+    collection_metadata::WideRowStore{Int64}
+    collection_source_metadata::WideRowStore{Int64}
     items::RowStore{String,ItemRow}
     source_item_metadata::WideRowStore{Int64}
     # The metadata project code last received with each item, which queries read.
@@ -514,9 +494,13 @@ mutable struct CacheDB
     failures::RowStore{Tuple{String,Int64},FailureRow}
     result_states::RowStore{Tuple{Int8,String},CachedResultState}
     keyed_result_states::RowStore{Tuple{Int8,Int64},CachedKeyedResultState}
-    collection_process::RowStore{Int64,CollectionProcessRow}
+    # The metadata that the `process` of each collection changed.
+    collection_process::WideRowStore{Int64}
     code_revisions::RowStore{Tuple{Int8,String},CodeRevisionRow}
-    stage_metadata::RowStore{Tuple{Int8,Int64},StageMetadataRow}
+    # The metadata that item `process` and member `process` produced for each item, apart from the
+    # delivered metadata, where a collection can replace its values.
+    item_process_metadata::WideRowStore{Int64}
+    member_process_metadata::WideRowStore{Int64}
     computation_revision_rows::RowStore{String,ComputationRevisionRow}
     # The same revisions, read at opening, so that a lookup does not read the table.
     computation_revisions::Dict{String,ComputationRevisionRow}
@@ -624,12 +608,8 @@ function open_cache_db(
             db, "result_states", ("kind", "entity")))
         keyed_result_states = started(RowStore{Tuple{Int8,Int64},CachedKeyedResultState}(
             db, "keyed_result_states", ("kind", "entity")))
-        collection_process = started(
-            RowStore{Int64,CollectionProcessRow}(db, "collection_process", ("collection_key",)))
         code_revisions = started(RowStore{Tuple{Int8,String},CodeRevisionRow}(
             db, "code_revisions", ("stage", "type_hex")))
-        stage_metadata = started(RowStore{Tuple{Int8,Int64},StageMetadataRow}(
-            db, "item_stage_metadata", ("stage", "item_key")))
         computation_revision_rows = started(RowStore{String,ComputationRevisionRow}(
             db, "computation_revisions", ("id",)))
         item_keys, next_item_key = _load_item_keys(db)
@@ -647,15 +627,18 @@ function open_cache_db(
             metrics,
             source_items,
             collections,
+            started(WideRowStore{Int64}(db, "collection_metadata", "collection_key")),
+            started(WideRowStore{Int64}(db, "collection_source_metadata", "collection_key")),
             items,
             started(WideRowStore{Int64}(db, "source_item_metadata", "item_key")),
             started(WideRowStore{Int64}(db, "item_metadata", "item_key")),
             failures,
             result_states,
             keyed_result_states,
-            collection_process,
+            started(WideRowStore{Int64}(db, "collection_process_metadata", "collection_key")),
             code_revisions,
-            stage_metadata,
+            started(WideRowStore{Int64}(db, "item_process_metadata", "item_key")),
+            started(WideRowStore{Int64}(db, "member_process_metadata", "item_key")),
             computation_revision_rows,
             Dict{String,ComputationRevisionRow}(row.id => row for row in values(read(computation_revision_rows))),
             item_keys,
@@ -782,13 +765,9 @@ function ensure_schema!(connection)::Nothing
     DBInterface.execute(connection, create_table_sql(
         CachedKeyedResultState, "keyed_result_states", (:kind, :entity)))
     DBInterface.execute(connection,
-        create_table_sql(CollectionProcessRow, "collection_process", (:collection_key,)))
-    DBInterface.execute(connection,
         create_table_sql(CodeRevisionRow, "code_revisions", (:stage, :type_hex)))
     DBInterface.execute(connection,
         create_table_sql(ComputationRevisionRow, "computation_revisions", (:id,)))
-    DBInterface.execute(connection,
-        create_table_sql(StageMetadataRow, "item_stage_metadata", (:stage, :item_key)))
     DBInterface.execute(connection, """
         CREATE TABLE IF NOT EXISTS wide_columns(
             table_name TEXT,
@@ -797,12 +776,12 @@ function ensure_schema!(connection)::Nothing
             sql_type TEXT,
             PRIMARY KEY (table_name, column_name))
     """)
-    DBInterface.execute(connection, """
-        CREATE TABLE IF NOT EXISTS source_item_metadata(item_key BIGINT PRIMARY KEY)
-    """)
-    DBInterface.execute(connection, """
-        CREATE TABLE IF NOT EXISTS item_metadata(item_key BIGINT PRIMARY KEY)
-    """)
+    for table in ("source_item_metadata", "item_metadata", "item_process_metadata", "member_process_metadata")
+        DBInterface.execute(connection, "CREATE TABLE IF NOT EXISTS $table(item_key BIGINT PRIMARY KEY)")
+    end
+    for table in ("collection_metadata", "collection_source_metadata", "collection_process_metadata")
+        DBInterface.execute(connection, "CREATE TABLE IF NOT EXISTS $table(collection_key BIGINT PRIMARY KEY)")
+    end
     return nothing
 end
 
@@ -818,7 +797,7 @@ struct ItemOutput
     label::String
     type::Type
     collection_key::Union{Nothing,Int64}
-    metadata::MetadataDict
+    metadata::Dict{Symbol,Any}
 end
 
 """
@@ -869,7 +848,8 @@ end
 """
 Persist one collection: its place, its label, the metadata of its value and the metadata its source
 provides for it. `parent_key` is `nothing` below the root. Arbitrary user-defined
-`AbstractCollection` values never enter the cache.
+`AbstractCollection` values never enter the cache. Returns a message for each metadata value that
+could not be saved.
 """
 function store_collection!(
     cache::CacheDB,
@@ -878,12 +858,10 @@ function store_collection!(
     identity::AbstractString,
     label::AbstractString,
     type::Type,
-    metadata::MetadataDict,
-    source_metadata::MetadataDict,
-)::Nothing
-    row = CollectionRow(
-        key, parent_key, identity, label,
-        _serialize_hex(metadata), _serialize_hex(source_metadata), _serialize_type(type))
+    metadata::AbstractDict,
+    source_metadata::AbstractDict,
+)::Vector{String}
+    row = CollectionRow(key, parent_key, identity, label, _serialize_type(type))
     lock(cache.key_lock) do
         if key in cache.persisted_collection_keys
             edit!(cache.collections, key, row)
@@ -892,7 +870,8 @@ function store_collection!(
             push!(cache.persisted_collection_keys, key)
         end
     end
-    return nothing
+    return unique([edit!(cache.collection_metadata, key, metadata);
+        edit!(cache.collection_source_metadata, key, source_metadata)])
 end
 
 """
@@ -988,15 +967,14 @@ end
 
 """
 Persist the metadata that `stage` of one item produced. It is kept apart from the delivered
-metadata, where a collection can replace its values.
+metadata, where a collection can replace its values. Returns a message for each value that could
+not be saved.
 """
 function store_item_stage_metadata!(
     cache::CacheDB, id::AbstractString, stage::PipelineStage, produced::AbstractDict,
-)::Nothing
-    key = item_key!(cache, id)
-    edit!(cache.stage_metadata, (Int8(stage), key),
-        StageMetadataRow(Int8(stage), key, _serialize_hex(metadata_dict(produced))))
-    return nothing
+)::Vector{String}
+    store = stage === ITEM_PROCESS ? cache.item_process_metadata : cache.member_process_metadata
+    return edit!(store, item_key!(cache, id), produced)
 end
 
 """
@@ -1031,18 +1009,19 @@ end
 
 """
 Record that the `process` of one collection finished, with the metadata of the value it returned.
+Returns a message for each value that could not be saved.
 """
 function store_collection_process_result!(
-    cache::CacheDB, collection_key::Integer, metadata::MetadataDict,
-)::Nothing
+    cache::CacheDB, collection_key::Integer, metadata::AbstractDict,
+)::Vector{String}
     entity = Int64(collection_key)
-    edit!(cache.collection_process, entity, CollectionProcessRow(entity, _serialize_hex(metadata)))
+    dropped = edit!(cache.collection_process, entity, metadata)
     state = CachedKeyedResultState(
         Int8(COLLECTION_PROCESS), entity, Int8(RESULT_READY), 0, nothing)
     edit!(cache.keyed_result_states, (Int8(COLLECTION_PROCESS), entity), state)
     _stage_ledger_result!(
         cache.stage_ledger, (Int8(COLLECTION_PROCESS), entity), state)
-    return nothing
+    return dropped
 end
 
 """Write one source item-metadata (item layer) row."""
@@ -1065,8 +1044,9 @@ function delete_source_output!(
         _stage_ledger_item!(cache.stage_ledger, id, false)
         delete!(cache.source_item_metadata, key)
         delete!(cache.item_metadata, key)
+        delete!(cache.item_process_metadata, key)
+        delete!(cache.member_process_metadata, key)
         for stage in (ITEM_PROCESS, MEMBER_PROCESS)
-            delete!(cache.stage_metadata, (Int8(stage), key))
             delete!(cache.result_states, (Int8(stage), id))
             _stage_ledger_result!(cache.stage_ledger, (Int8(stage), id), nothing)
         end
@@ -1086,6 +1066,8 @@ function delete_collection_records!(
     lock(cache.key_lock) do
         for collection_key in unique(collection_keys)
             delete!(cache.collections, collection_key)
+            delete!(cache.collection_metadata, collection_key)
+            delete!(cache.collection_source_metadata, collection_key)
             delete!(cache.persisted_collection_keys, collection_key)
         end
     end
@@ -1106,15 +1088,19 @@ function delete_collection_metadata!(
     return nothing
 end
 
+"""Every store of `cache`."""
+cache_stores(cache::CacheDB) = (cache.source_items, cache.collections, cache.collection_metadata,
+    cache.collection_source_metadata, cache.items, cache.source_item_metadata, cache.item_metadata,
+    cache.failures, cache.result_states, cache.keyed_result_states, cache.collection_process,
+    cache.code_revisions, cache.item_process_metadata, cache.member_process_metadata,
+    cache.computation_revision_rows)
+
 """
 The number of keys and of rows that are queued or being written, over every store at the
 same moment.
 """
 function cache_pending_counts(cache::CacheDB)::NamedTuple{(:items, :rows),Tuple{Int,Int}}
-    buffers = (cache.source_items, cache.collections, cache.items, cache.source_item_metadata,
-        cache.item_metadata, cache.failures, cache.result_states,
-        cache.keyed_result_states, cache.collection_process, cache.code_revisions, cache.stage_metadata,
-        cache.computation_revision_rows)
+    buffers = cache_stores(cache)
     # Every store is locked before any is read. No other code holds two of these locks.
     foreach(buffer -> lock(buffer.flush_condition), buffers)
     try
@@ -1219,11 +1205,7 @@ end
 """Flush and close cache stores, then checkpoint and close the database."""
 function close_cache_db!(cachedb::CacheDB)::Nothing
     failures = Any[]
-    for buffer in
-        (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
-         cachedb.item_metadata, cachedb.failures,
-         cachedb.result_states, cachedb.keyed_result_states, cachedb.collection_process,
-         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows)
+    for buffer in cache_stores(cachedb)
         try
             close!(buffer)
         catch error
@@ -1282,11 +1264,7 @@ _null_to_nothing(value) = ismissing(value) ? nothing : value
 
 """Delete cached results and reset item keys while preserving the cache identity and schema."""
 function clear_cache_index!(cachedb::CacheDB)::Nothing
-    for buffer in
-        (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
-         cachedb.item_metadata, cachedb.failures,
-         cachedb.result_states, cachedb.keyed_result_states, cachedb.collection_process,
-         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows)
+    for buffer in cache_stores(cachedb)
         clear!(buffer)
     end
     lock(cachedb.key_lock) do
@@ -1365,6 +1343,8 @@ end
 """The saved collections, each after its parent."""
 function _load_collections(cache::CacheDB)::Vector{SavedCollection}
     rows = read(cache.collections)
+    collection_metadata = read(cache.collection_metadata)
+    source_metadata = read(cache.collection_source_metadata)
     processed = read(cache.collection_process)
     saved = SavedCollection[]
     loaded = Set{Int64}()
@@ -1382,10 +1362,9 @@ function _load_collections(cache::CacheDB)::Vector{SavedCollection}
             id=row.identity,
             row.label,
             type=_deserialize_type(row.type_hex),
-            metadata=metadata_dict(_deserialize_hex(row.metadata_hex)),
-            source_metadata=metadata_dict(_deserialize_hex(row.source_metadata_hex)),
-            process=haskey(processed, key) ?
-                metadata_dict(_deserialize_hex(processed[key].metadata_hex)) : MetadataDict(),
+            metadata=get(collection_metadata, key, Dict{Symbol,Any}()),
+            source_metadata=get(source_metadata, key, Dict{Symbol,Any}()),
+            process=get(processed, key, Dict{Symbol,Any}()),
         ))
         return nothing
     end
@@ -1410,9 +1389,8 @@ function load_cache_index(cache::CacheDB)::ProjectCacheIndex
     collection_keys = Set(collection.key for collection in collections)
     item_layer = read(cache.source_item_metadata)
     delivered = read(cache.item_metadata)
-    produced = read(cache.stage_metadata)
-    stage_metadata(stage, key) = haskey(produced, (Int8(stage), key)) ?
-        metadata_dict(_deserialize_hex(produced[(Int8(stage), key)].metadata_hex)) : MetadataDict()
+    processed = read(cache.item_process_metadata)
+    member = read(cache.member_process_metadata)
     items = SavedItem[]
     for row in values(read(cache.items))
         row.collection_key === nothing || row.collection_key in collection_keys ||
@@ -1426,10 +1404,10 @@ function load_cache_index(cache::CacheDB)::ProjectCacheIndex
             row.label,
             type=_deserialize_type(row.type_hex),
             row.collection_key,
-            metadata=get(item_layer, row.item_key, MetadataDict()),
-            process=stage_metadata(ITEM_PROCESS, row.item_key),
-            member=stage_metadata(MEMBER_PROCESS, row.item_key),
-            delivered=get(delivered, row.item_key, MetadataDict()),
+            metadata=get(item_layer, row.item_key, Dict{Symbol,Any}()),
+            process=get(processed, row.item_key, Dict{Symbol,Any}()),
+            member=get(member, row.item_key, Dict{Symbol,Any}()),
+            delivered=get(delivered, row.item_key, Dict{Symbol,Any}()),
         ))
     end
     # A source item publishes its items in a stable order.

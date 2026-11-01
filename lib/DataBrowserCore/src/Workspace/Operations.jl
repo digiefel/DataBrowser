@@ -299,7 +299,7 @@ function save!(workspace::Workspace, collection::CollectionKey)::Nothing
         workspace.next_collection_key - 1
     end
     above = parent(catalog, collection)
-    store_collection!(
+    dropped = store_collection!(
         workspace.cache.db,
         key,
         above == ROOT ? nothing : workspace.collection_keys[above],
@@ -309,6 +309,7 @@ function save!(workspace::Workspace, collection::CollectionKey)::Nothing
         metadata(catalog, collection, :collection),
         metadata(catalog, collection, :source),
     )
+    conflicts!(workspace, collection, SOURCE_EXPAND, dropped)
     return nothing
 end
 
