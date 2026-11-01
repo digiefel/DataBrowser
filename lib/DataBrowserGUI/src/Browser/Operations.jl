@@ -61,7 +61,9 @@ function _reveal_selected_items!(state::BrowserState)::Nothing
     workspace = state.workspace
     items = _items_for_ids(state, workspace.selection.item_ids)
     isempty(items) && return nothing
-    holders = unique(Workspace.collection(workspace, item) for item in items)
+    # Of a known element type: `unique` of a generator would run code of types unknown to the compiler,
+    # that packages loaded later invalidate.
+    holders = unique!(CollectionKey[Workspace.collection(workspace, item) for item in items])
     for holder in holders, ancestor in Workspace.ancestors(workspace, holder)
         path = Workspace.path(workspace, ancestor)
         path in state.expanded_collections || push!(state.expanded_collections, path)

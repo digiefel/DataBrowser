@@ -83,10 +83,12 @@ function _write_png(path::AbstractString, pixels::Vector{UInt8}, width::Int, hei
     crc(bytes) = UInt32(ccall((:crc32, libz), Culong, (Culong, Ptr{UInt8}, Cuint), 0, bytes, length(bytes)))
     open(path, "w") do io
         write(io, b"\x89PNG\r\n\x1a\n")
+        # `append!`, not `vcat`, here and below: methods of packages loaded later invalidate the code
+        # of `vcat` for these arrays.
         # 8 bits for each of red, green and blue (color type 2), no interlacing.
-        header = [reinterpret(UInt8, hton.(UInt32[width, height])); UInt8[8, 2, 0, 0, 0]]
+        header = append!(collect(reinterpret(UInt8, hton.(UInt32[width, height]))), UInt8[8, 2, 0, 0, 0])
         for (type, data) in (("IHDR", header), ("IDAT", compressed), ("IEND", UInt8[]))
-            chunk = [codeunits(type); data]
+            chunk = append!(Vector{UInt8}(codeunits(type)), data)
             write(io, hton(UInt32(length(data))), chunk, hton(crc(chunk)))
         end
     end

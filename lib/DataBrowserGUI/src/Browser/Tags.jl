@@ -61,8 +61,10 @@ function _project_visible_selection(
     selected_path = String[]
     if length(selected_collections) == 1
         selected = only(selected_collections)
-        selected_path = String[
-            label(workspace, key) for key in [Workspace.ancestors(workspace, selected); selected]]
+        # Not `[ancestors; selected]`: `vcat` of a vector and an element runs code of types unknown to
+        # the compiler, that packages loaded later invalidate.
+        selected_path = String[label(workspace, key) for key in Workspace.ancestors(workspace, selected)]
+        push!(selected_path, label(workspace, selected))
     end
     state.visible_selection =
         VisibleSelection(key, selected_collections, selected_items, Set(selected_items), selected_path)
@@ -98,8 +100,11 @@ function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
         earlier, later = times[left], times[right]
         # Items without a timestamp come last.
         (earlier === nothing) != (later === nothing) && return later === nothing
-        earlier !== nothing && typeof(earlier) == typeof(later) && earlier != later &&
-            return earlier < later
+        # Not `!=`: it has few methods, and a method of a package loaded later invalidates a call to it
+        # on these values of any type. `==` and `<` have many methods and stay dynamic calls.
+        if earlier !== nothing && typeof(earlier) == typeof(later)
+            earlier == later || return earlier < later
+        end
         return names[left] < names[right]
     end)
     all_items = all_items[order]

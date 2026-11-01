@@ -2,11 +2,15 @@
 # (Stack and Grid). The visualizer of the window holds the settings; the visualizer of each cell
 # holds what it prepared for its item and its drawing state.
 
-function _close_cells!(window::Window)::Nothing
+# Close the visualizers of the cells and of the window. `close` is a dynamic call: packages add `close`
+# methods for their visualizers when they load, and a static call would make each of them invalidate
+# the compiled code of the browser.
+function _close_visualizers!(window::Window)::Nothing
     for cell in window.cells
-        cell.visualizer === window.visualizer || close(cell.visualizer)
+        cell.visualizer === window.visualizer || Base.invokelatest(close, cell.visualizer)
     end
     empty!(window.cells)
+    Base.invokelatest(close, window.visualizer)
     return nothing
 end
 
@@ -96,7 +100,10 @@ function _finish_preparation!(window::Window)::Bool
     istaskdone(job.task) || return false
     result = fetch(job.task)
     window.preparation = nothing
-    foreach(close, result.retired)
+    # A dynamic call, as in `_close_visualizers!`.
+    for visualizer in result.retired::Vector{AbstractVisualizer}
+        Base.invokelatest(close, visualizer)
+    end
     window.error = result.error
     window.failed = result.failed
     return true
@@ -105,8 +112,7 @@ end
 function _finish_closed_windows!(state::BrowserState)::Nothing
     for window in copy(state.closing_windows)
         _finish_preparation!(window) || continue
-        _close_cells!(window)
-        close(window.visualizer)
+        _close_visualizers!(window)
         filter!(other -> other !== window, state.closing_windows)
     end
     return nothing

@@ -57,8 +57,10 @@ Load GLMakie, then AlgebraOfGraphics, which loads the plot-window extension. GLM
 icon of the process when it loads, on macOS; `policy` sets back the one the browser had, before the
 rest loads.
 """
-# FIXME: the browser stops drawing for 1–2 s several times while the packages load, and once more
-# after: the loaded packages invalidate browser code that the next frames compile again.
+# FIXME: the browser stops drawing for about 1.5 s while the packages load, and 0.8 s after. Browser
+# code that compiles for the first time while they load, such as the rows of the tree, compiles again
+# after each package that loads meanwhile. Packages outside the dependencies of the plot-window
+# extension, such as DataFrames, make Julia discard its compiled warmup.
 function _load_plot_windows(policy::Union{Nothing,Clong})::Nothing
     glmakie, aog = PLOT_WINDOW_PACKAGES
     Base.require(glmakie)

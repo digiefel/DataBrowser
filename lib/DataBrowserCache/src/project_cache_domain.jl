@@ -210,7 +210,7 @@ CacheStageLedger()::CacheStageLedger = CacheStageLedger(
 function CacheStageLedger(source_items, items, failures, states...)::CacheStageLedger
     result_states = Dict{CacheResultKey,AnyCachedResultState}()
     for store in states, state in values(store)
-        result_states[CacheResultKey(PipelineStage(state.kind), state.entity)] = state
+        result_states[CacheResultKey(PipelineStage(state.kind::Int8), state.entity)] = state
     end
     return CacheStageLedger(
         _cache_stage_summary(source_items, items, failures, states...),
@@ -575,7 +575,9 @@ function open_cache_db(
             mkpath(dirname(path))
             rebuild && _remove_cache_files!(path)
         end
-        DBInterface.connect(DuckDB.DB, persistent ? path : ":memory:")
+        # A dynamic call: DuckDB reads its configuration as values of types unknown to the compiler,
+        # and packages loaded later invalidate that code, and with a static call the code here too.
+        Base.invokelatest(DBInterface.connect, DuckDB.DB, persistent ? path : ":memory:")::DuckDB.DB
     catch
         persistent && @lock OPEN_FILES_LOCK delete!(OPEN_FILES, path)
         rethrow()
@@ -1390,7 +1392,7 @@ end
 
 """Read the identity header on the opening connection."""
 function _load_meta(connection)::Dict{String,String}
-    return Dict(String(row.key) => String(row.value)
+    return Dict{String,String}(String(row.key) => String(row.value)
         for row in DBInterface.execute(connection, "SELECT key, value FROM meta"))
 end
 

@@ -191,7 +191,9 @@ function export!(visualizer::AbstractVisualizer, path::AbstractString; options..
     mime = last(MIME_TYPES[index])
     # Write the file only once `show` has finished, so that an error leaves no partial file.
     buffer = IOBuffer()
-    show(buffer, mime, visualizer; options...)
+    # A dynamic call: packages add `show` methods for their visualizers when they load, and a static
+    # call would make each of them invalidate the compiled code here and in its callers.
+    Base.invokelatest(show, buffer, mime, visualizer; options...)
     write(path, take!(buffer))
     return nothing
 end

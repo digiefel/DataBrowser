@@ -126,15 +126,19 @@ function _render_hierarchy_tree_panel(
     cache_key = hash((objectid(workspace), _imgui_text_filter_text(filter_tree),
         hash(state.tag_visibility), workspace.tags.revision))
     generation = Workspace.generation(workspace)
-    cache = state.tree_cache
-    if cache === nothing || cache.key != cache_key ||
-       (cache.generation != generation && time() - cache.built >= TREE_REFRESH_SECONDS)
-        cache = state.tree_cache = TreeCache(
+    kept = state.tree_cache
+    # Assigned once: the functions below capture `cache`, and a captured variable that is assigned
+    # again has a type unknown to the compiler.
+    cache = if kept === nothing || kept.key != cache_key ||
+               (kept.generation != generation && time() - kept.built >= TREE_REFRESH_SECONDS)
+        state.tree_cache = TreeCache(
             cache_key, generation, time(),
             Dict{CollectionKey,Vector{CollectionKey}}(), Dict{CollectionKey,Bool}(),
             Dict{CollectionKey,Bool}(), CollectionKey[], -1,
             sort!([String.(split(id, '/')) for id in Workspace.unread(workspace)]),
             Dict{CollectionKey,Workspace.CollectionPath}(), Dict{CollectionKey,MetadataDict}())
+    else
+        kept
     end
     unread = cache.unread
     visible_collections = cache.visible
@@ -480,7 +484,7 @@ function _render_hierarchy_tree_panel(
                         child, next_row_id(row_id, child), direct_match,
                         below(unread_below, depth + 1, label(workspace, child)), depth + 1)
                 end
-                render_unread(unread_below, depth + 1, Set(label(workspace, child) for child in children))
+                render_unread(unread_below, depth + 1, Set{String}(label(workspace, child) for child in children))
                 ig.TreePop()
             end
             ig.PopID()
@@ -507,7 +511,7 @@ function _render_hierarchy_tree_panel(
                     child, next_row_id(row_seed, child), false,
                     below(1:length(unread), 1, label(workspace, child)), 1)
             end
-            render_unread(1:length(unread), 1, Set(label(workspace, child) for child in roots))
+            render_unread(1:length(unread), 1, Set{String}(label(workspace, child) for child in roots))
             ig.EndTable()
         end
     else
@@ -691,8 +695,12 @@ function _render_items_panel(
 
                             # The ids are gathered only when an entry is clicked: the selection
                             # can be large, and the menu draws in every frame while it is open.
+                            # A dynamic call: packages add `item_context_menu!` methods for their
+                            # extensions when they load, and a static call would make each of them
+                            # invalidate the compiled code here.
                             for ext in state.extensions
-                                item_context_menu!(
+                                Base.invokelatest(
+                                    item_context_menu!,
                                     ext,
                                     state;
                                     item_ids=() -> [id(workspace, key) for key in target_items],

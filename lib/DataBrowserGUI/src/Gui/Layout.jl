@@ -474,8 +474,7 @@ function _run_browser(
             _finish_closed_windows!(state)
             _discard_window_previews!()
             foreach(state.windows) do window
-                _close_cells!(window)
-                close(window.visualizer)
+                _close_visualizers!(window)
             end
             _shutdown_extensions!(state)
             _shutdown_implot_context!(state)

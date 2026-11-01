@@ -14,19 +14,26 @@ function _render_arrangement!(state::BrowserState, window::Window)::Nothing
         end
         ig.EndCombo()
     end
-    if window.arrangement == "stack" && !isempty(value)
-        i = something(findfirst(==(window.active_item), value.id), 1)
-        ig.SameLine()
-        ig.BeginDisabled(i == 1)
-        ig.ArrowButton("##previous-item", ig.ImGuiDir_Left) && active_item!(window, String(value.id[i-1]))
-        ig.EndDisabled()
-        ig.SameLine()
-        ig.TextUnformatted("$i / $(length(value)): $(value.label[i])")
-        ig.SameLine()
-        ig.BeginDisabled(i == length(value))
-        ig.ArrowButton("##next-item", ig.ImGuiDir_Right) && active_item!(window, String(value.id[i+1]))
-        ig.EndDisabled()
-    end
+    # A dynamic call: the arrows are compiled for the type of this selection. Compiled for a `Selection`
+    # of a type unknown to the compiler, they would make calls that methods of packages loaded later
+    # invalidate.
+    window.arrangement == "stack" && !isempty(value) && Base.invokelatest(_render_stack_arrows!, window, value)
+    return nothing
+end
+
+# The arrows that go through the items of a stack, with the position and the label of the item shown.
+function _render_stack_arrows!(window::Window, value::Workspace.Selection)::Nothing
+    i = something(findfirst(==(window.active_item), value.id), 1)
+    ig.SameLine()
+    ig.BeginDisabled(i == 1)
+    ig.ArrowButton("##previous-item", ig.ImGuiDir_Left) && active_item!(window, String(value.id[i-1]))
+    ig.EndDisabled()
+    ig.SameLine()
+    ig.TextUnformatted("$i / $(length(value)): $(value.label[i])")
+    ig.SameLine()
+    ig.BeginDisabled(i == length(value))
+    ig.ArrowButton("##next-item", ig.ImGuiDir_Right) && active_item!(window, String(value.id[i+1]))
+    ig.EndDisabled()
     return nothing
 end
 

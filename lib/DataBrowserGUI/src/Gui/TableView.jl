@@ -155,7 +155,7 @@ and its column is selected again when items have it. An empty list clears the se
 function select!(view::TableView; columns::AbstractVector)::Nothing
     view.selected_column_names = unique(String.(columns))
     if view.table !== nothing
-        view.grid.selected_columns = findall(in(columns), view.table.columns)
+        view.grid.selected_columns = findall(in(view.selected_column_names), view.table.columns)
         _pass_on!(view)
     end
     return nothing
@@ -544,8 +544,9 @@ function _pass_on!(view::TableView)::Nothing
     columns = table.paths[isempty(picked) ? shown : sort(picked)]
     view.output = map(unique(table.row_item[view.output_rows])) do index
         source = Workspace.computation(selection, table.item_index[index])
-        rows = table.item_row[[row for row in view.output_rows if table.row_item[row] == index]]
-        return Workspace.Computation(Base.view, source, TableSelection(rows, columns))
+        # Not `rows`: assigned here, `rows` would be the variable above, of a type unknown to the compiler.
+        item_rows = table.item_row[[row for row in view.output_rows if table.row_item[row] == index]]
+        return Workspace.Computation(Base.view, source, TableSelection(item_rows, columns))
     end
     return nothing
 end
@@ -657,9 +658,12 @@ _number(value) = value isa Real && !(value isa Bool)
 # A number as a number from 1 to 1000 and a power of ten, a multiple of 3.
 # TODO: 999.9996 with 3 decimals is written 1000.000e-6 rather than 1.000e-3.
 function _engineering(number::Real)::Tuple{Float64,Int}
-    number == 0 && return (0.0, 0)
-    exponent = 3 * floor(Int, log10(abs(number)) / 3)
-    return (number / exp10(exponent), exponent)
+    # In Float64: on a number of a type unknown to the compiler, `floor` is a call that a method of a
+    # package loaded later invalidates.
+    value = Float64(number)::Float64
+    value == 0 && return (0.0, 0)
+    exponent = 3 * floor(Int, log10(abs(value)) / 3)
+    return (value / exp10(exponent), exponent)
 end
 
 _exponent_text(exponent::Int)::String = exponent == 0 ? "" : "e$exponent"

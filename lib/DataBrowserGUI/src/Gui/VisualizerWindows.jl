@@ -151,9 +151,11 @@ function _render_export_button!(state::BrowserState, window::Window)::Nothing
         if clicked
             visualizer = window.visualizer
             # The file types the visualizer saves. Without one, and for a grid of several cells,
-            # the browser saves a picture of the window.
+            # the browser saves a picture of the window. `showable` is a dynamic call: packages add
+            # methods for their visualizers when they load, and a static call would make each of them
+            # invalidate the compiled code here.
             extensions = [extension[2:end] for (extension, mime) in DataBrowserAPI.MIME_TYPES
-                          if window.arrangement != "grid" && showable(mime, visualizer)]
+                          if window.arrangement != "grid" && Base.invokelatest(showable, mime, visualizer)]
             picture = isempty(extensions)
             picture && push!(extensions, "png")
             path = save_file("$(title(state, window)).$(first(extensions))"; filterlist=join(extensions, ","))
@@ -214,8 +216,11 @@ function render_windows!(state::BrowserState)::Nothing
                 # A group is one item of the row, also when the visualizer draws no button.
                 ig.SameLine()
                 ig.BeginGroup()
-                before = Dict(name => getproperty(window.visualizer, name) for name in keys(settings(window.visualizer)))
-                draw_header!(window.visualizer, ctx)
+                before = Dict{Symbol,Any}(
+                    name => getproperty(window.visualizer, name) for name in keys(settings(window.visualizer)))
+                # A dynamic call: packages add `draw_header!` methods for their visualizers when they
+                # load, and a static call would make each of them invalidate the compiled code here.
+                Base.invokelatest(draw_header!, window.visualizer, ctx)
                 for (name, value) in before
                     chosen = getproperty(window.visualizer, name)
                     isequal(value, chosen) || setting!(window, name, chosen)

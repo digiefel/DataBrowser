@@ -7,7 +7,9 @@ import DataBrowserCore.Workspace
 
 """Convert a user path into the stable absolute form used by persistence."""
 function _normalize_project_path(path::AbstractString)::String
-    return normpath(abspath(expanduser(String(path))))
+    # The assertion keeps the calls after it compiled for a `String`, whatever string the caller
+    # passes: methods of packages loaded later then do not invalidate them.
+    return normpath(abspath(expanduser(String(path)::String)))
 end
 
 # ---------------------------------------------------------------------------
@@ -244,7 +246,10 @@ function _open_saved_window!(state::BrowserState, window::PersistedWindow, V::Ty
     input = window.input == "items" ? FixedItems([get(replaced, id, id) for id in window.ids]) :
         window.input == "window" ? WindowOutput(only(window.ids)) : LiveSelection()
     visualizer = V(; values...)
-    isempty(window.selection) || select!(visualizer; (Symbol(name) => value for (name, value) in window.selection)...)
+    # A dynamic call: packages add `select!` methods for their visualizers when they load, and a static
+    # call would make each of them invalidate the compiled code here.
+    isempty(window.selection) ||
+        Base.invokelatest(select!, visualizer; (Symbol(name) => value for (name, value) in window.selection)...)
     opened = open_window!(state, visualizer; input)
     opened.id = window.id
     opened.arrangement = window.arrangement

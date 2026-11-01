@@ -373,7 +373,7 @@ function WideRowStore{K}(
             "SELECT column_name, vtype FROM wide_columns WHERE table_name = ?"),
         (String(table),),
     )
-        column_vtypes[Symbol(String(row.column_name))] = MetaVType(Int8(row.vtype))
+        column_vtypes[Symbol(String(row.column_name))] = MetaVType(Int8(row.vtype)::Int8)
     end
     column_order = Symbol[]
     for row in DBInterface.execute(

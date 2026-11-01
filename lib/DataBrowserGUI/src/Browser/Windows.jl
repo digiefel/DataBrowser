@@ -163,8 +163,7 @@ function close_window!(state::BrowserState, window::Window)::Nothing
     if preparing(window)
         push!(state.closing_windows, window)
     else
-        _close_cells!(window)
-        close(window.visualizer)
+        _close_visualizers!(window)
     end
     for other in state.windows
         input = other.input
@@ -247,8 +246,7 @@ Show the value of `window` with another visualizer.
 """
 function visualizer!(window::Window, visualizer::AbstractVisualizer)::Nothing
     _require_available(window)
-    _close_cells!(window)
-    close(window.visualizer)
+    _close_visualizers!(window)
     window.visualizer = visualizer
     window.arrangement = "auto"
     window.presentation_dirty = true
