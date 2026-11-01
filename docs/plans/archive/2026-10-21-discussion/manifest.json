@@ -1,0 +1,92 @@
+[
+  {
+    "source": "docs/plans/groupings.md",
+    "snapshot": "groupings.md",
+    "sha256": "95dfa1178b72e42203558f98171f910d323b081a501ef3ca3b34ae1ebfe29554",
+    "lines": 4732
+  },
+  {
+    "source": "docs/plans/graphics-grammar.md",
+    "snapshot": "graphics-grammar.md",
+    "sha256": "d7328884fde8974fd6ceb4c70df9e686a97fc8d24a1a199eee239a5f1d23e116",
+    "lines": 2221
+  },
+  {
+    "source": "docs/plans/fitting.md",
+    "snapshot": "fitting.md",
+    "sha256": "13b788c136a089dbd149d782e95eaacb314d811f89b97de4c544e84bfd868f34",
+    "lines": 642
+  },
+  {
+    "source": "docs/plans/visualizers.md",
+    "snapshot": "visualizers.md",
+    "sha256": "f845a740341718a509c826200cc3e07fa85a26086d825523fbdc880c0393ed90",
+    "lines": 738
+  },
+  {
+    "source": "docs/plans/tabs.md",
+    "snapshot": "tabs.md",
+    "sha256": "11f9b9b9a2ef2832e0f351ac0fda5540f92d95bba957f319e09e47a48efced66",
+    "lines": 251
+  },
+  {
+    "source": "docs/plans/graphics-grammar-review.md",
+    "snapshot": "graphics-grammar-review.md",
+    "sha256": "dda035cdd59fba751749b36d2396884d03d2494a7a01734d4b099bb36923f59a",
+    "lines": 143
+  },
+  {
+    "source": "docs/plans/fitting-review.md",
+    "snapshot": "fitting-review.md",
+    "sha256": "5dd9f3776a31bade31f87d49804f7375380835b396c2a233a6cbefca994dd0c9",
+    "lines": 140
+  },
+  {
+    "source": "docs/plot-editor.md",
+    "snapshot": "plot-editor.md",
+    "sha256": "0371233d0bc6313534a5150d153699565929cdcf2123f1358bc157de6dcb77d0",
+    "lines": 98
+  },
+  {
+    "source": "work/gui-editing/product-review.md",
+    "snapshot": "product-review.md",
+    "sha256": "286f6e6fcacc0ba39220adca76035c0f71d7cb359197c4436bd59c39d45ee1fd",
+    "lines": 504
+  },
+  {
+    "source": "docs/plans/scientific-workspace.md",
+    "snapshot": "scientific-workspace.md",
+    "sha256": "7a3187222fcd9c80a5b4e4f3fe32d3f66a147d1e12401b288a59d9d5f0ab4324",
+    "lines": 284
+  },
+  {
+    "source": "docs/plans/workspace-graph/workspace-graph.md",
+    "snapshot": "workspace-graph.md",
+    "sha256": "827b756129088e1069da944da35e00a925f2709395cb55c52637e6f58dc90334",
+    "lines": 465
+  },
+  {
+    "source": "docs/plans/workspace-graph/01-node-states.md",
+    "snapshot": "01-node-states.md",
+    "sha256": "89bc2bb092106234a35d5b1578c2b27630a3cff80edd9a9ef92c8c3790a8de98",
+    "lines": 89
+  },
+  {
+    "source": "docs/vision.md",
+    "snapshot": "vision.md",
+    "sha256": "0fc84e5bd895bb4eefd8ee41e9aab1422226ab06df97d067b74d099cf96da610",
+    "lines": 565
+  },
+  {
+    "source": "docs/roadmap.md",
+    "snapshot": "roadmap.md",
+    "sha256": "f5de501c7d10d0fbbb5b1a3c5c9a20a83e2dbc624da9f0f1cce310800e719bd7",
+    "lines": 777
+  },
+  {
+    "source": "docs/ARCHITECTURE.md",
+    "snapshot": "ARCHITECTURE.md",
+    "sha256": "fc0944f5d9938044d9cee79ec21ff4e59a2db27075dc289907013ddeef703bb2",
+    "lines": 490
+  }
+]

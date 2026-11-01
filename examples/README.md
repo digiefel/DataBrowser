@@ -1,23 +1,21 @@
-# Example Projects
+# Target workflows
 
-These projects show the public API in increasing levels of specialization.
+[Compare repeated measurements](repeated_measurements/README.md) is a design example for the
+workspace we are building. It follows one task from processed measurements through per-sample means,
+an ordered comparison, reuse and later input changes.
 
-| Example | Style | Main idea |
-|---|---|---|
-| [`01_simple_csv`](01_simple_csv/project.jl) | Registration | One reader turns each CSV file into one browsable table. |
-| [`02_multi_entry_pipeline`](02_multi_entry_pipeline/project.jl) | Registration | One file expands into several items with identity, metadata, processing, analysis, and a plot. |
-| [`03_typed_micrographs`](03_typed_micrographs/project.jl) | Type API | A custom source and concrete `AbstractDataItem` use multiple dispatch. |
-| [`04_domain_project`](04_domain_project/project.jl) | Packaged registration API | A domain module exposes its own project constructor over multiple registered formats. |
+The analysis workflow is shared by GUI, REPL and project users, whether their measurements
+were loaded through DBRecipes or a native project. Source loading is outside this example.
+The code contains proposed interfaces and explicit unresolved steps. It is not a runnable
+example of today's package.
 
-Every example takes a data directory as its first command-line argument:
+| File | Review purpose |
+| --- | --- |
+| [Walkthrough](repeated_measurements/README.md) | User actions, expected results, counterexamples and concrete failures in the target proposal |
+| [Shared analysis](repeated_measurements/analysis.jl) | Candidate saved calculations, explicit input roles and missing input/result/view operations |
+| [Type API](repeated_measurements/type_api.jl) | Proposed groups, native results and the failed attempt to compose produced sample means |
+| [Helpers](repeated_measurements/helpers.jl) | Ordinary calculations, independent of workspace machinery |
 
-```bash
-julia --project=examples examples/01_simple_csv/project.jl /path/to/data
-```
-
-The `examples` environment holds DataBrowser and the packages the examples load. Plots are part of
-the browser once GLMakie is loaded, so an example that draws plots starts with
-`using DataBrowser, GLMakie`.
-
-The scripts contain the complete project definitions. Domain projects can move the same definitions
-into a Julia package and expose a narrower constructor or launch function to their users.
+The acceptance question is whether the proposed API can express and support the complete user
+workflow. Compiling a subset against today's API does not answer it. The walkthrough distinguishes
+missing design contracts, broken target examples and implementation lag. Canvas editing is deferred.

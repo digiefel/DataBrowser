@@ -1,5 +1,11 @@
 # Workspace graph
 
+Scope clarified on 21 October 2026: this is the catalog-cutover design/implementation record.
+Its state distinctions remain useful. Fixed item/collection stages, tree placement and payload
+storage locations below describe that engine, not the newer target contracts. See the
+[active plans](../README.md), especially [processing](../processing.md) and [storage](../storage.md).
+The completed catalog cutover is not reopened by those proposals.
+
 Replace `WorkspaceIndex` and the live work-graph nodes with one in-memory
 catalog in Core, a job pool, and Cache as persistence. There is no
 compatibility with the current index, work graph, or cache ledger.

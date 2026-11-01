@@ -1,16 +1,23 @@
 # Scientific workspace: analysis and acquisition
 
-Engineering review, 2026-10-13. The product requirements below record the user's direction. The
-implementation order and contract changes are recommendations for discussion, not implemented APIs.
-The existing vocabulary remains: project, workspace, source, source item, item, collection,
-pipeline stage, command, visualizer, window, tab, figure, and workflow.
+Engineering review, 13 October 2026; scope clarified during curation on 21 October. The product
+requirements below remain relevant. Code observations and the discrepancy table record the October
+review, not a new verification of every implementation claim. Recommendations are not implemented APIs.
+
+The [active plan index](README.md) owns current design status. [Groups](groupings.md),
+[processing and Recipes](processing.md), and [storage](storage.md) own the newer group/runtime/storage
+design. References below to collections, fixed stages and Cache describe the earlier baseline;
+they do not override those plans. This document retains cross-cutting source, acquisition,
+headless-operation and responsiveness requirements.
 
 ## Product requirements
 
 DataBrowser is a scientific Julia working environment for acquisition, analysis, and exploration.
 A project supplies scientific code and conventions. The toolkit supplies the common infrastructure:
-source lifecycle, reliable communication, background execution, storage, caching, inspection,
-visualization, editing, persistence, and public operations shared by humans and agents.
+source lifecycle, reliable communication, background execution, inspection, visualization, editing,
+persistence defaults, and public operations shared by humans and agents. Optional domain control
+over payload storage and retention is part of the newer direction; its protocol is open in
+[storage](storage.md). Recipes uses the supplied default.
 
 The references describe complementary capabilities, not interfaces to copy wholesale:
 
@@ -53,7 +60,7 @@ Document that boundary now without making production streaming a prerequisite fo
 
 ## Scope of the current work
 
-The current work is visualizers, shared results, live code, and tabs. Instrument controls and the
+The October review concerned visualizers, shared results, live code, and tabs. Instrument controls and the
 full streaming implementation are later work. Use streaming/non-streaming as the product vocabulary;
 recovery, discovery, and partial access are implementation concerns behind the source boundary.
 Optional command support is additional functionality and does not change ordinary data views.
@@ -76,21 +83,21 @@ Examples given during discussion are not fixed workload specifications.
 
 ## Contradictions, gaps, and different sizes of work
 
-This table records the discrepancies found at the start of the review. Companion documents now
-clarify several of them; unresolved API and implementation decisions remain listed below.
+This table records discrepancies found on 13 October. It is a dated review record, not a live
+blocker list. Current open questions belong in the linked topic plans and the section below.
 
 | Finding | Evidence | Assessment and consequence |
 | --- | --- | --- |
-| Automatic live analysis versus rerunning arbitrary tab scripts | [Tabs: a tab](tabs.md#a-tab), [workspace graph: persistence](workspace-graph/workspace-graph.md#persistence-cache) | A real execution contradiction. Whole-file reevaluation repeats unrelated effects; disabling automatic analysis would violate the product requirement. Refresh tracked analysis and view results without replaying arbitrary top-level code. |
+| Automatic live analysis versus rerunning arbitrary tab scripts | [Tabs: a tab](tabs.md#file-and-window-model), [workspace graph: persistence](workspace-graph/workspace-graph.md#persistence-cache) | A real execution contradiction. Whole-file reevaluation repeats unrelated effects; disabling automatic analysis would violate the product requirement. Refresh tracked analysis and view results without replaying arbitrary top-level code. |
 | Non-repeatable sources versus rereading on eviction | [Stage contract](../../lib/DataBrowserAPI/src/stage_contract.jl), [source storage](../../lib/DataBrowserCache/src/source_stages.jl), [read fallback](../../lib/DataBrowserCore/src/Workspace/Processing.jl) | A foundational contract gap. An evicted read result currently permits another `read`. Captured data needs retention or an explicit unavailable result. |
 | Source retention deferred inconsistently | Roadmap 0.2 audit defers policies to 0.14, but 0.2.6 already requests persistence at expensive boundaries | A sequencing contradiction. Agree on replay and retention rules early; defer production transports and complete recording policy. |
 | Project-wide cache identity versus selective reprocessing | [Vision: caching](../vision.md#12-caching-and-persistence), roadmap 0.2.6 | Coarse code invalidation is a valid first implementation, but changing analysis must not discard acquired input. A project identifies storage; relevant input/code/parameter revisions determine result validity. |
-| Planned shared transforms versus current window state | [Window implementation](../../lib/DataBrowserGUI/src/Browser/Windows.jl), [window state](../../lib/DataBrowserGUI/src/Browser/State.jl), [tabs: headless use](tabs.md#without-the-browser-and-for-an-agent) | Pipeline data and stage results already belong to Core/Cache. A window's input link, last displayed value, and visualizer state currently belong to the browser. Future shared transform definitions/results should follow existing workspace ownership; this is narrower than moving the analysis engine out of the GUI. |
+| Planned shared transforms versus current window state | [Window implementation](../../lib/DataBrowserGUI/src/Browser/Windows.jl), [window state](../../lib/DataBrowserGUI/src/Browser/State.jl), [tabs: headless use](tabs.md#file-and-window-model) | Pipeline data and stage results already belong to Core/Cache. A window's input link, last displayed value, and visualizer state currently belong to the browser. Future shared transform definitions/results should follow existing workspace ownership; this is narrower than moving the analysis engine out of the GUI. |
 | Arbitrary values versus automatic persistence of every value | [Vision: data/item](../vision.md#5-conceptual-model), roadmap 0.12, [cache buffer](../../lib/DataBrowserCache/src/cache_buffer.jl) | A real limit, not a reason to force tables. Inspection, computation, encoding, and reconstruction are different capabilities. A live handle can be usable without being persistable. Unsupported recording must be explicit. |
 | Recomputing collections while data continues to arrive | [Collection readiness](../../lib/DataBrowserCore/src/Catalogs/Jobs.jl), [collection inputs](workspace-graph/workspace-graph.md#collection-inputs) | Full recomputation is a valid baseline. Schedule a calculation over the inputs available when it starts, then recompute after further arrivals. Avoid starving presentation by discarding every completed result because newer data exists. This is a scheduling/result-version question, not a requirement for user-facing windows or incremental algorithms. |
 | One or many configured sources versus one live workspace source | [Vision example](../vision.md#scriptable-shape-illustrative), [Workspace](../../lib/DataBrowserCore/src/Workspace.jl) | A significant engine/API extension. Resolve origin ownership, identity collisions, source events, and cache references before cross-source joins become public behavior. |
 | Annotations in the source root versus remote/multiple sources | Vision state ownership, roadmap 0.15, [current tag storage](../../lib/DataBrowserCore/src/Workspace/Tags.jl) | A storage-ownership mismatch. Project storage must hold annotations when sources have no writable root; current root-based behavior is an implementation to evolve. |
-| An ordinary Julia file versus special `include` behavior | [Tabs: reuse](tabs.md#3-use-the-function-in-an-analysis) | A bounded language-integration design problem. Ordinary `include` executes top-level expressions in the caller's module. Loading once in separate modules is not ordinary `include`; window ownership must be specified independently. |
+| An ordinary Julia file versus special `include` behavior | [Tabs: reuse](tabs.md#reuse-the-helper) | A bounded language-integration design problem. Ordinary `include` executes top-level expressions in the caller's module. Loading once in separate modules is not ordinary `include`; window ownership must be specified independently. |
 | Native responsive interaction versus loading/preparing on the frame path | [Window refresh](../../lib/DataBrowserGUI/src/Browser/Windows.jl), [materialization](../../lib/DataBrowserCore/src/Workspace/DataAccess.jl), visualizer `prepare!` contract | A concrete UI/runtime problem. Window refresh currently waits for materialization and prepares in the caller. Expensive I/O and CPU preparation must leave the frame path; graphics-resource updates remain on the required thread. |
 | Shared editable work deferred beyond 1.0 | Roadmap 0.11 tabs, longer-term GUI-authored workflows, vision agent support | A product sequencing tension. Basic headless definitions, live results, and saved work are early foundations; sophisticated graphical code editing and MCP transport can follow. |
 
@@ -122,9 +129,10 @@ boundaries; names and signatures remain open:
    support changed `process`, but not necessarily changed `expand`; retaining decoded read output
    may not support changing the decoder. Recording raw input is required when reinterpretation of
    that input is promised. Not every source can provide that input.
-4. Recorded input is not disposable derived cache. It may use the same storage machinery, but
-   clearing derived results must not delete the only copy of an observation. Retention limits,
-   durability acknowledgements, storage failures, and explicit deletion must have defined behavior.
+4. Retention follows project store policy; there is no mandatory protected recording class.
+   A project can choose not to store stream input. Core mediates reads/writes/removals and explicit
+   source deletion. Missing retained input may prevent recomputation; it does not authorize a new
+   acquisition. The newer store/metadata boundary is specified in [storage](storage.md).
 5. Arrival and processing are decoupled. Sources publish bounded records or chunks; the engine
    exposes lag and applies backpressure when possible. An uncontrollable producer needs explicit
    overflow behavior rather than an unbounded queue or silent loss.
@@ -175,8 +183,9 @@ machinery. Working item/collection stages and the existing headless engine remai
 ## Shared results and frontends
 
 Keep the workspace as the owner of requested scientific work, its definitions, input references,
-results, status, and errors. Cache implements encoding and persistence. GUI owns windows, drawing,
-focus, and editor presentation. Source implementations and shared communication infrastructure own
+results, status, and errors. The toolkit supplies encoding/persistence by default; the proposed
+domain-provider boundary is owned by [storage](storage.md). GUI owns windows, drawing, focus, and
+editor presentation. Source implementations and shared communication infrastructure own
 external connections and source-specific operations. Recipes remains an ordinary public API client.
 
 Shared communication infrastructure should give each live connection one owner, ordered requests,
@@ -193,7 +202,8 @@ An interaction such as a brush supplies an explicit value that can be named, sav
 a script. Headless execution must not wait for an absent mouse interaction.
 
 Use the existing package family. Shared declarations and lightweight descriptions belong in API;
-runtime implementations belong in Core; persistence in Cache; drawing in GUI/Plots. A later package
+runtime implementations belong in Core; supplied persistence in Cache; drawing in GUI/Plots.
+A domain payload provider must use an explicit public boundary if that proposal is adopted. A later package
 split is justified by a demonstrated dependency boundary, not by the ambition of this vision.
 
 For saved work, separate restoring definitions and showing retained results from deliberately
@@ -273,10 +283,12 @@ are not prerequisites for current visualizers. One serious domain package should
 ## Decisions still open
 
 - Exact source recovery, recording, and command signatures for the later streaming implementation.
-- Scheduling/result-version behavior for recomputing collections while input continues to arrive.
+- Scheduling/result-version behavior under continuing arrivals; the general invocation contract
+  belongs in [processing](processing.md#invocation-readiness-and-completion).
 - Cross-source identity and metadata composition.
 - The first code-dependency tracking granularity and behavior for edits Revise cannot apply.
-- Which tab expressions the GUI can edit while preserving surrounding user code and formatting.
+- Supported source-editing grammar and safe patches; explicit GUI actions may insert code and
+  inline controls change literal values, as settled in [plot editor](../plot-editor.md#editing).
 - Local-variable capture mechanism and invocation selection.
 - Rendering reduction rules and measured latency budgets for supported shapes.
 

@@ -1,5 +1,11 @@
 # Node states
 
+Scope clarified on 21 October 2026: this is the catalog-cutover design/implementation record.
+Its state distinctions remain useful. Fixed item/collection stages, tree placement and payload
+storage locations below describe that engine, not the newer target contracts. See the
+[active plans](../README.md), especially [processing](../processing.md) and [storage](../storage.md).
+The completed catalog cutover is not reopened by those proposals.
+
 This document defines the state of one pipeline stage on one catalog row. Job
 queues and payload storage use this state; they do not replace it.
 

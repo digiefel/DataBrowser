@@ -142,8 +142,9 @@ opened, closed, edited, versioned, and reopened.
 
 **Workspace.** One live opening of a project. It holds the current index, loaded data, cache
 connection, background jobs, selections, generated figures, errors, logs, and attached interfaces. It
-is transient. One project can back one-or-many workspaces, successive or concurrent. Closing the last
-workspace does not delete the project file, data-source config, or cache.
+is transient and is not the GUI. One Julia process runs one workspace at a time. A project can be
+opened again in a later workspace; closing it does not delete the project file, data-source config,
+or retained project state.
 
 **Data source.** A configured origin the project opens: a directory, database query, instrument run,
 stream, or remote dataset. Data-source configuration is core project state. Editing it changes the
@@ -180,6 +181,10 @@ that view — the user can then register their own support. Shapes whose support
 dependencies (audio codecs, for example) belong in extension packages even when generic, on the same
 host/extension pattern as the GUI itself.
 
+**Group.** An item whose inputs are other items, generalizing hierarchical collections. Its own
+result is reusable independently of its members; selecting the group and selecting its members
+are separate actions. Formation and hierarchy APIs remain under design in [groups](plans/groupings.md).
+
 **Selection.** A concrete list of items, or a *rule* that resolves to items as the project changes.
 Concrete selections reproduce exactly; live rules keep views attached as items are added, removed, or
 changed.
@@ -214,7 +219,9 @@ without custom setup. Both paths drive the same workspace and commands.
 
 ### Scriptable shape (illustrative)
 
-The API should feel like normal Julia composition, not an app-control protocol:
+The API should feel like normal Julia composition, not an app-control protocol. This example
+illustrates that shape, not approved signatures for the newer group, Recipes or tab contracts:
+
 
 ```julia
 config    = ProjectConfig(sources=[DirectorySource("data")])
@@ -223,7 +230,7 @@ workspace = open_workspace(project)           # one live opening
 browser   = open_browser(workspace; wait=false)   # non-blocking; REPL stays free
 
 items = query_items(workspace, "polarity = 'up'")   # concrete list, or a live rule
-select!(workspace, items)                     # the browser shows the selection
+select!(workspace, items)                     # views explicitly following shared selection update
 
 fig = Figure(workspace)
 plot!(fig, items, X(:voltage_V), Y(:polarization_uCcm2); visualizer=LinePlot)
@@ -237,9 +244,11 @@ The GUI issues the same kinds of actions when the user clicks, drags, or edits p
 workflow stores those actions in package-owned terms, not private widget state.
 
 Workspace actions, such as `select!(workspace, ids)`, operate on shared state and work without a
-GUI. The browser follows that state: when the workspace selection changes, from a click or from the
-REPL, the browser expands and reveals the items. Pure functions, such as `select(workspace, ids)`,
-read the workspace without changing it. Core has no GUI dependency. REPL code and GUI controls share the workspace rather than copying its state.
+GUI. Views connected to the shared workspace selection follow changes from the REPL or GUI.
+Tab trees can keep independent selections; changing the shared selection does not reset them.
+Public operations must identify the selection being changed without relying on GUI focus.
+Pure functions, such as `select(workspace, ids)`, read the workspace without changing it.
+Core has no GUI dependency. REPL code and GUI controls share the workspace rather than copying its state.
 
 A script that calls `define_project(project_file; config)` creates or reopens the project file, then
 registers callbacks and plots. Rerunning the script points at the same project file. If the file
@@ -452,21 +461,20 @@ interfaces share work. A code edit invalidates affected derived results, not the
 recorded copy of their source input. Conservative invalidation within a known stage boundary is a
 valid first implementation; selective reuse is the target.
 
-**Recorded input and derived cache have different retention rules.** Non-repeatable input must be
-retained when recording is promised, or explicitly reported as unavailable. Derived-result eviction
-must not silently cause another physical measurement. These policies may share storage machinery;
-they do not require unrelated cache backends. The retained boundary determines which later code
-edits can be recomputed. One source's ability to change over time does not establish its replayability.
+**Storage follows project policy.** Results are memoized without built-in “disposable” versus
+“expensive” categories. A project store chooses what to retain, including incoming stream data.
+Core mediates source/storage changes; an explicit source deletion requests removal. Stored stream
+input does not go stale merely with time; outputs can go stale when their code changes. Missing
+retained input can prevent recomputation, but does not itself request another physical measurement.
 
-DuckDB is used where it fits — metadata, indexes, tabular summaries, cache catalogs, provenance
-records, queryable results — without forcing all scientific data into tables. It should be
-the primary storage and caching backend for the system. It should handle metadata, indexes,
-tabular summaries, cache catalogs, provenance records, and most cached results in a unified way.
-The cache should remain conceptually simple and centralized. While it should be possible to store
-certain data outside of DuckDB when necessary (for example, large binary data or specialized formats),
-this should be the exception rather than the norm. Additional storage backends should be introduced
-deliberately and sparingly, and primarily as internal extensions rather than a broad collection
-of overlapping formats.
+The toolkit supplies storage by default, using DuckDB where it fits without forcing all scientific
+data into tables. Recipes authors should not need to implement caching. Domain-specific type API
+projects can choose per-item-type stores, with a supplied default for undeclared types. Stores own
+native values and their metadata; Core keeps a rebuildable metadata copy for queries and browsing.
+Core requests reads, writes and removals as sources/code change; stores implement them under project
+policy. The declaration/provider protocol and supplied backends remain open in
+[the storage plan](plans/storage.md).
+This supersedes the earlier assumption that additional backends must remain internal extensions.
 
 **State ownership.** A clear owner for each kind of state is what makes workflows and a non-blocking
 REPL work. `ui_state` is a GUI rendering detail; it must not become the durable owner of workspace
@@ -476,8 +484,9 @@ thing the GUI observes and mutates through the same operations available to Juli
 | State | Owner | Persistence |
 |---|---|---|
 | Workspace state | Workspace object | Restored from saved definitions, retained input/results, and source metadata; missing non-repeatable input is explicit. |
-| Data cache | Cache layer | DuckDB (+ side files) outside the source root; keyed by project. |
-| Recorded source input | Source/storage contract, coordinated by the workspace | Explicit recording/retention policy; never deleted by clearing derived results. |
+| Retained item values and metadata | Type-selected store, supplied by default | Project storage policy; Core mediates source/code changes. |
+| Internal metadata/index | Core and supplied storage | Rebuildable query/browser copy of stored item metadata. |
+| Recorded source input | Project store, coordinated through Core | Retained or removed according to project policy; not a special protected result class. |
 | GUI state | Browser window | Mostly transient; per-dataset state in `databrowser.toml`. App-wide prefs TBD with project-file persistence. |
 | Item annotations | Project storage | Hand-editable tags, notes, coordinates, spatial positions; a remote source need not have a writable root. |
 | Workflow state | Workspace, saved through public operations | Julia/tab files and result references, usable from GUI or API. |

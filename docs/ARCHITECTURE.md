@@ -4,7 +4,9 @@ This document describes the current implementation unless a section explicitly s
 The broader product direction is in `docs/vision.md`; proposed contract evolution is in
 `docs/plans/scientific-workspace.md` (Scientific workspace: analysis and acquisition). In particular,
 production non-repeatable sources, multiple live sources in one workspace, and headless tab/view
-definitions are not implied by the current diagrams.
+definitions are not implied by the current diagrams. The [active plan index](plans/README.md)
+records the newer group, processing and storage proposals. Their decisions and candidate APIs are
+not claims that the fixed-stage engine or toolkit-owned payload storage below has been replaced.
 
 ## What this is
 

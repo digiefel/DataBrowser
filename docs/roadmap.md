@@ -306,6 +306,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
   of source arrival mode; the exact API is open. Prove the contract with a non-repeatable producer
   before production streaming. A process-code edit and a cache miss must not consume another
   observation; retained boundaries determine whether read/expand edits can be recomputed.
+  Retained data stays readable without any Julia type: plain values that other tools can read. A
+  Julia type is stored at most as a name, a hint for rebuilding the value, so a Julia upgrade or a
+  renamed type never makes an observation unreadable.
 - [ ] Profile the DuckDB flush path at millions of rows and remove the dominant avoidable cost.
 - [ ] Document cache contracts in source docstrings and the generated public documentation.
 
@@ -440,8 +443,8 @@ on it with a few verbs.
 - [ ] `select(workspace, ids)` gives the items as a table, as described in
   [plans/visualizers.md](plans/visualizers.md#the-value-of-a-selection), and changes nothing.
   `select!(workspace, ids)` changes the workspace's one shared selection, and `selection(workspace)`
-  reads it. The browser follows the shared selection, so a REPL command changes what the browser
-  shows without a second command for the browser.
+  reads it. Views may explicitly follow this shared selection; tab selections remain independent.
+  The public API for targeting tab selections still needs design ([plans/tabs.md](plans/tabs.md)).
 - [ ] Move GUI actions onto those operations and keep GUI-only state limited to rendering and local
   interaction.
 - [ ] Make repeated project setup, workspace operations, and view changes idempotent where users
@@ -487,6 +490,9 @@ presentation. Every axis it creates can be inserted into the figure composer.
 - [ ] Provide line and scatter plots with editable series, axes, labels, scales, and styling.
 - [ ] Represent builder state through the shared application API rather than private widget state.
 - [ ] Insert a built axis into an existing composed figure without recreating it by hand.
+- [ ] Implement the linked declaration editor and inspector, with independently hideable panels,
+  permanently active value controls, and selection from the plot. See
+  [plot-editor.md](plot-editor.md) for the agreed interactions and text editing behavior.
 
 ## 0.9.0 — Python API
 
@@ -552,8 +558,10 @@ the table as a first-class view.
   loaded stays in the file until it is.
 - [ ] Save the theme of the plots and the plot chosen for each type of item.
 - [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
-- [ ] Update [plans/visualizers.md](plans/visualizers.md), which still describes a zoomable canvas,
-  for windows, tabs and inputs.
+- [x] Curate [plans/visualizers.md](plans/visualizers.md) for windows, tabs and inputs; archive the
+  superseded canvas model. The [active plan index](plans/README.md) separates decisions and open work.
+- [ ] Resolve the newer [group](plans/groupings.md), [processing/Recipes](plans/processing.md) and
+  [storage](plans/storage.md) contracts before treating their candidate APIs as implemented.
 - [ ] Tabs: a Julia file together with its windows, which the user, the browser and an agent all
   work on ([plans/tabs.md](plans/tabs.md)). The plan is written; nothing of it is built.
 - [ ] Resolve tab loading and external editing without rerunning arbitrary top-level effects.
@@ -773,16 +781,16 @@ opens the workspace. Reopening means rerunning the same entry code.
 - [x] Persist tree, item, filter, and plot-view state in the current `databrowser.toml`.
   ([#2](https://github.com/digiefel/MeasurementBrowser/pull/2),
   [#7](https://github.com/digiefel/MeasurementBrowser/pull/7))
-- [ ] Define the TOML schema for sources, cache settings, extension state, and the last workspace
-  file. Views are saved in workspace files ([plans/visualizers.md](plans/visualizers.md)), not in
-  the TOML.
+- [ ] Define the TOML schema for sources, cache settings, extension state, and reopening analysis
+  tabs. Analysis definitions belong in ordinary tab files; browser layout is separate presentation
+  state. The exact loading/persistence contract is open ([plans/tabs.md](plans/tabs.md)).
 - [ ] Only the browser and commands write `dbproject.toml`; entry code reads it. A setting is set in
   code or in the file, never in both, so rerunning entry code never undoes browser changes.
 - [ ] Load or create the config from Julia and Python entry code.
 - [ ] Edit project settings through the API and GUI and write them back predictably.
 - [ ] Place `tags.txt` and the notes file beside `dbproject.toml`: one set per project, not one per
   data folder. The directory scan then no longer skips their names.
-- [ ] Reopen the last workspace file when the same entry code reopens the project.
+- [ ] Reopen the saved analysis tabs and layout when the same entry code reopens the project.
 - [ ] Keep cache reuse and source changes correct across repeated openings.
 
 ## 0.16.0 — Command-line interface

@@ -1,9 +1,0 @@
-[deps]
-CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
-DataBrowser = "a11ddd67-7e33-4db9-a4a8-4453f6eb9e68"
-DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
-GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
-
-[sources]
-DataBrowser = {path = ".."}
