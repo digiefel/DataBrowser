@@ -1,6 +1,3 @@
-# TODO: a contract for code files that every visualizer can use: their text, syntax tree and edits,
-# as `CodeFile`, `syntax` and `edit!` give them here. Then DataBrowserPlots does not depend on
-# DataBrowserGUI, and loading it without the browser does not load CImGui and GLFW.
 using DataBrowserGUI: CodeFile, JuliaSyntax, syntax, edit!
 using .JuliaSyntax: SyntaxNode, byte_range, children, kind, sourcetext, @K_str
 

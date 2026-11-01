@@ -59,7 +59,7 @@ function browser_workload(root, opening, started_ns)
         end
         wait_for(session) do
             next_frames()
-            Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt) !== nothing
+            Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGUIExt) !== nothing
         end
         plot_windows_s = (time_ns() - started_ns) / 1e9
         # The plot windows are ready once their extension has drawn a first figure in a hidden window.

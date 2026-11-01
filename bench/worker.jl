@@ -1,7 +1,7 @@
 using TOML, Statistics
 
 workload, output = ARGS[1:2]
-# The browser loads GLMakie and AlgebraOfGraphics itself, after its first frame.
+# The browser loads GLMakie itself, after its first frame.
 import_s = @elapsed @eval using DataBrowser
 
 if workload == "engine"

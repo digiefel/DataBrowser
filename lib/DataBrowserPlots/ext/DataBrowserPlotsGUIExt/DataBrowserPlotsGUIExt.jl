@@ -1,8 +1,9 @@
 """
 The plot windows and the plot builder window of the browser, drawn with GLMakie. Loaded when
-AlgebraOfGraphics and GLMakie are loaded.
+DataBrowserGUI and GLMakie are loaded. The plot builder loads AlgebraOfGraphics with the first plot
+it runs.
 """
-module DataBrowserPlotsGLMakieExt
+module DataBrowserPlotsGUIExt
 
 using GLMakie: Axis, Figure, axislegend, cgrad, lines!, linkxaxes!, scatter!
 using PrecompileTools: @compile_workload

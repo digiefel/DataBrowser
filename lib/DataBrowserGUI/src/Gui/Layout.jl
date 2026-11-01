@@ -613,9 +613,9 @@ Start Julia with `--threads=auto,1`: thread 1 runs the UI and the default pool p
 `window_start` says how the window appears: `:normal` shows it and gives it the keyboard focus,
 `:background` shows it without the focus, and `:hidden` does not show it.
 
-After `using DataBrowser`, the browser loads AlgebraOfGraphics and GLMakie on a worker thread after
-its first frame, when they are in the active environment and not loaded yet. The plot windows
-appear when both have loaded, after a few seconds; saved plot windows show "Loading" until then.
+After `using DataBrowser`, the browser loads GLMakie on a worker thread after its first frame, when
+it is in the active environment and not loaded yet. The plot windows appear when it has loaded,
+after a few seconds; saved plot windows show "Loading" until then.
 """
 function open_browser(
     workspace::Workspace.Workspace;

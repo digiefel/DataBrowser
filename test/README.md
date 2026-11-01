@@ -101,10 +101,10 @@ benchmarks use the compiled cache. Test-only and documentation edits do not trig
 compilation.
 
 The figures extension of DataBrowserPlots, loaded with AoG, compiles a grouped table plot with a
-legend by building its figure without opening a window. The plot-window extension, loaded with AoG
-and GLMakie, builds a figure with the Makie calls that a registered plot usually makes and draws it
-in a hidden window. This moves compilation from first use into package preparation; it increases
-preparation time and does not eliminate compilation of user callbacks or every combination of plot
+legend by building its figure without opening a window. The plot-window extension, loaded with
+DataBrowserGUI and GLMakie, builds a figure with the Makie calls that a registered plot usually
+makes and draws it in a hidden window. This moves compilation from first use into package
+preparation; it increases preparation time and does not eliminate compilation of user callbacks or every combination of plot
 options. Packages loaded outside the dependencies of the extension, such as DataFrames, make Julia
 discard part of that compiled code. The browser builds the same figure on a worker thread before its
 first plot window, so that compiling it again does not stop the frames.

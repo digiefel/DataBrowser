@@ -1,7 +1,6 @@
 """The plot builder window of the browser."""
 module Builder
 
-import AlgebraOfGraphics
 import CImGui as ig
 import GLMakie.Makie as Makie
 
@@ -11,10 +10,13 @@ using DataBrowserCore: Selection
 using DataBrowserGUI: CODE_COLORS, CodeFile, code_text, draw_code, edit!, ischanged_on_disk, isunsaved, load!, save!, with_font
 using DataBrowserGUI.Browser: ListItem, ListPicker, render_list_picker!, guarded_draw, draw_colors
 import DataBrowserAPI: draw!, prepare!, settings
-using DataBrowserPlots: DataBrowserPlots, CallCode, EntryCode, PlotCode, figure, mapping_order, mappings, scale_categories, scale_kinds
-using ..DataBrowserPlotsGLMakieExt: DARK, FigureView
-import ..DataBrowserPlotsGLMakieExt: theme_button
-import ..DataBrowserPlotsGLMakieExt: build!
+using DataBrowserPlots: DataBrowserPlots, figure, mappings, scale_categories, scale_kinds
+using ..DataBrowserPlotsGUIExt: DARK, FigureView
+import ..DataBrowserPlotsGUIExt: theme_button
+import ..DataBrowserPlotsGUIExt: build!
+
+# The plot code uses AlgebraOfGraphics. It loads with the first plot the builder runs.
+const ALGEBRA_OF_GRAPHICS = Base.PkgId(Base.UUID("cbdf2221-f076-402e-a563-3d30da359d67"), "AlgebraOfGraphics")
 
 # Icons of the Lucide font that DataBrowserGUI loads with the interface font.
 const ICON_EYE = "\ue0ba"
@@ -41,6 +43,7 @@ const ICON_PIPETTE = "\ue13b"  # pipette
 const ICON_ORDERED = "\ue1d1"  # list-ordered
 const ICON_COLUMN = "\ue473"   # variable
 
+include("PlotCode.jl")
 include("BuilderView.jl")
 include("CodeEdits.jl")
 include("Drawing.jl")

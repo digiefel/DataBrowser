@@ -282,11 +282,12 @@ DataBrowserCore    → API, Sources, Cache : the workspace, the index, backgroun
                    needing heavy dependencies (audio, say) live in extension packages
 DataBrowserGUI     → API, Core (+ CImGui/GLFW) : the host shell, panels, browser, shared widgets,
                    the window registry, and lightweight visualizers for Core-supported data shapes
-DataBrowserPlots   → API, Core, GUI : plot registration and high-level plot APIs. Registering a
-                   plot needs no backend; its setup function returns a Makie figure. The plot
-                   windows (Makie embedding, enhanced default visualizers) are a package
-                   extension that loads when AlgebraOfGraphics and GLMakie are loaded. The
-                   browser loads both on a worker thread after its first frame
+DataBrowserPlots   → API, Core : plot registration and high-level plot APIs. Registering a
+                   plot needs no backend; its setup function returns a Makie figure. Two package
+                   extensions: `figure` draws AlgebraOfGraphics declarations, loaded with AoG; the
+                   plot windows and the plot builder (Makie embedding), loaded with DataBrowserGUI
+                   and GLMakie. The browser loads GLMakie on a worker thread after its first
+                   frame, and the plot builder loads AoG when it first runs a plot
 DataBrowserFitting (+ NonlinearSolve, ForwardDiff) : the least-squares solver of `fit`. It has
                    no dependency on the other packages, and DataBrowserPlots loads it on the
                    first fit, so a session without fits does not load the solver

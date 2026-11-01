@@ -2,18 +2,13 @@ import CImGui as ig
 using DataBrowserGUI: GuiExtension
 using DataBrowserGUI.Browser: Browser
 
-# The packages that the plot-window extension of DataBrowserPlots needs. GLMakie is first: see
-# `_load_plot_windows`.
-const PLOT_WINDOW_PACKAGES = (
-    Base.PkgId(Base.UUID("e9467ef8-e4e7-5192-8a1a-b1aee30e663a"), "GLMakie"),
-    Base.PkgId(Base.UUID("cbdf2221-f076-402e-a563-3d30da359d67"), "AlgebraOfGraphics"),
-)
+# The package that loads the plot-window extension of DataBrowserPlots, with DataBrowserGUI.
+const GLMAKIE = Base.PkgId(Base.UUID("e9467ef8-e4e7-5192-8a1a-b1aee30e663a"), "GLMakie")
 
 """
-Loads AlgebraOfGraphics and GLMakie on a worker thread after the browser shows its first frame, when
-they are in the active environment and not loaded yet. The plot windows of DataBrowserPlots join the
-browser when both have loaded. Until then, the saved windows that wait for their visualizer show
-"Loading".
+Loads GLMakie on a worker thread after the browser shows its first frame, when it is in the active
+environment and not loaded yet. The plot windows join the browser when it has loaded. Until then,
+the saved windows that wait for their visualizer show "Loading".
 """
 mutable struct PlotWindowsLoader <: GuiExtension
     task::Union{Nothing,Task}
@@ -24,10 +19,9 @@ PlotWindowsLoader() = PlotWindowsLoader(nothing, false)
 function Browser.draw!(loader::PlotWindowsLoader, state)
     if !loader.started
         loader.started = true
-        Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt) === nothing || return nothing
-        absent = [package.name for package in PLOT_WINDOW_PACKAGES if Base.locate_package(package) === nothing]
-        if !isempty(absent)
-            @warn "The browser has no plot windows: add $(join(absent, " and ")) to the active environment"
+        Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGUIExt) === nothing || return nothing
+        if Base.locate_package(GLMAKIE) === nothing
+            @warn "The browser has no plot windows: add GLMakie to the active environment"
             return nothing
         end
         # Read on the UI thread, after the browser has set it.
@@ -53,20 +47,17 @@ function Browser.draw!(loader::PlotWindowsLoader, state)
 end
 
 """
-Load GLMakie, then AlgebraOfGraphics, which loads the plot-window extension. GLMakie hides the Dock
-icon of the process when it loads, on macOS; `policy` sets back the one the browser had, before the
-rest loads.
+Load GLMakie, which loads the plot-window extension. GLMakie hides the Dock icon of the process
+when it loads, on macOS; `policy` sets back the one the browser had.
 """
-# FIXME: the browser stops drawing for about 1.5 s while the packages load, and 0.8 s after. Browser
-# code that compiles for the first time while they load, such as the rows of the tree, compiles again
+# FIXME: the browser stops drawing for about 1.5 s while GLMakie loads, and 0.8 s after. Browser
+# code that compiles for the first time while it loads, such as the rows of the tree, compiles again
 # after each package that loads meanwhile. Packages outside the dependencies of the plot-window
 # extension, such as DataFrames, make Julia discard its compiled warmup.
 function _load_plot_windows(policy::Union{Nothing,Clong})::Nothing
-    glmakie, aog = PLOT_WINDOW_PACKAGES
-    Base.require(glmakie)
+    Base.require(GLMAKIE)
     # FIXME: AppKit expects this call on the main thread. GLMakie makes the same call on this thread.
     policy === nothing || _set_activation_policy(policy)
-    Base.require(aog)
     return nothing
 end
 

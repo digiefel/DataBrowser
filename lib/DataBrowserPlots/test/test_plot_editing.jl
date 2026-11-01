@@ -1,4 +1,7 @@
 using Test, DataBrowserPlots, DataBrowserGUI, GLMakie, AlgebraOfGraphics
+# The code edits of the plot builder.
+const Builder = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGUIExt).Builder
+using .Builder: add_layer!, set_analysis!
 
 @testset "adding layers preserves plot source" begin
     rows = (t=[0.,1.], v=[0.,5.])

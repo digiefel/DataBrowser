@@ -219,6 +219,4 @@ DataBrowserPlots.figure
 DataBrowserPlots.@plot
 DataBrowserPlots.@invisible
 DataBrowserPlots.register_plot!
-DataBrowserPlots.add_layer!
-DataBrowserPlots.set_analysis!
 ```

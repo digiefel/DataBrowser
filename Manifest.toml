@@ -389,19 +389,22 @@ uuid = "f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"
 version = "0.1.0"
 
 [[deps.DataBrowserPlots]]
-deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserFitting", "DataBrowserGUI", "GLFW", "ModernGL", "NativeFileDialog", "PrecompileTools", "Tables"]
+deps = ["DataBrowserAPI", "DataBrowserCore", "DataBrowserFitting", "PrecompileTools", "Tables"]
 path = "lib/DataBrowserPlots"
 uuid = "e2f3a4b5-c6d7-8e9f-0a1b-2c3d4e5f6a7b"
 version = "0.1.0"
 
     [deps.DataBrowserPlots.extensions]
     DataBrowserPlotsAlgebraOfGraphicsExt = "AlgebraOfGraphics"
-    DataBrowserPlotsGLMakieExt = ["AlgebraOfGraphics", "GLMakie"]
+    DataBrowserPlotsGUIExt = ["DataBrowserGUI", "GLMakie", "CImGui", "GLFW", "ModernGL"]
 
     [deps.DataBrowserPlots.weakdeps]
     AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
-    CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+    CImGui = "5d785b6c-b76f-510e-a07c-3070796c7e87"
+    DataBrowserGUI = "f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"
+    GLFW = "f7f18e0c-5ee9-5ccd-a5bf-e8befd85ed98"
     GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+    ModernGL = "66fc600b-dfda-50eb-8b99-91cfa97b1301"
 
 [[deps.DataBrowserRecipes]]
 deps = ["CSV", "DataBrowserAPI", "DataBrowserCache", "DataBrowserSources", "DataFrames"]

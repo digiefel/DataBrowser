@@ -213,22 +213,22 @@ function analysis_menu!(view::BuilderView, layer::Int, index::Int; adding::Bool=
     changes = Function[]
     for choice in ANALYSES
         if ig.Selectable(String(first(split(choice, '('))))
-            push!(changes, () -> DataBrowserPlots.set_analysis!(view.code, layer, choice; index))
+            push!(changes, () -> set_analysis!(view.code, layer, choice; index))
             ig.CloseCurrentPopup()
         end
     end
     adding && return changes
-    parts = DataBrowserPlots.analysis_factors(view.code, view.plot.lines[layer])
-    analyses = filter(part -> !any(name -> DataBrowserPlots.is_call(part, name), ("mapping", "visual", "data")), parts)
+    parts = analysis_factors(view.code, view.plot.lines[layer])
+    analyses = filter(part -> !any(name -> is_call(part, name), ("mapping", "visual", "data")), parts)
     index <= length(analyses) || return changes
     ig.Separator()
-    source = String(DataBrowserPlots.sourcetext(analyses[index]))
+    source = String(sourcetext(analyses[index]))
     edited = part_field!(view, "analysis_expression", source, max(ig.GetContentRegionAvail().x, 240.0f0);
         hint="Analysis expression", tooltip="Edit the analysis and its arguments")
     edited === nothing || isempty(edited) || push!(changes,
-        () -> DataBrowserPlots.set_analysis!(view.code, layer, edited; index))
+        () -> set_analysis!(view.code, layer, edited; index))
     if ig.Selectable("Remove analysis")
-        push!(changes, () -> DataBrowserPlots.set_analysis!(view.code, layer, nothing; index))
+        push!(changes, () -> set_analysis!(view.code, layer, nothing; index))
         ig.CloseCurrentPopup()
     end
     return changes
@@ -419,7 +419,7 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
 
     section("layers") do
         type = heading!(view, "layers", "Layers", PLOT_TYPES; role=:interface, tooltip="Add a layer")
-        type === nothing || push!(changes, () -> DataBrowserPlots.add_layer!(view.code, Symbol(type)))
+        type === nothing || push!(changes, () -> add_layer!(view.code, Symbol(type)))
         for index in eachindex(plot.lines)
             ig.PushID(index)
             index > 1 && ig.Dummy((0.0f0, 4.0f0))
