@@ -361,10 +361,14 @@ uuid = "f3b8c1a2-4d5e-6f70-8192-a3b4c5d6e7f8"
 version = "0.1.0"
 
 [[deps.DataBrowserCache]]
-deps = ["DBInterface", "DataBrowserAPI", "Dates", "DuckDB", "Serialization", "Tables"]
+deps = ["DBInterface", "DataBrowserAPI", "Dates", "DuckDB", "OrderedCollections", "Serialization", "Tables"]
 path = "lib/DataBrowserCache"
 uuid = "c7d8e9f0-1a2b-3c4d-5e6f-708192a3b4c5"
 version = "0.1.0"
+weakdeps = ["DataFrames"]
+
+    [deps.DataBrowserCache.extensions]
+    DataBrowserCacheDataFramesExt = "DataFrames"
 
 [[deps.DataBrowserCore]]
 deps = ["CancellationTokens", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserSources", "Dates", "InteractiveUtils", "PrettyTables", "Printf", "Revise", "SHA", "Serialization", "StructArrays", "TOML", "Tables"]
@@ -400,7 +404,7 @@ version = "0.1.0"
     GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 
 [[deps.DataBrowserRecipes]]
-deps = ["CSV", "DataBrowserAPI", "DataBrowserSources", "DataFrames"]
+deps = ["CSV", "DataBrowserAPI", "DataBrowserCache", "DataBrowserSources", "DataFrames"]
 path = "lib/DataBrowserRecipes"
 uuid = "a7c3e5d9-2b4f-4816-9e0d-3f5a7c9b1e24"
 version = "0.1.0"

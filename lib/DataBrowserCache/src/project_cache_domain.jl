@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 33
+const PROJECT_CACHE_SCHEMA_VERSION = 36
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -17,14 +17,6 @@ function set_cache_memory_limit!(mib::Integer)::Int
     mib >= 1 || throw(ArgumentError("cache memory limit must be at least 1 MiB"))
     return CACHE_MEMORY_LIMIT_MIB[] = Int(mib)
 end
-
-"""
-    default_expanded_data_limit() -> Int
-
-The default of `expanded_data_limit` in [`open_cache_db`](@ref), in MiB: 512, or a quarter of the
-memory of the machine when that is less.
-"""
-default_expanded_data_limit()::Int = min(512, Sys.total_memory() ÷ 4 ÷ 1024^2)
 
 """Error raised when a project cache is missing or does not match the current project."""
 struct ProjectCacheError <: Exception
@@ -85,6 +77,12 @@ struct CachedResultState
     status::Int8
     source_item_key::Int64
     message::Union{Nothing,String}
+    # A new number each time the stage finishes, so that values computed from its result can
+    # tell, after a reopen, whether they were computed from the result that is current.
+    version::UInt64
+    # The serialized item type under which the store keeps the result; empty when none is kept.
+    # A `process` method may return another type than the item it receives.
+    type_hex::String
 end
 
 CachedResultState(row)::CachedResultState = CachedResultState(
@@ -93,6 +91,8 @@ CachedResultState(row)::CachedResultState = CachedResultState(
     Int8(row.status),
     Int64(row.source_item_key),
     _null_to_nothing(row.message),
+    UInt64(row.version),
+    String(row.type_hex),
 )
 
 """One persisted source or collection result, identified by its stage and private integer key."""
@@ -150,8 +150,7 @@ const SavedItem = @NamedTuple{
 Snapshot returned by `load_cache_index` for workspace restoration.
 
 Contains the saved source items, collections and items, and the result of each stage. A collection
-comes after its parent. Payloads are obtained separately through `read_payload`; the snapshot
-exposes no live cache stores or connections.
+comes after its parent. The snapshot exposes no live cache stores or connections.
 """
 struct ProjectCacheIndex
     identity::ProjectCacheIdentity
@@ -412,6 +411,19 @@ end
 CollectionProcessRow(row)::CollectionProcessRow =
     CollectionProcessRow(Int64(row.collection_key), String(row.metadata_hex))
 
+"""
+The revision of the inputs and code of the stored result of one computation, by its id, and the
+item type under which its store keeps it.
+"""
+struct ComputationRevisionRow
+    id::String
+    revision::UInt64
+    type_hex::String
+end
+
+ComputationRevisionRow(row)::ComputationRevisionRow =
+    ComputationRevisionRow(String(row.id), UInt64(row.revision), String(row.type_hex))
+
 """The revision of the code that one stage ran for one type of item, collection or source item."""
 struct CodeRevisionRow
     stage::Int8
@@ -486,9 +498,8 @@ end
 # Connection + schema
 
 """
-One open DuckDB cache, backed by a file or held in memory: typed row stores, one processed-payload
-store, and one resident unprocessed-payload buffer. Only schema, meta-header, and checkpoint work open short-lived
-connections.
+One open DuckDB cache, backed by a file or held in memory: typed row stores. Only schema,
+meta-header, and checkpoint work open short-lived connections.
 """
 mutable struct CacheDB
     identity::ProjectCacheIdentity
@@ -506,10 +517,10 @@ mutable struct CacheDB
     collection_process::RowStore{Int64,CollectionProcessRow}
     code_revisions::RowStore{Tuple{Int8,String},CodeRevisionRow}
     stage_metadata::RowStore{Tuple{Int8,Int64},StageMetadataRow}
-    payload::TabularFamilyStore
-    source_reads::MemoryStore{Int64,Any}
-    unprocessed::MemoryStore{String,Any}
-    # One integer surrogate per item id, shared with the payload store; minted when items are published.
+    computation_revision_rows::RowStore{String,ComputationRevisionRow}
+    # The same revisions, read at opening, so that a lookup does not read the table.
+    computation_revisions::Dict{String,ComputationRevisionRow}
+    # One integer surrogate per item id; minted when items are published.
     item_keys::Dict{String,Int64}
     next_item_key::Int64
     # One integer surrogate per source-item id; the mapping is persisted once in `source_items`.
@@ -549,9 +560,6 @@ limit to a temporary directory of its own. The supplied cache path is untouched,
 
 A cache file can be open only once in a Julia session: opening it again before
 [`close_cache_db!`](@ref) is an error.
-
-`expanded_data_limit` is the memory limit, in MiB, for the data that `expand` gave each item and
-that is kept until the `process` of the item has used it.
 """
 function open_cache_db(
     identity::ProjectCacheIdentity,
@@ -559,10 +567,7 @@ function open_cache_db(
     ;
     rebuild::Bool=false,
     persistent::Bool=true,
-    expanded_data_limit::Integer=default_expanded_data_limit(),
 )::CacheDB
-    expanded_data_limit >= 1 ||
-        throw(ArgumentError("the limit for expanded data must be at least 1 MiB"))
     path = abspath(identity.cache_path)
     persistent && @lock OPEN_FILES_LOCK begin
         haskey(OPEN_FILES, path) && error(
@@ -625,7 +630,8 @@ function open_cache_db(
             db, "code_revisions", ("stage", "type_hex")))
         stage_metadata = started(RowStore{Tuple{Int8,Int64},StageMetadataRow}(
             db, "item_stage_metadata", ("stage", "item_key")))
-        payload = started(TabularFamilyStore(db; row_limit=CACHE_BUFFER_ROW_LIMIT))
+        computation_revision_rows = started(RowStore{String,ComputationRevisionRow}(
+            db, "computation_revisions", ("id",)))
         item_keys, next_item_key = _load_item_keys(db)
         source_item_keys, source_item_ids, next_source_item_key = _load_source_item_keys(db)
         stage_ledger = CacheStageLedger(
@@ -650,10 +656,8 @@ function open_cache_db(
             collection_process,
             code_revisions,
             stage_metadata,
-            payload,
-            MemoryStore{Int64,Any}(; capacity=256 * 1024^2, weight=Base.summarysize),
-            MemoryStore{String,Any}(;
-                capacity=Int(expanded_data_limit) * 1024^2, weight=Base.summarysize),
+            computation_revision_rows,
+            Dict{String,ComputationRevisionRow}(row.id => row for row in values(read(computation_revision_rows))),
             item_keys,
             next_item_key,
             source_item_keys,
@@ -782,6 +786,8 @@ function ensure_schema!(connection)::Nothing
     DBInterface.execute(connection,
         create_table_sql(CodeRevisionRow, "code_revisions", (:stage, :type_hex)))
     DBInterface.execute(connection,
+        create_table_sql(ComputationRevisionRow, "computation_revisions", (:id,)))
+    DBInterface.execute(connection,
         create_table_sql(StageMetadataRow, "item_stage_metadata", (:stage, :item_key)))
     DBInterface.execute(connection, """
         CREATE TABLE IF NOT EXISTS wide_columns(
@@ -796,32 +802,15 @@ function ensure_schema!(connection)::Nothing
     DBInterface.execute(connection, """
         CREATE TABLE IF NOT EXISTS item_metadata(item_key BIGINT PRIMARY KEY)
     """)
-    DBInterface.execute(connection, """
-        CREATE TABLE IF NOT EXISTS item_data(
-            item_key BIGINT,
-            collection_key BIGINT,
-            storage_id USMALLINT,
-            seq UINTEGER,
-            container TEXT,
-            rows UBIGINT,
-            PRIMARY KEY (item_key, collection_key),
-            UNIQUE (storage_id, seq))
-    """)
-    DBInterface.execute(connection, """
-        CREATE TABLE IF NOT EXISTS payload_schemas(
-            storage_id USMALLINT PRIMARY KEY,
-            column_names VARCHAR[],
-            column_types VARCHAR[])
-    """)
     return nothing
 end
 
 # The domain write/read surface over the generic stores: pipeline stages, items and collections map
-# onto RowStore rows and TabularFamilyStore batches. The stores know none of this; they buffer typed rows.
+# onto RowStore rows. The stores know none of this; they buffer typed rows.
 
 """
 One item that a source item produced, in the form the cache stores: its row, the metadata its
-source item gave it, and its expanded data. `collection_key` is `nothing` for an item at the root.
+source item gave it. `collection_key` is `nothing` for an item at the root.
 """
 struct ItemOutput
     id::String
@@ -829,7 +818,6 @@ struct ItemOutput
     type::Type
     collection_key::Union{Nothing,Int64}
     metadata::MetadataDict
-    payload::Any
 end
 
 """
@@ -840,22 +828,17 @@ result made from them are deleted, `outputs` are stored, and the expand stage of
 recorded as finished. An id in both lists is a new item: its earlier results do not survive.
 `outputs` may be empty.
 
-`retain` chooses which outputs keep an unprocessed payload. Identity and metadata are recorded
-for every output, independently of payload retention.
-
 Returns type-conflict messages for metadata keys that could not be stored.
 """
 function replace_source_output!(
     cache::CacheDB,
     source_key::Int64,
     previous::Vector{String},
-    outputs::Vector{ItemOutput};
-    retain::AbstractVector{Bool}=trues(length(outputs)),
+    outputs::Vector{ItemOutput},
 )::Vector{String}
-    length(retain) == length(outputs) || throw(DimensionMismatch("One retention choice is required per output"))
     isempty(previous) || delete_source_output!(cache, source_key, previous)
     dropped = WideConflict[]
-    for (output, keep) in zip(outputs, retain)
+    for output in outputs
         started = time_ns()
         key = item_key!(cache, output.id; mint=true)
         append!(cache.items, output.id, ItemRow(
@@ -863,7 +846,6 @@ function replace_source_output!(
         _stage_ledger_item!(cache.stage_ledger, output.id, true)
         append!(dropped, edit!(cache.source_item_metadata, key, output.metadata))
         record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
-        keep ? store_item_payload!(cache, output.id, output.payload) : release_item_payload!(cache, output.id)
     end
     store_source_result!(cache, SOURCE_EXPAND, source_key)
     return _conflict_messages(unique(dropped))
@@ -913,64 +895,55 @@ function store_collection!(
 end
 
 """
-Keep the expanded data of one item in memory. When the limit of the cache is exceeded, the data
-kept longest is dropped.
+    store_result_ready!(cache, id, source_key, type; stage=ITEM_PROCESS)
+
+Record that a stage of an item finished: its own `process` for `ITEM_PROCESS`, or the member
+`process` methods of its collections for `MEMBER_PROCESS`. The value itself is kept by the store
+of its item type `type`. Return the new version of the result.
 """
-function store_item_payload!(cache::CacheDB, id::AbstractString, payload)::Nothing
-    append!(cache.unprocessed, String(id), payload)
-    return nothing
-end
-
-"""Drop the expanded data of one item, after its `process` has used it."""
-function release_item_payload!(cache::CacheDB, id::AbstractString)::Nothing
-    delete!(cache.unprocessed, String(id))
-    return nothing
-end
-
-"""Whether the expanded data kept in memory has reached half its limit."""
-expanded_data_full(cache::CacheDB)::Bool =
-    lock(() -> 2 * cache.unprocessed.size >= cache.unprocessed.capacity, cache.unprocessed.lock)
-
-"""
-    store_processed!(cache, id, source_key, payload; stage=ITEM_PROCESS)
-
-Store processed data of an item: the result of its `process` for `ITEM_PROCESS`, or the result of
-the member `process` methods of its collections for `MEMBER_PROCESS`. Each is kept separately, and
-records that its stage finished.
-
-The cache passes every payload to its payload store. That store defines the accepted Tables.jl
-shape and column types and reports unsupported values through its normal write errors.
-"""
-function store_processed!(
+function store_result_ready!(
     cache::CacheDB,
     id::AbstractString,
     source_key::Int64,
-    payload;
+    type::Type;
     stage::PipelineStage=ITEM_PROCESS,
-)::Nothing
-    key = item_key!(cache, id)
-    started = time_ns()
-    append!(cache.payload, payload_key(key, stage), payload)
-    record_cache_phase!(
-        cache.metrics.processed_write_ns,
-        cache.metrics.processed_writes,
-        started,
-    )
-    state = CachedResultState(Int8(stage), String(id), Int8(RESULT_READY), source_key, nothing)
+)::UInt64
+    version = rand(UInt64)
+    state = CachedResultState(Int8(stage), String(id), Int8(RESULT_READY), source_key, nothing, version,
+        _serialize_type(type))
     edit!(cache.result_states, (Int8(stage), String(id)), state)
     _stage_ledger_result!(cache.stage_ledger, (Int8(stage), String(id)), state)
+    return version
+end
+
+"""
+    store_computation_revision!(cache, id, revision, type)
+
+Record the revision of the inputs and code from which the stored result of the computation `id`
+was computed, and the item type under which its store keeps it.
+"""
+function store_computation_revision!(cache::CacheDB, id::AbstractString, revision::UInt64, type::Type)::Nothing
+    row = ComputationRevisionRow(String(id), revision, _serialize_type(type))
+    @lock cache.key_lock cache.computation_revisions[row.id] = row
+    edit!(cache.computation_revision_rows, row.id, row)
     return nothing
 end
 
-# The processed data of an item for one stage: 0 for its own `process`, 1 for its member `process`.
-# Items and collections have separate keys; the second part tells them apart.
-payload_key(key::Int64, stage::PipelineStage)::PayloadKey =
-    (key, stage == COLLECTION_PROCESS ? Int64(2) : Int64(stage == MEMBER_PROCESS))
+"""
+    recorded_revision(cache, id) -> Union{Nothing,Tuple{UInt64,Type}}
 
-"""Delete the processed data that one stage stored for an item."""
-function delete_processed!(cache::CacheDB, id::AbstractString; stage::PipelineStage)::Nothing
-    delete!(cache.payload, payload_key(item_key!(cache, id), stage))
-    return nothing
+The revision and the item type that [`store_computation_revision!`](@ref) recorded for `id`, or
+`nothing`. A type that no longer exists counts as no record.
+"""
+function recorded_revision(cache::CacheDB, id::AbstractString)::Union{Nothing,Tuple{UInt64,Type}}
+    row = @lock cache.key_lock get(cache.computation_revisions, String(id), nothing)
+    row === nothing && return nothing
+    type = try
+        _deserialize_type(row.type_hex)
+    catch
+        return nothing
+    end
+    return (row.revision, type)
 end
 
 """Persist one independent failed work result."""
@@ -979,7 +952,7 @@ function store_result_failure!(cache::CacheDB, kind::PipelineStage,
         message::AbstractString)::Nothing
     entity_value = String(entity)
     state = CachedResultState(Int8(kind), entity_value, Int8(RESULT_FAILED),
-        Int64(source_item_key), String(message))
+        Int64(source_item_key), String(message), UInt64(0), "")
     edit!(cache.result_states, (Int8(kind), entity_value), state)
     _stage_ledger_result!(cache.stage_ledger, (Int8(kind), entity_value), state)
     return nothing
@@ -1004,8 +977,7 @@ _conflict_messages(dropped::Vector{WideConflict})::Vector{String} = String[
 ]
 
 """
-Persist the metadata project code receives with one item, which queries read and the processed
-payload is rebuilt with. Returns type-conflict messages for dropped keys.
+Persist the metadata project code receives with one item, which queries read. Returns type-conflict messages for dropped keys.
 """
 function store_item_metadata!(
     cache::CacheDB, id::AbstractString, effective::AbstractDict,
@@ -1064,15 +1036,12 @@ function code_revisions(cache::CacheDB)::Dict{Tuple{PipelineStage,Type},String}
 end
 
 """
-Record that the `process` of one collection finished, with the metadata and the data of the value
-it returned. Data that is `nothing` is not stored.
+Record that the `process` of one collection finished, with the metadata of the value it returned.
 """
 function store_collection_process_result!(
-    cache::CacheDB, collection_key::Integer, metadata::MetadataDict, payload,
+    cache::CacheDB, collection_key::Integer, metadata::MetadataDict,
 )::Nothing
     entity = Int64(collection_key)
-    payload === nothing ? delete!(cache.payload, payload_key(entity, COLLECTION_PROCESS)) :
-        append!(cache.payload, payload_key(entity, COLLECTION_PROCESS), payload)
     edit!(cache.collection_process, entity, CollectionProcessRow(entity, _serialize_hex(metadata)))
     state = CachedKeyedResultState(
         Int8(COLLECTION_PROCESS), entity, Int8(RESULT_READY), 0, nothing)
@@ -1104,11 +1073,9 @@ function delete_source_output!(
         delete!(cache.item_metadata, key)
         for stage in (ITEM_PROCESS, MEMBER_PROCESS)
             delete!(cache.stage_metadata, (Int8(stage), key))
-            delete!(cache.payload, payload_key(key, stage))
             delete!(cache.result_states, (Int8(stage), id))
             _stage_ledger_result!(cache.stage_ledger, (Int8(stage), id), nothing)
         end
-        delete!(cache.unprocessed, id)
         delete!(cache.failures, (id, source_key))
         _stage_ledger_failure!(cache.stage_ledger, (id, source_key), false)
     end
@@ -1139,7 +1106,6 @@ function delete_collection_metadata!(
     for collection_key in unique(collection_keys)
         delete!(cache.keyed_result_states, (Int8(COLLECTION_PROCESS), collection_key))
         delete!(cache.collection_process, collection_key)
-        delete!(cache.payload, payload_key(collection_key, COLLECTION_PROCESS))
         _stage_ledger_result!(
             cache.stage_ledger, (Int8(COLLECTION_PROCESS), collection_key), nothing)
     end
@@ -1147,14 +1113,14 @@ function delete_collection_metadata!(
 end
 
 """
-The number of keys and of payload rows that are queued or being written, over every store at the
+The number of keys and of rows that are queued or being written, over every store at the
 same moment.
 """
 function cache_pending_counts(cache::CacheDB)::NamedTuple{(:items, :rows),Tuple{Int,Int}}
     buffers = (cache.source_items, cache.collections, cache.items, cache.source_item_metadata,
         cache.item_metadata, cache.failures, cache.result_states,
         cache.keyed_result_states, cache.collection_process, cache.code_revisions, cache.stage_metadata,
-        cache.payload)
+        cache.computation_revision_rows)
     # Every store is locked before any is read. No other code holds two of these locks.
     foreach(buffer -> lock(buffer.flush_condition), buffers)
     try
@@ -1230,6 +1196,19 @@ function cache_has_pending_writes(cache::CacheDB)::Bool
     return pending.items > 0 || pending.rows > 0
 end
 
+"""
+The item type under which the store keeps the result of `state`; `nothing` when none was recorded
+or the type no longer exists.
+"""
+function stored_type(state::CachedResultState)::Union{Nothing,Type}
+    isempty(state.type_hex) && return nothing
+    return try
+        _deserialize_type(state.type_hex)
+    catch
+        nothing
+    end
+end
+
 """Return the current result-ledger entry for one pipeline stage, or `nothing`."""
 function cached_result_state(
     cache::CacheDB,
@@ -1243,48 +1222,6 @@ function cached_result_state(
     end
 end
 
-"""
-Return whether an item has a cached payload without loading the payload: its unprocessed data for
-`SOURCE_EXPAND`, its own processed data for `ITEM_PROCESS`, or the result of the member `process`
-methods of its collections for `MEMBER_PROCESS`.
-
-Unprocessed payloads are resident and processed payloads use the database payload store.
-The payload-store check covers queued and committed writes.
-"""
-function has_payload(
-    cache::CacheDB, item_id::AbstractString; stage::PipelineStage=ITEM_PROCESS,
-)::Bool
-    id_value = String(item_id)
-    stage === SOURCE_EXPAND && return haskey(cache.unprocessed, id_value)
-    key = lock(cache.key_lock) do
-        get(cache.item_keys, id_value, nothing)
-    end
-    key === nothing && return false
-    return haskey(cache.payload, payload_key(key, stage))
-end
-
-"""
-Read cached item payloads: unprocessed data for `SOURCE_EXPAND`, processed data for `ITEM_PROCESS`,
-and the result of the member `process` methods for `MEMBER_PROCESS`.
-
-The returned vector aligns with `ids`. Each entry is `Some(payload)` on a hit and `nothing` on
-a miss, so `nothing` remains a valid payload value. Unprocessed payloads are resident only;
-processed payloads come from the DuckDB-backed payload store.
-"""
-function read_payload(
-    cache::CacheDB,
-    ids::Vector{String};
-    stage::PipelineStage=ITEM_PROCESS,
-)::Vector{Any}
-    isempty(ids) && return Any[]
-    stage === SOURCE_EXPAND && return Any[read_hit(cache.unprocessed, id) for id in ids]
-    keys = PayloadKey[payload_key(item_key!(cache, id), stage) for id in ids]
-    stored_data = read(cache.payload, unique(keys))
-    return Any[
-        (data = get(stored_data, key, nothing); data === nothing ? nothing : Some(data))
-        for key in keys]
-end
-
 """Flush and close cache stores, then checkpoint and close the database."""
 function close_cache_db!(cachedb::CacheDB)::Nothing
     failures = Any[]
@@ -1292,8 +1229,7 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.item_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.collection_process,
-         cachedb.code_revisions, cachedb.stage_metadata, cachedb.payload,
-         cachedb.unprocessed, cachedb.source_reads)
+         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows)
         try
             close!(buffer)
         catch error
@@ -1356,8 +1292,7 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
         (cachedb.source_items, cachedb.collections, cachedb.items, cachedb.source_item_metadata,
          cachedb.item_metadata, cachedb.failures,
          cachedb.result_states, cachedb.keyed_result_states, cachedb.collection_process,
-         cachedb.code_revisions, cachedb.stage_metadata, cachedb.payload,
-         cachedb.unprocessed, cachedb.source_reads)
+         cachedb.code_revisions, cachedb.stage_metadata, cachedb.computation_revision_rows)
         clear!(buffer)
     end
     lock(cachedb.key_lock) do
@@ -1366,6 +1301,7 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
         empty!(cachedb.source_item_keys)
         empty!(cachedb.source_item_ids)
         cachedb.next_source_item_key = Int64(1)
+        empty!(cachedb.computation_revisions)
         empty!(cachedb.persisted_collection_keys)
     end
     _reset_stage_ledger!(cachedb.stage_ledger)
@@ -1506,10 +1442,6 @@ function load_cache_index(cache::CacheDB)::ProjectCacheIndex
     sort!(items; by=item -> (item.source_key, item.id))
     result_states = Dict{CacheResultKey,AnyCachedResultState}()
     for state in values(read(cache.result_states))
-        # A processed payload that was evicted or never flushed leaves nothing to deliver.
-        stage = PipelineStage(state.kind)
-        stage in (ITEM_PROCESS, MEMBER_PROCESS) && CacheResultStatus(state.status) === RESULT_READY &&
-            !has_payload(cache, state.entity; stage) && continue
         result_states[CacheResultKey(PipelineStage(state.kind), state.entity)] = state
     end
     for state in values(read(cache.keyed_result_states))

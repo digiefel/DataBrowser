@@ -69,38 +69,34 @@ using DataBrowserCache:
     cache_has_pending_writes,
     cache_pending_counts,
     cached_result_state,
+    stored_type,
     clear_cache_index!,
     clear_cached_result_state!,
     close_cache_db!,
     delete_collection_records!,
-    delete_processed!,
     delete_collection_metadata!,
     delete_source_item!,
     delete_source_output!,
     replace_source_output!,
     ItemOutput,
-    has_payload,
     load_cache_index,
     cached_source_fingerprints,
     open_cache_db,
     project_cache_identity,
-    read_payload,
     reset_build_metrics!,
     store_collection!,
     store_collection_process_result!,
     store_code_revision!,
     code_revisions,
-    store_item_payload!,
-    release_item_payload!,
-    expanded_data_full,
-    default_expanded_data_limit,
     store_item_label!,
     store_item_metadata!,
     store_item_stage_metadata!,
-    store_processed!,
+    store_result_ready!,
+    store_computation_revision!,
+    recorded_revision,
     store_result_failure!,
     store_source_identity!,
-    store_source_read!,
+    store_source_result!,
     source_complete,
     cache_knows_source,
     source_item_key!
@@ -116,7 +112,7 @@ using ..DataBrowserCore: ComputationStores, ComputationResult, RecordedExecution
 using DataBrowserAPI: ComputationExecution
 import DataBrowserAPI: last_execution, cache_info
 using ..DataBrowserCore: ResultItem
-using ..DataBrowserCore: result_item_type
+using DataBrowserAPI: AbstractStore
 import DataBrowserAPI: computation, inputs, evaluate
 import DataBrowserAPI
 import DataBrowserAPI:
@@ -334,6 +330,10 @@ mutable struct Workspace{P<:AbstractProject}
     disk_cache::Bool
     # Memory limit (MiB) for the data that `expand` gave the items and `process` has not used yet.
     expanded_data_limit::Int
+    # The value that `expand` gave each item, which `process` has not taken yet, with its size in
+    # bytes; and the sum of those sizes.
+    expanded::Dict{String,Tuple{AbstractDataItem,Int}}
+    expanded_bytes::Int
     background_tasks::Vector{Task}
     metrics::BuildMetrics
     # Held for the whole of `modify_workspace!` / `close_workspace!` so a frame cannot read a
@@ -366,6 +366,14 @@ function Catalog(background_processing::Bool)::Catalog
     return Catalog(; eager)
 end
 
+"""
+    default_expanded_data_limit() -> Int
+
+The default of `expanded_data_limit` in [`open_workspace`](@ref), in MiB: 512, or a quarter of the
+memory of the machine when that is less.
+"""
+default_expanded_data_limit()::Int = min(512, Sys.total_memory() ÷ 4 ÷ 1024^2)
+
 # The priority of source item jobs: above the background jobs of items, or between those and the
 # background jobs of collections.
 const SOURCES_FIRST = 4
@@ -384,12 +392,11 @@ function _open_workspace_cache(
     metrics::BuildMetrics;
     rebuild::Bool,
     cache::Bool,
-    expanded_data_limit::Integer,
 )::Tuple{CacheDB,Union{Nothing,Exception},ProjectCacheIdentity}
     identity = project_cache_identity(project_name(project), source)
     disk_error::Union{Nothing,Exception} = nothing
     cache_db::CacheDB = try
-        @timed_dbg open_cache_db(identity, metrics; rebuild, persistent=cache, expanded_data_limit)
+        @timed_dbg open_cache_db(identity, metrics; rebuild, persistent=cache)
     catch error
         if cache && !rebuild && error isa ProjectCacheSchemaError
             disk_error = error
@@ -398,7 +405,7 @@ function _open_workspace_cache(
                 cache=identity.cache_path,
                 error,
             )
-            open_cache_db(identity, metrics; persistent=false, expanded_data_limit)
+            open_cache_db(identity, metrics; persistent=false)
         else
             rethrow()
         end
@@ -419,7 +426,7 @@ function Workspace(
 )::Workspace{P} where {P<:AbstractProject}
     metrics = BuildMetrics()
     cache_db, disk_error, identity =
-        _open_workspace_cache(project, source, metrics; rebuild, cache, expanded_data_limit)
+        _open_workspace_cache(project, source, metrics; rebuild, cache)
     workspace = Workspace(
         project,
         source,
@@ -451,6 +458,8 @@ function Workspace(
         background_processing,
         cache,
         Int(expanded_data_limit),
+        Dict{String,Tuple{AbstractDataItem,Int}}(),
+        0,
         Task[],
         metrics,
         ReentrantLock(),

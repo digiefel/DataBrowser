@@ -149,6 +149,29 @@ end
 # A hit is a native result, including `nothing`. Missing native restoration is a miss, so that
 # evaluation follows the recorded inputs instead of inventing a replacement value.
 function computation_result(workspace::Workspace, value::Computation)
+    location = result_location(workspace, value)
+    location === nothing || return only(read_results([location]))
+    catalog = workspace.catalog
+    target, revision = @lock catalog.lock (computation_address(catalog, value), computation_revision(catalog, value))
+    (revision === nothing || target isa Target) && return nothing
+    return restored_result(workspace, value)
+end
+
+"""Where a store keeps the result of a computation: the store, and the item type and id it saves."""
+struct ResultLocation
+    store::AbstractStore
+    type::Type
+    id::String
+    # Whether the result is the data of the saved item, not the item.
+    unwrap::Bool
+end
+
+"""
+Where a store keeps the current result of `value`, computed in this opening or kept from an earlier
+one; `nothing` when there is none, or when it is the result of a call that is not a stage of an
+item, collection or source item, which `restored_result` finds.
+"""
+function result_location(workspace::Workspace, value::Computation)::Union{Nothing,ResultLocation}
     catalog = workspace.catalog
     target, revision, native = @lock catalog.lock begin
         target = computation_address(catalog, value)
@@ -158,30 +181,50 @@ function computation_result(workspace::Workspace, value::Computation)
         target, revision, get(workspace.results, target, nothing)
     end
     if native !== nothing && native.computation === value && native.revision == revision
-        return stored_result(native)
+        native.store === nothing && return nothing
+        return ResultLocation(native.store, native.item_type, native.key, !(native.value_type <: AbstractDataItem))
     end
     target isa Target || return nothing
     key, stage = target
-    if key isa SourceKey
-        stage == SOURCE_READ || return nothing
-        cached = read_payload(workspace.cache.db, cache_key(workspace, key))
-        return cached === nothing || !keeps_result(workspace, something(cached)) ? nothing : cached
-    elseif key isa ItemKey
-        haskey(workspace.computations, key) && return nothing
-        result_store(workspace, valuetype(workspace, key)) === nothing && return nothing
-        payload = only(read_payload(workspace.cache.db, [id(workspace, key)]; stage))
-        payload === nothing && return nothing
-        restored = reconstruct(valuetype(workspace, key), id(workspace, key), something(payload),
-            metadata(workspace, key; through=stage))
-        return restored === nothing ? nothing : Some(restored)
-    elseif key isa CollectionKey && stage == COLLECTION_PROCESS
-        # The value that the `process` of a collection returned, rebuilt from its data and metadata.
-        payload = read_payload(workspace.cache.db, workspace.collection_keys[key]; stage)
-        given = metadata(workspace, key)
-        return Some(reconstruct(valuetype(catalog, key), id(catalog, key),
-            payload === nothing ? nothing : something(payload), given))
+    # The read and expand results of a source item are not kept.
+    key isa SourceKey && return nothing
+    key isa ItemKey && haskey(workspace.computations, key) && return nothing
+    # The value kept in an earlier opening, under the item type that its stage recorded, since a
+    # `process` method may return another type than the item it receives.
+    type, stored = @lock catalog.lock begin
+        current_value(catalog, target) || return nothing
+        type = valuetype(catalog, key)
+        # A collection value is kept as a `ResultItem`, since it is not an item.
+        (key isa ItemKey ? type : ResultItem{type}), id(catalog, key)
     end
-    return nothing
+    if key isa ItemKey
+        state = cached_result_state(workspace.cache.db, stage, stored)
+        recorded = state === nothing ? nothing : stored_type(state)
+        recorded === nothing || (type = recorded)
+    end
+    store = result_store(workspace, type)
+    store === nothing && return nothing
+    return ResultLocation(store, type, stored, !(key isa ItemKey))
+end
+
+"""
+The results at `locations`, each as `Some(result)`, or `nothing` where its store no longer has it.
+Each store reads all its items of one type in one call.
+"""
+function read_results(locations::AbstractVector)::Vector{Union{Nothing,Some}}
+    results = Vector{Union{Nothing,Some}}(nothing, length(locations))
+    groups = Dict{Tuple{AbstractStore,Type},Vector{Int}}()
+    for (position, location) in pairs(locations)
+        location === nothing || push!(get!(Vector{Int}, groups, (location.store, location.type)), position)
+    end
+    for ((store, type), positions) in groups
+        items = @timed_dbg "result.read" read(store, type, [locations[position].id for position in positions])
+        for (position, item) in zip(positions, items)
+            item === nothing && continue
+            results[position] = Some(locations[position].unwrap ? data(item) : item)
+        end
+    end
+    return results
 end
 
 # Execute a scheduled call with the inputs already materialized by its publication job. The

@@ -2,12 +2,12 @@
 Start cache loading and source scanning for one new workspace.
 With `cache=false`, keep the cache in memory and discard it on close; the project cache file is untouched.
 
-`expanded_data_limit` is the memory limit, in MiB, for expanded data: the data that `expand` gave
-each item, kept until the `process` of the item has used it. The default is 512, or a quarter of
-the memory of the machine when that is less. While the expanded data is under half the limit, the
-workspace reads its source items first. Above that, it processes items first, which releases their
-expanded data. A lower limit uses less memory and lists the items of all source items later. The
-size of the data is estimated.
+`expanded_data_limit` is the limit, in MiB, for expanded data: the data that `expand` gave each
+item, kept in memory until the `process` of the item has used it. The default
+is 512, or a quarter of the memory of the machine when that is less. While the expanded data is
+under half the limit, the workspace reads its source items first. Above that, it processes items
+first, which replaces their expanded data. A lower limit keeps less expanded data and lists the
+items of all source items later. The size of the data is estimated.
 
 Close the workspace with [`close_workspace!`](@ref). A workspace that is still open when Julia exits
 is closed then.
@@ -119,7 +119,13 @@ function _stop_runtime!(workspace::Workspace)::Nothing
     empty!(workspace.background_tasks)
     stop_workers!(workspace)
     try
-        forget_results!(workspace)
+        # Kept results stay in their stores for the next opening; only this opening's records go.
+        # TODO: values of items removed while the workspace was closed stay in the stores.
+        empty!(workspace.results)
+        empty!(workspace.executions)
+        stores = @lock workspace.stores.lock unique(values(workspace.stores.types))
+        foreach(store -> store === nothing || close(store), stores)
+        empty!(workspace.stores.types)
         close_cache_db!(workspace.cache.db)
     finally
         close_source!(workspace.source)
@@ -138,7 +144,7 @@ function _install_runtime!(
 )::Nothing
     metrics = BuildMetrics()
     cache_db, disk_error, identity = _open_workspace_cache(
-        workspace.project, source, metrics; rebuild, cache, expanded_data_limit)
+        workspace.project, source, metrics; rebuild, cache)
     workspace.source = source
     workspace.tags = WorkspaceTags(source)
     workspace.catalog = Catalog(background_processing)
@@ -146,7 +152,9 @@ function _install_runtime!(
     foreach(empty!, (
         workspace.source_items, workspace.source_locks, workspace.collection_keys,
         workspace.errors, workspace.wanted, workspace.computations,
-        workspace.results, workspace.executions, workspace.code, workspace.outdated_reads))
+        workspace.results, workspace.executions, workspace.code, workspace.outdated_reads,
+        workspace.expanded))
+    workspace.expanded_bytes = 0
     workspace.next_collection_key = 1
     workspace.running = 0
     workspace.completed = 0
@@ -343,6 +351,7 @@ function remove_items!(workspace::Workspace, source::SourceKey)::Nothing
     removed = Catalogs.items(catalog, source)
     removed_ids = String[id(catalog, item) for item in removed]
     foreach(item -> forget_results!(workspace, item), removed)
+    foreach(id -> release_expanded!(workspace, id), removed_ids)
     publish!(catalog, source, ItemEntry[])
     delete_source_output!(workspace.cache.db, cache_key(workspace, source), removed_ids)
     filter!(entry -> !(entry.first[1] in removed), workspace.errors)
@@ -690,8 +699,8 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
                 item.collection_key === nothing ? ROOT : restored[item.collection_key],
                 item.type, item.metadata)
             for item in produced])
-        # The cache keeps a read result in memory only, so a read that did not fail counts as
-        # fresh: the job reads again when it has to.
+        # Read results are not kept, so a read that did not fail counts as fresh: the job reads
+        # again when it has to.
         if failed(state(SOURCE_READ, saved))
             restore(source, SOURCE_READ, saved)
         else
@@ -704,7 +713,6 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
         item === nothing && continue
         if result_store(workspace, saved.type) === nothing
             for stage in (ITEM_PROCESS, MEMBER_PROCESS)
-                delete_processed!(cache, saved.id; stage)
                 clear_cached_result_state!(cache, stage, saved.id)
             end
             continue

@@ -1,59 +1,58 @@
 using Test, DataBrowserCache
 import DataBrowserAPI as API
 
+struct TableItem <: API.AbstractDataItem
+    id::String
+    data::NamedTuple
+    metadata::Dict{Symbol,Any}
+end
+API.data(item::TableItem) = item.data
+API.metadata(item::TableItem) = item.metadata
+API.reconstruct(::Type{TableItem}, id::AbstractString, data, metadata::Dict) =
+    TableItem(id, NamedTuple(pairs(data)), metadata)
+
+struct TextItem <: API.AbstractDataItem
+    id::String
+    text::String
+end
+table(id, values) = TableItem(id, (x=values,), Dict{Symbol,Any}())
+
 @testset "native memory storage" begin
     store = MemoryStore(; max_bytes=20_000)
-    write(store, "one", zeros(1000))
-    write(store, "two", ones(1000))
-    @test read(store, Vector{Float64}, "one") == zeros(1000)
-    write(store, "three", fill(3.0, 1000))
-    @test !haskey(store, "one")
-    @test haskey(store, "two")
-    @test haskey(store, "three")
-    @test_throws KeyError read(store, Vector{Float64}, "one")
-    @test_throws ArgumentError read(store, String, "two")
-    write(store, "oversized", zeros(10_000))
-    @test haskey(store, "oversized")
-    write(store, "nothing", nothing)
-    @test haskey(store, "nothing")
-    @test read(store, Nothing, "nothing") === nothing
-    @test !haskey(store, "oversized")
-    delete!(store, "nothing")
-    @test !haskey(store, "nothing")
+    write(store, "one", table("one", zeros(1000)))
+    write(store, "two", table("two", ones(1000)))
+    # Reading "one" makes "two" the least recently used item, so it goes first.
+    @test read(store, TableItem, "one").data.x == zeros(1000)
+    write(store, "three", table("three", fill(3.0, 1000)))
+    @test haskey(store, TableItem, "one")
+    @test !haskey(store, TableItem, "two")
+    @test haskey(store, TableItem, "three")
+    @test_throws KeyError read(store, TableItem, "two")
+    @test isnothing.(read(store, TableItem, ["three", "two"])) == [false, true]
+    # An item is saved under its type and its id.
+    write(store, "one", TextItem("one", "text"))
+    @test read(store, TextItem, "one").text == "text"
+    @test haskey(store, TableItem, "one")
+    delete!(store, TextItem, "one")
+    @test !haskey(store, TextItem, "one")
     @test_throws ArgumentError MemoryStore(; max_bytes=-1)
 end
 
-@testset "payload encoding is independent of native storage" begin
-    @test can_store_payload((x=[1.0, 2.0],))
-    @test can_store_payload((x=Union{Missing,Float64}[missing, 1.0],))
-    @test !can_store_payload([1.0, 2.0])
-    @test !can_store_payload(ones(2, 2))
-    @test !can_store_payload((x=fill(missing, 2),))
-    @test !can_store_payload((__mb_seq=[1],))
-end
-
-struct RetentionSourceItem <: API.AbstractDataSourceItem end
-struct RetentionItem <: API.AbstractDataItem end
-API.id(::RetentionSourceItem) = "source"
-API.label(::RetentionSourceItem) = "source"
-API.fingerprint(::RetentionSourceItem) = 1
-
-@testset "source completion and metadata do not require cached data" begin
+@testset "DuckDB storage keeps values after closing" begin
     mktempdir() do dir
-        identity = ProjectCacheIdentity("retention", "source", "source", joinpath(dir, "cache.duckdb"))
-        cache = open_cache_db(identity; persistent=false)
-        try
-            store_source_identity!(cache, RetentionSourceItem())
-            key = source_item_key!(cache, "source")
-            store_source_read!(cache, key, [1, 2]; retain=false)
-            @test read_payload(cache, key) === nothing
-            output = ItemOutput("item", "item", RetentionItem, nothing, API.MetadataDict(:n => 2), (x=[1, 2],))
-            replace_source_output!(cache, key, String[], [output]; retain=[false])
-            @test only(load_cache_index(cache).items).id == "item"
-            @test only(read_payload(cache, ["item"]; stage=API.SOURCE_EXPAND)) === nothing
-            @test source_complete(cache, key)
-        finally
-            close_cache_db!(cache)
-        end
+        path = joinpath(dir, "values.duckdb")
+        store = DuckDBStore(path)
+        write(store, "table", TableItem("table", (x=[1.0, 2.0], y=[3, 4]), Dict{Symbol,Any}(:n => 2)))
+        write(store, "one", TextItem("one", "kept"))
+        write(store, "two", TextItem("two", "removed"))
+        delete!(store, TextItem, "two")
+        close(store)
+        store = DuckDBStore(path)
+        @test read(store, TextItem, "one").text == "kept"
+        table = read(store, TableItem, "table")
+        @test (table.data.x, table.data.y, table.metadata[:n]) == ([1.0, 2.0], [3, 4], 2)
+        @test !haskey(store, TextItem, "two")
+        @test_throws KeyError read(store, TextItem, "two")
+        close(store)
     end
 end

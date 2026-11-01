@@ -143,18 +143,52 @@ end
 
 """
 Choose what runs first in the background. While the expanded data that waits for `process` is
-under half its memory limit, source items are read first, so that all items appear soon. Above
-that, items are processed first, which releases their expanded data.
+under half its limit, source items are read first, so that all items appear soon. Above that,
+items are processed first, which replaces their expanded data. The caller holds the catalog lock.
 """
 pace!(workspace::Workspace)::Nothing = eager!(
     workspace.catalog, SOURCE_EXPAND,
-    expanded_data_full(workspace.cache.db) ? ITEMS_FIRST : SOURCES_FIRST)
+    2 * workspace.expanded_bytes >= workspace.expanded_data_limit * 1024^2 ? ITEMS_FIRST : SOURCES_FIRST)
 
 """
-Read one source item, or reuse its saved read result, turn it into items and publish them.
+Keep the value that `expand` gave an item in memory until `process` takes it. The caller holds the
+catalog lock.
+"""
+function keep_expanded!(workspace::Workspace, item_id::String, value::AbstractDataItem)::Nothing
+    release_expanded!(workspace, item_id)
+    bytes = Base.summarysize(value)
+    workspace.expanded_bytes += bytes
+    workspace.expanded[item_id] = (value, bytes)
+    return nothing
+end
 
-The outcome of `read` is saved as soon as `read` returns or throws. A later failure is then a
-failure to create items, and the read result stays available when the job runs again.
+"""Drop the expanded value of an item, if it is kept. The caller holds the catalog lock."""
+function release_expanded!(workspace::Workspace, item_id::String)::Nothing
+    kept = pop!(workspace.expanded, item_id, nothing)
+    kept === nothing || (workspace.expanded_bytes -= last(kept))
+    return nothing
+end
+
+"""
+Take the value that `expand` gave an item, with the metadata `given`; `nothing` when it is not kept.
+The value is no longer kept, so the caller may change it.
+"""
+function kept_expanded(workspace::Workspace, item_id::String, type::Type, given::MetadataDict)
+    kept = @lock workspace.catalog.lock begin
+        kept = get(workspace.expanded, item_id, nothing)
+        release_expanded!(workspace, item_id)
+        kept
+    end
+    kept === nothing && return nothing
+    return reconstruct(type, item_id, data(first(kept)), given)
+end
+
+"""
+Read one source item, turn it into items and publish them. The value of each item is kept in
+memory until its `process` runs.
+
+The outcome of `read` is recorded as soon as `read` returns or throws. A later failure is then a
+failure to create items.
 """
 function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
     catalog = workspace.catalog
@@ -163,27 +197,15 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
     source_item === nothing &&
         error("The source has not reported source item '$(id(catalog, job.key))' in this session")
     saved = cache_key(workspace, job.key)
-    cached = read_payload(cache, saved)
-    cached === nothing || keeps_result(workspace, something(cached)) || (cached = nothing)
-    loaded = if cached === nothing
-        value = try
-            execute(workspace, job.key, SOURCE_READ, workspace.project, workspace.source, source_item)
-        catch error
-            fail!(workspace, job, error, catch_backtrace(); stage=SOURCE_READ)
-            return nothing
-        end
-        retain = keeps_result(workspace, value)
-        # `deepcopy` of a value of any type is a dynamic call: a `deepcopy` method of a package loaded later then
-        # does not invalidate the compiled code here.
-        snapshot = retain ? Base.invokelatest(deepcopy, value) : nothing
-        @lock catalog.lock iscurrent(catalog, job) && store_source_read!(cache, saved, snapshot; retain)
-        value
-    else
-        something(cached)
+    loaded = try
+        execute(workspace, job.key, SOURCE_READ, workspace.project, workspace.source, source_item)
+    catch error
+        fail!(workspace, job, error, catch_backtrace(); stage=SOURCE_READ)
+        return nothing
     end
+    @lock catalog.lock iscurrent(catalog, job) && store_source_result!(cache, SOURCE_READ, saved)
     native_items = execute(workspace, job.key, SOURCE_EXPAND, workspace.project, source_item, loaded)
     expanded = expanded_items(workspace.project, workspace.source, source_item, loaded, native_items)
-    retain = Bool[keeps_result(workspace, value.item) for value in expanded]
     @lock catalog.lock begin
         # A job whose result is discarded adds no collections.
         iscurrent(catalog, job) || (finish!(catalog, job, ItemEntry[]); return nothing)
@@ -218,9 +240,8 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             ItemOutput(
                 entry.id, entry.label, entry.type,
                 entry.collection == ROOT ? nothing : workspace.collection_keys[entry.collection],
-                entry.metadata, keep ? Base.invokelatest(deepcopy, data(item.item)) : nothing)
-            for (item, entry, keep) in zip(expanded, entries, retain)]; retain)
-        pace!(workspace)
+                entry.metadata)
+            for entry in entries])
         # The items the source item no longer produces leave the selection. When it produces as
         # many new items in their place, each new item replaces the one at the same place.
         before = unique!([pop!(workspace.produced_before, job.key, String[]); previous])
@@ -249,13 +270,16 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
         (renamed || length(selected) != count) && (workspace.selection.revision += 1)
         conflicts!(workspace, job.key, SOURCE_EXPAND, conflicts)
         forget_stale!(workspace)
+        foreach(id -> release_expanded!(workspace, id), previous)
+        foreach((item, entry) -> keep_expanded!(workspace, entry.id, item.item), expanded, entries)
+        pace!(workspace)
     end
     return nothing
 end
 
 """
-The read result of a source item outside its job: the saved one, or a new `read`. A saved read
-failure is thrown again without calling `read`.
+The read result of a source item outside its job, from a new `read`. A recorded read failure is
+thrown again without calling `read`.
 """
 function read_again(workspace::Workspace, source::SourceKey, source_item::AbstractDataSourceItem)
     cache = workspace.cache.db
@@ -263,11 +287,8 @@ function read_again(workspace::Workspace, source::SourceKey, source_item::Abstra
     state = cached_result_state(cache, SOURCE_READ, saved)
     state !== nothing && CacheResultStatus(state.status) === RESULT_FAILED &&
         error(something(state.message, "Source read failed"))
-    cached = read_payload(cache, saved)
-    cached === nothing || !keeps_result(workspace, something(cached)) || return something(cached)
     loaded = execute(workspace, source, SOURCE_READ, workspace.project, workspace.source, source_item)
-    retain = keeps_result(workspace, loaded)
-    store_source_read!(cache, saved, retain ? Base.invokelatest(deepcopy, loaded) : nothing; retain)
+    store_source_result!(cache, SOURCE_READ, saved)
     return loaded
 end
 
@@ -305,7 +326,7 @@ end
 Run `expand` for the source item of `item` again and return the item it produces now.
 
 This runs inside the job that needs the item, because a worker must not wait for another job. One
-task at a time does it for each source item. It keeps the payload of every item it produces that
+task at a time does it for each source item. It keeps the value of every item it produces that
 is not processed yet, so the jobs of those items do not run `expand` again.
 """
 function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
@@ -316,22 +337,19 @@ function expand_again(workspace::Workspace, item::ItemKey)::AbstractDataItem
         source_id_value = id(catalog, source)
         source_item = reported_source_item(workspace, source)
         # Another task may have expanded this source item while this one waited.
-        retain_item = result_store(workspace, valuetype(catalog, item)) !== nothing
-        kept = retain_item ? only(read_payload(workspace.cache.db, [id(catalog, item)]; stage=SOURCE_EXPAND)) : nothing
-        value = kept === nothing ? nothing : reconstruct(
-            valuetype(catalog, item), id(catalog, item), something(kept),
+        value = kept_expanded(workspace, id(catalog, item), valuetype(catalog, item),
             metadata(workspace, item; through=SOURCE_EXPAND))
         value === nothing || return value
         loaded = read_again(workspace, source, source_item)
         native_items = execute(workspace, source, SOURCE_EXPAND, workspace.project, source_item, loaded)
         expanded = expanded_items(workspace.project, workspace.source, source_item, loaded, native_items)
-        retain = Bool[keeps_result(workspace, produced.item) for produced in expanded]
         @lock catalog.lock begin
-            for (produced, keep) in zip(expanded, retain)
+            for produced in expanded
                 sibling = lookup(catalog, ItemKey, produced.id)
                 sibling === nothing && continue
-                keep && Catalogs.status(catalog, sibling, ITEM_PROCESS).validity != Catalogs.FRESH &&
-                    store_item_payload!(workspace.cache.db, produced.id, Base.invokelatest(deepcopy, data(produced.item)))
+                # A processed item needs no expanded value.
+                Catalogs.status(catalog, sibling, ITEM_PROCESS).validity != Catalogs.FRESH &&
+                    keep_expanded!(workspace, produced.id, produced.item)
             end
             pace!(workspace)
         end
@@ -354,14 +372,12 @@ function row(workspace::Workspace, item::ItemKey)
 end
 
 """
-The item that `process` receives: rebuilt from the payload `expand` gave it, with `given`, the
-metadata of the item and its source item. `known` is the [`row`](@ref) of the item. When
-the payload is gone, or the item type does not rebuild from a payload, `expand` runs again.
+The item that `process` receives: the value `expand` gave it, with `given`, the metadata of the item
+and its source item. `known` is the [`row`](@ref) of the item. When that value is no longer kept,
+or the item type does not rebuild from its data, `expand` runs again.
 """
 function unprocessed(workspace::Workspace, item::ItemKey, known, given::MetadataDict)::AbstractDataItem
-    cached = result_store(workspace, known.type) === nothing ? nothing :
-        only(read_payload(workspace.cache.db, [known.id]; stage=SOURCE_EXPAND))
-    value = cached === nothing ? nothing : reconstruct(known.type, known.id, something(cached), given)
+    value = kept_expanded(workspace, known.id, known.type, given)
     if value === nothing
         value = expand_again(workspace, item)
         value = something(reconstruct(known.type, known.id, data(value), given), value)
@@ -379,18 +395,6 @@ function processed(workspace::Workspace, input::AbstractDataItem)::AbstractDataI
     return output
 end
 
-"""
-The item for one saved payload of a processed version of `item`, with `delivered` as its metadata. `known` is the
-[`row`](@ref) of the item. When the item type does not rebuild from a payload, `expand` and
-`process` run again.
-"""
-function rebuilt(workspace::Workspace, item::ItemKey, known, payload, delivered::MetadataDict)::AbstractDataItem
-    value = reconstruct(known.type, known.id, payload, delivered)
-    value === nothing && (value = processed(workspace, unprocessed(
-        workspace, item, known, metadata(workspace, item; through=SOURCE_EXPAND))))
-    return value
-end
-
 """Replace the label of an item in the catalog and the cache. The caller holds the catalog lock."""
 function relabel!(workspace::Workspace, item::ItemKey, new::String)::Nothing
     catalog = workspace.catalog
@@ -403,7 +407,7 @@ function relabel!(workspace::Workspace, item::ItemKey, new::String)::Nothing
     return nothing
 end
 
-"""Run `process` for one item and save its payload, its label and the metadata it changed."""
+"""Run `process` for one item and save its value, its label and the metadata it changed."""
 function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Nothing
     catalog = workspace.catalog
     @lock(catalog.lock, haskey(workspace.computations, job.key)) && return compute!(workspace, job)
@@ -412,28 +416,19 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     known, given, saved = @lock catalog.lock (
         row(workspace, item), metadata(workspace, item; through=SOURCE_EXPAND), cache_key(workspace, item))
     output = processed(workspace, unprocessed(workspace, item, known, given))
-    payload = data(output)
-    retain = keeps_result(workspace, output) && typeof(output) == known.type &&
-        DataBrowserCache.can_store_payload(payload)
     delivered = metadata_dict(metadata(output))
     # The results are saved outside the lock: saving takes time, and every other worker needs the
     # lock. A job that turns out not to be current drops the record that its result is ready.
     item_id = known.id
     dropped = String[]
     if iscurrent(catalog, job)
-        if retain
-            @timed_dbg store_processed!(cache, item_id, saved, Base.invokelatest(deepcopy, payload))
-        else
-            delete_processed!(cache, item_id; stage=ITEM_PROCESS)
-            clear_cached_result_state!(cache, ITEM_PROCESS, item_id)
-        end
+        store_result_ready!(cache, item_id, saved, typeof(output); stage=ITEM_PROCESS)
         store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, delivered)
         dropped = store_item_metadata!(cache, item_id, delivered)
     end
     @lock catalog.lock begin
+        pace!(workspace)
         if finish!(catalog, job; metadata=delivered)
-            release_item_payload!(cache, item_id)
-            pace!(workspace)
             relabel!(workspace, item, label(workspace.project, output))
             conflicts!(workspace, item, ITEM_PROCESS, dropped)
         else
@@ -448,7 +443,8 @@ end
 """
     versions(workspace, items; own=false) -> Vector{AbstractDataItem}
 
-The processed values of `items`, each built from saved data with its label and its metadata. This
+The processed values of `items`, each with its label and its metadata, from the stores or computed
+again. This
 is the only place that decides which value of an item a stage or a view receives: the result of its
 member `process` while that result is current, and otherwise the result of its own `process`. With
 `own`, always the result of its own `process`, which is what collection `process` and member
@@ -458,52 +454,24 @@ The caller makes sure that item `process` is fresh for every item.
 """
 function versions(workspace::Workspace, items::Vector{ItemKey}; own::Bool=false)::Vector{AbstractDataItem}
     catalog = workspace.catalog
-    cache = workspace.cache.db
-    computed, types, stages = @lock catalog.lock (
-        [haskey(workspace.computations, item) for item in items],
-        [valuetype(catalog, item) for item in items],
-        [own || !member_current(catalog, item) ? ITEM_PROCESS : MEMBER_PROCESS for item in items])
-    native = @lock catalog.lock [haskey(workspace.results, (item, stage)) for (item, stage) in zip(items, stages)]
-    graph = [!iscomputed && (hasnative || result_store(workspace, type) === nothing)
-        for (iscomputed, hasnative, type) in zip(computed, native, types)]
-    if any(computed) || any(graph)
-        found = Vector{AbstractDataItem}(undef, length(items))
-        legacy = .!computed .& .!graph
-        found[legacy] = versions(workspace, items[legacy]; own)
-        found[computed] = [computed_version(workspace, item) for item in items[computed]]
-        for index in findall(graph)
-            item = items[index]
-            source = Catalogs.source(catalog, item)
-            source === nothing || reported_source_item(workspace, source)
-            found[index] = evaluate(workspace, version_computation(workspace, item; own))
-        end
-        return found
+    computed = [@lock(catalog.lock, haskey(workspace.computations, item)) for item in items]
+    values = [computed[position] ? nothing : version_computation(workspace, item; own)
+              for (position, item) in pairs(items)]
+    # Kept versions are read together, so that a store reads the selection in one call.
+    kept = read_results([value === nothing ? nothing : result_location(workspace, value) for value in values])
+    return map(eachindex(items)) do position
+        item = items[position]
+        computed[position] && return computed_version(workspace, item)
+        kept[position] === nothing || return something(kept[position])
+        source = Catalogs.source(catalog, item)
+        source === nothing || reported_source_item(workspace, source)
+        return evaluate(workspace, values[position])
     end
-    known, given = @lock catalog.lock (
-        [row(workspace, item) for item in items],
-        [metadata(workspace, item; through=stage) for (item, stage) in zip(items, stages)])
-    item_ids = String[getproperty.(known, :id)...]
-    payloads = Vector{Any}(nothing, length(items))
-    for stage in (ITEM_PROCESS, MEMBER_PROCESS)
-        chosen = findall(==(stage), stages)
-        isempty(chosen) || (payloads[chosen] = read_payload(cache, item_ids[chosen]; stage))
-    end
-    # A member job that runs at the same time may have removed the result just chosen.
-    for index in findall(isnothing, payloads)
-        stages[index] == MEMBER_PROCESS || continue
-        payloads[index] = only(read_payload(cache, item_ids[index:index]))
-        given[index] = metadata(workspace, items[index]; through=ITEM_PROCESS)
-    end
-    missing = findfirst(isnothing, payloads)
-    missing === nothing || error("The processed data of item '$(item_ids[missing])' is missing")
-    return AbstractDataItem[
-        rebuilt(workspace, item, facts, something(payload), metadata)
-        for (item, facts, payload, metadata) in zip(items, known, payloads, given)]
 end
 
 """
 Run collection `process` with every item below one collection, each as its own `process` returned
-it, and keep the metadata and the data of the collection value it returns.
+it, and record the metadata of the collection value it returns.
 """
 function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PROCESS})::Nothing
     catalog = workspace.catalog
@@ -522,19 +490,14 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
         if !haskey(before, name) || !isequal(before[name], value))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=computed) || return nothing
-        # TODO: data that the cache cannot store is lost on reopening, and member `process`
-        # methods that run again then receive the collection without it.
-        payload = data(output)
-        DataBrowserCache.can_store_payload(payload) || (payload = nothing)
-        store_collection_process_result!(
-            workspace.cache.db, workspace.collection_keys[job.key], computed, Base.invokelatest(deepcopy, payload))
+        store_collection_process_result!(workspace.cache.db, workspace.collection_keys[job.key], computed)
     end
     return nothing
 end
 
 """
 Run the member `process` methods of the collections above one item, from the collection that holds
-it up to the outermost one, and save the payload, the label and the metadata of the result.
+it up to the outermost one, and save the value, the label and the metadata of the result.
 """
 function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::Nothing
     catalog = workspace.catalog
@@ -546,18 +509,10 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
     output = evaluate(workspace, computation(workspace, item, MEMBER_PROCESS))
     output isa AbstractDataItem || error(
         "A member process method for $(known.type) must return an AbstractDataItem; got $(typeof(output))")
-    payload = data(output)
-    retain = keeps_result(workspace, output) && typeof(output) == known.type &&
-        DataBrowserCache.can_store_payload(payload)
     delivered = metadata_dict(metadata(output))
     dropped = String[]
     if iscurrent(catalog, job)
-        if retain
-            @timed_dbg store_processed!(cache, known.id, saved, Base.invokelatest(deepcopy, payload); stage=MEMBER_PROCESS)
-        else
-            delete_processed!(cache, known.id; stage=MEMBER_PROCESS)
-            clear_cached_result_state!(cache, MEMBER_PROCESS, known.id)
-        end
+        store_result_ready!(cache, known.id, saved, typeof(output); stage=MEMBER_PROCESS)
         store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, delivered)
         dropped = store_item_metadata!(cache, known.id, delivered)
     end

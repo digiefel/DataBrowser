@@ -38,6 +38,7 @@ import DataBrowserAPI:
     reconstruct
 using DataBrowserAPI: MetadataDict, metadata_dict
 using DataBrowserSources: SourceFile
+using DataBrowserCache: DuckDBStore
 
 include("carriers.jl")
 include("recipes.jl")

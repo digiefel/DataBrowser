@@ -8,8 +8,6 @@ function result_store(workspace::Workspace, type::Type{<:AbstractDataItem})
     end
 end
 
-keeps_result(workspace::Workspace, value) = result_store(workspace, result_item_type(value)) !== nothing
-
 computation_address(catalog::Catalog, value::Computation) =
     get(catalog.computation_targets, value, value)
 
@@ -62,11 +60,14 @@ function computation_identity(workspace::Workspace, value::Computation)
     end
 end
 
+# Whether a call prepares a stage's input from kept values.
+prepares_input(value::Computation) = value.f in (expanded_value, process_input, native_collection)
+
 function result_item(workspace::Workspace, catalog::Catalog, value::Computation, args::Tuple, result)
     # A view, and a selection, are parts of the workspace's values: never kept, and made again when needed.
     (value.f === view || result isa Selection) && return nothing
     # Preparing a stage's input only relabels a kept value; another copy would evict kept results.
-    value.f in (expanded_value, process_input, native_collection) && return nothing
+    prepares_input(value) && return nothing
     result isa AbstractDataItem && return result
     workspace.catalog === catalog || return nothing
     identity, title = computation_identity(workspace, value)
@@ -89,6 +90,8 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     address, revision = @lock catalog.lock (
         computation_address(catalog, value), computation_revision(catalog, value))
     revision === nothing && error("A computation input was removed")
+    # Read before running, so that it names the inputs the result is computed from.
+    lasting = address isa Target ? nothing : lasting_revision(workspace, value)
     beginning = time_ns()
     succeeded = false
     result = try
@@ -104,10 +107,21 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
     item = result_item(workspace, catalog, value, args, result)
     item === nothing && return result
     store = result_store(workspace, typeof(item))
-    key = string(objectid(catalog), '/', objectid(value), '/', revision)
+    # Under its id, so that a store on disk finds it again after a reopen.
+    key = if !(address isa Target)
+        stored_id(workspace, value)
+    elseif first(address) isa SourceKey
+        # A source item's read and expand results only lead to its items, which are kept instead.
+        store = nothing
+        ""
+    else
+        @lock(catalog.lock, current_value(catalog, address)) || (store = nothing)
+        id(catalog, first(address))
+    end
+    type = typeof(item)
     # `deepcopy` of a value of any type is a dynamic call: a `deepcopy` method of a package loaded later then
     # does not invalidate the compiled code here.
-    stored = ComputationResult(value, revision, typeof(result), typeof(item), store, key, Dict{Symbol,Any}(Base.invokelatest(deepcopy, metadata(item))))
+    stored = ComputationResult(value, revision, typeof(result), type, store, key, Dict{Symbol,Any}(Base.invokelatest(deepcopy, metadata(item))))
     store === nothing || write(store, key, Base.invokelatest(deepcopy, item))
     kept, previous = @lock catalog.lock begin
         if current_execution(workspace, catalog, value, revision)
@@ -118,41 +132,107 @@ function execute(workspace::Workspace, value::Computation, args::Tuple)
             false, nothing
         end
     end
-    kept || store === nothing || delete!(store, key)
+    kept || store === nothing || delete!(store, type, key)
+    kept && store !== nothing && lasting !== nothing &&
+        store_computation_revision!(workspace.cache.db, key, lasting, type)
     if previous !== nothing && previous.store !== nothing &&
-            (previous.store !== store || previous.key != key)
-        delete!(previous.store, previous.key)
+            (previous.store !== store || previous.item_type !== type || previous.key != key)
+        delete!(previous.store, previous.item_type, previous.key)
     end
     return result
+end
+
+"""
+The revision of a computation that stays the same after a reopen: the code it runs and the
+versions of the item results it reads. `nothing` when an input has no recorded version.
+"""
+function lasting_revision(workspace::Workspace, value::Computation)::Union{Nothing,UInt64}
+    catalog = workspace.catalog
+    address = @lock catalog.lock begin
+        address = computation_address(catalog, value)
+        address isa Target ? resolve_target(catalog, address) : address
+    end
+    address === nothing && return nothing
+    if address isa Target
+        key, stage = address
+        # TODO: results of source items and collections have no recorded version yet.
+        key isa ItemKey || return nothing
+        state = cached_result_state(workspace.cache.db, stage, id(workspace, key))
+        (state === nothing || CacheResultStatus(state.status) !== RESULT_READY) && return nothing
+        return hash(state.version)
+    end
+    revision = hash(code_hash(value.f))
+    for input in inputs(value)
+        current = lasting_revision(workspace, input)
+        current === nothing && return nothing
+        revision = hash(current, revision)
+    end
+    return revision
+end
+
+"""
+The id under which a store keeps the result of a computation: its [`id`](@ref), with each input
+that supplies an item, a collection or a source item written as their id, for example
+`fit(sample)`.
+"""
+stored_id(workspace::Workspace, value::Computation) = call_id(value, x -> stored_argument(workspace, x))
+function stored_argument(workspace::Workspace, value::Computation)
+    # The current value of an item is its `process` result, with its label and metadata.
+    value.f === process_input && return stored_argument(workspace, first(value.args))
+    catalog = workspace.catalog
+    address = @lock catalog.lock computation_address(catalog, value)
+    address isa Target && return @lock(catalog.lock, id(catalog, first(address)))
+    return stored_id(workspace, value)
+end
+stored_argument(workspace::Workspace, values::Union{AbstractVector,Tuple}) =
+    "[" * join(map(x -> stored_argument(workspace, x), values), ", ") * "]"
+stored_argument(_, value) = argument_id(value)
+
+"""
+The result of a computation that a store kept in an earlier opening, while its code and inputs are
+the ones it was computed from.
+"""
+function restored_result(workspace::Workspace, value::Computation)
+    # Never kept (see `result_item`), so there is no id to build and look up.
+    prepares_input(value) && return nothing
+    lasting = lasting_revision(workspace, value)
+    lasting === nothing && return nothing
+    key = stored_id(workspace, value)
+    recorded = recorded_revision(workspace.cache.db, key)
+    (recorded === nothing || first(recorded) != lasting) && return nothing
+    type = last(recorded)
+    store = result_store(workspace, type)
+    store === nothing && return nothing
+    item = only(read(store, type, [key]))
+    item === nothing && return nothing
+    result = type <: ResultItem ? data(item) : item
+    # Later evaluations find it by its address, without building its id again.
+    catalog = workspace.catalog
+    @lock catalog.lock begin
+        revision = computation_revision(catalog, value)
+        revision === nothing || (workspace.results[value] = ComputationResult(
+            value, revision, typeof(result), type, store, key, Dict{Symbol,Any}(metadata(item))))
+    end
+    return Some(result)
 end
 
 current_execution(workspace, catalog, value, revision) =
     workspace.catalog === catalog && !workspace.stopping && !workspace.closed &&
     computation_revision(catalog, value) == revision
 
-function stored_result(value::ComputationResult)
-    value.store === nothing && return nothing
-    haskey(value.store, value.key) || return nothing
-    try
-        item = @timed_dbg "result.read" read(value.store, value.item_type, value.key)
-        return Some(value.value_type <: AbstractDataItem ? item : data(item))
-    catch error
-        error isa KeyError && isequal(error.key, value.key) || rethrow()
-        return nothing
-    end
-end
+"""
+Whether a stage gives the current value of its item or collection, the one that a store keeps
+under its id. The result of an item's own `process` is not kept when a member `process` follows
+it; a project that wants such a value kept gives it a type of its own. The caller holds the
+catalog lock.
+"""
+current_value(catalog::Catalog, (key, stage)::Target) =
+    !(key isa ItemKey && stage == ITEM_PROCESS && !Catalogs.status(catalog, key, MEMBER_PROCESS).absent)
 
 function forget_result!(workspace::Workspace, address)
     delete!(workspace.executions, address)
     value = pop!(workspace.results, address, nothing)
-    value === nothing || value.store === nothing || delete!(value.store, value.key)
-    return nothing
-end
-
-function forget_results!(workspace::Workspace)
-    for address in union(keys(workspace.results), keys(workspace.executions))
-        forget_result!(workspace, address)
-    end
+    value === nothing || value.store === nothing || delete!(value.store, value.item_type, value.key)
     return nothing
 end
 
@@ -186,15 +266,16 @@ function cache_info(workspace::Workspace, value::Computation)
     if record !== nothing
         record.computation === value && record.revision == computation_revision(catalog, value) &&
             record.store !== nothing || return (cached=false, bytes=nothing)
-        cached = haskey(record.store, record.key)
-        return (cached=cached, bytes=cached ? DataBrowserAPI.stored_size(record.store, record.key) : nothing)
+        cached = haskey(record.store, record.item_type, record.key)
+        return (cached=cached, bytes=cached ? DataBrowserAPI.stored_size(record.store, record.item_type, record.key) : nothing)
     end
     address isa Target || return (cached=false, bytes=nothing)
     key, stage = address
-    cached = if key isa SourceKey && stage == SOURCE_READ
-        has_payload(workspace.cache.db, cache_key(workspace, key))
-    elseif key isa ItemKey && stage == ITEM_PROCESS && !haskey(workspace.computations, key)
-        has_payload(workspace.cache.db, id(workspace, key))
+    cached = if key isa ItemKey && !haskey(workspace.computations, key)
+        type = valuetype(workspace, key)
+        store = result_store(workspace, type)
+        store !== nothing && @lock(catalog.lock, current_value(catalog, address)) &&
+            haskey(store, type, id(workspace, key))
     else
         false
     end

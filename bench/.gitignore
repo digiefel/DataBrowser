@@ -1,2 +1,5 @@
 /data/
 /results/
+# Kept results of recipe projects defined while bench is the active environment, as in tests.
+/values.duckdb
+/values.duckdb.wal

@@ -16,23 +16,22 @@ include("fixtures/code_project.jl")
         @test ready(code)
         view = code.visualizer
         @test [row.call.title for row in view.rows] == ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)"]
-        before = (project.reads[], project.processes[])
+        before = project.processes[]
         indexed_before = Workspace.query_items(workspace)
         API.select!(view; row=1)
         chosen = output(code)
         @test chosen === output(code)
-        @test (project.reads[], project.processes[]) == before
-        @test API.cache_info(workspace, only(chosen)).cached
+        @test project.processes[] == before
         @test API.last_execution(workspace, only(chosen)).succeeded
         linked = open_window!(state, CodeConsumer(); input=WindowOutput(code.id))
         @test ready(linked)
         @test only(linked.visualizer.values).signal == [1, 2, 3]
-        @test (project.reads[], project.processes[]) == before
+        @test project.processes[] == before
         API.select!(view; row=3)
         @test output(code) !== chosen
         @test ready(linked)
         @test only(linked.visualizer.values).signal == [10, 20, 30]
-        @test (project.reads[], project.processes[]) == before
+        @test project.processes[] == before
         input!(state, code, FixedItems(["signal", "other"]))
         @test ready(linked)
         @test view.selected == 3
@@ -50,7 +49,7 @@ include("fixtures/code_project.jl")
         @test ready(history)
         @test [row.call.title for row in history.visualizer.rows] ==
             ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "view"]
-        @test (project.reads[], project.processes[]) == before
+        @test project.processes[] == before
         @test Workspace.query_items(workspace) == indexed_before
         close_window!(state, history)
         close_window!(state, table)

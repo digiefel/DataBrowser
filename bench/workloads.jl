@@ -1,5 +1,5 @@
 using DataBrowserAPI
-using DataBrowserCache: MemoryStore
+using DataBrowserCache: MemoryStore, DuckDBStore
 import DataBrowserAPI as API
 import DataBrowserCore.Workspace as Workspace
 using Statistics: median
@@ -37,14 +37,18 @@ API.id(::PreparedSource) = "prepared-benchmark"
 API.label(::PreparedSource) = "Prepared benchmark data"
 API.items(source::PreparedSource; kwargs...) = source.items
 
-"""Callback counts are correctness checks, not performance measurements."""
+"""
+Callback counts are correctness checks, not performance measurements. With `values`, the items are
+kept in a DuckDB file at that path, so that they remain after a reopen.
+"""
 Base.@kwdef struct BenchProject <: API.AbstractProject
     reads::Threads.Atomic{Int} = Threads.Atomic{Int}(0)
     processes::Threads.Atomic{Int} = Threads.Atomic{Int}(0)
+    values::Union{Nothing,String} = nothing
 end
-# The cache-hit workload retains both native read and process results for its 128 MiB of tables.
-# Its budget includes those copies and their metadata; eviction has separate coverage.
-API.storage(::BenchProject, ::Type{BenchItem}) = MemoryStore(; max_bytes=512 * 1024^2)
+# The 128 MiB of tables of the cache workload fit in memory with their metadata.
+API.storage(project::BenchProject, ::Type{BenchItem}) = project.values === nothing ?
+    MemoryStore(; max_bytes=512 * 1024^2) : DuckDBStore(project.values; max_bytes=512 * 1024^2)
 
 function API.read(project::BenchProject, ::PreparedSource, item::BenchSourceItem)
     Threads.atomic_add!(project.reads, 1)
@@ -130,7 +134,7 @@ end
 """Cache throughput and materialization latency, with identity processing."""
 function measure_cache(source)
     with_benchmark_cache() do
-        project = BenchProject()
+        project = BenchProject(; values=joinpath(first(DEPOT_PATH), "values.duckdb"))
         ids = API.id.(source.items)
         selected, remaining = ids[1:SELECTION_SIZE], ids[SELECTION_SIZE+1:end]
         ws = nothing

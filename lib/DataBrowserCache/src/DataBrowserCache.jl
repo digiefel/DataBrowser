@@ -22,6 +22,7 @@ using DataBrowserAPI:
 using DataBrowserAPI: @timed_dbg
 
 using DuckDB
+using OrderedCollections: OrderedDict
 using DBInterface
 import Tables
 using Serialization
@@ -30,12 +31,13 @@ using Dates
 include("build_metrics.jl")
 include("cache_buffer.jl")
 include("MemoryStore.jl")
+include("DuckDBStore.jl")
 include("project_cache_domain.jl")
 include("source_stages.jl")
 
 export BuildMetrics,
     MemoryStore,
-    can_store_payload,
+    DuckDBStore,
     CacheResultKey,
     CacheResultStatus,
     CacheDB,
@@ -52,42 +54,38 @@ export BuildMetrics,
     cache_has_pending_writes,
     cache_pending_counts,
     cached_result_state,
+    stored_type,
     cached_source_fingerprints,
     clear_cache_index!,
     clear_cached_result_state!,
     close_cache_db!,
     delete_collection_records!,
-    delete_processed!,
     delete_collection_metadata!,
     delete_source_item!,
     delete_source_output!,
-    has_payload,
     load_cache_index,
     open_cache_db,
     project_cache_identity,
     query_items,
-    read_payload,
     replace_source_output!,
     ItemOutput,
     record_cache_phase!,
     reset_build_metrics!,
     set_cache_memory_limit!,
-    default_expanded_data_limit,
-    release_item_payload!,
-    expanded_data_full,
     store_collection!,
     store_collection_process_result!,
     store_code_revision!,
+    store_computation_revision!,
+    recorded_revision,
     code_revisions,
-    store_item_payload!,
     store_item_label!,
     store_item_metadata!,
     store_item_stage_metadata!,
-    store_processed!,
+    store_result_ready!,
     store_result_failure!,
     store_source_identity!,
-    store_source_read!,
     source_complete,
+    store_source_result!,
     cache_knows_source,
     edit_source_item_metadata!,
     source_item_key!,

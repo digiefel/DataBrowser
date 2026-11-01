@@ -546,20 +546,21 @@ _clear_db!(store::WideRowStore)::Nothing =
 
 _reset_memory!(::WideRowStore)::Nothing = nothing
 
-# Memory-only FIFO
+# Memory-only least-recently-used store
 
 """
-A memory-only FIFO cache. `weight(value)` measures each entry against `capacity`.
+A memory-only cache that drops the least recently used values first. `weight(value)` measures each
+entry against `capacity`.
 
 Weights are recorded on insertion so later mutation cannot corrupt eviction accounting. One value
 larger than the capacity remains usable until another value arrives. Cache eviction only releases
-its reference; values held by running consumers remain alive.
+its reference; values held by running consumers remain alive. Writing, reading and removing a value
+take the same time for any number of entries.
 """
 mutable struct MemoryStore{K,R} <: DataBrowserAPI.AbstractStore
     lock::ReentrantLock
-    entries::Dict{K,R}
-    weights::Dict{K,Int}
-    order::Vector{K}
+    # Each value with its weight, the least recently used first.
+    entries::OrderedDict{K,Tuple{R,Int}}
     size::Int
     capacity::Int
     weight::Function
@@ -568,26 +569,20 @@ end
 
 function MemoryStore{K,R}(; capacity::Int, weight::Function=_buffer_rows)::MemoryStore{K,R} where {K,R}
     capacity > 0 || throw(ArgumentError("memory cache capacity must be positive"))
-    return MemoryStore{K,R}(ReentrantLock(), Dict{K,R}(), Dict{K,Int}(), K[],
-        0, capacity, weight, false)
+    return MemoryStore{K,R}(ReentrantLock(), OrderedDict{K,Tuple{R,Int}}(), 0, capacity, weight, false)
 end
 
 function Base.append!(store::MemoryStore{K,R}, key::K, row::R)::Bool where {K,R}
     cost = max(1, store.weight(row))
     lock(store.lock) do
         store.closed && error("memory store is closed")
-        if haskey(store.entries, key)
-            store.size -= pop!(store.weights, key)
-            deleteat!(store.order, something(findfirst(isequal(key), store.order)))
-        end
-        store.entries[key] = row
-        store.weights[key] = cost
-        push!(store.order, key)
+        replaced = pop!(store.entries, key, nothing)
+        replaced === nothing || (store.size -= last(replaced))
+        store.entries[key] = (row, cost)
         store.size += cost
-        while store.size > store.capacity && length(store.order) > 1
-            evicted_key = popfirst!(store.order)
-            delete!(store.entries, evicted_key)
-            store.size -= pop!(store.weights, evicted_key)
+        while store.size > store.capacity && length(store.entries) > 1
+            _, (_, evicted) = popfirst!(store.entries)
+            store.size -= evicted
         end
     end
     return true
@@ -596,10 +591,8 @@ end
 function Base.delete!(store::MemoryStore{K}, key::K)::Nothing where {K}
     lock(store.lock) do
         store.closed && error("memory store is closed")
-        haskey(store.entries, key) || return
-        delete!(store.entries, key)
-        store.size -= pop!(store.weights, key)
-        deleteat!(store.order, something(findfirst(isequal(key), store.order)))
+        removed = pop!(store.entries, key, nothing)
+        removed === nothing || (store.size -= last(removed))
     end
     return nothing
 end
@@ -609,7 +602,11 @@ end
 function read_hit(store::MemoryStore{K,R}, key::K)::Union{Nothing,Some} where {K,R}
     found = lock(store.lock) do
         store.closed && error("memory store is closed")
-        haskey(store.entries, key) ? Some(store.entries[key]) : nothing
+        found = pop!(store.entries, key, nothing)
+        found === nothing && return nothing
+        # The value read becomes the most recently used.
+        store.entries[key] = found
+        return Some(first(found))
     end
     # `deepcopy` of a value of any type is a dynamic call: a `deepcopy` method of a package loaded later then
     # does not invalidate the compiled code here.
@@ -623,12 +620,18 @@ function Base.haskey(store::MemoryStore{K}, key::K)::Bool where {K}
     end
 end
 
+"""The recorded weight of the value under `key`, or `nothing` when there is none."""
+function stored_weight(store::MemoryStore{K}, key::K)::Union{Nothing,Int} where {K}
+    return lock(store.lock) do
+        found = get(store.entries, key, nothing)
+        found === nothing ? nothing : last(found)
+    end
+end
+
 function clear!(store::MemoryStore)::Nothing
     lock(store.lock) do
         store.closed && error("memory store is closed")
         empty!(store.entries)
-        empty!(store.weights)
-        empty!(store.order)
         store.size = 0
     end
     return nothing
@@ -639,8 +642,6 @@ function close!(store::MemoryStore)::Nothing
         store.closed && error("memory store is already closed")
         store.closed = true
         empty!(store.entries)
-        empty!(store.weights)
-        empty!(store.order)
         store.size = 0
     end
     return nothing
@@ -648,19 +649,15 @@ end
 
 # Database-backed tabular table family
 
-"""
-One processed payload's key: the integer surrogate of its item, and the key of the collection whose
-version of the item it is. Collection key 0 marks the item's own processed data.
-"""
-const PayloadKey = Tuple{Int64,Int64}
+# Tables kept as DuckDB columns, one DuckDB table per set of column names and types, under string
+# ids. Writes are queued and written in batches by a background task.
 
 # `body` is the caller's original Tables.jl container; pending reads hand it back untouched, and
 # the flush loop reads it only through the interface. `container` is the hex-serialized container
 # type, carried in the batch because the store's `containers` map can drop a superseded location
 # while its append is still being flushed.
 struct TabularBodyBatch
-    item_key::Int64
-    collection_key::Int64
+    id::String
     body::Any
     container::String
 end
@@ -688,7 +685,7 @@ mutable struct TabularFamilyStore <:
     last_flush::Float64
     closing::Bool
     flush_task::Task
-    item_locations::Dict{PayloadKey,Tuple{UInt16,UInt32}}
+    item_locations::Dict{String,Tuple{UInt16,UInt32}}
     payload_schemas::Dict{PayloadShape,UInt16}
     # Hex-serialized container type per stored payload, rebuilt on read via Tables.materializer.
     containers::Dict{Tuple{UInt16,UInt32},String}
@@ -707,13 +704,26 @@ function TabularFamilyStore(
         throw(ArgumentError("cache buffer row limit must be positive"))
     read_connection = DBInterface.connect(database)
     write_connection = DBInterface.connect(database)
-    locations = Dict{PayloadKey,Tuple{UInt16,UInt32}}()
+    _run(write_connection, """
+        CREATE TABLE IF NOT EXISTS item_data(
+            id VARCHAR PRIMARY KEY,
+            storage_id USMALLINT,
+            seq UINTEGER,
+            container TEXT,
+            rows UBIGINT,
+            UNIQUE (storage_id, seq))""")
+    _run(write_connection, """
+        CREATE TABLE IF NOT EXISTS payload_schemas(
+            storage_id USMALLINT PRIMARY KEY,
+            column_names VARCHAR[],
+            column_types VARCHAR[])""")
+    locations = Dict{String,Tuple{UInt16,UInt32}}()
     containers = Dict{Tuple{UInt16,UInt32},String}()
     rows = Dict{Tuple{UInt16,UInt32},Int}()
     for row in DBInterface.execute(
-        read_connection, "SELECT item_key, collection_key, storage_id, seq, container, rows FROM item_data")
+        read_connection, "SELECT id, storage_id, seq, container, rows FROM item_data")
         location = (UInt16(row.storage_id), UInt32(row.seq))
-        locations[(Int64(row.item_key), Int64(row.collection_key))] = location
+        locations[String(row.id)] = location
         containers[location] = String(row.container)
         rows[location] = Int(row.rows)
     end
@@ -900,21 +910,21 @@ end
 
 function Base.append!(
     store::TabularFamilyStore,
-    payload_key::PayloadKey,
+    payload_key::String,
     body,
 )::Bool
     any(
         name -> String(name) in (MB_SEQ_COLUMN, MB_ROW_COLUMN),
         collect(Symbol, Tables.columnnames(Tables.columns(body)))::Vector{Symbol},
     ) && error(
-        "Tabular item '$(payload_key[1])' uses a reserved cache column name " *
+        "Table '$payload_key' uses a reserved cache column name " *
         "'$MB_SEQ_COLUMN' or '$MB_ROW_COLUMN'",
     )
     lock(store.flush_condition)
     try
         _require_writable(store)
         batch = TabularBodyBatch(
-            payload_key[1], payload_key[2], body,
+            payload_key, body,
             get!(() -> something(_serialize_hex(typeof(body))), store.container_names, typeof(body)))
         old_location = get(store.item_locations, payload_key, nothing)
         old_mutation = old_location === nothing ?
@@ -959,7 +969,7 @@ function Base.append!(
     end
 end
 
-function Base.delete!(store::TabularFamilyStore, payload_key::PayloadKey)::Nothing
+function Base.delete!(store::TabularFamilyStore, payload_key::String)::Nothing
     lock(store.flush_condition) do
         _require_writable(store)
         location = pop!(store.item_locations, payload_key, nothing)
@@ -968,7 +978,7 @@ function Base.delete!(store::TabularFamilyStore, payload_key::PayloadKey)::Nothi
     return nothing
 end
 
-function Base.haskey(store::TabularFamilyStore, payload_key::PayloadKey)::Bool
+function Base.haskey(store::TabularFamilyStore, payload_key::String)::Bool
     return lock(store.flush_condition) do
         _require_open(store)
         haskey(store.item_locations, payload_key)
@@ -1108,8 +1118,8 @@ function _pending_tabular_body(
         (false, nothing)
 end
 
-# The most values that one query of a read returns, about 20 MiB of numbers. The query sorts its
-# result, so the database holds one batch in memory while the reader takes it.
+# The most values that one query of a read returns, about 20 MiB of numbers, which the reader holds
+# in memory once more while it places them.
 const READ_BATCH_VALUES = 2_500_000
 const READ_BATCH_PAYLOADS = 1024
 
@@ -1118,8 +1128,7 @@ Read the stored payloads at `locations`, each as a `NamedTuple` of columns. `loc
 number of values of each payload, rows times columns.
 
 A read is split into queries of at most `READ_BATCH_VALUES` values, and a payload larger than that
-has a query of its own. The result of a query is taken one chunk at a time and appended to the
-columns of each payload, so no table of the whole result exists.
+has a query of its own.
 """
 function _read_tabular_locations(
     store::TabularFamilyStore,
@@ -1130,7 +1139,8 @@ function _read_tabular_locations(
         push!(get!(() -> UInt32[], by_storage, storage_id), seq)
     end
     rows_by_location = Dict{Tuple{UInt16,UInt32},Any}()
-    seq_name, row_name = Symbol(MB_SEQ_COLUMN), Symbol(MB_ROW_COLUMN)
+    # The column names and DuckDB column types of each payload table.
+    shapes = lock(() -> Dict(storage_id => shape for (shape, storage_id) in store.payload_schemas), store.flush_condition)
     for (storage_id, seqs) in by_storage
         table = _quote_identifier(_payload_table_name(storage_id))
         remaining = sort!(seqs)
@@ -1142,59 +1152,149 @@ function _read_tabular_locations(
                 batch_values += locations[(storage_id, remaining[batch])]
             end
             batch_seqs = splice!(remaining, 1:batch)
-            placeholders = join(fill("?", length(batch_seqs)), ", ")
-            # A streamed result uses the connection until it is closed, so the lock covers it.
-            lock(store.read_lock) do
-                statement = DuckDB.Stmt(store.read_connection, """
-                    SELECT *
-                    FROM $table
-                    WHERE $MB_SEQ_COLUMN IN ($placeholders)
-                    ORDER BY $MB_SEQ_COLUMN, $MB_ROW_COLUMN
-                """, DuckDB.StreamResult)
-                result = DuckDB.execute(statement, Tuple(batch_seqs))
-                try
-                    data = findall(name -> name ∉ (seq_name, row_name), result.names)
-                    data_names = Tuple(result.names[data])
-                    # The columns of each payload, in the order of `data_names`.
-                    columns = Dict{UInt32,Vector{AbstractVector}}()
-                    for chunk in Tables.partitions(result)
-                        seq_column = chunk.tbl[seq_name]
-                        # The query orders by seq, so one payload is contiguous runs of the seq column.
-                        run_start = 1
-                        while run_start <= length(seq_column)
-                            run_end = something(
-                                findnext(!=(seq_column[run_start]), seq_column, run_start),
-                                length(seq_column) + 1) - 1
-                            target = get!(columns, seq_column[run_start]) do
-                                AbstractVector[similar(chunk.tbl[name], 0) for name in data_names]
-                            end
-                            for (index, name) in enumerate(data_names)
-                                rows = view(chunk.tbl[name], run_start:run_end)
-                                # A chunk without missing values has a narrower element type than one with them.
-                                target[index] = eltype(rows) <: eltype(target[index]) ?
-                                    append!(target[index], rows) : vcat(target[index], rows)
-                            end
-                            run_start = run_end + 1
-                        end
-                    end
-                    for seq in batch_seqs
-                        # A zero-row payload has a pointer and schema but no physical rows; it
-                        # reconstructs as an empty value with the correct columns. The database
-                        # reports every column as one that allows missing values; a column with
-                        # rows and no missing value comes back without `Missing`, and so does this.
-                        payload = get(columns, seq) do
-                            AbstractVector[nonmissingtype(type)[] for type in result.types[data]]
-                        end
-                        rows_by_location[(storage_id, seq)] = NamedTuple{data_names}(Tuple(payload))
-                    end
-                finally
-                    DBInterface.close!(result)
-                    DBInterface.close!(statement)
-                end
+            names, types = shapes[storage_id]
+            payloads = all(type -> haskey(DIRECT_READ_TYPES, type), types) ?
+                _read_direct(store, table, storage_id, batch_seqs, names, types) : nothing
+            payloads === nothing && (payloads = _read_converted(store, table, storage_id, batch_seqs))
+            for seq in batch_seqs
+                rows_by_location[(storage_id, seq)] = payloads[seq]
             end
         end
     end
     return rows_by_location
+end
+
+# The Julia element type of each DuckDB column type that a read copies straight from the query
+# result, with no conversion.
+const DIRECT_READ_TYPES = Dict{String,DataType}(
+    "BOOLEAN" => Bool, "TINYINT" => Int8, "SMALLINT" => Int16, "INTEGER" => Int32, "BIGINT" => Int64,
+    "UTINYINT" => UInt8, "USMALLINT" => UInt16, "UINTEGER" => UInt32, "UBIGINT" => UInt64,
+    "FLOAT" => Float32, "DOUBLE" => Float64)
+
+"""
+Read the payloads `seqs` of one payload table whose column types are all in `DIRECT_READ_TYPES`.
+Each value is copied from the chunks of the query result to its row in its payload, with no other
+copy. `nothing` when a column has a missing value; the caller reads those payloads with
+`_read_converted`.
+"""
+function _read_direct(store::TabularFamilyStore, table::String, storage_id::UInt16, seqs::Vector{UInt32}, names, types)
+    element_types = [DIRECT_READ_TYPES[type] for type in types]
+    columns = Dict{UInt32,Vector{AbstractVector}}(
+        seq => AbstractVector[Vector{T}(undef, store.rows[(storage_id, seq)]) for T in element_types]
+        for seq in seqs)
+    selected = join([MB_SEQ_COLUMN; MB_ROW_COLUMN; _quote_identifier.(collect(names))], ", ")
+    placeholders = join(fill("?", length(seqs)), ", ")
+    runs = Run[]
+    complete = lock(store.read_lock) do
+        result = _execute_on_duckdb_threads(store.read_connection,
+            "SELECT $selected FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)", seqs)
+        try
+            while (chunk = DuckDB.nextDataChunk(result)) !== missing
+                try
+                    size = Int(DuckDB.get_size(chunk))
+                    all(index -> DuckDB.all_valid(chunk, index + 2), eachindex(element_types)) || return false
+                    # The chunk's own memory, of which the first `size` values are its rows.
+                    _runs!(runs, columns, DuckDB.get_array(chunk, 1, UInt32), DuckDB.get_array(chunk, 2, UInt64), size)
+                    for (index, T) in enumerate(element_types)
+                        _scatter!(runs, index, DuckDB.get_array(chunk, index + 2, T))
+                    end
+                finally
+                    DuckDB.destroy_data_chunk(chunk)
+                end
+            end
+            return true
+        finally
+            DBInterface.close!(result)
+        end
+    end
+    complete || return nothing
+    data_names = Tuple(Symbol.(names))
+    return Dict(seq => NamedTuple{data_names}(Tuple(columns[seq])) for seq in seqs)
+end
+
+"""
+Read the payloads `seqs` of one payload table through DuckDB.jl's conversion of the query result to
+Julia columns, which handles every column type and missing values.
+"""
+function _read_converted(store::TabularFamilyStore, table::String, storage_id::UInt16, seqs::Vector{UInt32})
+    seq_name, row_name = Symbol(MB_SEQ_COLUMN), Symbol(MB_ROW_COLUMN)
+    placeholders = join(fill("?", length(seqs)), ", ")
+    # One materialized query, which DuckDB runs on all threads. Its rows come in no order; each
+    # value goes to its place from the seq and row columns.
+    result = lock(store.read_lock) do
+        Tables.columntable(_execute_on_duckdb_threads(store.read_connection,
+            "SELECT * FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)", seqs))
+    end
+    data_names = Tuple(name for name in keys(result) if name ∉ (seq_name, row_name))
+    seq_column, row_column = result[seq_name], result[row_name]
+    columns = Dict{UInt32,Vector{AbstractVector}}(
+        seq => AbstractVector[similar(result[name], store.rows[(storage_id, seq)]) for name in data_names]
+        for seq in seqs)
+    runs = _runs!(Run[], columns, seq_column, row_column, length(seq_column))
+    for (index, name) in enumerate(data_names)
+        _scatter!(runs, index, result[name])
+    end
+    return Dict(seq => NamedTuple{data_names}(Tuple(map(columns[seq]) do column
+        # The database reports a column as one that allows missing values when any row of the
+        # query has one; a payload column without missing values comes back without it.
+        Missing <: eltype(column) && !any(ismissing, column) ?
+            convert(Vector{nonmissingtype(eltype(column))}, column) : column
+    end)) for seq in seqs)
+end
+
+# Run a query whose result is materialized. DuckDB.jl's `execute` runs the query's work on one
+# Julia task per Julia thread, which wait for work by yielding in a loop; when other work takes
+# those threads, the query slows down several times. Here the calling task runs DuckDB's tasks
+# one by one while DuckDB's own threads run the others (the store opens the file with
+# `external_threads = 1`).
+# TODO(maintenance): uses DuckDB.jl internals (`Stmt`, `PendingQueryResult`, `QueryResult`).
+function _execute_on_duckdb_threads(connection::DuckDB.Connection, sql::AbstractString, parameters)
+    statement = DuckDB.Stmt(connection, sql, DuckDB.MaterializedResult)
+    try
+        DuckDB.bind_parameters(statement, parameters)
+        pending = DuckDB.PendingQueryResult(statement)
+        if !pending.success || !DuckDB.pending_execute_tasks(pending)
+            throw(DuckDB.QueryException(DuckDB.get_error(statement, pending)))
+        end
+        handle = Ref{DuckDB.duckdb_result}()
+        if DuckDB.duckdb_execute_pending(pending.handle, handle) != DuckDB.DuckDBSuccess
+            message = DuckDB.fetch_error(sql, DuckDB.duckdb_result_error(handle))
+            DuckDB.duckdb_destroy_result(handle)
+            throw(DuckDB.QueryException(message))
+        end
+        return DuckDB.QueryResult(handle)
+    finally
+        DuckDB._close_stmt(statement)
+    end
+end
+
+# Consecutive query rows that go to consecutive rows of one payload: the payload's columns, the
+# first row there, the first query row and the number of rows.
+const Run = Tuple{Vector{AbstractVector},Int,Int,Int}
+
+# The runs of the first `count` query rows, whose payloads and rows are in `seqs` and `rows`. The
+# rows of one payload mostly follow each other, so a chunk of query rows has few runs.
+function _runs!(runs::Vector{Run}, columns::Dict{UInt32,Vector{AbstractVector}}, seqs::AbstractVector, rows::AbstractVector, count::Int)
+    empty!(runs)
+    checkbounds(seqs, 1:count); checkbounds(rows, 1:count)
+    position = 1
+    @inbounds while position <= count
+        run_end = position
+        while run_end < count && seqs[run_end+1] == seqs[position] && rows[run_end+1] == rows[run_end] + 1
+            run_end += 1
+        end
+        push!(runs, (columns[seqs[position]], Int(rows[position]), position, run_end - position + 1))
+        position = run_end + 1
+    end
+    return runs
+end
+
+# Copy each run of `values` to the column `index` of its payload.
+function _scatter!(runs::Vector{Run}, index::Int, values::AbstractVector{T}) where {T}
+    for (payload, row, position, count) in runs
+        copyto!(payload[index]::Vector{T}, row, values, position, count)
+    end
+    return nothing
 end
 
 """
@@ -1210,18 +1310,22 @@ function _materialize_payload(store::TabularFamilyStore, location::Tuple{UInt16,
     catch
         return nothing
     end
-    return Tables.materializer(container)(columns)
+    return materialized(container, columns)
 end
+
+# The columns of a payload just read, as a `container`. The columns are new arrays that nothing
+# else holds, so a container type may take them without copying them.
+materialized(container, columns) = Tables.materializer(container)(columns)
 
 function Base.read(
     store::TabularFamilyStore,
-    payload_keys::Vector{PayloadKey},
-)::Dict{PayloadKey,Any}
+    payload_keys::Vector{String},
+)::Dict{String,Any}
     # Typed, as each pass replaces it: a captured variable that changes is otherwise of unknown type.
-    remaining::Vector{PayloadKey} = unique(payload_keys)
-    results = Dict{PayloadKey,Any}()
+    remaining::Vector{String} = unique(payload_keys)
+    results = Dict{String,Any}()
     while !isempty(remaining)
-        locations = Dict{PayloadKey,Tuple{UInt16,UInt32}}()
+        locations = Dict{String,Tuple{UInt16,UInt32}}()
         stored_values = Dict{Tuple{UInt16,UInt32},Int}()
         lock(store.flush_condition) do
             _require_open(store)
@@ -1243,7 +1347,7 @@ function Base.read(
         end
         isempty(locations) && break
         stored_rows = _read_tabular_locations(store, stored_values)
-        retry = PayloadKey[]
+        retry = String[]
         lock(store.flush_condition) do
             _require_open(store)
             for (key, location) in locations
@@ -1479,8 +1583,7 @@ function _flush_to_db!(
     _transaction(store.write_connection) do
         _append_table!(store.write_connection, "item_data") do appender
             for (location, entry) in appends
-                DuckDB.append(appender, entry.item_key)
-                DuckDB.append(appender, entry.collection_key)
+                DuckDB.append(appender, entry.id)
                 DuckDB.append(appender, location[1])
                 DuckDB.append(appender, location[2])
                 DuckDB.append(appender, entry.container)

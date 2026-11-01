@@ -1,6 +1,6 @@
 using Test, DataBrowserAPI, DataBrowserCore
 using DataBrowserAPI: data
-using DataBrowserCache: MemoryStore
+using DataBrowserCache: DuckDBStore, MemoryStore
 import DataBrowserCore.Workspace as CW
 
 struct ComputationProject <: AbstractProject
@@ -11,12 +11,14 @@ ComputationProject() = ComputationProject(Ref(0), Type[])
 
 # A project store can accept only the native item type it was configured for.
 struct NativeItemStore{T<:AbstractDataItem} <: AbstractStore
-    values::MemoryStore{String,Any}
+    values::typeof(MemoryStore())
 end
-Base.haskey(store::NativeItemStore, id::AbstractString) = haskey(store.values, id)
-Base.write(store::NativeItemStore{T}, id::AbstractString, value::T) where {T} = write(store.values, id, value)
-Base.read(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = read(store.values, T, id)
-Base.delete!(store::NativeItemStore, id::AbstractString) = delete!(store.values, id)
+Base.haskey(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = haskey(store.values, T, id)
+Base.write(store::NativeItemStore{T}, id::AbstractString, item::T) where {T} = write(store.values, id, item)
+Base.read(store::NativeItemStore{T}, ::Type{T}, ids::AbstractVector) where {T} = read(store.values, T, ids)
+Base.delete!(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = delete!(store.values, T, id)
+DataBrowserAPI.stored_size(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} =
+    DataBrowserAPI.stored_size(store.values, T, id)
 function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T<:ResultItem}
     push!(project.store_types, T)
     return NativeItemStore{T}(MemoryStore())
@@ -366,12 +368,12 @@ DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueIte
             @test only(CW.results(workspace, [id(step)])).data == [1.0, 2.0]
             write(path, "3 4")
             current() = try
-                only(CW.results(workspace, [id(step)])).data == [3.0, 4.0]
+                only(materialize_items(workspace, ["vector"])).data == [6.0, 8.0]
             catch
                 false
             end
             @test timedwait(current, 60) === :ok
-            @test only(materialize_items(workspace, ["vector"])).data == [6.0, 8.0]
+            @test only(CW.results(workspace, [id(step)])).data == [3.0, 4.0]
         finally
             CW.close_workspace!(workspace)
         end
@@ -443,8 +445,7 @@ code_increment(value) = (code_calls[] += 1; value + 1)
 end
 
 unindexed_increment(value) = value + 1
-DataBrowserAPI.id(::Computation{typeof(unindexed_increment)}) = error("Evaluating a node must not print its identity")
-@testset "consuming a node needs no browsable identity" begin
+@testset "consuming a node adds no browsable item" begin
     workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
     try
         CW.wait_workspace_idle!(workspace)
@@ -455,5 +456,38 @@ DataBrowserAPI.id(::Computation{typeof(unindexed_increment)}) = error("Evaluatin
         @test cache_info(workspace, value).cached
     finally
         CW.close_workspace!(workspace)
+    end
+end
+
+struct KeptProject <: AbstractProject
+    values::String
+end
+DataBrowserAPI.project_name(::KeptProject) = "kept-computations"
+DataBrowserAPI.read(::KeptProject, source::ComputationSource, file::ComputationFile) =
+    read(ComputationProject(), source, file)
+DataBrowserAPI.expand(::KeptProject, file::ComputationFile, data) = expand(ComputationProject(), file, data)
+DataBrowserAPI.process(::KeptProject, value::ComputationItem) = process(ComputationProject(), value)
+DataBrowserAPI.storage(project::KeptProject, ::Type{<:AbstractDataItem}) = DuckDBStore(project.values)
+const KEPT_CALLS = Threads.Atomic{Int}(0)
+kept_total(value) = (Threads.atomic_add!(KEPT_CALLS, 1); sum(data(value).signal))
+
+@testset "a computation result kept on disk is not computed again after a reopen" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            project = KeptProject(joinpath(depot, "values.duckdb"))
+            for _ in 1:2
+                workspace = CW.open_workspace(project, ComputationSource(); background_processing=true)
+                try
+                    CW.wait_workspace_idle!(workspace)
+                    @test evaluate(workspace, Computation(kept_total, computation(workspace, "sample"))) == 12
+                finally
+                    CW.close_workspace!(workspace)
+                end
+            end
+            @test KEPT_CALLS[] == 1
+        finally
+            popfirst!(DEPOT_PATH)
+        end
     end
 end

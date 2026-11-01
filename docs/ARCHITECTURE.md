@@ -118,27 +118,24 @@ flowchart TB
 flowchart LR
     source["source item"]
     read["read"]
-    read_cache[("read input<br/>memory cache")]
     expand["expand<br/>(optional)"]
     index[("catalog<br/>source items, items, collections")]
-    unprocessed[("unprocessed payload<br/>memory cache")]
+    expanded[("expanded item<br/>in memory")]
     item_process["item process"]
-    processed[("processed payload<br/>cache store")]
+    processed[("processed item<br/>store of its type")]
     item_metadata[("item metadata<br/>cache store")]
     collection_process["collection process"]
     collection_payload[("collection data and metadata<br/>cache store")]
     member_process["member process"]
-    member_payload[("member payload<br/>cache store")]
+    member_payload[("member result<br/>store of its type")]
     views["views and inspectors"]
 
     source --> read
     read -->|"one item"| index
     read -->|"loaded value"| expand
-    read --> read_cache
-    read_cache -.->|"reused input"| expand
     expand -->|"items and identities"| index
-    index --> unprocessed
-    unprocessed --> item_process
+    expand -->|"item values"| expanded
+    expanded --> item_process
     item_process --> processed
     item_process --> item_metadata
     processed --> collection_process
@@ -153,15 +150,17 @@ flowchart LR
     classDef state fill:#f5d6a8,stroke:#c08a3f,color:#111
     classDef output fill:#c9e4c5,stroke:#5a9a52,color:#111
     class source,read,expand,item_process,collection_process,member_process,views stage
-    class read_cache,unprocessed,processed,item_metadata,collection_payload,member_payload state
+    class expanded,processed,item_metadata,collection_payload,member_payload state
     class index output
 ```
 
 A project/source implementation defines the callbacks behind the stages. `read` is the only stage
 that receives the source. When a source item holds one data item, `read` returns that item. When it
-holds zero or several, `read` returns the loaded value and `expand` turns it into data items; `expand`
-may run again with the cached read input. Both run in one source job, which records whether reading
-succeeded (`SOURCE_READ`) and whether the items were created (`SOURCE_EXPAND`).
+holds zero or several, `read` returns the loaded value and `expand` turns it into data items. Both run
+in one source job, which records whether reading succeeded (`SOURCE_READ`) and whether the items were
+created (`SOURCE_EXPAND`). The loaded value is not kept. The value of each item is kept in the store
+of its item type, under its id, until its `process` replaces it with the processed value. When that
+store no longer holds it, `read` and `expand` run again.
 
 The catalog (`DataBrowserCore.Catalogs`) holds one row for each source item, item and collection,
 and the status of each stage of each row. A row is named by a key (`SourceKey`, `ItemKey`,
@@ -224,16 +223,19 @@ Interactive computations evaluate their input graph directly, replacing their fo
 input-filling and result dictionaries. Unindexed nodes use the same type-selected stores and
 execution records as scheduled project calls. Their input revisions invalidate their cached results.
 Results from stale work are discarded, and invalidated results are not reused. Replacing a result
-or closing the workspace releases its stored value. Store keys currently identify a
-computation revision within one workspace opening; native restoration across openings is pending.
+releases its stored value; closing the workspace keeps it. A store keeps the current value of each
+item under its id: the result of its member `process`, or else of its own `process`. A store that
+keeps values on disk, such as `DuckDBStore`, supplies it again after a reopen while the cache
+records the stage as current. Earlier values of an item are computed again when needed.
+A computation's result is stored under its id with each item input written as the item's id, for
+example `fit(sample)`. The cache records the revision of the code and of the item results it was
+computed from, and supplies it after a reopen only while that revision is current.
 
 The scheduler, publication jobs and cache addressing still use the fixed stages described below.
-Their project calls use the same computation invocation. Normal materialization uses native
-computation results while available and replays uncached results. The older stage payload paths
-also honor the type policy, retain copies and store identity and metadata independently of data
-retention. Supported table payloads can still be restored from the existing persistent cache;
-values that it cannot encode stay in their native result store. Fixed-stage scheduling, native
-restoration across openings remain on the [roadmap](roadmap.md).
+Their project calls use the same computation invocation. Materialization evaluates the computation
+of an item's current version: it uses stored results and runs again what no store keeps. The cache
+records which stages finished and the metadata they delivered, independently of the stored values.
+Source reads, expanded items and collection data still use the older cache payload paths.
 
 Workers run project code in the latest world, so a method defined after the workspace opened is
 used. Each stage has a code revision for each type it runs for: a content hash of the code it can
@@ -265,11 +267,11 @@ generated function, and a value it cannot read; the warning names the way from t
 
 Jobs run in this order: what a view asks for, then source items, then the background work on items,
 then the background work on collections. The data that `expand` gives each item stays in memory
-until the `process` of the item has used it. When that data reaches half its memory limit
+until the `process` of the item has used it. When that data reaches half its limit
 (`expanded_data_limit` of `open_workspace`), items are processed before more source items are read, so that a
 source item normally does not need a second read/expand while processing that batch. This pacing
-does not guarantee exactly-once source access: reconstruction can call `read` again after its input
-was evicted.
+does not guarantee exactly-once source access: `read` runs again when the expanded value of an
+item is no longer kept, for example after its `process` failed or ran again.
 
 The source items that are not read yet (`unread`) are in the collection tree of the browser from
 the moment the source lists them. Their ids, split at `/`, give folders. A folder with the label of
@@ -329,8 +331,7 @@ private buffer helpers.
 Both persistent and in-memory workspaces use the same DuckDB stores and cache operations.
 `cache=false` opens a private `:memory:` database that moves data it cannot hold in memory to a
 temporary directory of its own; closing the workspace discards it without changing the project's
-cache file. Source-read and unprocessed
-payloads use resident `MemoryStore` buffers in both modes.
+cache file. The values of items are in the stores of their item types, not in the cache.
 
 ```mermaid
 flowchart LR
@@ -348,11 +349,11 @@ flowchart LR
     scan -->|"cached_source_fingerprints"| cache
     cache -->|"Dict of source ids and fingerprints"| fingerprints
     fingerprints --> scan
-    core -->|"read_payload / has_payload"| cache
+    core -->|"read_payload"| cache
     core -->|"cached_result_state"| cache
     cache -->|"payloads and stage state"| payloads
     payloads --> core
-    core -->|"store_source_read!<br/>store_source_items!<br/>store_processed!"| cache
+    core -->|"store_source_result!<br/>replace_source_output!<br/>store_result_ready!"| cache
     source -->|"read / expand / process"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111
