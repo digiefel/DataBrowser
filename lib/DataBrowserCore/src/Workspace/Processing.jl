@@ -88,18 +88,25 @@ function fail!(
     workspace::Workspace, job::Job, error, backtrace; stage::PipelineStage=job.stage,
 )::Nothing
     catalog = workspace.catalog
+    context = ""
     @lock catalog.lock begin
         kept = job isa Job{SourceKey} ?
             finish!(catalog, job; failed=stage) : finish!(catalog, job; failed=true)
         kept || return nothing
         job isa Job{SourceKey} && remove_items!(workspace, job.key)
-        failed!(workspace, job.key, stage, sprint(showerror, error))
+        context = stage_error_context(workspace, job.key, stage)
+        failed!(workspace, job.key, stage,
+            DataBrowserAPI.error_summary(error, backtrace) * "\n\n" * context)
     end
-    DataBrowserAPI.report_error(
-        "A stage failed\n  Source: $(DataBrowserAPI.source_description(workspace.source))\n" *
-        "  Item: $(id(catalog, job.key))\n  Stage: $stage", error, backtrace)
+    DataBrowserAPI.report_error(context, error, backtrace)
     return nothing
 end
+
+"""Identify the stage and input in both logged and saved failures."""
+stage_error_context(workspace::Workspace, key::RowKey, stage::PipelineStage)::String =
+    "A stage failed\n  Stage: $(stage_name(stage)) ($stage)\n" *
+    "  Source: $(DataBrowserAPI.source_description(workspace.source))\n" *
+    "  Item: $(id(workspace.catalog, key))"
 
 """Show and save the message of a stage that failed. The caller holds the catalog lock."""
 function failed!(workspace::Workspace, key::RowKey, stage::PipelineStage, message::String)::Nothing
@@ -198,10 +205,11 @@ function run!(workspace::Workspace, job::Job{SourceKey})::Nothing
             # The catalog refused the items and failed the stage. Collections added for them go.
             foreach(collection -> delete!(catalog, collection), reverse(placed))
             remove_items!(workspace, job.key)
-            failed!(workspace, job.key, SOURCE_EXPAND, sprint(showerror, error))
-            DataBrowserAPI.report_error(
-                "A stage failed\n  Source: $(DataBrowserAPI.source_description(workspace.source))\n" *
-                "  Item: $(id(catalog, job.key))\n  Stage: SOURCE_EXPAND", error, catch_backtrace())
+            backtrace = catch_backtrace()
+            context = stage_error_context(workspace, job.key, SOURCE_EXPAND)
+            failed!(workspace, job.key, SOURCE_EXPAND,
+                DataBrowserAPI.error_summary(error, backtrace) * "\n\n" * context)
+            DataBrowserAPI.report_error(context, error, backtrace)
             return nothing
         end
         foreach(item -> forget_results!(workspace, item),

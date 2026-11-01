@@ -629,12 +629,11 @@ query_items(workspace::Workspace)::Vector{String} =
     sort!(String[id(workspace, item) for item in items(workspace)])
 
 """
-The words shown before the message of a failed source stage. They are plain words, because the
-source job also fails for projects that never define `expand`.
+The words shown before the message of a failed stage. Source expansion uses plain words because
+the source job also fails for projects that never define `expand`.
 """
 failure_prefix(stage::PipelineStage)::String =
-    stage === SOURCE_READ ? "read failed: " :
-    stage === SOURCE_EXPAND ? "could not create items: " : ""
+    stage === SOURCE_EXPAND ? "could not create items: " : "$(stage_name(stage)) failed: "
 
 """
 Fill the empty catalog with the rows the cache saved, as the first view before the scan checks

@@ -68,7 +68,16 @@ end
         try
             wait_workspace_idle!(ws; timeout=20)
             @test !isempty(workspace_status(ws).errors)
-            @test_throws ErrorException materialize_items(ws, ["sample"])
+            failure = try
+                materialize_items(ws, ["sample"])
+            catch error
+                error
+            end
+            @test failure isa ErrorException
+            message = sprint(showerror, failure)
+            @test occursin("Stage: process", message)
+            @test occursin("Item: sample", message)
+            @test occursin("test_source_updates.jl", message)
 
             write(path, "sample 9")
             @test timedwait(() -> reading_is(ws, "sample", 3.0), 20) === :ok
@@ -76,6 +85,7 @@ end
 
             write(path, "sample invalid")
             @test timedwait(() -> isempty(query_items(ws)) && !isempty(workspace_status(ws).errors), 20) === :ok
+            @test occursin("Stage: read", last(only(workspace_status(ws).errors)))
             @test_throws ErrorException materialize_items(ws, ["sample"])
 
             write(path, "sample 16")
