@@ -1,4 +1,5 @@
 using TOML
+import GLFW
 
 using DataBrowserAPI: AbstractVisualizer, prepare!, project_name, select!, selection, settings
 using DataBrowserCore.Catalogs: ItemKey
@@ -32,6 +33,11 @@ end
 function _project_view_from_toml(::Type{Bool}, value::Any)::Bool
     value isa Bool || error("Expected boolean, got $(typeof(value))")
     return value
+end
+
+function _project_view_from_toml(::Type{Int}, value::Any)::Int
+    value isa Integer && !(value isa Bool) || error("Expected integer, got $(typeof(value))")
+    return Int(value)
 end
 
 function _project_view_from_toml(::Type{Tuple{String,String}}, value::Any)::Tuple{String,String}
@@ -109,6 +115,15 @@ function _load_project_view(root_path::AbstractString)::PersistedProjectView
     )
 end
 
+"""Read the saved view belonging to this workspace's source and project."""
+function _load_project_view(workspace::Workspace.Workspace)::PersistedProjectView
+    view = hasproperty(workspace.source, :root_path) ?
+        _load_project_view(workspace.source.root_path) : PersistedProjectView()
+    project = project_name(workspace.project)
+    return !isempty(view.project) && view.project != project ?
+        PersistedProjectView(project=project) : view
+end
+
 """Write project-local browser state beside the source data."""
 function _save_project_view(root_path::AbstractString, view::PersistedProjectView)::Nothing
     open(_project_view_file_path(root_path), "w") do io
@@ -134,6 +149,8 @@ function _project_view_from_browser(
     workspace = state.workspace
     return PersistedProjectView(
         project=project_name(workspace.project),
+        window_size=Int[GLFW.GetWindowSize(ig.current_window())...],
+        window_position=Int[GLFW.GetWindowPos(ig.current_window())...],
         tree=PersistedTreeView(
             expanded=copy(state.expanded_collections),
             selected=copy(workspace.selection.collections),
@@ -271,6 +288,8 @@ Write project-local state only when its serialized value changed. The frames com
 second at most; `every=0` compares it now, as when the browser closes.
 """
 function _save_project_view_if_changed!(state::BrowserState; every::Real=0.5)::Nothing
+    # A failed initial restore must not overwrite the saved view with startup defaults.
+    isempty(state.loaded_source_id) && return nothing
     # Building and serializing the view at every frame allocates in proportion to the selection.
     time() - state.project_view_checked < every && return nothing
     state.project_view_checked = time()

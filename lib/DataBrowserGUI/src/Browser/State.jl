@@ -45,6 +45,9 @@ remain in memory.
 """
 Base.@kwdef struct PersistedProjectView
     project::String = ""
+    # Native content-area geometry in screen coordinates; empty until the browser is shown.
+    window_size::Vector{Int} = Int[]
+    window_position::Vector{Int} = Int[]
     tree::PersistedTreeView = PersistedTreeView()
     items::PersistedItemsView = PersistedItemsView()
     extensions::Dict{String,Dict{String,Any}} = Dict{String,Dict{String,Any}}()

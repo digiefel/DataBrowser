@@ -12,11 +12,9 @@ function _check_source_identity!(
     current = id(workspace.source)
     current == state.loaded_source_id && return nothing
     isempty(state.loaded_source_id) || _reset_extensions!(state)
-    source_root = hasproperty(workspace.source, :root_path) ? workspace.source.root_path : ""
-    view = isempty(source_root) ? PersistedProjectView() : _load_project_view(source_root)
-    project = project_name(workspace.project)
-    !isempty(view.project) && view.project != project &&
-        (view = PersistedProjectView(project=project))
+    # The initial view was read before creating the native window. Later source changes read
+    # their own view, without moving or resizing the already-open window.
+    view = isempty(state.loaded_source_id) ? state.saved_project_view : _load_project_view(workspace)
     _apply_project_view!(state, view)
     state.saved_project_view = view
     state.loaded_source_id = current

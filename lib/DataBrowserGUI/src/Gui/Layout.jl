@@ -330,6 +330,20 @@ function _leave_foreground_app()
     return nothing
 end
 
+# GLFW 3.4's public initial-position hints, not yet named by GLFW.jl.
+# https://www.glfw.org/docs/3.4/window_guide.html#window_pos
+const GLFW_POSITION_X = 0x0002000e
+const GLFW_POSITION_Y = 0x0002000f
+const GLFW_ANY_POSITION = typemin(Cint)
+
+"""Set or clear GLFW's initial-position hints before a native window is created."""
+function _set_browser_position_hints(position::Vector{Int}=Int[])::Nothing
+    x, y = length(position) == 2 ? position : (GLFW_ANY_POSITION, GLFW_ANY_POSITION)
+    GLFW.WindowHint(GLFW_POSITION_X, x)
+    GLFW.WindowHint(GLFW_POSITION_Y, y)
+    return nothing
+end
+
 function _set_browser_window_hints(window_start::Symbol)::Nothing
     if window_start == :normal
         GLFW.WindowHint(GLFW.FOCUSED, true)
@@ -425,7 +439,12 @@ function _run_browser(
     exit_after_frames === nothing || exit_after_frames > 0 ||
         error("exit_after_frames must be positive when provided; got $exit_after_frames")
     DEDICATED_IO_THREAD()
+    view = _load_project_view(state.workspace)
+    state.saved_project_view = view
+    window_options = length(view.window_size) == 2 && all(>(0), view.window_size) ?
+        (; window_size=Tuple(view.window_size)) : (;)
     _set_browser_window_hints(window_start)
+    _set_browser_position_hints(view.window_position)
     # A GLFW error while the browser runs, such as a paste when the clipboard holds no text, is a
     # warning: GLFW.jl's own handler throws it out of the frame and stops the drawing.
     GLFW.SetErrorCallback(error -> @warn "GLFW: $(error.description)")
@@ -437,6 +456,7 @@ function _run_browser(
         engine,
         spawn,
         wait,
+        window_options...,
         window_title="Data Browser",
         opengl_version=v"3.3",
         wait_events=false,
@@ -500,6 +520,9 @@ function _run_browser(
             exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
                 return :imgui_exit_loop
             if first_frame[]
+                # The main window has been created. Do not give its placement hints to other
+                # windows created by visualizers or by ImGui's multi-viewport backend.
+                _set_browser_position_hints()
                 state.performance.gl_info = _gl_info()
                 window_start == :normal && _promote_to_foreground_app()
                 # The backend always creates the window visible.
@@ -569,8 +592,9 @@ With `wait=false`, returns a [`BrowserSession`](@ref) (`task` + `state`). Use
 [`wait_browser_ready`](@ref) to wait until extension initialization is complete and the first
 full browser frame has been presented. Use [`close_browser!`](@ref) to exit the loop cleanly.
 
-Window positions, docking and table widths use ImGui’s `imgui.ini` in the current working
-directory.
+Panel positions, docking and table widths use ImGui’s `imgui.ini` in the current working
+directory. The native window position and size are saved in the source directory's
+`databrowser.toml` and used when creating the window, before the first ImGui frame.
 
 Closing the window closes the browser only. The workspace stays open and keeps processing items,
 and `open_browser` can show it again. Use `close_workspace!` to close the workspace.
