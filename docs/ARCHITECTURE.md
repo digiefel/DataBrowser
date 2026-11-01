@@ -244,12 +244,17 @@ instead. When the walk fails, the stage still runs and its code counts as not tr
 as roots.
 
 The first time a stage runs for a type, the worker records its revision, also in the cache. Twice a
-second the workspace compares the roots with the recorded ones; after a method definition, or when
-the roots differ, it computes the revision again. When the revision changed, the results of the stage
+second the workspace asks Revise to load saved edits, including files tracked with `includet`, even
+when the REPL is idle. It then compares the roots with the recorded ones; after a method definition,
+or when the roots differ, it computes the revision again. When the revision changed, the results of the stage
 for that type are invalidated: source items are read again, as if the source had changed them, and
 items and collections run the stage again. Collections ask `has_stage` again, so a collection stage
 defined later gets its jobs. The same code defined again, as when a script runs again, changes
 nothing. On reopening, a saved result counts only if the revision it was computed with is current.
+
+While a browser is open, its main window's keyboard focus controls these automatic updates. An
+inactive window pauses Revise loading and code-revision checks; gaining focus resumes them.
+Without a browser, including after closing one, the workspace continues checking automatically.
 
 The revision does not see a mutable value changed in place, nor a change to a macro: the functions
 that use a macro keep their old expansion until they are defined again. It warns about code it

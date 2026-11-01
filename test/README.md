@@ -58,6 +58,9 @@ julia --project=bench --threads=auto test/runtests.jl precompile --force
 | `Plots` | `test_declaration.jl`, `test_fitting.jl`, `test_legend.jl`: ordinary plot declarations, plotted values, grouped fits and legend content. `test_plot_editing.jl`: adding a layer and changing an analysis from code, keeping the rest of the plot code. `test_secondary_axis.jl`: second y axes, their scales and the settings they share with the first. |
 | `Profiling` | `test_timings.jl`: concurrent instrumentation, snapshots and lifecycle. |
 
+`Core test_revise.jl` checks a saved process-helper edit through `register_item!`: the processed
+data and analysis metadata update without a REPL command or an explicit call to Revise.
+
 ### Coverage gaps
 
 - TODO: test window creation, transforms, reopening, table selection/copy, plot-file recovery,

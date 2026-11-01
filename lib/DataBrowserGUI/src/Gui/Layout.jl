@@ -441,6 +441,8 @@ function _run_browser(
         opengl_version=v"3.3",
         wait_events=false,
         on_exit=() -> begin
+            # The workspace keeps running after the browser closes.
+            @atomic state.workspace.code_updates_active = true
             # A visualizer may hold a figure that must be released before the window goes. The
             # windows stay in the list, so that they are saved and open again next time.
             # Finish handovers while the graphics context and workspace are still available.
@@ -470,6 +472,8 @@ function _run_browser(
         end,
     ) do
         _window_close_requested(state) && return :imgui_exit_loop
+        @atomic state.workspace.code_updates_active =
+            GLFW.GetWindowAttrib(ig.current_window(), GLFW.FOCUSED) != 0
         state.performance.frame += 1
         # The backend renders and swaps the previous frame before calling us again.
         # Discard startup timings once the first full frame has been presented, or on request.
@@ -571,6 +575,9 @@ directory.
 Closing the window closes the browser only. The workspace stays open and keeps processing items,
 and `open_browser` can show it again. Use `close_workspace!` to close the workspace.
 
+Automatic code updates pause while the main browser window is inactive and resume when it gains
+keyboard focus. Closing the browser resumes the workspace's automatic code updates.
+
 Start Julia with `--threads=auto,1`: thread 1 runs the UI and the default pool prepares values.
 
 `window_start` says how the window appears: `:normal` shows it and gives it the keyboard focus,
@@ -592,8 +599,14 @@ function open_browser(
         init!(ext, state)
     end
     ctx, fonts = _init_browser_context!()
-    result = ScopedValues.with(_CURRENT_FONTS => fonts, _WINDOW_PREVIEWS => WindowPreviewCache()) do
-        _run_browser(state, ctx; engine, spawn, wait, window_start=window_start)
+    @atomic workspace.code_updates_active = false
+    result = try
+        ScopedValues.with(_CURRENT_FONTS => fonts, _WINDOW_PREVIEWS => WindowPreviewCache()) do
+            _run_browser(state, ctx; engine, spawn, wait, window_start=window_start)
+        end
+    catch
+        @atomic workspace.code_updates_active = true
+        rethrow()
     end
     return wait ? result : BrowserSession(result::Task, state)
 end

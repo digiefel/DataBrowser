@@ -292,6 +292,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] Track code/environment revisions in derived-result validity. Each stage records a code
   revision per type, also in the cache; a changed revision invalidates only that stage's results,
   while the workspace is open and on reopening (`docs/ARCHITECTURE.md`).
+- [x] Load saved edits through Revise before checking code revisions, so tracked process and
+  analysis edits update affected results while the REPL is idle. Pause these updates while an
+  open browser's main window is inactive; resume when it gains focus or the browser closes.
 - [ ] Notice code that code revisions cannot follow: values changed in place, non-constant globals,
   `eval`/`invokelatest`. Show the "not tracked" warning in the browser, and check the walk against
   a tracing run (`research_notes/code-change-detection/design.md`, step 7).

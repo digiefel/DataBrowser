@@ -2,6 +2,7 @@ module Workspace
 
 using Printf
 using Dates: now
+import Revise
 import InteractiveUtils
 import StructArrays, Tables
 using PrettyTables: @text__no_horizontal_lines, @text__no_vertical_lines, TextTableFormat, pretty_table
@@ -338,6 +339,9 @@ mutable struct Workspace{P<:AbstractProject}
     # Held for the whole of `modify_workspace!` / `close_workspace!` so a frame cannot read a
     # half-rebuilt runtime. The GUI trylocks this at the start of a frame.
     lifecycle_lock::ReentrantLock
+    # A browser pauses automatic code updates while its main window is inactive.
+    # Without a browser, the workspace checks code independently of window focus.
+    @atomic code_updates_active::Bool
     # Increased on every published change.
     generation::Base.Threads.Atomic{Int}
     # The last computed status with the generation it reflects, replaced as one value so that
@@ -450,6 +454,7 @@ function Workspace(
         Task[],
         metrics,
         ReentrantLock(),
+        true,
         Base.Threads.Atomic{Int}(0),
         -1 => WorkspaceStatus(),
         CancellationTokenSource(),

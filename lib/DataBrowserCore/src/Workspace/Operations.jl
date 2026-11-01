@@ -11,6 +11,10 @@ size of the data is estimated.
 
 Close the workspace with [`close_workspace!`](@ref). A workspace that is still open when Julia exits
 is closed then.
+
+Saved edits to code tracked by Revise, including files loaded with `Revise.includet`, are loaded
+automatically while the workspace is open. Affected results are computed again without a REPL command.
+An open browser pauses these automatic updates while its main window is inactive.
 """
 function open_workspace(
     project::AbstractProject,
@@ -823,15 +827,21 @@ function publish_source_event!(
 end
 
 """
-Check the project's code twice a second until the workspace stops: see [`check_code!`](@ref).
+Load pending edits through Revise and check the project's code twice a second until the workspace
+stops, while automatic updates are active: see [`check_code!`](@ref).
 """
 function watch_code(workspace::Workspace)::Task
     token = get_token(workspace.cancel_source)
     return Threads.@spawn try
         while true
             try
-                # The latest world, so the check sees methods defined after the workspace opened.
-                Base.invokelatest(check_code!, workspace)
+                if @atomic workspace.code_updates_active
+                    # File watchers queue edits; load them even when the REPL is idle. Revise
+                    # serializes concurrent callers, including other workspaces and the REPL.
+                    Base.invokelatest(Revise.revise)
+                    # The latest world, so the check sees methods defined after the workspace opened.
+                    Base.invokelatest(check_code!, workspace)
+                end
             catch error
                 @error "Could not check the project code for changes" exception=(error, catch_backtrace()) maxlog=1
             end
