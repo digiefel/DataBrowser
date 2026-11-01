@@ -622,6 +622,27 @@ the table as a first-class view.
 - [ ] Failures in the Code visualizer: a window leaves out its failed items, so the visualizer never
   receives them and its rows show no failures.
 - [ ] Show the line of code that called each function, under its row.
+- [x] A single "Vector" visualizer combines an index plot, a sideways histogram, a color strip
+  and an ECDF. Index and value ranges are linked across the relevant panels. Histogram controls
+  choose an explicit bin count and count or density, with an optional Gaussian density estimate.
+  A thin numeric strip spans the full width above the plots, followed by aligned summary
+  statistics. It shows each index above its value, in original order, and scrolls horizontally
+  without a visible scrollbar. A thin color strip uses the trace's own Index axis. The histogram
+  and ECDF have equal drawing widths, allowing extra frame width for the ECDF's right-hand
+  Value axis. New Vector windows default to 900 × 360 pixels.
+  Nonfinite values leave gaps and do not enter distributions or statistics.
+  Open it from **+ Window → Vector** and select one item whose data is an `AbstractVector{<:Real}`,
+  or select one numeric column in a Table window and use that window as the source. A table with
+  exactly one real-valued column is unwrapped; multiple columns require an explicit selection.
+  Other data is not plotted; "through" can return a vector as a computed item's data.
+  Restored windows retain their saved size; docked windows follow their docking region.
+- [x] A "Frequency Analysis" toggle in the Vector visualizer: one-sided FFT amplitude, a Hann
+  periodogram (PSD) and normalized autocorrelation. Sample spacing defaults to 1; the user can
+  change it, switch frequency and amplitude axes between linear and logarithmic scales with
+  compact `f: Linear/Log` and `A: Linear/Log` buttons, and choose whether to remove the mean from
+  the spectra. Log amplitude applies to FFT and PSD; autocorrelation retains a linear value axis.
+  A Markers checkbox is available in both modes. Log frequency omits the zero-frequency bin.
+  Nonfinite samples are rejected in this mode because removing them would change sample timing.
 - [ ] A great table:
   - [x] Numbers right-aligned, with the decimal points lined up in each column; one format per
     column chosen from its values; in a column with very small or very large numbers, each number
