@@ -459,7 +459,7 @@ function edit!(store::WideRowStore{K}, key::K, row::AbstractDict)::Vector{String
                 store.columns[name] = column
                 push!(store.column_order, name)
                 push!(store.pending_columns, name)
-            elseif _type_name(typeof(value)) != column.name
+            elseif typeof(value) !== column.type && _type_name(typeof(value)) != column.name
                 push!(dropped, "metadata :$name holds $(something(column.type, column.name)), got $(typeof(value))")
                 continue
             end
@@ -497,7 +497,8 @@ function Base.read(store::WideRowStore{K})::Dict{K,Dict{Symbol,Any}} where {K}
                 for name in stored_columns
                     raw = getproperty(database_row, name)
                     ismissing(raw) && continue
-                    dict[name] = StructUtils.make(columns[name].type, raw)
+                    type = columns[name].type
+                    dict[name] = raw isa type ? raw : StructUtils.make(type, raw)
                 end
                 rows[convert(K, raw_key)] = dict
             end
@@ -513,8 +514,8 @@ function Base.read(store::WideRowStore{K})::Dict{K,Dict{Symbol,Any}} where {K}
     end
 end
 
-# The appender cannot write lists and structs, so rows go to a staging table first, where those
-# columns hold DuckDB text, and then to the table with a cast.
+# The appender cannot write lists and structs. When the table has such columns, rows go to a staging
+# table first, where those columns hold DuckDB text, and then to the table with a cast.
 function _flush_to_db!(
     store::WideRowStore{K},
     batch::Dict{K,BufferMutation{Dict{Symbol,Any}}},
@@ -552,6 +553,19 @@ function _flush_to_db!(
             deleted_keys,
         )
         isempty(rows) && return
+        if !any(nested, column_order)
+            _append_table!(store.write_connection, store.table_name) do appender
+                for (key, dict) in rows
+                    DuckDB.append(appender, key)
+                    for name in column_order
+                        value = get(dict, name, missing)
+                        DuckDB.append(appender, value === missing ? missing : _saved(value))
+                    end
+                    DuckDB.end_row(appender)
+                end
+            end
+            return
+        end
         _run(store.write_connection, "CREATE OR REPLACE TABLE $(_quote_identifier(staging)) AS " *
             "SELECT $(store.quoted_key_column)" *
             join([", $(nested(name) ? "CAST(NULL AS VARCHAR) AS $(quoted(name))" : quoted(name))"
