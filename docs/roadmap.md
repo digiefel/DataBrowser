@@ -227,6 +227,14 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] The workspace hands out each item as its `process` returned it, without rebuilding it.
 - [x] The metadata of an item is the metadata of its latest value, not merged over the metadata
   its `process` received, so that `reconstruct` gets the metadata the value had when it was stored.
+- [ ] Metadata values of any type that `StructUtils.make` can build again, such as a fit parameter
+  with its error. Core saves each value with its type and reads it back with `make(T, saved)`; the
+  loaded project defines the type again, as it does for `reconstruct`. A type whose fields do not
+  describe it defines `StructUtils.lower` and `StructUtils.lift`. For a type of another package
+  without them, such as a Unitful quantity, we add them upstream or in DataBrowserCache.
+  `metadata_value`, `MetadataValue` and `MetadataDict` leave DataBrowserAPI, and Core no longer
+  catches errors to find values that cannot be metadata. Which saved values become typed columns
+  for queries is a separate question.
 - [ ] Store the results of item and member `process` in the store that `storage(project, T)`
   chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
   one copy of data that a member `process` returned unchanged.
