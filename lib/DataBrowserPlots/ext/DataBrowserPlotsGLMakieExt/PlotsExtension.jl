@@ -1,5 +1,5 @@
 import CImGui as ig
-using GLMakie: Axis, Figure, lines!
+using GLMakie: Figure
 
 import DataBrowserGUI
 const Browser = DataBrowserGUI.Browser
@@ -13,7 +13,7 @@ One instance per browser warms GLMakie before the first visible plot.
 """
 Base.@kwdef mutable struct PlotsExtension <: Browser.GuiExtension
     runtime_warmed::Bool = false
-    warmup_figure::Union{Nothing,Figure} = nothing
+    warmup_task::Union{Nothing,Task} = nothing
 end
 
 Browser.is_ready(ext::PlotsExtension, ::Browser.BrowserState) = ext.runtime_warmed
@@ -21,6 +21,10 @@ Browser.is_ready(ext::PlotsExtension, ::Browser.BrowserState) = ext.runtime_warm
 """Warm GLMakie once in a hidden window before the first visible plot."""
 function Browser.warmup!(ext::PlotsExtension, ::Browser.BrowserState)
     ext.runtime_warmed && return nothing
+    # Build the figure on a worker thread, as plot windows do during preparation. Packages loaded
+    # after precompilation, such as DataFrames, can make Makie compile the figure code again.
+    ext.warmup_task === nothing && (ext.warmup_task = Threads.@spawn :default example_figure())
+    istaskdone(ext.warmup_task) || return nothing
     flags = ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoInputs |
             ig.ImGuiWindowFlags_NoBackground | ig.ImGuiWindowFlags_NoSavedSettings |
             ig.ImGuiWindowFlags_NoNav | ig.ImGuiWindowFlags_NoFocusOnAppearing
@@ -33,20 +37,14 @@ function Browser.warmup!(ext::PlotsExtension, ::Browser.BrowserState)
     ig.SetNextWindowPos((-10_000.0, -10_000.0), ig.ImGuiCond_Always)
     ig.SetNextWindowSize((8.0, 8.0), ig.ImGuiCond_Always)
     if ig.Begin("###plot_runtime_warmup", C_NULL, flags)
-        if ext.warmup_figure === nothing
-            figure = Figure(size=(64, 48))
-            axis = Axis(figure[1, 1], xlabel="x", ylabel="y", title="warm")
-            lines!(axis, [0.0, 1.0], [0.0, 1.0], color=:blue)
-            ext.warmup_figure = figure
-        end
         MakieFigure(
             "_plot_runtime_warmup",
-            ext.warmup_figure;
+            fetch(ext.warmup_task)::Figure;
             auto_resize_x=false,
             auto_resize_y=false,
         )
         destroy_figure!("_plot_runtime_warmup")
-        ext.warmup_figure = nothing
+        ext.warmup_task = nothing
         ext.runtime_warmed = true
     end
     ig.End()

@@ -23,12 +23,14 @@ include("PlotView.jl")
 include("PlotsExtension.jl")
 include("Builder.jl")
 
-# The calls a registered plot usually makes: linked axes, a color per item, solid and dashed lines,
-# markers and a legend.
-# TODO: also compile drawing a plot window, and the engine code that loading GLMakie invalidates.
-@compile_workload begin
+"""
+A figure with the calls a registered plot usually makes: linked axes, a color per item, solid and
+dashed lines, markers and a legend. The precompile workload builds and draws it, and the browser
+draws it once before its first plot window, so that both compile the same code.
+"""
+function example_figure()::Figure
     voltage = collect(range(-1.0, 1.0; length=20))
-    figure = Figure()
+    figure = Figure(size=(320, 240))
     current = Axis(figure[1, 1]; ylabel="Current (A)", title="I-V")
     magnitude = Axis(figure[2, 1]; xlabel="Voltage (V)", ylabel="|Current| (A)")
     linkxaxes!(current, magnitude)
@@ -40,7 +42,10 @@ include("Builder.jl")
         lines!(magnitude, voltage, abs.(values); color=colors[index], linestyle=:dash)
     end
     axislegend(current)
+    return figure
 end
+
+@compile_workload MakieImguiIntegration.draw_in_hidden_window(example_figure())
 
 function __init__()
     Browser.register_gui_extension!(PlotsExtension)

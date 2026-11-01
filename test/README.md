@@ -102,9 +102,12 @@ compilation.
 
 The figures extension of DataBrowserPlots, loaded with AoG, compiles a grouped table plot with a
 legend by building its figure without opening a window. The plot-window extension, loaded with AoG
-and GLMakie, compiles the Makie calls that a registered plot usually makes. This moves compilation
-from first use into package preparation; it increases preparation time and does not eliminate
-compilation of user callbacks or every combination of plot options.
+and GLMakie, builds a figure with the Makie calls that a registered plot usually makes and draws it
+in a hidden window. This moves compilation from first use into package preparation; it increases
+preparation time and does not eliminate compilation of user callbacks or every combination of plot
+options. Packages loaded outside the dependencies of the extension, such as DataFrames, make Julia
+discard part of that compiled code. The browser builds the same figure on a worker thread before its
+first plot window, so that compiling it again does not stop the frames.
 
 The engine workload of DataBrowser runs without GLMakie and AoG. Code that loading them would
 invalidate is written so that it does not depend on their methods: for example, it calls `deepcopy`
@@ -137,6 +140,7 @@ script setup; readiness is observed on the next render-loop iteration after pres
 10 ms polling delay. `import_s` is `using DataBrowser`. The browser then loads GLMakie and
 AlgebraOfGraphics on a worker thread; `plot_windows_open_s` and `plot_windows_reopen_s` measure,
 from the same start, when the plot-window extension has loaded. `frame_gap_ms` is the longest time
-between two frames, from the first frame until 60 frames after the plot-window extension has loaded.
+between two frames, from the first frame until 60 frames after the plot windows are ready: the
+extension has loaded and has drawn its first figure in a hidden window.
 Snapshots taken before the browser loaded them itself imported GLMakie and AlgebraOfGraphics in
 `import_s`; compare measurements within the same workload.

@@ -91,6 +91,37 @@ function destroy_context!()::Nothing
     return nothing
 end
 
+"""
+Draw `figure` once in a new hidden window, with the calls that `MakieFigure` makes outside
+ImGui. The precompile workload calls it, so that the first plot window in the browser does not
+compile them.
+"""
+function draw_in_hidden_window(figure::GLMakie.Figure)::Nothing
+    # The context of the browser's window: OpenGL 3.3, core profile.
+    GLFW.WindowHint(GLFW.VISIBLE, false)
+    GLFW.WindowHint(GLFW.CONTEXT_VERSION_MAJOR, 3)
+    GLFW.WindowHint(GLFW.CONTEXT_VERSION_MINOR, 3)
+    GLFW.WindowHint(GLFW.OPENGL_PROFILE, GLFW.OPENGL_CORE_PROFILE)
+    GLFW.WindowHint(GLFW.OPENGL_FORWARD_COMPAT, true)
+    window = GLFW.CreateWindow(64, 48, "")
+    GLFW.DefaultWindowHints()
+    try
+        GLFW.MakeContextCurrent(window)
+        screen = GLMakie.Screen(; window=ImMakieWindow(window), start_renderloop=false)
+        imfigure = ImMakieFigure(figure, screen, false, gl.GLuint(0), (0, 0), nothing, Makie.Axis[])
+        MAKIE_CONTEXT["draw_in_hidden_window"] = imfigure
+        Makie.get_scene(figure).events.window_open[] = true
+        display(screen, figure)
+        GLMakie.poll_updates(screen)
+        GLMakie.requires_update(screen) && GLMakie.render_frame(screen; resize_buffers=false)
+        _sync_display_texture!(imfigure, true)
+        destroy_figure!("draw_in_hidden_window")
+    finally
+        GLFW.DestroyWindow(window)
+    end
+    return nothing
+end
+
 """Destroy the embedded Makie screen and figure owned by one plot id."""
 function destroy_figure!(title_id::String)::Nothing
     imfigure = pop!(MAKIE_CONTEXT, title_id, nothing)

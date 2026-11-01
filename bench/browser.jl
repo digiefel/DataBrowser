@@ -2,7 +2,7 @@ include("smoke_project.jl")
 using DataBrowserPlots
 using DataBrowserAPI: data
 using DataBrowserGUI: merge_item_tables, gui_timings
-using DataBrowserGUI.Browser: TimerOutputs
+using DataBrowserGUI.Browser: TimerOutputs, _extensions_ready
 
 function wait_for(predicate, session; timeout=120)
     deadline = time() + timeout
@@ -62,8 +62,14 @@ function browser_workload(root, opening, started_ns)
             Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt) !== nothing
         end
         plot_windows_s = (time_ns() - started_ns) / 1e9
-        loaded = frames
-        wait_for(() -> next_frames() >= loaded + 60, session)
+        # The plot windows are ready once their extension has drawn a first figure in a hidden window.
+        wait_for(session) do
+            next_frames()
+            any(ext -> nameof(typeof(ext)) == :PlotsExtension, session.state.extensions) &&
+                _extensions_ready(session.state)
+        end
+        ready = frames
+        wait_for(() -> next_frames() >= ready + 60, session)
         finish_work(workspace)
         items = check_items(workspace, [4.0, 6.0, 6.0])
         # "runs" holds every item: its callbacks see three members.
