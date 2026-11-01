@@ -219,8 +219,8 @@ function unread(workspace::Workspace)::Vector{String}
 end
 
 """
-    metadata(workspace, collection) -> MetadataDict
-    metadata(workspace, item; through=MEMBER_PROCESS) -> MetadataDict
+    metadata(workspace, collection) -> Dict{Symbol,Any}
+    metadata(workspace, item; through=MEMBER_PROCESS) -> Dict{Symbol,Any}
 
 The metadata of a collection or an item, as a new dictionary.
 
@@ -237,16 +237,16 @@ into an item.
 `through=SOURCE_EXPAND` gives the metadata that `process` receives, and `through=ITEM_PROCESS` the
 metadata that the member `process` methods receive.
 """
-function metadata(workspace::Workspace, collection::CollectionKey)::MetadataDict
+function metadata(workspace::Workspace, collection::CollectionKey)::Dict{Symbol,Any}
     catalog = workspace.catalog
     @lock catalog.lock begin
-        collection == ROOT && return MetadataDict()
+        collection == ROOT && return Dict{Symbol,Any}()
         return merge(metadata(catalog, collection, :collection), metadata(catalog, collection, :source),
             metadata(catalog, collection, COLLECTION_PROCESS))
     end
 end
 
-function metadata(workspace::Workspace, item::ItemKey; through::PipelineStage=MEMBER_PROCESS)::MetadataDict
+function metadata(workspace::Workspace, item::ItemKey; through::PipelineStage=MEMBER_PROCESS)::Dict{Symbol,Any}
     catalog = workspace.catalog
     @lock catalog.lock begin
         through == MEMBER_PROCESS && member_current(catalog, item) &&

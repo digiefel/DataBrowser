@@ -113,7 +113,7 @@ end
 
 # The item that `process` receives: the item `expand` made, with `given`, the metadata of the item
 # and its source item.
-function process_input(value::AbstractDataItem, id::String, given::MetadataDict)
+function process_input(value::AbstractDataItem, id::String, given::Dict{Symbol,Any})
     isequal(metadata_dict(metadata(value)), given) && return value
     return something(reconstruct(typeof(value), id, data(value), given), value)
 end

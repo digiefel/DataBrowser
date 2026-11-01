@@ -12,7 +12,7 @@ struct CacheItem <: AbstractDataItem end
 function store_fixture_item!(cache, source_key)
     store_source_identity!(cache, CacheSourceItem(), "source")
     replace_source_output!(cache, source_key, String[],
-        [ItemOutput("item", "item", CacheItem, nothing, DataBrowserAPI.MetadataDict())])
+        [ItemOutput("item", "item", CacheItem, nothing, Dict{Symbol,Any}())])
 end
 delivered(cache) = only(load_cache_index(cache).items).delivered
 

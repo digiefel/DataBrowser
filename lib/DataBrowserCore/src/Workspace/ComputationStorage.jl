@@ -72,7 +72,8 @@ function result_item(workspace::Workspace, catalog::Catalog, value::Computation,
     workspace.catalog === catalog || return nothing
     identity, title = computation_identity(workspace, value)
     address = computation_address(catalog, value)
-    given = MetadataDict()
+    # A value that is not an item, computed from one item, has the metadata of that item.
+    given = Dict{Symbol,Any}()
     if address isa Target
         key = first(address)
         if key isa ItemKey && haskey(workspace.computations, key)
@@ -82,7 +83,7 @@ function result_item(workspace::Workspace, catalog::Catalog, value::Computation,
     elseif length(args) == 1 && only(args) isa AbstractDataItem
         given = metadata_dict(metadata(only(args)))
     end
-    return ResultItem(identity, title, Dict{Symbol,Any}(merge(given, parts(result))), result)
+    return ResultItem(identity, title, Dict{Symbol,Any}(given), result)
 end
 
 function execute(workspace::Workspace, value::Computation, args::Tuple)

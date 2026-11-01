@@ -7,11 +7,11 @@ keys as a typed project's methods. Nothing here is privileged: the engine calls 
 """
 
 """Split the documented `(data=..., metadata=Dict(...))` result form."""
-function _data_and_metadata(value)::Tuple{Any,MetadataDict}
+function _data_and_metadata(value)::Tuple{Any,Dict{Symbol,Any}}
     if value isa NamedTuple && keys(value) == (:data, :metadata)
         return value.data, metadata_dict(value.metadata)
     end
-    return value, MetadataDict()
+    return value, Dict{Symbol,Any}()
 end
 
 function _with_data(item::RegisteredDataItem, data)::RegisteredDataItem
@@ -19,7 +19,7 @@ function _with_data(item::RegisteredDataItem, data)::RegisteredDataItem
 end
 
 # The item with `analysis` merged over its metadata.
-_with_metadata(item::RegisteredDataItem{K}, analysis::MetadataDict) where {K} = RegisteredDataItem{K}(
+_with_metadata(item::RegisteredDataItem{K}, analysis::Dict{Symbol,Any}) where {K} = RegisteredDataItem{K}(
     item.id, item.data, merge(item.metadata, analysis))
 
 
@@ -71,7 +71,7 @@ entry's position. A `register_item!` user never supplies or sees it.
 function _registered_item(
     recipe::ItemRecipe{<:Any,<:Any,<:Any,<:Any,<:Any,Label,Collection,Id},
     value,
-    inherited_metadata::MetadataDict,
+    inherited_metadata::Dict{Symbol,Any},
     source_item_id::AbstractString,
     position::Integer,
 )::RegisteredDataItem where {Label,Collection,Id}
@@ -170,7 +170,7 @@ function process(
     collection_value isa NamedCollection || return process(collection_value, items)
     level = label(typeof(collection_value))
     by_member = Dict{String,Any}()
-    analysis = MetadataDict()
+    analysis = Dict{Symbol,Any}()
     for recipe in project.collections
         recipe.level === level || continue
         group = recipe.members === nothing ? items :

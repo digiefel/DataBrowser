@@ -81,6 +81,7 @@ struct ComputationResult
     item_type::Type
     store::Union{Nothing,AbstractStore}
     key::String
+    # The metadata of the kept item, for the values this session prepares from it. The store saves it.
     metadata::Dict{Symbol,Any}
 end
 

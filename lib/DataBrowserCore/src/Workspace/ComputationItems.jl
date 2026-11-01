@@ -30,7 +30,8 @@ function computation_item(workspace::Workspace, value::Computation, result)
     end
     catalog = workspace.catalog
     record = @lock catalog.lock get(workspace.results, computation_address(catalog, value), nothing)
-    given = record === nothing ? parts(result) : metadata_dict(record.metadata)
+    given = result isa AbstractDataItem ? metadata_dict(metadata(result)) :
+        record === nothing ? Dict{Symbol,Any}() : record.metadata
     if !(result isa AbstractDataItem) && length(value.args) == 1 && only(value.args) isa ComputationItem
         given = merge(metadata_dict(metadata(only(value.args))), given)
     end
@@ -83,7 +84,7 @@ function evaluate_argument(selection::Selection, result, invoke, resolve)
     for i in eachindex(selection)
         source = computation(selection, i)
         value = evaluate(source, result, invoke, resolve)
-        given = value isa AbstractDataItem ? metadata_dict(metadata(value)) : MetadataDict()
+        given = value isa AbstractDataItem ? metadata_dict(metadata(value)) : Dict{Symbol,Any}()
         push!(items, ComputationItem(String(selection.id[i]), String(selection.label[i]), source, value, Dict{Symbol,Any}(given)))
     end
     return Selection(getfield(selection.data, :workspace), items)

@@ -1,29 +1,10 @@
 # TODO: move fitting to DataBrowserFitting, with a REPL API (plans/fitting.md). The workspace keeps
 # the results of a plot's fits already: one computed item for each group.
 
-"""
-A fitted parameter: its estimate `value` and one standard `error`. It prints as `1520 ± 83`.
-"""
-struct Parameter
-    value::Float64
-    error::Float64
-end
-
-# A parameter is its estimate in the metadata of a fit's group, so that `Rc < 10` finds it.
-# TODO: the error is left out of the query; keep it next to the estimate (plans/fitting.md).
-metadata_value(parameter::Parameter) = parameter.value
-
-function Base.show(io::IO, parameter::Parameter)
-    value, error = parameter.value, parameter.error
-    # Two significant digits of the error, and the estimate to the same place.
-    # TODO: the rounding of estimates and errors is not decided (plans/fitting.md).
-    isfinite(error) && error > 0 || return print(io, round(value; sigdigits=4), " ± ", error)
-    digits = 1 - floor(Int, log10(error))
-    shown(x) = digits > 0 ? string(round(x; digits)) : string(round(Int, round(x; digits)))
-    print(io, shown(value), " ± ", shown(error))
-end
-
-# The least-squares estimates of the parameters named in `starts`, each with one standard error.
+# The least-squares estimates of the parameters named in `starts`, each a `Measurement` with one
+# standard error.
+# TODO: StructUtils saves a `Measurement` as its text, such as "1520.0 ± 83.0", so a query cannot
+# compare `Rc < 10` yet; save the estimate and the error as numbers (plans/fitting.md).
 # The residuals are measured after `scale`, the function of the y axis, such as `log10`.
 # The solver loads on the first fit of a session: a session without fits then does not load
 # NonlinearSolve and ForwardDiff, about 115 packages and 2.5 s.
@@ -31,7 +12,7 @@ end
 function solve_fit(curve, x::Vector{Float64}, y::Vector{Float64}, starts::NamedTuple; scale=identity)::NamedTuple
     fitting = Base.require(@__MODULE__, :DataBrowserFitting)
     estimates, errors = Base.invokelatest(fitting.least_squares, curve, x, y, starts; scale)
-    return NamedTuple{keys(starts)}(Tuple(Parameter.(estimates, errors)))
+    return NamedTuple{keys(starts)}(Tuple(measurement.(estimates, errors)))
 end
 
 # One fit for each group of `rows`, a Tables.jl table: the rows with equal values in the `group`
@@ -56,7 +37,7 @@ function fit_groups(curve, starts::NamedTuple, rows, x::Symbol, y::Symbol, group
         end
         low, high = xlim === nothing ? extrema(xs) : xlim
         curve_x = collect(range(low, high; length=100))
-        curve_y = curve.(curve_x; map(parameter -> parameter.value, parameters)...)
+        curve_y = curve.(curve_x; map(Measurements.value, parameters)...)
         fitted = item === nothing ? AbstractDataItem[] : AbstractDataItem[members[sort(unique(table[item][rows]))]...]
         return Group(name, Dict{Symbol,Any}(pairs(key)..., pairs(parameters)...), (x=curve_x, y=curve_y), fitted)
     end

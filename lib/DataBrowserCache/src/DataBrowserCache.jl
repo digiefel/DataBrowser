@@ -6,8 +6,6 @@ import DataBrowserAPI: label
 using DataBrowserAPI:
     AbstractCollection,
     AbstractDataSourceItem,
-    MetadataDict,
-    MetadataValue,
     metadata_dict,
     PipelineStage,
     SOURCE_READ,

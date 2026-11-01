@@ -9,7 +9,9 @@ GLMakie, and are part of the browser once AlgebraOfGraphics and GLMakie are load
 """
 module DataBrowserPlots
 
-import DataBrowserAPI: @timed_dbg, metadata_value
+import DataBrowserAPI: @timed_dbg
+import Measurements
+using Measurements: measurement
 using DataBrowserAPI: AbstractDataItem, id, metadata
 import DataBrowserCore.Workspace
 using DataBrowserCore: Group, Selection

@@ -327,10 +327,10 @@ struct ItemEntry
     label::String
     collection::CollectionKey
     type::Type{<:AbstractDataItem}
-    metadata::MetadataDict
+    metadata::Dict{Symbol,Any}
 end
 
-ItemEntry(id, label, collection, type) = ItemEntry(id, label, collection, type, MetadataDict())
+ItemEntry(id, label, collection, type) = ItemEntry(id, label, collection, type, Dict{Symbol,Any}())
 
 """
     get!(catalog, SourceKey, id) -> SourceKey
@@ -826,7 +826,7 @@ function status(catalog::Catalog, key::K, stage::PipelineStage)::StageStatus whe
 end
 
 """
-    metadata(catalog, key, layer) -> MetadataDict
+    metadata(catalog, key, layer) -> Dict{Symbol,Any}
 
 One layer of the metadata of an item or a collection. A stage as `layer` gives the metadata that
 the stage last produced: for an item, `SOURCE_EXPAND` gives the metadata of its entry in the source
@@ -838,7 +838,7 @@ becomes stale, until the stage produces new metadata.
 A collection has two more layers: `:collection` gives the metadata of its value, and `:source` the
 metadata its source gives it. [`get!`](@ref) sets the first and [`metadata!`](@ref) the second.
 """
-metadata(catalog::Catalog, key::Union{ItemKey,CollectionKey}, layer::MetadataLayer)::MetadataDict =
+metadata(catalog::Catalog, key::Union{ItemKey,CollectionKey}, layer::MetadataLayer)::Dict{Symbol,Any} =
     @lock catalog.lock table(catalog, key).metadata[layer][key.index]
 
 """

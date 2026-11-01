@@ -42,8 +42,6 @@ using ..Catalogs:
     settled,
     stale!
 using DataBrowserAPI:
-    MetadataDict,
-    metadata_value,
     PipelineStage,
     COLLECTION_PROCESS,
     ITEM_PROCESS,

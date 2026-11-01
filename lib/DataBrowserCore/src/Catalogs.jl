@@ -10,7 +10,6 @@ import DataBrowserAPI: id, items, label, metadata
 using DataBrowserAPI:
     AbstractCollection,
     AbstractDataItem,
-    MetadataDict,
     PipelineStage,
     SOURCE_READ,
     SOURCE_EXPAND,

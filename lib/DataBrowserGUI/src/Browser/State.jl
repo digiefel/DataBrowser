@@ -1,7 +1,7 @@
 import CImGui as ig
 
 import DataBrowserCore.Workspace
-using DataBrowserAPI: AbstractVisualizer, MetadataDict
+using DataBrowserAPI: AbstractVisualizer
 
 """Saved tree controls from `databrowser.toml`."""
 Base.@kwdef struct PersistedTreeView
@@ -240,7 +240,7 @@ mutable struct TreeCache
     unread::Vector{Vector{String}}
     # The path and the metadata of each collection that was drawn.
     paths::Dict{Workspace.Catalogs.CollectionKey,Workspace.CollectionPath}
-    metadata::Dict{Workspace.Catalogs.CollectionKey,MetadataDict}
+    metadata::Dict{Workspace.Catalogs.CollectionKey,Dict{Symbol,Any}}
 end
 
 const TREE_REFRESH_SECONDS = 0.1
