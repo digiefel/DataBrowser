@@ -27,6 +27,7 @@ using DBInterface
 import Tables
 using Serialization
 using Dates
+import StructUtils
 
 include("build_metrics.jl")
 include("cache_buffer.jl")

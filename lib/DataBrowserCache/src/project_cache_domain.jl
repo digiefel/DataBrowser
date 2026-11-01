@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 36
+const PROJECT_CACHE_SCHEMA_VERSION = 37
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -793,7 +793,8 @@ function ensure_schema!(connection)::Nothing
         CREATE TABLE IF NOT EXISTS wide_columns(
             table_name TEXT,
             column_name TEXT,
-            vtype TINYINT,
+            julia_type TEXT,
+            sql_type TEXT,
             PRIMARY KEY (table_name, column_name))
     """)
     DBInterface.execute(connection, """
@@ -837,7 +838,7 @@ function replace_source_output!(
     outputs::Vector{ItemOutput},
 )::Vector{String}
     isempty(previous) || delete_source_output!(cache, source_key, previous)
-    dropped = WideConflict[]
+    dropped = String[]
     for output in outputs
         started = time_ns()
         key = item_key!(cache, output.id; mint=true)
@@ -848,7 +849,7 @@ function replace_source_output!(
         record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
     end
     store_source_result!(cache, SOURCE_EXPAND, source_key)
-    return _conflict_messages(unique(dropped))
+    return unique(dropped)
 end
 
 """Persist the label of one existing item, which later stages may recompute."""
@@ -969,13 +970,6 @@ function store_result_failure!(cache::CacheDB, kind::PipelineStage,
     return nothing
 end
 
-"""Format wide-column type conflicts as the messages the failure channels surface."""
-_conflict_messages(dropped::Vector{WideConflict})::Vector{String} = String[
-    "metadata :$name expected $(_vtype_julia(registered)), got $(_vtype_julia(incoming)); " *
-    "value dropped"
-    for (name, registered, incoming) in dropped
-]
-
 """
 Persist the metadata project code receives with one item, which queries read. Returns type-conflict messages for dropped keys.
 """
@@ -983,13 +977,13 @@ function store_item_metadata!(
     cache::CacheDB, id::AbstractString, effective::AbstractDict,
 )::Vector{String}
     started = time_ns()
-    dropped = edit!(cache.item_metadata, item_key!(cache, id), metadata_dict(effective))
+    dropped = edit!(cache.item_metadata, item_key!(cache, id), effective)
     record_cache_phase!(
         cache.metrics.metadata_write_ns,
         cache.metrics.metadata_writes,
         started,
     )
-    return _conflict_messages(dropped)
+    return dropped
 end
 
 """
@@ -1053,7 +1047,7 @@ end
 
 """Write one source item-metadata (item layer) row."""
 function edit_source_item_metadata!(cache::CacheDB, key::Int64, metadata::AbstractDict)::Nothing
-    edit!(cache.source_item_metadata, key, metadata_dict(metadata))
+    edit!(cache.source_item_metadata, key, metadata)
     return nothing
 end
 

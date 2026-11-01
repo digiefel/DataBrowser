@@ -233,105 +233,111 @@ end
 
 # Database-backed dynamically-widened metadata table
 
-"""A wide metadata column's logical type: the discriminator restoring the [`MetadataValue`](@ref)."""
-@enum MetaVType::Int8 begin
-    VT_BOOL = 1
-    VT_INT = 2
-    VT_FLOAT = 3
-    VT_STRING = 4
-    VT_SYMBOL = 5
-    VT_DATE = 6
-    VT_DATETIME = 7
-    VT_VBOOL = 9
-    VT_VINT = 10
-    VT_VFLOAT = 11
-    VT_VSTRING = 12
-end
+# A metadata value is saved as `StructUtils.lower` gives it: numbers, strings, symbols and dates as
+# they are, vectors element by element, and any other value as the named tuple of its fields. It is
+# read back with `StructUtils.make` and the type the value had.
 
-"""Classify one [`MetadataValue`](@ref) as its wide-column logical type. `missing` is not stored."""
-function _meta_vtype(value)::MetaVType
-    value isa Bool && return VT_BOOL
-    value isa Int64 && return VT_INT
-    value isa Float64 && return VT_FLOAT
-    value isa String && return VT_STRING
-    value isa Symbol && return VT_SYMBOL
-    value isa Date && return VT_DATE
-    value isa DateTime && return VT_DATETIME
-    value isa Vector{Bool} && return VT_VBOOL
-    value isa Vector{Int64} && return VT_VINT
-    value isa Vector{Float64} && return VT_VFLOAT
-    value isa Vector{String} && return VT_VSTRING
-    error("No wide-column vtype for $(typeof(value))")
-end
-
-"""The Julia type name a wide-column logical type stands for, for conflict messages."""
-function _vtype_julia(vtype::MetaVType)::String
-    vtype === VT_BOOL && return "Bool"
-    vtype === VT_INT && return "Int64"
-    vtype === VT_FLOAT && return "Float64"
-    vtype === VT_STRING && return "String"
-    vtype === VT_SYMBOL && return "Symbol"
-    vtype === VT_DATE && return "Date"
-    vtype === VT_DATETIME && return "DateTime"
-    vtype === VT_VBOOL && return "Vector{Bool}"
-    vtype === VT_VINT && return "Vector{Int64}"
-    vtype === VT_VFLOAT && return "Vector{Float64}"
-    vtype === VT_VSTRING && return "Vector{String}"
-    error("No Julia type name for wide-column vtype $vtype")
-end
-
-"""One wide-column type conflict: the name, its registered type, and the rejected value's type."""
-const WideConflict = Tuple{Symbol,MetaVType,MetaVType}
-
-"""The DuckDB column type storing one wide-column logical type."""
-function _meta_vtype_sql(vtype::MetaVType)::String
-    vtype === VT_BOOL && return "BOOLEAN"
-    vtype === VT_INT && return "BIGINT"
-    vtype === VT_FLOAT && return "DOUBLE"
-    vtype === VT_STRING && return "VARCHAR"
-    vtype === VT_SYMBOL && return "VARCHAR"
-    vtype === VT_DATE && return "TIMESTAMP"
-    vtype === VT_DATETIME && return "TIMESTAMP"
-    vtype === VT_VBOOL && return "BOOLEAN[]"
-    vtype === VT_VINT && return "BIGINT[]"
-    vtype === VT_VFLOAT && return "DOUBLE[]"
-    vtype === VT_VSTRING && return "VARCHAR[]"
-    error("No SQL type for wide-column vtype $vtype")
-end
-
-"""The value stored in a wide column for one [`MetadataValue`](@ref) (Symbol/Date normalized to SQL)."""
-function _encode_wide_value(value)
-    value isa Symbol && return String(value)
-    value isa Date && return DateTime(value)
-    return value
-end
-
-"""Restore one [`MetadataValue`](@ref) from a wide-column cell using the registry's logical type."""
-function _decode_wide_value(vtype::MetaVType, raw)
-    vtype === VT_BOOL && return Bool(raw)
-    vtype === VT_INT && return Int64(raw)
-    vtype === VT_FLOAT && return Float64(raw)
-    vtype === VT_STRING && return String(raw)
-    vtype === VT_SYMBOL && return Symbol(String(raw))
-    vtype === VT_DATE && return Date(raw)
-    vtype === VT_DATETIME && return DateTime(raw)
-    vtype === VT_VBOOL && return Vector{Bool}(raw)
-    vtype === VT_VINT && return Vector{Int64}(raw)
-    vtype === VT_VFLOAT && return Vector{Float64}(raw)
-    vtype === VT_VSTRING && return Vector{String}(raw)
-    error("No decoder for wide-column vtype $vtype")
+"""The saved form of one metadata value, which a DuckDB column of [`_saved_sql`](@ref) holds."""
+function _saved(value)
+    lowered = StructUtils.lower(value)
+    lowered isa Symbol && return String(lowered)
+    lowered isa Union{Missing,Nothing,Bool,Integer,AbstractFloat,AbstractString,Date,DateTime} && return lowered
+    lowered isa Union{AbstractVector,Tuple} && return [_saved(element) for element in lowered]
+    fields = StructUtils.make(OrderedDict{Symbol,Any}, lowered)
+    return NamedTuple{Tuple(keys(fields))}(Tuple(_saved(field) for field in values(fields)))
 end
 
 """
-A dynamically-widened metadata table: one row per entity, one bare column per metadata name.
-
-Reuses the generic database-store queue (`append!`/`edit!`/`delete!`/`clear!`/`close!`) with whole-row
-replace semantics. `edit!` type-checks each value against the first type registered for its name,
-registers unseen names in memory immediately, and returns the keys it dropped for a type conflict;
-the domain layer surfaces those as failures. The flush additively `ALTER TABLE ADD COLUMN`s new names
-in one transaction with the keyed deletes and the Appender pass.
+The DuckDB column type that holds the saved form `saved`. An error when a part of it has no type,
+as an empty vector of no element type, or a field that is `nothing`.
 """
-mutable struct WideRowStore{K} <: AbstractDatabaseStore{K,MetadataDict}
+function _saved_sql(saved)::String
+    saved isa Bool && return "BOOLEAN"
+    saved isa Integer && return "BIGINT"
+    saved isa AbstractFloat && return "DOUBLE"
+    saved isa AbstractString && return "VARCHAR"
+    saved isa Date && return "DATE"
+    saved isa DateTime && return "TIMESTAMP"
+    if saved isa AbstractVector
+        isempty(saved) && error("an empty vector has no column type")
+        types = unique(_saved_sql.(saved))
+        length(types) == 1 || error("a vector holds values of different column types: $(join(types, ", "))")
+        return only(types) * "[]"
+    end
+    saved isa NamedTuple && return "STRUCT(" *
+        join(["$(_quote_identifier(String(name))) $(_saved_sql(field))" for (name, field) in pairs(saved)], ", ") * ")"
+    error("a part of type $(typeof(saved)) has no column type")
+end
+
+"""
+The saved form as DuckDB text that a cast to its column type reads, for a column that holds a
+`STRUCT`, which the appender cannot write.
+"""
+function _saved_text(saved)::String
+    (saved === missing || saved === nothing) && return "NULL"
+    saved isa Bool && return saved ? "true" : "false"
+    saved isa Integer && return string(saved)
+    saved isa AbstractFloat && return isnan(saved) ? "nan" : isinf(saved) ? (saved > 0 ? "inf" : "-inf") : repr(Float64(saved))
+    saved isa Union{AbstractString,Date,DateTime} &&
+        return "'" * replace(string(saved), "\\" => "\\\\", "'" => "\\'") * "'"
+    saved isa AbstractVector && return "[" * join(_saved_text.(saved), ", ") * "]"
+    return "{" * join(["$(_quote_identifier(String(name))): $(_saved_text(field))" for (name, field) in pairs(saved)], ", ") * "}"
+end
+
+"""
+One metadata column: the name of the Julia type its values have (see [`_type_name`](@ref)), that
+type, or `nothing` while its module is not loaded, and the DuckDB column type of its saved values.
+"""
+struct MetadataColumn
+    name::String
+    type::Union{Nothing,Type}
+    sql::String
+end
+
+# A type parameter that `_type_name` can write as it is.
+_plain_parameter(x) = x isa Union{Integer,Symbol,Bool} || x isa Tuple && all(_plain_parameter, x)
+
+"""
+The name of type `T` in the registry of metadata columns: its module path and name, then its
+parameters written the same way. When a parameter is a value that cannot be written so, the type is
+named without its parameters, and `StructUtils.make` must build the value from that.
+"""
+function _type_name(T)::String
+    name = Base.typename(Base.unwrap_unionall(T))
+    base = join([string.(fullname(name.module))...; string(name.name)], ".")
+    T isa DataType && !isempty(T.parameters) || return base
+    all(p -> p isa Type || _plain_parameter(p), T.parameters) || return base
+    return base * "{" * join([p isa Type ? _type_name(p) : repr(p) for p in T.parameters], ", ") * "}"
+end
+
+"""The type named `text` by [`_type_name`](@ref), or `nothing` when its module is not loaded."""
+function _named_type(text::AbstractString)::Union{Nothing,Type}
+    function find(expression)
+        expression === :Main && return Main
+        if expression isa Symbol
+            modules = Base.loaded_modules_array()
+            return modules[findfirst(m -> nameof(m) === expression, modules)]
+        end
+        expression isa QuoteNode && return expression.value
+        expression isa Expr || return expression
+        expression.head === :. && return getglobal(find(expression.args[1]), expression.args[2].value)
+        expression.head === :tuple && return Tuple(find.(expression.args))
+        expression.head === :curly && return find(expression.args[1]){find.(expression.args[2:end])...}
+        error("not a type name: $text")
+    end
+    found = try find(Meta.parse(text)) catch; nothing end
+    return found isa Type ? found : nothing
+end
+
+"""
+A metadata table: one row per entity, one column per metadata name.
+
+A column takes the type of the first value written under its name, and holds the saved form of its
+values in a DuckDB type, so that queries can read it. `edit!` returns a message for each value it
+leaves out: a value of another type than its column, or one that cannot be saved and built again.
+New columns are added with `ALTER TABLE ADD COLUMN` when the buffered rows are written.
+"""
+mutable struct WideRowStore{K} <: AbstractDatabaseStore{K,Dict{Symbol,Any}}
     read_connection::DuckDB.Connection
     read_lock::ReentrantLock
     write_connection::DuckDB.Connection
@@ -340,22 +346,22 @@ mutable struct WideRowStore{K} <: AbstractDatabaseStore{K,MetadataDict}
     key_column::Symbol
     quoted_key_column::String
     flush_condition::Base.Threads.Condition
-    queued::Dict{K,BufferMutation{MetadataDict}}
-    writing::Dict{K,BufferMutation{MetadataDict}}
+    queued::Dict{K,BufferMutation{Dict{Symbol,Any}}}
+    writing::Dict{K,BufferMutation{Dict{Symbol,Any}}}
     queued_rows::Int
     writing_rows::Int
     row_limit::Union{Nothing,Int}
     last_flush::Float64
     closing::Bool
     flush_task::Task
-    # Registered columns: their logical type and their physical order (matching the Appender).
-    column_vtypes::Dict{Symbol,MetaVType}
+    columns::Dict{Symbol,MetadataColumn}
+    # The columns in the order of the table.
     column_order::Vector{Symbol}
-    # Names first seen in memory this session, flushed as ALTER TABLE ADD COLUMN + registry insert.
+    # Columns first seen since the last write, which the table does not have yet.
     pending_columns::Vector{Symbol}
 end
 
-_buffer_rows(::MetadataDict)::Int = 1
+_buffer_rows(::Dict{Symbol,Any})::Int = 1
 
 function WideRowStore{K}(
     database::DuckDB.DB,
@@ -366,14 +372,15 @@ function WideRowStore{K}(
     quoted_table = _quote_identifier(table)
     read_connection = DBInterface.connect(database)
     write_connection = DBInterface.connect(database)
-    column_vtypes = Dict{Symbol,MetaVType}()
+    columns = Dict{Symbol,MetadataColumn}()
     for row in DBInterface.execute(
         DBInterface.prepare(
             read_connection,
-            "SELECT column_name, vtype FROM wide_columns WHERE table_name = ?"),
+            "SELECT column_name, julia_type, sql_type FROM wide_columns WHERE table_name = ?"),
         (String(table),),
     )
-        column_vtypes[Symbol(String(row.column_name))] = MetaVType(Int8(row.vtype)::Int8)
+        name = String(row.julia_type)
+        columns[Symbol(String(row.column_name))] = MetadataColumn(name, _named_type(name), String(row.sql_type))
     end
     column_order = Symbol[]
     for row in DBInterface.execute(
@@ -396,15 +403,15 @@ function WideRowStore{K}(
         key_symbol,
         _quote_identifier(String(key_column)),
         Base.Threads.Condition(),
-        Dict{K,BufferMutation{MetadataDict}}(),
-        Dict{K,BufferMutation{MetadataDict}}(),
+        Dict{K,BufferMutation{Dict{Symbol,Any}}}(),
+        Dict{K,BufferMutation{Dict{Symbol,Any}}}(),
         0,
         0,
         nothing,
         time(),
         false,
         current_task(),
-        column_vtypes,
+        columns,
         column_order,
         Symbol[],
     )
@@ -413,27 +420,47 @@ function WideRowStore{K}(
 end
 
 """
-Buffer one whole-row metadata replacement, type-checked against registered columns.
-
-Returns the conflicts dropped from the row: each name whose registered logical type differs from
-the incoming value's, with both types. Unseen names register their type immediately, in memory.
-The surviving keys are stored; conflicting keys are omitted from the row.
+The column that `value` under `name` starts, or the message why it cannot be saved: it has no
+DuckDB type, or `StructUtils.make` does not build it again from its saved form.
 """
-function edit!(store::WideRowStore{K}, key::K, row::MetadataDict)::Vector{WideConflict} where {K}
-    dropped = WideConflict[]
-    accepted = MetadataDict()
+function _new_column(name::Symbol, value)::Union{MetadataColumn,String}
+    T = typeof(value)
+    problem = try
+        saved = _saved(value)
+        sql = _saved_sql(saved)
+        isequal(_saved(StructUtils.make(T, saved)), saved) ?
+            MetadataColumn(_type_name(T), T, sql) : "its saved form builds a different value"
+    catch error
+        first(split(sprint(showerror, error), '\n'))
+    end
+    problem isa MetadataColumn && return problem
+    return "metadata :$name cannot be saved: a $T, and $problem"
+end
+
+"""
+Buffer one whole-row metadata replacement. Returns a message for each value left out of the row:
+one whose type differs from its column's, or one that cannot be saved. The first value under a new
+name gives its column, at once, in memory.
+"""
+function edit!(store::WideRowStore{K}, key::K, row::AbstractDict)::Vector{String} where {K}
+    dropped = String[]
+    accepted = Dict{Symbol,Any}()
     lock(store.flush_condition) do
         _require_writable(store)
         for (name, value) in row
             value === missing && continue
-            incoming = _meta_vtype(value)
-            registered = get(store.column_vtypes, name, nothing)
-            if registered === nothing
-                store.column_vtypes[name] = incoming
+            column = get(store.columns, name, nothing)
+            if column === nothing
+                column = _new_column(name, value)
+                if column isa String
+                    push!(dropped, column)
+                    continue
+                end
+                store.columns[name] = column
                 push!(store.column_order, name)
                 push!(store.pending_columns, name)
-            elseif registered !== incoming
-                push!(dropped, (name, registered, incoming))
+            elseif _type_name(typeof(value)) != column.name
+                push!(dropped, "metadata :$name holds $(something(column.type, column.name)), got $(typeof(value))")
                 continue
             end
             accepted[name] = value
@@ -442,34 +469,35 @@ function edit!(store::WideRowStore{K}, key::K, row::MetadataDict)::Vector{WideCo
         previous = get(store.queued, key, nothing)
         kind = previous !== nothing && previous.kind === BUFFER_APPEND ?
             BUFFER_APPEND : BUFFER_EDIT
-        _set_queued!(store, key, BufferMutation{MetadataDict}(kind, accepted))
+        _set_queued!(store, key, BufferMutation{Dict{Symbol,Any}}(kind, accepted))
     end
     return dropped
 end
 
-function Base.read(store::WideRowStore{K})::Dict{K,MetadataDict} where {K}
+# A column whose type is not loaded is left out of the rows read.
+function Base.read(store::WideRowStore{K})::Dict{K,Dict{Symbol,Any}} where {K}
     while true
-        writing, queued, vtypes, stored_columns = lock(store.flush_condition) do
+        writing, queued, columns, stored_columns = lock(store.flush_condition) do
             _require_open(store)
-            # Only decode flushed columns from the database; pending names live in queued/writing.
+            # Columns not written yet are only in `queued` and `writing`.
             (
                 store.writing,
                 store.queued,
-                copy(store.column_vtypes),
+                copy(store.columns),
                 setdiff(store.column_order, store.pending_columns),
             )
         end
-        rows = Dict{K,MetadataDict}()
+        filter!(name -> columns[name].type !== nothing, stored_columns)
+        rows = Dict{K,Dict{Symbol,Any}}()
         lock(store.read_lock) do
             for database_row in DBInterface.execute(
                 store.read_connection, "SELECT * FROM $(store.quoted_table)")
                 raw_key = getproperty(database_row, store.key_column)
-                dict = MetadataDict()
+                dict = Dict{Symbol,Any}()
                 for name in stored_columns
-                    vtype = vtypes[name]
                     raw = getproperty(database_row, name)
                     ismissing(raw) && continue
-                    dict[name] = _decode_wide_value(vtype, raw)
+                    dict[name] = StructUtils.make(columns[name].type, raw)
                 end
                 rows[convert(K, raw_key)] = dict
             end
@@ -485,12 +513,14 @@ function Base.read(store::WideRowStore{K})::Dict{K,MetadataDict} where {K}
     end
 end
 
+# The appender cannot write lists and structs, so rows go to a staging table first, where those
+# columns hold DuckDB text, and then to the table with a cast.
 function _flush_to_db!(
     store::WideRowStore{K},
-    batch::Dict{K,BufferMutation{MetadataDict}},
+    batch::Dict{K,BufferMutation{Dict{Symbol,Any}}},
 )::Nothing where {K}
     deleted_keys = K[]
-    rows = Pair{K,MetadataDict}[]
+    rows = Pair{K,Dict{Symbol,Any}}[]
     for (key, mutation) in batch
         if mutation.kind === BUFFER_DELETE
             push!(deleted_keys, key)
@@ -499,20 +529,20 @@ function _flush_to_db!(
             push!(rows, key => something(mutation.row))
         end
     end
-    new_columns, column_order, vtypes = lock(store.flush_condition) do
-        (copy(store.pending_columns), copy(store.column_order), copy(store.column_vtypes))
+    new_columns, column_order, columns = lock(store.flush_condition) do
+        (copy(store.pending_columns), copy(store.column_order), copy(store.columns))
     end
+    nested(name) = occursin(r"\[|STRUCT", columns[name].sql)
+    quoted(name) = _quote_identifier(String(name))
+    staging = store.table_name * "_staging"
     _transaction(store.write_connection) do
         for name in new_columns
-            DBInterface.execute(
-                store.write_connection,
-                "ALTER TABLE $(store.quoted_table) ADD COLUMN " *
-                "$(_quote_identifier(String(name))) $(_meta_vtype_sql(vtypes[name]))",
-            )
+            _run(store.write_connection,
+                "ALTER TABLE $(store.quoted_table) ADD COLUMN $(quoted(name)) $(columns[name].sql)")
             DBInterface.execute(
                 DBInterface.prepare(
-                    store.write_connection, "INSERT INTO wide_columns VALUES (?, ?, ?)"),
-                (store.table_name, String(name), Int8(vtypes[name])),
+                    store.write_connection, "INSERT INTO wide_columns VALUES (?, ?, ?, ?)"),
+                (store.table_name, String(name), columns[name].name, columns[name].sql),
             )
         end
         _delete_keys!(
@@ -521,17 +551,29 @@ function _flush_to_db!(
             String[store.quoted_key_column],
             deleted_keys,
         )
-        isempty(rows) || _append_table!(store.write_connection, store.table_name) do appender
+        isempty(rows) && return
+        _run(store.write_connection, "CREATE OR REPLACE TABLE $(_quote_identifier(staging)) AS " *
+            "SELECT $(store.quoted_key_column)" *
+            join([", $(nested(name) ? "CAST(NULL AS VARCHAR) AS $(quoted(name))" : quoted(name))"
+                  for name in column_order]) *
+            " FROM $(store.quoted_table) LIMIT 0")
+        _append_table!(store.write_connection, staging) do appender
             for (key, dict) in rows
                 DuckDB.append(appender, key)
                 for name in column_order
                     value = get(dict, name, missing)
-                    DuckDB.append(
-                        appender, value === missing ? missing : _encode_wide_value(value))
+                    saved = value === missing ? missing : _saved(value)
+                    DuckDB.append(appender, saved !== missing && nested(name) ? _saved_text(saved) : saved)
                 end
                 DuckDB.end_row(appender)
             end
         end
+        _run(store.write_connection, "INSERT INTO $(store.quoted_table) " *
+            "SELECT $(store.quoted_key_column)" *
+            join([", " * (nested(name) ? "CAST($(quoted(name)) AS $(columns[name].sql))" : quoted(name))
+                  for name in column_order]) *
+            " FROM $(_quote_identifier(staging))")
+        _run(store.write_connection, "DROP TABLE $(_quote_identifier(staging))")
     end
     lock(store.flush_condition) do
         filter!(name -> !(name in new_columns), store.pending_columns)
