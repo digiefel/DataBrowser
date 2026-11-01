@@ -45,7 +45,11 @@ function example_figure()::Figure
     return figure
 end
 
-@compile_workload MakieImguiIntegration.draw_in_hidden_window(example_figure())
+@compile_workload begin
+    MakieImguiIntegration.draw_in_hidden_window(example_figure())
+    # The browser draws the figure through ImGui, which needs a browser to run.
+    precompile(Browser.warmup!, (PlotsExtension, Browser.BrowserState))
+end
 
 function __init__()
     Browser.register_gui_extension!(PlotsExtension)

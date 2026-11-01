@@ -505,17 +505,20 @@ function _run_browser(
         state.performance.ready |= full_frame_submitted[]
         workspace = state.workspace
         held = trylock(workspace.lifecycle_lock)
+        # The parts of the frame are dynamic calls (`@invokelatest`). A package that loads while
+        # the browser is open can invalidate the compiled code of some parts: the next frame then
+        # compiles those parts again, not the whole frame.
         try
             if !held
                 _render_workspace_updating!()
                 return nothing
             end
-            _check_source_identity!(state, workspace)
-            _check_cache_error!(state, workspace)
+            @invokelatest _check_source_identity!(state, workspace)
+            @invokelatest _check_cache_error!(state, workspace)
             # Reveal a selection made through the workspace, from the REPL or by an action.
             if workspace.selection.revision != state.selection_revision
                 state.selection_revision = workspace.selection.revision
-                _reveal_selected_items!(state)
+                @invokelatest _reveal_selected_items!(state)
             end
             exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
                 return :imgui_exit_loop
@@ -530,15 +533,15 @@ function _run_browser(
                 first_frame[] = false
             end
             # Extensions of packages loaded while the browser is open, such as its plot windows.
-            _add_new_extensions!(state)
-            if !full_frame_submitted[] && !_extensions_ready(state)
+            @invokelatest _add_new_extensions!(state)
+            if !full_frame_submitted[] && !(@invokelatest _extensions_ready(state))
                 # Present the preparation surface for one frame before running any blocking
                 # extension warmup, so the window is never blank during the expensive part.
                 _render_startup_preparation!()
                 if startup_presented[]
                     @timed "extension_warmup" begin
                         for ext in state.extensions
-                            is_ready(ext, state) || warmup!(ext, state)
+                            @invokelatest(is_ready(ext, state)) || @invokelatest(warmup!(ext, state))
                         end
                     end
                 else
@@ -549,35 +552,35 @@ function _run_browser(
             @timed "frame_ui" begin
                 ig.DockSpaceOverViewport(0, ig.GetMainViewport())
                 @timed "selection_window" begin
-                    render_selection_window(state)
+                    @invokelatest render_selection_window(state)
                 end
                 @timed "project_window" begin
-                    render_project_window(state)
+                    @invokelatest render_project_window(state)
                 end
                 @timed "info" begin
-                    render_info_window(state)
+                    @invokelatest render_info_window(state)
                 end
                 @timed "windows" begin
-                    render_windows!(state)
+                    @invokelatest render_windows!(state)
                 end
                 @timed "extensions" begin
                     for ext in state.extensions
                         # An extension added after the startup screen prepares during the frames.
-                        is_ready(ext, state) || warmup!(ext, state)
-                        draw!(ext, state)
+                        @invokelatest(is_ready(ext, state)) || @invokelatest(warmup!(ext, state))
+                        @invokelatest draw!(ext, state)
                     end
                 end
                 @timed "perf_window" begin
-                    render_perf_window(state)
+                    @invokelatest render_perf_window(state)
                 end
                 @timed "debug_tools" begin
-                    render_debug_tools!(state)
+                    @invokelatest render_debug_tools!(state)
                 end
                 @timed "persist_view" begin
-                    _save_project_view_if_changed!(state)
+                    @invokelatest _save_project_view_if_changed!(state)
                 end
                 @timed "modals" begin
-                    render_cache_rebuild_modal(state)
+                    @invokelatest render_cache_rebuild_modal(state)
                 end
             end
             full_frame_submitted[] = true
