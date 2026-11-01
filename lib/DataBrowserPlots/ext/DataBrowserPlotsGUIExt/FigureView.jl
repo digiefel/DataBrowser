@@ -20,9 +20,9 @@ const PLOT_HELP_TEXT = "Export saves the figure.\nScroll zooms, drag zooms to a 
 
 """
 A visualizer that shows one figure. Its window has the theme button and the help button in its
-header, and "Inspect" for the values under the mouse. The Export button offers the MIME types
-that Makie's `showable` allows with the current backend: PNG and JPEG with GLMakie; PNG and EPS
-with CairoMakie, and also PDF and SVG after `CairoMakie.activate!(type="svg")`.
+header, and "Inspect" for the values under the mouse. The Export button offers PNG and JPEG,
+saved with GLMakie, and PDF, SVG and EPS when CairoMakie is installed. CairoMakie loads with the
+first file it saves.
 
 A subtype has these fields:
 
@@ -91,10 +91,21 @@ function draw_header!(view::FigureView, ctx)::Nothing
     return nothing
 end
 
-Base.showable(mime::MIME, view::FigureView) = view.figure !== nothing && showable(mime, view.figure)
+# CairoMakie saves the types that GLMakie does not save.
+const CAIRO_MAKIE = Base.PkgId(Base.UUID("13f3f980-e62b-5c42-98c6-ff1f3baf88f0"), "CairoMakie")
+const CAIRO_MAKIE_TYPES = (MIME("application/pdf"), MIME("image/svg+xml"), MIME("application/postscript"))
 
-Base.show(io::IO, mime::MIME, view::FigureView; backend=Makie.current_backend()) =
-    show(io, mime, view.figure; backend)
+Base.showable(mime::MIME, view::FigureView) = view.figure !== nothing && (showable(mime, view.figure) ||
+    mime in CAIRO_MAKIE_TYPES && Base.locate_package(CAIRO_MAKIE) !== nothing)
+
+function Base.show(io::IO, mime::MIME, view::FigureView; backend=nothing)
+    if backend === nothing
+        backend = showable(mime, view.figure) ? Makie.current_backend() : Base.require(CAIRO_MAKIE)
+    end
+    # CairoMakie may have loaded during this call: its methods are reached through `invokelatest`.
+    Base.invokelatest(show, io, mime, view.figure; backend)
+    return nothing
+end
 # Base's `show` for text/plain would conflict with the method above, as it does for Makie's figures.
 Base.show(io::IO, ::MIME"text/plain", view::FigureView) = summary(io, view)
 

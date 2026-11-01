@@ -555,9 +555,8 @@ the table as a first-class view.
   calls `export!(visualizer, path)`. Without one, it saves a picture of what the visualizer draws
   as PNG, without the title and header of the window.
 - [x] The table exports its rows as CSV, with the columns it shows.
-- [x] A figure exports in the MIME types that Makie's `showable` allows with the current backend:
-  PNG and JPEG with GLMakie; PNG and EPS with CairoMakie, and also PDF and SVG after
-  `CairoMakie.activate!(type="svg")`.
+- [x] A figure exports as PNG and JPEG with GLMakie, and as PDF, SVG and EPS when CairoMakie is
+  installed. CairoMakie loads with the first file it saves.
 - [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
   another window. Names for windows, so that the input menu can tell two tables apart.
 - [x] Save the windows with the view in `databrowser.toml`: their visualizer, input, transform
