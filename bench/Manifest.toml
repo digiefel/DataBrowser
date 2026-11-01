@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.13.2"
+julia_version = "1.13.3"
 manifest_format = "2.1"
-project_hash = "d7d839f9924e6057b18cc63b8cc32380603b08a2"
+project_hash = "2f3308d540d678d0fd70b01b5232589dfb63cb7b"
 
 [[deps.ADTypes]]
 deps = ["PrecompileTools"]
@@ -529,15 +529,10 @@ uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.16.0"
 
 [[deps.DataBrowser]]
-deps = ["BetterFileWatching", "CImGui", "CSV", "CancellationTokens", "DBInterface", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "Dates", "DuckDB", "GLFW", "ModernGL", "NativeFileDialog", "Observables", "PrecompileTools", "Printf", "Reexport", "Serialization", "SmoothData", "Statistics", "TOML"]
+deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserFitting", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "PrecompileTools", "Reexport"]
 path = ".."
 uuid = "a11ddd67-7e33-4db9-a4a8-4453f6eb9e68"
 version = "0.1.0-alpha.1"
-weakdeps = ["AlgebraOfGraphics", "GLMakie"]
-
-    [deps.DataBrowser.extensions]
-    DataBrowserGLMakieAlgebraOfGraphicsExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL", "AlgebraOfGraphics"]
-    DataBrowserGLMakieExt = ["CImGui", "DataBrowserPlots", "GLFW", "GLMakie", "ModernGL"]
 
 [[deps.DataBrowserAPI]]
 deps = ["CancellationTokens", "Dates"]
@@ -546,7 +541,6 @@ uuid = "08de5a46-6e49-4091-bc31-d2c451d3c374"
 version = "0.1.0"
 
 [[deps.DataBrowserAnnotations]]
-deps = ["DataBrowserAPI"]
 path = "../lib/DataBrowserAnnotations"
 uuid = "f3b8c1a2-4d5e-6f70-8192-a3b4c5d6e7f8"
 version = "0.1.0"
@@ -558,19 +552,25 @@ uuid = "c7d8e9f0-1a2b-3c4d-5e6f-708192a3b4c5"
 version = "0.1.0"
 
 [[deps.DataBrowserCore]]
-deps = ["CancellationTokens", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserSources", "Dates", "InteractiveUtils", "PrettyTables", "Printf", "SHA", "Serialization", "StructArrays", "TOML", "Tables"]
+deps = ["CancellationTokens", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserSources", "Dates", "InteractiveUtils", "PrettyTables", "Printf", "Revise", "SHA", "Serialization", "StructArrays", "TOML", "Tables"]
 path = "../lib/DataBrowserCore"
 uuid = "d1e2f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f6a"
 version = "0.1.0"
 
+[[deps.DataBrowserFitting]]
+deps = ["ForwardDiff", "LinearAlgebra", "NonlinearSolve"]
+path = "../lib/DataBrowserFitting"
+uuid = "ffed4914-3e78-4db9-85fa-c0de1962d06e"
+version = "0.1.0"
+
 [[deps.DataBrowserGUI]]
-deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserCache", "DataBrowserCore", "GLFW", "JuliaSyntax", "ModernGL", "NativeFileDialog", "Printf", "TOML", "Tables", "TimerOutputs", "Zlib_jll"]
+deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserCache", "DataBrowserCore", "FFTA", "GLFW", "JuliaSyntax", "ModernGL", "NativeFileDialog", "Printf", "Statistics", "TOML", "Tables", "TimerOutputs", "Zlib_jll"]
 path = "../lib/DataBrowserGUI"
 uuid = "f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"
 version = "0.1.0"
 
 [[deps.DataBrowserPlots]]
-deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserGUI", "ForwardDiff", "GLFW", "InteractiveUtils", "LinearAlgebra", "ModernGL", "NativeFileDialog", "NonlinearSolve", "PrecompileTools", "Printf", "Tables"]
+deps = ["CImGui", "DataBrowserAPI", "DataBrowserCore", "DataBrowserFitting", "DataBrowserGUI", "GLFW", "ModernGL", "NativeFileDialog", "PrecompileTools", "Tables"]
 path = "../lib/DataBrowserPlots"
 uuid = "e2f3a4b5-c6d7-8e9f-0a1b-2c3d4e5f6a7b"
 version = "0.1.0"
@@ -578,8 +578,7 @@ weakdeps = ["AlgebraOfGraphics", "CairoMakie", "GLMakie"]
 
     [deps.DataBrowserPlots.extensions]
     DataBrowserPlotsAlgebraOfGraphicsExt = "AlgebraOfGraphics"
-    DataBrowserPlotsBuilderExt = ["AlgebraOfGraphics", "GLMakie"]
-    DataBrowserPlotsGLMakieExt = "GLMakie"
+    DataBrowserPlotsGLMakieExt = ["AlgebraOfGraphics", "GLMakie"]
 
 [[deps.DataBrowserProfiling]]
 deps = ["DataBrowserAPI", "TimerOutputs"]
@@ -594,7 +593,7 @@ uuid = "a7c3e5d9-2b4f-4816-9e0d-3f5a7c9b1e24"
 version = "0.1.0"
 
 [[deps.DataBrowserSources]]
-deps = ["BetterFileWatching", "CancellationTokens", "DataBrowserAPI", "Dates"]
+deps = ["BetterFileWatching", "CancellationTokens", "DataBrowserAPI"]
 path = "../lib/DataBrowserSources"
 uuid = "b4e2f8c1-9a3d-4e5f-8b7c-1d2e3f4a5b6c"
 version = "0.1.0"
@@ -1875,7 +1874,7 @@ version = "0.3.4"
 
 [[deps.MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
-version = "2026.8.13"
+version = "2026.10.20"
 
 [[deps.MuladdMacro]]
 deps = ["PrecompileTools"]
@@ -2107,7 +2106,7 @@ version = "2.0.3"
 [[deps.PCRE2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "efcefdf7-47ab-520b-bdef-62a2eaa19f15"
-version = "10.46.0+0"
+version = "10.47.0+0"
 
 [[deps.PDMats]]
 deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse"]
