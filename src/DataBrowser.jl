@@ -15,6 +15,9 @@ using Reexport
 @reexport using DataBrowserPlots
 @reexport using DataBrowserGUI
 
+include("PlotWindows.jl")
 include("Precompile.jl")
+
+__init__() = DataBrowserGUI.register_gui_extension!(PlotWindowsLoader)
 
 end

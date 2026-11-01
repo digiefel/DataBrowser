@@ -4,6 +4,7 @@ version = "0.1.0-alpha.1"
 authors = ["Davide Lombardo <dlombardo32@gmail.com>"]
 
 [deps]
+CImGui = "5d785b6c-b76f-510e-a07c-3070796c7e87"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 DataBrowserAPI = "08de5a46-6e49-4091-bc31-d2c451d3c374"
 DataBrowserAnnotations = "f3b8c1a2-4d5e-6f70-8192-a3b4c5d6e7f8"
@@ -30,6 +31,7 @@ DataBrowserRecipes = {path = "lib/DataBrowserRecipes"}
 DataBrowserSources = {path = "lib/DataBrowserSources"}
 
 [compat]
+CImGui = "10.1"
 PrecompileTools = "1.2.1"
 Reexport = "1.2.2"
 julia = "1.13"

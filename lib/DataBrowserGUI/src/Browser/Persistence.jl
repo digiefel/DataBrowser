@@ -205,40 +205,52 @@ end
 
 """
 Open the saved windows again. A window whose visualizer is not loaded now is not opened, and stays
-in the file until the browser opens with its visualizer loaded.
+in the file until its visualizer loads; then `_open_waiting_windows!` opens it.
 """
 function _restore_windows!(state::BrowserState, saved::Vector{PersistedWindow})::Nothing
     foreach(window -> close_window!(state, window), copy(state.windows))
     for window in saved
         V = _visualizer_type(window.visualizer)
-        if V === nothing
-            @warn "A saved window is not opened until a visualizer called $(window.visualizer) is loaded"
-            continue
-        end
-        values = Pair{Symbol,Any}[]
-        for (key, value) in window.settings
-            name = Symbol(key)
-            hasfield(V, name) || continue
-            push!(values, name => fieldtype(V, name) === Symbol ? Symbol(value) : value)
-        end
-        # TODO: a window of fixed items that are replaced while the browser is open keeps the old ids.
-        replaced = state.workspace.selection.replaced
-        input = window.input == "items" ? FixedItems([get(replaced, id, id) for id in window.ids]) :
-            window.input == "window" ? WindowOutput(only(window.ids)) : LiveSelection()
-        visualizer = V(; values...)
-        isempty(window.selection) || select!(visualizer; (Symbol(name) => value for (name, value) in window.selection)...)
-        opened = open_window!(state, visualizer; input)
-        opened.id = window.id
-        opened.arrangement = window.arrangement
-        opened.active_item = window.active_item
-        opened.initial_size_pending = false
-        isempty(window.transform) || transform!(opened, GlobalRef(Main, Symbol(window.transform)))
+        V === nothing || _open_saved_window!(state, window, V)
     end
     # New windows take ids after the saved ones, also those not opened, so ImGui does not give
     # them a saved place.
     numbers = [parse(Int, m.captures[1]) for m in
         (match(r"^window_(\d+)$", window.id) for window in saved) if m !== nothing]
     state.next_window = maximum(numbers; init=0)
+    return nothing
+end
+
+"""Open the saved windows whose visualizer has loaded since the browser opened."""
+function _open_waiting_windows!(state::BrowserState)::Nothing
+    for window in state.saved_project_view.windows
+        any(open -> open.id == window.id, state.windows) && continue
+        V = _visualizer_type(window.visualizer)
+        V === nothing || _open_saved_window!(state, window, V)
+    end
+    return nothing
+end
+
+"""Open the saved `window` with a new visualizer of type `V`."""
+function _open_saved_window!(state::BrowserState, window::PersistedWindow, V::Type)::Nothing
+    values = Pair{Symbol,Any}[]
+    for (key, value) in window.settings
+        name = Symbol(key)
+        hasfield(V, name) || continue
+        push!(values, name => fieldtype(V, name) === Symbol ? Symbol(value) : value)
+    end
+    # TODO: a window of fixed items that are replaced while the browser is open keeps the old ids.
+    replaced = state.workspace.selection.replaced
+    input = window.input == "items" ? FixedItems([get(replaced, id, id) for id in window.ids]) :
+        window.input == "window" ? WindowOutput(only(window.ids)) : LiveSelection()
+    visualizer = V(; values...)
+    isempty(window.selection) || select!(visualizer; (Symbol(name) => value for (name, value) in window.selection)...)
+    opened = open_window!(state, visualizer; input)
+    opened.id = window.id
+    opened.arrangement = window.arrangement
+    opened.active_item = window.active_item
+    opened.initial_size_pending = false
+    isempty(window.transform) || transform!(opened, GlobalRef(Main, Symbol(window.transform)))
     return nothing
 end
 

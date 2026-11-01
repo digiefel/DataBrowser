@@ -134,6 +134,9 @@ actual windows and requires a working graphics session; unavailable graphics or 
 fail the workload. It uses public browser lifecycle operations, without creating or configuring
 visualizer windows through internal state. Browser startup is measured once per opening and includes
 script setup; readiness is observed on the next render-loop iteration after presentation, plus up to
-10 ms polling delay. `import_s` includes DataBrowser, GLMakie and AlgebraOfGraphics. The browser and
-import measurements therefore have a different workload from snapshots that opened plots through
-private helpers and timed only `using DataBrowser`; compare measurements within the same workload.
+10 ms polling delay. `import_s` is `using DataBrowser`. The browser then loads GLMakie and
+AlgebraOfGraphics on a worker thread; `plot_windows_open_s` and `plot_windows_reopen_s` measure,
+from the same start, when the plot-window extension has loaded. `frame_gap_ms` is the longest time
+between two frames, from the first frame until 60 frames after the plot-window extension has loaded.
+Snapshots taken before the browser loaded them itself imported GLMakie and AlgebraOfGraphics in
+`import_s`; compare measurements within the same workload.

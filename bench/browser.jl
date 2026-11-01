@@ -47,6 +47,23 @@ function browser_workload(root, opening, started_ns)
         session = open_browser(workspace; wait=false, window_start=:background)
         wait_browser_ready(session)
         opening_s = (time_ns() - started_ns) / 1e9
+        # The browser loads the plot windows on a worker thread after its first frame, and prepares
+        # them during the frames after. Measure the longest time between two frames meanwhile.
+        timer = gui_timings(session)
+        frames, since, frame_gap_s = TimerOutputs.ncalls(timer["frame_ui"]), time(), 0.0
+        function next_frames()
+            count = TimerOutputs.ncalls(timer["frame_ui"])
+            frame_gap_s = max(frame_gap_s, time() - since)
+            count == frames || ((frames, since) = (count, time()))
+            return count
+        end
+        wait_for(session) do
+            next_frames()
+            Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGLMakieExt) !== nothing
+        end
+        plot_windows_s = (time_ns() - started_ns) / 1e9
+        loaded = frames
+        wait_for(() -> next_frames() >= loaded + 60, session)
         finish_work(workspace)
         items = check_items(workspace, [4.0, 6.0, 6.0])
         # "runs" holds every item: its callbacks see three members.
@@ -58,7 +75,6 @@ function browser_workload(root, opening, started_ns)
             counters.collection_processes[] == counters.collection_analyses[] == 0 ||
                 error("Reopening reran collection callbacks")
         end
-        timer = gui_timings(session)
         before_count = TimerOutputs.ncalls(timer["frame_ui"])
         before_time = TimerOutputs.time(timer["frame_ui"])
         wait_for(() -> TimerOutputs.ncalls(timer["frame_ui"]) >= before_count + 60, session)
@@ -80,7 +96,8 @@ function browser_workload(root, opening, started_ns)
             finish_work(workspace)
             check_items(workspace, [6.0, 40.0, 42.0])
         end
-        return Dict("browser_$(opening)_s" => opening_s, "frame_ui_ms" => frame_ms)
+        return Dict("browser_$(opening)_s" => opening_s, "plot_windows_$(opening)_s" => plot_windows_s,
+            "frame_gap_ms" => frame_gap_s * 1000, "frame_ui_ms" => frame_ms)
     finally
         if session !== nothing
             close_browser!(session)

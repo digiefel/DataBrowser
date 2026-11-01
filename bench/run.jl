@@ -46,6 +46,7 @@ function measure_benchmark(workload, julia::Cmd)
                 # Import and frame time refer to the initial opening; reopen has its own latency.
                 opening == "reopen" && delete!(measurements, "import_s")
                 opening == "reopen" && delete!(measurements, "frame_ui_ms")
+                opening == "reopen" && delete!(measurements, "frame_gap_ms")
                 merge!(result, measurements)
             end
         else
