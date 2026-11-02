@@ -1,15 +1,46 @@
-# The rows that the workspace adds for its source, and as rows finish:
+# The pipeline is the rows that the workspace adds for the calls of the project: for its source,
+# and then as rows finish. For a source item `a.csv` that gives the items `a/1` and `a/2`, in a
+# collection `runs` whose project defines a collection `process` and member `process` methods, the
+# rows and their names are:
 #
-# - each source item has one row, `read_items(project, source, source_item)`, which gives its items;
-# - each item has its own row, `process(project, Part(source_row, id))`;
-# - a collection whose project defines a collection `process` or member `process` methods has a
-#   row, `process(project, collection, [the own row of every item below it])`;
-# - an item below collections with member `process` methods has one row for each of them, from the
-#   collection that holds it up: `process(project, process(project, own_row, inner), outer)`. The
-#   last is its member row, which gives its latest value.
+# ```text
+#     read_items(project, source, a.csv)                source row       "read:a.csv"
+#       ├─▶ process(project, Part(source row, "a/1"))   own row          "a/1"
+#       └─▶ process(project, Part(source row, "a/2"))   own row          "a/2"
+#             │ every own row below the collection, by item id
+#             ▼
+#     process(project, runs, [own rows])                collection row   "collection:…(runs)"
+#             │ with the own row of each item
+#             ▼
+#     process(project, own row of a/1, collection row)  member row       "member:a/1"
+#     process(project, own row of a/2, collection row)  member row       "member:a/2"
+# ```
+#
+# - The **source row** of a source item is added when the source reports the source item. It runs
+#   `read`, and `expand` when the source item holds none or several items. `read` is the only call
+#   that receives the source, and the value it loads is not kept. The result of the source row is
+#   the items of the source item.
+# - When the source row finishes, each item gets its **own row**, which runs its `process`. The
+#   items that the source item no longer gives are removed with their rows, and each new item is
+#   placed in its collection.
+# - Once every source item is read, each collection whose project defines a collection `process`
+#   or member `process` methods gets a **collection row**. It receives the result of the own row of
+#   every item below the collection, at any depth, sorted by item id, and returns a later version of
+#   the collection. Until every source item is read, each source item that finishes would change
+#   the collection row again. A collection with neither method has no row.
+# - Each item below such a collection gets a **member row** for each collection above it with
+#   member `process` methods, from the innermost to the outermost. Each member row receives the
+#   result of the one before; the last gives the latest value of the item. An item without member
+#   rows has the result of its own row as its latest value.
+#
+# The metadata of an item is its own: it does not include the metadata of the collections above it,
+# and a member `process` copies what the item needs. The workspace holds the rows of its items and
+# collections, so they stay until their item or collection leaves the tree.
 #
 # The functions here change the catalog and the tree. Their caller holds the catalog lock, and calls
 # `publish!` when it is done.
+
+# ## Source items and items
 
 """
 Add the row of a source item that the source reported, or give the row of a source item that
@@ -169,6 +200,13 @@ function conflicts!(workspace::Workspace, row::Row, messages::Vector{String})::N
     return nothing
 end
 
+# ## Collections
+#
+# `has_stage(project, collection, stage)` decides whether a collection has a collection `process`
+# and member `process` methods; by default it answers from the `process` methods that apply to the
+# collection. When the items below a collection change, its collection row receives the new list of
+# members.
+
 """
 Mark that the members or the value of a collection changed, and so the members of the collections
 above it. [`collections!`](@ref) makes their rows again.
@@ -282,6 +320,8 @@ function member!(workspace::Workspace, key::ItemKey)::Nothing
     return nothing
 end
 
+# ## The cache and the source
+
 """
 Fill the tree with the items and collections that the cache saved, as the first view before the
 scan checks the source. Their rows are added when the scan reports their source items.
@@ -379,6 +419,12 @@ function replaced!(selection::WorkspaceSelection, before::Vector{String}, after:
     selected == selection.item_ids || (selection.item_ids = selected; selection.revision += 1)
     return nothing
 end
+
+# ## Memory of the items of source items
+#
+# The items that a source item gives stay in memory until the `process` of each has used them. A
+# source item is read again when one of its items needs its `process` again after the items left
+# memory, as after a code change.
 
 """
 Choose what runs first in the background. While the items that source rows gave and that wait for

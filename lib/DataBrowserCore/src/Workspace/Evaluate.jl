@@ -1,10 +1,42 @@
-# How the rows of a workspace run: the workers, the version of each result, where results are kept,
-# and the code checks that make results stale. Then the functions that views and scripts call on
-# computations and items.
+# How the rows of a workspace run. Each worker takes a job from the catalog and runs it:
+#
+# ```text
+#     take! a job ─▶ the version of its row ─▶ did the cache record this version?
+#                                                 │ no                     │ yes
+#                                                 ▼                        ▼
+#                              call the function with the        take the recorded result
+#                              results of the inputs             or failure: nothing runs
+#                                │ returns         │ throws
+#                                ▼                 ▼
+#                    keep the result in      record the failure
+#                    the store of its type   for the next session
+#                                │                 │
+#                                ▼                 ▼
+#                     finish!: current      finish!: failed
+#                     finished!: the pipeline
+#                     adds the rows that the
+#                     result calls for
+# ```
+#
+# The rows themselves, their states and the rules they follow are in
+# [`Catalogs.jl`](../Catalogs.md); the rows that the workspace adds for the project are in
+# [`Pipeline.jl`](Pipeline.md).
 
-# ---------------------------------------------------------------------------
-# Workers
-# ---------------------------------------------------------------------------
+# ## Workers
+#
+# Worker tasks run the rows: one for each Julia thread, and at least two. Rows run in this order of
+# priority:
+#
+# 1. what a view asks for: items, then collections;
+# 2. source items;
+# 3. the `process` of items, in the background;
+# 4. collection rows and member rows, in the background.
+#
+# While the items that source items gave and that wait for their `process` fill half of
+# `expanded_data_limit`, the `process` of items comes before source items, which frees that memory
+# (`pace!` in [`Pipeline.jl`](Pipeline.md)). Background work is an option of `open_workspace`
+# (`background_processing`): without it, source items are read, and items are processed only when a
+# view asks for them.
 
 function start_workers!(workspace::Workspace)::Nothing
     Threads.nthreads() == 1 && @warn("Julia runs with one thread: the browser waits while a computation runs. Start Julia with `--threads=auto`.", maxlog=1)
@@ -157,9 +189,18 @@ end
 resolved(::Workspace, x) = x
 resolved(::Workspace, x::Selection) = x
 
-# ---------------------------------------------------------------------------
-# Names and versions
-# ---------------------------------------------------------------------------
+# ## Names and versions
+#
+# Each row has a name and a version. The name is its function with the name of each argument, as
+# `fit(sample)`, or the name that the pipeline gives it. The version is a hash of the name of its
+# function, the revision of its code, the versions of its inputs, and its other arguments and
+# settings: the same version means the same result, also in another session. The cache records,
+# under the name of each row, the version of its last result, and its error when it failed.
+#
+# When a workspace opens again, a row whose recorded version is its current version is current, or
+# failed with its recorded error, without running. Its metadata is the metadata the cache saved, and
+# its value comes from its store; a store that no longer has it, such as a `MemoryStore`, computes
+# it again when something needs it.
 
 """
 The name of a row, under which the cache records its version and its store keeps its result: its
@@ -279,9 +320,13 @@ function restored!(workspace::Workspace, row::Row, record)::Nothing
     return nothing
 end
 
-# ---------------------------------------------------------------------------
-# Results
-# ---------------------------------------------------------------------------
+# ## Results
+#
+# `storage(project, T)` chooses the store for results of type `T`: items, or any other Julia value.
+# The default is a `MemoryStore` of 64 MiB for each result type. A store of `nothing` keeps no
+# results of that type: they are computed again when something needs them. A store receives a copy
+# of each result and gives copies; `AbstractStore` lists its methods. The result of a view is not
+# stored.
 
 """
 The store that the project chooses for results of `type`; `nothing` for the results that are
@@ -388,9 +433,34 @@ function publish!(workspace::Workspace)::Nothing
     return nothing
 end
 
-# ---------------------------------------------------------------------------
-# Code changes
-# ---------------------------------------------------------------------------
+# ## Code changes
+#
+# Each signature of a row, its function and the types of its arguments, has a code revision: a
+# content hash of the code it can reach from its roots ([`CodeRevisions.jl`](../CodeRevisions.md)).
+# The roots of a row of the pipeline are `stage_roots(project, stage, type)`; a Recipes project
+# lists its registered callbacks. The roots of any other row are its function. A callable object
+# that is not a function, such as a fit, has its type and its call methods as roots: the parameters
+# of the type name the functions it holds, such as the curve of the fit. The walk follows only `Main`
+# and packages developed from a local folder (`Pkg.develop`); for every other package, the Julia
+# version and the Manifest count instead.
+#
+# The version of each result includes the revision of its code. Twice a second, the workspace asks
+# Revise to load saved edits, including files tracked with `includet`, even when the REPL is idle.
+# After a method definition, or when the roots differ, it computes the revision again; `evaluate`
+# does the same check first when a method was defined since the last check. When the revision
+# changed, the rows of that signature become stale, and with them every row that reads them: source
+# items are read again, as if the source had changed them, and items and collections are processed
+# again. Collections ask `has_stage` again, so a collection `process` defined later gets its rows.
+# The same code defined again, as when a script runs again, changes nothing.
+#
+# While a browser is open, the keyboard focus of its main window controls these checks: an inactive
+# window pauses them, and gaining focus resumes them. Without a browser, including after closing
+# one, the workspace keeps checking.
+#
+# The revision does not see a mutable value changed in place, nor a change to a macro: the functions
+# that use a macro keep their old expansion until they are defined again. It warns about code it
+# cannot follow: a non-constant global, a call through `eval`, `invokelatest` or a computed name, a
+# generated function, and a value it cannot read. The warning names the way from the root to it.
 
 """
 Make the results whose code changed stale, so that they are computed again. The revision of the
@@ -450,9 +520,7 @@ function warn_untracked(signature::Type, code::Code, previous=nothing)::Nothing
     return nothing
 end
 
-# ---------------------------------------------------------------------------
-# Computations
-# ---------------------------------------------------------------------------
+# ## Computations
 
 """
 `value` with each data item among its arguments that is an item of the workspace replaced by the
@@ -548,6 +616,8 @@ function row(workspace::Workspace, value::Computation)::Union{Nothing,Row}
     return found == Catalogs.NOWHERE ? nothing : found
 end
 
+# The time of an execution covers the call of the function, with compilation and waits, and not the
+# evaluation of its inputs or the storage of its result.
 function last_execution(workspace::Workspace, value::Computation)::Union{Nothing,ComputationExecution}
     found = row(workspace, value)
     found === nothing && return nothing
@@ -636,9 +706,7 @@ function computed_name(workspace::Workspace, value::Computation)::Tuple{String,S
     return (title, title)
 end
 
-# ---------------------------------------------------------------------------
-# Computed items
-# ---------------------------------------------------------------------------
+# ## Computed items
 
 # The name of the function of computed values: it names the collection that holds them and starts
 # their ids. A package whose computations are values of its own type gives them a name, and can
@@ -739,9 +807,7 @@ function results(workspace::Workspace, ids::AbstractVector{<:AbstractString})::V
     return results(workspace, @lock(workspace.catalog.lock, Row[workspace.tree[key].row for key in keys]))
 end
 
-# ---------------------------------------------------------------------------
-# Items
-# ---------------------------------------------------------------------------
+# ## Items
 
 """
     materialize_items(workspace, items) -> Vector{AbstractDataItem}
