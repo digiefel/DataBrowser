@@ -1,7 +1,7 @@
 # Each workspace has one *catalog*, which holds the computations of the workspace, decides which of
 # them run, in which order, and which results are out of date. A computation,
-# `Computation(f, args...; settings...)`, is a call before it runs: a function with its arguments
-# and its keyword arguments, which are called *settings*.
+# `Computation(f, args...; settings...)`, is a function call before it runs: a function with its
+# arguments and its keyword arguments, which are called *settings*.
 #
 # The catalog is a table with one row for each computation. A row holds the computation, its state,
 # the rows that it reads and the rows that read it, and its priority. The rest of the workspace
@@ -653,8 +653,8 @@ end
 # end
 # ```
 #
-# The workspace computes `version` before the call; `work!` in [`Evaluate.jl`](Workspace/Evaluate.md)
-# is its loop.
+# The workspace computes `version` before it calls the function; `work!` in
+# [`Evaluate.jl`](Workspace/Evaluate.md) is its loop.
 
 """
     Job

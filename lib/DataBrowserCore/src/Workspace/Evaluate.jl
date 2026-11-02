@@ -1,7 +1,8 @@
-# A computation, `Computation(f, args...; settings...)`, is a call before it runs: reading one
-# source item, the `process` of one item, or a call of your own, such as a fit. The workspace keeps
-# each computation in a row of its *catalog*, a table, with the state of the computation: missing,
-# stale, current or failed ([`Catalogs.jl`](../Catalogs.md)). A *job* is one run of one row.
+# A computation, `Computation(f, args...; settings...)`, is a function call before it runs: reading
+# one source item, the `process` of one item, or a function of your own, such as a fit. The
+# workspace keeps each computation in a row of its *catalog*, a table, with the state of the
+# computation: missing, stale, current or failed ([`Catalogs.jl`](../Catalogs.md)). A *job* is one
+# run of one row.
 #
 # The workspace adds four kinds of rows for the project ([`Pipeline.jl`](Pipeline.md)), and one row
 # for each computation that a script or a window asks for:
@@ -377,10 +378,10 @@ end
 """
     code_roots(project, signature, f) -> Vector
 
-The functions, methods and types whose code a call of `signature` runs: for the calls of the
-pipeline, what [`stage_roots`](@ref) gives for the type they run for; else the function. A
-callable object that is not a function, such as a fit, runs the call methods of its type, whose
-parameters include the types of the functions it holds.
+The functions, methods and types whose code runs when a function is called with the argument
+types of `signature`: for the stages of the pipeline, what [`stage_roots`](@ref) gives for the type
+they run for; else the function. A callable object that is not a function, such as a fit, runs the
+methods that make its type callable, whose parameters include the types of the functions it holds.
 """
 function code_roots(project::AbstractProject, signature::Type, f)::Vector
     found = stage(signature)
@@ -598,10 +599,10 @@ end
 # content hash of the code it can reach from its roots ([`CodeRevisions.jl`](../CodeRevisions.md)).
 # The roots of a row of the pipeline are `stage_roots(project, stage, type)`, which for a Recipes
 # project are its registered callbacks. The roots of any other row are its function. A callable
-# object that is not a function, such as a fit, has its type and its call methods as roots: the
-# parameters of the type include the types of the functions it holds, such as the curve of the fit.
-# The walk follows only `Main` and packages developed from a local folder (`Pkg.develop`); for every
-# other package, the Julia version and the Manifest count instead.
+# object that is not a function, such as a fit, has as roots its type and the methods that make the
+# type callable: the parameters of the type include the types of the functions it holds, such as the
+# curve of the fit. The walk follows only `Main` and packages developed from a local folder
+# (`Pkg.develop`); for every other package, the Julia version and the Manifest count instead.
 #
 # The version of each result includes the revision of its code. Twice a second, the workspace asks
 # Revise to load saved edits, including files tracked with `includet`, even when the REPL is idle.
@@ -752,8 +753,8 @@ DataBrowserCore.evaluated(selection::Selection) = selection
     evaluate(workspace, computation)
 
 The result of `computation`, computed ahead of background work with the results that the workspace
-keeps, and kept for later calls. The workspace keeps the computation until it closes. A failed
-computation, or one whose input failed, throws its error.
+keeps, and kept for later calls of `evaluate`. The workspace keeps the computation until it closes.
+A failed computation, or one whose input failed, throws its error.
 """
 function evaluate(workspace::Workspace, value::Computation)
     catalog = workspace.catalog
@@ -1022,7 +1023,7 @@ end
     results(workspace, ids) -> Vector
 
 The results of the computed items with `ids`, as their functions returned them. Items that are not
-computed yet are computed now, and the call waits for them.
+computed yet are computed now, and `results` waits for them.
 """
 function results(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector
     keys = ItemKey[key(workspace, id) for id in ids]
@@ -1039,9 +1040,9 @@ The processed items for `items`, given as item keys or public ids, in the same o
 comes with its latest value: the one its member `process` returned, when that is current, or else
 its own processed data. A computed item is its computation, whose data is its result.
 
-An item that is not processed yet is processed now, ahead of background work, and the call waits
-for it. The member `process` of each item is requested too, and the call does not wait for it: a
-later call delivers the later value once it is ready. A failed item throws its error.
+An item that is not processed yet is processed now, ahead of background work, and `materialize_items`
+waits for it. The member `process` of each item is requested too, without waiting for it: a later
+`materialize_items` gives the later value once it is ready. A failed item throws its error.
 
 The data and the metadata of each delivered item belong together: when an item changes while it is
 loaded, it is loaded again.
