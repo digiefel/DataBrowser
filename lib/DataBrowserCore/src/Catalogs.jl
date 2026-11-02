@@ -465,11 +465,15 @@ function Base.replace!(catalog::Catalog, row::Row, value::Computation)::Row
         current.computation = value
         tally!(catalog, current, 1)
         catalog.row_of[value] = row
-        before = current.inputs
+        before, was_stuck = current.inputs, stuck(current)
         disconnect!(catalog, row)
         connect!(catalog, row)
+        ## The new inputs can make the row stuck, or no longer stuck: its readers count it again.
+        stuck(current) == was_stuck || foreach(reader -> block!(catalog, reader, stuck(current) ? 1 : -1), current.readers)
         foreach(input -> remove_unheld!(catalog, input), before)
         invalidate!(catalog, row, true)
+        ## Wakes the tasks that wait for a row that is stuck now.
+        notify(catalog.changed)
         return row
     end
 end
