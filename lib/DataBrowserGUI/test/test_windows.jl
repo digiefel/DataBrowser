@@ -1,10 +1,10 @@
 using Test, DataBrowserGUI
 import DataBrowserAPI
 using DataBrowserCore: Workspace
-using DataBrowserCore: Group
 using DataBrowserGUI: TableSelection
 using DataBrowserGUI.Browser: BrowserState, CodeView, FixedItems, TableView, WindowOutput, open_window!, refresh!, transform!, preparing,
     setting!, input!, close_window!, output
+@isdefined(ItemsProject) || include("fixtures/items_project.jl")
 
 # Three numbers, each an item.
 struct WindowTestProject <: DataBrowserAPI.AbstractProject end
@@ -206,7 +206,7 @@ end
 end
 
 @testset "the selected rows of an item keep the shape of its data" begin
-    item = Group("A", Dict{Symbol,Any}(:Chip => "A"), (iv=(x=[1, 2, 3], y=[4, 5, 6]), fit=(slope=2.0, offset=1.0)), [])
+    item = Entry("A", (iv=(x=[1, 2, 3], y=[4, 5, 6]), fit=(slope=2.0, offset=1.0)), Dict{Symbol,Any}(:Chip => "A"))
     selected = TableSelection([3, 1], [["iv", "x"], ["fit"]])
     @test item[selected].data == (iv=(x=[3, 1],), fit=(slope=2.0, offset=1.0))
     @test item[selected].metadata[:Chip] == "A"

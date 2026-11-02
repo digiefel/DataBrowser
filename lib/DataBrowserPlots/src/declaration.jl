@@ -139,16 +139,16 @@ function entry_text(entry::LegendEntry, rows::LegendRows, name::Symbol)::String
     return get(names, value, string(value))
 end
 
-# The metadata of the one group of `result` that the legend entry determines: the group whose
-# values in the entry's roles are the entry's values.
+# The one group of `result` that the legend entry determines: the group whose values in the entry's
+# roles are the entry's values.
 function entry_values(result::Result, entry::LegendEntry)::NamedTuple
     matches(group) = all(getfield(result, :named)) do (role, value)
-        !haskey(entry.values, role) || category(value, metadata(group)[column(value)]) == entry.values[role]
+        !haskey(entry.values, role) || category(value, group[column(value)]) == entry.values[role]
     end
     found = filter(matches, getfield(result, :groups))
     length(found) == 1 || error("The legend entry $(describe(entry)) matches $(length(found)) groups of a " *
         "result; its text can read only a value that the entry determines")
-    return (; metadata(only(found))...)
+    return only(found)
 end
 
 """
@@ -224,10 +224,9 @@ starting value for each parameter. The line's two positional values are x and y,
 categorical named roles, here `color=:Chip`, divide the points into groups, with one fit each. The
 line changes the points as any line does: `mapping(; color=nothing) * fit(...)` fits all of them
 at once.
-`fit` gives a [`Result`](@ref): one `Group` for each group of points. Its metadata holds the
-group's values, such as `:Chip`, and each parameter, such as `:Rc`, a [`Parameter`](@ref) that
-prints as the estimate ± one standard error. Its data is the drawn curve, and its members are the
-items whose points it fits. `fit(...; xlim=(0, 25))` draws the curve over that range of x instead
+`fit` gives a [`Result`](@ref): one named tuple for each group of points. It holds the group's
+values, such as `:Chip`, each parameter, such as `:Rc`, a [`Parameter`](@ref) that prints as the
+estimate ± one standard error, and the drawn curve, as `curve`. `fit(...; xlim=(0, 25))` draws the curve over that range of x instead
 of over the fitted points. With `data(table)` in the header, `fit` takes the rows of that table.
 `fit` comes before the visual in its line: the visual draws the result.
 
@@ -268,10 +267,9 @@ under the name of its function, and a value of a function that gives several is 
 
 A line that maps only `y` takes the x of the groups.
 
-`aggregate` gives a [`Result`](@ref) with one `Group` for each x and group of points, in order of
-x, so that `Lines` joins them from left to right. Its metadata holds the x and the roles' values,
-the value of each function under its name, such as `:mean`, and the `count` of the points; its
-members are the items whose points it takes. Without a visual, an aggregate of one function is drawn
+`aggregate` gives a [`Result`](@ref) with one named tuple for each x and group of points, in order
+of x, so that `Lines` joins them from left to right. It holds the x and the roles' values, the value
+of each function under its name, such as `:mean`, and the `count` of the points. Without a visual, an aggregate of one function is drawn
 with `Scatter`.
 
 A named result reads the values of its groups by name: `result.count` is the count of each group,

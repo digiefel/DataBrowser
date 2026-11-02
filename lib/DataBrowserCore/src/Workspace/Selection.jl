@@ -1,21 +1,4 @@
 """
-    Group(id, metadata, data, members)
-
-A group made in code, such as a fit: its own `metadata` and `data`, and the items it was made from,
-its `members`.
-"""
-struct Group <: AbstractGroup
-    id::String
-    metadata::Dict{Symbol,Any}
-    data::Any
-    members::Vector{AbstractDataItem}
-end
-id(group::Group) = group.id
-metadata(group::Group) = group.metadata
-data(group::Group) = group.data
-DataBrowserAPI.members(group::Group) = group.members
-
-"""
     view(item, selection)
     item[selection]
 
@@ -32,8 +15,6 @@ function made_again(item::AbstractDataItem, data)
     made === nothing && error("$(typeof(item)) has no reconstruct method for part of its data")
     return made
 end
-# A group keeps its members, which are not part of its data.
-made_again(group::Group, data) = Group(group.id, group.metadata, data, group.members)
 
 """
 The data of each item, or a value inside it, read from the cache only when the vector is indexed.
@@ -46,7 +27,7 @@ are put together only when the values are named together.
 """
 struct ItemData <: AbstractVector{Any}
     workspace::Workspace
-    # Keys of the workspace's items, or values that the workspace prepared, such as for a window.
+    # Keys of the workspace's items, or computations, such as the values of a window.
     items::Vector
     # The names followed inside each item's data, from the outside in; empty for the data itself.
     path::Vector{Symbol}
@@ -59,22 +40,24 @@ Base.getproperty(data::ItemData, name::Symbol) =
 Base.size(data::ItemData) = size(getfield(data, :items))
 function Base.getindex(data::ItemData, index::Int)
     items = getfield(data, :items)[index:index]
-    return follow(only(loaded(getfield(data, :workspace), items)), getfield(data, :path))
+    return follow(getfield(data, :workspace), only(loaded(getfield(data, :workspace), items)), getfield(data, :path))
 end
 # Going through all the values, as `map` and `collect` do, reads the items from the cache together.
 function Base.iterate(data::ItemData, (items, index)=(nothing, 1))
     items === nothing && (items = loaded(getfield(data, :workspace), getfield(data, :items)))
     index > length(items) && return nothing
-    return follow(items[index], getfield(data, :path)), (items, index + 1)
+    return follow(getfield(data, :workspace), items[index], getfield(data, :path)), (items, index + 1)
 end
 
 # The items themselves: those of the workspace are read from the cache together.
 loaded(workspace::Workspace, items::Vector{ItemKey}) = materialize_items(workspace, items)
 loaded(::Workspace, items::Vector) = items
 
-# The value at `path` inside the data of `item`.
-function follow(item, path::Vector{Symbol})
-    value = data(item)
+# The value at `path` inside the data of `item`. The data of a computation is its result, which the
+# workspace keeps.
+# TODO: each read of a computation's data reads its result from its store again, one item at a time.
+function follow(workspace::Workspace, item, path::Vector{Symbol})
+    value = item isa Computation ? with(() -> data(item), CURRENT_WORKSPACE => workspace) : data(item)
     for (depth, name) in enumerate(path)
         # A column of a table, or a field of any other value.
         if Tables.istable(value) && name in Tables.columnnames(Tables.columns(value))
@@ -198,12 +181,6 @@ function select(workspace::Workspace, items::Vector{ItemKey})::Selection
         [label(workspace, item) for item in items], [metadata(workspace, item) for item in items], levels)
 end
 
-# Values that the workspace prepared, such as the values of a window.
-function Selection(workspace::Workspace, items::AbstractVector)
-    items = AbstractDataItem[items...]
-    return Selection(ItemData(workspace, items), id.(items), label.(items), metadata.(items))
-end
-
 # The columns `id` and `label`, the tree levels, then each metadata key. A value that an item does
 # not have is `missing`.
 function Selection(data::ItemData, ids, labels, metadatas, levels=[Pair{Symbol,String}[] for _ in ids])
@@ -243,8 +220,8 @@ end
 """
     items(selection) -> Vector
 
-The items of `selection` as the project made them, in the same order: the objects whose
-`data` is `selection.data`.
+The items of `selection`, in the same order: the objects whose `data` is `selection.data`. An item
+of the workspace is the object its project made; a computed value is its `Computation`.
 """
 function items(selection::Selection)::Vector
     data = selection.data::ItemData

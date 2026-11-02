@@ -932,7 +932,7 @@ end
 """
     recorded_revision(cache, id) -> Union{Nothing,Tuple{UInt64,Type}}
 
-The revision and the item type that [`store_computation_revision!`](@ref) recorded for `id`, or
+The revision and the type of the result that [`store_computation_revision!`](@ref) recorded for `id`, or
 `nothing`. A type that no longer exists counts as no record.
 """
 function recorded_revision(cache::CacheDB, id::AbstractString)::Union{Nothing,Tuple{UInt64,Type}}

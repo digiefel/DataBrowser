@@ -96,8 +96,8 @@ function bound_argument(workspace, value::Computation)
     return key === nothing ? bound_computation(workspace, value) : computation(workspace, key, ITEM_PROCESS)
 end
 bound_argument(workspace, value::AbstractDataItem) = computation(workspace, value)
-bound_argument(workspace, value::Selection) = Computation(Selection, workspace, Computation[ref isa ComputationItem ?
-    bound_computation(workspace, ref.computation) : computation(workspace, i) for (ref, i) in zip(getfield(value.data, :items), value.id)])
+bound_argument(workspace, value::Selection) = Computation(select, workspace, Computation[ref isa Computation ?
+    bound_computation(workspace, ref) : computation(workspace, i) for (ref, i) in zip(getfield(value.data, :items), value.id)])
 bound_argument(workspace, value::Tuple) = map(x -> bound_argument(workspace, x), value)
 function bound_argument(workspace, value::AbstractVector)
     any(x -> x isa Union{Computation,AbstractDataItem}, value) || return value
@@ -157,13 +157,11 @@ function computation_result(workspace::Workspace, value::Computation)
     return restored_result(workspace, value)
 end
 
-"""Where a store keeps the result of a computation: the store, and the item type and id it saves."""
+"""Where a store keeps the result of a computation: the store, and the type and id it saves."""
 struct ResultLocation
     store::AbstractStore
     type::Type
     id::String
-    # Whether the result is the data of the saved item, not the item.
-    unwrap::Bool
 end
 
 """
@@ -182,20 +180,18 @@ function result_location(workspace::Workspace, value::Computation)::Union{Nothin
     end
     if native !== nothing && native.computation === value && native.revision == revision
         native.store === nothing && return nothing
-        return ResultLocation(native.store, native.item_type, native.key, !(native.value_type <: AbstractDataItem))
+        return ResultLocation(native.store, native.type, native.key)
     end
     target isa Target || return nothing
     key, stage = target
     # The read and expand results of a source item are not kept.
     key isa SourceKey && return nothing
     key isa ItemKey && haskey(workspace.computations, key) && return nothing
-    # The value kept in an earlier opening, under the item type that its stage recorded, since a
+    # The value kept in an earlier opening, under the type that its stage recorded, since a
     # `process` method may return another type than the item it receives.
     type, stored = @lock catalog.lock begin
         current_value(catalog, target) || return nothing
-        type = valuetype(catalog, key)
-        # A collection value is kept as a `ResultItem`, since it is not an item.
-        (key isa ItemKey ? type : ResultItem{type}), id(catalog, key)
+        valuetype(catalog, key), id(catalog, key)
     end
     if key isa ItemKey
         state = cached_result_state(workspace.cache.db, stage, stored)
@@ -204,7 +200,7 @@ function result_location(workspace::Workspace, value::Computation)::Union{Nothin
     end
     store = result_store(workspace, type)
     store === nothing && return nothing
-    return ResultLocation(store, type, stored, !(key isa ItemKey))
+    return ResultLocation(store, type, stored)
 end
 
 """
@@ -220,8 +216,7 @@ function read_results(locations::AbstractVector)::Vector{Union{Nothing,Some}}
     for ((store, type), positions) in groups
         items = @timed_dbg "result.read" read(store, type, [locations[position].id for position in positions])
         for (position, item) in zip(positions, items)
-            item === nothing && continue
-            results[position] = Some(locations[position].unwrap ? data(item) : item)
+            item === nothing || (results[position] = Some(item))
         end
     end
     return results

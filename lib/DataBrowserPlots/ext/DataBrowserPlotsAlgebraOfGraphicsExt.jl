@@ -8,10 +8,10 @@ using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_categories, scale_kinds
 using DataBrowserPlots: YScaleLayers, is_y_scale, @plot, Aggregate, Declaration, Fit, ITEM, LegendEntry, PlotLine, PlotLines, PlotTheme, Points, Scaled, Result, category, column, grouping
 import DataBrowserAPI
-using DataBrowserAPI: id, metadata
+using DataBrowserAPI: id
 import DataBrowserCore.Workspace
 import DataBrowserPlots
-using DataBrowserCore: Group, Selection, select
+using DataBrowserCore: Selection
 using DataBrowserPlots: Tables
 using PrecompileTools: @setup_workload, @compile_workload
 
@@ -559,7 +559,7 @@ function Base.:*(result::Result, layer::AoG.Layer)
         groups = getfield(result, :groups)
         places = Pair{Symbol,Vector}[]
         for name in getfield(result, :scaled)
-            computed = [metadata(group)[name] for group in groups]
+            computed = [group[name] for group in groups]
             first(computed) isa Tuple ?
                 append!(places, [Symbol(name, "[", i, "]") => getindex.(computed, i) for i in eachindex(first(computed))]) :
                 push!(places, name => computed)
@@ -583,12 +583,12 @@ function Base.:*(result::Result, layer::AoG.Layer)
     drawn = column.(positional)
     columns = Dict{Symbol,Vector{Any}}(name => Any[] for name in [drawn; [c for (_, _, c) in roles]])
     for group in getfield(result, :groups)
-        values = DataBrowserAPI.data(group)
+        values = group.curve
         for (name, value) in zip(drawn, values)
             append!(columns[name], value)
         end
         for (_, _, c) in unique(r -> r[3], roles)
-            append!(columns[c], fill(metadata(group)[c], length(first(values))))
+            append!(columns[c], fill(group[c], length(first(values))))
         end
     end
     table = NamedTuple{Tuple(keys(columns))}(Tuple(identity.(values(columns))))
@@ -643,7 +643,7 @@ function resolve(layer::AoG.Layer, items, axes, points=nothing)
         error("A fit or an aggregate takes the points of its line before any visual, as in `fit(...) * visual(Lines)`")
     layer.data isa AoG.Columns || error("A fit or an aggregate needs points: a mapping of x and y, such as mapping(:x, :y)")
     analysis = Analysis(first(found), layer.positional, named, axes, points)
-    result = points === nothing ? analysis(layer.data.columns, items) :
+    result = points === nothing ? analysis(layer.data.columns) :
         computed(analysis, layer.data.columns, items, getfield(items.data, :workspace))
     after = found[2:end]
     return isempty(after) ? result : result * AoG.Layer(; transformation=foldl(AoG.:⨟, after))
@@ -716,10 +716,10 @@ function taken(analysis::Analysis, columns)
     return map(values -> values[inside], columns), positional, named
 end
 
-# The result of the analysis over the points of `columns`, whose items are `items`.
-function (analysis::Analysis)(columns, items)::Result
+# The result of the analysis over the points of `columns`.
+function (analysis::Analysis)(columns)::Result
     table, positional, named = taken(analysis, columns)
-    return Result(analysis.step, table, positional, named, items; scale=setting(analysis, :y, :scale, identity))
+    return Result(analysis.step, table, positional, named; scale=setting(analysis, :y, :scale, identity))
 end
 
 # The result of the analysis in the workspace of `items`: one computed item for each group of the
@@ -739,7 +739,7 @@ function computed(analysis::Analysis, columns, items::Selection, workspace)::Res
         push!(workspace, value)
         return value
     end
-    groups = @timed_dbg "plot_results" reduce(vcat, Workspace.results(workspace, id.(values)); init=Group[])
+    groups = @timed_dbg "plot_results" reduce(vcat, Workspace.results(workspace, id.(values)); init=NamedTuple[])
     return Result(analysis.step, groups, positional, roles; scale=setting(analysis, :y, :scale, identity))
 end
 
@@ -748,7 +748,7 @@ end
 function (analysis::Analysis)(items::Selection; group::NamedTuple)
     table, positional, named = taken(analysis, Tables.columntable(analysis.points.table(items)))
     rows = [row for row in eachindex(table[ITEM]) if all(k -> isequal(table[k][row], group[k]), keys(group))]
-    result = Result(analysis.step, map(values -> values[rows], table), positional, named, items;
+    result = Result(analysis.step, map(values -> values[rows], table), positional, named;
         scale=setting(analysis, :y, :scale, identity))
     return analysis.step isa Fit ? only(result) : collect(result)
 end
@@ -777,7 +777,7 @@ function DataBrowserAPI.id(value::Workspace.Computation{<:Analysis})
         isempty(by) ? "" : " by " * join(by, ", "), isempty(settings) ? "" : "; " * join(settings, ", "),
         isempty(group) ? "" : " for " * join(("$(get(texts, k, repr(k))) = $(repr(v))" for (k, v) in pairs(group)), ", "),
         " on ", string(hash(map(only(value.args).id, getfield(only(value.args).data, :items)) do i, ref
-            ref isa Workspace.ComputationItem ? hash(ref.computation) : hash(i)
+            ref isa Workspace.Computation ? hash(ref) : hash(i)
         end); base=62))
 end
 
@@ -819,9 +819,9 @@ resolve(layers::AoG.Layers, items, axes, points=nothing) = foldl(+, (resolve(lay
 function over_result(result::Result, table, layer)
     named = getfield(result, :named)
     groups = getfield(result, :groups)
-    roles = [column(value) => [metadata(group)[column(value)] for group in groups] for (_, value) in named]
+    roles = [column(value) => [group[column(value)] for group in groups] for (_, value) in named]
     x = first(getfield(result, :positional))
-    xs = haskey(table, column(x)) ? [] : [column(x) => [metadata(group)[column(x)] for group in groups]]
+    xs = haskey(table, column(x)) ? [] : [column(x) => [group[column(x)] for group in groups]]
     with_x(l) = first(l.positional, 1) == [nothing] ? AoG.Layer(l.transformation, l.data, [x; l.positional[2:end]], l.named) : l
     # The values computed after the y scale's function, such as an aggregate's `mean` and `std`,
     # are placed back on the axis by what the visual draws with them: a y value is a position, and

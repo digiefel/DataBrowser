@@ -16,15 +16,12 @@ function_name(f) = Symbol(nameof(f))
 
 # The aggregate over the points of `table`, whose columns `positional` maps to x and y: one group for
 # each x and each group of the categorical roles in `named`, sorted by x, then by those roles. Each
-# group's metadata holds its x, its roles' values, the value of each function and the `count` of its
-# points; its data holds its x and those values, one column each; its members are the items of
-# `source` whose rows it takes.
+# group holds its x, its roles' values, the value of each function and the `count` of its points.
 # The functions take the y values after `scale`, the function of the y axis, such as `log10`, and
 # their values stay as they give them: the result's `scaled` values.
-function Result(aggregate::Aggregate, table, positional::Vector, named::Vector, source; scale=identity)::Result
+function Result(aggregate::Aggregate, table::NamedTuple, positional::Vector, named::Vector; scale=identity)::Result
     length(positional) == 2 || error("aggregate needs the points to map two positional values, x and y")
     columns = Tables.columntable(table)
-    members = haskey(columns, ITEM) ? Workspace.items(source) : AbstractDataItem[]
     roles = grouping(named, columns)
     x, y = column.(positional)
     keyed = unique([x; Symbol[column(v) for (_, v) in roles]])
@@ -33,14 +30,11 @@ function Result(aggregate::Aggregate, table, positional::Vector, named::Vector, 
     groups = map(sort(unique(keys))) do key
         rows = [row for row in eachindex(keys) if keys[row] == key && columns[y][row] isa Real && isfinite(scaled(scale, columns[y][row]))]
         values = [f(scaled.(scale, Float64.(columns[y][rows]))) for f in aggregate.functions]
-        name = join(("$k = $v" for (k, v) in pairs(key)), ", ")
-        taken = haskey(columns, ITEM) ? AbstractDataItem[members[sort(unique(columns[ITEM][rows]))]...] : AbstractDataItem[]
-        Group(name, Dict{Symbol,Any}(pairs(key)..., (names .=> values)..., :count => length(rows)),
-            NamedTuple{(:x, names...)}(([key[x]], ([v] for v in values)...)), taken)
+        merge(key, NamedTuple{names}(Tuple(values)), (; count=length(rows)))
     end
     return Result(aggregate, groups, positional, roles; scale)
 end
 
 # The result of an aggregate already done, as `groups`, drawn as points.
-Result(aggregate::Aggregate, groups::Vector{Group}, positional::Vector, roles::Vector; scale=identity) =
+Result(aggregate::Aggregate, groups::Vector, positional::Vector, roles::Vector; scale=identity) =
     Result(groups, positional, roles, :Scatter, scale, collect(Symbol, function_name.(aggregate.functions)))

@@ -1,7 +1,7 @@
 using Test, DataBrowserGUI
 import CImGui as ig
 using DataBrowserAPI: draw!, draw_header!, initial_size, label, prepare!, settings
-using DataBrowserCore: Group, Selection
+using DataBrowserCore: Selection
 using DataBrowserGUI: TableSelection
 using DataBrowserGUI.Browser: VectorView, distribution_frame_widths, vector_density, vector_signal, visualizers
 @isdefined(ItemsProject) || include("fixtures/items_project.jl")
@@ -67,7 +67,7 @@ using DataBrowserGUI.Browser: VectorView, distribution_frame_widths, vector_dens
         end
         # Selecting one table column keeps its name and row order. That one-column result
         # is usable by Vector without an additional column chooser.
-        table_item = Group("vector", Dict{Symbol,Any}(), (Time_s=[1.0, 2, 3], Current_A=[4.0, 5, 6]), [])
+        table_item = Entry("vector", (Time_s=[1.0, 2, 3], Current_A=[4.0, 5, 6]), Dict{Symbol,Any}())
         selected_column = table_item[TableSelection([3, 1], [["Current_A"]])]
         @test selected_column.data == (Current_A=[6.0, 4.0],)
         for data in (selected_column.data, (Current_A=Float64[],))

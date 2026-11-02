@@ -9,9 +9,8 @@ are an extension of this package, loaded with DataBrowserGUI and GLMakie.
 module DataBrowserPlots
 
 import DataBrowserAPI: @timed_dbg, metadata_value
-using DataBrowserAPI: AbstractDataItem, id, metadata
 import DataBrowserCore.Workspace
-using DataBrowserCore: Group, Selection
+using DataBrowserCore: Selection
 import Tables
 
 include("plots.jl")

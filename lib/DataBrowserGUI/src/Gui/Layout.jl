@@ -635,7 +635,8 @@ function open_browser(
     ctx, fonts = _init_browser_context!()
     @atomic workspace.code_updates_active = false
     result = try
-        ScopedValues.with(_CURRENT_FONTS => fonts, _WINDOW_PREVIEWS => WindowPreviewCache()) do
+        ScopedValues.with(_CURRENT_FONTS => fonts, _WINDOW_PREVIEWS => WindowPreviewCache(),
+                Workspace.CURRENT_WORKSPACE => workspace) do
             _run_browser(state, ctx; engine, spawn, wait, window_start=window_start)
         end
     catch

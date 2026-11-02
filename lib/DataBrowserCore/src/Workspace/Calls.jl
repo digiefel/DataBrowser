@@ -75,11 +75,11 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
             title, code = function_name(value.f), which(value)
             made = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding),
                 known, (title, code, map(objectid, preceding)))
-            identity, description = computation_identity(workspace, value)
-            made.items[identity] = description
+            identity = stored_id(workspace, value)
+            made.items[identity] = identity
             made.computations[identity] = value
             stored = get(workspace.results, value, nothing)
-            inferred = stored === nothing ? Base.infer_return_type(value.f, argument_types(value)) : stored.value_type
+            inferred = stored === nothing ? Base.infer_return_type(value.f, argument_types(value)) : stored.type
             inferred === Any || (made.result = made.result === nothing ? inferred : typejoin(made.result, inferred))
             return (visited[value] = Call[made])
         end

@@ -35,13 +35,11 @@ function solve_fit(curve, x::Vector{Float64}, y::Vector{Float64}, starts::NamedT
 end
 
 # One fit for each group of `rows`, a Tables.jl table: the rows with equal values in the `group`
-# columns. Each fit is a `Group`: its metadata holds the group's values and the parameters, its data
-# is the curve, as columns `x` and `y`, and its members are the items whose rows it fits. `members`
-# are those items, and the column `item` holds the place of each row's item in `members`.
-# The curve is drawn over the fitted x values, or over `xlim`. `scale` is the function of the y axis;
-# a point it has no value for, such as a negative y of `log10`, is left out.
+# columns. Each fit holds the group's values, the parameters, and the curve, as columns `x` and `y`,
+# under `curve`. The curve is drawn over the fitted x values, or over `xlim`. `scale` is the function
+# of the y axis; a point it has no value for, such as a negative y of `log10`, is left out.
 function fit_groups(curve, starts::NamedTuple, rows, x::Symbol, y::Symbol, group::Vector{Symbol};
-        members=AbstractDataItem[], item=nothing, xlim=nothing, scale=identity)::Vector{Group}
+        xlim=nothing, scale=identity)::Vector{NamedTuple}
     table = Tables.columntable(rows)
     keys = [NamedTuple{Tuple(group)}(Tuple(table[g][row] for g in group)) for row in eachindex(table[x])]
     return map(unique(keys)) do key
@@ -57,24 +55,23 @@ function fit_groups(curve, starts::NamedTuple, rows, x::Symbol, y::Symbol, group
         low, high = xlim === nothing ? extrema(xs) : xlim
         curve_x = collect(range(low, high; length=100))
         curve_y = curve.(curve_x; map(parameter -> parameter.value, parameters)...)
-        fitted = item === nothing ? AbstractDataItem[] : AbstractDataItem[members[sort(unique(table[item][rows]))]...]
-        return Group(name, Dict{Symbol,Any}(pairs(key)..., pairs(parameters)...), (x=curve_x, y=curve_y), fitted)
+        return merge(key, parameters, (; curve=(x=curve_x, y=curve_y)))
     end
 end
 
 """
 What a line of [`@plot`](@ref) computes from its points, such as the curves and parameters of
-`fit`: one `Group` for each group of points. It is a vector of those groups.
+`fit`: one named tuple for each group of points. It is a vector of those groups.
 
 Multiply it by a `visual` to draw it: its data is drawn on the axes of the points, in the named
 roles of their groups, such as `color`, so that it shares their legend entries. Alone, it is drawn
 with its own visual, `Lines` for a fit.
 
-A name of its groups' metadata reads one value for each group: `contacts.Rc` is the parameter `Rc`
-of each fit.
+A name in its groups reads one value for each group: `contacts.Rc` is the parameter `Rc` of each
+fit.
 """
-struct Result <: AbstractVector{Group}
-    groups::Vector{Group}
+struct Result <: AbstractVector{NamedTuple}
+    groups::Vector{NamedTuple}
     # The values the points mapped to x and y, as `mapping` takes them, such as `:gap => "gap (µm)"`.
     positional::Vector{Any}
     # The named roles that form the groups, such as `:color => :Chip`.
@@ -89,10 +86,9 @@ end
 Result(groups, positional, named, plottype) = Result(groups, positional, named, plottype, identity, Symbol[])
 Base.size(result::Result) = size(getfield(result, :groups))
 Base.getindex(result::Result, index::Int) = getfield(result, :groups)[index]
-# A value of each group's metadata, such as `contacts.Rc` or `result.count`: one for each group.
-# TODO: the data and the members of each group.
-Base.getproperty(result::Result, name::Symbol) = [metadata(group)[name] for group in getfield(result, :groups)]
-Base.propertynames(result::Result) = unique(reduce(vcat, [collect(keys(metadata(group))) for group in getfield(result, :groups)]; init=Symbol[]))
+# A value of each group, such as `contacts.Rc` or `result.count`: one for each group.
+Base.getproperty(result::Result, name::Symbol) = [group[name] for group in getfield(result, :groups)]
+Base.propertynames(result::Result) = unique(reduce(vcat, [collect(keys(group)) for group in getfield(result, :groups)]; init=Symbol[]))
 
 """
 A curve to fit to the points of a layer, as `fit(curve, starts; options...)` in [`@plot`](@ref)
@@ -116,13 +112,9 @@ item_places(selection::Selection) = NamedTuple{(ITEM,)}((collect(eachindex(selec
 item_places(_) = (;)
 
 # The fit's result over the points of a layer: `table`, whose columns `positional` and `named`
-# map. Its groups' members are the items of `source` whose rows they fit. `scale` is the function of
-# the y axis, after which the residuals are measured.
-function Result(fit::Fit, table, positional::Vector, named::Vector, source; scale=identity)::Result
-    columns = Tables.columntable(table)
-    members = haskey(columns, ITEM) ? (; members=Workspace.items(source), item=ITEM) : (;)
-    return fit_result(fit.curve, fit.starts, columns, positional, named; members..., scale, fit.options...)
-end
+# map. `scale` is the function of the y axis, after which the residuals are measured.
+Result(fit::Fit, table::NamedTuple, positional::Vector, named::Vector; scale=identity)::Result =
+    fit_result(fit.curve, fit.starts, table, positional, named; scale, fit.options...)
 
 # The value of `scale` at `value`, or `NaN` where it has none, such as `log10` of a negative value.
 scaled(scale, value) = try
@@ -158,5 +150,5 @@ function fit_result(curve, starts::NamedTuple, table, positional::Vector, named:
 end
 
 # The result of fits already done, as `groups`, drawn as lines.
-Result(::Fit, groups::Vector{Group}, positional::Vector, roles::Vector; scale=identity) =
+Result(::Fit, groups::Vector, positional::Vector, roles::Vector; scale=identity) =
     Result(groups, positional, roles, :Lines)

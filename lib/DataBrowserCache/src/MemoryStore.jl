@@ -6,14 +6,14 @@ Store complete native computation results in memory. When their estimated total 
 than the limit remains available until another value arrives. Reads return a copy of the stored
 value.
 
-Each default item-type store belongs to one workspace opening. To configure an item type, define
-`DataBrowserAPI.storage(project, ::Type{MyItem}) = MemoryStore(; max_bytes=...)`.
+Each default store keeps the results of one type for one workspace opening. To configure the store
+of a type, define `DataBrowserAPI.storage(project, ::Type{MyItem}) = MemoryStore(; max_bytes=...)`.
 """
 function MemoryStore(; max_bytes::Integer=64 * 1024^2)
     return MemoryStore{Tuple{Type,String},Any}(; capacity=Int(max_bytes), weight=Base.summarysize)
 end
 
-DataBrowserAPI.storage(::Type{<:DataBrowserAPI.AbstractDataItem}) = MemoryStore()
+DataBrowserAPI.storage(::Type) = MemoryStore()
 
 function Base.write(store::MemoryStore{Tuple{Type,String},Any}, id::AbstractString, item)
     append!(store, (typeof(item), String(id)), item)

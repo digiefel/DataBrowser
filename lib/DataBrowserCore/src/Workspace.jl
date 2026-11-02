@@ -1,6 +1,7 @@
 module Workspace
 
 using Printf
+using Base.ScopedValues: ScopedValue, with
 using Dates: now
 import Revise
 import InteractiveUtils
@@ -111,7 +112,6 @@ import ..DataBrowserCore: evaluate_argument, computation_inputs
 using ..DataBrowserCore: ComputationStores, ComputationResult, RecordedExecution
 using DataBrowserAPI: ComputationExecution
 import DataBrowserAPI: last_execution, cache_info
-using ..DataBrowserCore: ResultItem
 using DataBrowserAPI: AbstractStore
 import DataBrowserAPI: computation, inputs, evaluate
 import DataBrowserAPI

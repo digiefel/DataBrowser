@@ -175,9 +175,6 @@ DataBrowserAPI.inputs
 DataBrowserAPI.last_execution
 DataBrowserAPI.ComputationExecution
 DataBrowserAPI.cache_info
-DataBrowserCore.ResultItem
-DataBrowserCore.Group
-DataBrowserCore.ComputationItem
 ```
 
 #### Tags

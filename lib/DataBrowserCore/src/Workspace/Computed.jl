@@ -19,9 +19,9 @@ argument_id(xs::Union{AbstractVector,Tuple}) = "[" * join(map(argument_id, xs), 
 argument_id(x) = repr(x)
 label(value::Computation) = function_name(value.f)
 
-# What a value reads, in order: the ids of workspace items, the `Computation` values among its
-# arguments, and the values prepared for a window (`ComputationItem`), which are not workspace items.
-const Read = Union{String,Computation,AbstractDataItem}
+# What a value reads, in order: the ids of workspace items, and the `Computation` values among its
+# arguments.
+const Read = Union{String,Computation}
 reads(value::Computation)::Vector{Read} = found(value.args)
 found(x::Computation) = Read[x]
 found(x::AbstractDataItem) = Read[id(x)]
@@ -29,10 +29,6 @@ found(selection::Selection) = reduce(vcat,
     [ref isa ItemKey ? Read[i] : found(ref) for (ref, i) in zip(getfield(selection.data, :items), selection.id)]; init=Read[])
 found(xs::Union{AbstractVector,Tuple}) = reduce(vcat, map(found, xs); init=Read[])
 found(_) = Read[]
-
-# The ids of the items a value reads, also through the `Computation` values it reads.
-member_ids(value::Computation)::Vector{String} = unique(reduce(vcat,
-    [x isa Computation ? member_ids(x) : x isa AbstractDataItem ? [id(x)] : [x] for x in reads(value)]; init=String[]))
 
 # The metadata of a result: the metadata of an item, or the named values of a named tuple, each one
 # that metadata can hold. A vector, such as the points of a curve, is left out.
@@ -112,7 +108,6 @@ function _register_computation!(workspace::Workspace, value::Computation)::ItemK
                 known = @lock catalog.lock get(catalog.computation_targets, x, nothing)
                 return Target[known === nothing ? (row!(workspace, x), ITEM_PROCESS) : current_target(workspace, known)]
             end
-            x isa AbstractDataItem && return followed(workspace, x.computation)
             return Target[(read_key(workspace, x), ITEM_PROCESS)]
         end; init=Target[])
     end
@@ -132,16 +127,6 @@ function read_key(workspace::Workspace, id::String)::ItemKey
     key = item(workspace, id)
     key === nothing && error("Item '$id' that a computed item reads is not an item of the workspace")
     return key
-end
-
-# The targets of what a value prepared for a window reads: the value itself is not a workspace item.
-function followed(workspace::Workspace, value::Computation)::Vector{Target}
-    known = @lock workspace.catalog.lock get(workspace.catalog.computation_targets, value, nothing)
-    known === nothing || return Target[current_target(workspace, known)]
-    return reduce(vcat, map(reads(value)) do x
-        x isa Computation ? followed(workspace, x) : x isa AbstractDataItem ? followed(workspace, x.computation) :
-            Target[(read_key(workspace, x), ITEM_PROCESS)]
-    end; init=Target[])
 end
 
 """
@@ -173,20 +158,4 @@ function results(workspace::Workspace, ids::AbstractVector{<:AbstractString})::V
     keys = ItemKey[something(item(workspace, id)) for id in ids]
     wait_processed(workspace, keys)
     return [evaluate(workspace, computation(workspace, key, ITEM_PROCESS)) for key in keys]
-end
-
-"""
-The version of a computed item that views receive: a `ResultItem` for an ordinary Julia result,
-or a `Group` for a native item result, with the computed row's identity and metadata. The latter
-keeps the items it reads, through other computed items, as members.
-"""
-function computed_version(workspace::Workspace, key::ItemKey)::AbstractDataItem
-    catalog = workspace.catalog
-    value, given = @lock catalog.lock (
-        workspace.computations[key], metadata(workspace, key))
-    result = evaluate(workspace, computation(workspace, key, ITEM_PROCESS))
-    result isa AbstractDataItem || return ResultItem(
-        id(value), label(workspace, key), Dict{Symbol,Any}(given), result)
-    read = ItemKey[something(item(workspace, i)) for i in member_ids(value)]
-    return Group(id(value), Dict{Symbol,Any}(given), data(result), versions(workspace, read))
 end

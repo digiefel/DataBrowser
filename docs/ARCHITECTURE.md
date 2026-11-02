@@ -195,13 +195,12 @@ for an item; `computation(workspace, key, stage)` describes one pipeline call. `
 returns the directly preceding computations. Reading these definitions does not load payloads
 or run project functions. `evaluate(workspace, value)` obtains the native result, reusing existing
 native result stores where available and replaying missing inputs. `storage(project, T)` chooses
-the store for a native `AbstractDataItem` type; the project form defaults to `storage(T)`. Ordinary
-Julia results are stored as workspace-owned `ResultItem{T}` items, with `T` the result's type.
-Stores receive this complete item; evaluation unwraps it for ordinary function calls. Returning
-`nothing` leaves that result uncached. A store is an `AbstractStore`; its docstring lists the
-methods it implements. The default `MemoryStore` uses the same bounded memory buffer as the source
-cache, with one 64 MiB store per item type per workspace opening. Store selection runs once per
-item type. Complete results are copied when written and when supplied from storage.
+the store for results of type `T`, items or any other Julia value; the project form defaults to
+`storage(T)`. Stores receive the result as the function returned it. Returning `nothing` leaves
+that result uncached. A store is an `AbstractStore`; its docstring lists the methods it implements.
+The default `MemoryStore` uses the same bounded memory buffer as the source cache, with one 64 MiB
+store per result type per workspace opening. Store selection runs once per result type. Complete
+results are copied when written and when supplied from storage.
 
 `last_execution(workspace, computation)` reports a completed call's duration, completion date and
 whether it returned normally. It reads recorded information without loading stored data. Timing
@@ -213,8 +212,10 @@ its `bytes` field uses the store's optional `stored_size` report.
 
 Code displays these computations as selectable rows. Each row retains the actual computations
 for its items, and selection passes those definitions through `output`. Linked windows use the
-same reference-evaluation path as table selections. `ComputationItem` keeps a prepared native
-value with its origin; `data` exposes its payload, and `computation` follows its origin.
+same reference-evaluation path as table selections. A computation is itself an item: in the
+workspace in scope, `data` is its kept result, `metadata` the named parts of the result on top of
+the metadata of the one item it reads. In a selection, a computation that gives a row's value has
+that row's id, label and metadata.
 Scientific transforms receive the native result of the preceding call. Neither selection nor
 window refresh registers a browsable item or builds an identity by printing the input graph.
 

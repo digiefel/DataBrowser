@@ -15,28 +15,6 @@ end
 computation_inputs(_) = Computation[]
 
 """
-    ResultItem(id, label, metadata, data)
-
-A workspace-owned item for a computation returning an ordinary Julia value. Project data items
-keep their own types. `data(item)` returns `data`; `metadata(item)` contains the named
-scalar results and any metadata inherited by the computed item.
-
-Storage is selected for `ResultItem{typeof(data)}` and receives this complete item. Evaluation
-unwraps it before supplying the value to another function, so ordinary function calls keep their
-native arguments and results.
-"""
-struct ResultItem{T} <: AbstractDataItem
-    id::String
-    label::String
-    metadata::Dict{Symbol,Any}
-    data::T
-end
-DataBrowserAPI.id(item::ResultItem) = item.id
-DataBrowserAPI.label(item::ResultItem) = item.label
-DataBrowserAPI.metadata(item::ResultItem) = item.metadata
-DataBrowserAPI.data(item::ResultItem) = item.data
-
-"""
     evaluate(computation)
 
 Evaluate a computation and its inputs, returning the function's native result. This form runs
@@ -66,22 +44,20 @@ function evaluate_argument(values::AbstractVector, result, invoke, resolve)
 end
 evaluate_argument(value, _, _, _) = value
 
-"""One workspace's store choices, initialized once per native item type."""
+"""One workspace's store choices, initialized once per result type."""
 struct ComputationStores
     lock::ReentrantLock
     types::IdDict{Type,Union{Nothing,AbstractStore}}
 end
 ComputationStores() = ComputationStores(ReentrantLock(), IdDict{Type,Union{Nothing,AbstractStore}}())
 
-"""The native result location of one completed computation revision; no payload lives here."""
+"""Where the result of one completed computation revision is kept, and its type; no payload lives here."""
 struct ComputationResult
     computation::Computation
     revision::UInt
-    value_type::Type
-    item_type::Type
+    type::Type
     store::Union{Nothing,AbstractStore}
     key::String
-    metadata::Dict{Symbol,Any}
 end
 
 """The execution of one computation revision, independent of retained data."""

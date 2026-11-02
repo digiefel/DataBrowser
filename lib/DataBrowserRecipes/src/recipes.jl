@@ -62,4 +62,4 @@ mutable struct Project <: AbstractProject
     values::String
 end
 
-DataBrowserAPI.storage(project::Project, ::Type{<:AbstractDataItem}) = DuckDBStore(project.values)
+DataBrowserAPI.storage(project::Project, ::Type) = DuckDBStore(project.values)

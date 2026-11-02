@@ -36,16 +36,14 @@ Base.close(::AbstractStore) = nothing
     storage(project, ::Type{T}) -> Union{Nothing,AbstractStore}
     storage(::Type{T}) -> Union{Nothing,AbstractStore}
 
-The store for computation results whose item type is `T <: AbstractDataItem`. The project form
-defaults to `storage(T)`. Return `nothing` to keep no results of type `T`. The default is a
-bounded `DataBrowserCache.MemoryStore`. Core calls this once per item type and workspace opening.
-
-Results that are not `AbstractDataItem`s are kept as `DataBrowserCore.ResultItem{typeof(value)}`,
-so `storage(project, ResultItem{V})` chooses their store.
+The store for computation results of type `T`: items, and any other value a computation returns.
+The project form defaults to `storage(T)`. Return `nothing` to keep no results of type `T`. The
+default is a bounded `DataBrowserCache.MemoryStore`. Core calls this once per result type and
+workspace opening.
 """
 function storage end
 
-storage(::AbstractProject, type::Type{<:AbstractDataItem}) = storage(type)
+storage(::AbstractProject, type::Type) = storage(type)
 
 """
     stored_size(store, T, id) -> Int

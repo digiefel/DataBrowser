@@ -9,8 +9,8 @@ struct ComputationProject <: AbstractProject
 end
 ComputationProject() = ComputationProject(Ref(0), Type[])
 
-# A project store can accept only the native item type it was configured for.
-struct NativeItemStore{T<:AbstractDataItem} <: AbstractStore
+# A project store can accept only the type it was configured for.
+struct NativeItemStore{T} <: AbstractStore
     values::typeof(MemoryStore())
 end
 Base.haskey(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = haskey(store.values, T, id)
@@ -19,7 +19,7 @@ Base.read(store::NativeItemStore{T}, ::Type{T}, ids::AbstractVector) where {T} =
 Base.delete!(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = delete!(store.values, T, id)
 DataBrowserAPI.stored_size(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} =
     DataBrowserAPI.stored_size(store.values, T, id)
-function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T<:ResultItem}
+function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T}
     push!(project.store_types, T)
     return NativeItemStore{T}(MemoryStore())
 end
@@ -78,7 +78,7 @@ struct UncachedComputationProject <: AbstractProject
 end
 DataBrowserAPI.project_name(::UncachedComputationProject) = "uncached-computation-graph"
 DataBrowserAPI.storage(::UncachedComputationProject, ::Type{ComputationItem}) = nothing
-DataBrowserAPI.storage(project::UncachedComputationProject, ::Type{T}) where {T<:ResultItem} =
+DataBrowserAPI.storage(project::UncachedComputationProject, ::Type{T}) where {T} =
     storage(project.project, T)
 DataBrowserAPI.read(project::UncachedComputationProject, source::ComputationSource, file::ComputationFile) =
     read(project.project, source, file)
@@ -102,7 +102,7 @@ DataBrowserAPI.process(project::UncachedComputationProject, value::ComputationIt
             @test previous_execution.duration >= 0
             @test last_execution(workspace, step) === previous_execution
             @test counter.processes[] == before
-            @test ResultItem{Vector{Int}} in counter.store_types
+            @test Vector{Int} in counter.store_types
             first = evaluate(workspace, step)
             @test first.gain == 2.0
             first.data.signal[1] = 99
@@ -467,7 +467,7 @@ DataBrowserAPI.read(::KeptProject, source::ComputationSource, file::ComputationF
     read(ComputationProject(), source, file)
 DataBrowserAPI.expand(::KeptProject, file::ComputationFile, data) = expand(ComputationProject(), file, data)
 DataBrowserAPI.process(::KeptProject, value::ComputationItem) = process(ComputationProject(), value)
-DataBrowserAPI.storage(project::KeptProject, ::Type{<:AbstractDataItem}) = DuckDBStore(project.values)
+DataBrowserAPI.storage(project::KeptProject, ::Type) = DuckDBStore(project.values)
 const KEPT_CALLS = Threads.Atomic{Int}(0)
 kept_total(value) = (Threads.atomic_add!(KEPT_CALLS, 1); sum(data(value).signal))
 

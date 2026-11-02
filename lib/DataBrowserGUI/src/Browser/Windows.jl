@@ -330,17 +330,18 @@ end
 function _resolve_window_input(workspace, given, transform)
     failures = String[]
     function resolve(values)
-        items = DataBrowserAPI.AbstractDataItem[]
+        computed = Workspace.Computation[]
         for value in values
             try
-                append!(items, Workspace.materialize_items(workspace, [value]))
+                Workspace.evaluate(workspace, value)
+                push!(computed, value)
             catch err
                 # The workspace reports a failed computation as an `ErrorException` with its message.
                 err isa ErrorException || rethrow()
                 push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
             end
         end
-        return Workspace.Selection(workspace, items)
+        return Workspace.select(workspace, computed)
     end
     given isa AbstractVector{<:Workspace.Computation} && (given = resolve(given))
     if transform !== nothing
@@ -348,7 +349,7 @@ function _resolve_window_input(workspace, given, transform)
         if given isa Workspace.Selection
             whole = Base.invokelatest(hasmethod, f, Tuple{Workspace.Selection}) &&
                 !all(item -> Base.invokelatest(applicable, f,
-                    item isa Workspace.ComputationItem ? item.value : item), Workspace.items(given))
+                    item isa Workspace.Computation ? Workspace.evaluate(workspace, item) : item), Workspace.items(given))
             calls = whole ? [Workspace.Computation(f, given)] :
                 [Workspace.Computation(f, Workspace.computation(given, i)) for i in eachindex(given)]
             given = resolve(calls)

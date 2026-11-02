@@ -461,7 +461,8 @@ function versions(workspace::Workspace, items::Vector{ItemKey}; own::Bool=false)
     kept = read_results([value === nothing ? nothing : result_location(workspace, value) for value in values])
     return map(eachindex(items)) do position
         item = items[position]
-        computed[position] && return computed_version(workspace, item)
+        # A computed item is the computation of its row, whose data is its result.
+        computed[position] && return computation(workspace, item, ITEM_PROCESS)
         kept[position] === nothing || return something(kept[position])
         source = Catalogs.source(catalog, item)
         source === nothing || reported_source_item(workspace, source)
