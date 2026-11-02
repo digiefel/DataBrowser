@@ -225,8 +225,8 @@ categorical named roles, here `color=:Chip`, divide the points into groups, with
 line changes the points as any line does: `mapping(; color=nothing) * fit(...)` fits all of them
 at once.
 `fit` gives a [`Result`](@ref): one named tuple for each group of points. It holds the group's
-values, such as `:Chip`, each parameter, such as `:Rc`, a [`Parameter`](@ref) that prints as the
-estimate ± one standard error, and the drawn curve, as `curve`. `fit(...; xlim=(0, 25))` draws the curve over that range of x instead
+values, such as `:Chip`, each parameter, such as `:Rc`, a `Measurement` of
+[Measurements.jl](https://github.com/JuliaPhysics/Measurements.jl): the estimate ± one standard error, and the drawn curve, as `curve`. `fit(...; xlim=(0, 25))` draws the curve over that range of x instead
 of over the fitted points. With `data(table)` in the header, `fit` takes the rows of that table.
 `fit` comes before the visual in its line: the visual draws the result.
 

@@ -173,7 +173,7 @@ end
 Take the value that `expand` gave an item, with the metadata `given`; `nothing` when it is not kept.
 The value is no longer kept, so the caller may change it.
 """
-function kept_expanded(workspace::Workspace, item_id::String, type::Type, given::MetadataDict)
+function kept_expanded(workspace::Workspace, item_id::String, type::Type, given::Dict{Symbol,Any})
     kept = @lock workspace.catalog.lock begin
         kept = get(workspace.expanded, item_id, nothing)
         release_expanded!(workspace, item_id)
@@ -376,7 +376,7 @@ The item that `process` receives: the value `expand` gave it, with `given`, the 
 and its source item. `known` is the [`row`](@ref) of the item. When that value is no longer kept,
 or the item type does not rebuild from its data, `expand` runs again.
 """
-function unprocessed(workspace::Workspace, item::ItemKey, known, given::MetadataDict)::AbstractDataItem
+function unprocessed(workspace::Workspace, item::ItemKey, known, given::Dict{Symbol,Any})::AbstractDataItem
     value = kept_expanded(workspace, known.id, known.type, given)
     if value === nothing
         value = expand_again(workspace, item)
@@ -423,8 +423,8 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{ITEM_PROCESS})::Not
     dropped = String[]
     if iscurrent(catalog, job)
         store_result_ready!(cache, item_id, saved, typeof(output); stage=ITEM_PROCESS)
-        store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, delivered)
-        dropped = store_item_metadata!(cache, item_id, delivered)
+        dropped = unique([store_item_stage_metadata!(cache, item_id, ITEM_PROCESS, delivered);
+            store_item_metadata!(cache, item_id, delivered)])
     end
     @lock catalog.lock begin
         pace!(workspace)
@@ -485,13 +485,14 @@ function run!(workspace::Workspace, job::Job{CollectionKey}, ::Val{COLLECTION_PR
     output isa typeof(given) || error(
         "process(::$(typeof(workspace.project)), ::$(typeof(given)), members) must return a " *
         "$(typeof(given)); got $(typeof(output))")
-    before = metadata_dict(metadata(given))::MetadataDict
-    computed = MetadataDict(
-        name => value for (name, value) in metadata_dict(metadata(output))::MetadataDict
+    before = metadata_dict(metadata(given))::Dict{Symbol,Any}
+    computed = Dict{Symbol,Any}(
+        name => value for (name, value) in metadata_dict(metadata(output))::Dict{Symbol,Any}
         if !haskey(before, name) || !isequal(before[name], value))
     @lock catalog.lock begin
         finish!(catalog, job; metadata=computed) || return nothing
-        store_collection_process_result!(workspace.cache.db, workspace.collection_keys[job.key], computed)
+        dropped = store_collection_process_result!(workspace.cache.db, workspace.collection_keys[job.key], computed)
+        conflicts!(workspace, job.key, COLLECTION_PROCESS, dropped)
     end
     return nothing
 end
@@ -514,8 +515,8 @@ function run!(workspace::Workspace, job::Job{ItemKey}, ::Val{MEMBER_PROCESS})::N
     dropped = String[]
     if iscurrent(catalog, job)
         store_result_ready!(cache, known.id, saved, typeof(output); stage=MEMBER_PROCESS)
-        store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, delivered)
-        dropped = store_item_metadata!(cache, known.id, delivered)
+        dropped = unique([store_item_stage_metadata!(cache, known.id, MEMBER_PROCESS, delivered);
+            store_item_metadata!(cache, known.id, delivered)])
     end
     @lock catalog.lock begin
         if finish!(catalog, job; metadata=delivered)

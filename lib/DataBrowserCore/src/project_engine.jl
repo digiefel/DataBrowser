@@ -13,7 +13,6 @@ using DataBrowserAPI:
     AbstractDataSource,
     AbstractDataSourceItem,
     AbstractProject,
-    MetadataDict,
     metadata_dict
 import DataBrowserAPI: collection, expand, id, label, metadata, read
 
@@ -28,9 +27,9 @@ struct ExpandedItem
     id::String
     label::String
     # The metadata of the source item, then the metadata of the item.
-    metadata::MetadataDict
+    metadata::Dict{Symbol,Any}
     collections::Vector{AbstractCollection}
-    source_metadata::Vector{MetadataDict}
+    source_metadata::Vector{Dict{Symbol,Any}}
 end
 
 """The collection values of `item` from the top down, or those of its source item when it has none."""
@@ -83,7 +82,7 @@ function expanded_items(project, source, source_item, loaded, items)::Vector{Exp
             label(project, item),
             merge(source_metadata, metadata_dict(metadata(item))),
             values,
-            MetadataDict[
+            Dict{Symbol,Any}[
                 metadata_dict(metadata(source, values[1:depth])) for depth in eachindex(values)],
         )
     end

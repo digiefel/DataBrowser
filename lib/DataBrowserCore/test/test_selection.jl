@@ -88,7 +88,6 @@ end
         W.wait_workspace_idle!(workspace; timeout=20)
         computed = W.select(workspace, [DataBrowserAPI.id(value)])
         @test only(computed.data) == (top=4.0, count=2)
-        @test computed.top == [4.0]
     finally
         W.close_workspace!(workspace)
     end

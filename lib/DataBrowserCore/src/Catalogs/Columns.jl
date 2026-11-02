@@ -271,8 +271,8 @@ end
 MetadataColumns() = MetadataColumns(Dict{Symbol,Vector}())
 
 """The metadata of row `row`, without the names it has no value for. A vector value is a copy."""
-function Base.getindex(layer::MetadataColumns, row::Integer)::MetadataDict
-    return MetadataDict(
+function Base.getindex(layer::MetadataColumns, row::Integer)::Dict{Symbol,Any}
+    return Dict{Symbol,Any}(
         name => (column[row] isa Vector ? copy(column[row]) : column[row])
         for (name, column) in layer.columns
         if row <= length(column) && column[row] !== missing)

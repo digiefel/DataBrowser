@@ -227,14 +227,17 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] The workspace hands out each item as its `process` returned it, without rebuilding it.
 - [x] The metadata of an item is the metadata of its latest value, not merged over the metadata
   its `process` received, so that `reconstruct` gets the metadata the value had when it was stored.
-- [ ] Let metadata hold values of any type that `StructUtils.make` can build again, such as a fit
+- [x] Let metadata hold values of any type that `StructUtils.make` can build again, such as a fit
   parameter with its error. Core saves each value with its type and reads it back with
   `make(T, saved)`. Loading the project defines the type again, as it does for `reconstruct`. A type
   whose fields do not describe it defines `StructUtils.lower` and `StructUtils.lift`. For a type of
   another package without these methods, such as a Unitful quantity, we add them upstream or in
   DataBrowserCache. Remove `metadata_value`, `MetadataValue` and `MetadataDict` from DataBrowserAPI,
-  and stop catching errors in Core to find values that cannot be metadata. Which saved values
-  become typed columns for queries is a separate question.
+  and stop catching errors in Core to find values that cannot be metadata. Each value is saved in a
+  column of the DuckDB type of its saved form, which queries read, and the metadata names of a
+  computed item's result start with the name of its function, as in `fit.Rc`.
+- [ ] StructUtils saves a `Measurement` as its text, such as `"1520.0 ± 83.0"`, so a query cannot
+  compare `fit.Rc < 10`. Save the estimate and the error as numbers.
 - [ ] Store the results of item and member `process` in the store that `storage(project, T)`
   chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
   one copy of data that a member `process` returned unchanged.

@@ -1,18 +1,21 @@
-"""The item type and metadata, hex-serialized, of an item whose data is kept as a table."""
+"""The item type, hex-serialized, of an item whose data is kept as a table."""
 struct StoredShell
     id::String
-    shell::String
+    type_hex::String
 end
-StoredShell(row)::StoredShell = StoredShell(String(row.id), String(row.shell))
+StoredShell(row)::StoredShell = StoredShell(String(row.id), String(row.type_hex))
 
 """
     DuckDBStore(path; max_bytes=64 * 1024^2)
 
 Store values in the DuckDB file at `path`, so they remain available when the workspace opens
 again. When the data of an item is a table (a Tables.jl table whose columns DuckDB can hold), the
-table is kept as DuckDB columns and the item is rebuilt with `reconstruct` from it and its
-metadata. Tables are written in batches by a background task. Other values are kept with Julia's
-`Serialization`. Recently written or read values also stay in memory, up to `max_bytes`, as in
+table is kept as DuckDB columns, its metadata as metadata columns (one for each name, of the type
+of its values), and the item is rebuilt with `reconstruct` from them. Tables are written in batches
+by a background task. Other values are kept with Julia's `Serialization`.
+
+Writing an item whose metadata value has another type than the values written before under its
+name is an error. Recently written or read values also stay in memory, up to `max_bytes`, as in
 [`MemoryStore`](@ref).
 
 While a store is open on `path`, `DuckDBStore(path)` returns that store, so several item types can
@@ -31,8 +34,11 @@ mutable struct DuckDBStore <: DataBrowserAPI.AbstractStore
     serialized_ids::Set{String}
     tables::TabularFamilyStore
     shell_rows::RowStore{String,StoredShell}
-    # The item type and metadata of each item whose data is in `tables`.
+    # The item type of each item whose data is in `tables`.
     shells::Dict{String,StoredShell}
+    metadata_rows::WideRowStore{String}
+    # The metadata of each item whose data is in `tables`.
+    metadata::Dict{String,Dict{Symbol,Any}}
     # Recently written items, by their key in the file.
     recent::MemoryStore{String,Any}
 end
@@ -55,12 +61,16 @@ function open_duckdb_store(path::String, max_bytes::Integer)
     _run(serialized, "SET external_threads = 1")
     _run(serialized, "SET threads = $(Sys.CPU_THREADS)")
     _run(serialized, "CREATE TABLE IF NOT EXISTS stored_values (id VARCHAR PRIMARY KEY, value BLOB NOT NULL)")
-    _run(serialized, create_table_sql(StoredShell, "stored_items", (:id,)))
-    shell_rows = RowStore{String,StoredShell}(database, "stored_items", ("id",))
+    _run(serialized, create_table_sql(StoredShell, "stored_item_types", (:id,)))
+    _run(serialized, "CREATE TABLE IF NOT EXISTS stored_item_metadata (id VARCHAR PRIMARY KEY)")
+    _run(serialized, "CREATE TABLE IF NOT EXISTS wide_columns(table_name TEXT, column_name TEXT, " *
+        "julia_type TEXT, sql_type TEXT, PRIMARY KEY (table_name, column_name))")
+    shell_rows = RowStore{String,StoredShell}(database, "stored_item_types", ("id",))
+    metadata_rows = WideRowStore{String}(database, "stored_item_metadata", "id")
     serialized_ids = Set{String}(String(row.id) for row in DBInterface.execute(serialized, "SELECT id FROM stored_values"))
     return DuckDBStore(path, ReentrantLock(), database, serialized, serialized_ids,
         TabularFamilyStore(database; row_limit=CACHE_BUFFER_ROW_LIMIT),
-        shell_rows, read(shell_rows),
+        shell_rows, read(shell_rows), metadata_rows, read(metadata_rows),
         MemoryStore{String,Any}(; capacity=Int(max_bytes), weight=Base.summarysize))
 end
 
@@ -74,7 +84,15 @@ function Base.write(store::DuckDBStore, id::AbstractString, item)
     table = item isa DataBrowserAPI.AbstractDataItem && can_store_payload(data)
     @lock store.lock begin
         if table
-            shell = StoredShell(key, _serialize_hex((typeof(item), metadata_dict(metadata(item)))))
+            given = metadata_dict(metadata(item))
+            dropped = edit!(store.metadata_rows, key, given)
+            if !isempty(dropped)
+                delete!(store.metadata_rows, key)
+                _forget_table!(store, key)
+                error("$(typeof(item)) $id cannot be stored: " * join(dropped, "; "))
+            end
+            store.metadata[key] = given
+            shell = StoredShell(key, _serialize_type(typeof(item)))
             append!(store.tables, key, data)
             edit!(store.shell_rows, key, shell)
             store.shells[key] = shell
@@ -120,7 +138,7 @@ function Base.read(store::DuckDBStore, ::Type{T}, ids::AbstractVector)::Vector{U
         for (position, shell) in tables
             data = get(found, keys[position], nothing)
             data === nothing && continue
-            item = _rebuilt(shell, String(ids[position]), data)
+            item = _rebuilt(shell, String(ids[position]), data, store.metadata[keys[position]])
             item isa T && (items[position] = item)
         end
     end
@@ -136,10 +154,9 @@ end
 
 const READ_BATCH_IDS = 1_000
 
-function _rebuilt(shell::StoredShell, id::String, data)
+function _rebuilt(shell::StoredShell, id::String, data, given::Dict{Symbol,Any})
     try
-        type, given = _deserialize_hex(shell.shell)
-        return DataBrowserAPI.reconstruct(type, id, data, given)
+        return DataBrowserAPI.reconstruct(_deserialize_type(shell.type_hex), id, data, given)
     catch
         # Written by another Julia or package version: compute it again.
         return nothing
@@ -186,6 +203,7 @@ DataBrowserAPI.stored_size(store::DuckDBStore, ::Type{T}, id::AbstractString) wh
 
 # The caller holds the store lock.
 function _forget_table!(store::DuckDBStore, id::String)::Nothing
+    pop!(store.metadata, id, nothing) === nothing || delete!(store.metadata_rows, id)
     pop!(store.shells, id, nothing) === nothing && return nothing
     delete!(store.tables, id)
     delete!(store.shell_rows, id)
@@ -213,6 +231,7 @@ function Base.close(store::DuckDBStore)
     @lock store.lock begin
         close!(store.tables)
         close!(store.shell_rows)
+        close!(store.metadata_rows)
         _run(store.serialized, "CHECKPOINT")
         DBInterface.close!(store.serialized)
         DBInterface.close!(store.database)

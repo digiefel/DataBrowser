@@ -11,6 +11,11 @@ abstract type AbstractDataSourceItem end
 
 Return metadata supplied directly by `value`. It does not include metadata supplied by source
 items or collections around that value.
+
+A metadata value may have any type that `StructUtils.lower` saves and `StructUtils.make` builds
+again: numbers, strings, symbols, dates, vectors of them, and structs of those, field by field. A
+type whose fields do not describe it defines `StructUtils.lower` and `StructUtils.lift`. All values
+under one name have one type: the workspace reports a value of another type and does not save it.
 """
 function metadata end
 

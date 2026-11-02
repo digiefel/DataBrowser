@@ -22,14 +22,15 @@ function data(value::Computation)
     return result isa AbstractDataItem ? data(result) : result
 end
 
-# The metadata of a row, or else the named parts of the result, on top of the metadata of the one
-# item the computation reads.
+# The metadata of a row, or else the metadata of the result when it is an item, on top of the
+# metadata of the one item the computation reads.
 function metadata(value::Computation)
     key = row_key(value)
     key isa ItemKey && return Dict{Symbol,Any}(metadata(CURRENT_WORKSPACE[], key))
     read = [x for x in value.args if x isa AbstractDataItem]
-    given = length(read) == 1 ? metadata_dict(metadata(only(read))) : MetadataDict()
-    return Dict{Symbol,Any}(merge(given, parts(evaluate_in_scope(value))))
+    given = length(read) == 1 ? metadata_dict(metadata(only(read))) : Dict{Symbol,Any}()
+    result = evaluate_in_scope(value)
+    return result isa AbstractDataItem ? merge(given, metadata_dict(metadata(result))) : given
 end
 
 DataBrowserAPI.members(value::Computation) = AbstractDataItem[x for x in value.args if x isa AbstractDataItem]

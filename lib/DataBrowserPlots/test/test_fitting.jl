@@ -1,7 +1,7 @@
 using Test, DataBrowserAPI, DataBrowserCore, DataBrowserPlots, GLMakie, AlgebraOfGraphics
+using Measurements: value
 
 resistance(gap; Rc, Rsh) = 2Rc + Rsh * gap
-estimate(parameter) = parameter.value
 
 struct FitTestDevice <: AbstractDataItem
     name::String
@@ -58,7 +58,7 @@ axis(drawn) = only(filter(c -> c isa Axis, drawn.content))
         contacts = fit(resistance, (Rc=1.0, Rsh=1.0))
         contacts * visual(Lines)
         scales(color = (; categories = ["A" => "chip A", "B" => "chip B"]))
-        legend(color = "$(:Chip) on $(:Wafer): $(round(estimate(contacts.Rc)))")
+        legend(color = "$(:Chip) on $(:Wafer): $(round(value(contacts.Rc)))")
     end
     legend = in_workspace((_, devices) -> only(filter(c -> c isa Legend, figure(plot, devices).content)), CHIPS)
     @test [entry.label[] for (_, entries) in legend.entrygroups[] for entry in entries] == ["chip A on WA: 300.0", "chip B on WB: 50.0"]
@@ -76,19 +76,19 @@ twice(device::FitTestDevice) = FitTestDevice(device.name, device.chip, device.ga
         end
         figure(plot([:red, :blue]), devices)
         fits = W.select(workspace, filter(startswith("fit("), W.query_items(workspace)))
-        @test sort(round.(fits.Rc)) == [50.0, 300.0]
+        @test sort(round.(value.(fits.data.Rc))) == [50.0, 300.0]
         curve_calls[] = 0
         figure(plot([:green, :orange]), devices)
         @test curve_calls[] == 0
         # A new curve, R = Rc + Rsh * gap, gives each chip twice the Rc.
         @eval counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; Rc + Rsh * gap)
-        @test timedwait(() -> sort(round.(W.select(workspace, fits.id).Rc)) == [100.0, 600.0], 20) === :ok
+        @test timedwait(() -> sort(round.(value.(W.select(workspace, fits.id).data.Rc))) == [100.0, 600.0], 20) === :ok
         # Values a window prepared keep their items' ids, and their fits are items too: twice each
         # device's R gives each chip twice the Rc.
         doubled = W.select(workspace, [W.Computation(twice, W.computation(devices, i)) for i in eachindex(devices)])
         @test doubled.id == devices.id
         figure(plot([:red, :blue]), doubled)
-        @test sort(round.(W.select(workspace, filter(startswith("fit("), W.query_items(workspace))).Rc)) == [100.0, 200.0, 600.0, 1200.0]
+        @test sort(round.(value.(W.select(workspace, filter(startswith("fit("), W.query_items(workspace))).data.Rc))) == [100.0, 200.0, 600.0, 1200.0]
     end
 end
 

@@ -30,22 +30,6 @@ found(selection::Selection) = reduce(vcat,
 found(xs::Union{AbstractVector,Tuple}) = reduce(vcat, map(found, xs); init=Read[])
 found(_) = Read[]
 
-# The metadata of a result: the metadata of an item, or the named values of a named tuple, each one
-# that metadata can hold. A vector, such as the points of a curve, is left out.
-function parts(result)::MetadataDict
-    named = result isa AbstractDataItem ? metadata(result) : result isa NamedTuple ? pairs(result) : ()
-    found = MetadataDict()
-    for (name, value) in named
-        value isa AbstractVector && continue
-        try
-            found[Symbol(name)] = metadata_value(value)
-        catch err
-            err isa ArgumentError || rethrow()
-        end
-    end
-    return found
-end
-
 """
 The collections of computed values: `Computed` at the root, and below it one for each function,
 named after it.
@@ -141,12 +125,16 @@ function compute!(workspace::Workspace, job::Job{ItemKey})::Nothing
     # TODO: the browser shows a computed item only by its title: there is no way yet to examine its
     # result or its metadata, such as the parameters of a fit.
     # A computed item that reads one item, such as the selected rows of an item, has all of that
-    # item's metadata, with the named parts of its result on top.
+    # item's metadata. When its result is an item, the metadata of the result is on top, each name
+    # after the name of the function, such as `fit_tlm.rc`, so that two functions never share one.
     definition = workspace.computations[job.key]
     origin = get(catalog.computation_targets, definition, nothing)
     exposed = origin !== nothing && origin != (job.key, ITEM_PROCESS)
-    given = !exposed && length(keys) == 1 && only(keys) isa ItemKey ? metadata(workspace, only(keys)) : MetadataDict()
-    @lock catalog.lock finish!(catalog, job; metadata=merge(given, parts(result)))
+    given = !exposed && length(keys) == 1 && only(keys) isa ItemKey ? metadata(workspace, only(keys)) : Dict{Symbol,Any}()
+    prefix = function_name(definition.f) * "."
+    computed = result isa AbstractDataItem ? metadata_dict(metadata(result)) : Dict{Symbol,Any}()
+    @lock catalog.lock finish!(catalog, job;
+        metadata=merge(given, Dict{Symbol,Any}(Symbol(prefix, name) => value for (name, value) in computed)))
     return nothing
 end
 

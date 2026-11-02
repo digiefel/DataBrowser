@@ -17,10 +17,10 @@ The carrier holds the id, the data and the metadata. Its label and its collectio
 struct RegisteredDataItem{K,D} <: AbstractDataItem
     id::String
     data::D
-    metadata::MetadataDict
+    metadata::Dict{Symbol,Any}
 end
 
-RegisteredDataItem{K}(id::AbstractString, data::D, metadata::MetadataDict) where {K,D} =
+RegisteredDataItem{K}(id::AbstractString, data::D, metadata::Dict{Symbol,Any}) where {K,D} =
     RegisteredDataItem{K,D}(String(id), data, metadata)
 
 """Copy registered data while replacing only its payload."""
@@ -30,7 +30,7 @@ RegisteredDataItem(item::RegisteredDataItem{K}, data) where {K} =
 id(item::RegisteredDataItem)::String = item.id
 label(::Type{<:RegisteredDataItem{K}}) where {K} = K
 
-metadata(item::RegisteredDataItem)::MetadataDict = item.metadata
+metadata(item::RegisteredDataItem)::Dict{Symbol,Any} = item.metadata
 data(item::RegisteredDataItem) = item.data
 
 """
@@ -51,16 +51,16 @@ what the collection `analyze` callbacks computed.
 struct NamedCollection{Level} <: AbstractCollection
     name::String
     data::Dict{String,Any}
-    metadata::MetadataDict
+    metadata::Dict{Symbol,Any}
 end
 
 NamedCollection{Level}(name::AbstractString) where {Level} =
-    NamedCollection{Level}(String(name), Dict{String,Any}(), MetadataDict())
+    NamedCollection{Level}(String(name), Dict{String,Any}(), Dict{Symbol,Any}())
 
 id(collection::NamedCollection)::String = collection.name
 label(collection::NamedCollection)::String = collection.name
 label(::Type{NamedCollection{Level}}) where {Level} = Level
-metadata(collection::NamedCollection)::MetadataDict = collection.metadata
+metadata(collection::NamedCollection)::Dict{Symbol,Any} = collection.metadata
 data(collection::NamedCollection) = isempty(collection.data) ? nothing : collection.data
 reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, metadata::Dict) where {Level} =
     NamedCollection{Level}(String(identity), Dict{String,Any}(), metadata_dict(metadata))

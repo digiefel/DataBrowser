@@ -136,7 +136,7 @@ function _render_hierarchy_tree_panel(
             Dict{CollectionKey,Vector{CollectionKey}}(), Dict{CollectionKey,Bool}(),
             Dict{CollectionKey,Bool}(), CollectionKey[], -1,
             sort!([String.(split(id, '/')) for id in Workspace.unread(workspace)]),
-            Dict{CollectionKey,Workspace.CollectionPath}(), Dict{CollectionKey,MetadataDict}())
+            Dict{CollectionKey,Workspace.CollectionPath}(), Dict{CollectionKey,Dict{Symbol,Any}}())
     else
         kept
     end

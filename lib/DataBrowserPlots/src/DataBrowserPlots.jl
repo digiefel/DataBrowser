@@ -8,7 +8,9 @@ are an extension of this package, loaded with DataBrowserGUI and GLMakie.
 """
 module DataBrowserPlots
 
-import DataBrowserAPI: @timed_dbg, metadata_value
+import DataBrowserAPI: @timed_dbg
+import Measurements
+using Measurements: measurement
 import DataBrowserCore.Workspace
 using DataBrowserCore: Selection
 import Tables

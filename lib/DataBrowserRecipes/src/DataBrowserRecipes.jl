@@ -36,7 +36,7 @@ import DataBrowserAPI:
     project_name,
     read,
     reconstruct
-using DataBrowserAPI: MetadataDict, metadata_dict
+using DataBrowserAPI: metadata_dict
 using DataBrowserSources: SourceFile
 using DataBrowserCache: DuckDBStore
 

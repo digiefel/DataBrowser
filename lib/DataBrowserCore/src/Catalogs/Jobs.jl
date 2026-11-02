@@ -402,7 +402,7 @@ function settle!(catalog::Catalog, job::Job{SourceKey}, failed::Union{PipelineSt
 end
 
 """
-    finish!(catalog, job; failed=false, metadata=MetadataDict()) -> Bool
+    finish!(catalog, job; failed=false, metadata=Dict{Symbol,Any}()) -> Bool
     finish!(catalog, source_job, entries) -> Bool
     finish!(catalog, source_job; failed=stage) -> Bool
 
@@ -421,7 +421,7 @@ function finish!(
     catalog::Catalog,
     job::Job{<:Union{ItemKey,CollectionKey}};
     failed::Bool=false,
-    metadata::AbstractDict{Symbol}=MetadataDict(),
+    metadata::AbstractDict{Symbol}=Dict{Symbol,Any}(),
 )::Bool
     @lock catalog.lock begin
         claim!(catalog, job) || return false
