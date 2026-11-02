@@ -231,8 +231,8 @@ How far the work for one item or one collection is. See [`readiness`](@ref).
 - `CURRENT`: every result is current.
 - `PARTIAL`: its own `process` is current and its member `process` is not, and nothing is queued
   for it, so views show the item without the changes of its collections.
-- `WORKING`: a result that is not current is wanted, or its job runs.
-- `UNPROCESSED`: its own `process` is not current and nothing wants it.
+- `WORKING`: a result that is not current is wanted or requested, or its job runs.
+- `UNPROCESSED`: its own `process` is not current and nothing wants or requests it.
 - `FAILED`: a computation failed, or waits for one that failed.
 """
 @enum Readiness CURRENT PARTIAL WORKING UNPROCESSED FAILED
@@ -247,7 +247,7 @@ its `process`.
 """
 function readiness(workspace::Workspace, key::Union{ItemKey,CollectionKey})::Readiness
     catalog = workspace.catalog
-    # Whether a row is not current, whether it is stuck, and whether it is wanted or runs.
+    # Whether a row is not current, whether it is stuck, and whether it is wanted, requested or runs.
     flags(row) = row === nothing || Catalogs.state(catalog, row) == Catalogs.CURRENT ? (false, false, false) :
         (true, Catalogs.stuck(catalog, row), Catalogs.running(catalog, row) || Catalogs.wanted(catalog, row))
     @lock catalog.lock begin

@@ -116,8 +116,9 @@ flowchart TB
 
 A workspace opens one project on one source. The project says how to read each source item, how to
 turn what it holds into items, and how to process items and collections. The workspace makes each of
-these calls a computation, keeps all of them in one catalog, runs them in the background, keeps
-their results, and computes them again when the source or the code changes.
+these calls a computation, keeps all of them in one catalog, and keeps their results. It runs a
+computation when its result is needed, and runs it again when the source or the code that it
+depends on changes.
 
 The project defines:
 
@@ -144,13 +145,13 @@ methods of the contract it calls.
 
 ### The engine
 
-The workspace makes each call of the project a computation, and keeps all of its computations in
-one catalog: a graph whose rows are computations, linked by the results that one row reads from
-another. Workers run the rows that something wants. They keep each result in the store that the
+The workspace makes each call of the project a computation, and keeps all of its computations in one
+catalog: a graph whose rows are computations, linked by the results that one row reads from another.
+Workers run the rows that something wants or requests. They keep each result in the store that the
 project chooses for its type, and record its version in the cache, so that a workspace that opens
 again computes only what changed. A change to the source or to the code makes the rows that depend
-on it stale, and they run again. A row that throws an error is failed: it keeps its error until its
-code or an input changes.
+on it stale, and they run again when something wants or requests them. A row that throws an error is
+failed: it keeps its error until its code or an input changes.
 
 ```mermaid
 flowchart LR

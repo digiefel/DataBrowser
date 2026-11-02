@@ -614,8 +614,9 @@ end
 # again; `evaluate` does the same check first when a method was defined since the last check. When
 # the revision changed, the rows of that signature become stale, and with them every row that reads
 # them: source items are read again, as if the source had changed them, and items and collections
-# are processed again. Collections ask `has_stage` again, so a collection `process` defined later
-# gets its rows. The same code defined again, as when a script runs again, changes nothing.
+# are processed again when a window shows them or a script reads them, or in the background with
+# `background_processing=true`. Collections ask `has_stage` again, so a collection `process` defined
+# later gets its rows. The same code defined again, as when a script runs again, changes nothing.
 #
 # While a browser is open, the keyboard focus of its main window controls these checks: an inactive
 # window pauses them, and gaining focus resumes them. Without a browser, including after closing
@@ -698,8 +699,8 @@ end
 #
 # `fit` is a function of your own. `evaluate` adds the computation as a row, keeps the row until the
 # workspace closes, runs it ahead of background work, and waits for its result. An item of the
-# workspace among the arguments stands for the row of its latest value, so the computation runs
-# again when that item changes:
+# workspace among the arguments stands for the row of its latest value, so the next `evaluate`
+# computes it again after that item changed:
 #
 # ```text
 #   Computation(fit, item)  ──bound──▶  fit(the row of the latest value of a/1)
@@ -769,11 +770,10 @@ function evaluate(workspace::Workspace, value::Computation)
     row = @lock catalog.lock begin
         row = add!(catalog, bound(workspace, value))
         row in workspace.evaluated || (hold!(catalog, row); push!(workspace.evaluated, row))
-        want!(catalog, row, VIEWED_ITEM)
         restore!(workspace, row)
         row
     end
-    wait(catalog, row) == Catalogs.CURRENT || error(failure(workspace, row))
+    wait(catalog, row, VIEWED_ITEM) == Catalogs.CURRENT || error(failure(workspace, row))
     return only(results(workspace, [row]))
 end
 
@@ -1072,20 +1072,20 @@ function materialize_items(workspace::Workspace, ids::AbstractVector{<:AbstractS
     return materialize_items(workspace, ItemKey[key(workspace, id) for id in ids])
 end
 
-# Ask for the items ahead of background work: their own `process`, or the source item they wait
-# for, and their member `process` after it.
-function want_viewed!(workspace::Workspace, keys::Vector{ItemKey})::Nothing
+# Ask for the items ahead of background work: their own `process`, or the source item that they
+# wait for, and their member `process`. A request ends when its row has a result, so the callers ask
+# again for an item that waited for its source item.
+function Catalogs.request!(workspace::Workspace, keys::Vector{ItemKey})::Nothing
     catalog = workspace.catalog
     @lock catalog.lock for key in keys
         item = workspace.tree[key]
         if item.row === nothing
             source = get(workspace.sources, item.source, nothing)
-            source === nothing || want!(catalog, source, VIEWED_ITEM)
+            source === nothing || request!(catalog, source, VIEWED_ITEM)
         else
-            Catalogs.priority(catalog, item.row) >= VIEWED_ITEM || want!(catalog, item.row, VIEWED_ITEM)
+            request!(catalog, item.row, VIEWED_ITEM)
         end
-        item.member === nothing || Catalogs.priority(catalog, item.member) >= VIEWED_COLLECTION ||
-            want!(catalog, item.member, VIEWED_COLLECTION)
+        item.member === nothing || request!(catalog, item.member, VIEWED_COLLECTION)
     end
     return nothing
 end
@@ -1100,7 +1100,7 @@ the items are ready.
 function processed(workspace::Workspace, keys::Vector{ItemKey})::Bool
     catalog = workspace.catalog
     @lock catalog.lock begin
-        want_viewed!(workspace, keys)
+        request!(workspace, keys)
         return catalog.closed || all(keys) do key
             row = workspace.tree[key].row
             row !== nothing && (Catalogs.state(catalog, row) in (Catalogs.CURRENT, Catalogs.FAILED) || Catalogs.stuck(catalog, row))
@@ -1117,14 +1117,16 @@ Ask for `items` ahead of background work, wait until each is processed, and retu
 function wait_processed(workspace::Workspace, keys::Vector{ItemKey})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
-        want_viewed!(workspace, keys)
+        request!(workspace, keys)
         for key in keys
             item = workspace.tree[key]
+            ## The rows of the item can be new, or stale again, since the request above.
+            request!(workspace, [key])
             while item.row === nothing && !item.removed && !catalog.closed
                 wait(catalog.changed)
-                want_viewed!(workspace, [key])
+                request!(workspace, [key])
             end
-            state = item.row === nothing ? Catalogs.REMOVED : wait(catalog, item.row)
+            state = item.row === nothing ? Catalogs.REMOVED : wait(catalog, item.row, VIEWED_ITEM)
             state == Catalogs.CURRENT && continue
             catalog.closed && error("The workspace was closed")
             state == Catalogs.REMOVED && error("The item \"$(item.id)\" was removed from the workspace while it was loaded")
@@ -1175,7 +1177,7 @@ function read_first!(workspace::Workspace, ids::AbstractVector{<:AbstractString}
     catalog = workspace.catalog
     @lock catalog.lock for id in ids
         row = get(workspace.sources, id, nothing)
-        row === nothing || Catalogs.priority(catalog, row) >= VIEWED_ITEM || want!(catalog, row, VIEWED_ITEM)
+        row === nothing || request!(catalog, row, VIEWED_ITEM)
     end
     return nothing
 end

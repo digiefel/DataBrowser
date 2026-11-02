@@ -151,9 +151,8 @@ columns are `id`, `label`, one column for each level of the collection tree, nam
 then each metadata key. A value that an item does not have is `missing`. `selection.data` is the
 data of each item.
 
-`select` changes nothing: the workspace's own selection is [`select!`](@ref) and
-[`selection`](@ref). Items that are not processed yet are processed now, and the call waits for
-them.
+To change the selection of the workspace, use [`select!`](@ref); [`selection`](@ref) gives it.
+Items that are not processed yet are processed now, and the call waits for them.
 """
 function select(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Selection
     found = [item(workspace, id) for id in ids]

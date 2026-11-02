@@ -284,6 +284,7 @@ DataBrowserAPI.project_name(::HelperProject) = "helper"
 DataBrowserAPI.read(::HelperProject, source::EngineSource, item::EngineSourceItem) =
     DataBrowserAPI.read(TypedProject(), source, item)
 helper_scale() = 2
+const HELPER_CALLS = Threads.Atomic{Int}(0)
 DataBrowserAPI.process(::HelperProject, i::EngineItem) = EngineItem(id(i),
     (x=i.data.x .* helper_scale(),), metadata(i))
 
@@ -293,7 +294,10 @@ DataBrowserAPI.process(::HelperProject, i::EngineItem) = EngineItem(id(i),
     try
         settled(ws)
         @test processed() == [2]
-        @eval helper_scale() = 3
+        @eval helper_scale() = (Threads.atomic_add!(HELPER_CALLS, 1); 3)
+        # Without background processing, the item is processed again when it is read, not before.
+        sleep(1.5)
+        @test HELPER_CALLS[] == 0
         @test timedwait(() -> processed() == [3], 10) === :ok
     finally
         W.close_workspace!(ws)

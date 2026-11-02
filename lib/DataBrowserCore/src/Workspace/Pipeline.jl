@@ -8,8 +8,9 @@
 # ([`Catalogs.jl`](../Catalogs.md)).
 # The workspace *holds* a row to keep it in the catalog, and *wants* it, with a priority, so that a
 # worker runs it, and runs it again when it is *stale*: when its code, an input or its computation
-# changed since it ran. The tree, which the browser shows, contains the items and collections of the
-# workspace.
+# changed since it ran. A window or a script that reads a row *requests* it: a worker runs it ahead
+# of the wanted rows, until it has a result. The tree, which the browser shows, contains the items
+# and collections of the workspace.
 #
 # A project defines the two stages of a type of collection with methods of `process`:
 #
@@ -106,8 +107,9 @@
 #     a code change                 ─▶ check_code! (Evaluate.jl) ─▶ collections!
 # ```
 #
-# When you edit a `process` method, the rows that call it become stale and run again; their source
-# items are read again when their items have left memory.
+# When you edit a `process` method, the rows that call it become stale. They run again when a window
+# shows their item or a script reads it, or in the background with `background_processing=true`;
+# their source items are read again when their items have left memory.
 #
 # Each function on this page runs inside `@lock catalog.lock` while it changes the catalog and the
 # tree, so that a window never sees half a change. When the change is complete, the workspace calls
@@ -623,8 +625,7 @@ function pace!(workspace::Workspace)::Nothing
     ## TODO: the pace changes back and forth while the memory stays near half the limit, and each
     ## change visits every source row.
     for row in values(workspace.sources)
-        Catalogs.state(catalog, row) in (Catalogs.MISSING, Catalogs.STALE) &&
-            Catalogs.priority(catalog, row) < VIEWED_ITEM && want!(catalog, row, pace)
+        Catalogs.state(catalog, row) in (Catalogs.MISSING, Catalogs.STALE) && want!(catalog, row, pace)
     end
     return nothing
 end

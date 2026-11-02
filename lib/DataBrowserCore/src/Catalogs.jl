@@ -35,13 +35,15 @@
 # so that the rows stay in the catalog. When `a/1` is removed, the workspace calls `release!` on
 # row 2.
 #
-# When the plot window opens, the workspace adds row 3, holds it, and *wants* it with `want!`, with
-# the priority of what a window shows: a wanted row runs before the rows with a lower priority. Row
-# 3 reads row 2, which reads row 1, so rows 1 and 2 get the same priority and run first. Each run of
-# a row is a *job*, and the *workers*, tasks of the workspace, run the jobs.
+# When the plot window opens, the workspace adds row 3, holds it, and *requests* it with `request!`,
+# with the priority of what a window shows: a requested row runs before the rows with a lower
+# priority, until it has a result. Row 3 reads row 2, so row 2 gets the same request when it has no
+# result yet, and runs first. Each run of a row is a *job*, and the *workers*, tasks of the
+# workspace, run the jobs.
 #
 # When the code of `process` changes, row 2 becomes *stale*: it ran with code that is no longer
-# current. Row 3 reads row 2, so row 3 becomes stale too, and both run again.
+# current. Row 3 reads row 2, so row 3 becomes stale too. The plot window then requests row 3
+# again, and both rows run again.
 #
 # Two computations are one row when their functions, arguments and settings are equal with
 # `isequal`, as the keys of a `Dict` are. When two windows draw the same fit of the same item, the
@@ -77,17 +79,22 @@
 #
 # - **Current.** A row is current when it was computed with the current code of its function and
 #   the current results of its inputs.
-# - **Compute.** A row runs when the workspace wants it, it is missing or stale, and its inputs are
-#   current. A row that is wanted passes its priority on to its inputs, so that they run first. An
-#   input keeps the highest priority that it inherited, even after its reader is no longer wanted.
+# - **Compute.** A row runs when the workspace wants it or requests it, it is missing or stale, and
+#   its inputs are current. A row passes its priority on to its inputs, so that they run first. A
+#   want lasts: an input keeps the highest priority that it inherited from a want. A request lasts
+#   until the row is current or failed.
 # - **Hold.** A row is removed when it loses its last hold while no row reads it, or its last reader
 #   while it has no hold.
 #
-# Holding and wanting are separate. A row that is held stays, but it runs only when it is wanted.
-# The workspace holds the row of each item while the item is in the workspace, and wants the row in
-# the background, or before everything else while a window shows the item. The priorities of the
-# workspace go from `VIEWED_ITEM` (6), for what a window shows, down to `BACKGROUND_COLLECTION` (1),
-# and 0 means that nothing wants the row (see "Workers" in [`Evaluate.jl`](Workspace/Evaluate.md)).
+# Holding and wanting are separate. A row that is held stays, but it runs only when it is wanted or
+# requested. The workspace holds the row of each item while the item is in the workspace. It always
+# wants the rows of source items, and the rows of the items added with `push!(workspace,
+# computation)`; it wants the rows of the other items in the background only when it was opened
+# with `background_processing=true`. A window that shows an item, or a script that reads it,
+# requests its row, which then runs before everything else. The priorities of the workspace go from
+# `VIEWED_ITEM` (6), for what a window shows or a script reads, down to `BACKGROUND_COLLECTION` (1),
+# and 0 means that nothing wants or requests the row (see "Workers" in
+# [`Evaluate.jl`](Workspace/Evaluate.md)).
 #
 # ## Who calls what
 #
@@ -95,9 +102,9 @@
 #
 # | Caller                      | Calls                                                              |
 # | --------------------------- | ------------------------------------------------------------------ |
-# | the workspace               | `add!`, `replace!`, `hold!`, `release!`, `want!`, `invalidate!`, `restore!`, `lost!` |
+# | the workspace               | `add!`, `replace!`, `hold!`, `release!`, `want!`, `request!`, `invalidate!`, `restore!`, `lost!` |
 # | a worker                    | `take!`, then `finish!`                                            |
-# | a task that waits for a row | `wait`, which gives the state of the row                           |
+# | a task that waits for a row | `wait`, which requests the row and gives its state                 |
 # | the progress display        | `count`, `queued`, `CHANGES`                                       |
 #
 # The workspace decides what a row computes, where its result and its error are kept, and which rows
@@ -175,9 +182,11 @@ mutable struct Node
     ## How many inputs are not current, and how many failed or are stuck.
     waiting::Int32
     blocked::Int32
-    ## The priority given with `want!`, the highest priority it inherited from a reader, and its holds.
+    ## The priority given with `want!`, the highest priority it inherited from a want of a reader,
+    ## the priority of a request that waits for its result (see `request!`), and its holds.
     priority::Int
     inherited::Int
+    requested::Int
     holds::Int32
     ## The version and the type of its result; see `finish!`.
     version::UInt64
@@ -316,7 +325,7 @@ running(catalog::Catalog, row::Row)::Bool = node(catalog, row).running
 """
     wanted(catalog, row) -> Bool
 
-Whether something wants `row`: its [`priority`](@ref) is above 0. Call it inside
+Whether something wants or requests `row`: its [`priority`](@ref) is above 0. Call it inside
 `@lock catalog.lock`.
 """
 wanted(catalog::Catalog, row::Row)::Bool = priority(node(catalog, row)) > 0
@@ -344,12 +353,12 @@ result_type(catalog::Catalog, row::Row)::Type = node(catalog, row).type
 """
     priority(catalog, row) -> Int
 
-The priority of `row`: the one [`want!`](@ref) gave it, or the highest that it inherited from a
-reader, whichever is higher. A row with priority 0 does not run. Call it inside
-`@lock catalog.lock`.
+The priority of `row`: the one [`want!`](@ref) gave it, the highest that it inherited from a
+reader, or the one of a [`request!`](@ref), whichever is highest. A row with priority 0 does not
+run. Call it inside `@lock catalog.lock`.
 """
 priority(catalog::Catalog, row::Row)::Int = priority(node(catalog, row))
-priority(node::Node)::Int = max(node.priority, node.inherited)
+priority(node::Node)::Int = max(node.priority, node.inherited, node.requested)
 
 # ## Instancing
 #
@@ -441,7 +450,7 @@ function add!(catalog::Catalog, value::Computation)::Row
         any(input -> node(catalog, input).state == REMOVED, input_rows(value.args)) &&
             error("An input of the computation was removed from the workspace")
         row = Row(length(catalog.nodes) + 1)
-        push!(catalog.nodes, Node(value, Row[], Row[], MISSING, false, 0, 0, 0, 0, 0, 0, 0, Nothing))
+        push!(catalog.nodes, Node(value, Row[], Row[], MISSING, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing))
         tally!(catalog, catalog.nodes[end], 1)
         catalog.row_of[value] = row
         connect!(catalog, row)
@@ -483,7 +492,8 @@ function connect!(catalog::Catalog, row::Row)::Nothing
         push!(other.readers, row)
         current.waiting += other.state != CURRENT
         current.blocked += stuck(other)
-        inherit!(catalog, input, priority(current))
+        inherit!(catalog, input, max(current.priority, current.inherited))
+        request!(catalog, input, current.requested)
     end
     queue!(catalog, row)
     return nothing
@@ -541,13 +551,14 @@ end
 """
     want!(catalog, row, priority)
 
-Give `row` this priority: the higher the priority, the sooner it runs, and 0 means that nothing
-wants it. The workspace has a constant for each priority, such as `VIEWED_ITEM` for an item that a
-window shows. Each row that `row` reads, directly or through other rows, inherits the priority when
-it has a lower one.
+Give `row` this priority until the next `want!` of `row`: the higher the priority, the sooner it
+runs, and 0 means that nothing wants it. The workspace has a constant for each priority, such as
+`BACKGROUND_ITEM` for the `process` of an item in the background. Each row that `row` reads,
+directly or through other rows, inherits the priority when it has a lower one.
 """
-# TODO: lowering the priority of a row does not lower what its inputs inherited, so an input that a
-# view wanted once keeps that priority when it becomes stale again.
+# TODO: an input keeps what it inherited after its reader is lowered, replaced or removed. The
+# workspace lowers only source rows, which read no rows, but it replaces and removes computed items,
+# whose inputs keep `BACKGROUND_ITEM`.
 function want!(catalog::Catalog, row::Row, priority::Int)::Nothing
     @lock catalog.lock begin
         current = node(catalog, row)
@@ -565,6 +576,28 @@ function inherit!(catalog::Catalog, row::Row, priority::Int)::Nothing
     current.inherited = priority
     queue!(catalog, row)
     foreach(input -> inherit!(catalog, input, priority), current.inputs)
+    return nothing
+end
+
+"""
+    request!(catalog, row, priority)
+
+Ask for the result of `row`: until the row is current or failed, it has at least this priority,
+and so does each row that it reads, directly or through other rows, until that row is current or
+failed. A row that is current or failed does not change. A row that reads a failed row keeps its
+request, and runs once the failed row is current again. When a row becomes stale while the request
+of a reader waits, it gets that request. The workspace requests what a window shows and what a
+script reads with `VIEWED_ITEM`, and the member `process` of each of these items with
+`VIEWED_COLLECTION`.
+"""
+function request!(catalog::Catalog, row::Row, priority::Int)::Nothing
+    @lock catalog.lock begin
+        current = node(catalog, row)
+        (current.state in (MISSING, STALE) && current.requested < priority) || return nothing
+        current.requested = priority
+        queue!(catalog, row)
+        foreach(input -> request!(catalog, input, priority), current.inputs)
+    end
     return nothing
 end
 
@@ -590,6 +623,8 @@ function invalidate!(catalog::Catalog, row::Row, outside::Bool)::Nothing
     current.revision += 1
     had && (push!(catalog.lost, row); set!(catalog, row, STALE))
     foreach(reader -> invalidate!(catalog, reader, false), current.readers)
+    ## A reader whose request waits needs this row again.
+    request!(catalog, row, maximum(reader -> node(catalog, reader).requested, current.readers; init=0))
     queue!(catalog, row)
     return nothing
 end
@@ -601,6 +636,8 @@ function set!(catalog::Catalog, row::Row, state::State)::Nothing
     was_current, was_stuck = current.state == CURRENT, stuck(current)
     tally!(catalog, current, -1)
     current.state = state
+    ## A request ends with a result.
+    state in (CURRENT, FAILED) && (current.requested = 0)
     tally!(catalog, current, 1)
     for reader in current.readers
         other = node(catalog, reader)
@@ -756,16 +793,18 @@ function restore!(catalog::Catalog, row::Row; failed::Bool=false, version::UInt6
 end
 
 """
-    wait(catalog, row) -> State
+    wait(catalog, row, priority) -> State
 
-Wait until `row` has a result, is stuck, or is removed, or until the catalog closes, and give its
-state. Only a row that something wants runs: [`want!`](@ref) it first, or `wait` waits until the
-catalog closes. `wait` gives `MISSING` or `STALE` for a row that reads a failed row, and for any
-row of a closed catalog; tell them apart with [`stuck`](@ref) and `catalog.closed`. A failed row
-gives `FAILED`.
+[`request!`](@ref) `row` with `priority`, wait until it has a result, is stuck, or is removed, or
+until the catalog closes, and give its state. When the row becomes stale again while the task
+waits, `wait` requests it again. `wait` gives `MISSING` or `STALE` for a row that reads a failed
+row, and for any row of a closed catalog; tell them apart with [`stuck`](@ref) and
+`catalog.closed`. A failed row gives `FAILED`.
 """
-function Base.wait(catalog::Catalog, row::Row)::State
+function Base.wait(catalog::Catalog, row::Row, priority::Int)::State
     @lock catalog.lock while true
+        ## A request ends with a result, and the row can be stale again by the time the task wakes.
+        request!(catalog, row, priority)
         current = node(catalog, row)
         (current.state in (CURRENT, FAILED, REMOVED) || current.blocked > 0 || catalog.closed) &&
             return current.state

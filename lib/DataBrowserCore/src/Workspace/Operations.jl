@@ -13,7 +13,10 @@ Close the workspace with [`close_workspace!`](@ref). A workspace that is still o
 is closed then.
 
 Saved edits to code tracked by Revise, including files loaded with `Revise.includet`, are loaded
-automatically while the workspace is open. Affected results are computed again without a REPL command.
+automatically while the workspace is open. The workspace then reads the affected source items and
+computes the affected items added with `push!` again, in the background. It processes the other
+affected items again when a window shows them or a script reads them, or in the background with
+`background_processing=true`.
 An open browser pauses these automatic updates while its main window is inactive.
 """
 function open_workspace(
