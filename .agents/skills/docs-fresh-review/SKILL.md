@@ -29,8 +29,8 @@ docstrings carry the page, and the prose leads from one to the next.
    `~/.claude/CLAUDE.md`, which holds style rules only.
 4. **Check** each claim of a report against the code before acting on it. Reviewers misread, and
    a page can be right where a reviewer says it contradicts itself.
-5. **Apply** what holds. A finding that asks for a rename of an API name, or shows that the docs
-   and the code disagree on what the program should do, goes to Davide as a question instead.
+5. **Apply** what holds. A finding that shows that the docs and the code disagree on what the
+   program should do goes to Davide as a question instead.
 6. **Rebuild** the site with `julia --project=docs docs/make.jl`, check that the pages give no
    warnings, and commit. Comments and docstrings only: no test run.
 
