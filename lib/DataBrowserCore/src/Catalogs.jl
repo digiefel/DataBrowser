@@ -1,10 +1,10 @@
-# A catalog holds the computations of a workspace and decides which of them run, in which order,
-# and which results are out of date: it is the scheduler of the workspace. A computation,
-# `Computation(f, args...; settings...)`, is a call before it runs: a function, its arguments, and
-# its keyword arguments, called *settings*. The catalog gives each computation one *row*. A `Row` is
-# the number of a row, and a `Node` is what the catalog keeps for it: its state, its inputs and
-# readers, its priority and its holds. The catalog keeps no results and no errors: the workspace
-# keeps them (see [`Evaluate.jl`](Workspace/Evaluate.md)).
+# Each workspace has one catalog. The catalog holds the computations of the workspace and decides
+# which of them run, in which order, and which results are out of date: it is the scheduler of the
+# workspace. A computation, `Computation(f, args...; settings...)`, is a call before it runs: a
+# function, its arguments, and its keyword arguments, called *settings*. The catalog gives each
+# computation one *row*. A `Row` is the number of a row, and a `Node` is what the catalog keeps for
+# it: its state, its inputs and readers, its priority and its holds. The catalog keeps no results
+# and no errors: the workspace keeps them (see [`Evaluate.jl`](Workspace/Evaluate.md)).
 #
 # When an argument is another computation, that computation is a row too: it is an *input* of the
 # row, and the row is a *reader* of it. The rows and their inputs form a graph. There are no kinds of
@@ -119,7 +119,7 @@ using ..DataBrowserCore: Computation
 """
     Row
 
-The number of a row of a catalog. A number is never reused, so a `Row` kept after its row was
+The number of a row in the catalog. A number is never reused, so a `Row` kept after its row was
 removed never names another computation; `in` tells whether it is still there.
 """
 struct Row
@@ -226,9 +226,9 @@ Base.show(io::IO, input::Input) = print(io, "Input(", input.row.index, ")")
 """
     CHANGES
 
-A number that rises whenever a row of any catalog is added, changes its state, or is removed. A
-progress display draws again when it differs from the number it drew with. All catalogs share it,
-so it may also rise for a change in another catalog.
+A number that rises whenever a row is added, changes its state, or is removed. A progress display
+draws again when it differs from the number it drew with. The catalogs of all open workspaces share
+it, so it may also rise for a change in another workspace.
 """
 const CHANGES = Threads.Atomic{Int}(0)
 
