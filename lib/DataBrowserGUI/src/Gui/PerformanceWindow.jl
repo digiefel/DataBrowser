@@ -25,7 +25,7 @@ function _record_throughput!(
     active::Int,
     pending_rows::Int,
     discovered::Int,
-    cached::Int,
+    read::Int,
 )::Bool
     dt = now - h.last_sample_t
     dt >= 0.25 || return false
@@ -34,12 +34,12 @@ function _record_throughput!(
         _push_capped!(h.active, active)
         _push_capped!(h.pending_rows, pending_rows)
         _push_capped!(h.scan_per_s, max(discovered - h.last_discovered, 0) / dt)
-        _push_capped!(h.cache_per_s, max(cached - h.last_cached, 0) / dt)
+        _push_capped!(h.read_per_s, max(read - h.last_read, 0) / dt)
     end
     h.last_sample_t = now
     h.last_completed = completed
     h.last_discovered = discovered
-    h.last_cached = cached
+    h.last_read = read
     return true
 end
 
@@ -54,7 +54,7 @@ function _sample_throughput!(state::BrowserState)::Nothing
         active,
         Workspace.cache_pending_counts(workspace.cache.db).rows,
         workspace.scan.discovered[],
-        Workspace.cache_stage_summary(workspace.cache.db).cached_sources,
+        Workspace.workspace_status(workspace).counts.read,
     )
     return nothing
 end
@@ -161,7 +161,7 @@ function _render_throughput_tab!(state::BrowserState)::Nothing
     _sparkline("Pending cache rows", h.pending_rows, "")
     ig.Separator()
     _sparkline("Scan discovery", h.scan_per_s, " /s")
-    _sparkline("Cache flush", h.cache_per_s, " /s")
+    _sparkline("Source items read", h.read_per_s, " /s")
     return nothing
 end
 

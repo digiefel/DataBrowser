@@ -135,7 +135,7 @@ mutable struct Window
     # The world and the code revision of the transform when they were last read.
     code::Tuple{UInt,String}
     # The items the window waits for before it makes its value again; empty when it waits for none.
-    waiting::Vector{Workspace.Catalogs.ItemKey}
+    waiting::Vector{Workspace.ItemKey}
     # The value the window shows, and what tells whether the input gives another value now.
     # `stamp` is `nothing` until the visualizer is given the value.
     value::Any
@@ -195,11 +195,11 @@ Base.@kwdef mutable struct PerfHistory
     active::Vector{Float32}       = Float32[]   # background tasks in flight  ┐ backlog
     pending_rows::Vector{Float32} = Float32[]   # cache write queue depth     ┘
     scan_per_s::Vector{Float32}   = Float32[]
-    cache_per_s::Vector{Float32}  = Float32[]
+    read_per_s::Vector{Float32}   = Float32[]
     last_sample_t::Float64 = 0.0
     last_completed::Int = 0
     last_discovered::Int = 0
-    last_cached::Int = 0
+    last_read::Int = 0
 end
 
 """Frame counters and item-throughput history gathered during the render loop."""
@@ -228,19 +228,19 @@ mutable struct TreeCache
     generation::Int
     built::Float64
     # The collections directly below each collection, in display order.
-    children::Dict{Workspace.Catalogs.CollectionKey,Vector{Workspace.Catalogs.CollectionKey}}
-    has_visible_leaf::Dict{Workspace.Catalogs.CollectionKey,Bool}
-    subtree_matches::Dict{Workspace.Catalogs.CollectionKey,Bool}
+    children::Dict{Workspace.CollectionKey,Vector{Workspace.CollectionKey}}
+    has_visible_leaf::Dict{Workspace.CollectionKey,Bool}
+    subtree_matches::Dict{Workspace.CollectionKey,Bool}
     # The leaf collections that the filter and the tags leave visible, in display order.
-    visible::Vector{Workspace.Catalogs.CollectionKey}
+    visible::Vector{Workspace.CollectionKey}
     # The number of leaf collections, or -1 before the tree was walked.
     leaves::Int
     # The ids of the source items that are not read yet, each split at "/" and all sorted, so that
     # the source items below one folder follow each other.
     unread::Vector{Vector{String}}
     # The path and the metadata of each collection that was drawn.
-    paths::Dict{Workspace.Catalogs.CollectionKey,Workspace.CollectionPath}
-    metadata::Dict{Workspace.Catalogs.CollectionKey,Dict{Symbol,Any}}
+    paths::Dict{Workspace.CollectionKey,Workspace.CollectionPath}
+    metadata::Dict{Workspace.CollectionKey,Dict{Symbol,Any}}
 end
 
 const TREE_REFRESH_SECONDS = 0.1
@@ -253,7 +253,7 @@ struct ItemList
     key::UInt
     generation::Int
     built::Float64
-    items::Vector{Workspace.Catalogs.ItemKey}
+    items::Vector{Workspace.ItemKey}
 end
 
 """
@@ -261,9 +261,9 @@ The items of an [`ItemList`](@ref) that the tags and the item filter leave visib
 list is the same object and `key` stays the same: the key covers the filter text and the tags.
 """
 struct VisibleItems
-    listed::Vector{Workspace.Catalogs.ItemKey}
+    listed::Vector{Workspace.ItemKey}
     key::UInt
-    items::Vector{Workspace.Catalogs.ItemKey}
+    items::Vector{Workspace.ItemKey}
 end
 
 """
@@ -274,9 +274,9 @@ are selected.
 """
 struct VisibleSelection
     key::UInt
-    collections::Vector{Workspace.Catalogs.CollectionKey}
-    items::Vector{Workspace.Catalogs.ItemKey}
-    item_set::Set{Workspace.Catalogs.ItemKey}
+    collections::Vector{Workspace.CollectionKey}
+    items::Vector{Workspace.ItemKey}
+    item_set::Set{Workspace.ItemKey}
     path::Vector{String}
 end
 

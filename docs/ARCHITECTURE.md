@@ -6,7 +6,7 @@ The broader product direction is in `docs/vision.md`; proposed contract evolutio
 production non-repeatable sources, multiple live sources in one workspace, and headless tab/view
 definitions are not implied by the current diagrams. The [active plan index](plans/README.md)
 records the newer group, processing and storage proposals. Their decisions and candidate APIs are
-not claims that the fixed-stage engine or toolkit-owned payload storage below has been replaced.
+not claims about the engine described below.
 
 ## What this is
 
@@ -156,107 +156,133 @@ flowchart LR
 
 A project/source implementation defines the callbacks behind the stages. `read` is the only stage
 that receives the source. When a source item holds one data item, `read` returns that item. When it
-holds zero or several, `read` returns the loaded value and `expand` turns it into data items. Both run
-in one source job, which records whether reading succeeded (`SOURCE_READ`) and whether the items were
-created (`SOURCE_EXPAND`). The loaded value is not kept. The value of each item is kept in the store
-of its item type, under its id, until its `process` replaces it with the processed value. When that
-store no longer holds it, `read` and `expand` run again.
+holds zero or several, `read` returns the loaded value and `expand` turns it into data items. The
+loaded value is not kept.
 
-The catalog (`DataBrowserCore.Catalogs`) holds one row for each source item, item and collection,
-and the status of each stage of each row. A row is named by a key (`SourceKey`, `ItemKey`,
-`CollectionKey`) that stays the same while the workspace is open. Setting a status queues the jobs
-that depend on it; workers take jobs from the catalog and report their results to it. The workspace
-accessors (`items`, `children`, `label`, `metadata` and others) read the catalog, and the browser
-passes keys.
+### The catalog
 
-Each item row records its inputs: the source item that expanded it, or, for a computed item, the
-items it reads. A computed item records a result that no `process` of the project describes,
-because its inputs are chosen elsewhere, such as the groups of a fit in a plot. Core holds it as a
-`Computation(f, args...; settings...)` value. Its row is
-in a collection named after `f`, below the collection `Computed`. Its `process` runs `f` once every
-item it reads is processed, and again whenever one of them becomes stale. A computed
-item's metadata is the metadata of the item it reads, when it reads one, and, when its result is an
-item, the metadata of that result, each name after the name of `f`, as in `fit.Rc`, so that two
-functions never share a name. When a source item
-changes, its items are removed and added again with new keys: a computed item that read one waits,
-and reads the new item with the same id. Computed results stay in memory and are not saved in the
-cache. A plot's fit adds one computed item for each group of its points; the id of the item is the
-code that gives its result, so a plot drawn again with other visuals finds its results unchanged.
-Adding a computation with `push!(workspace, computation)` creates an indexed computed item.
-Viewing a computation is separate: windows hold references to nodes and evaluate them in their
-background preparation task. They do not create or remove catalog rows.
+The workspace keeps one catalog (`DataBrowserCore.Catalogs`): a graph of computations. Each row is
+one `Computation(f, args...; settings...)`, and its inputs are the rows among its arguments. There
+are no kinds of rows: a stage of the project, a window's function and a fit in a plot are rows of
+the same kind.
 
-Recipes return each `read` callback's value unchanged. `expand` already receives the source item,
-so it resolves the matching recipe and separates an explicit `(data=..., metadata=...)` callback
-result there. Recipe selection does not require a transport carrier around the read data.
+Each row is in one of four states:
 
-Project calls and interactive operations share the `Computation` definition in DataBrowserAPI:
-a function, arguments and settings. `computation(workspace, item)` describes the value supplied
-for an item; `computation(workspace, key, stage)` describes one pipeline call. `inputs(value)`
-returns the directly preceding computations. Reading these definitions does not load payloads
-or run project functions. `evaluate(workspace, value)` obtains the native result, reusing existing
-native result stores where available and replaying missing inputs. `storage(project, T)` chooses
-the store for results of type `T`, items or any other Julia value; the project form defaults to
-`storage(T)`. Stores receive the result as the function returned it. Returning `nothing` leaves
-that result uncached. A store is an `AbstractStore`; its docstring lists the methods it implements.
-The default `MemoryStore` uses the same bounded memory buffer as the source cache, with one 64 MiB
-store per result type per workspace opening. Store selection runs once per result type. Complete
-results are copied when written and when supplied from storage.
+| State | Meaning |
+| --- | --- |
+| missing | never computed |
+| current | computed from current inputs, with its current code |
+| stale | its code or one of its inputs changed since it was computed |
+| failed | computed from current inputs, with its current code, and it threw an error |
+
+A failed row is a result like a current one: it keeps its error, and it is computed again only when
+its code or one of its inputs changes. When a row gets another result, every row that reads it
+becomes stale. A row is computed when something wants it and its inputs are current: what a view
+asks for first, then the background work of the workspace. A row stays in the catalog while
+something holds it or reads it.
+
+### The pipeline
+
+The stages of the project are rows that the workspace adds as other rows finish:
+
+```
+read_items(project, source, source_item)   one row for each source item: read, then expand
+process(project, item)                     one row for each item, reading it from the row above
+process(project, collection, members)      one row for each collection with a collection process
+process(project, item, collection)         one row for each item and each collection above it
+                                           with member process, from the innermost one out
+```
+
+When the row of a source item finishes, the workspace adds the rows of the items it gave, removes
+the rows of the items it no longer gives, and places each item in its collection. When the items
+below a collection change, the row of its collection `process` gets the new list of members.
+
+### The tree
+
+Items and collections form a tree, kept apart from the catalog. Each item and each collection is
+named by a key (`ItemKey`, `CollectionKey`) that stays the same while the workspace is open. An item
+names the rows that give its value. The workspace accessors (`items`, `children`, `label`,
+`metadata` and others) read the tree, and the browser passes keys. The tree view of the browser is
+one visualizer among others.
+
+### Computed items
+
+A computed item is a computation that no stage of the project describes, because its inputs are
+chosen elsewhere, such as the groups of a fit in a plot. `push!(workspace, computation)` adds it as
+an item of a collection named after `f`, below the collection `Computed`. Its row is computed in the
+background once every item it reads is processed, and again whenever one of them changes. A computed
+item that reads one item has the metadata of that item, below the metadata of its result when that
+is an item. When a source item changes, a computed item that read one of its items reads the new
+item with the same id.
+
+`evaluate(workspace, computation)` computes a computation without adding an item: the workspace
+adds its row to the catalog and keeps it until it closes. Windows evaluate computations this way in
+their background preparation.
+
+### Results and versions
+
+Project calls and interactive operations share the `Computation` definition in DataBrowserAPI: a
+function, arguments and settings. `computation(workspace, item)` gives the computation of an item's
+latest value. `inputs(value)` returns the directly preceding computations. Reading these definitions
+does not load payloads or run project functions. `storage(project, T)` chooses the store for results
+of type `T`, items or any other Julia value; the project form defaults to `storage(T)`. Stores
+receive the result as the function returned it. Returning `nothing` leaves that result uncached. A
+store is an `AbstractStore`; its docstring lists the methods it implements. The default
+`MemoryStore` uses the same bounded memory buffer as the source cache, with one 64 MiB store per
+result type per workspace opening. Store selection runs once per result type. Complete results are
+copied when written and when supplied from storage. The items that a source item gives stay in
+memory until the `process` of each has used them.
+
+Each row has a version: a hash of the name of its function, the revision of its code, the versions
+of its inputs, and its other arguments and settings. The same version means the same result, also
+in another session. The cache records, under the name of each row, the version of its last result,
+and its error when it failed. The name of a row is its function with the name of each argument, as
+`fit(sample)`, or a name the pipeline gives it, as `read:` and the id of the source item. After a
+reopen, a row whose recorded version is its current version takes the recorded result: the value in
+its store, or its error.
 
 `last_execution(workspace, computation)` reports a completed call's duration, completion date and
 whether it returned normally. It reads recorded information without loading stored data. Timing
 covers elapsed function-call time, including compilation and scheduling waits, and excludes input
 evaluation and result storage; a cache hit does not
-replace the last execution. The record belongs to the current computation revision and workspace
-opening. `cache_info(workspace, computation)` checks availability without loading the result;
+replace the last execution. The record belongs to the current workspace opening.
+`cache_info(workspace, computation)` checks availability without loading the result;
 its `bytes` field uses the store's optional `stored_size` report.
 
-Code displays these computations as selectable rows. Each row retains the actual computations
-for its items, and selection passes those definitions through `output`. Linked windows use the
-same reference-evaluation path as table selections. A computation is itself an item: in the
-workspace in scope, `data` is its kept result, `metadata` the named parts of the result on top of
-the metadata of the one item it reads. In a selection, a computation that gives a row's value has
-that row's id, label and metadata.
-Scientific transforms receive the native result of the preceding call. Neither selection nor
-window refresh registers a browsable item or builds an identity by printing the input graph.
+The code view shows these computations as calls, in the order they ran. The row of a source item
+shows as two calls, `read` and `expand`; the `read` call gives what `read` returns, computed when a
+window asks for it. Each call retains the actual computations for its items, and selection passes
+those definitions through `output`. Linked windows use the same reference-evaluation path as table
+selections. A computation is itself an item: in the workspace in scope, `data` is its kept result,
+`metadata` the metadata of the item it gives, or else the metadata of the one item it reads with the
+metadata of its result on top. In a selection, a computation that gives a row's value has that
+row's id, label and metadata. Scientific transforms receive the native result of the preceding
+call. Neither selection nor window refresh registers a browsable item.
 
-Project steps and interactive computations share these result records and storage operations.
-Interactive computations evaluate their input graph directly, replacing their former separate
-input-filling and result dictionaries. Unindexed nodes use the same type-selected stores and
-execution records as scheduled project calls. Their input revisions invalidate their cached results.
-Results from stale work are discarded, and invalidated results are not reused. Replacing a result
-releases its stored value; closing the workspace keeps it. A store keeps the current value of each
-item under its id: the result of its member `process`, or else of its own `process`. A store that
-keeps values on disk, such as `DuckDBStore`, supplies it again after a reopen while the cache
-records the stage as current. Earlier values of an item are computed again when needed.
-A computation's result is stored under its id with each item input written as the item's id, for
-example `fit(sample)`. The cache records the revision of the code and of the item results it was
-computed from, and supplies it after a reopen only while that revision is current.
-
-The scheduler, publication jobs and cache addressing still use the fixed stages described below.
-Their project calls use the same computation invocation. Materialization evaluates the computation
-of an item's current version: it uses stored results and runs again what no store keeps. The cache
-records which stages finished and the metadata they delivered, independently of the stored values.
-Source reads, expanded items and collection data still use the older cache payload paths.
+### Code changes
 
 Workers run project code in the latest world, so a method defined after the workspace opened is
-used. Each stage has a code revision for each type it runs for: a content hash of the code it can
-reach from `stage_roots(project, stage, type)` (`DataBrowserCore.CodeRevisions`). The walk follows
+used. Each signature of a row, its function and the types of its arguments, has a code revision:
+a content hash of the code it can reach from its roots (`DataBrowserCore.CodeRevisions`). The roots
+of a row of the pipeline are `stage_roots(project, stage, type)`; the roots of any other row are its
+function. The walk follows
 the names in lowered code, the methods of each function reached, closures and their captured values,
 constants, and every method that the project adds to a library function, such as `Base.show` for a
 project type. It follows only `Main` and packages developed from a local folder (`Pkg.develop`).
 It skips every other package, and DataBrowser itself, and adds the Julia version and the Manifest
-instead. When the walk fails, the stage still runs and its code counts as not tracked. A Recipes project lists its registered callbacks
+instead. When the walk fails, the row still runs and its code counts as not tracked. A Recipes project lists its registered callbacks
 as roots.
 
-The first time a stage runs for a type, the worker records its revision, also in the cache. Twice a
-second the workspace asks Revise to load saved edits, including files tracked with `includet`, even
-when the REPL is idle. It then compares the roots with the recorded ones; after a method definition,
-or when the roots differ, it computes the revision again. When the revision changed, the results of the stage
-for that type are invalidated: source items are read again, as if the source had changed them, and
-items and collections run the stage again. Collections ask `has_stage` again, so a collection stage
-defined later gets its jobs. The same code defined again, as when a script runs again, changes
-nothing. On reopening, a saved result counts only if the revision it was computed with is current.
+The first time a row of a signature runs, the workspace computes the revision of its code. The
+version of each result includes it, so the cache keeps it with each result. Twice a second the
+workspace asks Revise to load saved edits, including files tracked with `includet`, even when the
+REPL is idle. It then compares the roots with the recorded ones; after a method definition, or when
+the roots differ, it computes the revision again. `evaluate` does the same check first when a method
+was defined since the last check. When the revision changed, the rows of that signature become
+stale, and with them every row that reads them: source items are read again, as if the source had
+changed them, and items and collections are processed again. Collections ask `has_stage` again, so
+a collection `process` defined later gets its rows. The same code defined again, as when a script
+runs again, changes nothing. On reopening, a recorded result counts only if its version is current.
 
 While a browser is open, its main window's keyboard focus controls these automatic updates. An
 inactive window pauses Revise loading and code-revision checks; gaining focus resumes them.
@@ -265,15 +291,15 @@ Without a browser, including after closing one, the workspace continues checking
 The revision does not see a mutable value changed in place, nor a change to a macro: the functions
 that use a macro keep their old expansion until they are defined again. It warns about code it
 cannot follow: a non-constant global, a call through `eval`, `invokelatest` or a computed name, a
-generated function, and a value it cannot read; the warning names the way from the stage to it (`research_notes/code-change-detection/design.md`).
+generated function, and a value it cannot read; the warning names the way from the root to it (`research_notes/code-change-detection/design.md`).
 
-Jobs run in this order: what a view asks for, then source items, then the background work on items,
-then the background work on collections. The data that `expand` gives each item stays in memory
-until the `process` of the item has used it. When that data reaches half its limit
-(`expanded_data_limit` of `open_workspace`), items are processed before more source items are read, so that a
-source item normally does not need a second read/expand while processing that batch. This pacing
-does not guarantee exactly-once source access: `read` runs again when the expanded value of an
-item is no longer kept, for example after its `process` failed or ran again.
+Rows run in this order: what a view asks for, then source items, then the background work on
+items, then the background work on collections. The items that a source item gives stay in memory
+until the `process` of each has used them. When they reach half their limit
+(`expanded_data_limit` of `open_workspace`), items are processed before more source items are read,
+so that a source item normally does not need a second read while processing that batch. This pacing
+does not guarantee exactly-once source access: `read` runs again when the items that a source item
+gave are no longer kept, for example after an item's `process` failed or ran again.
 
 The source items that are not read yet (`unread`) are in the collection tree of the browser from
 the moment the source lists them. Their ids, split at `/`, give folders. A folder with the label of
@@ -295,8 +321,9 @@ its metadata and label, once it is current, and the item's own processed version
 An item's metadata is its own: it does not include the metadata of the collections above it, and a
 member `process` copies what the item needs.
 
-A collection stage that the project does not define for a collection has no job: nothing is queued
-or shown as in progress for it, and it counts as done once everything below the collection is done.
+A collection `process` that the project does not define for a collection has no row: nothing is
+queued or shown as in progress for it, and it counts as done once everything below the collection
+is done.
 `has_stage(project, collection, stage)` decides, and by default answers from the `process`
 methods that apply to the collection.
 
@@ -312,11 +339,11 @@ It defines:
 The workspace owns:
 
 - the open source and its identity (multiple sources are a target, not current workspace storage)
-- the catalog of source items, items and collections, filled as source jobs finish
+- the catalog of computations, and the tree of items and collections, filled as rows finish
 - selection identities
 - cache identity, freshness, storage, and repair
 - scanning, cache work, progress, errors, and cancellation
-- the status of every stage, the job queue, and source fallback
+- the state of every row, the order in which rows run, and source fallback
 
 The browser owns windows, controls, filters, and temporary rendering state. Annotations store
 user-authored tags, notes, and other user-authored metadata. Other package modules own generic

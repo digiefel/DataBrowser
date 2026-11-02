@@ -126,9 +126,9 @@ function _render_cache_controls!(state::BrowserState)::Nothing
         shown = min(length(status.errors), 20)
         ig.BeginChild("##cache_errors", (0.0f0, 120.0f0), true)
         for index in 1:shown
-            source_item_id, message = status.errors[index]
-            ig.PushID(source_item_id)
-            if ig.TextLink(source_item_id) && select_source_item!(state, source_item_id)
+            failed, message = status.errors[index]
+            ig.PushID(failed)
+            if ig.TextLink(failed) && select_failed!(state, failed)
                 state.tree_filter = ""
                 state.item_filter = ""
                 state.reset_project_filters = true
@@ -139,7 +139,7 @@ function _render_cache_controls!(state::BrowserState)::Nothing
         end
         ig.EndChild()
         length(status.errors) > shown &&
-            ig.TextDisabled("$(length(status.errors) - shown) more file errors")
+            ig.TextDisabled("$(length(status.errors) - shown) more failures")
     end
 
     ig.Separator()
@@ -170,35 +170,18 @@ end
 
 function _render_stage_counts!(status::WorkspaceStatus)::Nothing
     counts = status.counts
-    cache = counts.cache
     flags = ig.ImGuiTableFlags_SizingStretchSame
     ig.BeginTable("stage_counts", 4, flags) || return nothing
     ig.TableNextRow()
-    _stage_count_cell("$(counts.sources_found) Sources", [
-        "$(counts.sources_found) source items found",
-        "$(cache.read_sources) read",
-        "$(cache.cached_sources) indexed",
-        "$(counts.sources_pending) pending source work",
+    _stage_count_cell("$(counts.sources) Sources", [
+        "$(counts.sources) source items found",
+        "$(counts.read) read",
     ]; align=:center)
-    _stage_count_cell("$(cache.created_items) items", [
-        "$(cache.created_items) items created and cached",
-    ]; align=:center)
-    _stage_count_cell("$(cache.processed) processed", [
-        "$(cache.processed) processed",
-    ]; align=:center)
-    stage_failures = cache.failed_read + cache.failed_expand + cache.failed_process +
-        cache.failed_collection
-    # Errors that no stage count holds, such as metadata the cache could store only in part.
-    other_issues = max(length(status.errors) - stage_failures, 0)
-    issues = stage_failures + other_issues
-    issue_word = issues == 1 ? "issue" : "issues"
-    _stage_count_cell("$(issues) $issue_word", [
-        "$(cache.failed_read) read",
-        "$(cache.failed_expand) item creation",
-        "$(cache.failed_process) process",
-        "$other_issues other",
-        "$(cache.failed_collection) collection",
-    ]; align=:center)
+    _stage_count_cell("$(counts.items) items", ["$(counts.items) items created"]; align=:center)
+    _stage_count_cell("$(counts.processed) processed", ["$(counts.processed) processed"]; align=:center)
+    issues = length(status.errors)
+    _stage_count_cell("$(issues) $(issues == 1 ? "issue" : "issues")",
+        ["$issues computations failed"]; align=:center)
     ig.EndTable()
     return nothing
 end

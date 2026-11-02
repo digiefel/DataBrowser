@@ -14,6 +14,10 @@ end
 
 Computation(f, args...; settings...) = Computation(f, args, NamedTuple(settings))
 
+# Two computations are equal when they call equal functions with equal arguments and settings.
+Base.:(==)(a::Computation, b::Computation) = a.f == b.f && a.args == b.args && a.settings == b.settings
+Base.hash(value::Computation, h::UInt) = hash(value.settings, hash(value.args, hash(value.f, hash(:Computation, h))))
+
 """
     inputs(computation) -> Vector{Computation}
 
@@ -24,10 +28,9 @@ function inputs end
 
 """
     computation(workspace, item)
-    computation(workspace, key, stage)
 
-The computation supplying an item's current value, or a particular source, item or collection
-call. Reading a computation's definition does not load its data or execute its function.
+The computation supplying an item's current value. Reading a computation's definition does not
+load its data or execute its function.
 """
 function computation end
 

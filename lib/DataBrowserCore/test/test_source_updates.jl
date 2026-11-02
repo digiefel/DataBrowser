@@ -75,7 +75,7 @@ end
             end
             @test failure isa ErrorException
             message = sprint(showerror, failure)
-            @test occursin("Stage: process", message)
+            @test occursin("Function: process", message)
             @test occursin("Item: sample", message)
             @test occursin("test_source_updates.jl", message)
 
@@ -85,7 +85,7 @@ end
 
             write(path, "sample invalid")
             @test timedwait(() -> isempty(query_items(ws)) && !isempty(workspace_status(ws).errors), 20) === :ok
-            @test occursin("Stage: read", last(only(workspace_status(ws).errors)))
+            @test occursin("Source item: sample", last(only(workspace_status(ws).errors)))
             @test_throws ErrorException materialize_items(ws, ["sample"])
 
             write(path, "sample 16")

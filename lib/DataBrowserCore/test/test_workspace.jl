@@ -490,7 +490,7 @@ end
                     settled(ws)
                     @test !isempty(W.workspace_status(ws).errors)
                     message = last(only(W.workspace_status(ws).errors))
-                    @test occursin("Stage: read", message)
+                    @test occursin("Source item: source", message)
                     @test occursin("test_workspace.jl", message)
                 finally
                     W.close_workspace!(ws)

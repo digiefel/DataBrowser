@@ -10,33 +10,33 @@ function workspace_status(workspace::Workspace)::WorkspaceStatus
     seen, previous = @atomic workspace.status
     current == seen && return previous
     # Never wait for the catalog lock here: a publication can hold it for a while, and this runs
-    # every GUI frame. If one is in flight, show the errors of the last status and keep its
+    # every GUI frame. If one is in flight, show the errors and counts of the last status and keep its
     # generation, so that the next call reads the errors again.
     catalog = workspace.catalog
     locked = trylock(catalog.lock)
-    errors = previous.errors
+    errors, counts = previous.errors, previous.counts
     if locked
         try
-            errors = sort!(
-                Pair{String,String}[id(catalog, key) => message for ((key, _), message) in workspace.errors];
-                by=first,
-            )
+            errors = sort!(Pair{String,String}[subject(workspace, row) => message for (row, message) in workspace.errors]; by=first)
+            counts = WorkspaceStageCounts(length(workspace.sources),
+                count(catalog, typeof(read_items), Catalogs.CURRENT) + count(catalog, typeof(read_items), Catalogs.FAILED),
+                length(workspace.tree.item_ids), count(catalog, typeof(process), Catalogs.CURRENT))
         finally
             unlock(catalog.lock)
         end
     end
-    status = build_status(workspace, previous, errors)
+    workspace.scan.state === :discovering &&
+        (counts = WorkspaceStageCounts(workspace.scan.discovered[], counts.read, counts.items, counts.processed))
+    status = build_status(workspace, previous, counts, errors)
     # If another caller stored an older pair meanwhile, the next call sees the mismatch and recomputes.
     @atomic workspace.status = (locked ? current : seen) => status
     return status
 end
 
 """Fold a workspace's job and cache state and its `errors` into a status, using the previous one where noted."""
-function build_status(
-    workspace::Workspace, previous::WorkspaceStatus, errors::Vector{Pair{String,String}},
-)::WorkspaceStatus
+function build_status(workspace::Workspace, previous::WorkspaceStatus, counts::WorkspaceStageCounts,
+        errors::Vector{Pair{String,String}})::WorkspaceStatus
     scan = workspace.scan
-    counts = workspace_stage_counts(workspace)
     # During an incremental update, keep the last settled verdict on the chip instead of flashing
     # colors. A rebuild or first build voids any verdict — the cache was just discarded or has
     # never existed — and without one nothing is known fresh yet, so the chip says Building.
@@ -50,7 +50,7 @@ function build_status(
         return WorkspaceStatus(
             calm_level,
             calm_label,
-            @sprintf("Finding source items… (%d found)", counts.sources_found),
+            @sprintf("Finding source items… (%d found)", counts.sources),
             true,
             nothing,
             counts,
@@ -75,9 +75,6 @@ function build_status(
     end
 
     # Settled: a single merged summary line, no bar.
-    workspace.cache.identity === nothing && return WorkspaceStatus(
-        :none, "No Project", "Open a project folder to build a cache.",
-        false, nothing, counts, errors)
     scan.state == :error && return WorkspaceStatus(
         :error, "Scan Error", scan.error, false, nothing, counts, errors)
     isempty(workspace.source_error) || return WorkspaceStatus(
@@ -90,10 +87,7 @@ function build_status(
     scan.state == :canceled && return WorkspaceStatus(
         :none, "Canceled", "The last scan was canceled.", false, nothing, counts, errors)
 
-    status = workspace.cache.status
-    status isa ProjectCacheStatus || return WorkspaceStatus(
-        :none, "Idle", "No cache loaded.", false, nothing, counts, errors)
-    if !isempty(errors) || status.error_source_items > 0
+    if !isempty(errors)
         return WorkspaceStatus(
             :error, "Errors", "Some work failed.", false, nothing, counts, errors)
     elseif !(scan.state in (:done, :unchanged))
@@ -105,16 +99,13 @@ function build_status(
     return WorkspaceStatus(:fresh, "Fresh", "Cache is current.", false, nothing, counts, errors)
 end
 
-function workspace_stage_counts(workspace::Workspace)::WorkspaceStageCounts
-    cache_counts = cache_stage_summary(workspace.cache.db)
-    status = workspace.cache.status
-    found = status isa ProjectCacheStatus ? status.total_source_items :
-        cache_counts.cached_sources + cache_counts.failed_read + cache_counts.failed_expand
-    workspace.scan.state === :discovering && (found = max(found, workspace.scan.discovered[]))
-    done = cache_counts.cached_sources + cache_counts.failed_read + cache_counts.failed_expand
-    return WorkspaceStageCounts(
-        found,
-        max(found - done, 0),
-        cache_counts,
-    )
+"""
+What a failed row computes, for a reader: the source item it reads, the item or the collection it
+gives, or else its name. The caller holds the catalog lock.
+"""
+function subject(workspace::Workspace, row::Row)::String
+    place = get(workspace.places, row, nothing)
+    place isa String && return place
+    place === nothing || return workspace.tree[place].id
+    return name(workspace, row)
 end

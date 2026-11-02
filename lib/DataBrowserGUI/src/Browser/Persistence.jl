@@ -2,7 +2,7 @@ using TOML
 import GLFW
 
 using DataBrowserAPI: AbstractVisualizer, prepare!, project_name, select!, selection, settings
-using DataBrowserCore.Catalogs: ItemKey
+using DataBrowserCore.Workspace: ItemKey
 import DataBrowserCore.Workspace
 
 """Convert a user path into the stable absolute form used by persistence."""

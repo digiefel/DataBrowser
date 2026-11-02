@@ -19,31 +19,9 @@ using CancellationTokens:
     is_cancellation_requested
 
 using ..Catalogs
+using ..Catalogs: Catalog, Row, Part, Job, add!, hold!, release!, want!, finish!, iscurrent, lost!, queued
 using ..CodeRevisions: CodeRevision, code_revision
-import ..Catalogs: Catalog, restore!, valuetype
-using ..Catalogs:
-    CollectionKey,
-    ItemEntry,
-    ItemKey,
-    Job,
-    ROOT,
-    RowKey,
-    SourceKey,
-    Target,
-    finish!,
-    iscurrent,
-    label!,
-    lookup,
-    metadata!,
-    progress,
-    publish!,
-    queued,
-    request,
-    eager!,
-    settled,
-    stale!
 using DataBrowserAPI:
-    PipelineStage,
     COLLECTION_PROCESS,
     ITEM_PROCESS,
     MEMBER_PROCESS,
@@ -54,60 +32,41 @@ using DataBrowserAPI:
 using DataBrowserCache:
     CacheDB,
     BuildMetrics,
-    CacheResultKey,
-    CacheResultStatus,
-    CacheStageSummary,
     ProjectCacheSchemaError,
     ProjectCacheDataError,
     ProjectCacheIdentity,
     ProjectCacheIndex,
-    ProjectCacheStatus,
-    RESULT_FAILED,
-    RESULT_READY,
-    cache_stage_summary,
     cache_has_pending_writes,
     cache_pending_counts,
-    cached_result_state,
-    stored_type,
     clear_cache_index!,
-    clear_cached_result_state!,
     close_cache_db!,
     delete_collection_records!,
     delete_collection_metadata!,
+    delete_computation_revision!,
     delete_source_item!,
-    delete_source_output!,
     replace_source_output!,
     ItemOutput,
     load_cache_index,
-    cached_source_fingerprints,
     open_cache_db,
     project_cache_identity,
     reset_build_metrics!,
     store_collection!,
     store_collection_process_result!,
-    store_code_revision!,
-    code_revisions,
     store_item_label!,
     store_item_metadata!,
     store_item_stage_metadata!,
-    store_result_ready!,
     store_computation_revision!,
     recorded_revision,
-    store_result_failure!,
     store_source_identity!,
-    store_source_result!,
-    source_complete,
-    cache_knows_source,
     source_item_key!
 import DataBrowserCache
 import DataBrowserCache: query_items
 import DataBrowserAnnotations: Tags
 import DataBrowserAnnotations.Tags: Tag, TagState, Untagged
-using ..DataBrowserCore: ExpandedItem, expanded_items
+import ..DataBrowserCore
+using ..DataBrowserCore: ExpandedItems, read_items, process_input
+using ..Catalogs: Input
 using ..DataBrowserCore: Computation
-using ..DataBrowserCore: invoke_computation
-import ..DataBrowserCore: evaluate_argument, computation_inputs
-using ..DataBrowserCore: ComputationStores, ComputationResult, RecordedExecution
 using DataBrowserAPI: ComputationExecution
 import DataBrowserAPI: last_execution, cache_info
 using DataBrowserAPI: AbstractStore
@@ -124,7 +83,6 @@ import DataBrowserAPI:
     SourceError,
     close_source!,
     collection,
-    expand,
     fingerprint,
     id,
     data,
@@ -145,19 +103,15 @@ import DataBrowserAPI:
 
 """
 State of the workspace's source scan: running or idle, cancel token, and how many sources were found.
-
-`epoch` increments each time a scan starts. A background scan task captures that value and ignores
-its own publishes if a newer scan has begun.
 """
 mutable struct WorkspaceScan
-    epoch::Int
     state::Symbol
     error::String
     cancel_token::Union{Nothing,CancellationTokenSource}
     discovered::Base.Threads.Atomic{Int}
 end
 
-WorkspaceScan()::WorkspaceScan = WorkspaceScan(0, :idle, "", nothing, Base.Threads.Atomic{Int}(0))
+WorkspaceScan()::WorkspaceScan = WorkspaceScan(:idle, "", nothing, Base.Threads.Atomic{Int}(0))
 
 """
 What is selected in a workspace: items by public id, and each collection by its
@@ -194,12 +148,12 @@ mutable struct WorkspaceTags
     state::TagState
     error::String
     revision::Int
-    resolved::Dict{Union{ItemKey,CollectionKey},Vector{Tag}}
+    resolved::Dict{Any,Vector{Tag}}
     resolved_at::Tuple{Int,Int}
     lock::ReentrantLock
 end
 WorkspaceTags(state::TagState, error::String) =
-    WorkspaceTags(state, error, 0, Dict{Union{ItemKey,CollectionKey},Vector{Tag}}(), (-1, -1), ReentrantLock())
+    WorkspaceTags(state, error, 0, Dict{Any,Vector{Tag}}(), (-1, -1), ReentrantLock())
 
 """
 Loaded cache state for one workspace.
@@ -208,19 +162,21 @@ mutable struct WorkspaceCache
     identity::ProjectCacheIdentity
     db::CacheDB
     disk_error::Union{Nothing,Exception}
-    status::Union{Nothing,ProjectCacheStatus}
     operation::Symbol
 end
 
-"""Counts row shown by status watchers."""
+"""
+The counts that status watchers show: source items found and read, items, and the results of
+`process` that are current.
+"""
 struct WorkspaceStageCounts
-    sources_found::Int
-    sources_pending::Int
-    cache::CacheStageSummary
+    sources::Int
+    read::Int
+    items::Int
+    processed::Int
 end
 
-WorkspaceStageCounts()::WorkspaceStageCounts =
-    WorkspaceStageCounts(0, 0, CacheStageSummary())
+WorkspaceStageCounts()::WorkspaceStageCounts = WorkspaceStageCounts(0, 0, 0, 0)
 
 """
 A single snapshot of everything a watcher needs to show about a workspace's background work.
@@ -237,8 +193,9 @@ cached value instead of rebuilding strings every frame.
 - `busy` is true while any scan, processing, or cache work runs.
 - `progress` is a determinate fraction when counts are known, or `nothing` for an indeterminate or
   absent bar.
-- `counts` carries the cache/source numbers shown by status watchers.
-- `errors` lists source-item failures as `id => first message line`, streamed as they occur.
+- `counts` carries the numbers shown by status watchers.
+- `errors` lists failures as `failed => message`, streamed as they occur. `failed` is the id of the
+  source item, item or collection that failed, or else the name of the computation.
 """
 struct WorkspaceStatus
     level::Symbol
@@ -255,63 +212,71 @@ WorkspaceStatus() =
         :none, "Opening", "Opening the source…", true, nothing,
         WorkspaceStageCounts(), Pair{String,String}[])
 
-
-"""The code a stage runs for one type: see [`check_code!`](@ref)."""
-struct StageCode
+"""
+The code that the rows of one signature run: the function, the roots that [`code_roots`](@ref)
+gives, the world they were read in, and their revision.
+"""
+struct Code
+    f::Any
     roots::Vector
     world::UInt
     revision::CodeRevision
 end
 
-"""The roots and the revision of the code that `stage` runs for `type` now."""
-function StageCode(project::AbstractProject, stage::PipelineStage, type::Type)::StageCode
-    world = Base.get_world_counter()
-    roots = stage_roots(project, stage, type)
-    return StageCode(roots, world, code_revision(roots))
-end
+include("Workspace/Tree.jl")
 
 """
 One open project/source pair and all package-managed state belonging to it.
 
-The rows live in `catalog`. The fields below it, down to `stopping`, belong to the catalog and its
-jobs: they are read and written under `catalog.lock`, and they start empty again when the workspace
-is modified.
+The computations are the rows of `catalog`, and `tree` holds the items and collections that their
+results give. Every field from `catalog` to `completed` is read and written under `catalog.lock`.
 """
 mutable struct Workspace{P<:AbstractProject}
     project::P
     source::AbstractDataSource
     catalog::Catalog
-    # The value of each source item that the scan or the source watcher reported, for its job.
-    source_items::Dict{SourceKey,AbstractDataSourceItem}
-    # One lock per source item whose items are read again outside its job.
-    source_locks::Dict{SourceKey,ReentrantLock}
-    # The ids of the items of each changed source item, from when it changed until it is expanded
-    # again, to tell which new items replace them.
-    produced_before::Dict{SourceKey,Vector{String}}
+    tree::Tree
+    # The metadata of the result of each row that gives an item or a collection, by row index.
+    produced::MetadataColumns
+    # The row that reads each source item, and the items it gives, by the id of the source item.
+    sources::Dict{String,Row}
+    by_source::Dict{String,Vector{ItemKey}}
+    # The name of each row, under which the cache keeps its version and its store keeps its result,
+    # and what it gives: a source item's items (by its id), an item, or a collection.
+    names::Dict{Row,String}
+    places::Dict{Row,Union{String,ItemKey,CollectionKey}}
+    # The code each row ran with, as the signature of its call, and the code of each signature.
+    # When the revision of a signature's code changes, the rows of that signature are stale.
+    signatures::Dict{Row,Type}
+    code::Dict{Type,Code}
+    # Whether each collection type has a collection `process` and member `process` methods.
+    stages::Dict{Type,Tuple{Bool,Bool}}
+    # The message of each failed row, and of each row whose metadata was stored only in part.
+    errors::Dict{Row,String}
+    # The items that each source row gave, kept in memory until the `process` of each has run, with
+    # their size in bytes; the sum of those sizes; and the priority of source rows that follows it.
+    expanded::Dict{Row,Tuple{ExpandedItems,Int}}
+    expanded_bytes::Int
+    pace::Int
+    # One lock per row whose result is computed again outside its job.
+    row_locks::Dict{Row,ReentrantLock}
+    executions::Dict{Row,ComputationExecution}
+    # TODO: rows that `evaluate` added stay until the workspace closes; release those nothing uses.
+    evaluated::Set{Row}
+    # Metadata that the cache saved for rows of an earlier session, by row name, until they restore.
+    saved::Dict{String,Dict{Symbol,Any}}
+    # Collections whose members or values changed since their rows were last made.
+    changed::Set{CollectionKey}
     # The key the cache uses for each collection. The cache keeps its keys from session to session.
     collection_keys::Dict{CollectionKey,Int64}
     next_collection_key::Int64
-    # The message of each failed stage, and of each stage whose metadata the cache stored in part.
-    errors::Dict{Target,String}
-    # Items that were delivered. Their process is requested, so their metadata becomes complete.
-    wanted::Set{ItemKey}
-    # Interactive definitions, and the native result location of each project or interactive call.
-    computations::Dict{ItemKey,AbstractDataItem}
-    results::IdDict{Union{Target,Computation},ComputationResult}
-    executions::IdDict{Union{Target,Computation},RecordedExecution}
-    stores::ComputationStores
-    # The code that each stage first ran with for each type: its roots, the world they were read
-    # in, and their revision. When the revision changes, the results of that stage for that type
-    # are out of date.
-    code::Dict{Tuple{PipelineStage,Type},StageCode}
-    # Source item types whose reading code changed. The scan reads their source items again, also
-    # those that the cache restored before the scan reported them.
-    outdated_reads::Set{Type}
     workers::Vector{Task}
-    # Jobs that run now, and jobs that ended since the catalog was created.
+    # Jobs that run now, and jobs that ended since the workspace opened.
     running::Int
     completed::Int
-    stopping::Bool
+    # The store that the project chooses for each result type.
+    stores::Dict{Type,Union{Nothing,AbstractStore}}
+    stores_lock::ReentrantLock
     selection::WorkspaceSelection
     tags::WorkspaceTags
     cache::WorkspaceCache
@@ -326,12 +291,8 @@ mutable struct Workspace{P<:AbstractProject}
     # Requested disk cache. Kept even when a schema error falls back to a memory cache, so a
     # rebuild can open a real disk cache again.
     disk_cache::Bool
-    # Memory limit (MiB) for the data that `expand` gave the items and `process` has not used yet.
+    # Memory limit (MiB) for `expanded`.
     expanded_data_limit::Int
-    # The value that `expand` gave each item, which `process` has not taken yet, with its size in
-    # bytes; and the sum of those sizes.
-    expanded::Dict{String,Tuple{AbstractDataItem,Int}}
-    expanded_bytes::Int
     background_tasks::Vector{Task}
     metrics::BuildMetrics
     # Held for the whole of `modify_workspace!` / `close_workspace!` so a frame cannot read a
@@ -350,21 +311,6 @@ mutable struct Workspace{P<:AbstractProject}
 end
 
 """
-An empty catalog for a workspace. A source item's job always runs without a request. With
-`background_processing`, so does every stage of every item and collection; without it, those run
-when something requests them.
-
-Source items come before the background work on items; [`pace!`](@ref) changes that while the
-expanded data waiting for `process` fills its memory limit. Collections come last.
-"""
-function Catalog(background_processing::Bool)::Catalog
-    eager = Dict{PipelineStage,Int}(SOURCE_EXPAND => SOURCES_FIRST)
-    background_processing && merge!(eager, Dict(
-        ITEM_PROCESS => 3, COLLECTION_PROCESS => 1, MEMBER_PROCESS => 1))
-    return Catalog(; eager)
-end
-
-"""
     default_expanded_data_limit() -> Int
 
 The default of `expanded_data_limit` in [`open_workspace`](@ref), in MiB: 512, or a quarter of the
@@ -372,12 +318,13 @@ memory of the machine when that is less.
 """
 default_expanded_data_limit()::Int = min(512, Sys.total_memory() ÷ 4 ÷ 1024^2)
 
-# The priority of source item jobs: above the background jobs of items, or between those and the
-# background jobs of collections.
+# The priorities of rows. Source rows come before the background work on items, or between it and
+# the background work on collections while the items they gave fill the memory limit (see `pace!`).
 const SOURCES_FIRST = 4
+const BACKGROUND_ITEM = 3
 const ITEMS_FIRST = 2
-
-# The priorities of what a view asks for: above all background work.
+const BACKGROUND_COLLECTION = 1
+# What a view asks for: above all background work.
 const VIEWED_ITEM = 6
 const VIEWED_COLLECTION = 5
 
@@ -412,7 +359,7 @@ function _open_workspace_cache(
 end
 
 """
-Create the empty state for one project-owned source.
+Create the empty state for one project-owned source. Nothing runs until [`start!`](@ref).
 """
 function Workspace(
     project::P,
@@ -425,50 +372,28 @@ function Workspace(
     metrics = BuildMetrics()
     cache_db, disk_error, identity =
         _open_workspace_cache(project, source, metrics; rebuild, cache)
-    workspace = Workspace(
-        project,
-        source,
-        Catalog(background_processing),
-        Dict{SourceKey,AbstractDataSourceItem}(),
-        Dict{SourceKey,ReentrantLock}(),
-        Dict{SourceKey,Vector{String}}(),
-        Dict{CollectionKey,Int64}(),
-        Int64(1),
-        Dict{Target,String}(),
-        Set{ItemKey}(),
-        Dict{ItemKey,AbstractDataItem}(),
-        IdDict{Union{Target,Computation},ComputationResult}(),
-        IdDict{Union{Target,Computation},RecordedExecution}(),
-        ComputationStores(),
-        Dict{Tuple{PipelineStage,Type},StageCode}(),
-        Set{Type}(),
-        Task[],
-        0,
-        0,
-        false,
+    return Workspace(
+        project, source, Catalog(), Tree(), MetadataColumns(),
+        Dict{String,Row}(), Dict{String,Vector{ItemKey}}(),
+        Dict{Row,String}(), Dict{Row,Union{String,ItemKey,CollectionKey}}(),
+        Dict{Row,Type}(), Dict{Type,Code}(), Dict{Type,Tuple{Bool,Bool}}(),
+        Dict{Row,String}(),
+        Dict{Row,Tuple{ExpandedItems,Int}}(), 0, SOURCES_FIRST,
+        Dict{Row,ReentrantLock}(), Dict{Row,ComputationExecution}(), Set{Row}(),
+        Dict{String,Dict{Symbol,Any}}(), Set{CollectionKey}(),
+        Dict{CollectionKey,Int64}(), Int64(1),
+        Task[], 0, 0,
+        Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),
         WorkspaceTags(source),
-        WorkspaceCache(identity, cache_db, disk_error, nothing, :load),
+        WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),
-        :idle,
-        "",
-        "",
-        background_processing,
-        cache,
-        Int(expanded_data_limit),
-        Dict{String,Tuple{AbstractDataItem,Int}}(),
-        0,
-        Task[],
-        metrics,
-        ReentrantLock(),
-        true,
-        Base.Threads.Atomic{Int}(0),
-        -1 => WorkspaceStatus(),
-        CancellationTokenSource(),
-        false,
+        :idle, "", "",
+        background_processing, cache, Int(expanded_data_limit),
+        Task[], metrics, ReentrantLock(), true,
+        Base.Threads.Atomic{Int}(0), -1 => WorkspaceStatus(),
+        CancellationTokenSource(), false,
     )
-    start_workers!(workspace)
-    return workspace
 end
 
 # ---------------------------------------------------------------------------
@@ -478,7 +403,7 @@ end
 Base.show(io::IO, workspace::Workspace) = print(
     io,
     "Workspace(", project_name(workspace.project), ", ", label(workspace.source),
-    ", ", progress(workspace.catalog, ROOT)[2], " items)",
+    ", ", length(items(workspace)), " items)",
 )
 
 function Base.show(io::IO, ::MIME"text/plain", workspace::Workspace)
@@ -487,23 +412,19 @@ function Base.show(io::IO, ::MIME"text/plain", workspace::Workspace)
     println(io, "  source:       ", id(workspace.source))
     println(io, "  scan:         ", workspace.scan.state)
     println(io, "  cache:        ", workspace.cache_state)
-    println(io, "  items:        ", progress(workspace.catalog, ROOT)[2])
+    println(io, "  items:        ", length(items(workspace)))
     print(io,   "  failures:     ", length(workspace.errors))
     workspace.closed && print(io, "\n  (closed)")
 end
 
-include("Workspace/Accessors.jl")
+include("Workspace/Items.jl")
 include("Workspace/Tags.jl")
+include("Workspace/Selection.jl")
+include("Workspace/Pipeline.jl")
+include("Workspace/Evaluate.jl")
 include("Workspace/Operations.jl")
 include("Workspace/Status.jl")
-include("Workspace/DataAccess.jl")
-include("Workspace/Selection.jl")
-include("Workspace/Computed.jl")
-include("Workspace/ComputationStorage.jl")
-include("Workspace/ComputationGraph.jl")
-include("Workspace/ComputationItems.jl")
 include("Workspace/Calls.jl")
-include("Workspace/Processing.jl")
 include("Workspace/MemoryDiagnostics.jl")
 
 function open_workspace(

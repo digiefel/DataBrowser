@@ -1,7 +1,7 @@
 import DataBrowserCore.Workspace
 import DataBrowserCore.Workspace: Tag, tags, tag!, untag!
 using DataBrowserAPI: id, label
-using DataBrowserCore.Catalogs: CollectionKey, ItemKey, ROOT
+using DataBrowserCore.Workspace: CollectionKey, ItemKey, ROOT
 
 """Whether the workspace read its tags; they cannot be shown or changed otherwise."""
 _tags_ready(state::BrowserState)::Bool = isempty(state.workspace.tags.error)

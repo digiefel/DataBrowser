@@ -22,9 +22,9 @@ include("fixtures/code_project.jl")
         chosen = output(code)
         @test chosen === output(code)
         @test project.processes[] == before
-        @test API.last_execution(workspace, only(chosen)).succeeded
         linked = open_window!(state, CodeConsumer(); input=WindowOutput(code.id))
         @test ready(linked)
+        @test API.last_execution(workspace, only(chosen)).succeeded
         @test only(linked.visualizer.values).signal == [1, 2, 3]
         @test project.processes[] == before
         API.select!(view; row=3)

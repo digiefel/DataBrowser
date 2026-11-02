@@ -4,7 +4,7 @@ using DataBrowserAPI:
     id,
     kind_label,
     label
-using DataBrowserCore.Catalogs: CollectionKey, ItemKey, ROOT
+using DataBrowserCore.Workspace: CollectionKey, ItemKey, ROOT
 import DataBrowserCore.Workspace
 
 """

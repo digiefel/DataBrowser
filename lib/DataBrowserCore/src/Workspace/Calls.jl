@@ -7,8 +7,8 @@ function of a computed item. Items that went through the same code share their c
 - `title`: the function's name, with the type of the values a stage of the project ran for;
 - `code`: the method, or the place in a file, that [`which`](@ref) gives; `nothing` when it is not
   known;
-- `items`: the label of each item it ran for, by id: the source items for `read` and `expand`, the
-  items for the other stages, the computed items for a function;
+- `items`: the label of each item it ran for, by id: the source items for `read`, the items and
+  collections for `process`, the computed items for a function;
 - `failed`: the first line of the error of each item it failed for, by id;
 - `result`: the type of the values a function gives, as Julia infers it before running it;
   `nothing` when Julia cannot tell, and for a stage of the project;
@@ -46,62 +46,51 @@ end
 calls(workspace::Workspace, selection::Selection) =
     calls(workspace, Computation[computation(selection, i) for i in eachindex(selection)])
 
-"""Inspect computation references without evaluating them or adding catalog entries."""
+"""How computations were made, without computing them or adding them to the workspace."""
 function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})::Vector{Call}
+    catalog = workspace.catalog
     # The calls made so far, by their code and inputs; the same code on the same inputs is one call.
     known = Dict{Tuple{String,Any,Vector{UInt}},Call}()
-    # The call of `code` on `inputs`, which ran for the item `x` with the key `key` in the errors.
-    function call!(title, code, inputs::Vector{Call}, x, key, stage; result=nothing)::Call
-        made = get!(() -> Call(title, code, Dict(), Dict(), result, Dict(), inputs), known, (title, code, map(objectid, inputs)))
-        keyed = x isa Union{ItemKey,CollectionKey}
-        x_id = keyed ? id(workspace, x) : id(x)
-        made.items[x_id] = keyed ? label(workspace, x) : label(x)
-        made.computations[x_id] = computation(workspace, key, stage)
-        failure = @lock workspace.catalog.lock get(workspace.errors, (key, stage), nothing)
-        failure === nothing || (made.failed[x_id] = first(split(failure, '\n')))
-        result === nothing || (made.result = made.result === nothing ? result : typejoin(made.result, result))
-        return made
-    end
-    # Walk the actual computation inputs. Projection and identity helpers have no project call
-    # of their own, so their inputs pass through. This also handles computations supplied by a
-    # linked visualizer without registering copies of their preceding calls.
     visited = IdDict{Computation,Vector{Call}}()
     function calls_of(value::Computation)::Vector{Call}
         haskey(visited, value) && return visited[value]
-        target = @lock workspace.catalog.lock get(workspace.catalog.computation_targets, value, nothing)
         preceding = unique!(reduce(vcat, map(calls_of, inputs(value)); init=Call[]))
-        if target === nothing
-            parentmodule(typeof(value.f)) === (@__MODULE__) && return (visited[value] = preceding)
-            title, code = function_name(value.f), which(value)
-            made = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding),
-                known, (title, code, map(objectid, preceding)))
-            identity = stored_id(workspace, value)
-            made.items[identity] = identity
-            made.computations[identity] = value
-            stored = get(workspace.results, value, nothing)
-            inferred = stored === nothing ? Base.infer_return_type(value.f, argument_types(value)) : stored.type
-            inferred === Any || (made.result = made.result === nothing ? inferred : typejoin(made.result, inferred))
-            return (visited[value] = Call[made])
+        row, place, ran_for, failure, result = @lock catalog.lock begin
+            row = get(catalog, value, Catalogs.NOWHERE)
+            place = row == Catalogs.NOWHERE ? nothing : get(workspace.places, row, nothing)
+            ran_for = place isa String ? (id(value.args[3]), label(value.args[3])) :
+                place === nothing ? (row == Catalogs.NOWHERE ? (id(value), id(value)) : (name(workspace, row), name(workspace, row))) :
+                (workspace.tree[place].id, place isa ItemKey ? workspace.tree[place].label : label(workspace.tree[place].value))
+            current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
+            row, place, ran_for, get(workspace.errors, row, nothing), current ? Catalogs.result_type(catalog, row) : nothing
         end
-        key, stage = target
-        key in workspace.catalog || return (visited[value] = preceding)
-        derived = key isa ItemKey ? get(workspace.computations, key, nothing) : nothing
-        if derived !== nothing
-            original = get(workspace.catalog.computation_targets, derived, nothing)
-            # A row exposing an existing computation adds no function call.
-            original !== nothing && original != target && return (visited[value] = preceding)
-            result = Base.infer_return_type(derived.f, argument_types(derived))
-            made = call!(function_name(derived.f), which(derived), preceding, key, key, stage;
-                result=result === Any ? nothing : result)
+        found = row == Catalogs.NOWHERE ? nothing : stage(@lock catalog.lock get(() -> call_signature(workspace, row), workspace.signatures, row))
+        # The call of `value`, with the calls it reads, kept with each call of the same code on the same inputs.
+        function made!(title, code, value, preceding, result)
+            made = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding), known, (title, code, map(objectid, preceding)))
+            made.items[first(ran_for)] = last(ran_for)
+            made.computations[first(ran_for)] = value
+            result === nothing || result === Any || (made.result = made.result === nothing ? result : typejoin(made.result, result))
+            return made
+        end
+        if found === nothing
+            made = made!(function_name(value.f), which(value), value, preceding,
+                something(result, Base.infer_return_type(value.f, argument_types(value))))
+        elseif found[1] == SOURCE_READ
+            # The row of a source item runs `read` and then `expand`, which are two calls of the
+            # project's code. The call of `read` gives what `read` returns, computed when asked for.
+            type = string(nameof(found[2]))
+            expand = which(workspace.project, SOURCE_EXPAND, found[2])
+            made = made!("read(::$type)", which(workspace.project, SOURCE_READ, found[2]),
+                expand === nothing ? value : Computation(DataBrowserAPI.read, value.args...), preceding, nothing)
+            expand === nothing || (made = made!("expand(::$type)", expand, value, Call[made], nothing))
         else
-            ran_for = key isa SourceKey ? get(workspace.source_items, key, nothing) : key
-            ran_for === nothing && return (visited[value] = preceding)
-            type = key isa SourceKey ? typeof(ran_for) : valuetype(workspace, key)
-            code = which(workspace.project, stage, key isa SourceKey ? ran_for : type)
-            code === nothing && stage != SOURCE_READ && return (visited[value] = preceding)
-            title = stage_name(stage) * "(::" * string(key isa SourceKey ? nameof(type) : label(type)) * ")"
-            made = call!(title, code, preceding, ran_for, key, stage)
+            code = which(workspace.project, found...)
+            # A stage the project does not define passes on what it receives.
+            code === nothing && return (visited[value] = preceding)
+            made = made!("process(::" * string(label(found[2])) * ")", code, value, preceding, nothing)
         end
+        failure === nothing || (made.failed[first(ran_for)] = first(split(failure, '\n')))
         return (visited[value] = Call[made])
     end
     found = reduce(vcat, map(calls_of, definitions); init=Call[])
@@ -112,6 +101,16 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         foreach(visit, call.inputs)
     end
     return filter(call -> !(call in preceding), found)
+end
+
+# The signature of a row that did not run yet. The result type of a collection row that did not run
+# is the type of its collection.
+function call_signature(workspace::Workspace, row::Row)::Type
+    value = workspace.catalog[row]
+    type(x::Input) = Catalogs.result_type(workspace.catalog, x.row) !== Nothing ? Catalogs.result_type(workspace.catalog, x.row) :
+        get(workspace.places, x.row, nothing) isa CollectionKey ? typeof(workspace.tree[workspace.places[x.row]].value) : Any
+    type(x) = argument_type(workspace, x)
+    return Tuple{typeof(value.f),map(type, value.args)...}
 end
 
 """
@@ -125,12 +124,9 @@ function InteractiveUtils.edit(call::Call)::Nothing
     return nothing
 end
 
-stage_name(stage::PipelineStage)::String =
-    stage == SOURCE_READ ? "read" : stage == SOURCE_EXPAND ? "expand" :
-    "process"
-
 # A computed argument is passed as its result, whose type is known only once it is computed.
-argument_types(value::Computation)::Type{<:Tuple} = Tuple{map(x -> x isa Computation ? Any : typeof(x), value.args)...}
+argument_types(value::Computation)::Type{<:Tuple} =
+    Tuple{map(x -> x isa Union{Computation,Input,Part} ? Any : typeof(x), value.args)...}
 
 """
     which(value::Computation) -> Union{Method,LineNumberNode,Nothing}

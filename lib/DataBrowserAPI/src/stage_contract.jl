@@ -143,7 +143,7 @@ process(member::AbstractDataItem, ::AbstractCollection) = member
 Whether `stage` is defined for `collection`: `COLLECTION_PROCESS` for the `process` of the
 collection, or `MEMBER_PROCESS` for a member `process` method of the collection. A workspace runs no
 job for a stage that is not defined, and shows no work in progress for it. It asks once for each
-collection, when it first finds the collection.
+type of collection, and again after the code of the project changes.
 
 The default answers from the methods: the stage is defined when a `process` method other than the
 default of this package applies to the collection. A project that decides in another way which

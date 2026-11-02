@@ -41,16 +41,16 @@ function _check_cache_error!(
     return nothing
 end
 
-"""Select every item produced by one source item. The browser reveals them, as for any `select!`."""
-function select_source_item!(
-    state::BrowserState,
-    source_item_id::AbstractString,
-)::Bool
+"""
+Select what a failure names: the item with the id `id`, or else every item produced by the source
+item `id`. The browser reveals them, as for any `select!`.
+"""
+function select_failed!(state::BrowserState, id::AbstractString)::Bool
     workspace = state.workspace
+    found = Workspace.item(workspace, id)
     # TODO(scale): goes through every item of the workspace; ask Core for the items of the source item.
-    items = [
-        item for item in Workspace.items(workspace)
-        if Workspace.source_item_id(workspace, item) == source_item_id]
+    items = found !== nothing ? [found] : [
+        item for item in Workspace.items(workspace) if Workspace.source_item_id(workspace, item) == id]
     isempty(items) && return false
     Workspace.select!(workspace, items)
     return true

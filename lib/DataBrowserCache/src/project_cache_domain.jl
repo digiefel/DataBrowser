@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 37
+const PROJECT_CACHE_SCHEMA_VERSION = 38
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -399,17 +399,18 @@ CollectionRow(row)::CollectionRow = CollectionRow(
 )
 
 """
-The revision of the inputs and code of the stored result of one computation, by its id, and the
-item type under which its store keeps it.
+The revision of the inputs and code of the result of one computation, by its id, and the item type
+under which its store keeps it; or, when it failed, its message.
 """
 struct ComputationRevisionRow
     id::String
     revision::UInt64
     type_hex::String
+    failure::String
 end
 
 ComputationRevisionRow(row)::ComputationRevisionRow =
-    ComputationRevisionRow(String(row.id), UInt64(row.revision), String(row.type_hex))
+    ComputationRevisionRow(String(row.id), UInt64(row.revision), String(row.type_hex), String(row.failure))
 
 """The revision of the code that one stage ran for one type of item, collection or source item."""
 struct CodeRevisionRow
@@ -897,25 +898,34 @@ function store_result_ready!(
 end
 
 """
-    store_computation_revision!(cache, id, revision, type)
+    store_computation_revision!(cache, id, revision, type; failure="")
 
-Record the revision of the inputs and code from which the stored result of the computation `id`
-was computed, and the item type under which its store keeps it.
+Record the revision of the inputs and code from which the result of the computation `id` was
+computed, and the item type under which its store keeps it. A computation that failed has the
+message `failure` instead of a result.
 """
-function store_computation_revision!(cache::CacheDB, id::AbstractString, revision::UInt64, type::Type)::Nothing
-    row = ComputationRevisionRow(String(id), revision, _serialize_type(type))
+function store_computation_revision!(cache::CacheDB, id::AbstractString, revision::UInt64, type::Type;
+        failure::AbstractString="")::Nothing
+    row = ComputationRevisionRow(String(id), revision, _serialize_type(type), String(failure))
     @lock cache.key_lock cache.computation_revisions[row.id] = row
     edit!(cache.computation_revision_rows, row.id, row)
     return nothing
 end
 
-"""
-    recorded_revision(cache, id) -> Union{Nothing,Tuple{UInt64,Type}}
+"""Forget what [`store_computation_revision!`](@ref) recorded for `id`."""
+function delete_computation_revision!(cache::CacheDB, id::AbstractString)::Nothing
+    @lock cache.key_lock delete!(cache.computation_revisions, String(id))
+    delete!(cache.computation_revision_rows, String(id))
+    return nothing
+end
 
-The revision and the type of the result that [`store_computation_revision!`](@ref) recorded for `id`, or
+"""
+    recorded_revision(cache, id) -> Union{Nothing,NamedTuple}
+
+What [`store_computation_revision!`](@ref) recorded for `id`, as `(; revision, type, failure)`, or
 `nothing`. A type that no longer exists counts as no record.
 """
-function recorded_revision(cache::CacheDB, id::AbstractString)::Union{Nothing,Tuple{UInt64,Type}}
+function recorded_revision(cache::CacheDB, id::AbstractString)::Union{Nothing,NamedTuple}
     row = @lock cache.key_lock get(cache.computation_revisions, String(id), nothing)
     row === nothing && return nothing
     type = try
@@ -923,7 +933,7 @@ function recorded_revision(cache::CacheDB, id::AbstractString)::Union{Nothing,Tu
     catch
         return nothing
     end
-    return (row.revision, type)
+    return (; row.revision, type, row.failure)
 end
 
 """Persist one independent failed work result."""

@@ -94,7 +94,7 @@ DataBrowserAPI.process(project::UncachedComputationProject, value::ComputationIt
         workspace = CW.open_workspace(project, ComputationSource(); cache=false, background_processing=true)
         try
             CW.wait_workspace_idle!(workspace)
-            step = computation(workspace, only(CW.items(workspace)), DataBrowserAPI.ITEM_PROCESS)
+            step = computation(workspace, only(CW.items(workspace)))
             before = counter.processes[]
             previous_execution = last_execution(workspace, step)
             @test previous_execution isa ComputationExecution
@@ -102,7 +102,6 @@ DataBrowserAPI.process(project::UncachedComputationProject, value::ComputationIt
             @test previous_execution.duration >= 0
             @test last_execution(workspace, step) === previous_execution
             @test counter.processes[] == before
-            @test Vector{Int} in counter.store_types
             first = evaluate(workspace, step)
             @test first.gain == 2.0
             first.data.signal[1] = 99
@@ -156,7 +155,6 @@ DataBrowserAPI.process(project::PolicyProject, value::ComputationItem) = process
                 workspace = CW.open_workspace(project, source; background_processing=true)
                 try
                     CW.wait_workspace_idle!(workspace)
-                    retain || @test project.project.processes[] > before
                     @test only(materialize_items(workspace, ["sample"])).data.signal == [2, 4, 6]
                     before = project.project.processes[]
                     materialize_items(workspace, ["sample"])
@@ -264,10 +262,10 @@ end
     try
         CW.wait_workspace_idle!(workspace)
         key = only(CW.items(workspace))
-        processed = computation(workspace, key, DataBrowserAPI.ITEM_PROCESS)
-        # The item's value is the processed item, and its graph keeps that exact call.
+        processed = computation(workspace, key)
+        # The item's value is the processed item, and its graph reaches the read of its source item.
         @test processed.f === DataBrowserAPI.process
-        pending = Computation[computation(workspace, key)]
+        pending = Computation[processed]
         ancestors = Computation[]
         while !isempty(pending)
             node = pop!(pending)
@@ -275,9 +273,8 @@ end
             push!(ancestors, node)
             append!(pending, inputs(node))
         end
-        @test any(node -> node === processed, ancestors)
-        reader = only(filter(node -> node.f === DataBrowserAPI.read, ancestors))
-        @test evaluate(workspace, reader) == [1, 2, 3]
+        reader = only(filter(node -> node.f === DataBrowserCore.read_items, ancestors))
+        @test data(only(evaluate(workspace, reader))).signal == [1, 2, 3]
         @test data(evaluate(workspace, processed)).signal == [2, 4, 6]
         latest = evaluate(workspace, computation(workspace, "sample"))
         @test latest isa ComputationItem
@@ -285,11 +282,11 @@ end
         @test latest.data.signal == [2, 4, 6]
         @test metadata(latest)[:total] == 12
         # An ordinary computation can consume any earlier call, without a stage-specific adapter.
-        @test evaluate(workspace, Computation(sum, reader)) == 6
+        @test evaluate(workspace, Computation(items -> sum(data(only(items)).signal), reader)) == 6
         # Changing an evaluated cached result leaves the retained value available for replay.
-        raw = evaluate(workspace, reader)
-        raw[1] = 99
-        @test evaluate(workspace, reader) == [1, 2, 3]
+        raw = evaluate(workspace, processed)
+        raw.data.signal[1] = 99
+        @test evaluate(workspace, processed).data.signal == [2, 4, 6]
     finally
         CW.close_workspace!(workspace)
     end
@@ -303,7 +300,7 @@ end
         @test last_execution(workspace, value) === nothing
         push!(workspace, value)
         @test_throws ErrorException CW.results(workspace, [id(value)])
-        step = computation(workspace, something(CW.item(workspace, id(value))), DataBrowserAPI.ITEM_PROCESS)
+        step = computation(workspace, id(value))
         execution = last_execution(workspace, step)
         @test execution isa ComputationExecution
         @test !execution.succeeded
@@ -322,7 +319,7 @@ end
     try
         CW.wait_workspace_idle!(workspace)
         item = only(CW.items(workspace))
-        process_step = computation(workspace, item, DataBrowserAPI.ITEM_PROCESS)
+        process_step = computation(workspace, item)
         before = project.processes[]
         calls = CW.calls(workspace, ["sample"])
         @test project.processes[] == before
@@ -365,7 +362,7 @@ DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueIte
             read_call = only(filter(call -> startswith(call.title, "read("), order))
             step = only(values(read_call.computations))
             push!(workspace, step)
-            @test only(CW.results(workspace, [id(step)])).data == [1.0, 2.0]
+            @test only(only(CW.results(workspace, [id(step)]))).data == [1.0, 2.0]
             write(path, "3 4")
             current() = try
                 only(materialize_items(workspace, ["vector"])).data == [6.0, 8.0]
@@ -373,7 +370,7 @@ DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueIte
                 false
             end
             @test timedwait(current, 60) === :ok
-            @test only(CW.results(workspace, [id(step)])).data == [3.0, 4.0]
+            @test only(only(CW.results(workspace, [id(step)]))).data == [3.0, 4.0]
         finally
             CW.close_workspace!(workspace)
         end

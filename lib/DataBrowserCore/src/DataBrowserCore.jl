@@ -10,8 +10,8 @@ using DataBrowserAPI: @timed_dbg
 import DataBrowserAPI: Computation, computation, inputs, evaluate, last_execution
 
 include("project_engine.jl")
-include("Computation.jl")
 include("Catalogs.jl")
+include("Computation.jl")
 include("CodeRevisions.jl")
 include("Workspace.jl")
 

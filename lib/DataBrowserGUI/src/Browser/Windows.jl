@@ -7,7 +7,7 @@ import DataBrowserAPI
 using DataBrowserAPI: AbstractVisualizer, id, label, prepare!, settings
 using DataBrowserAPI: @timed_dbg
 import DataBrowserAPI: output
-using DataBrowserCore.Catalogs: ItemKey
+using DataBrowserCore.Workspace: ItemKey
 using DataBrowserCore.CodeRevisions: code_revision
 import DataBrowserCore.Workspace
 
@@ -51,24 +51,26 @@ end
 # What tells whether the input of `window` gives another value than before: another stamp means
 # another value. Reading the stamp costs time in proportion to the items, so it is read again only
 # when what it is read from changed: the input and the object it names (kept items, ids or an
-# output, compared by identity), the scan, the status of any stage, or a method definition.
+# output, compared by identity), the catalog of the workspace, which a new source replaces, the state
+# of any computation, or a method definition.
 function stamp(window::Window, state::BrowserState)
     workspace = state.workspace
     input = window.input
     named = input isa LiveSelection ? itemkeys(input, state) :
         input isa FixedItems ? input.ids : output(source(input, state))
-    basis = (input, named, workspace.scan.epoch, Workspace.status_revision(workspace),
+    basis = (input, named, workspace.catalog, Workspace.status_revision(workspace),
         Base.get_world_counter())
     window.checked !== nothing && first(window.checked) === basis && return last(window.checked)
     current = stamp(input, state)
     window.checked = (basis, current)
     return current
 end
-# Item keys are never reused, so their hash tells the items apart without building their ids.
+# Item keys are never reused within a catalog, so their hash tells the items apart without building
+# their ids.
 function stamp(input::Union{LiveSelection,FixedItems}, state::BrowserState)
     workspace = state.workspace
     items = itemkeys(input, state)
-    return (workspace.scan.epoch, hash(items), Workspace.revision(workspace, items))
+    return (workspace.catalog, hash(items), Workspace.revision(workspace, items))
 end
 # A visualizer returns the same object until its output changes.
 function stamp(input::WindowOutput, state::BrowserState)
