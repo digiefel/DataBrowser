@@ -39,31 +39,32 @@ round raises new questions, so stop when the findings become small, and report t
 
 ## Writing rules
 
-- **Say what the thing is**, in familiar terms: "The catalog is a table with one row for each
-  computation"; "`Row(3)` is the third row, as in a spreadsheet". Then ordinary words need no
-  definition.
-- **Attach a definition with a relative clause**, not with a new sentence that starts with the
-  same noun: "Each workspace has one *catalog*, which holds…, decides…".
-- **Put the event in a main clause, with its actor as the subject**: "When a plot window draws a
-  fit of the item `a/1`, which comes from the source item `a.csv`, the catalog has three rows".
-  No long opening phrase of noun phrases before the main clause.
-- **No meta-language**: no sentence about the words, the page or the reader ("The words that
-  follow…", "the rest of the page…"). Describe the thing.
-- **No noun used as a verb**, above all a word that the page uses as a thing ("the cache records"
-  where a record is a thing; "names", "lists", "walks", "forwards", "answers"). Use a plain verb:
-  saves, refers to, shows, follows, calls.
-- **No pink elephants**: never deny what the reader had no reason to expect ("There are no kinds of
-  rows", "X is not a state"). State what is.
-- **No list that does not show its claim.**
-- **Full terms where the context is not there yet**: "a function call", not "a call".
-- **Italics only for jargon where it is defined**, never for an ordinary word.
-- **No pronoun with an unclear referent.**
-- **No glossary out of context**: define each word in the example, where it first happens.
-- The names of a page are its vocabulary: one term for one thing, as the code names it.
+Read every sentence as that user would: once, without the code.
 
-When Davide corrects one sentence, find the general mistake behind it, fix it on every page, and add
-the rule here and to `instructions.md`, with an invented example: the reviewer must never see a
-sentence from an earlier version of a page.
+1. **Say what the thing is, where it first appears**, in familiar terms and in a relative clause
+   attached to it: "Each workspace has one *catalog*, which holds the computations…"; "The catalog
+   is a table with one row for each computation"; "`Row(3)` is the third row, as in a spreadsheet".
+   Use concrete nouns, never "a place that keeps values". Italics mark jargon where it is defined,
+   and nothing else. Define each word inside the example where it first happens, not in a glossary
+   before it.
+2. **Write only about the thing, and only what it is and does.** No sentence about the words, the
+   page or its audience ("The words that follow…", "the rest of the page…"). No denial of what the
+   reader had no reason to expect ("There are no kinds of rows", "X is not a state", "X; not Y"),
+   and no claim about what other code does not do. No list that does not show its claim.
+3. **Make the actor the subject of a main clause**: "When a plot window draws a fit of the item
+   `a/1`, which comes from the source item `a.csv`, the catalog has three rows", not a long opening
+   phrase of noun phrases before the main clause.
+4. **Let each word mean one thing at first reading.** One term for one thing, as the code names it.
+   No noun used as a verb, above all a word that the page uses as a thing ("the cache records"
+   where a record is a thing): saves, refers to, shows, follows, calls. The full term where the
+   context is not there yet: "a function call", not "a call". No pronoun with two possible
+   referents.
+
+When Davide corrects a sentence, find the general mistake and fix it on every page. Then remove the
+rule that caused it, if there is one; else sharpen the rule that should have caught it, in its
+wording or its example; add a rule only when none covers the mistake. Change `instructions.md` to
+match, with an invented example: the reviewer must never see a sentence from an earlier version of
+a page.
 
 ## Files
 

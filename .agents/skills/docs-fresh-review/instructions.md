@@ -61,36 +61,27 @@ Work through these steps in order, and keep what each step produces.
    - length: each sentence earns its place, and fewer, better words beat more words.
 
    Do not judge whether the code is correct or fast. Judge only how well the page communicates.
-5. **Sentences.** Read the prose and the docstrings once more, sentence by sentence, looking only
-   for these patterns. They are what this reader trips over most. Report every instance, not a
-   sample. The examples are invented and come from no page:
-   - **Meta-language**: a sentence about the words, the page or the reader, instead of about the
-     thing. ("The terms below mean the following:", "Two names look alike:", "The rest of this
-     section explains…")
-   - **A noun used as a verb**, above all a word that the page also uses as a thing: "the log
-     records each request" on a page where a record is a thing; "the index names a file". Use a
-     plain verb: saves, refers to, shows, follows, calls.
-   - **A restarted sentence** where a relative clause would carry the definition: "Each user has one
-     *inbox*. The inbox stores messages and decides…" instead of "Each user has one *inbox*, which
-     stores messages and decides…".
-   - **An abstract definition** where a familiar comparison says what the thing concretely is: a
-     list, a table, a dictionary, a queue, "as in a spreadsheet". Once the reader knows the thing is
-     a table, a word like "row" needs no definition.
-   - **Italics on an ordinary word.** Italics mark jargon where it is defined, and nothing else.
-   - **A pronoun with an unclear referent**: "the server keeps a record for it", where "it" could be
-     two things.
-   - **A glossary out of context**: a table or list of terms before the reader has seen them at
-     work. Each term belongs in the example, where it first happens.
-   - **A long opening phrase** before the main clause, made of noun phrases with no verb of their
-     own, so that the actor is buried in a subordinate clause: "For a user who has a draft, and a
-     reply that a bot sends, the server keeps two copies" instead of "When a bot replies to a user
-     who has a draft, the server keeps two copies".
-   - **A short word that needs context the reader does not have yet**: "a call" where "a function
-     call" is meant; "a run" before anything has run.
-   - **A pink elephant**: a denial of something the reader had no reason to expect, which plants the
-     doubt it denies ("There are no special users", "A draft is not a message"). State what is.
-   - **A list that does not show its claim**: unrelated items joined to a statement that the items
-     do not demonstrate ("Users are all the same: an admin, a bot and a guest").
+5. **Sentences.** Read the prose and the docstrings once more, sentence by sentence, for these four
+   faults. They are what this reader trips over most. Report every instance, not a sample. The
+   examples are invented and come from no page:
+   - **A thing that is not said to be what it is, where it first appears.** An abstract definition
+     where a familiar comparison would do ("a list", "a table", "as in a spreadsheet"); a vague noun
+     ("a place that keeps values"); a definition in a new sentence that starts with the same noun
+     ("Each user has one *inbox*. The inbox stores…" instead of "Each user has one *inbox*, which
+     stores…"); a glossary before the reader has seen the terms at work; italics on an ordinary
+     word.
+   - **A sentence that is not about the thing, or not about what it is and does.** Meta-language
+     ("The terms below mean the following:", "Two names look alike:"); a denial of what the reader
+     had no reason to expect, which plants the doubt it denies ("There are no special users", "A
+     draft is not a message"); a list that does not show its claim ("Users are all the same: an
+     admin, a bot and a guest").
+   - **An actor buried outside the main clause**: a long opening phrase of noun phrases ("For a
+     user who has a draft, and a reply that a bot sends, the server keeps two copies" instead of
+     "When a bot replies to a user who has a draft, the server keeps two copies").
+   - **A word that can mean two things at first reading.** A noun used as a verb, above all a word
+     that the page uses as a thing ("the log records each request" where a record is a thing); a
+     short word that needs context the reader does not have yet ("a call" for "a function call");
+     a pronoun with two possible referents; two terms for one thing, or one term for two things.
 
 ## What to report
 
