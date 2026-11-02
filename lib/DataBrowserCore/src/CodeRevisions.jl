@@ -3,14 +3,17 @@ The revision of the code that a stage runs: a content hash of every method, type
 stage can reach by name from its [`stage_roots`](@ref), in modules that can change during a session.
 
 Two definitions with the same source give the same revision, also in a new session, so running a
-script again changes nothing, and the cache can keep a revision from one session to the next. Code
-in Base, the standard library, registered packages and DataBrowser's own packages never changes
-during a session and is not entered.
+script again changes nothing, and the cache can keep a revision from one session to the next. The
+revision follows only the code that can change during a session: `Main`, and the packages that an
+environment develops from a local folder (`Pkg.develop`) or is itself, except DataBrowser's own
+packages. Base, the standard library and every other package count through the Julia version and
+the Manifest instead.
 
-A revision is a static analysis. It is conservative where it can be: every method of a reached
-function is part of it, and every project method added to a library function (such as `Base.show` or
-`Base.iterate` for a project type) is part of the revision of every stage. Some code is out of its
-reach; the revision keeps it in `untracked`. See `research_notes/code-change-detection/design.md`.
+The revision reads the code without running it, and takes in every method that a stage may call:
+every method of a reached function is part of it, and every project method added to a library
+function (such as `Base.show` or `Base.iterate` for a project type) is part of the revision of every
+stage. The revision lists in `untracked` the code that it cannot follow. See
+`research_notes/code-change-detection/design.md`.
 """
 module CodeRevisions
 
@@ -34,7 +37,7 @@ end
 # Which modules can change
 # ---------------------------------------------------------------------------
 
-# Answers per module; modules are never unloaded.
+# Answers per module, kept for the session, as Julia keeps each module until it exits.
 const CHANGEABLE = IdDict{Module,Bool}()
 const LOCK = ReentrantLock()
 
@@ -93,7 +96,7 @@ struct MethodContent
     untracked::Vector{String}
 end
 
-# A method never changes: a redefinition makes a new `Method`.
+# A redefinition makes a new `Method`, so the content of a `Method` stays valid for the session.
 const CONTENTS = IdDict{Method,MethodContent}()
 
 # Generated names of closures and keyword bodies contain '#' and a counter that depends on the order
@@ -194,13 +197,14 @@ literal(@nospecialize(x))::Bool = x isa QuoteNode || x isa Symbol
 # Project methods on library functions
 # ---------------------------------------------------------------------------
 
-# The walk of the methods that changeable modules add to library functions, for one world.
+# The walk of the methods that changeable modules add to library functions, for one world age.
 const EXTENSIONS = Ref{Any}(nothing)
 
 """
 The parts of the methods that changeable modules add to functions they do not own, such as
 `Base.show` for a project type. Library code may call any of them, so each counts for every stage.
-DataBrowser's own functions are left out: the stage roots list the methods of those that apply.
+DataBrowser's own functions are left out, because the roots of each stage already include the
+project methods of the DataBrowser functions that the stage calls.
 """
 function extensions(world::UInt)
     known = @lock LOCK EXTENSIONS[]
@@ -219,12 +223,13 @@ function extensions(world::UInt)
     return found
 end
 
-# Read once per session: libraries do not change during a session.
+# Computed once per session: the packages that it describes change only between sessions.
 const ENVIRONMENT = Ref{Union{Nothing,String}}(nothing)
 
 """
-A hash of the Julia version and the package versions of the active environment. Libraries change
-only between sessions, when they are upgraded; their code is not walked.
+A hash of the Julia version and the package versions of the active environment. It stands for the
+code of the packages that the walk does not follow, which changes only between sessions, when they
+are upgraded.
 """
 function environment()::String
     known = @lock LOCK ENVIRONMENT[]
@@ -264,9 +269,9 @@ databrowser(mod::Module)::Bool = startswith(String(nameof(Base.moduleroot(mod)))
 # ---------------------------------------------------------------------------
 
 """
-A walk of the code reachable from some roots. It keeps what is still to follow in a list instead of
-recursing, so that its depth does not depend on how deep the code goes. Each step remembers the step
-that reached it, so that a warning about a step can show the way from a root to it.
+A walk of the code reachable from some roots, which keeps what is still to follow in a list instead
+of recursing, so that its depth does not depend on how deep the code goes. Each step remembers the
+step that reached it, so that a warning about a step can show the way from a root to that step.
 """
 mutable struct Walk
     world::UInt
@@ -287,7 +292,7 @@ end
 
 follow!(walk::Walk, @nospecialize(x))::Nothing = (push!(walk.pending, (x, walk.step)); nothing)
 
-"""Follow everything pending. A step that fails is left out, and the code is marked as not tracked."""
+"""Follow everything pending. A step that fails adds its reason to `untracked`; the walk goes on."""
 function finish!(walk::Walk)::Nothing
     while !isempty(walk.pending)
         x, from = pop!(walk.pending)
@@ -320,10 +325,10 @@ end
     code_revision(roots) -> CodeRevision
 
 The revision of the code reachable from `roots`: methods, functions and closures, and types.
-A root method of a library, such as a default stage method that calls the project's method, is
-left out: the roots already include the project's methods that it calls.
+`code_revision` leaves out a root method of a library, such as a default stage method that calls
+the project's method, because the roots already include the project's methods that it calls.
 
-When the walk fails, the revision is `"not tracked"` and gives the reason.
+When the walk itself fails, the hash is `"not tracked"`, and `untracked` gives the reason.
 """
 function code_revision(roots::AbstractVector)::CodeRevision
     walk = Walk(Base.get_world_counter())
@@ -339,7 +344,7 @@ function code_revision(roots::AbstractVector)::CodeRevision
         return CodeRevision("not tracked", [], ["the code could not be followed: $(sprint(showerror, error))"])
     end
     push!(walk.parts, "Julia and package versions" => environment())
-    ## Names are not unique: closures, for one, all have the same.
+    ## Closures, among others, share one name, so the same part can appear more than once.
     unique!(sort!(walk.parts))
     return CodeRevision(bytes2hex(sha1(join(last.(walk.parts), '\n'))), walk.parts, sort!(unique!(walk.untracked)))
 end
@@ -370,7 +375,7 @@ function visit!(walk::Walk, @nospecialize(x))::Nothing
         end
         if !(value isa Union{Function,Type,Module}) && changeable(owner)
             ## TODO: a global that is reassigned, or constant data that is changed in place, changes
-            ## no method, so the check sees it only with the next definition.
+            ## no method, so the revision shows it only after the next method definition.
             isconst(owner, x.name) || push!(walk.untracked, "reads the global $(owner).$(x.name)")
             push!(walk.parts, "$(owner).$(x.name)" => value_hash(walk, value))
         else
@@ -390,11 +395,14 @@ function visit!(walk::Walk, @nospecialize(x))::Nothing
     return nothing
 end
 
-# The changeable methods of each callable type, for one world. Listing the methods of large library
-# functions, such as `getindex`, is most of the cost of a walk.
+# The changeable methods of each callable type, for one world age. Listing the methods of large
+# library functions, such as `getindex`, is most of the cost of a walk.
 const METHODS = Ref{Pair{UInt,IdDict{Any,Vector{Method}}}}(UInt(0) => IdDict{Any,Vector{Method}}())
 
-"""Every method callable on objects of type `F`, also with keyword arguments, in changeable modules."""
+"""
+Follow every method of the function or callable object whose type is `F`, also with keyword
+arguments, in changeable modules.
+"""
 function visit_methods!(walk::Walk, @nospecialize(F::Type))::Nothing
     ## A call with keywords, `Core.kwcall(keywords, f, ...)`, also refers to `f`, whose keyword
     ## methods are followed with it. The methods of `kwcall` are every keyword method of every
@@ -420,7 +428,7 @@ function visit_methods!(walk::Walk, @nospecialize(F::Type))::Nothing
     return nothing
 end
 
-# A type never changes: a redefinition makes a new type.
+# A redefinition makes a new type, so the part of a type stays valid for the session.
 const TYPES = IdDict{DataType,Pair{String,String}}()
 
 function visit_type!(walk::Walk, T::DataType)::Nothing
@@ -450,7 +458,8 @@ end
 # Values
 # ---------------------------------------------------------------------------
 
-"""A hash of a value by its structure. Functions and types found inside are walked."""
+"""A hash of a value by its structure. The walk follows the functions and types found inside."""
+
 function value_hash(walk::Walk, @nospecialize(x))::String
     context = SHA1_CTX()
     value_hash!(walk, context, x, IdDict{Any,Nothing}(), 0)

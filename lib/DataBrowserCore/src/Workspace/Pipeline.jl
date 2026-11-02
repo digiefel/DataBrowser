@@ -1,16 +1,17 @@
-# The pipeline of a project is its stages: `read`, `expand`, `process`, and the collection and member
-# `process`. The workspace runs them as rows: a row for each source item, and then rows for the items
-# and collections that its result gives.
+# The pipeline of a project is its stages: `read`, `expand` and `process` for each source item and
+# its items, and the collection and member `process` for a type of collection. The workspace runs
+# them as rows: a row for each source item, and then rows for the items and collections that reading
+# the source item gives.
 #
-# The *catalog* of the workspace is a table with one row for each computation, which keeps the state
-# of the computation (missing, stale, current or failed) and the rows that it reads
+# The *catalog* of the workspace is a table with one row for each computation, and each row contains
+# the state of its computation (missing, stale, current or failed) and the rows that it reads
 # ([`Catalogs.jl`](../Catalogs.md)).
 # The workspace *holds* a row to keep it in the catalog, and *wants* it, with a priority, so that a
 # worker runs it, and runs it again when it is *stale*: when its code, an input or its computation
-# changed since it ran. The tree, which the browser shows, holds the items and collections of the
+# changed since it ran. The tree, which the browser shows, contains the items and collections of the
 # workspace.
 #
-# A project can give a type of collection two more stages, with methods of `process`:
+# A project defines the two stages of a type of collection with methods of `process`:
 #
 # ```julia
 # process(project, collection::Runs, members::Vector) -> Runs   # a collection `process`
@@ -42,30 +43,31 @@
 #     A ──▶ B, and A above ▼ above B: B receives the result of A.
 #     A row among the arguments stands for its result. Part(row, id) is the item `id` among the
 #     items that the row gives. read_items calls `read`, then `expand`.
-#     ★  the latest value of the item, which windows show.
-#     name: the name under which the cache saves the result of the row.
+#     ★  the latest value of the item.
+#     name: the name under which the cache saves the version and the error of the row.
 # ```
 #
-# | Row            | Runs                                                        | Added when                          |
+# | Row            | Calls                                                       | Added when                          |
 # | -------------- | ----------------------------------------------------------- | ----------------------------------- |
 # | source row     | `read`, then `expand`; the default `expand` keeps what `read` returned as the only item | the source reports the source item |
-# | own row        | the `process` of one item                                   | its source row finishes             |
+# | own row        | the `process` of one item                                   | its source row finishes, or the cache saved the source item unchanged |
 # | collection row | the collection `process`                                    | every source item is read           |
 # | member row     | the member `process`                                        | every source item is read           |
 #
-# - The source row is the only row that receives the source. Its result is the items of the source
-#   item; the value that `read` loads is not kept. The items stay in memory until the own row of
-#   each has run (see the last section).
+# - The result of the source row is the items that `expand` gives, and the source row keeps only
+#   them, not the value that `read` loaded. The items stay in memory until the own row of each has
+#   run (see "Memory of the items of source items").
 # - When the source row finishes, each item gets its own row, the items that the source item no
 #   longer gives are removed with their rows, and each new item goes into its collection.
-# - A collection with neither a collection `process` nor a member `process` has no row. The cache
-#   keeps the metadata of the collection that its collection `process` returns.
+# - A collection with neither a collection `process` nor a member `process` has no row.
+# - The cache keeps the metadata that the collection `process` of a collection returns.
 # - Collection and member rows wait until the scan has listed every source item and every source row
 #   has run: until then, each source item that finishes would change them again. Meanwhile, an item
 #   shows the result of its own row.
 # - An item below several collections with a member `process` has one member row for each, from the
-#   innermost collection outward; each reads the one before. The last gives the *latest value* of the
-#   item. An item without member rows has the result of its own row as its latest value.
+#   innermost collection outward, and each reads the one before. The last gives the *latest value*
+#   of the item, which windows show. An item without member rows has the result of its own row as
+#   its latest value.
 # - An item can also be computed from other items, as `push!(workspace, computation)` adds it
 #   ([`Evaluate.jl`](Evaluate.md)). Such an item has one row and no source row, and the cache does
 #   not save it.
@@ -74,23 +76,24 @@
 # "Workers" in [`Evaluate.jl`](Evaluate.md)). Source rows always run in the background. Own,
 # collection and member rows run in the background only with the option `background_processing` of
 # `open_workspace`, which is off by default; then source rows and own rows run in the order that the
-# memory of the waiting items chooses (see the last section), and collection and member rows last.
-# Without it, they run only when a window or a script asks for them.
+# memory of the waiting items chooses (see "Memory of the items of source items"), and collection
+# and member rows last. Without `background_processing`, own, collection and member rows run only
+# when a window or a script asks for them.
 #
 # When a workspace opens again, the cache gives back the tree, with the metadata and labels of the
 # items and collections, and the version of each row; a row whose version is the saved one is
 # current without running. The results themselves come from the stores
 # ([`Evaluate.jl`](Evaluate.md)).
 #
-# The metadata of an item is its own: it does not include the metadata of the collections above it,
-# and a member `process` copies what the item needs. Each metadata name holds values of one type in
-# the whole workspace, because the cache keeps each name in a column of one type: the type of the
-# first value saved under the name. When `a/1` gives `temperature = 300`, an `Int`, and `a/2` then
-# gives `temperature = 300.5`, a `Float64`, the value of `a/2` is not saved, and the status panel of
-# the browser shows the error with `a/2`.
+# The metadata of an item comes from the item alone; to give an item the metadata of a collection
+# above it, a member `process` copies that metadata into the item. All the values under one metadata
+# name have one type in the whole workspace, because the cache keeps each name in a column of one
+# type: the type of the first value saved under the name. When `a/1` gives `temperature = 300`, an
+# `Int`, and `a/2` then gives `temperature = 300.5`, a `Float64`, the cache does not save the value
+# of `a/2`, and the status panel of the browser shows the error next to `a/2`.
 #
-# Items and collections have an *id*, a string that the project chooses. It stays the same from one
-# session to the next, as do the names of rows. Inside the workspace, an `ItemKey` or a
+# Items and collections have an *id*, a string that the project chooses and that stays the same from
+# one session to the next, as the names of rows do. Inside the workspace, an `ItemKey` or a
 # `CollectionKey` is the place of an item or a collection in the tree while the workspace is open;
 # `ROOT` is the collection at the top. The cache keeps each collection under a number of its own, its
 # cache key.
@@ -106,8 +109,8 @@
 # When you edit a `process` method, the rows that call it become stale and run again; their source
 # items are read again when their items have left memory.
 #
-# The caller of each function on this page holds the catalog lock while it changes the catalog and
-# the tree, so that a window never sees half a change. When the change is complete, the caller calls
+# Each function on this page runs inside `@lock catalog.lock` while it changes the catalog and the
+# tree, so that a window never sees half a change. When the change is complete, the workspace calls
 # `publish!`, which forgets what the workspace kept for removed rows and tells the windows that
 # something changed.
 
@@ -117,9 +120,9 @@
     source!(workspace, source_item)
 
 Add the row of a source item that the source reports for the first time. A source item that has a
-row already gets its new computation in that row when it changed, or when it has no fingerprint. A
-*fingerprint* is the value that a source gives to tell whether a source item changed, such as the
-modification time of a file. When the cache saved the source item unchanged, its row is current at
+row already gets its new computation in that row when it changed, or when it has no *fingerprint*,
+the value that a source gives to tell whether a source item changed, such as the modification time
+of a file. When the cache saved the source item unchanged, its row is current at
 once, and so are the own rows of the items that the cache saved for it.
 """
 function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Nothing
@@ -142,7 +145,8 @@ end
 """
     own!(workspace, key, source_row)
 
-Add the own row of an item: the `process` of the item that `source_row` gives under its id.
+Add the own row of the item at `key`: the `process` of the item with the same id among the items
+that `source_row` gives.
 """
 function own!(workspace::Workspace, key::ItemKey, source_row::Row)::Nothing
     item, catalog = workspace.tree[key], workspace.catalog
@@ -213,10 +217,11 @@ end
 """
     finished!(workspace, row, source::String, given::ExpandedItems)
 
-Place the items that the row of the source item with id `source` gave: their collections, and each
-item with its own row. The items that it no longer gives are removed, and the cache saves what it
-gives now. An item id that another source item gave already is skipped, and the status panel of the
-browser shows the error with the source item.
+Put into the tree the items that the row of the source item with id `source` gave: their
+collections, and each item with its own row. The workspace removes the items that the source item no
+longer gives, and the cache saves the items that it gives now. An item id that another source item
+gave already is skipped, and the status panel of the browser shows the error next to the source
+item.
 """
 function finished!(workspace::Workspace, row::Row, source::String, given::ExpandedItems)::Nothing
     tree, db = workspace.tree, workspace.cache.db
@@ -257,10 +262,10 @@ end
 """
     finished!(workspace, row, key::ItemKey, value)
 
-Record the metadata of the result of an item's row, and the item's label once the result is its
-latest value. The cache saves both for an item of the source. An item that the workspace computes
-from one other item, as `push!` adds it, starts with the metadata of that item; the metadata of its
-result replaces each name that both have.
+Save the metadata of the result of a row of an item, and the label of the item once the result is
+its latest value. The cache saves both for an item of the source. An item that the workspace
+computes from one other item, as `push!` adds it, starts with the metadata of that item; the
+metadata of its result replaces each name that both have.
 """
 function finished!(workspace::Workspace, row::Row, key::ItemKey, value)::Nothing
     item, db = workspace.tree[key], workspace.cache.db
@@ -287,7 +292,7 @@ end
 """
     finished!(workspace, row, key::CollectionKey, collection)
 
-Record the metadata of the collection that a collection `process` returned.
+Save the metadata of the collection that a collection `process` returned.
 """
 function finished!(workspace::Workspace, row::Row, key::CollectionKey, value)::Nothing
     produced = metadata_dict(metadata(value))
@@ -308,7 +313,8 @@ conflict_message(conflict::MetadataConflict)::String =
     conflicts!(workspace, row, messages)
 
 Show the metadata values of a row that were not saved as an error of that row: the status panel of
-the browser shows it with the item, and a warning with the name of the row goes to the log.
+the browser shows the error next to the item, and a warning with the name of the row goes to the
+log.
 """
 function conflicts!(workspace::Workspace, row::Row, messages::Vector{String})::Nothing
     isempty(messages) && return nothing
@@ -386,7 +392,7 @@ function collections!(workspace::Workspace)::Nothing
     empty!(workspace.changed)
     foreach(key -> member!(workspace, key), unique!(below))
     ## Once the scan has listed every source item, forget the metadata that the cache saved for the
-    ## rows that it did not restore by now: those rows run again.
+    ## rows that the workspace has not restored yet: those rows run again.
     workspace.scan.state == :idle || empty!(workspace.saved)
     return nothing
 end
@@ -465,8 +471,10 @@ end
     restore!(workspace, index::ProjectCacheIndex)
 
 Fill the tree with the items and collections that the cache saved for the project, as `index`
-holds them, so that the browser shows them before the scan has checked the source. Their rows are added when the scan reports their source
-items; `restore!(workspace, row)` then gives each row the result that the cache saved for it.
+lists them, so that the browser shows them before the scan has checked the source. Their rows are
+added when the scan reports their source items; `restore!(workspace, row)` then makes each row
+current, or failed, when the cache saved the version that the row has now.
+
 """
 function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     index.identity.source_id == id(workspace.source) ||

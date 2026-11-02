@@ -1,8 +1,8 @@
 # A computation, `Computation(f, args...; settings...)`, is a function call before it runs: reading
 # one source item, the `process` of one item, or a function of your own, such as a fit. The
 # workspace keeps each computation in a row of its *catalog*, a table, with the state of the
-# computation: missing, stale, current or failed ([`Catalogs.jl`](../Catalogs.md)). A *job* is one
-# run of one row.
+# computation: missing, stale, current or failed ([`Catalogs.jl`](../Catalogs.md)). To compute a
+# row, the workspace runs a *job*.
 #
 # The workspace adds four kinds of rows for the project ([`Pipeline.jl`](Pipeline.md)), and one row
 # for each computation that a script or a window asks for:
@@ -14,8 +14,8 @@
 # | collection row | `process(project, collection, members)`                   | `collection:Runs(runs)`             |
 # | member row     | `process(project, item, collection)`                      | `member:a/1`                        |
 #
-# The *latest value* of an item is the result of its last member row when that row is current, and
-# else the result of its own row. Windows show it.
+# Windows show the *latest value* of an item: the result of its last member row when that row is
+# current, and else the result of its own row.
 #
 # Scripts ask for results with these functions:
 #
@@ -27,7 +27,7 @@
 # | `push!(workspace, computation)`     | a computed item in the tree            | no    | the item, until `delete!`       |
 # | `results(workspace, ids)`           | the results of computed items          | yes   | nothing new                     |
 #
-# Three places keep what the workspace knows about a row:
+# Three parts of the workspace keep information about a row:
 #
 # ```text
 #     catalog, in memory          the state of each row, its inputs and its priority
@@ -43,17 +43,17 @@
 # Each worker takes a job from the catalog and runs it:
 #
 # ```text
-#     take! a job ─▶ compute the version of its row ─▶ did the cache record this version?
+#     take! a job ─▶ compute the version of its row ─▶ did the cache save this version?
 #                                                       │ no                    │ yes
 #                                                       ▼                       ▼
-#                                    call the function with the       the row is current, or failed
-#                                    results of its inputs            with the saved error. The
-#                                      │                │             function does not run: the
-#                                      │ returns a      │ throws, or  value comes from its store
-#                                      │ result of the  │ returns     when something needs it
+#                                    call the function with the       finish!: the row is current,
+#                                    results of its inputs            or failed with the saved
+#                                      │                │             error. The function does not
+#                                      │ returns a      │ throws, or  run: the value comes from its
+#                                      │ result of the  │ returns     store when something needs it
 #                                      │ right type     │ another type
 #                                      ▼                ▼
-#                          keep the result in     record the error
+#                          keep the result in     save the error
 #                          the store of its type  in the cache
 #                          and its version in
 #                          the cache
@@ -63,14 +63,14 @@
 #                          current                failed
 #                                      │
 #                                      ▼
-#                          finished!: the pipeline adds the rows that the result calls for
+#                          finished!: the pipeline adds the rows that the result needs
 #
 #     finish! belongs to the catalog: it ends the job and sets the state of the row.
 #     finished! belongs to the pipeline: it adds rows, such as the own row of each new item.
 # ```
 #
-# The *version* of a row identifies its result (see "Names and versions" below). A current row whose
-# store no longer has its result runs again when something needs the result.
+# The version of a row identifies its result (see "Names and versions"). A current row whose store
+# no longer has its result runs again when something needs the result.
 
 # ## Workers
 #
@@ -79,26 +79,27 @@
 #
 # 1. what a window shows and what a script asks for: its items and computations (`VIEWED_ITEM`),
 #    then the member rows of its items (`VIEWED_COLLECTION`);
-# 2. source items, while the items that wait in memory take less than half of the limit below
-#    (`SOURCES_FIRST`);
+# 2. source items, while the items that wait in memory take less than half of
+#    `expanded_data_limit` (`SOURCES_FIRST`);
 # 3. the `process` of items, in the background (`BACKGROUND_ITEM`);
-# 4. source items, while the waiting items take more than half of the limit (`ITEMS_FIRST`);
+# 4. source items, while the waiting items take more than half of `expanded_data_limit`
+#    (`ITEMS_FIRST`);
 # 5. collection rows and member rows, in the background (`BACKGROUND_COLLECTION`).
 #
-# Items read from a source item wait in memory until their `process` runs. The limit is
-# `expanded_data_limit`, an option of `open_workspace` in MiB: 512 by default, or a quarter of the
-# memory of the machine when that is less. Above half of it, workers process waiting items before
-# they read more source items, which frees that memory (`pace!` in [`Pipeline.jl`](Pipeline.md)).
-# With `background_processing=false`, the default of `open_workspace`, source items are still read,
-# but items are processed only when a window or a script asks for them.
+# Items read from a source item wait in memory until their `process` runs. Once they take more than
+# half of `expanded_data_limit`, workers process waiting items before they read more source items,
+# which frees that memory (`pace!` in [`Pipeline.jl`](Pipeline.md)). `expanded_data_limit` is an
+# option of `open_workspace`, in MiB: 512 by default, or a quarter of the memory of the machine when
+# that is less. By default, `open_workspace` sets `background_processing=false`: the workers read
+# every source item, but process an item only when a window or a script asks for it.
 #
 # The `process` of an item read from the source must return a data item, and a collection `process`
 # must return a collection; any other result fails the row. When a function throws, the row fails:
-# the error is logged, the status panel of the browser shows it with its item, and the cache saves
-# it. When reading a source item fails, its items leave the tree until a later read succeeds. A
-# failed row does not run again, even in a later session, until its version changes: its code, an
-# input or an argument changed. To run failed rows again without a change, open the workspace with
-# `rebuild=true`, which empties its cache.
+# the error is logged, the status panel of the browser shows the error next to its item, and the
+# cache saves it. When reading a source item fails, its items leave the tree until a later read
+# succeeds. A failed row does not run again, even in a later session, until its version changes: its
+# code, an input or an argument changed. To run failed rows again without a change, open the
+# workspace with `rebuild=true`, which empties its cache.
 #
 # TODO: a way to run one failed row again, as after a file was locked for a moment.
 
@@ -162,7 +163,7 @@ end
 """
     run!(workspace, job)
 
-Compute the row of `job`, keep its result, and add the rows that its result calls for. A row whose
+Compute the row of `job`, keep its result, and add the rows that its result needs. A row whose
 current version is the one the cache saved becomes current, or failed, without running. A result of
 the wrong type fails the row: the `process` of an item read from the source must return an
 `AbstractDataItem`, and a collection `process` an `AbstractCollection`.
@@ -208,9 +209,9 @@ end
 """
     failed!(workspace, job, version, error, backtrace)
 
-Fail the row of `job` and record its message in the cache under `version`, so that the next
-session shows the same failure without running the row. The message goes to `report_error`, and
-the status panel of the browser shows it with the item. A source item that fails loses its items.
+Fail the row of `job` and save its message in the cache under `version`, so that the next session
+shows the same failure without running the row. The message goes to `report_error`, and the status
+panel of the browser shows the message next to the item. A source item that fails loses its items.
 """
 function failed!(workspace::Workspace, job::Job, at::UInt64, error, backtrace)::Nothing
     catalog, row = workspace.catalog, job.row
@@ -286,18 +287,20 @@ resolved(::Workspace, x::Selection) = x
 
 # ## Names and versions
 #
-# Each row has a name and a version. The name is its function with the name of each argument, as
-# `fit(a/1)`, or the name that the pipeline gives it, as `read:a.csv`. The version is a hash of the
-# name of its function, the code revision of the function, the versions of its inputs, and its other
+# Each row has a name, which is its function with the name of each argument, as `fit(a/1)`, or the
+# name that the pipeline gives it, as `read:a.csv`. Each row also has a version, a hash of the name
+# of its function, the code revision of the function, the versions of its inputs, and its other
 # arguments and settings: the same version means the same result, even in another session. A source
-# item contributes its id and its fingerprint, such as the modification time of a file; a source item
-# without a fingerprint gives a new version each time, so that it is always read again. The cache
-# saves, under the name of each row, the version of its last result, and its error when it failed.
+# item contributes its id and its fingerprint, such as the modification time of a file; a source
+# item without a fingerprint gives a new version each time, so that it is always read again. The
+# cache saves, under the name of each row, the version of its last result, and its error when it
+# failed.
 #
 # The *code revision* of a function, which the version uses, is a hash of the code that the function
-# can reach; the workspace keeps it in memory (see "Code changes"). The catalog also gives each row a
-# *revision*, a counter that rises whenever the row loses its result, so that a job that ends after
-# that is ignored (see [`Catalogs.jl`](../Catalogs.md)).
+# can reach; the workspace keeps it in memory (see "Code changes"). The catalog also gives each row
+# a *revision*, a counter that rises when the code, an input or the computation of the row changes,
+# so that the workspace drops the result of a job that started before (see
+# [`Catalogs.jl`](../Catalogs.md)).
 #
 # `revision(workspace, computation)` and `revision(workspace, items)` are numbers that a window
 # compares to know when to draw again; they follow the revisions of the rows. The cache functions
@@ -457,19 +460,19 @@ end
 #
 # A store of `nothing` keeps no results of that type: the row runs again when something needs its
 # value. A store receives a copy of each result and gives copies; the docstring of `AbstractStore`
-# gives its methods. Four kinds of results are never stored:
+# gives its methods. Four kinds of results never go to a store:
 #
 # - `nothing`;
 # - `ExpandedItems`, the items that reading a source item gives, which wait in memory for their
 #   `process` (`keep_expanded!` in [`Pipeline.jl`](Pipeline.md));
-# - a `Selection`, which reads the workspace when it is indexed;
+# - a `Selection`, which reads the workspace each time something takes an item from it;
 # - the result of `view(item, selection)`, the part of an item that a window chose.
 
 """
     store(workspace, type) -> Union{Nothing,AbstractStore}
 
 The store that the project chooses for results of `type`, asked once for each type. It is `nothing`
-for the types of results that are never stored, `Nothing`, `ExpandedItems` and `Selection`, and
+for the types of results that never go to a store, `Nothing`, `ExpandedItems` and `Selection`, and
 when `storage` gives `nothing`. [`keep!`](@ref) also skips the result of `view`.
 """
 function store(workspace::Workspace, type::Type)::Union{Nothing,AbstractStore}
@@ -601,26 +604,28 @@ end
 # project are its registered callbacks. The roots of any other row are its function. A callable
 # object that is not a function, such as a fit, has as roots its type and the methods that make the
 # type callable: the parameters of the type include the types of the functions it holds, such as the
-# curve of the fit. The walk follows only `Main` and packages developed from a local folder
-# (`Pkg.develop`); for every other package, the Julia version and the Manifest count instead.
+# curve of the fit. The workspace follows the code only into `Main` and into packages developed from
+# a local folder (`Pkg.develop`); for every other package, the Julia version and the Manifest count
+# instead.
 #
 # The version of each result includes the revision of its code. Twice a second, the workspace asks
 # Revise to load saved edits, including files tracked with `includet`, even when the REPL is idle.
-# After a method definition, or when the roots differ, it computes the revision again; `evaluate`
-# does the same check first when a method was defined since the last check. When the revision
-# changed, the rows of that signature become stale, and with them every row that reads them: source
-# items are read again, as if the source had changed them, and items and collections are processed
-# again. Collections ask `has_stage` again, so a collection `process` defined later gets its rows.
-# The same code defined again, as when a script runs again, changes nothing.
+# After a method definition, or when the roots differ, the workspace computes the code revision
+# again; `evaluate` does the same check first when a method was defined since the last check. When
+# the revision changed, the rows of that signature become stale, and with them every row that reads
+# them: source items are read again, as if the source had changed them, and items and collections
+# are processed again. Collections ask `has_stage` again, so a collection `process` defined later
+# gets its rows. The same code defined again, as when a script runs again, changes nothing.
 #
 # While a browser is open, the keyboard focus of its main window controls these checks: an inactive
 # window pauses them, and gaining focus resumes them. Without a browser, including after closing
 # one, the workspace keeps checking.
 #
 # The revision does not see a mutable value changed in place, nor a change to a macro: the functions
-# that use a macro keep their old expansion until they are defined again. It warns about code it
-# cannot follow: a non-constant global, a call through `eval`, `invokelatest` or a computed name, a
-# generated function, and a value it cannot read. The warning shows the way from the root to it.
+# that use a macro keep their old expansion until they are defined again. The workspace warns about
+# code that it cannot follow: a non-constant global, a call through `eval`, `invokelatest` or a
+# computed name, a generated function, and a value it cannot read. The warning shows the way from
+# the root to it.
 
 """
     check_code!(workspace)
@@ -705,8 +710,8 @@ end
 # computations for a window. In the browser, a window draws again when the `revision` of what it
 # shows changes.
 #
-# Give computations named functions. An anonymous function is named by its generated name, such as
-# `#3`, which can change from one session to the next: its result is then computed again, and its
+# Give computations named functions. An anonymous function has a generated name, such as `#3`,
+# which can change from one session to the next: its result is then computed again, and its
 # computed item gets another id.
 #
 # TODO: a way to let go of the rows that `evaluate` keeps; each computation stays, with its result,
@@ -777,8 +782,8 @@ end
 
 The computation that gives the latest value of an item, given as a key, a public id or a data item:
 its member `process`, when the collections above it have member `process` methods, or else its own
-`process`. Its [`inputs`](@ref) lead back to the source item it comes from. Reading it computes
-nothing.
+`process`. Its [`inputs`](@ref) lead back to the source item it comes from. `computation` gives the
+computation without running it.
 """
 computation(workspace::Workspace, value::Union{AbstractString,AbstractDataItem}) =
     computation(workspace, key(workspace, value))
@@ -794,7 +799,7 @@ end
 """
     computation(selection, index) -> Computation
 
-The computation that gives one item of a selection. Reading it loads no data.
+The computation that gives one item of a selection, without loading its data.
 """
 function computation(selection::Selection, index::Integer)::Computation
     data = selection.data::ItemData
@@ -802,7 +807,8 @@ function computation(selection::Selection, index::Integer)::Computation
     return item isa Computation ? item : computation(getfield(data, :workspace), item)
 end
 
-# The row of a computation, or `nothing` when the workspace does not have it. Nothing is added.
+# The row of a computation, or `nothing` when the workspace does not have it. The catalog stays as
+# it is.
 function row(workspace::Workspace, value::Computation)::Union{Nothing,Row}
     found = @lock workspace.catalog.lock get(workspace.catalog, bound(workspace, value), Catalogs.NOWHERE)
     return found == Catalogs.NOWHERE ? nothing : found
@@ -889,7 +895,7 @@ DataBrowserAPI.members(value::Computation) = AbstractDataItem[x for x in value.a
     select(workspace, items::AbstractVector) -> Selection
 
 The items as a [`Selection`](@ref): computations, each an item whose data is its result, or the
-items that functions returned. No item is added to the tree of the workspace. The computations are
+items that functions returned. The tree of the workspace stays as it is. The computations are
 evaluated now, with [`evaluate`](@ref): the workspace keeps their rows and results until it closes.
 """
 function select(workspace::Workspace, items::AbstractVector)::Selection
@@ -914,7 +920,7 @@ end
 # ## Computed items
 #
 # `push!(workspace, computation)` adds a computation as an item of the tree, computed in the
-# background like the items of the source. Its collection is named after its function, below the
+# background like the items of the source. Its collection has the name of its function, below the
 # collection `Computed`:
 #
 # ```text
@@ -954,7 +960,7 @@ label(value::Computation) = function_name(value.f)
 
 """
 The collections of computed values: `Computed` at the root, and below it one for each function,
-named after it.
+with the name of the function.
 """
 struct ComputedCollection <: AbstractCollection
     name::String
@@ -972,8 +978,9 @@ const COMPUTED = ComputedCollection("Computed")
 Add `computation` to the workspace as an item, computed in the background once the items it reads
 are processed, even without `background_processing`: the rows that it reads inherit its priority. It is an item of the collection of its function, below the collection `Computed`.
 The data items among its arguments that are items of the workspace are read in their latest value.
-A computation with the id of one added before takes its place; it runs again when it reads other
-rows, as when the latest value of an argument moved from its own row to its member row.
+A new computation with the id of one added before replaces the older one, and runs again when it
+reads other rows, as when the latest value of an argument moved from its own row to its member row.
+
 """
 function Base.push!(workspace::Workspace, value::Computation)::Workspace
     catalog, tree = workspace.catalog, workspace.tree
