@@ -141,7 +141,7 @@ function write_statement!(io::IO, names::Vector{Any}, untracked::Vector{String},
                 !(callee.name === :getglobal && length(x.args) == 3 && literal(x.args[3]))
             push!(untracked, "calls $(DYNAMIC[callee])")
         end
-        # `Module.name` lowers to `getproperty(Module, :name)`: it names `Module.name`.
+        ## `Module.name` lowers to `getproperty(Module, :name)`: it names `Module.name`.
         if x.head === :call && length(x.args) == 3 && x.args[1] == GlobalRef(Base, :getproperty) &&
                 x.args[3] isa QuoteNode && x.args[3].value isa Symbol
             owner = x.args[2] isa Core.SSAValue ? code[x.args[2].id] : x.args[2]
@@ -206,7 +206,7 @@ function extensions(world::UInt)
     Base.visit(Core.methodtable) do method
         changeable(method.module) || return
         library(method) || return
-        # A replaced method stays in the table; keep only the methods of this world.
+        ## A replaced method stays in the table; keep only the methods of this world.
         live = Base._methods_by_ftype(method.sig, -1, world)
         live !== nothing && any(match -> match.method === method, live) && follow!(walk, method)
     end
@@ -238,14 +238,14 @@ end
 function library(method::Method)::Bool
     parameters = Base.unwrap_unionall(method.sig).parameters
     F = parameters[1]
-    # A keyword method belongs to the function after `kwcall`.
+    ## A keyword method belongs to the function after `kwcall`.
     if F === typeof(Core.kwcall) && length(parameters) >= 3
         F = parameters[3]
     end
-    # `read` is `Base.read`; a `read` for a project or source is a stage method.
+    ## `read` is `Base.read`; a `read` for a project or source is a stage method.
     F === typeof(Base.read) && length(parameters) >= 2 &&
         parameters[2] isa Type && parameters[2] <: Union{AbstractProject,AbstractDataSource} && return false
-    # A constructor belongs to the module of its type.
+    ## A constructor belongs to the module of its type.
     if F isa DataType && F <: Type && F.parameters[1] isa Type
         T = Base.unwrap_unionall(F.parameters[1])
         T isa DataType && return !changeable(parentmodule(T)) && !databrowser(parentmodule(T))
@@ -270,7 +270,7 @@ mutable struct Walk
     seen::IdDict{Any,Nothing}
     parts::Vector{Pair{String,String}}
     untracked::Vector{String}
-    # Each a thing to follow and the index in `steps` of the step that reached it, 0 for a root.
+    ## Each a thing to follow and the index in `steps` of the step that reached it, 0 for a root.
     pending::Vector{Tuple{Any,Int}}
     steps::Vector{Tuple{Any,Int}}
     step::Int
@@ -331,12 +331,12 @@ function code_revision(roots::AbstractVector)::CodeRevision
         append!(walk.parts, parts)
         append!(walk.untracked, untracked)
     catch error
-        # Each step catches its own errors: this is an error of the walk itself.
+        ## Each step catches its own errors: this is an error of the walk itself.
         @error "Could not follow the code of a stage" exception=(error, catch_backtrace()) maxlog=1
         return CodeRevision("not tracked", [], ["the code could not be followed: $(sprint(showerror, error))"])
     end
     push!(walk.parts, "Julia and package versions" => environment())
-    # Names are not unique: closures, for one, all have the same.
+    ## Names are not unique: closures, for one, all have the same.
     unique!(sort!(walk.parts))
     return CodeRevision(bytes2hex(sha1(join(last.(walk.parts), '\n'))), walk.parts, sort!(unique!(walk.untracked)))
 end
@@ -358,16 +358,16 @@ function visit!(walk::Walk, @nospecialize(x))::Nothing
         walk.seen[x] = nothing
         isdefined(x.mod, x.name) || return nothing
         value = getglobal(x.mod, x.name)
-        # A name that a module imports, such as `stdout`, belongs to the module that defines it. A
-        # name that two modules export with the same value has no single owner.
+        ## A name that a module imports, such as `stdout`, belongs to the module that defines it. A
+        ## name that two modules export with the same value has no single owner.
         owner = try
             Base.binding_module(x.mod, x.name)
         catch
             x.mod
         end
         if !(value isa Union{Function,Type,Module}) && changeable(owner)
-            # TODO: a global that is reassigned, or constant data that is changed in place, changes
-            # no method, so the check sees it only with the next definition.
+            ## TODO: a global that is reassigned, or constant data that is changed in place, changes
+            ## no method, so the check sees it only with the next definition.
             isconst(owner, x.name) || push!(walk.untracked, "reads the global $(owner).$(x.name)")
             push!(walk.parts, "$(owner).$(x.name)" => value_hash(walk, value))
         else
@@ -378,7 +378,7 @@ function visit!(walk::Walk, @nospecialize(x))::Nothing
         T isa DataType && visit_type!(walk, T)
     elseif x isa Function
         follow!(walk, MethodsOf(typeof(x)))
-        # A closure carries the values it captured.
+        ## A closure carries the values it captured.
         if !Base.issingletontype(typeof(x)) && !haskey(walk.seen, x)
             walk.seen[x] = nothing
             push!(walk.parts, "captured by $(normal(typeof(x)))" => value_hash(walk, x))
@@ -393,8 +393,8 @@ const METHODS = Ref{Pair{UInt,IdDict{Any,Vector{Method}}}}(UInt(0) => IdDict{Any
 
 """Every method callable on objects of type `F`, also with keyword arguments, in changeable modules."""
 function visit_methods!(walk::Walk, @nospecialize(F::Type))::Nothing
-    # A call with keywords, `Core.kwcall(keywords, f, ...)`, also names `f`, whose keyword methods are
-    # followed with it. The methods of `kwcall` are every keyword method of every function.
+    ## A call with keywords, `Core.kwcall(keywords, f, ...)`, also names `f`, whose keyword methods are
+    ## followed with it. The methods of `kwcall` are every keyword method of every function.
     F === typeof(Core.kwcall) && return nothing
     haskey(walk.seen, (:call, F)) && return nothing
     walk.seen[(:call, F)] = nothing
@@ -423,10 +423,10 @@ function visit_type!(walk::Walk, T::DataType)::Nothing
     haskey(walk.seen, T) && return nothing
     walk.seen[T] = nothing
     foreach(parameter -> follow!(walk, parameter), T.parameters)
-    # Constructors, also those that extend `Base` functions for this type.
+    ## Constructors, also those that extend `Base` functions for this type.
     follow!(walk, MethodsOf(Type{T}))
-    # The methods of one function or closure. An abstract type, such as a field `::Function`, would
-    # bring in every function: the value in the field is followed instead.
+    ## The methods of one function or closure. An abstract type, such as a field `::Function`, would
+    ## bring in every function: the value in the field is followed instead.
     T <: Function && return isconcretetype(T) ? follow!(walk, MethodsOf(T)) : nothing
     changeable(parentmodule(T)) || return nothing
     fields = isstructtype(T) && !isabstracttype(T) ? collect(zip(fieldnames(T), fieldtypes(T))) : []
@@ -506,8 +506,8 @@ function contents!(walk::Walk, context, @nospecialize(x), seen::IdDict{Any,Nothi
     put(text) = context === nothing || update!(context, codeunits(string(text, '\x1f')))
     if x isa Array && isbitstype(eltype(x))
         put(string(typeof(x), size(x)))
-        # A dynamic call: hashing the bytes of an array whose type is known only at run time is code that a
-        # package loaded later can invalidate.
+        ## A dynamic call: hashing the bytes of an array whose type is known only at run time is code that a
+        ## package loaded later can invalidate.
         context === nothing || Base.invokelatest(array -> update!(context, reinterpret(UInt8, vec(array))), x)
     elseif x isa AbstractDict
         put(typeof(x))
@@ -521,7 +521,7 @@ function contents!(walk::Walk, context, @nospecialize(x), seen::IdDict{Any,Nothi
         put(string(typeof(x), length(x)))
         foreach(element -> value_hash!(walk, context, element, seen, depth + 1), x)
     else
-        # Structs, named tuples, `Ref` and the boxes of captured variables: field by field.
+        ## Structs, named tuples, `Ref` and the boxes of captured variables: field by field.
         put(normal(typeof(x)))
         for i in 1:nfields(x)
             isdefined(x, i) ? value_hash!(walk, context, getfield(x, i), seen, depth + 1) : put("<undef>")

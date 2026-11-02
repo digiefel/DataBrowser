@@ -278,7 +278,7 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
         @lock catalog.lock begin
             # TODO: the records of the rows of a removed source item that had no rows stay in the cache.
             gone = index === nothing ? String[] : setdiff(values(index.sources), Set(id(item) for item in walked))
-            foreach(source -> remove_source!(workspace, source), gone)
+            foreach(source -> remove_source_item!(workspace, source), gone)
             refresh_source_metadata!(workspace)
             scan.state = read_again == 0 && isempty(gone) ? :unchanged : :done
             workspace.cache_state = :ready

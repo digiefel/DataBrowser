@@ -1,43 +1,115 @@
-# How the rows of a workspace run. Each worker takes a job from the catalog and runs it:
+# How the computations of a workspace run, where their results are kept, and how scripts and windows
+# ask for them.
+#
+# A *computation*, `Computation(f, args...; settings...)`, is a call before it runs: reading one
+# source item, the `process` of one item, or a call of your own, such as a fit. The workspace keeps
+# each computation as a *row* of its *catalog*, with the row's state: missing, stale, current or
+# failed ([`Catalogs.jl`](../Catalogs.md)). A *job* is one run of one row.
+#
+# The workspace adds four kinds of rows for the project ([`Pipeline.jl`](Pipeline.md)), and one row
+# for each computation that a script or a window asks for:
+#
+# | Row            | Calls                                                     | Name, for the item `a/1` of `a.csv` |
+# |:---------------|:----------------------------------------------------------|:------------------------------------|
+# | source row     | `read_items(project, source, source_item)`: `read`, then `expand` | `read:a.csv`, which gives `a/1` |
+# | own row        | `process(project, item)`                                  | `a/1`                               |
+# | collection row | `process(project, collection, members)`                   | `collection:Runs(runs)`             |
+# | member row     | `process(project, item, collection)`                      | `member:a/1`                        |
+#
+# The *latest value* of an item is the result of its last member row when that row is current, and
+# else the result of its own row. Windows show it.
+#
+# Scripts ask for results with these functions; the rest of the page is how the workspace computes
+# them:
+#
+# | Call                                | Gives                                  | Waits | Keeps in the workspace          |
+# |:------------------------------------|:---------------------------------------|:------|:--------------------------------|
+# | `materialize_items(workspace, ids)` | the items, with their latest value     | yes   | nothing new                     |
+# | `evaluate(workspace, computation)`  | the result of a computation            | yes   | its row, until the workspace closes |
+# | `select(workspace, items)`          | a `Selection` for a window             | yes   | the rows of its computations, until the workspace closes |
+# | `push!(workspace, computation)`     | a computed item in the tree            | no    | the item, until `delete!`       |
+# | `results(workspace, ids)`           | the results of computed items          | yes   | nothing new                     |
+#
+# Three places keep what the workspace knows about a row:
 #
 # ```text
-#     take! a job ─▶ the version of its row ─▶ did the cache record this version?
-#                                                 │ no                     │ yes
-#                                                 ▼                        ▼
-#                              call the function with the        take the recorded result
-#                              results of the inputs             or failure: nothing runs
-#                                │ returns         │ throws
-#                                ▼                 ▼
-#                    keep the result in      record the failure
-#                    the store of its type   for the next session
-#                                │                 │
-#                                ▼                 ▼
-#                     finish!: current      finish!: failed
-#                     finished!: the pipeline
-#                     adds the rows that the
-#                     result calls for
+#     catalog, in memory          the state of each row, its inputs and its priority
+#     cache, a DuckDB file        for each row name: the version of its last result, or its error;
+#                                 and the tree, with the metadata and labels of items and
+#                                 collections. The next session knows from it which rows are
+#                                 current, and shows the tree at once
+#     stores, one for each        for each row name: its result. A MemoryStore, the default, loses
+#       type of result            the results when Julia exits; a DuckDBStore, as a project made
+#                                 with DataBrowserRecipes uses, keeps them in a file
 # ```
 #
-# The rows themselves, their states and the rules they follow are in
-# [`Catalogs.jl`](../Catalogs.md); the rows that the workspace adds for the project are in
-# [`Pipeline.jl`](Pipeline.md).
+# Each worker takes a job from the catalog and runs it:
+#
+# ```text
+#     take! a job ─▶ compute the version of its row ─▶ did the cache record this version?
+#                                                       │ no                    │ yes
+#                                                       ▼                       ▼
+#                                    call the function with the       the row is current, or failed
+#                                    results of its inputs            with the recorded error. The
+#                                      │                │             function does not run: the
+#                                      │ returns a      │ throws, or  value comes from its store
+#                                      │ result of the  │ returns     when something needs it
+#                                      │ right type     │ another type
+#                                      ▼                ▼
+#                          keep the result in     record the error
+#                          the store of its type  in the cache
+#                          and its version in
+#                          the cache
+#                                      │                │
+#                                      ▼                ▼
+#                          finish!: the row is    finish!: the row is
+#                          current                failed
+#                                      │
+#                                      ▼
+#                          finished!: the pipeline adds the rows that the result calls for
+#
+#     finish! belongs to the catalog: it ends the job and sets the state of the row.
+#     finished! belongs to the pipeline: it adds rows, such as the own row of each new item.
+# ```
+#
+# The *version* of a row identifies its result (see "Names and versions" below). A current row whose
+# store no longer has its result runs again when something needs the result.
 
 # ## Workers
 #
-# Worker tasks run the rows: one for each Julia thread, and at least two. Rows run in this order of
-# priority:
+# Worker tasks run the jobs: one for each Julia thread, and at least two. Jobs run in this order of
+# priority, highest first:
 #
-# 1. what a view asks for: items, then collections;
-# 2. source items;
-# 3. the `process` of items, in the background;
-# 4. collection rows and member rows, in the background.
+# 1. what a window shows and what a script asks for: its items and computations (`VIEWED_ITEM`),
+#    then the member rows of its items (`VIEWED_COLLECTION`);
+# 2. source items, while the items that wait in memory take less than half of the limit below
+#    (`SOURCES_FIRST`);
+# 3. the `process` of items, in the background (`BACKGROUND_ITEM`);
+# 4. source items, while the waiting items take more than half of the limit (`ITEMS_FIRST`);
+# 5. collection rows and member rows, in the background (`BACKGROUND_COLLECTION`).
 #
-# While the items that source items gave and that wait for their `process` fill half of
-# `expanded_data_limit`, the `process` of items comes before source items, which frees that memory
-# (`pace!` in [`Pipeline.jl`](Pipeline.md)). Background work is an option of `open_workspace`
-# (`background_processing`): without it, source items are read, and items are processed only when a
-# view asks for them.
+# Items read from a source item wait in memory until their `process` runs. The limit is
+# `expanded_data_limit`, an option of `open_workspace` in MiB: 512 by default, or a quarter of the
+# memory of the machine when that is less. Above half of it, workers process waiting items before
+# they read more source items, which frees that memory (`pace!` in [`Pipeline.jl`](Pipeline.md)).
+# With `background_processing=false`, the default of `open_workspace`, source items are still read,
+# but items are processed only when a window or a script asks for them.
+#
+# The `process` of an item read from the source must return a data item, and a collection `process`
+# must return a collection; any other result fails the row. When a function throws, the row fails:
+# the error is logged, the status panel of the browser lists it with its item, and the cache records
+# it. When reading a source item fails, its items leave the tree until a later read succeeds. A
+# failed row does not run again, even in a later session, until its version changes: its code, an
+# input or an argument changed. To run failed rows again without a change, open the workspace with
+# `rebuild=true`, which empties its cache.
+#
+# TODO: a way to run one failed row again, as after a file was locked for a moment.
 
+"""
+    start_workers!(workspace)
+
+Start the worker tasks of the workspace: one for each Julia thread, and at least two.
+"""
 function start_workers!(workspace::Workspace)::Nothing
     Threads.nthreads() == 1 && @warn("Julia runs with one thread: the browser waits while a computation runs. Start Julia with `--threads=auto`.", maxlog=1)
     for _ in 1:max(2, Threads.nthreads())
@@ -46,6 +118,11 @@ function start_workers!(workspace::Workspace)::Nothing
     return nothing
 end
 
+"""
+    stop_workers!(workspace)
+
+Close the catalog and wait until each worker task has finished its job and ended.
+"""
 function stop_workers!(workspace::Workspace)::Nothing
     close(workspace.catalog)
     foreach(wait, workspace.workers)
@@ -53,6 +130,12 @@ function stop_workers!(workspace::Workspace)::Nothing
     return nothing
 end
 
+"""
+    work!(workspace)
+
+The loop of one worker task: take the job of highest priority, run it, and wait when there is
+none, until the catalog closes.
+"""
 function work!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
     while true
@@ -68,7 +151,7 @@ function work!(workspace::Workspace)::Nothing
         job === nothing && return nothing
         changed!(workspace)
         try
-            # The latest world, so that a job runs the code defined after the worker started.
+            ## The latest world, so that a job runs the code defined after the worker started.
             Base.invokelatest(run!, workspace, job)
         catch error
             @error "A job of the workspace failed" exception=(error, catch_backtrace())
@@ -80,8 +163,12 @@ function work!(workspace::Workspace)::Nothing
 end
 
 """
+    run!(workspace, job)
+
 Compute the row of `job`, keep its result, and add the rows that its result calls for. A row whose
-version the cache recorded takes that record instead of running.
+version the cache recorded takes that record instead of running. A result of the wrong type fails
+the row: the `process` of an item read from the source must return an `AbstractDataItem`, and a
+collection `process` an `AbstractCollection`.
 """
 function run!(workspace::Workspace, job::Job)::Nothing
     catalog, row = workspace.catalog, job.row
@@ -107,7 +194,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
     end
     output isa expected || return failed!(workspace, job, at,
         ErrorException("$(function_name(value.f)) returned a $(typeof(output)), not a $expected"), nothing)
-    iscurrent(catalog, job) && keep!(workspace, row, output)
+    keepable(catalog, job) && keep!(workspace, row, output)
     @lock catalog.lock begin
         finish!(catalog, job; version=at, type=typeof(output)) || return nothing
         delete!(workspace.errors, row)
@@ -121,7 +208,13 @@ function run!(workspace::Workspace, job::Job)::Nothing
     return nothing
 end
 
-"""Record that the row of `job` failed, with its message, also for the next session."""
+"""
+    failed!(workspace, job, version, error, backtrace)
+
+Fail the row of `job` and record its message in the cache under `version`, so that the next
+session shows the same failure without running the row. The message goes to `report_error`, and
+the status panel of the browser lists it with the item. A source item that fails loses its items.
+"""
 function failed!(workspace::Workspace, job::Job, at::UInt64, error, backtrace)::Nothing
     catalog, row = workspace.catalog, job.row
     context = @lock catalog.lock begin
@@ -148,6 +241,8 @@ end
 failure_prefix(f)::String = f === read_items ? "could not create items: " : "$(function_name(f)) failed: "
 
 """
+    failure(workspace, row) -> String
+
 The message of the failed row that `row` waits for, or of `row` itself when it failed.
 """
 function failure(workspace::Workspace, row::Row)::String
@@ -161,7 +256,10 @@ function failure(workspace::Workspace, row::Row)::String
 end
 
 """
-Run the function of `row` with the results of its inputs, and record how long it took.
+    call(workspace, row, computation)
+
+Call the function of `computation`, the value of `row`, with the results of its inputs, and record
+how long it took and whether it threw.
 """
 function call(workspace::Workspace, row::Row, value::Computation)
     args = map(x -> resolved(workspace, x), value.args)
@@ -182,7 +280,7 @@ resolved(workspace::Workspace, x::Input) = only(results(workspace, [x.row]))
 resolved(workspace::Workspace, x::Part) = process_input(resolved(workspace, x.of), x.id)
 resolved(workspace::Workspace, x::Tuple) = map(v -> resolved(workspace, v), x)
 function resolved(workspace::Workspace, x::AbstractVector)
-    # The members of a collection, read together, in a vector of their common type.
+    ## The members of a collection, read together, in a vector of their common type.
     eltype(x) === Input && return identity.(results(workspace, Row[v.row for v in x]))
     return any(v -> v isa Union{Input,Part,Tuple,AbstractVector}, x) ? map(v -> resolved(workspace, v), x) : x
 end
@@ -192,19 +290,35 @@ resolved(::Workspace, x::Selection) = x
 # ## Names and versions
 #
 # Each row has a name and a version. The name is its function with the name of each argument, as
-# `fit(sample)`, or the name that the pipeline gives it. The version is a hash of the name of its
-# function, the revision of its code, the versions of its inputs, and its other arguments and
-# settings: the same version means the same result, also in another session. The cache records,
-# under the name of each row, the version of its last result, and its error when it failed.
+# `fit(a/1)`, or the name that the pipeline gives it, as `read:a.csv`. The version is a hash of the
+# name of its function, the code revision of the function, the versions of its inputs, and its other
+# arguments and settings: the same version means the same result, even in another session. A source
+# item contributes its id and its fingerprint, such as the modification time of a file; a source item
+# without a fingerprint gives a new version each time, so that it is always read again. The cache
+# records, under the name of each row, the version of its last result, and its error when it failed.
+#
+# Three words sound alike:
+#
+# | Word          | What it is                                                      | Kept in      |
+# |:--------------|:----------------------------------------------------------------|:-------------|
+# | version       | hash that identifies the result of a row                        | the cache    |
+# | code revision | hash of the code that a function can reach (see "Code changes") | memory       |
+# | revision      | counter of a row in the catalog, so that late jobs are ignored  | memory       |
+#
+# `revision(workspace, computation)` and `revision(workspace, items)` are numbers that a window
+# compares to know when to draw again; they follow the revisions of the rows. The cache functions
+# `store_computation_revision!` and `recorded_revision` keep and read versions.
 #
 # When a workspace opens again, a row whose recorded version is its current version is current, or
 # failed with its recorded error, without running. Its metadata is the metadata the cache saved, and
-# its value comes from its store; a store that no longer has it, such as a `MemoryStore`, computes
-# it again when something needs it.
+# its value comes from its store; when the store no longer has it, as a `MemoryStore` after a
+# restart, the row runs again when something needs its value.
 
 """
+    name(workspace, row) -> String
+
 The name of a row, under which the cache records its version and its store keeps its result: its
-function and the name of each argument, or the name that the pipeline gave it.
+function and the name of each argument, as `fit(a/1)`, or the name that the pipeline gave it.
 """
 name(workspace::Workspace, row::Row)::String =
     get!(() -> call_id(workspace.catalog[row], x -> argument_name(workspace, x)), workspace.names, row)
@@ -215,7 +329,9 @@ argument_name(::Workspace, x::Selection) = argument_id(x)
 argument_name(::Workspace, x) = argument_id(x)
 
 """
-The version of the result that `row` gives now: the same version means the same result, also in
+    version(workspace, row) -> UInt64
+
+The version of the result that `row` gives now: the same version means the same result, even in
 another session. It follows the code of its function, the versions of its inputs, and its other
 arguments and settings. The caller holds the catalog lock.
 """
@@ -223,7 +339,7 @@ function version(workspace::Workspace, row::Row)::UInt64
     value = workspace.catalog[row]
     signature = Tuple{typeof(value.f),map(x -> argument_type(workspace, x), value.args)...}
     workspace.signatures[row] = signature
-    # Types and symbols hash differently in another session; their names do not.
+    ## Types and symbols hash differently in another session; their names do not.
     seed = hash(function_name(value.f), hash(code!(workspace, signature, value.f).revision.hash))
     for x in value.args
         seed = hash(argument_version(workspace, x), seed)
@@ -240,7 +356,7 @@ argument_version(workspace::Workspace, x::Part)::UInt64 = hash(x.id, argument_ve
 argument_version(workspace::Workspace, x::Union{Tuple,AbstractVector{Input}})::UInt64 =
     foldl((seed, v) -> hash(argument_version(workspace, v), seed), x; init=UInt64(0))
 argument_version(workspace::Workspace, x::Selection)::UInt64 =
-    foldl((seed, row) -> hash(Catalogs.version(workspace.catalog, row), seed), Catalogs.rows(x); init=hash(argument_id(x)))
+    foldl((seed, row) -> hash(Catalogs.version(workspace.catalog, row), seed), Catalogs.input_rows(x); init=hash(argument_id(x)))
 # A source item without a fingerprint may have changed at any time: its result is never the recorded one.
 argument_version(::Workspace, x::AbstractDataSourceItem)::UInt64 =
     fingerprint(x) === nothing ? rand(UInt64) : hash(id(x), hash(repr(fingerprint(x))))
@@ -249,8 +365,11 @@ argument_version(::Workspace, x::AbstractCollection)::UInt64 = hash(string(typeo
 argument_version(::Workspace, x)::UInt64 = hash(argument_id(x))
 
 """
-The code that the rows of `signature` run, followed from the roots that [`code_roots`](@ref) gives.
-The caller holds the catalog lock.
+    code!(workspace, signature, f) -> Code
+
+The code that the rows of `signature` run, followed from the roots that [`code_roots`](@ref) gives,
+with its code revision. It is computed once for each signature, and again after a code change. The
+caller holds the catalog lock.
 """
 function code!(workspace::Workspace, signature::Type, f)::Code
     return get!(workspace.code, signature) do
@@ -262,6 +381,8 @@ function code!(workspace::Workspace, signature::Type, f)::Code
 end
 
 """
+    code_roots(project, signature, f) -> Vector
+
 The functions, methods and types whose code a call of `signature` runs: for the calls of the
 pipeline, what [`stage_roots`](@ref) gives for the type they run for; else the function. A
 callable object that is not a function, such as a fit, runs the call methods of its type, whose
@@ -280,23 +401,27 @@ stage(::Type{<:Tuple{typeof(process),Any,Any,C}}) where {C<:AbstractCollection} 
 stage(_) = nothing
 
 """
+    recorded(workspace, row, version)
+
 What the cache recorded for the result of `row` at `version`, when it can be used now: a failure,
-or a result whose metadata the cache saved for an item or a collection. The caller holds the
-catalog lock.
+or a result whose metadata the cache saved for an item or a collection; else `nothing`. The caller
+holds the catalog lock.
 """
 function recorded(workspace::Workspace, row::Row, at::UInt64)
     record = recorded_revision(workspace.cache.db, name(workspace, row))
     (record === nothing || record.revision != at) && return nothing
     place = get(workspace.places, row, nothing)
-    # TODO: a computed item that takes a recorded result has no metadata.
+    ## TODO: a computed item that takes a recorded result has no metadata.
     saves = place isa CollectionKey || place isa ItemKey && !isempty(workspace.tree[place].source)
     isempty(record.failure) && saves && !haskey(workspace.saved, name(workspace, row)) && return nothing
     return record
 end
 
 """
+    restore!(workspace, row) -> Bool
+
 Give `row` the result that the cache recorded for it, when its version is the recorded one and its
-inputs are current. The caller holds the catalog lock.
+inputs are current, without a job. Return whether it did. The caller holds the catalog lock.
 """
 function restore!(workspace::Workspace, row::Row)::Bool
     catalog = workspace.catalog
@@ -322,15 +447,35 @@ end
 
 # ## Results
 #
-# `storage(project, T)` chooses the store for results of type `T`: items, or any other Julia value.
-# The default is a `MemoryStore` of 64 MiB for each result type. A store of `nothing` keeps no
-# results of that type: they are computed again when something needs them. A store receives a copy
-# of each result and gives copies; `AbstractStore` lists its methods. The result of a view is not
-# stored.
+# A store keeps results under the name of their row, so that a row that is current does not run
+# again for each task that needs its value. `storage(project, T)` chooses the store for results of
+# type `T`: items, or any other Julia value. By default, each result type has its own `MemoryStore`
+# of 64 MiB, which removes the least recently used results first, and loses them when Julia exits.
+# A project made with DataBrowserRecipes keeps the results of every type in one `DuckDBStore`, a
+# file next to the project, so they stay from one session to the next. A project can choose another
+# size, or another store:
+#
+# ```julia
+# DataBrowserAPI.storage(::MyProject, ::Type{MyItem}) = MemoryStore(; max_bytes=512 * 1024^2)
+# DataBrowserAPI.storage(::MyProject, ::Type{MyFit}) = DuckDBStore(joinpath(@__DIR__, "results.duckdb"))
+# ```
+#
+# A store of `nothing` keeps no results of that type: the row runs again when something needs its
+# value. A store receives a copy of each result and gives copies; `AbstractStore` lists its methods.
+# Four kinds of results are never stored:
+#
+# - `nothing`;
+# - `ExpandedItems`, the items that reading a source item gives, which wait in memory for their
+#   `process` (`keep_expanded!` in [`Pipeline.jl`](Pipeline.md));
+# - a `Selection`, which reads the workspace when it is indexed;
+# - the result of `view(item, selection)`, the part of an item that a window chose.
 
 """
-The store that the project chooses for results of `type`; `nothing` for the results that are
-kept in memory or made again when needed.
+    store(workspace, type) -> Union{Nothing,AbstractStore}
+
+The store that the project chooses for results of `type`, asked once for each type. It is `nothing`
+for the types of results that are never stored, `Nothing`, `ExpandedItems` and `Selection`, and
+when `storage` gives `nothing`. [`keep!`](@ref) also skips the result of `view`.
 """
 function store(workspace::Workspace, type::Type)::Union{Nothing,AbstractStore}
     type <: Union{Nothing,ExpandedItems,Selection} && return nothing
@@ -340,28 +485,39 @@ function store(workspace::Workspace, type::Type)::Union{Nothing,AbstractStore}
 end
 
 """
-Save the result of `row` in its store. A view is made again when needed: another copy would push
-kept results out.
+    keep!(workspace, row, result)
+
+Save a copy of `result` in the store of its type, under the name of `row`. The result of
+`view(item, selection)` is not saved: it is made again when needed, and another copy of the item
+would push other results out.
 """
 function keep!(workspace::Workspace, row::Row, output)::Nothing
     catalog = workspace.catalog
     title, again = @lock catalog.lock (name(workspace, row), catalog[row].f === view)
     again && return nothing
     place = store(workspace, typeof(output))
-    # `deepcopy` is a dynamic call: a method of a package loaded later then does not invalidate this code.
+    ## `deepcopy` is a dynamic call: a method of a package loaded later then does not invalidate this code.
     place === nothing || write(place, title, Base.invokelatest(deepcopy, output))
     return nothing
 end
 
 """
+    results(workspace, rows) -> Vector{Any}
+
 The results of `rows`, which are current: from memory, from their stores, read together for each
-type, or else computed again.
+type, or else computed again with [`computed!`](@ref).
 """
 function results(workspace::Workspace, rows::Vector{Row})::Vector{Any}
     found = kept(workspace, rows)
     return Any[value === nothing ? computed!(workspace, row) : something(value) for (row, value) in zip(rows, found)]
 end
 
+"""
+    kept(workspace, rows) -> Vector{Union{Nothing,Some}}
+
+The results of `rows` that memory or a store still has, as `Some(result)`, and `nothing` for each
+result that must be computed again.
+"""
 function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Some}}
     catalog = workspace.catalog
     found = Vector{Union{Nothing,Some}}(nothing, length(rows))
@@ -388,7 +544,13 @@ function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Som
     return found
 end
 
-"""Compute the result of a current row again, once for all the tasks that ask for it, and keep it."""
+"""
+    computed!(workspace, row)
+
+Compute the result of a current row again, once for all the tasks that ask for it at the same
+time, and keep it. The row stays current: it ran before with the same version, and its store had
+dropped the result.
+"""
 function computed!(workspace::Workspace, row::Row)
     catalog = workspace.catalog
     one = @lock catalog.lock get!(ReentrantLock, workspace.row_locks, row)
@@ -407,8 +569,11 @@ function computed!(workspace::Workspace, row::Row)
 end
 
 """
-Forget what the workspace kept for the rows that lost their result or were removed, and tell
-watchers that something changed. The caller holds the catalog lock.
+    publish!(workspace)
+
+Delete the stored results and the cache records of the rows that were removed, forget what the
+workspace kept in memory for the rows that lost their result, and wake the tasks that wait for the
+workspace, and the browser. The caller holds the catalog lock.
 """
 function publish!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
@@ -427,7 +592,7 @@ function publish!(workspace::Workspace)::Nothing
         delete!(workspace.produced, row.index)
         foreach(found -> delete!(found, row), (workspace.places, workspace.signatures, workspace.row_locks, workspace.evaluated))
     end
-    # Wakes the tasks that wait for the scan or for the workspace to be idle.
+    ## Wakes the tasks that wait for the scan or for the workspace to be idle.
     notify(catalog.changed)
     changed!(workspace)
     return nothing
@@ -463,10 +628,12 @@ end
 # generated function, and a value it cannot read. The warning names the way from the root to it.
 
 """
-Make the results whose code changed stale, so that they are computed again. The revision of the
-code of a signature is computed again only when a method was defined since, or when
-[`code_roots`](@ref) gives other roots. A collection `process` or member `process` methods may be
-defined now, or no longer.
+    check_code!(workspace)
+
+Make the rows whose code changed stale, so that they are computed again. The code revision of a
+signature is computed again only when a method was defined since the last check, or when
+[`code_roots`](@ref) gives other roots. Collections ask `has_stage` again, since a collection
+`process` or member `process` methods may be defined now, or no longer.
 """
 function check_code!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
@@ -497,7 +664,7 @@ function check_code!(workspace::Workspace)::Nothing
         empty!(workspace.stages)
         for key in collections(workspace)
             value = workspace.tree[key].value
-            # The collections of computed values belong to the workspace: the project never processes them.
+            ## The collections of computed values belong to the workspace: the project never processes them.
             value isa ComputedCollection && continue
             stages(workspace, value) == get(before, typeof(value), nothing) || members_changed!(workspace, key)
         end
@@ -521,9 +688,39 @@ function warn_untracked(signature::Type, code::Code, previous=nothing)::Nothing
 end
 
 # ## Computations
+#
+# Scripts and windows ask the workspace for results with computations:
+#
+# ```julia
+# item = only(materialize_items(workspace, ["a/1"]))
+# fitted = evaluate(workspace, Computation(fit, item))
+# ```
+#
+# `fit` is a function of your own. `evaluate` adds the computation as a row, keeps the row until the
+# workspace closes, runs it ahead of background work, and waits for its result. An item of the
+# workspace among the arguments stands for the row of its latest value, so the computation runs
+# again when that item changes:
+#
+# ```text
+#   Computation(fit, item)  ──bound──▶  fit(the row of the latest value of a/1)
+# ```
+#
+# A `Computation` is also an item whose data is its result. `computation(workspace, item)` gives the
+# computation of the latest value of an item, and `select` makes a `Selection` of items and
+# computations for a window. In the browser, a window draws again when the `revision` of what it
+# shows changes.
+#
+# Give computations named functions. An anonymous function is named by its generated name, such as
+# `#3`, which can change from one session to the next: its result is then computed again, and its
+# computed item gets another id.
+#
+# TODO: a way to let go of the rows that `evaluate` keeps; each computation stays, with its result,
+# until the workspace closes.
 
 """
-`value` with each data item among its arguments that is an item of the workspace replaced by the
+    bound(workspace, computation) -> Computation
+
+`computation` with each data item among its arguments that is an item of the workspace replaced by the
 row of its latest value, so that it follows the changes of that item. The caller holds the catalog
 lock.
 """
@@ -542,7 +739,7 @@ bound_argument(::Workspace, x::Selection) = x
 bound_argument(::Workspace, x) = x
 
 # A selection reads the latest value of each of its items, and the result of each of its computations.
-function Catalogs.rows(selection::Selection)::Vector{Row}
+function Catalogs.input_rows(selection::Selection)::Vector{Row}
     data = selection.data::ItemData
     workspace = getfield(data, :workspace)
     found = Row[]
@@ -566,7 +763,7 @@ computation, or one whose input failed, throws its error.
 """
 function evaluate(workspace::Workspace, value::Computation)
     catalog = workspace.catalog
-    # Code defined since the last check makes its results stale before this one is read.
+    ## Code defined since the last check makes its results stale before this one is read.
     world = Base.get_world_counter()
     @lock(catalog.lock, any(code -> code.world != world, values(workspace.code))) && Base.invokelatest(check_code!, workspace)
     row = @lock catalog.lock begin
@@ -610,7 +807,7 @@ function computation(selection::Selection, index::Integer)::Computation
     return item isa Computation ? item : computation(getfield(data, :workspace), item)
 end
 
-# The row of a computation, or `nothing` when the workspace does not have it.
+# The row of a computation, or `nothing` when the workspace does not have it. Nothing is added.
 function row(workspace::Workspace, value::Computation)::Union{Nothing,Row}
     found = @lock workspace.catalog.lock get(workspace.catalog, bound(workspace, value), Catalogs.NOWHERE)
     return found == Catalogs.NOWHERE ? nothing : found
@@ -618,6 +815,7 @@ end
 
 # The time of an execution covers the call of the function, with compilation and waits, and not the
 # evaluation of its inputs or the storage of its result.
+# The method of `DataBrowserAPI.last_execution` for a workspace.
 function last_execution(workspace::Workspace, value::Computation)::Union{Nothing,ComputationExecution}
     found = row(workspace, value)
     found === nothing && return nothing
@@ -625,6 +823,8 @@ function last_execution(workspace::Workspace, value::Computation)::Union{Nothing
         get(workspace.executions, found, nothing) : nothing
 end
 
+# The method of `DataBrowserAPI.cache_info` for a workspace: whether the store of its type has the
+# result of a current computation, and its size.
 function cache_info(workspace::Workspace, value::Computation)
     found, catalog = row(workspace, value), workspace.catalog
     found === nothing && return (cached=false, bytes=nothing)
@@ -639,7 +839,7 @@ end
     revision(workspace, computation) -> UInt
 
 A number that changes when the result of `computation` changes: when it becomes current, or stops
-being so. A view keeps the number it drew with, and draws again when it differs. Reading it
+being so. A window keeps the number it drew with, and draws again when it differs. Reading it
 computes nothing.
 """
 function revision(workspace::Workspace, value::Computation)::UInt
@@ -649,8 +849,17 @@ function revision(workspace::Workspace, value::Computation)::UInt
 end
 
 """
-The workspace whose kept results `data` and `metadata` of a `Computation` read. Outside of it, `data`
-runs the call and its inputs directly.
+    CURRENT_WORKSPACE
+
+The workspace from which `data(c)` and `metadata(c)` of a `Computation` read results, so that code
+that receives only a computation, such as a visualizer, needs no workspace. When it is `nothing`,
+`data(c)` calls the function and its inputs directly, with no stored results.
+
+```julia
+with(CURRENT_WORKSPACE => workspace) do
+    data(Computation(fit, item))
+end
+```
 """
 const CURRENT_WORKSPACE = ScopedValue{Union{Nothing,Workspace}}(nothing)
 
@@ -666,7 +875,8 @@ function data(value::Computation)
 end
 
 # The metadata of the item that a computation gives in the workspace. Or else the metadata of the one
-# item it reads, with the metadata of its result on top when that is an item.
+# item it reads, with the metadata of its result on top when that is an item: `fit(a/1)` has the
+# metadata of `a/1`, and the metadata of the fit when it returns an item.
 function metadata(value::Computation)
     workspace = CURRENT_WORKSPACE[]
     found = workspace === nothing ? nothing : row(workspace, value)
@@ -683,9 +893,9 @@ DataBrowserAPI.members(value::Computation) = AbstractDataItem[x for x in value.a
 """
     select(workspace, items::AbstractVector) -> Selection
 
-The items as a [`Selection`](@ref), without adding them to the workspace: computations, each an item
-whose data is its result, or the items that functions returned. The results of the computations are
-computed now, and the workspace keeps them.
+The items as a [`Selection`](@ref): computations, each an item whose data is its result, or the
+items that functions returned. No item is added to the tree of the workspace. The computations are
+evaluated now, with [`evaluate`](@ref): the workspace keeps their rows and results until it closes.
 """
 function select(workspace::Workspace, items::AbstractVector)::Selection
     with(CURRENT_WORKSPACE => workspace) do
@@ -707,6 +917,19 @@ function computed_name(workspace::Workspace, value::Computation)::Tuple{String,S
 end
 
 # ## Computed items
+#
+# `push!(workspace, computation)` adds a computation as an item of the tree, computed in the
+# background like the items of the source. Its collection is named after its function, below the
+# collection `Computed`:
+#
+# ```text
+#   Computed
+#   └── fit
+#       └── fit(a/1)
+# ```
+#
+# `delete!(workspace, id)` removes it, and `results(workspace, ids)` gives the results of computed
+# items.
 
 # The name of the function of computed values: it names the collection that holds them and starts
 # their ids. A package whose computations are values of its own type gives them a name, and can
@@ -747,13 +970,15 @@ label(collection::ComputedCollection) = collection.name
 const COMPUTED = ComputedCollection("Computed")
 
 # TODO: a rule for when the workspace drops a computed item. Today it keeps each one until it
-# closes, also when nothing uses it any more.
+# closes, even when nothing uses it any more.
 """
-Add `value` to the workspace as an item, computed in the background once the items it reads are
-processed. It is an item of the collection of its function, below the collection `Computed`. The
-data items among its arguments that are items of the workspace are read in their latest version. A
-value with the id of one added before takes its place, and is computed again when it reads other
-items.
+    push!(workspace, computation) -> Workspace
+
+Add `computation` to the workspace as an item, computed in the background once the items it reads
+are processed, even without `background_processing`: the rows that it reads inherit its priority. It is an item of the collection of its function, below the collection `Computed`.
+The data items among its arguments that are items of the workspace are read in their latest value.
+A computation with the id of one added before takes its place; it runs again when it reads other
+rows, as when the latest value of an argument moved from its own row to its member row.
 """
 function Base.push!(workspace::Workspace, value::Computation)::Workspace
     catalog, tree = workspace.catalog, workspace.tree
@@ -763,7 +988,7 @@ function Base.push!(workspace::Workspace, value::Computation)::Workspace
         if known !== nothing
             isempty(tree[known].source) || error("The workspace has an item with the id \"$(id(value))\" from its source")
             row = tree[known].row
-            reads = unique!(Catalogs.rows(Catalogs.instanced(catalog, given; add=false).args))
+            reads = unique!(Catalogs.input_rows(Catalogs.instanced(catalog, given; add=false).args))
             reads == Catalogs.inputs(catalog, row) || (replace!(catalog, row, given); publish!(workspace))
             return workspace
         end
@@ -772,7 +997,7 @@ function Base.push!(workspace::Workspace, value::Computation)::Workspace
         key = item!(tree, id(value), label(value), typeof(value), holder, "", Dict{Symbol,Any}())
         row = add!(catalog, given)
         hold!(catalog, row)
-        # A row of the pipeline keeps the item it gives.
+        ## A row of the pipeline keeps the item it gives.
         tree[key].row = row
         get!(workspace.places, row, key)
         get!(workspace.names, row, id(value))
@@ -784,6 +1009,8 @@ function Base.push!(workspace::Workspace, value::Computation)::Workspace
 end
 
 """
+    delete!(workspace, id) -> Workspace
+
 Remove the computed item with `id` from the workspace, with its result. An id the workspace has no
 computed item for changes nothing.
 """
@@ -798,6 +1025,8 @@ function Base.delete!(workspace::Workspace, id::AbstractString)::Workspace
 end
 
 """
+    results(workspace, ids) -> Vector
+
 The results of the computed items with `ids`, as their functions returned them. Items that are not
 computed yet are computed now, and the call waits for them.
 """
@@ -813,12 +1042,12 @@ end
     materialize_items(workspace, items) -> Vector{AbstractDataItem}
 
 The processed items for `items`, given as item keys or public ids, in the same order. Each item
-comes in its latest version: the one its member `process` returned, when that is current, or else
+comes with its latest value: the one its member `process` returned, when that is current, or else
 its own processed data. A computed item is its computation, whose data is its result.
 
 An item that is not processed yet is processed now, ahead of background work, and the call waits
 for it. The member `process` of each item is requested too, and the call does not wait for it: a
-later call delivers the later version once it is ready. A failed item throws its error.
+later call delivers the later value once it is ready. A failed item throws its error.
 
 The data and the metadata of each delivered item belong together: when an item changes while it is
 loaded, it is loaded again.
@@ -862,9 +1091,9 @@ end
 """
     processed(workspace, items) -> Bool
 
-Ask for `items` ahead of background work, as `select` does, and tell whether each is processed now,
-or failed. The call does not wait, so a view can keep showing what it showed until the items are
-ready.
+Ask for `items` ahead of background work, as `materialize_items` does, and tell whether every item
+is processed now, or failed. The call does not wait, so a window can keep showing what it showed until
+the items are ready.
 """
 function processed(workspace::Workspace, keys::Vector{ItemKey})::Bool
     catalog = workspace.catalog
@@ -878,6 +1107,8 @@ function processed(workspace::Workspace, keys::Vector{ItemKey})::Bool
 end
 
 """
+    wait_processed(workspace, items) -> UInt
+
 Ask for `items` ahead of background work, wait until each is processed, and return their
 [`revision`](@ref). A failed item throws its error.
 """
@@ -904,9 +1135,9 @@ end
 """
     revision(workspace, items) -> UInt
 
-A number that changes when `materialize_items` would deliver different versions of `items`: an item
-was processed again, or its member `process` became current or stopped being so. A view keeps the
-number it drew with and draws again when it differs.
+A number that changes when `materialize_items` would deliver other values of `items`: an item was
+processed again, or its member `process` became current or stopped being so. A window keeps the
+number it drew with, and draws again when it differs.
 """
 function revision(workspace::Workspace, keys::Vector{ItemKey})::UInt
     catalog = workspace.catalog
@@ -924,7 +1155,8 @@ end
     status_revision(workspace) -> Int
 
 A number that rises whenever a computation of this or any other workspace changes its state, is
-added or is removed. Items are added and removed only together with such a change. While the number
+added or is removed. All workspaces of the Julia session share it, so it may also rise for a change
+in another workspace. Items are added and removed only together with such a change. While the number
 stays the same, so do the [`revision`](@ref) of any items and the item that each public id names.
 Reading it costs the same for any number of items.
 """
@@ -958,6 +1190,11 @@ an id is the path of a file below the source root.
 unread(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock String[
     id for (id, row) in workspace.sources if Catalogs.state(workspace.catalog, row) in (Catalogs.MISSING, Catalogs.STALE)]
 
-"""The jobs that ended, the jobs that ended, run or wait, and the jobs that run now."""
+"""
+    work_counts(workspace) -> (completed, total, running)
+
+The jobs that ended, all jobs (ended, running and waiting), and the jobs that run now. The
+performance window of the browser shows them.
+"""
 work_counts(workspace::Workspace)::Tuple{Int,Int,Int} = @lock workspace.catalog.lock (
     workspace.completed, workspace.completed + workspace.running + queued(workspace.catalog), workspace.running)

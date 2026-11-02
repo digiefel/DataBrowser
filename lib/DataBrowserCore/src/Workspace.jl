@@ -19,7 +19,7 @@ using CancellationTokens:
     is_cancellation_requested
 
 using ..Catalogs
-using ..Catalogs: Catalog, Row, Part, Job, add!, hold!, release!, want!, finish!, iscurrent, lost!, queued
+using ..Catalogs: Catalog, Row, Part, Job, add!, hold!, release!, want!, finish!, keepable, lost!, queued
 using ..CodeRevisions: CodeRevision, code_revision
 using DataBrowserAPI:
     COLLECTION_PROCESS,

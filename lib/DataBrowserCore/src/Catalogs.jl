@@ -1,44 +1,127 @@
-# A catalog holds the computations of a workspace as one graph. Each row of the catalog is one
-# [`Computation`](@ref DataBrowserAPI.Computation): a function with its arguments. When an argument
-# is another computation, that computation is a row too, and it is an *input* of the row; the row
-# is a *reader* of its input. There are no kinds of rows: the `process` of an item, the function of
-# a window and a fit in a plot are rows alike.
+# A catalog holds the computations of a workspace and decides which of them run, in which order,
+# and which results are out of date: it is the scheduler of the workspace. A computation,
+# `Computation(f, args...; settings...)`, is a call before it runs: a function, its arguments, and
+# its keyword arguments, called *settings*. The catalog gives each computation one *row*. A `Row` is
+# the number of a row, and a `Node` is what the catalog keeps for it: its state, its inputs and
+# readers, its priority and its holds. The catalog keeps no results and no errors: the workspace
+# keeps them (see [`Evaluate.jl`](Workspace/Evaluate.md)).
 #
-# A row moves between five states:
+# When an argument is another computation, that computation is a row too: it is an *input* of the
+# row, and the row is a *reader* of it. The rows and their inputs form a graph. There are no kinds of
+# rows: the `process` of an item, the function of a plot window and a fit in a plot are rows alike.
+#
+# For a source item `a.csv` that contains the item `a/1`, and a fit of `a/1` that a plot window
+# draws, the catalog has three rows:
 #
 # ```text
-#                take! … finish!
-#     MISSING ───────────────────┐
-#                                ▼
-#      STALE ──────────────▶ CURRENT or FAILED
-#        ▲                       │
-#        └───────────────────────┘
-#         its code or an input changed (invalidate!)
+#     row 1   read_items(project, source, a.csv)      read the source item a.csv
+#               │
+#               ▼
+#     row 2   process(project, Part(row 1, "a/1"))    process the item a/1, one part of row 1
+#               │
+#               ▼
+#     row 3   fit(row 2)                              the fit that the plot window draws
 #
-#     REMOVED: nothing holds it and no row reads it
+#     ▼  the row below reads the result of the row above
 # ```
 #
-# A failed row is a result like a current one: it keeps its error, and it is computed again only
-# when its code or an input changes. Three rules decide what happens to a row:
+# The words that follow name what the workspace and its workers do with rows:
+#
+# | Word   | Meaning                                                                  |
+# |:-------|:-------------------------------------------------------------------------|
+# | hold   | keep a row in the catalog, with `hold!`, until `release!`                |
+# | want   | ask for a row to run, with a priority, with `want!`                      |
+# | stale  | of a row: its code, an input or its computation changed since it ran     |
+# | job    | one run of one row                                                       |
+# | worker | a task of the workspace that runs jobs                                   |
+#
+# When the plot window opens, the workspace adds row 3, holds it and wants it. Rows 1 and 2 inherit
+# its priority, so they run first. When the code of `process` changes, row 2 becomes stale, and so
+# does row 3, which reads it; both run again.
+#
+# Two computations are one row when their functions, arguments and settings are equal with
+# `isequal`, as the keys of a `Dict` are. When two windows draw the same fit of the same item, the
+# fit runs once. Two closures that capture other values are other computations, and a vector given
+# as an argument must not change afterwards.
+#
+# ## States
+#
+# A row is in one of five states:
+#
+# ```text
+#     MISSING ──┐                                  ┌──▶ CURRENT ──┐
+#               ├── take! … finish!, or restore! ──┤              │
+#     STALE ────┘                                  └──▶ FAILED ───┤
+#       ▲                                                         │
+#       └── invalidate! or replace!, or an input lost its result ──┘
+#
+#     any state ──▶ REMOVED, when its last hold goes while no row reads it, or its last
+#                   reader goes while it has no hold. REMOVED is final.
+#
+#     While a job runs, from take! to finish!, the row stays MISSING or STALE.
+# ```
+#
+# A row becomes stale when its code, something that it reads outside the catalog, such as a file, or
+# its computation changes (`invalidate!` and `replace!`), or when one of its inputs loses its result.
+# A failed row counts as finished, as a current row does: it runs again only when it becomes stale.
+# *Stuck* is not a state: a row is stuck when it failed, or when it reads a failed row, directly or
+# through other rows. A stuck row that did not fail cannot run until the failed row runs again.
+# Three rules decide what happens to a row:
 #
 # - **Current.** A row is current when it was computed with the current code of its function and
 #   the current results of its inputs. When a row loses its result, every row that reads it,
-#   directly or not, becomes stale.
-# - **Compute.** A row runs when something wants it, it is missing or stale, and its inputs are
-#   current. A row that is wanted passes its priority on to its inputs, so that they run first.
-# - **Hold.** A row stays while something holds it, or while a row that stays reads it. A row that
-#   nothing keeps is removed.
+#   directly or through other rows, becomes stale.
+# - **Compute.** A row runs when the workspace wants it, it is missing or stale, and its inputs are
+#   current. A row that is wanted passes its priority on to its inputs, so that they run first. An
+#   input keeps the highest priority that it inherited, even after its reader is no longer wanted.
+# - **Hold.** A row stays while it has a hold, or while a row that stays reads it. It is removed when
+#   `release!` takes its last hold while no row reads it, or when its last reader is removed while
+#   it has no hold. A row that is added and never held is never removed by itself: the workspace
+#   holds each row that it adds.
 #
-# The catalog keeps the rows and applies the rules. It computes nothing itself: workers take a job
-# with `take!` and end it with `finish!`. What a row computes, where its result is kept, and which
-# rows to add when one finishes belong to the workspace: see [`Evaluate.jl`](Workspace/Evaluate.md)
-# and [`Pipeline.jl`](Workspace/Pipeline.md).
+# Holding and wanting are separate. A row that is held stays, but it runs only when it is wanted.
+# The workspace holds the row of each item while the item is in the workspace. It wants those rows
+# in the background, or before everything else when a window shows the item. Its priorities go from
+# `VIEWED_ITEM` (6), for what a window shows, down to `BACKGROUND_COLLECTION` (1), and 0 means that
+# nothing wants the row (see "Workers" in [`Evaluate.jl`](Workspace/Evaluate.md)).
+#
+# ## Who calls what
+#
+# The catalog keeps the rows and applies the rules. It computes nothing itself:
+#
+# | Caller                      | Calls                                                              |
+# | --------------------------- | ------------------------------------------------------------------ |
+# | the workspace               | `add!`, `replace!`, `hold!`, `release!`, `want!`, `invalidate!`, `restore!`, `lost!` |
+# | a worker                    | `take!`, then `finish!`                                            |
+# | a task that waits for a row | `wait`, which gives the state of the row                           |
+# | the progress display        | `count`, `queued`, `CHANGES`                                       |
+#
+# What a row computes, where its result and its error are kept, and which rows to add when one
+# finishes belong to the workspace: see [`Evaluate.jl`](Workspace/Evaluate.md) and
+# [`Pipeline.jl`](Workspace/Pipeline.md).
+#
+# Two numbers follow each row. Its *version* identifies its result: the workspace computes it from
+# the code of the function, the versions of the inputs, and the other arguments and settings. The
+# same version means the same result, even in another session. Its *revision* is a counter that rises
+# whenever the row loses its result, gets another computation, or is removed. A job records the
+# revision when it starts; when the revision differs at its end, its result is dropped.
 
+"""
+The computations of a workspace as one graph. Each row of a [`Catalog`](@ref) is one computation,
+and the rows among its arguments are its inputs. A row is missing, stale, current, failed or removed
+(see [`State`](@ref)). The catalog decides which rows run and which stay; workers run them with
+[`take!`](@ref) and [`finish!`](@ref).
+"""
 module Catalogs
 
 using ..DataBrowserCore: Computation
 
-"""A row of a catalog: its position. A position is never reused."""
+"""
+    Row
+
+The number of a row of a catalog. A number is never reused, so a `Row` kept after its row was
+removed never names another computation; `in` tells whether it is still there.
+"""
 struct Row
     index::Int32
 end
@@ -46,8 +129,11 @@ end
 """
     Part(of, id)
 
-The item with id `id` among the items that `of` gives: the argument of the `process` of one item.
-`of` is a computation, its row, or its [`Input`](@ref).
+The item with id `id` among the items that `of` gives. When reading the source item `a.csv` gives
+the items `a/1` and `a/2`, the `process` of `a/1` receives `Part(row, "a/1")`, where `row` reads
+`a.csv`. `of` is a computation, its row, or its [`Input`](@ref): `add!` replaces the first two with
+the third. When the row of `of` becomes stale, so does each row that reads one of its parts, and it
+runs again once `of` has run.
 """
 struct Part{T}
     of::T
@@ -55,53 +141,66 @@ struct Part{T}
 end
 
 """
+    State
+
 The state of a row:
 
 - `MISSING`: it was never computed;
-- `STALE`: its code or one of its inputs changed since it was computed;
+- `STALE`: its code, something that it reads outside the catalog, one of its inputs, or its
+  computation changed since it was computed;
 - `CURRENT`: it was computed with its current code, from the current results of its inputs;
-- `FAILED`: the same as `CURRENT`, but its function threw an error;
+- `FAILED`: it was computed like a current row, and its function threw an error. It does not run
+  again until it becomes stale, and every row that reads it is stuck;
 - `REMOVED`: it left the catalog, because nothing held it and no row read it.
 """
 @enum State::UInt8 MISSING STALE CURRENT FAILED REMOVED
 
+"""What the catalog keeps for one row."""
 mutable struct Node
     computation::Computation
-    # Each row among its arguments once, and the rows that read it.
+    ## Each row among its arguments once, and the rows that read it.
     inputs::Vector{Row}
     readers::Vector{Row}
     state::State
     running::Bool
-    # Rises when a job that runs for the row can no longer give its current result.
+    ## See `revision`.
     revision::UInt32
-    # How many inputs are not current, and how many failed or wait for a row that failed.
+    ## How many inputs are not current, and how many failed or are stuck.
     waiting::Int32
     blocked::Int32
-    # The priority its holders give it, the highest priority of a reader that wants it, and its holds.
+    ## The priority given with `want!`, the highest priority it inherited from a reader, and its holds.
     priority::Int
     inherited::Int
     holds::Int32
-    # The version and the type of its current result; see `finish!`.
+    ## The version and the type of its result; see `finish!`.
     version::UInt64
     type::Type
 end
 
+"""
+    Catalog()
+
+The rows of the computations of one workspace, with their states. The workers and the tasks of the
+workspace share it: every field is read and changed under `lock`.
+"""
 # TODO: a row costs about 300 bytes. Keep the inputs and readers of all rows in flat vectors when a
 # workspace with millions of items needs it.
 mutable struct Catalog
     const lock::ReentrantLock
-    # Notified at every change: for the tasks that wait for a row, and the workers that wait for a job.
+    ## Notified at every change: for the tasks that wait for a row, and the workers that wait for a job.
     const changed::Threads.Condition
     const nodes::Vector{Node}
-    const rows::Dict{Computation,Row}
-    # The rows that can run, by priority, in the order they could; `queued` holds the priority of each.
+    ## The row of each computation, after `add!` instanced it.
+    const row_of::Dict{Computation,Row}
+    ## The rows that can run, by priority, in the order they became able to run, and the priority
+    ## of each.
     const queue::Dict{Int,Vector{Row}}
-    const queued::Dict{Row,Int}
-    # The rows that lost their result since the last `lost!`.
+    const queued_at::Dict{Row,Int}
+    ## The rows that lost their result since the last `lost!`.
     const lost::Vector{Row}
-    # The number of rows in each state, by the type of their function.
+    ## The number of rows in each state, by the type of their function.
     const counts::Dict{Type,Vector{Int}}
-    # Set when the workspace stops: workers take no more jobs and waiting tasks return.
+    ## Set by `close`: tasks in `wait` return, and workers stop waiting for jobs.
     closed::Bool
 end
 
@@ -113,9 +212,9 @@ Base.show(io::IO, catalog::Catalog) = print(io, "Catalog(", length(catalog.nodes
 """
     Input(catalog, row)
 
-A row as an argument of a computation: it stands for the result of the row. In the computation of
-a row, each argument that is a computation of the catalog is its `Input`, so that `inputs` of that
-computation still gives the computations it reads.
+Stands, in the arguments of a computation, for the result of `row`. When `add!` adds a
+computation, each computation among its arguments is replaced by the `Input` of its row. When the row runs, the workspace
+passes the result of each `Input` to the function in its place. An `Input` belongs to one catalog.
 """
 struct Input
     catalog::Catalog
@@ -124,13 +223,20 @@ end
 
 Base.show(io::IO, input::Input) = print(io, "Input(", input.row.index, ")")
 
-"""A number that rises whenever a row of any catalog is added, changes its state, or is removed."""
+"""
+    CHANGES
+
+A number that rises whenever a row of any catalog is added, changes its state, or is removed. A
+progress display draws again when it differs from the number it drew with. All catalogs share it,
+so it may also rise for a change in another catalog.
+"""
 const CHANGES = Threads.Atomic{Int}(0)
 
 """
     count(catalog, F, state) -> Int
 
-The number of rows in `state` whose function has type `F`, such as `typeof(process)`.
+The number of rows in `state` whose function has type `F`, such as `typeof(process)`: the progress
+of one kind of work.
 """
 Base.count(catalog::Catalog, F::Type, state::State)::Int =
     @lock catalog.lock get(catalog.counts, F, zeros(Int, 5))[Int(state) + 1]
@@ -142,55 +248,137 @@ function tally!(catalog::Catalog, current::Node, change::Int)::Nothing
     return nothing
 end
 
-# The functions below read one row. Except for `getindex` and `in`, the caller holds the lock.
+# ## Reading a row
+#
+# These functions read one row. `getindex` and `in` take the lock themselves; for the others, the
+# caller holds `catalog.lock`. A worker can change a row at any time, so read the facts that belong
+# together under one lock, as `@lock catalog.lock (state(catalog, row), stuck(catalog, row))`.
+
 node(catalog::Catalog, row::Row)::Node = catalog.nodes[row.index]
-"""The computation of `row`. Its arguments that are rows of the catalog are their [`Input`](@ref)."""
+
+"""
+    catalog[row] -> Computation
+
+The computation of `row`. Each argument that was a computation is the [`Input`](@ref) of its row.
+"""
 Base.getindex(catalog::Catalog, row::Row)::Computation = @lock catalog.lock node(catalog, row).computation
-"""Whether `row` is still in the catalog."""
+
+"""
+    row in catalog -> Bool
+
+Whether `row` is still in the catalog: it was not removed.
+"""
 Base.in(row::Row, catalog::Catalog)::Bool = @lock catalog.lock node(catalog, row).state != REMOVED
+
+"""
+    state(catalog, row) -> State
+
+The state of `row`; see [`State`](@ref). The caller holds `catalog.lock`.
+"""
 state(catalog::Catalog, row::Row)::State = node(catalog, row).state
-"""A number that rises whenever `row` loses its result, or a job of it can no longer give one."""
+
+"""
+    revision(catalog, row) -> UInt32
+
+A number that rises whenever `row` loses its result, is removed, or its running job goes out of
+date. A job of the row records it when it starts; see [`keepable`](@ref). The caller holds `catalog.lock`.
+"""
 revision(catalog::Catalog, row::Row)::UInt32 = node(catalog, row).revision
+
+"""
+    inputs(catalog, row) -> Vector{Row}
+    readers(catalog, row) -> Vector{Row}
+
+The rows that `row` reads, each once, and the rows that read it. The caller holds `catalog.lock`.
+"""
 inputs(catalog::Catalog, row::Row)::Vector{Row} = node(catalog, row).inputs
 readers(catalog::Catalog, row::Row)::Vector{Row} = node(catalog, row).readers
-"""Whether a job runs for `row`, and whether something wants it."""
+
+"""
+    running(catalog, row) -> Bool
+
+Whether a job runs for `row` now. The caller holds `catalog.lock`.
+"""
 running(catalog::Catalog, row::Row)::Bool = node(catalog, row).running
+
+"""
+    wanted(catalog, row) -> Bool
+
+Whether something wants `row`: its [`priority`](@ref) is above 0. The caller holds `catalog.lock`.
+"""
 wanted(catalog::Catalog, row::Row)::Bool = priority(node(catalog, row)) > 0
-"""Whether `row` failed, or waits for a row that failed."""
+
+"""
+    stuck(catalog, row) -> Bool
+
+Whether `row` is stuck: it failed, or it reads a row that failed, directly or through other rows.
+The caller holds `catalog.lock`.
+"""
 stuck(catalog::Catalog, row::Row)::Bool = stuck(node(catalog, row))
 stuck(node::Node)::Bool = node.state == FAILED || node.blocked > 0
-"""The version and the type of the current result of `row`; see [`finish!`](@ref)."""
+
+"""
+    version(catalog, row) -> UInt64
+    result_type(catalog, row) -> Type
+
+The version and the type of the result of `row`, as [`finish!`](@ref) or [`restore!`](@ref) gave
+them: `0` and `Nothing` for a row that never had a result. A stale or failed row keeps those of its
+last result. The caller holds `catalog.lock`.
+"""
 version(catalog::Catalog, row::Row)::UInt64 = node(catalog, row).version
 result_type(catalog::Catalog, row::Row)::Type = node(catalog, row).type
-"""The priority of the job of `row`: its own, or the highest of a reader that wants it."""
+
+"""
+    priority(catalog, row) -> Int
+
+The priority of `row`: the one [`want!`](@ref) gave it, or the highest that it inherited from a
+reader, whichever is higher. A row with priority 0 does not run. The caller holds `catalog.lock`.
+"""
 priority(catalog::Catalog, row::Row)::Int = priority(node(catalog, row))
 priority(node::Node)::Int = max(node.priority, node.inherited)
 
 # ## Instancing
 #
 # A computation becomes a row once. `add!` *instances* it: each computation among its arguments is
-# added too and replaced by the `Input` of its row. The instanced computation is the key of the row,
-# so two computations that call the same function on the same arguments share one row.
+# added as a row first, and replaced by the `Input` of that row. The instanced computation is the
+# key of the row in `row_of`, so two equal computations find the same row.
+#
+# `input_rows(argument)` finds the inputs among the arguments, and `argument(catalog, argument, add)`
+# instances one argument. Both look inside tuples, vectors and parts. An argument of another type
+# that contains rows needs a method of each, as the workspace defines for a selection:
+#
+# ```julia
+# Catalogs.input_rows(x::MyArgument) = Catalogs.input_rows(x.items)
+# Catalogs.argument(catalog::Catalog, x::MyArgument, add::Bool) =
+#     MyArgument(Catalogs.argument(catalog, x.items, add))
+# ```
+#
+# Without them, the rows inside it are not inputs, and the row does not become stale when they
+# change.
 
-# The rows among the arguments of a computation: its inputs, also inside tuples, vectors and parts.
-# The workspace adds methods for its own arguments that hold rows. A vector of a concrete type that
-# holds no rows, such as a vector of numbers, is not visited.
-rows(value::Input) = Row[value.row]
-rows(value::Part) = rows(value.of)
-rows(values::Tuple) = reduce(vcat, map(rows, values); init=Row[])
-function rows(values::AbstractVector{T}) where {T}
+"""
+    input_rows(argument) -> Vector{Row}
+
+The rows that an argument of a computation reads. A vector of a concrete type that contains no
+rows, such as a vector of numbers, is not visited.
+"""
+input_rows(value::Input) = Row[value.row]
+input_rows(value::Part) = input_rows(value.of)
+input_rows(values::Tuple) = reduce(vcat, map(input_rows, values); init=Row[])
+function input_rows(values::AbstractVector{T}) where {T}
     T === Input && return Row[value.row for value in values]
     isconcretetype(T) && !(T <: Union{Input,Part,Tuple,AbstractVector}) && return Row[]
-    return reduce(vcat, map(rows, values); init=Row[])
+    return reduce(vcat, map(input_rows, values); init=Row[])
 end
-rows(_) = Row[]
+input_rows(_) = Row[]
 
 # `value` with each computation and each row among its arguments replaced by its input. With `add`,
-# the computations that the catalog does not have are added; without, they are the input of no row.
+# the computations that the catalog does not have are added; without, they become
+# `Input(catalog, NOWHERE)`.
 instanced(catalog::Catalog, value::Computation; add::Bool) =
     Computation(value.f, argument(catalog, value.args, add), value.settings)
 argument(catalog::Catalog, value::Computation, add::Bool) = Input(catalog,
-    add ? add!(catalog, value) : get(catalog.rows, instanced(catalog, value; add), NOWHERE))
+    add ? add!(catalog, value) : get(catalog.row_of, instanced(catalog, value; add), NOWHERE))
 argument(catalog::Catalog, value::Row, _) = Input(catalog, value)
 function argument(catalog::Catalog, value::Input, _)
     value.catalog === catalog || error("The computation reads a result of another workspace")
@@ -204,7 +392,11 @@ function argument(catalog::Catalog, values::AbstractVector{T}, add::Bool) where 
 end
 argument(_, value, _) = value
 
-"""The row of no computation: what `get` gives for a computation the catalog does not have."""
+"""
+    NOWHERE
+
+The row of no computation: what `get` gives for a computation that the catalog does not have.
+"""
 const NOWHERE = Row(0)
 
 """
@@ -213,48 +405,49 @@ const NOWHERE = Row(0)
 The row of `computation`, or `default` when the catalog does not have it. Nothing is added.
 """
 Base.get(catalog::Catalog, value::Computation, default) =
-    @lock catalog.lock get(catalog.rows, instanced(catalog, value; add=false), default)
+    @lock catalog.lock get(catalog.row_of, instanced(catalog, value; add=false), default)
 
 """
     add!(catalog, computation) -> Row
 
 The row of `computation`. A computation that the catalog does not have is added, and so is each
-computation among its arguments that it does not have either. A new row is missing, nothing wants
-it and nothing holds it: hold it with [`hold!`](@ref), or the next [`release!`](@ref) that reaches
-it removes it.
+computation among its arguments that it does not have either. A new row is missing, and nothing
+wants or holds it. Hold it with [`hold!`](@ref): a row without a hold is removed only when its last
+reader is removed, and a row that is never held and never read stays. An input of the computation
+that was removed is an error.
 """
 function add!(catalog::Catalog, value::Computation)::Row
     @lock catalog.lock begin
         value = instanced(catalog, value; add=true)
-        row = get(catalog.rows, value, nothing)
+        row = get(catalog.row_of, value, nothing)
         row === nothing || return row
-        any(input -> node(catalog, input).state == REMOVED, rows(value.args)) &&
+        any(input -> node(catalog, input).state == REMOVED, input_rows(value.args)) &&
             error("An input of the computation was removed from the workspace")
         row = Row(length(catalog.nodes) + 1)
         push!(catalog.nodes, Node(value, Row[], Row[], MISSING, false, 0, 0, 0, 0, 0, 0, 0, Nothing))
         tally!(catalog, catalog.nodes[end], 1)
-        catalog.rows[value] = row
+        catalog.row_of[value] = row
         connect!(catalog, row)
         return row
     end
 end
 
 """
-    replace!(catalog, row, computation)
+    replace!(catalog, row, computation) -> Row
 
-Make `row` compute `computation` from now on, as when the source changed the source item that it
-reads, or a collection has other members. The row and its readers become stale. Its holds and its
-priority stay.
+Make `row` compute `computation` from now on. The row and its readers become stale; its holds,
+its priority and its readers stay. The workspace uses it when the source item that a row reads
+changed, or when a collection has other members: its readers keep reading the same row.
 """
 function Base.replace!(catalog::Catalog, row::Row, value::Computation)::Row
     @lock catalog.lock begin
         value = instanced(catalog, value; add=true)
         current = node(catalog, row)
-        delete!(catalog.rows, current.computation)
+        delete!(catalog.row_of, current.computation)
         tally!(catalog, current, -1)
         current.computation = value
         tally!(catalog, current, 1)
-        catalog.rows[value] = row
+        catalog.row_of[value] = row
         before = current.inputs
         disconnect!(catalog, row)
         connect!(catalog, row)
@@ -267,7 +460,7 @@ end
 # Make the rows among the arguments of a row its inputs.
 function connect!(catalog::Catalog, row::Row)::Nothing
     current = node(catalog, row)
-    current.inputs = unique!(rows(current.computation.args))
+    current.inputs = unique!(input_rows(current.computation.args))
     for input in current.inputs
         other = node(catalog, input)
         push!(other.readers, row)
@@ -298,8 +491,9 @@ end
     hold!(catalog, row)
     release!(catalog, row)
 
-Hold `row` so that it stays, or let go of one hold. A row that nothing holds and that no row reads
-is removed, and so are the inputs that then have nothing to keep them either.
+Hold `row` so that it stays, or let go of one hold; call `release!` once for each `hold!`. A row
+that nothing holds and that no row reads is removed, and so are the inputs that then have nothing to
+keep them either.
 """
 hold!(catalog::Catalog, row::Row)::Nothing = @lock catalog.lock (node(catalog, row).holds += 1; nothing)
 
@@ -308,14 +502,15 @@ function release!(catalog::Catalog, row::Row)::Nothing
     return nothing
 end
 
+# Remove a row that has no hold and no reader, and then each of its inputs that is left with neither.
 function remove_unheld!(catalog::Catalog, row::Row)::Nothing
     current = node(catalog, row)
     (current.state == REMOVED || current.holds > 0 || !isempty(current.readers)) && return nothing
     push!(catalog.lost, row)
     before = current.inputs
     disconnect!(catalog, row)
-    delete!(catalog.rows, current.computation)
-    delete!(catalog.queued, row)
+    delete!(catalog.row_of, current.computation)
+    delete!(catalog.queued_at, row)
     tally!(catalog, current, -1)
     current.state = REMOVED
     current.revision += 1
@@ -329,10 +524,13 @@ end
 """
     want!(catalog, row, priority)
 
-Give the job of `row` this priority. Each row it reads, directly or not, inherits the priority when
-its own is lower. A row with priority 0 does not run. Lowering the priority of a row later does not
-lower what its inputs inherited.
+Give `row` this priority: the higher the priority, the sooner it runs, and 0 means that nothing
+wants it. The workspace names its priorities, such as `VIEWED_ITEM` for an item that a window shows.
+Each row that `row` reads, directly or through other rows, inherits the priority when it has a
+lower one.
 """
+# TODO: lowering the priority of a row does not lower what its inputs inherited, so an input that a
+# view wanted once keeps that priority when it becomes stale again.
 function want!(catalog::Catalog, row::Row, priority::Int)::Nothing
     @lock catalog.lock begin
         current = node(catalog, row)
@@ -343,6 +541,7 @@ function want!(catalog::Catalog, row::Row, priority::Int)::Nothing
     return nothing
 end
 
+# Give a row, and the rows that it reads, at least `priority` as their inherited priority.
 function inherit!(catalog::Catalog, row::Row, priority::Int)::Nothing
     current = node(catalog, row)
     current.inherited >= priority && return nothing
@@ -357,14 +556,15 @@ end
 """
     invalidate!(catalog, row)
 
-Make `row` and every row that reads it, directly or not, stale: the code of its function changed,
-or something it reads outside the catalog, such as a file. A job that runs for one of them cannot
-finish; the row runs again.
+Make `row` and every row that reads it, directly or through other rows, stale. The workspace calls it when the code
+of the function of `row` changed, or when something that `row` reads outside the catalog, such as a
+file, changed. A job that runs for one of these rows can finish, but its result is not kept, and the
+row runs again.
 """
 invalidate!(catalog::Catalog, row::Row)::Nothing = @lock catalog.lock invalidate!(catalog, row, true)
 
-# `outside` is true for the row whose code or outside input changed. A reader that has no result and
-# no job has passed that on to its own readers already, so the walk stops there.
+# `outside` is true for the row whose code or outside input changed. A reader that is missing or
+# stale and has no job made its own readers stale already, so the walk stops there.
 function invalidate!(catalog::Catalog, row::Row, outside::Bool)::Nothing
     current = node(catalog, row)
     had = current.state in (CURRENT, FAILED)
@@ -377,7 +577,8 @@ function invalidate!(catalog::Catalog, row::Row, outside::Bool)::Nothing
     return nothing
 end
 
-# Change the state of a row, and what its readers count of it.
+# Change the state of a row, and update in each reader the counts of its inputs that are not
+# current and that are stuck.
 function set!(catalog::Catalog, row::Row, state::State)::Nothing
     current = node(catalog, row)
     was_current, was_stuck = current.state == CURRENT, stuck(current)
@@ -394,6 +595,8 @@ function set!(catalog::Catalog, row::Row, state::State)::Nothing
     return nothing
 end
 
+# Count one more (`change` 1) or one less (`change` -1) stuck input of a row, and pass on to its
+# readers a change of whether the row itself is stuck.
 function block!(catalog::Catalog, row::Row, change::Int)::Nothing
     current = node(catalog, row)
     was_stuck = stuck(current)
@@ -402,6 +605,8 @@ function block!(catalog::Catalog, row::Row, change::Int)::Nothing
     return nothing
 end
 
+# Whether a job can start for a row: it is missing or stale, no job runs for it, and its inputs are
+# current. This is the Compute rule, without the priority.
 startable(current::Node)::Bool = current.state in (MISSING, STALE) && !current.running && current.waiting == 0
 
 # Queue the job of a row that can run and is wanted, at its priority. A row queued at another
@@ -410,16 +615,46 @@ function queue!(catalog::Catalog, row::Row)::Nothing
     current = node(catalog, row)
     rank = priority(current)
     (rank > 0 && startable(current)) || return nothing
-    get(catalog.queued, row, 0) == rank && return nothing
+    get(catalog.queued_at, row, 0) == rank && return nothing
     push!(get!(Vector{Row}, catalog.queue, rank), row)
-    catalog.queued[row] = rank
+    catalog.queued_at[row] = rank
     notify(catalog.changed)
     return nothing
 end
 
 # ## Jobs
+#
+# A worker runs one row at a time. It holds the catalog lock while it takes a job, and waits for
+# `catalog.changed` while no row can run:
+#
+# ```julia
+# while true
+#     job = @lock catalog.lock begin
+#         job = take!(catalog)
+#         while job === nothing && !catalog.closed
+#             wait(catalog.changed)   # a row may be able to run now
+#             job = take!(catalog)
+#         end
+#         job
+#     end
+#     job === nothing && break        # the catalog closed
+#     try
+#         result = ...                # call `catalog[job.row]` with the results of its inputs
+#         finish!(catalog, job; version, type=typeof(result))   # `false`: the result is out of date
+#     catch
+#         finish!(catalog, job; failed=true)
+#     end
+# end
+# ```
+#
+# The workspace computes `version` before the call; `work!` in [`Evaluate.jl`](Workspace/Evaluate.md)
+# is its loop.
 
-"""A job: one row to compute, with the revision of the row when the job started."""
+"""
+    Job
+
+One row to compute, with the [`revision`](@ref) of the row when the job started.
+"""
 struct Job
     row::Row
     revision::UInt32
@@ -430,7 +665,7 @@ end
 
 Start the job of the row with the highest priority that can run: it is wanted, it is missing or
 stale and no job runs for it, and its inputs are current. Rows of one priority start in the order
-they could. Gives `nothing` when no row can run.
+they became able to run. `take!` does not wait: it gives `nothing` when no row can run.
 """
 function Base.take!(catalog::Catalog)::Union{Job,Nothing}
     @lock catalog.lock while !isempty(catalog.queue)
@@ -438,8 +673,8 @@ function Base.take!(catalog::Catalog)::Union{Job,Nothing}
         bucket = catalog.queue[rank]
         row = popfirst!(bucket)
         isempty(bucket) && delete!(catalog.queue, rank)
-        get(catalog.queued, row, 0) == rank || continue
-        delete!(catalog.queued, row)
+        get(catalog.queued_at, row, 0) == rank || continue
+        delete!(catalog.queued_at, row)
         current = node(catalog, row)
         startable(current) || continue
         current.running = true
@@ -450,27 +685,29 @@ function Base.take!(catalog::Catalog)::Union{Job,Nothing}
 end
 
 """
-    iscurrent(catalog, job) -> Bool
+    keepable(catalog, job) -> Bool
 
-Whether the result of `job` can still be kept: its row is in the catalog, and neither its code nor
-an input changed since the job started.
+Whether the result of `job` can still be kept: its row is in the catalog, and it did not lose its
+result since the job started, as when its code or an input changed.
 """
-iscurrent(catalog::Catalog, job::Job)::Bool = @lock catalog.lock (
+keepable(catalog::Catalog, job::Job)::Bool = @lock catalog.lock (
     node(catalog, job.row).state != REMOVED && node(catalog, job.row).revision == job.revision)
 
 """
     finish!(catalog, job; version, type) -> Bool
     finish!(catalog, job; failed=true) -> Bool
 
-End `job`. Its row becomes current, with the version and the type of its result, or failed, and
-`finish!` gives `true`. When the job is no longer current (see [`iscurrent`](@ref)), the result is
-not kept: the row runs again when it can, and `finish!` gives `false`.
+End `job`. Its row becomes current, with the `version` and the `type` of its result, or failed; then
+`finish!` gives `true`. The workspace computes the version before the job runs (see
+[`Evaluate.jl`](Workspace/Evaluate.md)), and the type of the result tells it which store keeps the
+result. When the result is not [`keepable`](@ref), the row does not change, `finish!` gives `false`,
+and the row runs again when it can.
 """
 function finish!(catalog::Catalog, job::Job; failed::Bool=false, version::UInt64=UInt64(0), type::Type=Nothing)::Bool
     @lock catalog.lock begin
         current = node(catalog, job.row)
         current.running = false
-        if !iscurrent(catalog, job)
+        if !keepable(catalog, job)
             queue!(catalog, job.row)
             notify(catalog.changed)
             return false
@@ -487,7 +724,7 @@ end
 
 Give `row` a result that an earlier session computed, without a job: the row becomes current or
 failed. Gives `false`, and changes nothing, when an input is not current or the row is not missing
-or stale.
+or stale. The workspace restores the rows of a source item first, then the rows that read them.
 """
 function restore!(catalog::Catalog, row::Row; failed::Bool=false, version::UInt64=UInt64(0), type::Type=Nothing)::Bool
     @lock catalog.lock begin
@@ -502,8 +739,10 @@ end
 """
     wait(catalog, row) -> State
 
-Wait until `row` is current, failed, waits for a row that failed, or is removed, or until the
-catalog closes, and give its state. Only a row that something wants becomes current.
+Wait until `row` has a result, is stuck, or is removed, or until the catalog closes, and give its
+state. Only a row that something wants runs: [`want!`](@ref) it first, or `wait` waits until the
+catalog closes. A row that reads a failed row, and a row of a closed catalog, give `MISSING` or
+`STALE`; tell them apart with [`stuck`](@ref) and `catalog.closed`. A failed row gives `FAILED`.
 """
 function Base.wait(catalog::Catalog, row::Row)::State
     @lock catalog.lock while true
@@ -514,18 +753,28 @@ function Base.wait(catalog::Catalog, row::Row)::State
     end
 end
 
-"""Stop the catalog: [`take!`](@ref) waits no more, and the tasks that wait for a row return."""
+"""
+    close(catalog)
+
+Close the catalog: the tasks in [`wait`](@ref) return, and the workers that wait for
+`catalog.changed` wake up and see `catalog.closed`.
+"""
 Base.close(catalog::Catalog)::Nothing = @lock catalog.lock (catalog.closed = true; notify(catalog.changed); nothing)
 
 """
     lost!(catalog) -> Vector{Row}
 
-The rows that lost their current or failed result, and the rows that were removed, since the last
-call, each as often as it happened. The caller forgets what it kept for them.
+Return and clear the list of the rows that lost their result or were removed since the last call;
+a row can appear more than once. The workspace calls it after each change that can make rows lose
+their result or remove them, and forgets the results and errors that it keeps for these rows.
 """
 lost!(catalog::Catalog)::Vector{Row} = @lock catalog.lock (lost = copy(catalog.lost); empty!(catalog.lost); lost)
 
-"""The number of jobs that wait to run."""
-queued(catalog::Catalog)::Int = @lock catalog.lock length(catalog.queued)
+"""
+    queued(catalog) -> Int
+
+The number of rows that wait for a worker.
+"""
+queued(catalog::Catalog)::Int = @lock catalog.lock length(catalog.queued_at)
 
 end
