@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 38
+const PROJECT_CACHE_SCHEMA_VERSION = 39
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -54,66 +54,6 @@ struct ProjectCacheIdentity
     cache_path::String
 end
 
-@enum CacheResultStatus::Int8 begin
-    RESULT_READY = 1
-    RESULT_FAILED = 2
-end
-
-struct CacheResultKey
-    kind::PipelineStage
-    entity::Union{String,Int64}
-end
-
-Base.:(==)(left::CacheResultKey, right::CacheResultKey)::Bool =
-    left.kind == right.kind && left.entity == right.entity
-Base.isequal(left::CacheResultKey, right::CacheResultKey)::Bool =
-    left.kind == right.kind && isequal(left.entity, right.entity)
-Base.hash(key::CacheResultKey, seed::UInt)::UInt = hash(key.entity, hash(key.kind, seed))
-
-"""One persisted result-state row. `CacheResultKey` is rebuilt at the domain edge from `(kind, entity)`."""
-struct CachedResultState
-    kind::Int8
-    entity::String
-    status::Int8
-    source_item_key::Int64
-    message::Union{Nothing,String}
-    # A new number each time the stage finishes, so that values computed from its result can
-    # tell, after a reopen, whether they were computed from the result that is current.
-    version::UInt64
-    # The serialized item type under which the store keeps the result; empty when none is kept.
-    # A `process` method may return another type than the item it receives.
-    type_hex::String
-end
-
-CachedResultState(row)::CachedResultState = CachedResultState(
-    Int8(row.kind),
-    String(row.entity),
-    Int8(row.status),
-    Int64(row.source_item_key),
-    _null_to_nothing(row.message),
-    UInt64(row.version),
-    String(row.type_hex),
-)
-
-"""One persisted source or collection result, identified by its stage and private integer key."""
-struct CachedKeyedResultState
-    kind::Int8
-    entity::Int64
-    status::Int8
-    source_item_key::Int64
-    message::Union{Nothing,String}
-end
-
-CachedKeyedResultState(row)::CachedKeyedResultState = CachedKeyedResultState(
-    Int8(row.kind),
-    Int64(row.entity),
-    Int8(row.status),
-    Int64(row.source_item_key),
-    _null_to_nothing(row.message),
-)
-
-const AnyCachedResultState = Union{CachedResultState,CachedKeyedResultState}
-
 """A collection as the cache saved it. `parent_key` is `nothing` below the root."""
 const SavedCollection = @NamedTuple{
     key::Int64,
@@ -149,8 +89,7 @@ const SavedItem = @NamedTuple{
 """
 Snapshot returned by `load_cache_index` for workspace restoration.
 
-Contains the saved source items, collections and items, and the result of each stage. A collection
-comes after its parent. The snapshot exposes no live cache stores or connections.
+Contains the saved source items, collections and items. A collection comes after its parent. The snapshot exposes no live cache stores or connections.
 """
 struct ProjectCacheIndex
     identity::ProjectCacheIdentity
@@ -158,208 +97,6 @@ struct ProjectCacheIndex
     sources::Dict{Int64,String}
     collections::Vector{SavedCollection}
     items::Vector{SavedItem}
-    result_states::Dict{CacheResultKey,AnyCachedResultState}
-end
-
-"""Summary of the cache/source comparison shown by workspace status."""
-struct ProjectCacheStatus
-    total_source_items::Int
-    cached_source_items::Int
-    fresh_source_items::Int
-    stale_source_items::Int
-    new_source_items::Int
-    deleted_source_items::Int
-    error_source_items::Int
-end
-
-"""Persisted cache counts surfaced through workspace status."""
-struct CacheStageSummary
-    cached_sources::Int
-    read_sources::Int
-    created_items::Int
-    processed::Int
-    collection_processed::Int
-    failed_read::Int
-    failed_expand::Int
-    failed_process::Int
-    failed_collection::Int
-end
-
-CacheStageSummary()::CacheStageSummary =
-    CacheStageSummary(0, 0, 0, 0, 0, 0, 0, 0, 0)
-
-mutable struct CacheStageLedger
-    summary::CacheStageSummary
-    source_items::Set{Int64}
-    items::Set{String}
-    failures::Set{Tuple{String,Int64}}
-    result_states::Dict{CacheResultKey,AnyCachedResultState}
-    lock::ReentrantLock
-end
-
-CacheStageLedger()::CacheStageLedger = CacheStageLedger(
-    CacheStageSummary(),
-    Set{Int64}(),
-    Set{String}(),
-    Set{Tuple{String,Int64}}(),
-    Dict{CacheResultKey,AnyCachedResultState}(),
-    ReentrantLock(),
-)
-
-function CacheStageLedger(source_items, items, failures, states...)::CacheStageLedger
-    result_states = Dict{CacheResultKey,AnyCachedResultState}()
-    for store in states, state in values(store)
-        result_states[CacheResultKey(PipelineStage(state.kind::Int8), state.entity)] = state
-    end
-    return CacheStageLedger(
-        _cache_stage_summary(source_items, items, failures, states...),
-        Set{Int64}(row.source_item_key for row in values(source_items)),
-        Set{String}(String(id) for id in keys(items)),
-        Set{Tuple{String,Int64}}(
-            (String(first(key)), Int64(last(key))) for key in keys(failures)),
-        result_states,
-        ReentrantLock(),
-    )
-end
-
-function _stage_summary_delta(
-    summary::CacheStageSummary;
-    cached_sources::Int=0,
-    read_sources::Int=0,
-    created_items::Int=0,
-    processed::Int=0,
-    collection_processed::Int=0,
-    failed_read::Int=0,
-    failed_expand::Int=0,
-    failed_process::Int=0,
-    failed_collection::Int=0,
-)::CacheStageSummary
-    return CacheStageSummary(
-        summary.cached_sources + cached_sources,
-        summary.read_sources + read_sources,
-        summary.created_items + created_items,
-        summary.processed + processed,
-        summary.collection_processed + collection_processed,
-        summary.failed_read + failed_read,
-        summary.failed_expand + failed_expand,
-        summary.failed_process + failed_process,
-        summary.failed_collection + failed_collection,
-    )
-end
-
-function _stage_result_delta(
-    summary::CacheStageSummary,
-    state::AnyCachedResultState,
-    sign::Int,
-)::CacheStageSummary
-    kind = PipelineStage(state.kind)
-    status = CacheResultStatus(state.status)
-    if status === RESULT_READY
-        kind === SOURCE_READ && return _stage_summary_delta(summary; read_sources=sign)
-        kind === SOURCE_EXPAND && return _stage_summary_delta(summary; cached_sources=sign)
-        kind === ITEM_PROCESS &&
-            return _stage_summary_delta(summary; processed=sign)
-        kind === COLLECTION_PROCESS &&
-            return _stage_summary_delta(summary; collection_processed=sign)
-    elseif status === RESULT_FAILED
-        kind === SOURCE_READ && return _stage_summary_delta(summary; failed_read=sign)
-        kind === SOURCE_EXPAND && return _stage_summary_delta(summary; failed_expand=sign)
-        kind === ITEM_PROCESS &&
-            return _stage_summary_delta(summary; failed_process=sign)
-        kind === COLLECTION_PROCESS &&
-            return _stage_summary_delta(summary; failed_collection=sign)
-    end
-    return summary
-end
-
-function _stage_ledger_source!(ledger::CacheStageLedger, key::Integer, present::Bool)::Nothing
-    source_key = Int64(key)
-    lock(ledger.lock) do
-        exists = source_key in ledger.source_items
-        if present && !exists
-            push!(ledger.source_items, source_key)
-        elseif !present && exists
-            delete!(ledger.source_items, source_key)
-        end
-    end
-    return nothing
-end
-
-function _stage_ledger_item!(ledger::CacheStageLedger, id::AbstractString, present::Bool)::Nothing
-    item_id = String(id)
-    lock(ledger.lock) do
-        exists = item_id in ledger.items
-        if present && !exists
-            push!(ledger.items, item_id)
-            ledger.summary = _stage_summary_delta(ledger.summary; created_items=1)
-        elseif !present && exists
-            delete!(ledger.items, item_id)
-            ledger.summary = _stage_summary_delta(ledger.summary; created_items=-1)
-        end
-    end
-    return nothing
-end
-
-function _stage_ledger_failure!(
-    ledger::CacheStageLedger,
-    key::Tuple{String,Int64},
-    present::Bool,
-)::Nothing
-    lock(ledger.lock) do
-        exists = key in ledger.failures
-        # Source-level failures carry an empty item id.
-        delta = isempty(first(key)) ? 1 : 0
-        if present && !exists
-            push!(ledger.failures, key)
-            delta == 1 &&
-                (ledger.summary = _stage_summary_delta(ledger.summary; failed_expand=1))
-        elseif !present && exists
-            delete!(ledger.failures, key)
-            delta == 1 &&
-                (ledger.summary = _stage_summary_delta(ledger.summary; failed_expand=-1))
-        end
-    end
-    return nothing
-end
-
-function _stage_ledger_result!(
-    ledger::CacheStageLedger,
-    key::CacheResultKey,
-    state::Union{Nothing,AnyCachedResultState},
-)::Nothing
-    lock(ledger.lock) do
-        previous = get(ledger.result_states, key, nothing)
-        previous === nothing ||
-            (ledger.summary = _stage_result_delta(ledger.summary, previous, -1))
-        if state === nothing
-            delete!(ledger.result_states, key)
-        else
-            ledger.result_states[key] = state
-            ledger.summary = _stage_result_delta(ledger.summary, state, 1)
-        end
-    end
-    return nothing
-end
-
-function _stage_ledger_result!(
-    ledger::CacheStageLedger,
-    key::Tuple{Int8,T},
-    state::Union{Nothing,AnyCachedResultState},
-)::Nothing where {T<:Union{AbstractString,Integer}}
-    entity = key[2] isa AbstractString ? String(key[2]) : Int64(key[2])
-    return _stage_ledger_result!(
-        ledger, CacheResultKey(PipelineStage(key[1]), entity), state)
-end
-
-function _reset_stage_ledger!(ledger::CacheStageLedger)::Nothing
-    lock(ledger.lock) do
-        empty!(ledger.source_items)
-        empty!(ledger.items)
-        empty!(ledger.failures)
-        empty!(ledger.result_states)
-        ledger.summary = CacheStageSummary()
-    end
-    return nothing
 end
 
 # Storage rows (field names are the table columns; `R(database_row)` is the pure decoder)
@@ -412,16 +149,6 @@ end
 ComputationRevisionRow(row)::ComputationRevisionRow =
     ComputationRevisionRow(String(row.id), UInt64(row.revision), String(row.type_hex), String(row.failure))
 
-"""The revision of the code that one stage ran for one type of item, collection or source item."""
-struct CodeRevisionRow
-    stage::Int8
-    type_hex::String
-    revision::String
-end
-
-CodeRevisionRow(row)::CodeRevisionRow =
-    CodeRevisionRow(Int8(row.stage), String(row.type_hex), String(row.revision))
-
 struct ItemRow
     id::String
     item_key::Int64
@@ -439,16 +166,6 @@ ItemRow(row)::ItemRow = ItemRow(
     String(row.type_hex),
     _null_to_nothing(row.collection_key),
 )
-
-"""One persisted failure row. Source-level failures carry an empty item id."""
-struct FailureRow
-    item_id::String
-    source_item_key::Int64
-    message::String
-end
-
-FailureRow(row)::FailureRow =
-    FailureRow(String(row.item_id), Int64(row.source_item_key), String(row.message))
 
 # Identity
 
@@ -492,12 +209,8 @@ mutable struct CacheDB
     source_item_metadata::WideRowStore{Int64}
     # The metadata project code last received with each item, which queries read.
     item_metadata::WideRowStore{Int64}
-    failures::RowStore{Tuple{String,Int64},FailureRow}
-    result_states::RowStore{Tuple{Int8,String},CachedResultState}
-    keyed_result_states::RowStore{Tuple{Int8,Int64},CachedKeyedResultState}
     # The metadata that the `process` of each collection changed.
     collection_process::WideRowStore{Int64}
-    code_revisions::RowStore{Tuple{Int8,String},CodeRevisionRow}
     # The metadata that item `process` and member `process` produced for each item, apart from the
     # delivered metadata, where a collection can replace its values.
     item_process_metadata::WideRowStore{Int64}
@@ -514,7 +227,6 @@ mutable struct CacheDB
     next_source_item_key::Int64
     persisted_collection_keys::Set{Int64}
     key_lock::ReentrantLock
-    stage_ledger::CacheStageLedger
     # The signature of the item_metadata columns backing the query view; the view is
     # recreated only when it changes.
     query_view_signature::Vector{Symbol}
@@ -603,25 +315,10 @@ function open_cache_db(
         collections = started(RowStore{Int64,CollectionRow}(
             db, "collections", ("collection_key",)))
         items = started(RowStore{String,ItemRow}(db, "items", ("id",)))
-        failures = started(RowStore{Tuple{String,Int64},FailureRow}(
-            db, "item_failures", ("item_id", "source_item_key")))
-        result_states = started(RowStore{Tuple{Int8,String},CachedResultState}(
-            db, "result_states", ("kind", "entity")))
-        keyed_result_states = started(RowStore{Tuple{Int8,Int64},CachedKeyedResultState}(
-            db, "keyed_result_states", ("kind", "entity")))
-        code_revisions = started(RowStore{Tuple{Int8,String},CodeRevisionRow}(
-            db, "code_revisions", ("stage", "type_hex")))
         computation_revision_rows = started(RowStore{String,ComputationRevisionRow}(
             db, "computation_revisions", ("id",)))
         item_keys, next_item_key = _load_item_keys(db)
         source_item_keys, source_item_ids, next_source_item_key = _load_source_item_keys(db)
-        stage_ledger = CacheStageLedger(
-            read(source_items),
-            read(items),
-            read(failures),
-            read(result_states),
-            read(keyed_result_states),
-        )
         return CacheDB(
             identity,
             db,
@@ -633,11 +330,7 @@ function open_cache_db(
             items,
             started(WideRowStore{Int64}(db, "source_item_metadata", "item_key")),
             started(WideRowStore{Int64}(db, "item_metadata", "item_key")),
-            failures,
-            result_states,
-            keyed_result_states,
             started(WideRowStore{Int64}(db, "collection_process_metadata", "collection_key")),
-            code_revisions,
             started(WideRowStore{Int64}(db, "item_process_metadata", "item_key")),
             started(WideRowStore{Int64}(db, "member_process_metadata", "item_key")),
             computation_revision_rows,
@@ -649,7 +342,6 @@ function open_cache_db(
             next_source_item_key,
             Set{Int64}(keys(read(collections))),
             ReentrantLock(),
-            stage_ledger,
             Symbol[],
         )
     catch
@@ -761,12 +453,6 @@ function ensure_schema!(connection)::Nothing
     DBInterface.execute(connection,
         create_table_sql(CollectionRow, "collections", (:collection_key,)))
     DBInterface.execute(connection, create_table_sql(ItemRow, "items", (:id,)))
-    DBInterface.execute(connection, create_table_sql(FailureRow, "item_failures", (:item_id, :source_item_key)))
-    DBInterface.execute(connection, create_table_sql(CachedResultState, "result_states", (:kind, :entity)))
-    DBInterface.execute(connection, create_table_sql(
-        CachedKeyedResultState, "keyed_result_states", (:kind, :entity)))
-    DBInterface.execute(connection,
-        create_table_sql(CodeRevisionRow, "code_revisions", (:stage, :type_hex)))
     DBInterface.execute(connection,
         create_table_sql(ComputationRevisionRow, "computation_revisions", (:id,)))
     DBInterface.execute(connection, """
@@ -805,8 +491,7 @@ end
     replace_source_output!(cache, source_key, previous, outputs) -> conflicts
 
 Replace what the source item `source_key` produced. The items with the ids in `previous` and every
-result made from them are deleted, `outputs` are stored, and the expand stage of the source item is
-recorded as finished. An id in both lists is a new item: its earlier results do not survive.
+result made from them are deleted, and `outputs` are stored. An id in both lists is a new item: its earlier results do not survive.
 `outputs` may be empty.
 
 Returns type-conflict messages for metadata keys that could not be stored.
@@ -824,11 +509,9 @@ function replace_source_output!(
         key = item_key!(cache, output.id; mint=true)
         append!(cache.items, output.id, ItemRow(
             output.id, key, source_key, output.label, _serialize_type(output.type), output.collection_key))
-        _stage_ledger_item!(cache.stage_ledger, output.id, true)
         append!(dropped, edit!(cache.source_item_metadata, key, output.metadata))
         record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
     end
-    store_source_result!(cache, SOURCE_EXPAND, source_key)
     return unique(dropped)
 end
 
@@ -876,28 +559,6 @@ function store_collection!(
 end
 
 """
-    store_result_ready!(cache, id, source_key, type; stage=ITEM_PROCESS)
-
-Record that a stage of an item finished: its own `process` for `ITEM_PROCESS`, or the member
-`process` methods of its collections for `MEMBER_PROCESS`. The value itself is kept by the store
-of its item type `type`. Return the new version of the result.
-"""
-function store_result_ready!(
-    cache::CacheDB,
-    id::AbstractString,
-    source_key::Int64,
-    type::Type;
-    stage::PipelineStage=ITEM_PROCESS,
-)::UInt64
-    version = rand(UInt64)
-    state = CachedResultState(Int8(stage), String(id), Int8(RESULT_READY), source_key, nothing, version,
-        _serialize_type(type))
-    edit!(cache.result_states, (Int8(stage), String(id)), state)
-    _stage_ledger_result!(cache.stage_ledger, (Int8(stage), String(id)), state)
-    return version
-end
-
-"""
     store_computation_revision!(cache, id, revision, type; failure="")
 
 Record the revision of the inputs and code from which the result of the computation `id` was
@@ -936,29 +597,6 @@ function recorded_revision(cache::CacheDB, id::AbstractString)::Union{Nothing,Na
     return (; row.revision, type, row.failure)
 end
 
-"""Persist one independent failed work result."""
-function store_result_failure!(cache::CacheDB, kind::PipelineStage,
-        entity::AbstractString, source_item_key::Integer,
-        message::AbstractString)::Nothing
-    entity_value = String(entity)
-    state = CachedResultState(Int8(kind), entity_value, Int8(RESULT_FAILED),
-        Int64(source_item_key), String(message), UInt64(0), "")
-    edit!(cache.result_states, (Int8(kind), entity_value), state)
-    _stage_ledger_result!(cache.stage_ledger, (Int8(kind), entity_value), state)
-    return nothing
-end
-
-function store_result_failure!(cache::CacheDB, kind::PipelineStage,
-        entity::Integer, source_item_key::Integer,
-        message::AbstractString)::Nothing
-    entity_value = Int64(entity)
-    state = CachedKeyedResultState(Int8(kind), entity_value, Int8(RESULT_FAILED),
-        Int64(source_item_key), String(message))
-    edit!(cache.keyed_result_states, (Int8(kind), entity_value), state)
-    _stage_ledger_result!(cache.stage_ledger, (Int8(kind), entity_value), state)
-    return nothing
-end
-
 """
 Persist the metadata project code receives with one item, which queries read. Returns type-conflict messages for dropped keys.
 """
@@ -988,83 +626,26 @@ function store_item_stage_metadata!(
 end
 
 """
-    store_code_revision!(cache, stage, type, revision)
-
-Record the revision of the code that `stage` runs for values of `type`. The results the cache keeps
-for that stage and type were computed with that code.
+Persist the metadata of the value that the `process` of one collection returned. Returns a
+message for each value that could not be saved.
 """
-function store_code_revision!(cache::CacheDB, stage::PipelineStage, type::Type, revision::AbstractString)::Nothing
-    type_hex = _serialize_type(type)
-    edit!(cache.code_revisions, (Int8(stage), type_hex), CodeRevisionRow(Int8(stage), type_hex, revision))
-    return nothing
-end
+store_collection_process_result!(cache::CacheDB, collection_key::Integer, metadata::AbstractDict)::Vector{String} =
+    edit!(cache.collection_process, Int64(collection_key), metadata)
 
-"""
-    code_revisions(cache) -> Dict{Tuple{PipelineStage,Type},String}
-
-The revisions that [`store_code_revision!`](@ref) recorded. A type that no longer exists is left out.
-"""
-function code_revisions(cache::CacheDB)::Dict{Tuple{PipelineStage,Type},String}
-    revisions = Dict{Tuple{PipelineStage,Type},String}()
-    for row in values(read(cache.code_revisions))
-        type = try
-            _deserialize_type(row.type_hex)
-        catch
-            continue
-        end
-        revisions[(PipelineStage(row.stage), type)] = row.revision
-    end
-    return revisions
-end
-
-"""
-Record that the `process` of one collection finished, with the metadata of the value it returned.
-Returns a message for each value that could not be saved.
-"""
-function store_collection_process_result!(
-    cache::CacheDB, collection_key::Integer, metadata::AbstractDict,
-)::Vector{String}
-    entity = Int64(collection_key)
-    dropped = edit!(cache.collection_process, entity, metadata)
-    state = CachedKeyedResultState(
-        Int8(COLLECTION_PROCESS), entity, Int8(RESULT_READY), 0, nothing)
-    edit!(cache.keyed_result_states, (Int8(COLLECTION_PROCESS), entity), state)
-    _stage_ledger_result!(
-        cache.stage_ledger, (Int8(COLLECTION_PROCESS), entity), state)
-    return dropped
-end
-
-"""Write one source item-metadata (item layer) row."""
-function edit_source_item_metadata!(cache::CacheDB, key::Int64, metadata::AbstractDict)::Nothing
-    edit!(cache.source_item_metadata, key, metadata)
-    return nothing
-end
-
-"""Delete published items and downstream results, preserving source identity and the read result."""
+"""Delete published items and what the cache saved for them, keeping the source identity."""
 function delete_source_output!(
     cache::CacheDB,
     source_item_key_value::Integer,
     item_ids::Vector{String},
 )::Nothing
-    source_key = Int64(source_item_key_value)
-    clear_cached_result_state!(cache, SOURCE_EXPAND, source_key)
     for id in item_ids
         key = item_key!(cache, id)
         delete!(cache.items, id)
-        _stage_ledger_item!(cache.stage_ledger, id, false)
         delete!(cache.source_item_metadata, key)
         delete!(cache.item_metadata, key)
         delete!(cache.item_process_metadata, key)
         delete!(cache.member_process_metadata, key)
-        for stage in (ITEM_PROCESS, MEMBER_PROCESS)
-            delete!(cache.result_states, (Int8(stage), id))
-            _stage_ledger_result!(cache.stage_ledger, (Int8(stage), id), nothing)
-        end
-        delete!(cache.failures, (id, source_key))
-        _stage_ledger_failure!(cache.stage_ledger, (id, source_key), false)
     end
-    delete!(cache.failures, ("", source_key))
-    _stage_ledger_failure!(cache.stage_ledger, ("", source_key), false)
     return nothing
 end
 
@@ -1090,10 +671,7 @@ function delete_collection_metadata!(
     collection_keys::Vector{Int64},
 )::Nothing
     for collection_key in unique(collection_keys)
-        delete!(cache.keyed_result_states, (Int8(COLLECTION_PROCESS), collection_key))
         delete!(cache.collection_process, collection_key)
-        _stage_ledger_result!(
-            cache.stage_ledger, (Int8(COLLECTION_PROCESS), collection_key), nothing)
     end
     return nothing
 end
@@ -1101,8 +679,7 @@ end
 """Every store of `cache`."""
 cache_stores(cache::CacheDB) = (cache.source_items, cache.collections, cache.collection_metadata,
     cache.collection_source_metadata, cache.items, cache.source_item_metadata, cache.item_metadata,
-    cache.failures, cache.result_states, cache.keyed_result_states, cache.collection_process,
-    cache.code_revisions, cache.item_process_metadata, cache.member_process_metadata,
+    cache.collection_process, cache.item_process_metadata, cache.member_process_metadata,
     cache.computation_revision_rows)
 
 """
@@ -1123,93 +700,10 @@ function cache_pending_counts(cache::CacheDB)::NamedTuple{(:items, :rows),Tuple{
     end
 end
 
-"""
-The number of results the cache has accepted for each stage. A result counts from the moment it is
-queued, before it is written to disk.
-"""
-function cache_stage_summary(cache::CacheDB)::CacheStageSummary
-    return lock(cache.stage_ledger.lock) do
-        cache.stage_ledger.summary
-    end
-end
-
-"""Drop one cached work-result ledger row."""
-function clear_cached_result_state!(
-    cache::CacheDB,
-    kind::PipelineStage,
-    entity::AbstractString,
-)::Nothing
-    key = (Int8(kind), String(entity))
-    delete!(cache.result_states, key)
-    _stage_ledger_result!(cache.stage_ledger, key, nothing)
-    return nothing
-end
-
-function clear_cached_result_state!(
-    cache::CacheDB,
-    kind::PipelineStage,
-    entity::Integer,
-)::Nothing
-    key = (Int8(kind), Int64(entity))
-    delete!(cache.keyed_result_states, key)
-    _stage_ledger_result!(cache.stage_ledger, key, nothing)
-    return nothing
-end
-
-function _cache_stage_summary(source_items, items, failures, state_stores...)::CacheStageSummary
-    ready(kind::PipelineStage)::Int = count(
-        state -> PipelineStage(state.kind) === kind &&
-            CacheResultStatus(state.status) === RESULT_READY,
-        Iterators.flatten(values(store) for store in state_stores),
-    )
-    failed(kind::PipelineStage)::Int = count(
-        state -> PipelineStage(state.kind) === kind &&
-            CacheResultStatus(state.status) === RESULT_FAILED,
-        Iterators.flatten(values(store) for store in state_stores),
-    )
-    return CacheStageSummary(
-        ready(SOURCE_EXPAND),
-        ready(SOURCE_READ),
-        length(items),
-        ready(ITEM_PROCESS),
-        ready(COLLECTION_PROCESS),
-        failed(SOURCE_READ),
-        failed(SOURCE_EXPAND),
-        failed(ITEM_PROCESS),
-        failed(COLLECTION_PROCESS),
-    )
-end
-
 """Whether any cache store has queued or writing mutations."""
 function cache_has_pending_writes(cache::CacheDB)::Bool
     pending = cache_pending_counts(cache)
     return pending.items > 0 || pending.rows > 0
-end
-
-"""
-The item type under which the store keeps the result of `state`; `nothing` when none was recorded
-or the type no longer exists.
-"""
-function stored_type(state::CachedResultState)::Union{Nothing,Type}
-    isempty(state.type_hex) && return nothing
-    return try
-        _deserialize_type(state.type_hex)
-    catch
-        nothing
-    end
-end
-
-"""Return the current result-ledger entry for one pipeline stage, or `nothing`."""
-function cached_result_state(
-    cache::CacheDB,
-    kind::PipelineStage,
-    entity::Union{AbstractString,Integer},
-)
-    key_entity = entity isa AbstractString ? String(entity) : Int64(entity)
-    key = CacheResultKey(kind, key_entity)
-    return lock(cache.stage_ledger.lock) do
-        get(cache.stage_ledger.result_states, key, nothing)
-    end
 end
 
 """Flush and close cache stores, then checkpoint and close the database."""
@@ -1286,7 +780,6 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
         empty!(cachedb.computation_revisions)
         empty!(cachedb.persisted_collection_keys)
     end
-    _reset_stage_ledger!(cachedb.stage_ledger)
     return nothing
 end
 
@@ -1333,21 +826,6 @@ function _validate_meta(meta::Dict{String,String}, identity::ProjectCacheIdentit
         "'$(identity.source_id)'; use Rebuild Cache to replace it",
     ))
     return nothing
-end
-
-"""
-    cached_source_fingerprints(cache) -> Dict{String,Any}
-
-Return a snapshot of recorded source fingerprints, keyed by public source-item id. Values have
-the same meaning as `fingerprint(source_item)`; callers can compare them without knowing the
-cache's storage format. The returned dictionary belongs to the caller.
-"""
-function cached_source_fingerprints(cache::CacheDB)::Dict{String,Any}
-    fingerprints = Dict{String,Any}()
-    for row in values(read(cache.source_items))
-        fingerprints[row.id] = _deserialize_hex(row.fingerprint_hex)
-    end
-    return fingerprints
 end
 
 """The saved collections, each after its parent."""
@@ -1422,16 +900,9 @@ function load_cache_index(cache::CacheDB)::ProjectCacheIndex
     end
     # A source item publishes its items in a stable order.
     sort!(items; by=item -> (item.source_key, item.id))
-    result_states = Dict{CacheResultKey,AnyCachedResultState}()
-    for state in values(read(cache.result_states))
-        result_states[CacheResultKey(PipelineStage(state.kind), state.entity)] = state
-    end
-    for state in values(read(cache.keyed_result_states))
-        result_states[CacheResultKey(PipelineStage(state.kind), state.entity)] = state
-    end
     sources = Dict{Int64,String}(
         row.source_item_key => row.id for row in values(read(cache.source_items)))
-    return ProjectCacheIndex(identity, sources, collections, items, result_states)
+    return ProjectCacheIndex(identity, sources, collections, items)
 end
 
 # Query surface

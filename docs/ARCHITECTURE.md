@@ -365,32 +365,26 @@ cache file. The values of items are in the stores of their item types, not in th
 ```mermaid
 flowchart LR
     core["DataBrowserCore<br/>workspace and catalog"]
-    scan["source scan"]
     cache["DataBrowserCache<br/>storage and cache buffers"]
     snapshot[("ProjectCacheIndex<br/>restoration snapshot")]
-    fingerprints[("cached source<br/>fingerprints")]
-    payloads[("stage payloads<br/>and completion state")]
+    records[("version and failure<br/>of each computation")]
     source["project callbacks"]
 
     core -->|"load_cache_index"| cache
     cache -->|"ProjectCacheIndex"| snapshot
     snapshot --> core
-    scan -->|"cached_source_fingerprints"| cache
-    cache -->|"Dict of source ids and fingerprints"| fingerprints
-    fingerprints --> scan
-    core -->|"read_payload"| cache
-    core -->|"cached_result_state"| cache
-    cache -->|"payloads and stage state"| payloads
-    payloads --> core
-    core -->|"store_source_result!<br/>replace_source_output!<br/>store_result_ready!"| cache
+    core -->|"recorded_revision"| cache
+    cache -->|"recorded version and failure"| records
+    records --> core
+    core -->|"replace_source_output!<br/>store_item_metadata!<br/>store_computation_revision!"| cache
     source -->|"read / expand / process"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111
     classDef cacheC fill:#f5d6a8,stroke:#c08a3f,color:#111
     classDef stateC fill:#c9e4c5,stroke:#5a9a52,color:#111
-    class core,scan,source coreC
+    class core,source coreC
     class cache cacheC
-    class snapshot,fingerprints,payloads stateC
+    class snapshot,records stateC
 ```
 
 ## Subpackages

@@ -1,20 +1,20 @@
 # Julia 1.13.3; 10 threads; apple-m1; Darwin/aarch64
-# precompile: 2026-11-02T12:08:10.910; inputs cddfcc6f7c2b9e2965b2df65262db87aad98e312a0564eb8c33f2a22f4f12550
-precompile_s                       107.3196
-# engine: 2026-11-02T12:12:41.689; inputs d6bb0d9aed3d4e3cc28689e27178d55e4dd01ad1ce3bc85d4a82d9780c3e0d08
-cached_materialize_ms                1.8613
-concurrent_materialize_ms            3.1630
-index_us_per_item                  189.7570
-peak_rss_mib                      1558.9062
-read_mib_s                        1636.8899
-reopen_ms                           51.0144
-write_mib_s                        155.5346
-# browser: 2026-11-02T12:13:19.435; inputs 373dd5e995d93532484bd8e6797785a88f6ee80dfc8cf8adb33aaf45ca076c6c
-browser_open_s                       6.6957
-browser_reopen_s                     6.7913
-frame_gap_ms                       879.5500
-frame_ui_ms                          3.7503
-import_s                             1.6875
-browser_peak_rss_mib              1574.5781
-plot_windows_open_s                 11.7552
-plot_windows_reopen_s               12.0956
+# precompile: 2026-11-02T12:18:26.839; inputs 9db8ef9818db6ec607d2e81ac783e935b47dd864b1d7008a0aaf6639af013041
+precompile_s                       105.9483
+# engine: 2026-11-02T12:21:32.165; inputs 833e5dba6f76d0528c5a684a3fd69802cf277d83faef618e11b1c09b861f44f9
+cached_materialize_ms                1.6808
+concurrent_materialize_ms            3.1915
+index_us_per_item                  180.2714
+peak_rss_mib                      1676.9688
+read_mib_s                        1799.2805
+reopen_ms                           49.3020
+write_mib_s                        158.3965
+# browser: 2026-11-02T12:22:11.807; inputs d00bb4d6c83f656d5da76ee41a5cc834dc9ac414fc6e33d80effa59a27dd19c6
+browser_open_s                       5.4113
+browser_reopen_s                     6.6102
+frame_gap_ms                      1302.8848
+frame_ui_ms                         44.3171
+import_s                             1.6378
+browser_peak_rss_mib              1780.2812
+plot_windows_open_s                 11.9121
+plot_windows_reopen_s               11.6814
