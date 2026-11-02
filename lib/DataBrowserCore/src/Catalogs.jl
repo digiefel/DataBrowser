@@ -13,8 +13,7 @@
 # [`Evaluate.jl`](Workspace/Evaluate.md)).
 #
 # When an argument is another computation, that computation is a row too: it is an *input* of the
-# row, and the row is a *reader* of it. The rows and their inputs form a graph. There are no kinds of
-# rows: the `process` of an item, the function of a plot window and a fit in a plot are rows alike.
+# row, and the row is a *reader* of it. The rows and their inputs form a graph.
 #
 # When a plot window draws a fit of the item `a/1`, which comes from the source item `a.csv`, the
 # catalog has three rows:
@@ -30,6 +29,10 @@
 #
 #     ▼  the row below reads the result of the row above
 # ```
+#
+# The three rows do different work: row 1 reads the source item `a.csv`, row 2 processes an item,
+# and row 3 fits a curve for a window. The catalog treats them alike: the same rules decide when each
+# one runs and whether its result is current.
 #
 # The workspace adds row 1 when it finds `a.csv`, and row 2 when row 1 gives the item `a/1`. It
 # *holds* row 2 with `hold!` while `a/1` is in the workspace, so that the row stays in the catalog,
