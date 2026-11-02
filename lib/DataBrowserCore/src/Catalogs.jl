@@ -1,20 +1,23 @@
-# Each workspace has one catalog. The catalog holds the computations of the workspace and decides
-# which of them run, in which order, and which results are out of date: it is the scheduler of the
-# workspace. A computation, `Computation(f, args...; settings...)`, is a call before it runs: a
-# function, its arguments, and its keyword arguments, called *settings*. The catalog gives each
-# computation one *row*. A `Row` is the number of a row, and a `Node` is what the catalog keeps for
-# it: its state, its inputs and readers, its priority and its holds.
+# Each workspace has one *catalog*, which holds the computations of the workspace, decides which of
+# them run, in which order, and which results are out of date. A computation,
+# `Computation(f, args...; settings...)`, is a call before it runs: a function with its arguments
+# and its keyword arguments, which are called *settings*.
 #
-# The catalog is one of three parts of the workspace that keep what it knows about a row. The other
-# two keep what a row gives: the stores keep its result, and the cache keeps the error of a failed
-# row (see [`Evaluate.jl`](Workspace/Evaluate.md)).
+# The catalog is a table with one row for each computation. A row holds the computation, its state,
+# the rows that it reads and the rows that read it, and its priority. The rest of the workspace
+# refers to a row by its position in the table, as in a spreadsheet: `Row(3)` is the third row. A
+# position is never given to another computation, even after its row is removed.
+#
+# The other two parts of the workspace that keep what it knows about a row are the stores, which keep
+# the result of each row, and the cache, which keeps the error of each failed row (see
+# [`Evaluate.jl`](Workspace/Evaluate.md)).
 #
 # When an argument is another computation, that computation is a row too: it is an *input* of the
 # row, and the row is a *reader* of it. The rows and their inputs form a graph. There are no kinds of
 # rows: the `process` of an item, the function of a plot window and a fit in a plot are rows alike.
 #
-# For a source item `a.csv` that contains the item `a/1`, and a fit of `a/1` that a plot window
-# draws, the catalog has three rows:
+# When a plot window draws a fit of the item `a/1`, which comes from the source item `a.csv`, the
+# catalog has three rows:
 #
 # ```text
 #     row 1   read_items(project, source, a.csv)      read the source item a.csv
@@ -28,19 +31,17 @@
 #     ▼  the row below reads the result of the row above
 # ```
 #
-# The words that follow name what the workspace and its workers do with rows:
+# The workspace adds row 1 when it finds `a.csv`, and row 2 when row 1 gives the item `a/1`. It
+# *holds* row 2 with `hold!` while `a/1` is in the workspace, so that the row stays in the catalog,
+# and calls `release!` when `a/1` is removed.
 #
-# | Word   | Meaning                                                                  |
-# |:-------|:-------------------------------------------------------------------------|
-# | hold   | keep a row in the catalog, with `hold!`, until `release!`                |
-# | want   | ask for a row to run, with a priority, with `want!`                      |
-# | stale  | of a row: its code, an input or its computation changed since it ran     |
-# | job    | one run of one row                                                       |
-# | worker | a task of the workspace that runs jobs                                   |
+# When the plot window opens, the workspace adds row 3, holds it, and *wants* it with `want!`, with
+# the priority of what a window shows: a wanted row runs before the rows with a lower priority.
+# Row 3 reads row 2, which reads row 1, so rows 1 and 2 get the same priority and run first. Each run
+# of a row is a *job*, and the *workers*, tasks of the workspace, run the jobs.
 #
-# When the plot window opens, the workspace adds row 3, holds it and wants it. Rows 1 and 2 inherit
-# its priority, so they run first. When the code of `process` changes, row 2 becomes stale, and so
-# does row 3, which reads it; both run again.
+# When the code of `process` changes, row 2 becomes *stale*: it ran with code that is no longer
+# current. Row 3 reads row 2, so it becomes stale too, and both run again.
 #
 # Two computations are one row when their functions, arguments and settings are equal with
 # `isequal`, as the keys of a `Dict` are. When two windows draw the same fit of the same item, the
@@ -66,7 +67,7 @@
 #
 # A row becomes stale when its code, something that it reads outside the catalog, such as a file, or
 # its computation changes (`invalidate!` and `replace!`), or when one of its inputs loses its result.
-# A failed row counts as finished, as a current row does: it runs again only when it becomes stale.
+# A failed row is finished, as a current row is: it runs again only when it becomes stale.
 # *Stuck* is not a state: a row is stuck when it failed, or when it reads a failed row, directly or
 # through other rows. A stuck row that did not fail cannot run until the failed row runs again.
 # Three rules decide what happens to a row:
@@ -105,15 +106,15 @@
 #
 # Two numbers follow each row. Its *version* identifies its result: the workspace computes it from
 # the code of the function, the versions of the inputs, and the other arguments and settings. The
-# same version means the same result, even in another session. Its *revision* is a counter that rises
-# whenever the row loses its result, gets another computation, or is removed. A job records the
-# revision when it starts; when the revision differs at its end, its result is dropped.
+# same version means the same result, even in another session. Its *revision* is a counter that
+# rises whenever the row loses its result, gets another computation, or is removed. A job keeps the
+# revision of its row from its start; when the revision differs at its end, its result is dropped.
 
 """
-The computations of a workspace as one graph. Each row of a [`Catalog`](@ref) is one computation,
-and the rows among its arguments are its inputs. A row is missing, stale, current, failed or removed
-(see [`State`](@ref)). The catalog decides which rows run and which stay; workers run them with
-[`take!`](@ref) and [`finish!`](@ref).
+The computations of a workspace as one table and one graph. Each row of a [`Catalog`](@ref) is one
+computation, and the rows among its arguments are its inputs. A row is missing, stale, current,
+failed or removed (see [`State`](@ref)). The catalog decides which rows run and which stay; workers
+run them with [`take!`](@ref) and [`finish!`](@ref).
 """
 module Catalogs
 
@@ -122,8 +123,9 @@ using ..DataBrowserCore: Computation
 """
     Row
 
-The number of a row in the catalog. A number is never reused, so a `Row` kept after its row was
-removed never names another computation; `in` tells whether it is still there.
+The position of a row in the table of a [`Catalog`](@ref): `Row(3)` is the third row. A position
+is never given to another computation, so a `Row` kept after its row was removed never refers to
+another computation; `in` tells whether the row is still there.
 """
 struct Row
     index::Int32
@@ -158,7 +160,7 @@ The state of a row:
 """
 @enum State::UInt8 MISSING STALE CURRENT FAILED REMOVED
 
-"""What the catalog keeps for one row."""
+"""One row of the table of a [`Catalog`](@ref): a computation and what the catalog knows of it."""
 mutable struct Node
     computation::Computation
     ## Each row among its arguments once, and the rows that read it.
@@ -183,8 +185,8 @@ end
 """
     Catalog()
 
-The rows of the computations of one workspace, with their states. The workers and the tasks of the
-workspace share it: every field is read and changed under `lock`.
+The table of the computations of one workspace, with one row for each. The workers and the tasks of
+the workspace share it: every field is read and changed under `lock`.
 """
 # TODO: a row costs about 300 bytes. Keep the inputs and readers of all rows in flat vectors when a
 # workspace with millions of items needs it.
@@ -284,7 +286,8 @@ state(catalog::Catalog, row::Row)::State = node(catalog, row).state
     revision(catalog, row) -> UInt32
 
 A number that rises whenever `row` loses its result, is removed, or its running job goes out of
-date. A job of the row records it when it starts; see [`keepable`](@ref). The caller holds `catalog.lock`.
+date. A job of the row keeps it from its start; see [`keepable`](@ref). The caller holds
+`catalog.lock`.
 """
 revision(catalog::Catalog, row::Row)::UInt32 = node(catalog, row).revision
 
@@ -528,9 +531,9 @@ end
     want!(catalog, row, priority)
 
 Give `row` this priority: the higher the priority, the sooner it runs, and 0 means that nothing
-wants it. The workspace names its priorities, such as `VIEWED_ITEM` for an item that a window shows.
-Each row that `row` reads, directly or through other rows, inherits the priority when it has a
-lower one.
+wants it. The workspace has a constant for each priority, such as `VIEWED_ITEM` for an item that a
+window shows. Each row that `row` reads, directly or through other rows, inherits the priority when
+it has a lower one.
 """
 # TODO: lowering the priority of a row does not lower what its inputs inherited, so an input that a
 # view wanted once keeps that priority when it becomes stale again.

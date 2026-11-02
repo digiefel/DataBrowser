@@ -2,12 +2,13 @@
 # `process`. The workspace runs them as rows: a row for each source item, and then rows for the items
 # and collections that its result gives.
 #
-# A *row* is one computation in the *catalog* of the workspace. For each row, the catalog keeps its
-# state (missing, stale, current or failed) and the rows that it reads
+# The *catalog* of the workspace is a table with one row for each computation, which keeps the state
+# of the computation (missing, stale, current or failed) and the rows that it reads
 # ([`Catalogs.jl`](../Catalogs.md)).
 # The workspace *holds* a row to keep it in the catalog, and *wants* it, with a priority, so that a
-# worker runs it. A row is *stale* when its code, an input or its computation changed since it ran.
-# The *tree* holds the items and collections of the workspace, as the browser shows them.
+# worker runs it, and runs it again when it is *stale*: when its code, an input or its computation
+# changed since it ran. The tree, which the browser shows, holds the items and collections of the
+# workspace.
 #
 # A project can give a type of collection two more stages, with methods of `process`:
 #
@@ -21,8 +22,8 @@
 # computed from its members. A member `process` receives one item and the collection that the
 # collection `process` returned, and returns a later version of the item, with the same id.
 #
-# For a source item `a.csv` that gives the items `a/1` and `a/2`, in a collection `runs` of type
-# `Runs` that has both methods, the rows are:
+# When the source item `a.csv` gives the items `a/1` and `a/2` in the collection `runs`, and the
+# project defines both methods for its type `Runs`, the rows are:
 #
 # ```text
 #     computation                                         kind             name
@@ -42,7 +43,7 @@
 #     A row among the arguments stands for its result. Part(row, id) is the item `id` among the
 #     items that the row gives. read_items calls `read`, then `expand`.
 #     ★  the latest value of the item, which windows show.
-#     name: the name under which the cache records the result of the row.
+#     name: the name under which the cache saves the result of the row.
 # ```
 #
 # | Row            | Runs                                                        | Added when                          |
@@ -77,7 +78,7 @@
 # Without it, they run only when a window or a script asks for them.
 #
 # When a workspace opens again, the cache gives back the tree, with the metadata and labels of the
-# items and collections, and the version of each row; a row whose version is the recorded one is
+# items and collections, and the version of each row; a row whose version is the saved one is
 # current without running. The results themselves come from the stores
 # ([`Evaluate.jl`](Evaluate.md)).
 #
@@ -86,7 +87,7 @@
 # the whole workspace, because the cache keeps each name in a column of one type: the type of the
 # first value saved under the name. When `a/1` gives `temperature = 300`, an `Int`, and `a/2` then
 # gives `temperature = 300.5`, a `Float64`, the value of `a/2` is not saved, and the status panel of
-# the browser lists the error with `a/2`.
+# the browser shows the error with `a/2`.
 #
 # Items and collections have an *id*, a string that the project chooses. It stays the same from one
 # session to the next, as do the names of rows. Inside the workspace, an `ItemKey` or a
@@ -215,7 +216,7 @@ end
 Place the items that the row of the source item with id `source` gave: their collections, and each
 item with its own row. The items that it no longer gives are removed, and the cache saves what it
 gives now. An item id that another source item gave already is skipped, and the status panel of the
-browser lists the error with the source item.
+browser shows the error with the source item.
 """
 function finished!(workspace::Workspace, row::Row, source::String, given::ExpandedItems)::Nothing
     tree, db = workspace.tree, workspace.cache.db
@@ -296,8 +297,8 @@ function finished!(workspace::Workspace, row::Row, key::CollectionKey, value)::N
     return nothing
 end
 
-# A row that gives no item or collection records nothing: the metadata of its result is read from
-# the result when something asks for it.
+# The cache saves nothing for a row that gives no item or collection: the metadata of its result
+# is read from the result when something asks for it.
 finished!(::Workspace, ::Row, ::Nothing, _)::Nothing = nothing
 
 conflict_message(conflict::MetadataConflict)::String =
@@ -307,7 +308,7 @@ conflict_message(conflict::MetadataConflict)::String =
     conflicts!(workspace, row, messages)
 
 Show the metadata values of a row that were not saved as an error of that row: the status panel of
-the browser lists it with the item, and a warning logs it with the name of the row.
+the browser shows it with the item, and a warning with the name of the row goes to the log.
 """
 function conflicts!(workspace::Workspace, row::Row, messages::Vector{String})::Nothing
     isempty(messages) && return nothing
@@ -319,7 +320,7 @@ end
 # ## Collections
 #
 # `has_stage(project, collection, stage)` decides whether a collection has a collection `process`
-# and member `process` methods; by default it answers from the `process` methods that apply to the
+# and member `process` methods; by default, it looks for `process` methods that apply to the
 # collection. When the items below a collection change, its collection row receives the new list of
 # members.
 
@@ -342,7 +343,7 @@ end
     collections!(workspace)
 
 Make the rows of the collections that changed, and the member rows of the items below them. It
-does nothing while the scan still lists source items, or while a source row is missing or stale.
+does nothing while the scan still finds source items, or while a source row is missing or stale.
 """
 function collections!(workspace::Workspace)::Nothing
     catalog, tree, db = workspace.catalog, workspace.tree, workspace.cache.db
@@ -411,7 +412,7 @@ end
     stages(workspace, collection) -> (collection_process::Bool, member_process::Bool)
 
 Whether the project defines a collection `process`, and a member `process`, for collections of the
-type of `collection`, as `has_stage` answers. The answer is kept for each type;
+type of `collection`, as `has_stage` gives, kept for each type;
 [`check_code!`](@ref) asks again after a change of code.
 """
 stages(workspace::Workspace, value::AbstractCollection)::Tuple{Bool,Bool} = get!(workspace.stages, typeof(value)) do
@@ -465,7 +466,7 @@ end
 
 Fill the tree with the items and collections that the cache saved for the project, as `index`
 holds them, so that the browser shows them before the scan has checked the source. Their rows are added when the scan reports their source
-items; `restore!(workspace, row)` then gives each row the result that the cache recorded for it.
+items; `restore!(workspace, row)` then gives each row the result that the cache saved for it.
 """
 function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
     index.identity.source_id == id(workspace.source) ||

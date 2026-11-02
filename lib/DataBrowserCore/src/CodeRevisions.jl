@@ -3,14 +3,14 @@ The revision of the code that a stage runs: a content hash of every method, type
 stage can reach by name from its [`stage_roots`](@ref), in modules that can change during a session.
 
 Two definitions with the same source give the same revision, also in a new session, so running a
-script again changes nothing, and a revision can be stored with cached results. Code in Base, the
-standard library, registered packages and DataBrowser's own packages never changes during a session
-and is not entered.
+script again changes nothing, and the cache can keep a revision from one session to the next. Code
+in Base, the standard library, registered packages and DataBrowser's own packages never changes
+during a session and is not entered.
 
 A revision is a static analysis. It is conservative where it can be: every method of a reached
-function counts, and every project method added to a library function (such as `Base.show` or
-`Base.iterate` for a project type) counts for every stage. Some code is out of its reach; the
-revision lists it under `untracked`. See `research_notes/code-change-detection/design.md`.
+function is part of it, and every project method added to a library function (such as `Base.show` or
+`Base.iterate` for a project type) is part of the revision of every stage. Some code is out of its
+reach; the revision keeps it in `untracked`. See `research_notes/code-change-detection/design.md`.
 """
 module CodeRevisions
 
@@ -22,7 +22,7 @@ export CodeRevision, code_revision
 
 """
 The hash of the code a stage can reach, and the reasons some of that code may change unseen.
-`parts` names each method, type and value with its own hash, to tell what changed.
+`parts` gives the hash of each method, type and value, to tell what changed.
 """
 struct CodeRevision
     hash::String
@@ -42,7 +42,7 @@ const LOCK = ReentrantLock()
 Whether code in `mod` can change during a session: `Main` and the modules made in it, and the
 packages that an environment of the load path develops from a local folder (`Pkg.develop`), or that
 an environment is itself. DataBrowser's own packages count as libraries, and so do packages that
-no environment lists, such as the one VS Code loads into the session.
+are in no environment, such as the one VS Code loads into the session.
 """
 function changeable(mod::Module)::Bool
     return @lock LOCK get!(CHANGEABLE, mod) do
@@ -79,10 +79,13 @@ function developed()::Set{Base.UUID}
 end
 
 # ---------------------------------------------------------------------------
-# One method: its text and what it names
+# One method: its text and what it refers to
 # ---------------------------------------------------------------------------
 
-"""The content of one method: its name, a hash of its lowered code, and the globals and values it names."""
+"""
+The content of one method: its name, a hash of its lowered code, and the globals and values it
+refers to.
+"""
 struct MethodContent
     name::String
     hash::String
@@ -133,7 +136,7 @@ function content(method::Method)::MethodContent
     return found
 end
 
-"""Write one lowered statement without slot names or line numbers, and collect what it names."""
+"""Write one lowered statement without slot names or line numbers, and collect what it refers to."""
 function write_statement!(io::IO, names::Vector{Any}, untracked::Vector{String}, code, @nospecialize(x))
     if x isa Expr
         callee = isempty(x.args) ? nothing : x.args[1]
@@ -141,7 +144,7 @@ function write_statement!(io::IO, names::Vector{Any}, untracked::Vector{String},
                 !(callee.name === :getglobal && length(x.args) == 3 && literal(x.args[3]))
             push!(untracked, "calls $(DYNAMIC[callee])")
         end
-        ## `Module.name` lowers to `getproperty(Module, :name)`: it names `Module.name`.
+        ## `Module.name` lowers to `getproperty(Module, :name)`: it refers to `Module.name`.
         if x.head === :call && length(x.args) == 3 && x.args[1] == GlobalRef(Base, :getproperty) &&
                 x.args[3] isa QuoteNode && x.args[3].value isa Symbol
             owner = x.args[2] isa Core.SSAValue ? code[x.args[2].id] : x.args[2]
@@ -197,7 +200,7 @@ const EXTENSIONS = Ref{Any}(nothing)
 """
 The parts of the methods that changeable modules add to functions they do not own, such as
 `Base.show` for a project type. Library code may call any of them, so each counts for every stage.
-DataBrowser's own functions are left out: the stage roots name the methods of those that apply.
+DataBrowser's own functions are left out: the stage roots list the methods of those that apply.
 """
 function extensions(world::UInt)
     known = @lock LOCK EXTENSIONS[]
@@ -263,7 +266,7 @@ databrowser(mod::Module)::Bool = startswith(String(nameof(Base.moduleroot(mod)))
 """
 A walk of the code reachable from some roots. It keeps what is still to follow in a list instead of
 recursing, so that its depth does not depend on how deep the code goes. Each step remembers the step
-that reached it: a step that fails names the way from a root to it.
+that reached it, so that a warning about a step can show the way from a root to it.
 """
 mutable struct Walk
     world::UInt
@@ -317,8 +320,8 @@ end
     code_revision(roots) -> CodeRevision
 
 The revision of the code reachable from `roots`: methods, functions and closures, and types.
-A root method of a library, such as a default stage method that forwards to the project's method,
-is left out: the roots also name the project's methods that it forwards to.
+A root method of a library, such as a default stage method that calls the project's method, is
+left out: the roots already include the project's methods that it calls.
 
 When the walk fails, the revision is `"not tracked"` and gives the reason.
 """
@@ -393,8 +396,9 @@ const METHODS = Ref{Pair{UInt,IdDict{Any,Vector{Method}}}}(UInt(0) => IdDict{Any
 
 """Every method callable on objects of type `F`, also with keyword arguments, in changeable modules."""
 function visit_methods!(walk::Walk, @nospecialize(F::Type))::Nothing
-    ## A call with keywords, `Core.kwcall(keywords, f, ...)`, also names `f`, whose keyword methods are
-    ## followed with it. The methods of `kwcall` are every keyword method of every function.
+    ## A call with keywords, `Core.kwcall(keywords, f, ...)`, also refers to `f`, whose keyword
+    ## methods are followed with it. The methods of `kwcall` are every keyword method of every
+    ## function.
     F === typeof(Core.kwcall) && return nothing
     haskey(walk.seen, (:call, F)) && return nothing
     walk.seen[(:call, F)] = nothing
@@ -458,7 +462,7 @@ end
 const FIRST_SEEN = Dict{UInt,Tuple{WeakRef,String}}()
 
 """
-Add `x` to `context`; a `context` of `nothing` only walks the functions and types inside `x`.
+Add `x` to `context`; a `context` of `nothing` only follows the functions and types inside `x`.
 
 A mutable value keeps the hash it had when first seen, even when it changes in place: counters and
 caches that stages fill would otherwise change the revision on every run. A new object, such as

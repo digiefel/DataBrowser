@@ -1,10 +1,7 @@
-# How the computations of a workspace run, where their results are kept, and how scripts and windows
-# ask for them.
-#
-# A *computation*, `Computation(f, args...; settings...)`, is a call before it runs: reading one
+# A computation, `Computation(f, args...; settings...)`, is a call before it runs: reading one
 # source item, the `process` of one item, or a call of your own, such as a fit. The workspace keeps
-# each computation as a *row* of its *catalog*, with the row's state: missing, stale, current or
-# failed ([`Catalogs.jl`](../Catalogs.md)). A *job* is one run of one row.
+# each computation in a row of its *catalog*, a table, with the state of the computation: missing,
+# stale, current or failed ([`Catalogs.jl`](../Catalogs.md)). A *job* is one run of one row.
 #
 # The workspace adds four kinds of rows for the project ([`Pipeline.jl`](Pipeline.md)), and one row
 # for each computation that a script or a window asks for:
@@ -19,8 +16,7 @@
 # The *latest value* of an item is the result of its last member row when that row is current, and
 # else the result of its own row. Windows show it.
 #
-# Scripts ask for results with these functions; the rest of the page is how the workspace computes
-# them:
+# Scripts ask for results with these functions:
 #
 # | Call                                | Gives                                  | Waits | Keeps in the workspace          |
 # |:------------------------------------|:---------------------------------------|:------|:--------------------------------|
@@ -50,7 +46,7 @@
 #                                                       │ no                    │ yes
 #                                                       ▼                       ▼
 #                                    call the function with the       the row is current, or failed
-#                                    results of its inputs            with the recorded error. The
+#                                    results of its inputs            with the saved error. The
 #                                      │                │             function does not run: the
 #                                      │ returns a      │ throws, or  value comes from its store
 #                                      │ result of the  │ returns     when something needs it
@@ -97,7 +93,7 @@
 #
 # The `process` of an item read from the source must return a data item, and a collection `process`
 # must return a collection; any other result fails the row. When a function throws, the row fails:
-# the error is logged, the status panel of the browser lists it with its item, and the cache records
+# the error is logged, the status panel of the browser shows it with its item, and the cache saves
 # it. When reading a source item fails, its items leave the tree until a later read succeeds. A
 # failed row does not run again, even in a later session, until its version changes: its code, an
 # input or an argument changed. To run failed rows again without a change, open the workspace with
@@ -166,9 +162,9 @@ end
     run!(workspace, job)
 
 Compute the row of `job`, keep its result, and add the rows that its result calls for. A row whose
-version the cache recorded takes that record instead of running. A result of the wrong type fails
-the row: the `process` of an item read from the source must return an `AbstractDataItem`, and a
-collection `process` an `AbstractCollection`.
+current version is the one the cache saved becomes current, or failed, without running. A result of
+the wrong type fails the row: the `process` of an item read from the source must return an
+`AbstractDataItem`, and a collection `process` an `AbstractCollection`.
 """
 function run!(workspace::Workspace, job::Job)::Nothing
     catalog, row = workspace.catalog, job.row
@@ -213,7 +209,7 @@ end
 
 Fail the row of `job` and record its message in the cache under `version`, so that the next
 session shows the same failure without running the row. The message goes to `report_error`, and
-the status panel of the browser lists it with the item. A source item that fails loses its items.
+the status panel of the browser shows it with the item. A source item that fails loses its items.
 """
 function failed!(workspace::Workspace, job::Job, at::UInt64, error, backtrace)::Nothing
     catalog, row = workspace.catalog, job.row
@@ -295,29 +291,26 @@ resolved(::Workspace, x::Selection) = x
 # arguments and settings: the same version means the same result, even in another session. A source
 # item contributes its id and its fingerprint, such as the modification time of a file; a source item
 # without a fingerprint gives a new version each time, so that it is always read again. The cache
-# records, under the name of each row, the version of its last result, and its error when it failed.
+# saves, under the name of each row, the version of its last result, and its error when it failed.
 #
-# Three words sound alike:
-#
-# | Word          | What it is                                                      | Kept in      |
-# |:--------------|:----------------------------------------------------------------|:-------------|
-# | version       | hash that identifies the result of a row                        | the cache    |
-# | code revision | hash of the code that a function can reach (see "Code changes") | memory       |
-# | revision      | counter of a row in the catalog, so that late jobs are ignored  | memory       |
+# The *code revision* of a function, which the version uses, is a hash of the code that the function
+# can reach; the workspace keeps it in memory (see "Code changes"). The catalog also gives each row a
+# *revision*, a counter that rises whenever the row loses its result, so that a job that ends after
+# that is ignored (see [`Catalogs.jl`](../Catalogs.md)).
 #
 # `revision(workspace, computation)` and `revision(workspace, items)` are numbers that a window
 # compares to know when to draw again; they follow the revisions of the rows. The cache functions
 # `store_computation_revision!` and `recorded_revision` keep and read versions.
 #
-# When a workspace opens again, a row whose recorded version is its current version is current, or
-# failed with its recorded error, without running. Its metadata is the metadata the cache saved, and
-# its value comes from its store; when the store no longer has it, as a `MemoryStore` after a
+# When a workspace opens again, a row whose saved version is its current version is current, or
+# failed with its saved error, without running. Its metadata is the metadata that the cache saved,
+# and its value comes from its store; when the store no longer has it, as a `MemoryStore` after a
 # restart, the row runs again when something needs its value.
 
 """
     name(workspace, row) -> String
 
-The name of a row, under which the cache records its version and its store keeps its result: its
+The name of a row, under which the cache saves its version and its store keeps its result: its
 function and the name of each argument, as `fit(a/1)`, or the name that the pipeline gave it.
 """
 name(workspace::Workspace, row::Row)::String =
@@ -357,7 +350,8 @@ argument_version(workspace::Workspace, x::Union{Tuple,AbstractVector{Input}})::U
     foldl((seed, v) -> hash(argument_version(workspace, v), seed), x; init=UInt64(0))
 argument_version(workspace::Workspace, x::Selection)::UInt64 =
     foldl((seed, row) -> hash(Catalogs.version(workspace.catalog, row), seed), Catalogs.input_rows(x); init=hash(argument_id(x)))
-# A source item without a fingerprint may have changed at any time: its result is never the recorded one.
+# A source item without a fingerprint may have changed at any time: its result is never the saved
+# one.
 argument_version(::Workspace, x::AbstractDataSourceItem)::UInt64 =
     fingerprint(x) === nothing ? rand(UInt64) : hash(id(x), hash(repr(fingerprint(x))))
 argument_version(::Workspace, x::AbstractCollection)::UInt64 = hash(string(typeof(x)), hash(id(x),
@@ -386,7 +380,7 @@ end
 The functions, methods and types whose code a call of `signature` runs: for the calls of the
 pipeline, what [`stage_roots`](@ref) gives for the type they run for; else the function. A
 callable object that is not a function, such as a fit, runs the call methods of its type, whose
-parameters name the functions it holds.
+parameters include the types of the functions it holds.
 """
 function code_roots(project::AbstractProject, signature::Type, f)::Vector
     found = stage(signature)
@@ -403,7 +397,7 @@ stage(_) = nothing
 """
     recorded(workspace, row, version)
 
-What the cache recorded for the result of `row` at `version`, when it can be used now: a failure,
+What the cache saved for the result of `row` at `version`, when it can be used now: a failure,
 or a result whose metadata the cache saved for an item or a collection; else `nothing`. The caller
 holds the catalog lock.
 """
@@ -411,7 +405,7 @@ function recorded(workspace::Workspace, row::Row, at::UInt64)
     record = recorded_revision(workspace.cache.db, name(workspace, row))
     (record === nothing || record.revision != at) && return nothing
     place = get(workspace.places, row, nothing)
-    ## TODO: a computed item that takes a recorded result has no metadata.
+    ## TODO: a computed item that takes a saved result has no metadata.
     saves = place isa CollectionKey || place isa ItemKey && !isempty(workspace.tree[place].source)
     isempty(record.failure) && saves && !haskey(workspace.saved, name(workspace, row)) && return nothing
     return record
@@ -420,7 +414,7 @@ end
 """
     restore!(workspace, row) -> Bool
 
-Give `row` the result that the cache recorded for it, when its version is the recorded one and its
+Give `row` the result that the cache saved for it, when its version is the saved one and its
 inputs are current, without a job. Return whether it did. The caller holds the catalog lock.
 """
 function restore!(workspace::Workspace, row::Row)::Bool
@@ -461,8 +455,8 @@ end
 # ```
 #
 # A store of `nothing` keeps no results of that type: the row runs again when something needs its
-# value. A store receives a copy of each result and gives copies; `AbstractStore` lists its methods.
-# Four kinds of results are never stored:
+# value. A store receives a copy of each result and gives copies; the docstring of `AbstractStore`
+# gives its methods. Four kinds of results are never stored:
 #
 # - `nothing`;
 # - `ExpandedItems`, the items that reading a source item gives, which wait in memory for their
@@ -571,9 +565,9 @@ end
 """
     publish!(workspace)
 
-Delete the stored results and the cache records of the rows that were removed, forget what the
-workspace kept in memory for the rows that lost their result, and wake the tasks that wait for the
-workspace, and the browser. The caller holds the catalog lock.
+Delete the results in the stores and the records in the cache of the rows that were removed, forget
+what the workspace kept in memory for the rows that lost their result, and wake the tasks that wait
+for the workspace, and the browser. The caller holds the catalog lock.
 """
 function publish!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
@@ -602,12 +596,12 @@ end
 #
 # Each signature of a row, its function and the types of its arguments, has a code revision: a
 # content hash of the code it can reach from its roots ([`CodeRevisions.jl`](../CodeRevisions.md)).
-# The roots of a row of the pipeline are `stage_roots(project, stage, type)`; a Recipes project
-# lists its registered callbacks. The roots of any other row are its function. A callable object
-# that is not a function, such as a fit, has its type and its call methods as roots: the parameters
-# of the type name the functions it holds, such as the curve of the fit. The walk follows only `Main`
-# and packages developed from a local folder (`Pkg.develop`); for every other package, the Julia
-# version and the Manifest count instead.
+# The roots of a row of the pipeline are `stage_roots(project, stage, type)`, which for a Recipes
+# project are its registered callbacks. The roots of any other row are its function. A callable
+# object that is not a function, such as a fit, has its type and its call methods as roots: the
+# parameters of the type include the types of the functions it holds, such as the curve of the fit.
+# The walk follows only `Main` and packages developed from a local folder (`Pkg.develop`); for every
+# other package, the Julia version and the Manifest count instead.
 #
 # The version of each result includes the revision of its code. Twice a second, the workspace asks
 # Revise to load saved edits, including files tracked with `includet`, even when the REPL is idle.
@@ -625,7 +619,7 @@ end
 # The revision does not see a mutable value changed in place, nor a change to a macro: the functions
 # that use a macro keep their old expansion until they are defined again. It warns about code it
 # cannot follow: a non-constant global, a call through `eval`, `invokelatest` or a computed name, a
-# generated function, and a value it cannot read. The warning names the way from the root to it.
+# generated function, and a value it cannot read. The warning shows the way from the root to it.
 
 """
     check_code!(workspace)
@@ -853,7 +847,7 @@ end
 
 The workspace from which `data(c)` and `metadata(c)` of a `Computation` read results, so that code
 that receives only a computation, such as a visualizer, needs no workspace. When it is `nothing`,
-`data(c)` calls the function and its inputs directly, with no stored results.
+`data(c)` calls the function and its inputs directly, without reading the stores.
 
 ```julia
 with(CURRENT_WORKSPACE => workspace) do
@@ -931,11 +925,11 @@ end
 # `delete!(workspace, id)` removes it, and `results(workspace, ids)` gives the results of computed
 # items.
 
-# The name of the function of computed values: it names the collection that holds them and starts
-# their ids. A package whose computations are values of its own type gives them a name, and can
-# give their values their own `id` and `label`.
-# TODO: an anonymous function is named by its generated name, such as `#3`, which changes from
-# session to session; name it by the content of its code (docs/plans/processing.md).
+# The name of the function of computed values: the name of the collection that holds them, and the
+# start of their ids. A package whose computations are values of its own type gives them a name, and
+# can give their values their own `id` and `label`. TODO: an anonymous function gets its generated
+# name, such as `#3`, which changes from session to session; make its name from the content of its
+# code (docs/plans/processing.md).
 function_name(f) = string(nameof(f))
 
 id(value::Computation) = call_id(value, argument_id)
@@ -945,7 +939,7 @@ call_id(value::Computation, name) = string(function_name(value.f), "(",
     isempty(value.settings) ? "" : "; " * join(("$name = $(repr(setting))" for (name, setting) in pairs(value.settings)), ", "),
     ")")
 # TODO: the id of a computation repeats the ids of its inputs, so that the id of a member `process`
-# names every member of the collection.
+# contains the id of every member of the collection.
 argument_id(x::Computation) = id(x)
 argument_id(x::Input) = id(x.catalog[x.row])
 argument_id(x::Part) = x.id
@@ -1157,7 +1151,7 @@ end
 A number that rises whenever a computation of this or any other workspace changes its state, is
 added or is removed. All workspaces of the Julia session share it, so it may also rise for a change
 in another workspace. Items are added and removed only together with such a change. While the number
-stays the same, so do the [`revision`](@ref) of any items and the item that each public id names.
+stays the same, so do the [`revision`](@ref) of any items and the item of each public id.
 Reading it costs the same for any number of items.
 """
 status_revision(::Workspace)::Int = Catalogs.CHANGES[]
@@ -1181,7 +1175,7 @@ end
 """
     unread(workspace) -> Vector{String}
 
-The public ids of the source items that the source lists and the workspace has not read yet: their
+The public ids of the source items that the source has and the workspace has not read yet: their
 items are not in the workspace. A source item that failed is not included. For a directory source,
 an id is the path of a file below the source root.
 
