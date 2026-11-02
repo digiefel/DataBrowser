@@ -3,8 +3,11 @@
 # workspace. A computation, `Computation(f, args...; settings...)`, is a call before it runs: a
 # function, its arguments, and its keyword arguments, called *settings*. The catalog gives each
 # computation one *row*. A `Row` is the number of a row, and a `Node` is what the catalog keeps for
-# it: its state, its inputs and readers, its priority and its holds. The catalog keeps no results
-# and no errors: the workspace keeps them (see [`Evaluate.jl`](Workspace/Evaluate.md)).
+# it: its state, its inputs and readers, its priority and its holds.
+#
+# The catalog is one of three parts of the workspace that keep what it knows about a row. The other
+# two keep what a row gives: the stores keep its result, and the cache keeps the error of a failed
+# row (see [`Evaluate.jl`](Workspace/Evaluate.md)).
 #
 # When an argument is another computation, that computation is a row too: it is an *input* of the
 # row, and the row is a *reader* of it. The rows and their inputs form a graph. There are no kinds of
