@@ -5,8 +5,7 @@
 #
 # The catalog is a table with one row for each computation. A row holds the computation, its state,
 # the rows that it reads and the rows that read it, and its priority. The rest of the workspace
-# refers to a row by its position in the table, as in a spreadsheet: `Row(3)` is the third row. A
-# position is never given to another computation, even after its row is removed.
+# refers to a row by its position in the table, as in a spreadsheet: `Row(3)` is the third row.
 #
 # The other two parts of the workspace that keep what it knows about a row are the stores, which keep
 # the result of each row, and the cache, which keeps the error of each failed row (see
@@ -29,10 +28,6 @@
 #
 #     ▼  the row below reads the result of the row above
 # ```
-#
-# The three rows do different work: row 1 reads the source item `a.csv`, row 2 processes an item,
-# and row 3 fits a curve for a window. The catalog treats them alike: the same rules decide when each
-# one runs and whether its result is current.
 #
 # The workspace adds row 1 when it finds `a.csv`, and row 2 when row 1 gives the item `a/1`. It
 # *holds* row 2 with `hold!` while `a/1` is in the workspace, so that the row stays in the catalog,
@@ -71,8 +66,8 @@
 # A row becomes stale when its code, something that it reads outside the catalog, such as a file, or
 # its computation changes (`invalidate!` and `replace!`), or when one of its inputs loses its result.
 # A failed row is finished, as a current row is: it runs again only when it becomes stale.
-# *Stuck* is not a state: a row is stuck when it failed, or when it reads a failed row, directly or
-# through other rows. A stuck row that did not fail cannot run until the failed row runs again.
+# A row is *stuck* when it failed, or when it reads a failed row, directly or through other rows. A
+# stuck row that did not fail runs once the failed row is current again.
 # Three rules decide what happens to a row:
 #
 # - **Current.** A row is current when it was computed with the current code of its function and
@@ -83,8 +78,7 @@
 #   input keeps the highest priority that it inherited, even after its reader is no longer wanted.
 # - **Hold.** A row stays while it has a hold, or while a row that stays reads it. It is removed when
 #   `release!` takes its last hold while no row reads it, or when its last reader is removed while
-#   it has no hold. A row that is added and never held is never removed by itself: the workspace
-#   holds each row that it adds.
+#   it has no hold.
 #
 # Holding and wanting are separate. A row that is held stays, but it runs only when it is wanted.
 # The workspace holds the row of each item while the item is in the workspace. It wants those rows
@@ -94,7 +88,7 @@
 #
 # ## Who calls what
 #
-# The catalog keeps the rows and applies the rules. It computes nothing itself:
+# The catalog keeps the rows and applies the rules, and the workspace and its workers call it:
 #
 # | Caller                      | Calls                                                              |
 # | --------------------------- | ------------------------------------------------------------------ |
