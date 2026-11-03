@@ -107,5 +107,5 @@ function subject(workspace::Workspace, row::Row)::String
     place = get(workspace.places, row, nothing)
     place isa String && return place
     place === nothing || return workspace.tree[place].id
-    return name(workspace, row)
+    return cachekey(workspace, row)
 end

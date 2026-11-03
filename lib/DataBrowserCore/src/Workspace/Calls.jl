@@ -59,7 +59,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
             row = get(catalog, value, Catalogs.NOWHERE)
             place = row == Catalogs.NOWHERE ? nothing : get(workspace.places, row, nothing)
             ran_for = place isa String ? (id(value.args[3]), label(value.args[3])) :
-                place === nothing ? (row == Catalogs.NOWHERE ? (id(value), id(value)) : (name(workspace, row), name(workspace, row))) :
+                place === nothing ? (row == Catalogs.NOWHERE ? (id(value), id(value)) : (cachekey(workspace, row), cachekey(workspace, row))) :
                 (workspace.tree[place].id, place isa ItemKey ? workspace.tree[place].label : label(workspace.tree[place].value))
             current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
             row, place, ran_for, get(workspace.errors, row, nothing), current ? Catalogs.result_type(catalog, row) : nothing

@@ -138,7 +138,7 @@ function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Not
     end
     row = add!(catalog, value)
     hold!(catalog, row)
-    workspace.sources[source], workspace.names[row], workspace.places[row] = row, "read:" * source, source
+    workspace.sources[source], workspace.cachekeys[row], workspace.places[row] = row, "read:" * source, source
     want!(catalog, row, workspace.pace)
     restore!(workspace, row) && foreach(key -> own!(workspace, key, row), get(workspace.by_source, source, ItemKey[]))
     return nothing
@@ -155,7 +155,7 @@ function own!(workspace::Workspace, key::ItemKey, source_row::Row)::Nothing
     item.row === nothing || return nothing
     row = add!(catalog, Computation(process, workspace.project, Part(source_row, item.id)))
     hold!(catalog, row)
-    item.row, workspace.names[row], workspace.places[row] = row, item.id, key
+    item.row, workspace.cachekeys[row], workspace.places[row] = row, item.id, key
     workspace.background_processing && want!(catalog, row, BACKGROUND_ITEM)
     restore!(workspace, row)
     return nothing
@@ -315,13 +315,13 @@ conflict_message(conflict::MetadataConflict)::String =
     conflicts!(workspace, row, messages)
 
 Show the metadata values of a row that were not saved as an error of that row: the status panel of
-the browser shows the error next to the item, and a warning with the name of the row goes to the
+the browser shows the error next to the item, and a warning with the cache key of the row goes to the
 log.
 """
 function conflicts!(workspace::Workspace, row::Row, messages::Vector{String})::Nothing
     isempty(messages) && return nothing
     workspace.errors[row] = join(messages, "; ")
-    @warn("Metadata values were not saved", computation=name(workspace, row), messages)
+    @warn("Metadata values were not saved", computation=cachekey(workspace, row), messages)
     return nothing
 end
 
@@ -383,7 +383,7 @@ function collections!(workspace::Workspace)::Nothing
         if collection.row === nothing
             row = add!(catalog, Computation(process, workspace.project, value, members))
             hold!(catalog, row)
-            collection.row, workspace.names[row], workspace.places[row] = row, collection_name(workspace, key), key
+            collection.row, workspace.cachekeys[row], workspace.places[row] = row, collection_cachekey(workspace, key), key
             workspace.background_processing && want!(catalog, row, BACKGROUND_COLLECTION)
             restore!(workspace, row)
         else
@@ -429,12 +429,12 @@ stages(workspace::Workspace, value::AbstractCollection)::Tuple{Bool,Bool} = get!
 end
 
 """
-    collection_name(workspace, key) -> String
+    collection_cachekey(workspace, key) -> String
 
-The name of the row of a collection: `collection:` and its [`path`](@ref), the type and id of each
+The cache key of the row of a collection: `collection:` and its [`path`](@ref), the type and id of each
 collection from the top, as `collection:Runs(runs)`.
 """
-collection_name(workspace::Workspace, key::CollectionKey)::String =
+collection_cachekey(workspace::Workspace, key::CollectionKey)::String =
     "collection:" * join(("$type($id)" for (type, id) in path(workspace, key)), "/")
 
 """
@@ -452,7 +452,7 @@ function member!(workspace::Workspace, key::ItemKey)::Nothing
     row = item.row
     for (position, holder) in enumerate(holders)
         row = add!(catalog, Computation(process, workspace.project, row, tree[holder].row))
-        position == length(holders) && (workspace.names[row] = "member:" * item.id)
+        position == length(holders) && (workspace.cachekeys[row] = "member:" * item.id)
         restore!(workspace, row)
     end
     member = isempty(holders) ? nothing : row
@@ -490,7 +490,7 @@ function restore!(workspace::Workspace, index::ProjectCacheIndex)::Nothing
         restored[saved.key] = key
         workspace.collection_keys[key] = saved.key
         workspace.next_collection_key = max(workspace.next_collection_key, saved.key + 1)
-        workspace.saved[collection_name(workspace, key)] = saved.process
+        workspace.saved[collection_cachekey(workspace, key)] = saved.process
         push!(workspace.changed, key)
     end
     for saved in index.items

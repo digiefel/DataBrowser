@@ -241,9 +241,9 @@ mutable struct Workspace{P<:AbstractProject}
     # The row that reads each source item, and the items it gives, by the id of the source item.
     sources::Dict{String,Row}
     by_source::Dict{String,Vector{ItemKey}}
-    # The name of each row, under which the cache keeps its version and its store keeps its result,
-    # and what it gives: a source item's items (by its id), an item, or a collection.
-    names::Dict{Row,String}
+    # The cache key of each row, under which the cache keeps its version and its store keeps its
+    # result, and what it gives: a source item's items (by its id), an item, or a collection.
+    cachekeys::Dict{Row,String}
     places::Dict{Row,Union{String,ItemKey,CollectionKey}}
     # The code each row ran with, as the signature of its call, and the code of each signature.
     # When the revision of a signature's code changes, the rows of that signature are stale.

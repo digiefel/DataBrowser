@@ -195,7 +195,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
     @lock catalog.lock begin
         finish!(catalog, job; version=at, type=typeof(output)) || return nothing
         delete!(workspace.errors, row)
-        store_computation_revision!(workspace.cache.db, name(workspace, row), at, typeof(output))
+        store_computation_revision!(workspace.cache.db, cachekey(workspace, row), at, typeof(output))
         finished!(workspace, row, place, output)
         output isa ExpandedItems && keep_expanded!(workspace, row, output)
         foreach(input -> drop_used!(workspace, input), Catalogs.inputs(catalog, row))
@@ -219,14 +219,14 @@ function failed!(workspace::Workspace, job::Job, at::UInt64, error, backtrace)::
         subject = place isa String ? "Source item: $place" :
             place isa ItemKey ? "Function: $(function_name(f))\n  Item: $(workspace.tree[place].id)" :
             place isa CollectionKey ? "Function: $(function_name(f))\n  Collection: $(workspace.tree[place].id)" :
-            "Computation: $(name(workspace, row))"
+            "Computation: $(cachekey(workspace, row))"
         "A computation failed\n  $subject\n  Source: $(DataBrowserAPI.source_description(workspace.source))"
     end
     message = DataBrowserAPI.error_summary(error, backtrace) * "\n\n" * context
     @lock catalog.lock begin
         finish!(catalog, job; failed=true) || return nothing
         workspace.errors[row] = failure_prefix(catalog[row].f) * message
-        store_computation_revision!(workspace.cache.db, name(workspace, row), at, Nothing; failure=message)
+        store_computation_revision!(workspace.cache.db, cachekey(workspace, row), at, Nothing; failure=message)
         place = get(workspace.places, row, nothing)
         place isa String && (remove_items!(workspace, place); collections!(workspace))
         publish!(workspace)
@@ -311,18 +311,18 @@ resolved(::Workspace, x::Selection) = x
 # restart, the row runs again when something needs its value.
 
 """
-    name(workspace, row) -> String
+    cachekey(workspace, row) -> String
 
-The name of a row, under which the cache saves its version and its store keeps its result: its
-function and the name of each argument, as `fit(a/1)`, or the name that the pipeline gave it.
+The key under which the cache saves the version of a row and its store keeps its result: its
+function and the key of each argument, as `fit(a/1)`, or the key that the pipeline gave it.
 """
-name(workspace::Workspace, row::Row)::String =
-    get!(() -> call_id(workspace.catalog[row], x -> argument_name(workspace, x)), workspace.names, row)
-argument_name(workspace::Workspace, x::Input) = name(workspace, x.row)
-argument_name(::Workspace, x::Part) = x.id
-argument_name(workspace::Workspace, x::Union{Tuple,AbstractVector}) = "[" * join(map(v -> argument_name(workspace, v), x), ", ") * "]"
-argument_name(::Workspace, x::Selection) = argument_id(x)
-argument_name(::Workspace, x) = argument_id(x)
+cachekey(workspace::Workspace, row::Row)::String =
+    get!(() -> call_id(workspace.catalog[row], x -> argument_cachekey(workspace, x)), workspace.cachekeys, row)
+argument_cachekey(workspace::Workspace, x::Input) = cachekey(workspace, x.row)
+argument_cachekey(::Workspace, x::Part) = x.id
+argument_cachekey(workspace::Workspace, x::Union{Tuple,AbstractVector}) = "[" * join(map(v -> argument_cachekey(workspace, v), x), ", ") * "]"
+argument_cachekey(::Workspace, x::Selection) = argument_id(x)
+argument_cachekey(::Workspace, x) = argument_id(x)
 
 """
     version(workspace, row) -> UInt64
@@ -405,12 +405,12 @@ or a result whose metadata the cache saved for an item or a collection; else `no
 holds the catalog lock.
 """
 function recorded(workspace::Workspace, row::Row, at::UInt64)
-    record = recorded_revision(workspace.cache.db, name(workspace, row))
+    record = recorded_revision(workspace.cache.db, cachekey(workspace, row))
     (record === nothing || record.revision != at) && return nothing
     place = get(workspace.places, row, nothing)
     ## TODO: a computed item that takes a saved result has no metadata.
     saves = place isa CollectionKey || place isa ItemKey && !isempty(workspace.tree[place].source)
-    isempty(record.failure) && saves && !haskey(workspace.saved, name(workspace, row)) && return nothing
+    isempty(record.failure) && saves && !haskey(workspace.saved, cachekey(workspace, row)) && return nothing
     return record
 end
 
@@ -433,7 +433,7 @@ function restore!(workspace::Workspace, row::Row)::Bool
 end
 
 function restored!(workspace::Workspace, row::Row, record)::Nothing
-    saved = pop!(workspace.saved, name(workspace, row), nothing)
+    saved = pop!(workspace.saved, cachekey(workspace, row), nothing)
     if !isempty(record.failure)
         workspace.errors[row] = failure_prefix(workspace.catalog[row].f) * record.failure
     elseif saved !== nothing
@@ -444,7 +444,7 @@ end
 
 # ## Results
 #
-# A store keeps results under the name of their row, so that a row that is current does not run
+# A store keeps results under the cache key of their row, so that a row that is current does not run
 # again for each task that needs its value. `storage(project, T)` chooses the store for results of
 # type `T`: items, or any other Julia value. By default, each result type has its own `MemoryStore`
 # of 64 MiB, which removes the least recently used results first, and loses them when Julia exits.
@@ -490,11 +490,11 @@ would push other results out.
 """
 function keep!(workspace::Workspace, row::Row, output)::Nothing
     catalog = workspace.catalog
-    title, again = @lock catalog.lock (name(workspace, row), catalog[row].f === view)
+    key, again = @lock catalog.lock (cachekey(workspace, row), catalog[row].f === view)
     again && return nothing
     place = store(workspace, typeof(output))
     ## `deepcopy` is a dynamic call: a method of a package loaded later then does not invalidate this code.
-    place === nothing || write(place, title, Base.invokelatest(deepcopy, output))
+    place === nothing || write(place, key, Base.invokelatest(deepcopy, output))
     return nothing
 end
 
@@ -519,7 +519,7 @@ function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Som
     catalog = workspace.catalog
     found = Vector{Union{Nothing,Some}}(nothing, length(rows))
     by_type = Dict{Type,Vector{Int}}()
-    names = @lock catalog.lock map(enumerate(rows)) do (position, row)
+    cachekeys = @lock catalog.lock map(enumerate(rows)) do (position, row)
         given = get(workspace.expanded, row, nothing)
         type = Catalogs.result_type(catalog, row)
         if given !== nothing
@@ -529,12 +529,12 @@ function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Som
         else
             push!(get!(Vector{Int}, by_type, type), position)
         end
-        name(workspace, row)
+        cachekey(workspace, row)
     end
     for (type, positions) in by_type
         place = store(workspace, type)
         place === nothing && continue
-        for (position, value) in zip(positions, read(place, type, names[positions]))
+        for (position, value) in zip(positions, read(place, type, cachekeys[positions]))
             value === nothing || (found[position] = Some(value))
         end
     end
@@ -579,12 +579,12 @@ function publish!(workspace::Workspace)::Nothing
         delete!(workspace.executions, row)
         delete!(workspace.errors, row)
         Catalogs.state(catalog, row) == Catalogs.REMOVED || continue
-        title = pop!(workspace.names, row, nothing)
-        if title !== nothing
+        key = pop!(workspace.cachekeys, row, nothing)
+        if key !== nothing
             type = Catalogs.result_type(catalog, row)
             place = store(workspace, type)
-            place === nothing || delete!(place, type, title)
-            delete_computation_revision!(workspace.cache.db, title)
+            place === nothing || delete!(place, type, key)
+            delete_computation_revision!(workspace.cache.db, key)
         end
         delete!(workspace.produced, row.index)
         foreach(found -> delete!(found, row), (workspace.places, workspace.signatures, workspace.row_locks, workspace.evaluated))
@@ -828,11 +828,11 @@ end
 function cache_info(workspace::Workspace, value::Computation)
     found, catalog = row(workspace, value), workspace.catalog
     found === nothing && return (cached=false, bytes=nothing)
-    type, title, current = @lock catalog.lock (Catalogs.result_type(catalog, found), name(workspace, found),
+    type, key, current = @lock catalog.lock (Catalogs.result_type(catalog, found), cachekey(workspace, found),
         Catalogs.state(catalog, found) == Catalogs.CURRENT)
     place = store(workspace, type)
-    (current && place !== nothing && haskey(place, type, title)) || return (cached=false, bytes=nothing)
-    return (cached=true, bytes=DataBrowserAPI.stored_size(place, type, title))
+    (current && place !== nothing && haskey(place, type, key)) || return (cached=false, bytes=nothing)
+    return (cached=true, bytes=DataBrowserAPI.stored_size(place, type, key))
 end
 
 """
@@ -975,7 +975,7 @@ function Base.push!(workspace::Workspace, value::Computation)::Workspace
         ## A row of the pipeline keeps the item it gives.
         tree[key].row = row
         get!(workspace.places, row, key)
-        get!(workspace.names, row, id(value))
+        get!(workspace.cachekeys, row, id(value))
         want!(catalog, row, BACKGROUND_ITEM)
         restore!(workspace, row)
         publish!(workspace)
