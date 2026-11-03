@@ -83,10 +83,9 @@ twice(device::FitTestDevice) = FitTestDevice(device.name, device.chip, device.ga
         # A new curve, R = Rc + Rsh * gap, gives each chip twice the Rc.
         @eval counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; Rc + Rsh * gap)
         @test timedwait(() -> sort(round.(value.(W.select(workspace, fits.id).data.Rc))) == [100.0, 600.0], 20) === :ok
-        # Values a window prepared keep their items' ids, and their fits are items too: twice each
-        # device's R gives each chip twice the Rc.
-        doubled = W.select(workspace, [W.Computation(twice, W.computation(devices, i)) for i in eachindex(devices)])
-        @test doubled.id == devices.id
+        # The fits of computed items are items too: twice each device's R gives each chip twice the Rc.
+        foreach(i -> push!(workspace, W.Computation(twice, W.computation(devices, i))), eachindex(devices))
+        doubled = W.select(workspace, filter(startswith("twice("), W.query_items(workspace)))
         figure(plot([:red, :blue]), doubled)
         @test sort(round.(value.(W.select(workspace, filter(startswith("fit("), W.query_items(workspace))).data.Rc))) == [100.0, 200.0, 600.0, 1200.0]
     end

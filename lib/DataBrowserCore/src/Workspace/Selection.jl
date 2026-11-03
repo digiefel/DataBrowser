@@ -184,7 +184,8 @@ end
 # not have is `missing`.
 function Selection(data::ItemData, ids, labels, metadatas, levels=[Pair{Symbol,String}[] for _ in ids])
     names = [:id, :label]
-    properties = Dict(:id => Any[ids...], :label => Any[labels...])
+    # Typed, so that `select(workspace, selection.id)` takes the ids of an empty selection too.
+    properties = Dict{Symbol,Vector}(:id => String[ids...], :label => String[labels...])
     # Each property is added the first time an item has it, so the order follows the items.
     function put!(name::Symbol, index::Int, value)
         haskey(properties, name) || (push!(names, name); properties[name] = Vector{Any}(missing, length(ids)))

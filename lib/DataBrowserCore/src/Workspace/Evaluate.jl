@@ -23,7 +23,6 @@
 # |:------------------------------------|:---------------------------------------|:------|:--------------------------------|
 # | `materialize_items(workspace, ids)` | the items, with their latest value     | yes   | nothing new                     |
 # | `evaluate(workspace, computation)`  | the result of a computation            | yes   | its row, until the workspace closes |
-# | `select(workspace, items)`          | a `Selection` for a window             | yes   | the rows of its computations, until the workspace closes |
 # | `push!(workspace, computation)`     | a computed item in the tree            | no    | the item, until `delete!`       |
 # | `results(workspace, ids)`           | the results of computed items          | yes   | nothing new                     |
 #
@@ -706,10 +705,10 @@ end
 #   Computation(fit, item)  ──bound──▶  fit(the row of the latest value of a/1)
 # ```
 #
-# A `Computation` is also an item whose data is its result. `computation(workspace, item)` gives the
-# computation of the latest value of an item, and `select` makes a `Selection` of items and
-# computations for a window. In the browser, a window draws again when the `revision` of what it
-# shows changes.
+# A `Computation` is also an item whose data is its result, so a `Selection` can hold computations,
+# as the values that a visualizer passes through a function. `computation(workspace, item)` gives
+# the computation of the latest value of an item. In the browser, a visualizer draws again when the
+# `revision` of what it shows changes.
 #
 # Give computations named functions. An anonymous function has a generated name, such as `#3`,
 # which can change from one session to the next: its result is then computed again, and its
@@ -890,32 +889,6 @@ function metadata(value::Computation)
 end
 
 DataBrowserAPI.members(value::Computation) = AbstractDataItem[x for x in value.args if x isa AbstractDataItem]
-
-"""
-    select(workspace, items::AbstractVector) -> Selection
-
-The items as a [`Selection`](@ref): computations, each an item whose data is its result, or the
-items that functions returned. The tree of the workspace stays as it is. The computations are
-evaluated now, with [`evaluate`](@ref): the workspace keeps their rows and results until it closes.
-"""
-function select(workspace::Workspace, items::AbstractVector)::Selection
-    with(CURRENT_WORKSPACE => workspace) do
-        names = [x isa Computation ? computed_name(workspace, x) : (id(x), label(x)) for x in items]
-        Selection(ItemData(workspace, items), first.(names), last.(names), metadata.(items))
-    end
-end
-
-# The id and the label of a computation in a selection: those of the item it gives, or of its result
-# when that is an item; or else its name.
-function computed_name(workspace::Workspace, value::Computation)::Tuple{String,String}
-    result = evaluate(workspace, value)
-    catalog, found = workspace.catalog, row(workspace, value)
-    key = @lock catalog.lock get(workspace.places, found, nothing)
-    key isa ItemKey && return @lock catalog.lock (workspace.tree[key].id, workspace.tree[key].label)
-    result isa AbstractDataItem && return (id(result), label(result))
-    title = @lock catalog.lock name(workspace, found)
-    return (title, title)
-end
 
 # ## Computed items
 #

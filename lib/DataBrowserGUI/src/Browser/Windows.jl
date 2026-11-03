@@ -218,8 +218,9 @@ The function receives each item of the input, as `process` receives it, and retu
 show for it. A function with a method for a `Selection` and none for the items receives the whole
 selection instead, and returns one value, such as a mean over the items. The computation is
 evaluated in the background and evaluated again when an input or the code of the function
-changes. The visualizer receives a selection of the results with their computation references;
-viewing them adds no items to the workspace catalog.
+changes. The visualizer receives a selection of the results, each with its computation. The tree
+of the workspace stays as it is, and the workspace keeps each computation and its result until it
+closes.
 
 A value of the input that is not a selection of items is passed to the function as it is.
 """
@@ -331,19 +332,25 @@ end
 # task. Also return why computations failed, one line each; the value leaves out their items.
 function _resolve_window_input(workspace, given, transform)
     failures = String[]
+    # The computations as a `Selection`, each an item whose data is its result; the tree of the
+    # workspace stays as it is. A computation that gives an item has the id and label of that item.
+    # TODO: any other computation is named by `label(value)`, only its function as "doubled"; it
+    # should read "doubled(n1)", from the computation itself.
     function resolve(values)
-        computed = Workspace.Computation[]
+        computed, named = Workspace.Computation[], Any[]
         for value in values
             try
-                Workspace.evaluate(workspace, value)
+                result = Workspace.evaluate(workspace, value)
                 push!(computed, value)
+                push!(named, result isa DataBrowserAPI.AbstractDataItem ? result : value)
             catch err
                 # The workspace reports a failed computation as an `ErrorException` with its message.
                 err isa ErrorException || rethrow()
                 push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
             end
         end
-        return Workspace.select(workspace, computed)
+        metadatas = ScopedValues.with(() -> DataBrowserAPI.metadata.(computed), Workspace.CURRENT_WORKSPACE => workspace)
+        return Workspace.Selection(Workspace.ItemData(workspace, computed), id.(named), label.(named), metadatas)
     end
     given isa AbstractVector{<:Workspace.Computation} && (given = resolve(given))
     if transform !== nothing

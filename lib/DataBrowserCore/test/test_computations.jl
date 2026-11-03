@@ -389,9 +389,6 @@ end
         @test count[] == 1
         @test cache_info(workspace, value).cached
         @test last_execution(workspace, value).succeeded
-        selected = CW.select(workspace, [value])
-        @test collect(selected.data) == [5]
-        @test computation(selected, 1) === value
         @test query_items(workspace) == before
     finally
         CW.close_workspace!(workspace)
@@ -408,10 +405,10 @@ end
             before = query_items(workspace)
             source = computation(workspace, "vector")
             value = Computation(item -> sum(item.data), source)
-            @test only(CW.select(workspace, [value]).data) == 6.0
+            @test evaluate(workspace, value) == 6.0
             write(path, "3 4")
             current() = try
-                only(CW.select(workspace, [value]).data) == 14.0
+                evaluate(workspace, value) == 14.0
             catch
                 false
             end
@@ -448,7 +445,7 @@ unindexed_increment(value) = value + 1
         CW.wait_workspace_idle!(workspace)
         before = query_items(workspace)
         value = Computation(unindexed_increment, 5)
-        @test only(CW.select(workspace, [value]).data) == 6
+        @test evaluate(workspace, value) == 6
         @test query_items(workspace) == before
         @test cache_info(workspace, value).cached
     finally
