@@ -39,7 +39,9 @@ register_plot!(project, :series; label="X–Y",
     end)
 ```
 
-Registering the same `kind` and `label` again replaces the existing plot definition.
+Registering the same `kind` and `label` again replaces the existing plot definition. A window that
+shows the plot draws it again when the code of `setup` or `draw` changes, or the code of the project
+functions they call, for example when Revise updates a file.
 """
 function register_plot!(
     project::AbstractProject,

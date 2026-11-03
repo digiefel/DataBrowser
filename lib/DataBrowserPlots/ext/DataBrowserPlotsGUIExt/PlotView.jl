@@ -1,6 +1,7 @@
 using DataBrowserAPI: Setting, items, label
 import DataBrowserAPI: prepare!, settings
 using DataBrowserCore: Selection
+using DataBrowserCore.CodeRevisions: code_revision
 import DataBrowserCore.Workspace
 
 """
@@ -20,6 +21,8 @@ Base.@kwdef mutable struct PlotView <: FigureView
     # that plot when items of the type are selected again.
     # TODO: save the choices with the view, and share them between windows if that proves useful.
     chosen::Dict{Symbol,String} = Dict{Symbol,String}()
+    # The world and the result of `plot_code` when the window was last prepared.
+    code::Tuple{UInt,String} = (UInt(0), "")
     figure::Any = nothing
     # The theme `figure` was built with.
     dark::Bool = true
@@ -48,21 +51,46 @@ function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
     view.kind = kind
     project = ctx.workspace.project
     view.plots = kind === nothing ? String[] : [plot.label for plot in registered_plots(project, kind)]
+    view.plot in view.plots || (view.plot = isempty(view.plots) ? "" : first(view.plots))
+    view.code = (Base.get_world_counter(), plot_code(project, kind, view.plot))
 
     if isempty(view.plots)
         view.error_details = ""
         view.figure = nothing
-        view.plot = ""
         view.message =
             isempty(selection) ? "No item selected" :
             kind === nothing ? "The items have different types. A plot shows items of one type." :
             "No plot is registered for $kind items."
         return nothing
     end
-    view.plot in view.plots || (view.plot = first(view.plots))
     view.chosen[kind] = view.plot
     build!(view, ctx)
     return nothing
+end
+
+# The labels of the plots registered for `kind`, and the code revision of the plot with `label`.
+# TODO: remove when the registered plots run through Computations, which follow their code.
+function plot_code(project, kind::Union{Nothing,Symbol}, label::String)::String
+    kind === nothing && return ""
+    plots = registered_plots(project, kind)
+    chosen = findfirst(plot -> plot.label == label, plots)
+    revision = chosen === nothing ? "" : code_revision(Any[plots[chosen].setup, plots[chosen].draw]).hash
+    return join([[plot.label for plot in plots]; revision], '\n')
+end
+
+function draw!(view::PlotView, ctx)::Nothing
+    # After a new method definition, the window is prepared again if the code of its plot changed,
+    # or if `register_plot!` added a plot for the items.
+    world = Base.get_world_counter()
+    if first(view.code) != world
+        code = plot_code(ctx.workspace.project, view.kind, view.plot)
+        if code != last(view.code)
+            ctx.prepare()
+            return nothing
+        end
+        view.code = (world, code)
+    end
+    return invoke(draw!, Tuple{FigureView,Any}, view, ctx)
 end
 
 # Keep the short report in the window and the full report behind "Show details".
