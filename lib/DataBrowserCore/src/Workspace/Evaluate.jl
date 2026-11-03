@@ -100,6 +100,10 @@
 # code, an input or an argument changed. To run failed rows again without a change, open the
 # workspace with `rebuild=true`, which empties its cache.
 #
+# When the store refuses a result, as a `DuckDBStore` refuses metadata of another type than the
+# values it holds under that name, the row fails in the same way, but the cache does not save the
+# error: the next session runs the row again.
+#
 # TODO: a way to run one failed row again, as after a file was locked for a moment.
 
 """
@@ -169,12 +173,19 @@ the wrong type fails the row: the `process` of an item read from the source must
 """
 function run!(workspace::Workspace, job::Job)::Nothing
     catalog, row = workspace.catalog, job.row
-    value, place, expected, at, record = @lock catalog.lock begin
-        place = get(workspace.places, row, nothing)
-        at = version(workspace, row)
-        expected = place isa CollectionKey ? AbstractCollection :
-            place isa ItemKey && !isempty(workspace.tree[place].source) ? AbstractDataItem : Any
-        catalog[row], place, expected, at, recorded(workspace, row, at)
+    ## Until `finish!` ends the job, every error fails the row, so that no row stays running without
+    ## a job. The cache saves only the error of the function, under the version of the row: after
+    ## any other error, the next session runs the row again.
+    value, place, expected, at, record = try
+        @lock catalog.lock begin
+            place = get(workspace.places, row, nothing)
+            at = version(workspace, row)
+            expected = place isa CollectionKey ? AbstractCollection :
+                place isa ItemKey && !isempty(workspace.tree[place].source) ? AbstractDataItem : Any
+            catalog[row], place, expected, at, recorded(workspace, row, at)
+        end
+    catch error
+        return failed!(workspace, job, nothing, error, catch_backtrace())
     end
     if record !== nothing
         @lock catalog.lock begin
@@ -191,7 +202,11 @@ function run!(workspace::Workspace, job::Job)::Nothing
     end
     output isa expected || return failed!(workspace, job, at,
         ErrorException("$(function_name(value.f)) returned a $(typeof(output)), not a $expected"), nothing)
-    keepable(catalog, job) && keep!(workspace, row, output)
+    try
+        keepable(catalog, job) && keep!(workspace, row, output)
+    catch error
+        return failed!(workspace, job, nothing, error, catch_backtrace())
+    end
     @lock catalog.lock begin
         finish!(catalog, job; version=at, type=typeof(output)) || return nothing
         delete!(workspace.errors, row)
@@ -209,10 +224,11 @@ end
     failed!(workspace, job, version, error, backtrace)
 
 Fail the row of `job` and save its message in the cache under `version`, so that the next session
-shows the same failure without running the row. The message goes to `report_error`, and the status
-panel of the browser shows the message next to the item. A source item that fails loses its items.
+shows the same failure without running the row; a `version` of `nothing` saves nothing. The message
+goes to `report_error`, and the status panel of the browser shows the message next to the item. A
+source item that fails loses its items.
 """
-function failed!(workspace::Workspace, job::Job, at::UInt64, error, backtrace)::Nothing
+function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, error, backtrace)::Nothing
     catalog, row = workspace.catalog, job.row
     context = @lock catalog.lock begin
         f, place = catalog[row].f, get(workspace.places, row, nothing)
@@ -226,7 +242,7 @@ function failed!(workspace::Workspace, job::Job, at::UInt64, error, backtrace)::
     @lock catalog.lock begin
         finish!(catalog, job; failed=true) || return nothing
         workspace.errors[row] = failure_prefix(catalog[row].f) * message
-        store_computation_revision!(workspace.cache.db, cachekey(workspace, row), at, Nothing; failure=message)
+        at === nothing || store_computation_revision!(workspace.cache.db, cachekey(workspace, row), at, Nothing; failure=message)
         place = get(workspace.places, row, nothing)
         place isa String && (remove_items!(workspace, place); collections!(workspace))
         publish!(workspace)

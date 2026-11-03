@@ -86,6 +86,10 @@ function Base.write(store::DuckDBStore, id::AbstractString, item)
         if table
             given = metadata_dict(metadata(item))
             dropped = edit!(store.metadata_rows, key, given)
+            # TODO: when a code change gives a metadata name values of another type, each write
+            # of the new values fails until the file is deleted. The column should take the new
+            # type; the workspace cache and the metadata of the workspace in memory keep the
+            # first type of a name too.
             if !isempty(dropped)
                 delete!(store.metadata_rows, key)
                 _forget_table!(store, key)

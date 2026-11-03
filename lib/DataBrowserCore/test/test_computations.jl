@@ -485,3 +485,49 @@ kept_total(value) = (Threads.atomic_add!(KEPT_CALLS, 1); sum(data(value).signal)
         end
     end
 end
+
+# A store that refuses each result while `refuse` is set.
+struct RefusingStore <: AbstractStore
+    refuse::Base.RefValue{Bool}
+    values::typeof(MemoryStore())
+end
+Base.write(store::RefusingStore, id::AbstractString, value) =
+    store.refuse[] ? error("the store refuses $id") : write(store.values, id, value)
+Base.haskey(store::RefusingStore, ::Type{T}, id::AbstractString) where {T} = haskey(store.values, T, id)
+Base.read(store::RefusingStore, ::Type{T}, ids::AbstractVector) where {T} = read(store.values, T, ids)
+Base.delete!(store::RefusingStore, ::Type{T}, id::AbstractString) where {T} = delete!(store.values, T, id)
+struct RefusingProject <: AbstractProject
+    store::RefusingStore
+end
+DataBrowserAPI.project_name(::RefusingProject) = "refusing-store"
+DataBrowserAPI.read(::RefusingProject, source::ComputationSource, file::ComputationFile) =
+    read(ComputationProject(), source, file)
+DataBrowserAPI.expand(::RefusingProject, file::ComputationFile, data) = expand(ComputationProject(), file, data)
+DataBrowserAPI.process(::RefusingProject, value::ComputationItem) = process(ComputationProject(), value)
+DataBrowserAPI.storage(project::RefusingProject, ::Type) = project.store
+
+@testset "a result that its store refuses fails its item until the next opening" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            project = RefusingProject(RefusingStore(Ref(true), MemoryStore()))
+            workspace = CW.open_workspace(project, ComputationSource())
+            try
+                CW.wait_workspace_idle!(workspace)
+                @test_throws ErrorException materialize_items(workspace, ["sample"])
+            finally
+                CW.close_workspace!(workspace)
+            end
+            project.store.refuse[] = false
+            workspace = CW.open_workspace(project, ComputationSource())
+            try
+                CW.wait_workspace_idle!(workspace)
+                @test only(materialize_items(workspace, ["sample"])).data.signal == [2, 4, 6]
+            finally
+                CW.close_workspace!(workspace)
+            end
+        finally
+            popfirst!(DEPOT_PATH)
+        end
+    end
+end
