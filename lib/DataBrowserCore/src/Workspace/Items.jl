@@ -8,6 +8,35 @@ The ids of the values of a workspace.
 """
 items(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock collect(keys(workspace.versions))
 
+"""
+    haskey(workspace, id) -> Bool
+
+Whether the workspace has a value with the id `id`. A selection or a saved view may name values the
+workspace does not have yet or no longer has.
+"""
+Base.haskey(workspace::Workspace, x::AbstractString)::Bool =
+    @lock workspace.catalog.lock haskey(workspace.versions, x)
+
+"""
+    members(workspace, id) -> Vector{String}
+
+The ids of the members of the group `id`, in the order its latest version gives them. A value that
+is not a group, or a group without members, has none.
+"""
+members(workspace::Workspace, x::AbstractString)::Vector{String} =
+    @lock workspace.catalog.lock copy(get(workspace.members, x, String[]))
+
+"""
+    groups(workspace) -> Vector{String}
+    groups(workspace, id) -> Vector{String}
+
+The ids of the groups of a workspace that have members, or of the groups that hold the value `id`
+among their members.
+"""
+groups(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock collect(keys(workspace.members))
+groups(workspace::Workspace, x::AbstractString)::Vector{String} =
+    @lock workspace.catalog.lock copy(get(workspace.groups, x, String[]))
+
 """A sort key that orders text with embedded integers by the value of those integers."""
 natural_key(text::AbstractString)::Tuple = Tuple(
     all(isdigit, part.match) ? (1, parse(Int, part.match)) : (0, lowercase(part.match))
