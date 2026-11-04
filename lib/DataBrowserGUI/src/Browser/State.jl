@@ -207,15 +207,15 @@ Base.@kwdef mutable struct PerformanceState
 end
 
 """
-One row of the tree: the id of its value, the number of groups above it in the tree, and a number
-that names its place in the tree, the same from one making of the rows to the next. `group` tells
-whether the value is a group, and `open` whether the row shows the members below it.
+One row of the tree: the id of its value, the number of rows above it in the tree, and a number that
+stands for its place in the tree, the same from one making of the rows to the next. `parent` tells
+whether rows can show below it, and `open` whether they show.
 """
 struct TreeRow
     id::String
     depth::Int
     place::UInt
-    group::Bool
+    parent::Bool
     open::Bool
 end
 

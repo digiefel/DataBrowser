@@ -304,10 +304,12 @@ mutable struct Workspace{P<:AbstractProject}
     # to give.
     versions::Dict{String,Vector{Row}}
     # The ids of the members of each group, of the groups of each value, and of the source items
-    # with members that each source item is a member of.
+    # with members that each source item is a member of. `top` holds the values that no group holds
+    # and that a `read` gave.
     members::Dict{String,Vector{String}}
     groups::Dict{String,Vector{String}}
     parents::Dict{String,Vector{String}}
+    top::Set{String}
     # The member values that each row of a group read or a group process takes, and the rows that
     # take each value, by its id (see `input!`).
     taken::Dict{Row,Taken}
@@ -422,7 +424,7 @@ function Workspace(
         project, source, Catalog(),
         Dict{String,Row}(), Dict{String,Row}(), Dict{Row,String}(),
         Dict{Row,PipelineStage}(), Dict{Row,Vector{Output}}(), Dict{String,Vector{Row}}(),
-        Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(),
+        Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Set{String}(),
         Dict{Row,Taken}(), Dict{String,Vector{Row}}(),
         Dict{Tuple,Any}(), MetadataColumns(),
         Dict{Row,Type}(), Dict{Type,Code}(),

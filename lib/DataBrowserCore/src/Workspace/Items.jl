@@ -18,24 +18,38 @@ Base.haskey(workspace::Workspace, x::AbstractString)::Bool =
     @lock workspace.catalog.lock haskey(workspace.versions, x)
 
 """
+    members(workspace) -> Vector{String}
     members(workspace, id) -> Vector{String}
 
-The ids of the members of the group `id`, in the order its latest version gives them. A value that
+The ids of the values that no group holds and that a `read` gave, in no particular order. With `id`,
+the ids of the members of the group `id`, in the order its latest version gives them. A value that
 is not a group, or a group without members, has none.
 """
+members(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock collect(workspace.top)
 members(workspace::Workspace, x::AbstractString)::Vector{String} =
     @lock workspace.catalog.lock copy(get(workspace.members, x, String[]))
 
 """
-    groups(workspace) -> Vector{String}
     groups(workspace, id) -> Vector{String}
 
-The ids of the groups of a workspace that have members, or of the groups that hold the value `id`
-among their members.
+The ids of the groups that hold the value `id` among their members.
 """
-groups(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock collect(keys(workspace.members))
 groups(workspace::Workspace, x::AbstractString)::Vector{String} =
     @lock workspace.catalog.lock copy(get(workspace.groups, x, String[]))
+
+"""
+    made(workspace, id) -> Vector{String}
+
+The ids of the new values that a `process` of the value `id` gave: `process(project, x)`,
+`process(project, x, group)` and, for a group, `process(project, group, members)`.
+"""
+function made(workspace::Workspace, x::AbstractString)::Vector{String}
+    @lock workspace.catalog.lock begin
+        keys = ["process:$x"; "group process:$x"; ["member process:$x in $group" for group in get(workspace.groups, x, String[])]]
+        rows = (workspace.rows[key] for key in keys if haskey(workspace.rows, key))
+        return unique!(String[output.id for row in rows for output in get(workspace.outputs, row, Output[]) if output.id != x])
+    end
+end
 
 """A sort key that orders text with embedded integers by the value of those integers."""
 natural_key(text::AbstractString)::Tuple = Tuple(

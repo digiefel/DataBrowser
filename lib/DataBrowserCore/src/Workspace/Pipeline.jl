@@ -271,7 +271,7 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
         for member in setdiff(before, held)
             groups = get(workspace.groups, member, String[])
             filter!(!=(x), groups)
-            isempty(groups) && delete!(workspace.groups, member)
+            isempty(groups) && (delete!(workspace.groups, member); top!(workspace, member))
             row!(workspace, "member process:$member in $x", MEMBER_PROCESS, nothing)
         end
         isempty(held) ? delete!(workspace.members, x) : (workspace.members[x] = held)
@@ -284,10 +284,20 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
         for member in held
             groups = get!(Vector{String}, workspace.groups, member)
             x in groups || push!(groups, x)
+            delete!(workspace.top, member)
             member!(workspace, member, x)
         end
         foreach(group -> member!(workspace, x, group), copy(get(workspace.groups, x, String[])))
+        top!(workspace, x)
     end
+    return nothing
+end
+
+# Keep `x` among the values at the top of the workspace when no group holds it and a `read` gave it.
+function top!(workspace::Workspace, x::String)::Nothing
+    versions = get(workspace.versions, x, Row[])
+    top = !isempty(versions) && !haskey(workspace.groups, x) && workspace.stages[first(versions)] == SOURCE_READ
+    top ? push!(workspace.top, x) : delete!(workspace.top, x)
     return nothing
 end
 

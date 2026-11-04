@@ -53,43 +53,44 @@ function _imgui_text_filter_text(filter::Ptr{ig.lib.ImGuiTextFilter})::String
 end
 
 """
-The rows of the tree: the groups that no group holds, and below each group that shows its members
-the rows of those members. A value that is a member of several groups has a row below each of them.
-With a filter, a row shows when its label or its kind passes the filter, or when a row below it
-does, and a group with such a row below it shows its members. Below a row that passes, the rows show
-as without a filter. The tags hide rows as `state.tag_visibility` says.
+The rows of the tree: the values that no group holds and that a `read` gave, and below each row that
+shows what is below it the members of its group, then the new values that a `process` of it gave and
+that no group holds. A value that is a member of several groups has a row below each of them. With a
+filter, a row shows when its label or its kind passes the filter, or when a row below it does, and a
+row with such a row below it shows what is below it. Below a row that passes, the rows show as
+without a filter. The tags hide rows as `state.tag_visibility` says.
 """
 function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter})::Vector{TreeRow}
     workspace = state.workspace
     rows = TreeRow[]
-    # The groups from the top down to the row being added: a group that holds itself shows no
-    # members where it repeats.
+    # The rows from the top down to the row being added: a group that holds itself shows nothing
+    # below it where it repeats.
     above = String[]
     # Add the row of `x` and the rows below it, and return whether the row stays.
     function add!(x::String, depth::Int, place::UInt, passed::Bool)::Bool
         _is_visible(state, x) || return false
         type = Workspace.valuetype(workspace, x)
-        group = type <: AbstractGroup && !(x in above)
+        made = filter(y -> isempty(Workspace.groups(workspace, y)), Workspace.made(workspace, x))
+        parent = !(x in above) && (type <: AbstractGroup || !isempty(made))
         passed = passed || ig.ImGuiTextFilter_PassFilter(filter_tree,
             string(label(workspace, x), "\n", kind_label(workspace.project, label(type))), C_NULL)
-        open = group && x in state.expanded
-        push!(rows, TreeRow(x, depth, place, group, open))
-        index, below = length(rows), false
-        # TODO(scale): with a filter, this reads every group below the rows that do not pass it.
-        if open || (group && !passed)
+        open = parent && x in state.expanded
+        push!(rows, TreeRow(x, depth, place, parent, open))
+        index, kept = length(rows), false
+        # TODO(scale): with a filter, this reads every row below the rows that do not pass it.
+        if open || (parent && !passed)
             push!(above, x)
-            for member in Workspace.members(workspace, x)
-                below |= add!(member, depth + 1, hash(member, place), passed)
+            for y in (type <: AbstractGroup ? [Workspace.members(workspace, x); made] : made)
+                kept |= add!(y, depth + 1, hash(y, place), passed)
             end
             pop!(above)
         end
         passed && return true
         # The row stays, open, when a row below it passes.
-        below ? (rows[index] = TreeRow(x, depth, place, true, true)) : resize!(rows, index - 1)
-        return below
+        kept ? (rows[index] = TreeRow(x, depth, place, true, true)) : resize!(rows, index - 1)
+        return kept
     end
-    tops = filter(g -> isempty(Workspace.groups(workspace, g)), Workspace.groups(workspace))
-    for x in sort!(tops; by=g -> Workspace.natural_key(label(workspace, g)))
+    for x in sort!(Workspace.members(workspace); by=x -> Workspace.natural_key(label(workspace, x)))
         add!(x, 0, hash(x), !ig.ImGuiTextFilter_IsActive(filter_tree))
     end
     return rows
@@ -112,7 +113,8 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                (kept.generation != generation && time() - kept.built >= TREE_REFRESH_SECONDS)
         rows = @timed "tree_rows" _tree_rows(state, filter_tree)
         # One column for each metadata key of the groups.
-        metadata = Dict{String,Dict{Symbol,Any}}(row.id => Workspace.metadata(workspace, row.id) for row in rows if row.group)
+        metadata = Dict{String,Dict{Symbol,Any}}(row.id => Workspace.metadata(workspace, row.id)
+            for row in rows if Workspace.valuetype(workspace, row.id) <: AbstractGroup)
         columns = sort!(unique!(Symbol[name for found in values(metadata) for name in keys(found)]))
         state.tree_cache = TreeCache(key, generation, time(), rows, columns, metadata)
     else
@@ -173,9 +175,9 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                     row.depth > 0 && ig.Indent(indent)
                     flags = ig.ImGuiTreeNodeFlags_OpenOnArrow | ig.ImGuiTreeNodeFlags_OpenOnDoubleClick |
                         ig.ImGuiTreeNodeFlags_NoTreePushOnOpen | ig.ImGuiTreeNodeFlags_SpanAllColumns
-                    row.group || (flags |= ig.ImGuiTreeNodeFlags_Leaf | ig.ImGuiTreeNodeFlags_Bullet)
+                    row.parent || (flags |= ig.ImGuiTreeNodeFlags_Leaf | ig.ImGuiTreeNodeFlags_Bullet)
                     row.id in selected.set && (flags |= ig.ImGuiTreeNodeFlags_Selected)
-                    row.group && ig.SetNextItemOpen(row.open, ig.ImGuiCond_Always)
+                    row.parent && ig.SetNextItemOpen(row.open, ig.ImGuiCond_Always)
                     readiness = Workspace.readiness(workspace, row.id)
                     # A value that is not processed is gray, unless a tag already colors its text.
                     tagged = _tags_ready(state) && _push_tag_text_style!(workspace, row.id)
@@ -185,7 +187,7 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                     opened = ig.TreeNodeEx("", flags, name)
                     (tagged || grayed) && ig.PopStyleColor()
                     index == target && ig.SetScrollHereY(0.5)
-                    if row.group && ig.IsItemToggledOpen()
+                    if row.parent && ig.IsItemToggledOpen()
                         opened ? push!(state.expanded, row.id) : delete!(state.expanded, row.id)
                     elseif ig.IsItemClicked()
                         io = ig.GetIO()
@@ -199,7 +201,7 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                         targets = row.id in selected.set ? selected.ids : [row.id]
                         length(targets) > 1 && ig.TextDisabled("Apply to $(length(targets)) items")
                         # The browser reveals the members it selects.
-                        row.group && ig.MenuItem("Select members") && Workspace.select!(workspace,
+                        Workspace.valuetype(workspace, row.id) <: AbstractGroup && ig.MenuItem("Select members") && Workspace.select!(workspace,
                             filter(x -> haskey(workspace, x), Workspace.members(workspace, row.id)))
                         # A dynamic call: packages add `item_context_menu!` methods for their
                         # extensions when they load, and a static call would make each of them
