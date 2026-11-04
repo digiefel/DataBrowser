@@ -33,7 +33,8 @@ members(workspace::Workspace, x::AbstractString)::Vector{String} =
 """
     members(workspace) -> Vector{String}
 
-Internal. The ids of the values that no group holds and that a `read` gave, in no particular order.
+Internal. The ids of the values that no group holds, that a `read` gave, and whose source item no
+source item holds, in no particular order.
 """
 members(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock collect(workspace.top)
 
@@ -53,13 +54,22 @@ groups(workspace::Workspace, x::AbstractString)::Vector{String} =
     made(workspace, id) -> Vector{String}
 
 Internal. The ids of the new values that a `process` of the value `id` gave: `process(project, x)`,
-`process(project, x, group)` and, for a group, `process(project, group, members)`.
+`process(project, x, group)` and, for a group, `process(project, group, members)`. When a `read` of
+a source item gave `id`, also the values that the reads of the source items it holds gave.
 """
 function made(workspace::Workspace, x::AbstractString)::Vector{String}
     @lock workspace.catalog.lock begin
         keys = ["process:$x"; "group process:$x"; ["member process:$x in $group" for group in get(workspace.groups, x, String[])]]
         rows = (workspace.rows[key] for key in keys if haskey(workspace.rows, key))
-        return unique!(String[output.id for row in rows for output in get(workspace.outputs, row, Output[]) if output.id != x])
+        found = String[output.id for row in rows for output in get(workspace.outputs, row, Output[]) if output.id != x]
+        origin = first(get(workspace.versions, x, [Catalogs.NOWHERE]))
+        if get(workspace.stages, origin, nothing) == SOURCE_READ
+            for member in members(workspace.source, workspace.catalog[origin].args[3])
+                read = get(workspace.sources, id(member), nothing)
+                append!(found, y for y in values(workspace, id(member)) if first(workspace.versions[y]) == read)
+            end
+        end
+        return unique!(found)
     end
 end
 
