@@ -18,16 +18,22 @@ Base.haskey(workspace::Workspace, x::AbstractString)::Bool =
     @lock workspace.catalog.lock haskey(workspace.versions, x)
 
 """
-    members(workspace) -> Vector{String}
     members(workspace, id) -> Vector{String}
 
-The ids of the values that no group holds and that a `read` gave, in no particular order. With `id`,
-the ids of the members of the group `id`, in the order its latest version gives them. A value that
+The ids of the members of the group `id`, in the order its latest version gives them. A value that
 is not a group, or a group without members, has none.
 """
-members(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock collect(workspace.top)
 members(workspace::Workspace, x::AbstractString)::Vector{String} =
     @lock workspace.catalog.lock copy(get(workspace.members, x, String[]))
+
+# TODO(query model): an internal stand-in for the tree, until the query model of roadmap 0.5.0 has
+# "no group holds it and a `read` gave it" as a condition.
+"""
+    members(workspace) -> Vector{String}
+
+Internal. The ids of the values that no group holds and that a `read` gave, in no particular order.
+"""
+members(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock collect(workspace.top)
 
 """
     groups(workspace, id) -> Vector{String}
@@ -37,10 +43,12 @@ The ids of the groups that hold the value `id` among their members.
 groups(workspace::Workspace, x::AbstractString)::Vector{String} =
     @lock workspace.catalog.lock copy(get(workspace.groups, x, String[]))
 
+# TODO(query model): an internal stand-in for the tree, until the query model of roadmap 0.5.0 has
+# "a `process` of the value `id` gave it" as a condition. Its name is not settled.
 """
     made(workspace, id) -> Vector{String}
 
-The ids of the new values that a `process` of the value `id` gave: `process(project, x)`,
+Internal. The ids of the new values that a `process` of the value `id` gave: `process(project, x)`,
 `process(project, x, group)` and, for a group, `process(project, group, members)`.
 """
 function made(workspace::Workspace, x::AbstractString)::Vector{String}

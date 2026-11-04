@@ -421,7 +421,9 @@ selection model.
 - [x] Query committed effective metadata through DuckDB.
   ([#4](https://github.com/digiefel/MeasurementBrowser/pull/4))
 - [ ] Define one query model over metadata and tags, with concrete results for Julia callers and live
-  results for GUI views.
+  results for GUI views. Its conditions include which groups hold an item and which `process` gave
+  it, so it replaces `members(workspace)` and `made(workspace, id)`, the internal stand-ins the tree
+  uses until then.
 - [ ] Add a visual filter builder to the GUI.
 - [ ] Add a flat item table with selectable metadata columns alongside the hierarchy view.
 - [ ] Support flattening, grouping, sorting, and filtering without copying item state into the GUI.
