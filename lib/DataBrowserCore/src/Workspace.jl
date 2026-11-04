@@ -1,7 +1,6 @@
 module Workspace
 
 using Printf
-using Base.ScopedValues: ScopedValue, with
 using Dates: now
 import Revise
 import InteractiveUtils

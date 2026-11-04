@@ -69,9 +69,6 @@
 #   innermost collection outward, and each reads the one before. The last gives the *latest value*
 #   of the item, which windows show. An item without member rows has the result of its own row as
 #   its latest value.
-# - An item can also be computed from other items, as `push!(workspace, computation)` adds it
-#   ([`Evaluate.jl`](Evaluate.md)). Such an item has one row and no source row, and the cache does
-#   not save it.
 #
 # Windows come first: the rows of the items that a window shows run before all others (see
 # "Workers" in [`Evaluate.jl`](Evaluate.md)). Source rows always run in the background. Own,
@@ -265,27 +262,20 @@ end
     finished!(workspace, row, key::ItemKey, value)
 
 Save the metadata of the result of a row of an item, and the label of the item once the result is
-its latest value. The cache saves both for an item of the source. An item that the workspace
-computes from one other item, as `push!` adds it, starts with the metadata of that item; the
-metadata of its result replaces each name that both have.
+its latest value. The cache saves both.
 """
 function finished!(workspace::Workspace, row::Row, key::ItemKey, value)::Nothing
     item, db = workspace.tree[key], workspace.cache.db
-    produced = value isa AbstractDataItem ? metadata_dict(metadata(value)) : Dict{Symbol,Any}()
-    from = isempty(item.source) ? Catalogs.inputs(workspace.catalog, row) : Row[]
-    read = length(from) == 1 ? get(workspace.places, only(from), nothing) : nothing
-    read isa ItemKey && (produced = merge(metadata(workspace, read), produced))
+    produced = metadata_dict(metadata(value))
     messages = String[conflict_message(conflict) for conflict in store!(workspace.produced, row.index, produced)]
-    if !isempty(item.source)
-        stage = row == item.member ? MEMBER_PROCESS : ITEM_PROCESS
-        append!(messages, store_item_stage_metadata!(db, item.id, stage, produced))
-        if value_row(workspace, key) == row
-            append!(messages, store_item_metadata!(db, item.id, produced))
-            new = label(workspace.project, value)
-            new == item.label || store_item_label!(db, item.id, source_item_key!(db, item.source), new,
-                item.type, cache_key(workspace, item.collection))
-            item.label = new
-        end
+    stage = row == item.member ? MEMBER_PROCESS : ITEM_PROCESS
+    append!(messages, store_item_stage_metadata!(db, item.id, stage, produced))
+    if value_row(workspace, key) == row
+        append!(messages, store_item_metadata!(db, item.id, produced))
+        new = label(workspace.project, value)
+        new == item.label || store_item_label!(db, item.id, source_item_key!(db, item.source), new,
+            item.type, cache_key(workspace, item.collection))
+        item.label = new
     end
     conflicts!(workspace, row, unique!(messages))
     return nothing

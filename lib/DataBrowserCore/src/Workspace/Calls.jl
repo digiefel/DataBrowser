@@ -2,13 +2,13 @@
     Call
 
 One call of the code that made items: a stage of the project, such as `process(::Sweep)`, or the
-function of a computed item. Items that went through the same code share their calls.
+function of another computation. Items that went through the same code share their calls.
 
 - `title`: the function's name, with the type of the values a stage of the project ran for;
 - `code`: the method, or the place in a file, that [`which`](@ref) gives; `nothing` when it is not
   known;
 - `items`: the label of each item it ran for, by id: the source items for `read`, the items and
-  collections for `process`, the computed items for a function;
+  collections for `process`, the computations for a function;
 - `failed`: the first line of the error of each item it failed for, by id;
 - `result`: the type of the values a function gives, as Julia infers it before running it;
   `nothing` when Julia cannot tell, and for a stage of the project;
@@ -131,7 +131,7 @@ argument_types(value::Computation)::Type{<:Tuple} =
 """
     which(value::Computation) -> Union{Method,LineNumberNode,Nothing}
 
-The code of a computed item: the method of its function for its arguments, or `nothing` when that
+The code of a computation: the method of its function for its arguments, or `nothing` when that
 is not known before it runs. A package whose computations are values of its own type, such as the
 fits of a plot, can say where their code is.
 """

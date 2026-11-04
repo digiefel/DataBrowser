@@ -22,10 +22,10 @@ const ROOT = CollectionKey(1)
 mutable struct TreeItem
     const id::String
     label::String
-    # The item type, as `expand` gave it, or the type of a computation's result.
+    # The item type, as `expand` gave it.
     type::Type
     collection::CollectionKey
-    # The id of its source item; empty for a computation that the user added.
+    # The id of its source item.
     const source::String
     # The row of its own `process`, and of the member `process` methods of the collections above it.
     # A restored item has no rows until the source reports its source item.

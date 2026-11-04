@@ -1,12 +1,13 @@
 """
     Computation(f, args...; settings...)
 
-A function call before its value is needed: the function, its inputs and its settings. Inputs
-may themselves be computations. Evaluation supplies ordinary native values to the function.
+A function call before its value is needed: the function `f`, its inputs `args` and its
+`settings`, the keyword arguments that are not inputs. Inputs may themselves be computations.
+[`evaluate`](@ref) gives its value: it calls `f` with the values of the inputs and the settings.
 
 `DataBrowserCore` implements evaluation and workspace access.
 """
-struct Computation{F,Args<:Tuple,S<:NamedTuple} <: AbstractGroup
+struct Computation{F,Args<:Tuple,S<:NamedTuple} <: AbstractDataItem
     f::F
     args::Args
     settings::S
@@ -15,7 +16,7 @@ end
 Computation(f, args...; settings...) = Computation(f, args, NamedTuple(settings))
 
 # Two computations are equal when they call equal functions with equal arguments and settings: the
-# call is compared, never its result, which `data` would compute.
+# call is compared, never its result.
 Base.isequal(a::Computation, b::Computation) = isequal((a.f, a.args, a.settings), (b.f, b.args, b.settings))
 Base.hash(value::Computation, h::UInt) = hash(value.settings, hash(value.args, hash(value.f, hash(:Computation, h))))
 

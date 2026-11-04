@@ -133,7 +133,7 @@ end
     end
 end
 
-@testset "a window's function gives one computed item for each item, computed again when its code changes" begin
+@testset "a window's function gives one computed value for each item, computed again when its code changes" begin
     workspace = Workspace.open_workspace(WindowTestProject(), WindowTestSource(); cache=false, background_processing=true)
     try
         Workspace.wait_workspace_idle!(workspace; timeout=20)
@@ -149,10 +149,9 @@ end
         @test shown() == [2, 4, 6]
         @eval doubled(number::WindowTestNumber) = 10number.value
         @test timedwait(() -> shown() == [10, 20, 30], 20) === :ok
-        # Without the function, the window shows the items, and the computed items are gone.
+        # Without the function, the window shows the items.
         transform!(window, nothing)
         @test [only(data.value) for data in shown()] == [1, 2, 3]
-        @test !any(startswith("doubled("), Workspace.query_items(workspace))
         # A function of a whole selection gives one value for all items.
         transform!(window, GlobalRef(@__MODULE__, :total))
         @test shown() == [6]

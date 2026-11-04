@@ -1,5 +1,5 @@
 # TODO: move fitting to DataBrowserFitting, with a REPL API (plans/fitting.md). The workspace keeps
-# the results of a plot's fits already: one computed item for each group.
+# the results of a plot's fits already: one computation for each group.
 
 # The least-squares estimates of the parameters named in `starts`, each a `Measurement` with one
 # standard error.

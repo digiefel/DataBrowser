@@ -23,8 +23,6 @@
 # |:------------------------------------|:---------------------------------------|:------|:--------------------------------|
 # | `materialize_items(workspace, ids)` | the items, with their latest value     | yes   | nothing new                     |
 # | `evaluate(workspace, computation)`  | the result of a computation            | yes   | its row, until the workspace closes |
-# | `push!(workspace, computation)`     | a computed item in the tree            | no    | the item, until `delete!`       |
-# | `results(workspace, ids)`           | the results of computed items          | yes   | nothing new                     |
 #
 # Three parts of the workspace keep information about a row:
 #
@@ -181,7 +179,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
             place = get(workspace.places, row, nothing)
             at = version(workspace, row)
             expected = place isa CollectionKey ? AbstractCollection :
-                place isa ItemKey && !isempty(workspace.tree[place].source) ? AbstractDataItem : Any
+                place isa ItemKey ? AbstractDataItem : Any
             catalog[row], place, expected, at, recorded(workspace, row, at)
         end
     catch error
@@ -423,9 +421,7 @@ holds the catalog lock.
 function recorded(workspace::Workspace, row::Row, at::UInt64)
     record = recorded_revision(workspace.cache.db, cachekey(workspace, row))
     (record === nothing || record.revision != at) && return nothing
-    place = get(workspace.places, row, nothing)
-    ## TODO: a computed item that takes a saved result has no metadata.
-    saves = place isa CollectionKey || place isa ItemKey && !isempty(workspace.tree[place].source)
+    saves = get(workspace.places, row, nothing) isa Union{CollectionKey,ItemKey}
     isempty(record.failure) && saves && !haskey(workspace.saved, cachekey(workspace, row)) && return nothing
     return record
 end
@@ -680,8 +676,6 @@ function check_code!(workspace::Workspace)::Nothing
         empty!(workspace.stages)
         for key in collections(workspace)
             value = workspace.tree[key].value
-            ## The collections of computed values belong to the workspace: the project never processes them.
-            value isa ComputedCollection && continue
             stages(workspace, value) == get(before, typeof(value), nothing) || members_changed!(workspace, key)
         end
         collections!(workspace)
@@ -721,14 +715,13 @@ end
 #   Computation(fit, item)  ──bound──▶  fit(the row of the latest value of a/1)
 # ```
 #
-# A `Computation` is also an item whose data is its result, so a `Selection` can hold computations,
-# as the values that a visualizer passes through a function. `computation(workspace, item)` gives
-# the computation of the latest value of an item. In the browser, a visualizer draws again when the
-# `revision` of what it shows changes.
+# A `Selection` can hold computations, as the values that a visualizer passes through a function:
+# the data of each is its result. `computation(workspace, item)` gives the computation of the latest
+# value of an item. In the browser, a visualizer draws again when the `revision` of what it shows
+# changes.
 #
 # Give computations named functions. An anonymous function has a generated name, such as `#3`,
-# which can change from one session to the next: its result is then computed again, and its
-# computed item gets another id.
+# which can change from one session to the next: its result is then computed again.
 #
 # TODO: a way to let go of the rows that `evaluate` keeps; each computation stays, with its result,
 # until the workspace closes.
@@ -864,68 +857,10 @@ function revision(workspace::Workspace, value::Computation)::UInt
     return @lock catalog.lock hash(found.index, hash(Catalogs.state(catalog, found) == Catalogs.CURRENT, hash(Catalogs.revision(catalog, found))))
 end
 
-"""
-    CURRENT_WORKSPACE
-
-The workspace from which `data(c)` and `metadata(c)` of a `Computation` read results, so that code
-that receives only a computation, such as a visualizer, needs no workspace. When it is `nothing`,
-`data(c)` calls the function and its inputs directly, without reading the stores.
-
-```julia
-with(CURRENT_WORKSPACE => workspace) do
-    data(Computation(fit, item))
-end
-```
-"""
-const CURRENT_WORKSPACE = ScopedValue{Union{Nothing,Workspace}}(nothing)
-
-# A computation is an item whose data is its result.
-function in_scope(value::Computation)
-    workspace = CURRENT_WORKSPACE[]
-    return workspace === nothing ? evaluate(value) : evaluate(workspace, value)
-end
-
-function data(value::Computation)
-    result = in_scope(value)
-    return result isa AbstractDataItem ? data(result) : result
-end
-
-# The metadata of the item that a computation gives in the workspace. Or else the metadata of the one
-# item it reads, with the metadata of its result on top when that is an item: `fit(a/1)` has the
-# metadata of `a/1`, and the metadata of the fit when it returns an item.
-function metadata(value::Computation)
-    workspace = CURRENT_WORKSPACE[]
-    found = workspace === nothing ? nothing : row(workspace, value)
-    key = found === nothing ? nothing : @lock(workspace.catalog.lock, get(workspace.places, found, nothing))
-    key isa ItemKey && return metadata(workspace, key)
-    from = inputs(value)
-    given = length(from) == 1 ? metadata(only(from)) : Dict{Symbol,Any}()
-    result = in_scope(value)
-    return result isa AbstractDataItem ? merge(given, metadata_dict(metadata(result))) : given
-end
-
-DataBrowserAPI.members(value::Computation) = AbstractDataItem[x for x in value.args if x isa AbstractDataItem]
-
-# ## Computed items
-#
-# `push!(workspace, computation)` adds a computation as an item of the tree, computed in the
-# background like the items of the source. Its collection has the name of its function, below the
-# collection `Computed`:
-#
-# ```text
-#   Computed
-#   └── fit
-#       └── fit(a/1)
-# ```
-#
-# `delete!(workspace, id)` removes it, and `results(workspace, ids)` gives the results of computed
-# items.
-
-# The name of the function of computed values: the name of the collection that holds them, and the
-# start of their ids. A package whose computations are values of its own type gives them a name, and
-# can give their values their own `id` and `label`. TODO: an anonymous function gets its generated
-# name, such as `#3`, which changes from session to session; make its name from the content of its
-# code (docs/plans/processing.md).
+# The name of the function of a computation: the start of its id and of the key under which the
+# cache saves its result. A package whose computations call values of its own type gives them a
+# name. TODO: an anonymous function gets its generated name, such as `#3`, which changes from
+# session to session; make its name from the content of its code (docs/plans/processing.md).
 function_name(f) = string(nameof(f))
 
 id(value::Computation) = call_id(value, argument_id)
@@ -936,96 +871,19 @@ call_id(value::Computation, name) = string(function_name(value.f), "(",
     ")")
 # TODO: the id of a computation repeats the ids of its inputs, so that the id of a member `process`
 # contains the id of every member of the collection.
-argument_id(x::Computation) = id(x)
 argument_id(x::Input) = id(x.catalog[x.row])
 argument_id(x::Part) = x.id
 argument_id(x::AbstractDataItem) = id(x)
 argument_id(x::AbstractProject) = project_name(x)
 argument_id(x::Union{AbstractDataSource,AbstractDataSourceItem}) = id(x)
-argument_id(selection::Selection) = "[" * join(selection.id, ", ") * "]"
+# A computation in a selection is named by its own id: the item it gives may have the id of an item
+# of the workspace, as a part of an item that a table passes on.
+argument_id(selection::Selection) = "[" * join(map(selection.id, getfield(selection.data::ItemData, :items)) do name, x
+    x isa Computation ? id(x) : name
+end, ", ") * "]"
 argument_id(xs::Union{AbstractVector,Tuple}) = "[" * join(map(argument_id, xs), ", ") * "]"
 argument_id(x) = repr(x)
 label(value::Computation) = function_name(value.f)
-
-"""
-The collections of computed values: `Computed` at the root, and below it one for each function,
-with the name of the function.
-"""
-struct ComputedCollection <: AbstractCollection
-    name::String
-end
-id(collection::ComputedCollection) = collection.name
-label(collection::ComputedCollection) = collection.name
-
-const COMPUTED = ComputedCollection("Computed")
-
-# TODO: a rule for when the workspace drops a computed item. Today it keeps each one until it
-# closes, even when nothing uses it any more.
-"""
-    push!(workspace, computation) -> Workspace
-
-Add `computation` to the workspace as an item, computed in the background once the items it reads
-are processed, even without `background_processing`: the rows that it reads inherit its priority. It is an item of the collection of its function, below the collection `Computed`.
-The data items among its arguments that are items of the workspace are read in their latest value.
-A new computation with the id of one added before replaces the older one, and runs again when it
-reads other rows, as when the latest value of an argument moved from its own row to its member row.
-
-"""
-function Base.push!(workspace::Workspace, value::Computation)::Workspace
-    catalog, tree = workspace.catalog, workspace.tree
-    @lock catalog.lock begin
-        given = bound(workspace, value)
-        known = get(tree.item_ids, id(value), nothing)
-        if known !== nothing
-            isempty(tree[known].source) || error("The workspace has an item with the id \"$(id(value))\" from its source")
-            row = tree[known].row
-            reads = unique!(Catalogs.input_rows(Catalogs.instanced(catalog, given; add=false).args))
-            reads == Catalogs.inputs(catalog, row) || (replace!(catalog, row, given); publish!(workspace))
-            return workspace
-        end
-        holder = collection!(tree, collection!(tree, ROOT, COMPUTED, Dict{Symbol,Any}()),
-            ComputedCollection(function_name(value.f)), Dict{Symbol,Any}())
-        key = item!(tree, id(value), label(value), typeof(value), holder, "", Dict{Symbol,Any}())
-        row = add!(catalog, given)
-        hold!(catalog, row)
-        ## A row of the pipeline keeps the item it gives.
-        tree[key].row = row
-        get!(workspace.places, row, key)
-        get!(workspace.cachekeys, row, id(value))
-        want!(catalog, row, BACKGROUND_ITEM)
-        restore!(workspace, row)
-        publish!(workspace)
-    end
-    return workspace
-end
-
-"""
-    delete!(workspace, id) -> Workspace
-
-Remove the computed item with `id` from the workspace, with its result. An id the workspace has no
-computed item for changes nothing.
-"""
-function Base.delete!(workspace::Workspace, id::AbstractString)::Workspace
-    @lock workspace.catalog.lock begin
-        key = get(workspace.tree.item_ids, id, nothing)
-        (key === nothing || !isempty(workspace.tree[key].source)) && return workspace
-        remove_item!(workspace, key)
-        publish!(workspace)
-    end
-    return workspace
-end
-
-"""
-    results(workspace, ids) -> Vector
-
-The results of the computed items with `ids`, as their functions returned them. Items that are not
-computed yet are computed now, and `results` waits for them.
-"""
-function results(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector
-    keys = ItemKey[key(workspace, id) for id in ids]
-    wait_processed(workspace, keys)
-    return results(workspace, @lock(workspace.catalog.lock, Row[workspace.tree[key].row for key in keys]))
-end
 
 # ## Items
 
@@ -1034,7 +892,7 @@ end
 
 The processed items for `items`, given as item keys or public ids, in the same order. Each item
 comes with its latest value: the one its member `process` returned, when that is current, or else
-its own processed data. A computed item is its computation, whose data is its result.
+its own processed data.
 
 An item that is not processed yet is processed now, ahead of background work, and `materialize_items`
 waits for it. The member `process` of each item is requested too, without waiting for it: a later
@@ -1047,12 +905,7 @@ function materialize_items(workspace::Workspace, keys::Vector{ItemKey})::Vector{
     catalog = workspace.catalog
     while true
         seen = wait_processed(workspace, keys)
-        computed, rows = @lock catalog.lock begin
-            computed = [isempty(workspace.tree[key].source) for key in keys]
-            computed, Row[value_row(workspace, key) for key in keys]
-        end
-        found = results(workspace, rows[.!computed])
-        delivered = AbstractDataItem[computed[i] ? catalog[rows[i]] : popfirst!(found) for i in eachindex(keys)]
+        delivered = results(workspace, @lock(catalog.lock, Row[value_row(workspace, key) for key in keys]))
         revision(workspace, keys) == seen && return delivered
     end
 end

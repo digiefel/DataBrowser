@@ -2,7 +2,7 @@ using Tables
 
 import DataBrowserAPI
 using DataBrowserAPI: AbstractDataItem, id, data, items, label, metadata
-using DataBrowserCore: Selection
+using DataBrowserCore: Computation, Selection
 
 """
 The data of one or more items as one table.
@@ -127,9 +127,10 @@ function merge_item_tables(
     item_rows = Int[]
     warnings = String[]
     for (index, (item_label, item)) in enumerate(zip(selection.label, items(selection)))
-        # The project's `data` may fail for one item; the table shows the others.
+        # The project's `data` may fail for one item; the table shows the others. The data of a
+        # computed value is its result.
         payload = try
-            data(item)
+            item isa Computation ? selection.data[index] : data(item)
         catch err
             DataBrowserAPI.report_error("Table: the data of item '$item_label' cannot be read", err, catch_backtrace())
             push!(warnings, "Item '$item_label': its data cannot be read.")

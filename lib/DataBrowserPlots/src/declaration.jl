@@ -233,12 +233,12 @@ of over the fitted points. With `data(table)` in the header, `fit` takes the row
 The visual draws the fit on the axes of the points and in the roles of its group, so the group's
 legend entry shows its points and its curve. Without a visual, a fit is drawn with `Lines`.
 
-When the plot draws items of a workspace, each group of a `fit` or an `aggregate` is an item of the
-workspace, under `Computed`, and a fit's parameters are its metadata. The workspace computes a group
-again when one of its items changes, or when the code that gives the result changes: the `fit` or
-`aggregate` call and the functions it calls, such as the curve, the values mapped to x, y and the
-roles that form the groups, and the limits and function of the axes. A change of visuals, palette or legend draws the result again without
-computing it. The items stay in the workspace until it closes.
+When the plot draws items of a workspace, the workspace computes the result of each group of a
+`fit` or an `aggregate`, and keeps it until it closes. It computes a group again when one of its
+items changes, or when the code that gives the result changes: the `fit` or `aggregate` call and
+the functions it calls, such as the curve, the values mapped to x, y and the roles that form the
+groups, and the limits and function of the axes. A change of visuals, palette or legend draws the
+result again without computing it.
 
 `aggregate` applies functions to the y values of the points that share x and their groups: it
 splits the points into one group for each x and each value of the categorical roles, such as
@@ -459,7 +459,7 @@ const AXES = Symbol("#axes")
 # step again when the items change: the code of the step, such as `fit(line, (a = 1,))`, the code of
 # the value of each column, such as `:data.V` for `:V`, and the function that gives the points of a
 # selection of items.
-# The function's type is part of the type of a fit's computed item, so the item is computed again
+# The function's type is part of the type of a fit's computation, so the fit is computed again
 # when the code of a formula of the points changes.
 struct Points{T<:Function}
     step::String

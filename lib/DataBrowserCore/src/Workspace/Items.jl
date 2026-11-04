@@ -174,12 +174,11 @@ valuetype(workspace::Workspace, key::ItemKey)::Type = @lock workspace.catalog.lo
 valuetype(workspace::Workspace, key::CollectionKey)::Type = @lock workspace.catalog.lock typeof(workspace.tree[key].value)
 
 """
-    source_item_id(workspace, item) -> Union{String,Nothing}
+    source_item_id(workspace, item) -> String
 
-The public id of the source item that produced `item`, or `nothing` for a computation.
+The public id of the source item that produced `item`.
 """
-source_item_id(workspace::Workspace, item::ItemKey)::Union{String,Nothing} =
-    @lock workspace.catalog.lock (source = workspace.tree[item].source; isempty(source) ? nothing : source)
+source_item_id(workspace::Workspace, item::ItemKey)::String = @lock workspace.catalog.lock workspace.tree[item].source
 
 """
     metadata(workspace, collection) -> Dict{Symbol,Any}

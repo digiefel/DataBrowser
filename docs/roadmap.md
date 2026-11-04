@@ -234,10 +234,9 @@ workloads, completed disk writes, cache reads and process memory measurements.
   another package without these methods, such as a Unitful quantity, we add them upstream or in
   DataBrowserCache. Remove `metadata_value`, `MetadataValue` and `MetadataDict` from DataBrowserAPI,
   and stop catching errors in Core to find values that cannot be metadata. Each value is saved in a
-  column of the DuckDB type of its saved form, which queries read, and the metadata names of a
-  computed item's result start with the name of its function, as in `fit.Rc`.
+  column of the DuckDB type of its saved form, which queries read.
 - [ ] StructUtils saves a `Measurement` as its text, such as `"1520.0 ± 83.0"`, so a query cannot
-  compare `fit.Rc < 10`. Save the estimate and the error as numbers.
+  compare `Rc < 10`. Save the estimate and the error as numbers.
 - [ ] Store the results of item and member `process` in the store that `storage(project, T)`
   chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
   one copy of data that a member `process` returned unchanged.
@@ -617,9 +616,9 @@ the table as a first-class view.
     ([plot-editor.md](plot-editor.md)).
   - [ ] A draggable border between the figure and the code.
 - [x] Let a window pass its value through a function of the project, chosen by name in the
-  header after "through". The function receives each item of the window's value, and each
-  result is a computed item of the workspace, computed in the background and again when the item
-  or the function's code changes. A function with a method for a `Selection` and none for the
+  header after "through". The function receives each item of the window's value, and the
+  workspace computes each result in the background, and again when the item or the function's code
+  changes. A function with a method for a `Selection` and none for the
   items receives the whole selection and gives one value, such as a mean over the items. A "Value" visualizer shows any value as the REPL prints it.
 - [x] A window has its items processed and computed in the background, and shows its previous
   value, with "Loading", until they are ready.
@@ -651,7 +650,7 @@ the table as a first-class view.
   Open it from **+ Window → Vector** and select one item whose data is an `AbstractVector{<:Real}`,
   or select one numeric column in a Table window and use that window as the source. A table with
   exactly one real-valued column is unwrapped; multiple columns require an explicit selection.
-  Other data is not plotted; "through" can return a vector as a computed item's data.
+  Other data is not plotted; "through" can return a vector as a computed value.
   Restored windows retain their saved size; docked windows follow their docking region.
 - [x] A "Frequency Analysis" toggle in the Vector visualizer: one-sided FFT amplitude, a Hann
   periodogram (PSD) and normalized autocorrelation. Sample spacing defaults to 1; the user can

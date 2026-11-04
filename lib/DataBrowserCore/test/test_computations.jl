@@ -298,16 +298,12 @@ end
         CW.wait_workspace_idle!(workspace)
         value = Computation(error, "deliberate execution failure")
         @test last_execution(workspace, value) === nothing
-        push!(workspace, value)
-        @test_throws ErrorException CW.results(workspace, [id(value)])
-        step = computation(workspace, id(value))
-        execution = last_execution(workspace, step)
+        @test_throws ErrorException evaluate(workspace, value)
+        execution = last_execution(workspace, value)
         @test execution isa ComputationExecution
         @test !execution.succeeded
         @test execution.duration >= 0
-        @test last_execution(workspace, step) === execution
-        delete!(workspace, id(value))
-        @test last_execution(workspace, step) === nothing
+        @test last_execution(workspace, value) === execution
     finally
         CW.close_workspace!(workspace)
     end
@@ -328,14 +324,9 @@ end
         @test info.cached
         @test info.bytes > 0
         alias = Computation(identity, process_step)
-        push!(workspace, alias)
-        @test only(CW.results(workspace, [id(alias)])).data.signal == [2, 4, 6]
+        @test evaluate(workspace, alias).data.signal == [2, 4, 6]
         @test project.processes[] == before
         @test cache_info(workspace, process_step) == info
-        # A native pipeline call itself can also be handed to a consuming window.
-        push!(workspace, process_step)
-        @test only(CW.results(workspace, [id(process_step)])).gain == 2.0
-        @test project.processes[] == before
     finally
         CW.close_workspace!(workspace)
     end
@@ -361,8 +352,7 @@ DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueIte
             foreach(visit, history)
             read_call = only(filter(call -> startswith(call.title, "read("), order))
             step = only(values(read_call.computations))
-            push!(workspace, step)
-            @test only(only(CW.results(workspace, [id(step)]))).data == [1.0, 2.0]
+            @test only(evaluate(workspace, step)).data == [1.0, 2.0]
             write(path, "3 4")
             current() = try
                 only(materialize_items(workspace, ["vector"])).data == [6.0, 8.0]
@@ -370,18 +360,17 @@ DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueIte
                 false
             end
             @test timedwait(current, 60) === :ok
-            @test only(only(CW.results(workspace, [id(step)]))).data == [3.0, 4.0]
+            @test only(evaluate(workspace, step)).data == [3.0, 4.0]
         finally
             CW.close_workspace!(workspace)
         end
     end
 end
 
-@testset "evaluating a new computation caches its result without indexing it" begin
+@testset "evaluating a new computation caches its result" begin
     workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
     try
         CW.wait_workspace_idle!(workspace)
-        before = query_items(workspace)
         count = Ref(0)
         value = Computation(x -> (count[] += 1; x + 1), 4)
         @test evaluate(workspace, value) == 5
@@ -389,20 +378,18 @@ end
         @test count[] == 1
         @test cache_info(workspace, value).cached
         @test last_execution(workspace, value).succeeded
-        @test query_items(workspace) == before
     finally
         CW.close_workspace!(workspace)
     end
 end
 
-@testset "unindexed computations follow changes to their inputs" begin
+@testset "a computation follows changes to its inputs" begin
     mktempdir() do root
         path = joinpath(root, "signal.dat")
         write(path, "1 2")
         workspace = CW.open_workspace(ReplayProject(), DirectorySource(root); cache=false, background_processing=true)
         try
             CW.wait_workspace_idle!(workspace)
-            before = query_items(workspace)
             source = computation(workspace, "vector")
             value = Computation(item -> sum(item.data), source)
             @test evaluate(workspace, value) == 6.0
@@ -413,7 +400,6 @@ end
                 false
             end
             @test timedwait(current, 60) === :ok
-            @test query_items(workspace) == before
         finally
             CW.close_workspace!(workspace)
         end
@@ -422,7 +408,7 @@ end
 
 const code_calls = Ref(0)
 code_increment(value) = (code_calls[] += 1; value + 1)
-@testset "an unindexed computation is computed again when its code changes, and only then" begin
+@testset "a computation is computed again when its code changes, and only then" begin
     workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
     try
         CW.wait_workspace_idle!(workspace)
@@ -433,21 +419,6 @@ code_increment(value) = (code_calls[] += 1; value + 1)
         @test code_calls[] == 1
         @eval code_increment(value) = (code_calls[] += 1; value + 2)
         @test evaluate(workspace, value) == 6
-    finally
-        CW.close_workspace!(workspace)
-    end
-end
-
-unindexed_increment(value) = value + 1
-@testset "consuming a node adds no browsable item" begin
-    workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
-    try
-        CW.wait_workspace_idle!(workspace)
-        before = query_items(workspace)
-        value = Computation(unindexed_increment, 5)
-        @test evaluate(workspace, value) == 6
-        @test query_items(workspace) == before
-        @test cache_info(workspace, value).cached
     finally
         CW.close_workspace!(workspace)
     end

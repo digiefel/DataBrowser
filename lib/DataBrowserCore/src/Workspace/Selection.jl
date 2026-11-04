@@ -54,10 +54,11 @@ loaded(workspace::Workspace, items::Vector{ItemKey}) = materialize_items(workspa
 loaded(::Workspace, items::Vector) = items
 
 # The value at `path` inside the data of `item`. The data of a computation is its result, which the
-# workspace keeps.
+# workspace keeps, or the data of its result when that is an item.
 # TODO: each read of a computation's data reads its result from its store again, one item at a time.
 function follow(workspace::Workspace, item, path::Vector{Symbol})
-    value = item isa Computation ? with(() -> data(item), CURRENT_WORKSPACE => workspace) : data(item)
+    value = item isa Computation ? evaluate(workspace, item) : item
+    value isa AbstractDataItem && (value = data(value))
     for (depth, name) in enumerate(path)
         # A column of a table, or a field of any other value.
         if Tables.istable(value) && name in Tables.columnnames(Tables.columns(value))
@@ -220,8 +221,9 @@ end
 """
     items(selection) -> Vector
 
-The items of `selection`, in the same order: the objects whose `data` is `selection.data`. An item
-of the workspace is the object its project made; a computed value is its `Computation`.
+The items of `selection`, in the same order. An item of the workspace is the object its project
+made, whose `data` is its entry of `selection.data`. A computed value is its `Computation`, whose
+result gives that entry.
 """
 function items(selection::Selection)::Vector
     data = selection.data::ItemData

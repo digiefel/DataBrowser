@@ -4,6 +4,7 @@
 # TODO: these are the actions a script will call (roadmap 0.6). They take the browser state for now.
 
 import DataBrowserAPI
+import Tables
 using DataBrowserAPI: AbstractVisualizer, id, label, prepare!, settings
 using DataBrowserAPI: @timed_dbg
 import DataBrowserAPI: output
@@ -332,24 +333,26 @@ end
 # task. Also return why computations failed, one line each; the value leaves out their items.
 function _resolve_window_input(workspace, given, transform)
     failures = String[]
-    # The computations as a `Selection`, each an item whose data is its result; the tree of the
-    # workspace stays as it is. A computation that gives an item has the id and label of that item.
+    # The computations as a `Selection`, whose data is their results; the tree of the workspace
+    # stays as it is. Each has the metadata in `inherited`, of the item it was computed from. A
+    # computation that gives an item has the id and label of that item, and its metadata on top.
     # TODO: any other computation is named by `label(value)`, only its function as "doubled"; it
     # should read "doubled(n1)", from the computation itself.
-    function resolve(values)
-        computed, named = Workspace.Computation[], Any[]
-        for value in values
+    function resolve(values, inherited=[Dict{Symbol,Any}() for _ in values])
+        computed, named, metadatas = Workspace.Computation[], Any[], Dict{Symbol,Any}[]
+        for (value, from) in zip(values, inherited)
             try
                 result = Workspace.evaluate(workspace, value)
+                gives_item = result isa DataBrowserAPI.AbstractDataItem
                 push!(computed, value)
-                push!(named, result isa DataBrowserAPI.AbstractDataItem ? result : value)
+                push!(named, gives_item ? result : value)
+                push!(metadatas, gives_item ? merge(from, DataBrowserAPI.metadata_dict(DataBrowserAPI.metadata(result))) : from)
             catch err
                 # The workspace reports a failed computation as an `ErrorException` with its message.
                 err isa ErrorException || rethrow()
                 push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
             end
         end
-        metadatas = ScopedValues.with(() -> DataBrowserAPI.metadata.(computed), Workspace.CURRENT_WORKSPACE => workspace)
         return Workspace.Selection(Workspace.ItemData(workspace, computed), id.(named), label.(named), metadatas)
     end
     given isa AbstractVector{<:Workspace.Computation} && (given = resolve(given))
@@ -361,7 +364,12 @@ function _resolve_window_input(workspace, given, transform)
                     item isa Workspace.Computation ? Workspace.evaluate(workspace, item) : item), Workspace.items(given))
             calls = whole ? [Workspace.Computation(f, given)] :
                 [Workspace.Computation(f, Workspace.computation(given, i)) for i in eachindex(given)]
-            given = resolve(calls)
+            # A value computed from one item keeps the columns of its row, other than `id` and `label`:
+            # the metadata of the item and the collections above it.
+            columns = pairs(Base.structdiff(Tables.columns(given), NamedTuple{(:id, :label)}))
+            inherited = whole ? [Dict{Symbol,Any}()] : [Dict{Symbol,Any}(name => column[i]
+                for (name, column) in columns if !ismissing(column[i])) for i in eachindex(given)]
+            given = resolve(calls, inherited)
         else
             given = Workspace.evaluate(workspace, Workspace.Computation(f, given))
         end

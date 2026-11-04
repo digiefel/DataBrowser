@@ -196,21 +196,16 @@ collection is shown as that collection, and other folders and source items are g
 such a collection, or clicking a gray row, reads the source items below it before any other
 (`read_first!`).
 
-### Computed items
+### Other computations
 
-A computed item is a computation that no `process` of the project describes, because its inputs are
-chosen elsewhere, such as the groups of a fit in a plot. `push!(workspace, computation)` adds it as
-an item of a collection named after its function, below the collection `Computed`. Its row is
-computed in the background once every item it reads is processed, and again whenever one of them
-changes. A computed item that reads one item has the metadata of that item, below the metadata of
-its result when that is an item. When a source item changes, a computed item that read one of its
-items reads the new item with the same id.
-
-`evaluate(workspace, computation)` computes a computation without adding an item: the workspace adds
-its row to the catalog and keeps it until it closes. Windows evaluate computations this way in their
-background preparation. `computation(workspace, item)` gives the computation of the latest value of
-an item, and `inputs(computation)` the computations it reads. Neither loads a value nor runs project
-code.
+Scripts, windows and plots also compute what no `process` of the project describes, because its
+inputs are chosen elsewhere, such as the groups of a fit in a plot. `evaluate(workspace,
+computation)` gives the result of such a computation: the workspace adds its row to the catalog,
+runs it ahead of background work, and keeps it until it closes. An item of the workspace among its
+arguments stands for the row of the item's latest value, so the next `evaluate` computes it again
+after the item changed. Windows evaluate computations this way in their background preparation.
+`computation(workspace, item)` gives the computation of the latest value of an item, and
+`inputs(computation)` the computations it reads. Neither loads a value nor runs project code.
 
 ### The code view
 
@@ -219,11 +214,10 @@ as two calls, `read` and `expand`; the `read` call gives what `read` returns, co
 asks for it. Each call keeps the computations of its items, and the selection passes them on through
 `output`. Linked windows evaluate those computations the same way as table selections.
 
-A computation is itself an item: in the workspace in scope, `data` is its kept result, and `metadata`
-is the metadata of the item it gives, or else the metadata of the one item it reads with the metadata
-of its result on top. In a selection, a computation that gives the value of a row has the id, label
-and metadata of that row. Scientific transforms receive the result of the call before them. Neither
-the selection nor a window refresh adds an item to browse.
+A window holds the values it computed as a selection of computations, whose data is their results.
+A value computed from one item keeps the metadata of that item, and a computation that gives an item
+has the id and label of that item, with its metadata on top. Scientific transforms receive the
+result of the call before them.
 
 ## Core–Cache boundary
 

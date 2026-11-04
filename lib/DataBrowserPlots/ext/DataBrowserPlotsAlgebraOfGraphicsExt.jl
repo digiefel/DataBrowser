@@ -7,8 +7,6 @@ using .AoG.Makie: Scatter, Lines
 using DataBrowserAPI: @timed_dbg
 import DataBrowserPlots: figure, inherit, mappings, over_result, resolve, scale_categories, scale_kinds
 using DataBrowserPlots: YScaleLayers, is_y_scale, @plot, Aggregate, Declaration, Fit, ITEM, LegendEntry, PlotLine, PlotLines, PlotTheme, Points, Scaled, Result, category, column, grouping
-import DataBrowserAPI
-using DataBrowserAPI: id
 import DataBrowserCore.Workspace
 import DataBrowserPlots
 using DataBrowserCore: Selection
@@ -684,8 +682,8 @@ with_scale_limits(layer, limits, _) = any(!isnothing, limits) ?
 
 # A fit or an aggregate of a layer's points, with what it needs to compute again: the values the
 # layer maps, the settings of its axes, and the code of its points. The types of the step and the
-# points hold the types of the functions they call, so a computed item of the analysis is computed
-# again when their code changes.
+# points hold the types of the functions they call, so the workspace computes the analysis again
+# when their code changes.
 struct Analysis{S<:Union{Fit,Aggregate},P<:Union{Points,Nothing}}
     step::S
     positional::Vector{Any}
@@ -722,10 +720,10 @@ function (analysis::Analysis)(columns)::Result
     return Result(analysis.step, table, positional, named; scale=setting(analysis, :y, :scale, identity))
 end
 
-# The result of the analysis in the workspace of `items`: one computed item for each group of the
+# The result of the analysis in the workspace of `items`: one computation for each group of the
 # points, such as each chip, which the workspace computes again when an item of the group changes.
-# Its id is the code that gives it (`id` below), so a change of the plot's visuals, palette or
-# legend computes nothing again.
+# The workspace keeps its result under the code that gives it (`function_name` below), so a change
+# of the plot's visuals, palette or legend computes nothing again.
 # TODO: a group whose points the plot no longer has, or an analysis whose code changed, stays in the
 # workspace until it closes.
 function computed(analysis::Analysis, columns, items::Selection, workspace)::Result
@@ -735,16 +733,15 @@ function computed(analysis::Analysis, columns, items::Selection, workspace)::Res
     keys = [NamedTuple{Tuple(by)}(Tuple(table[k][row] for k in by)) for row in eachindex(table[ITEM])]
     values = map(unique(keys)) do key
         places = sort(unique(table[ITEM][[row for row in eachindex(keys) if isequal(keys[row], key)]]))
-        value = Workspace.Computation(analysis, items[places]; group=key)
-        push!(workspace, value)
-        return value
+        return Workspace.Computation(analysis, items[places]; group=key)
     end
-    groups = @timed_dbg "plot_results" reduce(vcat, Workspace.results(workspace, id.(values)); init=NamedTuple[])
+    # The groups wait together, so that the workers compute them at the same time.
+    groups = @timed_dbg "plot_results" reduce(vcat, asyncmap(value -> Workspace.evaluate(workspace, value), values); init=NamedTuple[])
     return Result(analysis.step, groups, positional, roles; scale=setting(analysis, :y, :scale, identity))
 end
 
 # The analysis of one group of points, as the workspace computes it: the groups of the result over
-# the points of `items` in `group`. A fit gives one group, whose parameters are its metadata.
+# the points of `items` in `group`. A fit gives one group, which holds its parameters.
 function (analysis::Analysis)(items::Selection; group::NamedTuple)
     table, positional, named = taken(analysis, Tables.columntable(analysis.points.table(items)))
     rows = [row for row in eachindex(table[ITEM]) if all(k -> isequal(table[k][row], group[k]), keys(group))]
@@ -753,20 +750,12 @@ function (analysis::Analysis)(items::Selection; group::NamedTuple)
     return analysis.step isa Fit ? only(result) : collect(result)
 end
 
-Workspace.function_name(analysis::Analysis) = analysis.step isa Fit ? "fit" : "aggregate"
-# The code of a fit or an aggregate is the `@plot` that defines its points.
-Base.which(value::Workspace.Computation{<:Analysis}) = only(methods(value.f.points.table))
-
-# The code that gives the result of a group, such as
-# `fit(line, (a = 1,)) of :V, :I by :Chip; y scale log10 for :Chip = "A"`: the step, the values
-# mapped to x and y, the values that form the groups, the limits and the y scale, and the group.
-# Titles, transformations and visuals are left out. The code of the functions the step calls, such
-# as the curve of a fit, is in the type of the analysis instead. The id ends with a digest of the
-# values it is of: the workspace items by id, and the values a window prepared by the computation
-# that made them, so that the same plot of other values, such as a table's selected parts, is
-# another result.
-function DataBrowserAPI.id(value::Workspace.Computation{<:Analysis})
-    analysis, group = value.f, value.settings.group
+# The code that gives the result of an analysis, such as `fit(line, (a = 1,)) of :V, :I by :Chip;
+# y scale log10`: the step, the values mapped to x and y, the values that form the groups, the
+# limits and the y scale. Titles, transformations and visuals are left out. The code of the
+# functions the step calls, such as the curve of a fit, is in the type of the analysis instead. The
+# workspace names the result of a group by this code, the items it is of and the group.
+function Workspace.function_name(analysis::Analysis)
     texts = analysis.points.texts
     text(v) = v isa AbstractVector ? "[" * join(text.(v), ", ") * "]" : get(texts, column(v), repr(column(v)))
     by = sort(unique([text(v) for (_, v) in analysis.named]))
@@ -774,17 +763,15 @@ function DataBrowserAPI.id(value::Workspace.Computation{<:Analysis})
     scale = setting(analysis, :y, :scale, identity)
     scale === identity || push!(settings, "y scale $scale")
     return string(analysis.points.step, " of ", join(text.(analysis.positional), ", "),
-        isempty(by) ? "" : " by " * join(by, ", "), isempty(settings) ? "" : "; " * join(settings, ", "),
-        isempty(group) ? "" : " for " * join(("$(get(texts, k, repr(k))) = $(repr(v))" for (k, v) in pairs(group)), ", "),
-        " on ", string(hash(map(only(value.args).id, getfield(only(value.args).data, :items)) do i, ref
-            ref isa Workspace.Computation ? hash(ref) : hash(i)
-        end); base=62))
+        isempty(by) ? "" : " by " * join(by, ", "), isempty(settings) ? "" : "; " * join(settings, ", "))
 end
-
-# The title of a group's result: the step and the group's values, such as
-# `fit(line, (a = 1,)) for A`. The id holds the rest of the code.
-DataBrowserAPI.label(value::Workspace.Computation{<:Analysis}) = string(value.f.points.step,
-    isempty(value.settings.group) ? "" : " for " * join(string.(values(value.settings.group)), ", "))
+# The computations of two groups are the same when their ids are: the same code, of the same items,
+# for the same group. A plot drawn again, as after a change of its palette, finds the computations it
+# made before.
+Base.isequal(a::Workspace.Computation{<:Analysis}, b::Workspace.Computation{<:Analysis}) = Workspace.id(a) == Workspace.id(b)
+Base.hash(value::Workspace.Computation{<:Analysis}, h::UInt) = hash(Workspace.id(value), h)
+# The code of a fit or an aggregate is the `@plot` that defines its points.
+Base.which(value::Workspace.Computation{<:Analysis}) = only(methods(value.f.points.table))
 
 # The title of a value of `mapping`: the title after `=>`, as in `:I => "V > 0"` and
 # `:I => abs => "V < 0"`, or the column's name.

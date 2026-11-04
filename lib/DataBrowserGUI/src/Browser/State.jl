@@ -145,7 +145,7 @@ mutable struct Window
     checked::Any
     # Why the window does not show the value; empty when it shows it.
     error::String
-    # The computed items the window leaves out of its value because they failed, one on each line.
+    # The computed values the window leaves out of its value because they failed, one on each line.
     failed::String
     # Why the last "Export" failed; empty when it succeeded.
     export_error::String

@@ -66,28 +66,23 @@ end
 
 const curve_calls = Ref(0)
 counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; resistance(gap; Rc, Rsh))
-twice(device::FitTestDevice) = FitTestDevice(device.name, device.chip, device.gap, 2device.R)
 
-@testset "a fit is an item for each group, computed again when its curve changes and not when its palette does" begin
+@testset "a fit is computed for each group, again when its curve changes and not when its palette does" begin
     in_workspace(CHIPS) do workspace, devices
         plot(palette) = @plot mapping(:gap, only(:data.R); color=:Chip) begin
-            fit(counted_resistance, (Rc=1.0, Rsh=1.0)) * visual(Lines)
+            contacts = fit(counted_resistance, (Rc=1.0, Rsh=1.0))
+            contacts * visual(Lines)
             scales(color = (; palette))
+            legend(color = "$(round(value(contacts.Rc)))")
         end
-        figure(plot([:red, :blue]), devices)
-        fits = W.select(workspace, filter(startswith("fit("), W.query_items(workspace)))
-        @test sort(round.(value.(fits.data.Rc))) == [50.0, 300.0]
+        labels(drawn) = [entry.label[] for (_, entries) in only(filter(c -> c isa Legend, drawn.content)).entrygroups[] for entry in entries]
+        @test labels(figure(plot([:red, :blue]), devices)) == ["300.0", "50.0"]
         curve_calls[] = 0
         figure(plot([:green, :orange]), devices)
         @test curve_calls[] == 0
         # A new curve, R = Rc + Rsh * gap, gives each chip twice the Rc.
         @eval counted_resistance(gap; Rc, Rsh) = (curve_calls[] += 1; Rc + Rsh * gap)
-        @test timedwait(() -> sort(round.(value.(W.select(workspace, fits.id).data.Rc))) == [100.0, 600.0], 20) === :ok
-        # The fits of computed items are items too: twice each device's R gives each chip twice the Rc.
-        foreach(i -> push!(workspace, W.Computation(twice, W.computation(devices, i))), eachindex(devices))
-        doubled = W.select(workspace, filter(startswith("twice("), W.query_items(workspace)))
-        figure(plot([:red, :blue]), doubled)
-        @test sort(round.(value.(W.select(workspace, filter(startswith("fit("), W.query_items(workspace))).data.Rc))) == [100.0, 200.0, 600.0, 1200.0]
+        @test labels(figure(plot([:red, :blue]), devices)) == ["600.0", "100.0"]
     end
 end
 

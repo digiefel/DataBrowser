@@ -88,9 +88,8 @@
 #
 # Holding and wanting are separate. A row that is held stays, but it runs only when it is wanted or
 # requested. The workspace holds the row of each item while the item is in the workspace. It always
-# wants the rows of source items, and the rows of the items added with `push!(workspace,
-# computation)`; it wants the rows of the other items in the background only when it was opened
-# with `background_processing=true`. A window that shows an item, or a script that reads it,
+# wants the rows of source items; it wants the rows of items in the background only when it was
+# opened with `background_processing=true`. A window that shows an item, or a script that reads it,
 # requests its row, which then runs before everything else. The priorities of the workspace go from
 # `VIEWED_ITEM` (6), for what a window shows or a script reads, down to `BACKGROUND_COLLECTION` (1),
 # and 0 means that nothing wants or requests the row (see "Workers" in
@@ -561,8 +560,7 @@ runs, and 0 means that nothing wants it. The workspace has a constant for each p
 directly or through other rows, inherits the priority when it has a lower one.
 """
 # TODO: an input keeps what it inherited after its reader is lowered, replaced or removed. The
-# workspace lowers only source rows, which read no rows, but it replaces and removes computed items,
-# whose inputs keep `BACKGROUND_ITEM`.
+# workspace lowers only source rows, which read no rows.
 function want!(catalog::Catalog, row::Row, priority::Int)::Nothing
     @lock catalog.lock begin
         current = node(catalog, row)
