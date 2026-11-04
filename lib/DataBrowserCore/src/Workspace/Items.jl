@@ -49,15 +49,16 @@ groups(workspace::Workspace, x::AbstractString)::Vector{String} =
     @lock workspace.catalog.lock copy(get(workspace.groups, x, String[]))
 
 # TODO(query model): an internal stand-in for the tree, until the query model of roadmap 0.5.0 has
-# "a `process` of the value `id` gave it" as a condition. Its name is not settled.
+# "it comes from the value `id`" as a condition.
 """
-    made(workspace, id) -> Vector{String}
+    items(workspace, id) -> Vector{String}
 
-Internal. The ids of the new values that a `process` of the value `id` gave: `process(project, x)`,
-`process(project, x, group)` and, for a group, `process(project, group, members)`. When a `read` of
-a source item gave `id`, also the values that the reads of the source items it holds gave.
+Internal. The ids of the values that come from the value `id` and that no group holds: the new
+values that a `process` of `id` gave, `process(project, x)`, `process(project, x, group)` and, for a
+group, `process(project, group, members)`; and when a `read` of a source item gave `id`, the values
+that the reads of the source items it holds gave.
 """
-function made(workspace::Workspace, x::AbstractString)::Vector{String}
+function items(workspace::Workspace, x::AbstractString)::Vector{String}
     @lock workspace.catalog.lock begin
         keys = ["process:$x"; "group process:$x"; ["member process:$x in $group" for group in get(workspace.groups, x, String[])]]
         rows = (workspace.rows[key] for key in keys if haskey(workspace.rows, key))
@@ -69,7 +70,7 @@ function made(workspace::Workspace, x::AbstractString)::Vector{String}
                 append!(found, y for y in values(workspace, id(member)) if first(workspace.versions[y]) == read)
             end
         end
-        return unique!(found)
+        return unique!(filter!(y -> !haskey(workspace.groups, y), found))
     end
 end
 

@@ -70,8 +70,8 @@ function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter
     function add!(x::String, depth::Int, place::UInt, passed::Bool)::Bool
         _is_visible(state, x) || return false
         type = Workspace.valuetype(workspace, x)
-        made = filter(y -> isempty(Workspace.groups(workspace, y)), Workspace.made(workspace, x))
-        parent = !(x in above) && (type <: AbstractGroup || !isempty(made))
+        from = Workspace.items(workspace, x)
+        parent = !(x in above) && (type <: AbstractGroup || !isempty(from))
         passed = passed || ig.ImGuiTextFilter_PassFilter(filter_tree,
             string(label(workspace, x), "\n", kind_label(workspace.project, label(type))), C_NULL)
         open = parent && x in state.expanded
@@ -80,7 +80,7 @@ function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter
         # TODO(scale): with a filter, this reads every row below the rows that do not pass it.
         if open || (parent && !passed)
             push!(above, x)
-            for y in (type <: AbstractGroup ? [Workspace.members(workspace, x); made] : made)
+            for y in (type <: AbstractGroup ? [Workspace.members(workspace, x); from] : from)
                 kept |= add!(y, depth + 1, hash(y, place), passed)
             end
             pop!(above)

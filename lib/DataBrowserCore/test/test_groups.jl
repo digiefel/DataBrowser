@@ -155,7 +155,7 @@ API.process(::FlatProject, reading::Reading) = reading.name == "x" ?
     try
         wait_workspace_idle!(ws; timeout=20)
         @test sort(W.members(ws)) == ["x", "y"]
-        @test W.made(ws, "x") == ["x1", "x2"] && isempty(W.made(ws, "y"))
+        @test W.items(ws, "x") == ["x1", "x2"] && isempty(W.items(ws, "y"))
     finally
         close_workspace!(ws)
     end

@@ -423,7 +423,7 @@ selection model.
 - [ ] Define one query model over metadata and tags, with concrete results for Julia callers and live
   results for GUI views. Its conditions include which groups hold an item and which `process` gave
   it, so it replaces the internal stand-ins that the browser uses until then: `members(workspace)`,
-  `members(workspace, id)`, `groups(workspace, id)` and `made(workspace, id)`.
+  `members(workspace, id)`, `groups(workspace, id)` and `items(workspace, id)`.
 - [ ] Add a visual filter builder to the GUI.
 - [ ] Add a flat item table with selectable metadata columns alongside the hierarchy view.
 - [ ] Support flattening, grouping, sorting, and filtering without copying item state into the GUI.
