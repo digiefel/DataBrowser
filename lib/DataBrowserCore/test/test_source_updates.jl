@@ -85,7 +85,7 @@ end
             @test isempty(workspace_status(ws).errors)
 
             write(path, "sample invalid")
-            @test timedwait(() -> query_items(ws) == ["."] && !isempty(workspace_status(ws).errors), 20) === :ok
+            @test timedwait(() -> query_items(ws) == [".", "sample.dat"] && !isempty(workspace_status(ws).errors), 20) === :ok
             @test occursin("Source item: sample", last(only(workspace_status(ws).errors)))
             @test_throws ErrorException materialize_items(ws, ["sample"])
 

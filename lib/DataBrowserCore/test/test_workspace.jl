@@ -108,7 +108,7 @@ DataBrowserAPI.label(s::GatedSourceItem) = s.name
 DataBrowserAPI.fingerprint(::GatedSourceItem) = 1
 function DataBrowserAPI.read(p::GatedProject, ::GatedSource, s::GatedSourceItem)
     wait(p.gate)
-    return EngineItem(s.name, (x=[1],), Dict())
+    return EngineItem(s.name * "/1", (x=[1],), Dict())
 end
 
 function settled(ws)
@@ -426,18 +426,17 @@ end
     end end
 end
 
-@testset "source items are listed before they are read" begin
+@testset "a source item is an item until its read gives items" begin
     project = GatedProject(Base.Event())
     ws = W.open_workspace(project, GatedSource(); cache=false)
     try
-        @test timedwait(() -> length(W.unread(ws)) == 2, 20) === :ok
-        @test sort(W.unread(ws)) == ["folder/a", "folder/b"]
-        @test isempty(W.items(ws))
-        W.read_first!(ws, ["folder/b", "not there"])
+        @test timedwait(() -> length(W.items(ws)) == 2, 20) === :ok
+        @test sort(W.items(ws)) == ["folder/a", "folder/b"]
+        W.select!(ws, ["folder/b"])
         notify(project.gate)
         settled(ws)
-        @test isempty(W.unread(ws))
-        @test length(W.items(ws)) == 2
+        @test sort(W.items(ws)) == ["folder/a/1", "folder/b/1"]
+        @test W.selection(ws).id == ["folder/b/1"]
     finally
         notify(project.gate)
         W.close_workspace!(ws)

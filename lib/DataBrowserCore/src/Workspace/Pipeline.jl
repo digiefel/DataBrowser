@@ -120,7 +120,7 @@ function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Not
     workspace.sources[read_id], workspace.cachekeys[row], workspace.stages[row] = row, "read:" * read_id, SOURCE_READ
     want!(catalog, row, SOURCES_FIRST)
     isempty(held) || members!(workspace, row, held, given)
-    restore!(workspace, row)
+    restore!(workspace, row) || finished!(workspace, row, nothing)
     return nothing
 end
 
@@ -159,11 +159,13 @@ end
     values(workspace, source_item_id) -> Vector{String}
 
 The ids of the values of a source item: the value that reading it gives, and the values that the
-`process` of that value gives.
+`process` of that value gives. Until its read has a result, the source item is a value of its own,
+with its id.
 """
 function Base.values(workspace::Workspace, read_id::AbstractString)::Vector{String}
     row = get(workspace.sources, read_id, nothing)
     found = String[output.id for output in get(workspace.outputs, row, Output[])]
+    haskey(workspace.outputs, row) || row in get(workspace.versions, read_id, Row[]) && push!(found, read_id)
     for value in copy(found)
         processed = get(workspace.rows, "process:" * value, nothing)
         append!(found, output.id for output in get(workspace.outputs, processed, Output[]))
@@ -204,7 +206,7 @@ end
 Make `outputs` the values of `row`: each is a version of its id, unless another row gives that id
 at the same stage, or an earlier row gives it and `row` does not read it. With `outputs = nothing`,
 for a row without a result, `row` is a version of the value it is expected to give: the value that a
-`process` method takes. The cache and the stores forget the values that `row` no longer gives.
+`process` method takes, or for a read, the source item itself, with its id. The cache and the stores forget the values that `row` no longer gives.
 Returns the ids of the values whose versions changed, or none when `row` gives values of the same
 ids, types and members as before.
 """
@@ -223,7 +225,7 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
             push!(accepted, output)
         end
     end
-    expected = stage == SOURCE_READ ? String[] : [catalog[row].args[2].id]
+    expected = [stage == SOURCE_READ ? id(catalog[row].args[3]) : catalog[row].args[2].id]
     before = get(workspace.outputs, row, nothing)
     ids = unique!(String[[output.id for output in something(before, Output[])]; [output.id for output in accepted]; expected])
     for x in ids
@@ -560,7 +562,8 @@ now. The values that it no longer gives leave the selection. When it gives as ma
 lost, the first new id replaces the first lost id, and so on, in the order that the source item gave
 them: when another recipe reads the source item, it usually gives the same measurements under other
 ids. With `a/1` selected, a source item that gave `a/1` and `a/2` and gives `a/x` and `a/y` now
-leaves `a/x` selected.
+leaves `a/x` selected. When it lost one id, all its new ids replace it in the selection, as for a
+source item before and after its read.
 """
 function replaced!(selection::WorkspaceSelection, before::Vector{String}, after::Vector{String})::Nothing
     gone, added = setdiff(before, after), setdiff(after, before)
@@ -573,7 +576,8 @@ function replaced!(selection::WorkspaceSelection, before::Vector{String}, after:
             replaced[old] = new
         end
     end
-    selected = unique!([get(replaced, id, id) for id in selection.item_ids if !(id in gone) || haskey(replaced, id)])
+    ids = length(gone) == 1 && only(gone) in selection.item_ids ? [selection.item_ids; added] : selection.item_ids
+    selected = unique!([get(replaced, id, id) for id in ids if !(id in gone) || haskey(replaced, id)])
     selected == selection.item_ids || (selection.item_ids = selected; selection.revision += 1)
     return nothing
 end

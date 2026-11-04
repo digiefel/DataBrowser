@@ -1021,33 +1021,6 @@ Reading it costs the same for any number of items.
 status_revision(::Workspace)::Int = Catalogs.CHANGES[]
 
 """
-    read_first!(workspace, ids)
-
-Read the source items with public ids `ids` ahead of background work. The call does not wait. Ids of source items that are read
-already, or that the workspace does not have, are ignored. See [`unread`](@ref).
-"""
-function read_first!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Nothing
-    catalog = workspace.catalog
-    @lock catalog.lock for id in ids
-        row = get(workspace.sources, id, nothing)
-        row === nothing || request!(catalog, row, VIEWED_ITEM)
-    end
-    return nothing
-end
-
-"""
-    unread(workspace) -> Vector{String}
-
-The public ids of the source items that the source has and the workspace has not read yet: their
-values are not in the workspace. A source item that failed is not included. For a directory source,
-an id is the path of a file below the source root.
-
-[`read_first!`](@ref) reads chosen source items ahead of the others.
-"""
-unread(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock String[
-    id for (id, row) in workspace.sources if Catalogs.state(workspace.catalog, row) in (Catalogs.MISSING, Catalogs.STALE)]
-
-"""
     work_counts(workspace) -> (completed, total, running)
 
 The jobs that ended, all jobs (ended, running and waiting), and the jobs that run now. The

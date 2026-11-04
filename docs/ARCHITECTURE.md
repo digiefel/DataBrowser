@@ -180,8 +180,8 @@ order of the pipeline, and the last one is its current version: the readiness of
 state of that row. Views, queries and the tree of the browser use the latest version that gave the
 value, with its metadata and label.
 
-The source items that are not read yet (`unread`) are known from the moment the source lists them.
-`read_first!` reads some of them before any other.
+Until its read has a result, a source item is a value of its own, with its id, from the moment the
+source lists it: the tree shows it, and selecting it reads it before other source items.
 
 ### Other computations
 
