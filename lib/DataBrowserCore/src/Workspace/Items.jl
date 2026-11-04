@@ -11,17 +11,19 @@ items(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock colle
 """
     haskey(workspace, id) -> Bool
 
-Whether the workspace has a value with the id `id`. A selection or a saved view may name values the
-workspace does not have yet or no longer has.
+Whether the workspace has an item with the id `id`. A selection or a saved view can name items that
+the workspace does not have yet, or no longer has.
 """
 Base.haskey(workspace::Workspace, x::AbstractString)::Bool =
     @lock workspace.catalog.lock haskey(workspace.versions, x)
 
+# TODO(query model): an internal stand-in for the browser, until the query model of roadmap 0.5.0 has
+# "the group `id` holds it" as a condition.
 """
     members(workspace, id) -> Vector{String}
 
-The ids of the members of the group `id`, in the order its latest version gives them. A value that
-is not a group, or a group without members, has none.
+Internal. The ids of the members of the group `id`, in the order its latest version gives them. A
+value that is not a group, or a group without members, has none.
 """
 members(workspace::Workspace, x::AbstractString)::Vector{String} =
     @lock workspace.catalog.lock copy(get(workspace.members, x, String[]))
@@ -35,10 +37,12 @@ Internal. The ids of the values that no group holds and that a `read` gave, in n
 """
 members(workspace::Workspace)::Vector{String} = @lock workspace.catalog.lock collect(workspace.top)
 
+# TODO(query model): an internal stand-in for the browser, until the query model of roadmap 0.5.0 has
+# "it holds the value `id`" as a condition.
 """
     groups(workspace, id) -> Vector{String}
 
-The ids of the groups that hold the value `id` among their members.
+Internal. The ids of the groups that hold the value `id` among their members.
 """
 groups(workspace::Workspace, x::AbstractString)::Vector{String} =
     @lock workspace.catalog.lock copy(get(workspace.groups, x, String[]))

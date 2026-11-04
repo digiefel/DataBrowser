@@ -160,6 +160,7 @@ DataBrowserCore.select
 DataBrowserCore.Selection
 DataBrowserCore.materialize_items
 DataBrowserCore.query_items
+Base.haskey(::DataBrowserCore.Workspace.Workspace, ::AbstractString)
 DataBrowserCore.unnest
 ```
 
