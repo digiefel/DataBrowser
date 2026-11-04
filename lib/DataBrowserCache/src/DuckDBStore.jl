@@ -75,54 +75,54 @@ function open_duckdb_store(path::String, max_bytes::Integer)
         MemoryStore{String,Any}(; capacity=Int(max_bytes), weight=Base.summarysize))
 end
 
-# The key of the item of type `T` and id `id` in the file and in `recent`.
+# The text under which the file and `recent` keep the item of type `T` and key `key`.
 # TODO(perf): integer keys, so that the file needs no VARCHAR primary key.
-stored_key(::Type{T}, id::AbstractString) where {T} = string(T, '\x1f', id)
+stored_key(::Type{T}, key::Integer) where {T} = string(T, '\x1f', key)
 
-function Base.write(store::DuckDBStore, id::AbstractString, item)
-    key = stored_key(typeof(item), id)
+function Base.write(store::DuckDBStore, key::Integer, item)
+    stored = stored_key(typeof(item), key)
     data = item isa DataBrowserAPI.AbstractDataItem ? DataBrowserAPI.data(item) : nothing
     table = item isa DataBrowserAPI.AbstractDataItem && can_store_payload(data)
     @lock store.lock begin
         if table
             given = metadata_dict(metadata(item))
-            dropped = edit!(store.metadata_rows, key, given)
+            dropped = edit!(store.metadata_rows, stored, given)
             # TODO: when a code change gives a metadata name values of another type, each write
             # of the new values fails until the file is deleted. The column should take the new
             # type; the workspace cache and the metadata of the workspace in memory keep the
             # first type of a name too.
             if !isempty(dropped)
-                delete!(store.metadata_rows, key)
-                _forget_table!(store, key)
-                error("$(typeof(item)) $id cannot be stored: " * join(dropped, "; "))
+                delete!(store.metadata_rows, stored)
+                _forget_table!(store, stored)
+                error("$(typeof(item)) $(DataBrowserAPI.id(item)) cannot be stored: " * join(dropped, "; "))
             end
-            store.metadata[key] = given
-            shell = StoredShell(key, DataBrowserAPI.id(item), _serialize_type(typeof(item)))
-            append!(store.tables, key, data)
-            edit!(store.shell_rows, key, shell)
-            store.shells[key] = shell
-            _forget_serialized!(store, key)
+            store.metadata[stored] = given
+            shell = StoredShell(stored, DataBrowserAPI.id(item), _serialize_type(typeof(item)))
+            append!(store.tables, stored, data)
+            edit!(store.shell_rows, stored, shell)
+            store.shells[stored] = shell
+            _forget_serialized!(store, stored)
         else
-            _forget_table!(store, key)
+            _forget_table!(store, stored)
             buffer = IOBuffer()
             serialize(buffer, item)
             # TODO(scale): one statement per value; queue these as the tables are.
-            _run_with(store.serialized, "INSERT OR REPLACE INTO stored_values VALUES (?, ?)", (key, take!(buffer)))
-            push!(store.serialized_ids, key)
+            _run_with(store.serialized, "INSERT OR REPLACE INTO stored_values VALUES (?, ?)", (stored, take!(buffer)))
+            push!(store.serialized_ids, stored)
         end
-        append!(store.recent, key, item)
+        append!(store.recent, stored, item)
     end
     return nothing
 end
 
 # Tables are read with one query per column shape, and other values with one query per
-# `READ_BATCH_IDS` ids.
-function Base.read(store::DuckDBStore, ::Type{T}, ids::AbstractVector)::Vector{Union{Nothing,T}} where {T}
-    keys = [stored_key(T, id) for id in ids]
-    items = Vector{Union{Nothing,T}}(nothing, length(keys))
+# `READ_BATCH_IDS` keys.
+function Base.read(store::DuckDBStore, ::Type{T}, keys::AbstractVector)::Vector{Union{Nothing,T}} where {T}
+    stored = [stored_key(T, key) for key in keys]
+    items = Vector{Union{Nothing,T}}(nothing, length(stored))
     tables = Pair{Int,StoredShell}[]
     serialized = Int[]
-    for (position, key) in pairs(keys)
+    for (position, key) in pairs(stored)
         recent = read_hit(store.recent, key)
         if recent !== nothing
             something(recent) isa T && (items[position] = something(recent))
@@ -139,18 +139,18 @@ function Base.read(store::DuckDBStore, ::Type{T}, ids::AbstractVector)::Vector{U
     end
     # A value read from the file is new, so the caller may change it; it is not kept in memory.
     if !isempty(tables)
-        found = read(store.tables, [keys[position] for (position, _) in tables])
+        found = read(store.tables, [stored[position] for (position, _) in tables])
         for (position, shell) in tables
-            data = get(found, keys[position], nothing)
+            data = get(found, stored[position], nothing)
             data === nothing && continue
-            item = _rebuilt(shell, data, store.metadata[keys[position]])
+            item = _rebuilt(shell, data, store.metadata[stored[position]])
             item isa T && (items[position] = item)
         end
     end
     for batch in Iterators.partition(serialized, READ_BATCH_IDS)
-        found = _read_serialized(store, [keys[position] for position in batch])
+        found = _read_serialized(store, [stored[position] for position in batch])
         for position in batch
-            item = get(found, keys[position], nothing)
+            item = get(found, stored[position], nothing)
             item isa T && (items[position] = item)
         end
     end
@@ -186,25 +186,25 @@ function _read_serialized(store::DuckDBStore, keys::Vector{String})::Dict{String
     return found
 end
 
-function Base.haskey(store::DuckDBStore, ::Type{T}, id::AbstractString)::Bool where {T}
-    key = stored_key(T, id)
-    haskey(store.recent, key) && return true
-    return @lock store.lock haskey(store.shells, key) || key in store.serialized_ids
+function Base.haskey(store::DuckDBStore, ::Type{T}, key::Integer)::Bool where {T}
+    stored = stored_key(T, key)
+    haskey(store.recent, stored) && return true
+    return @lock store.lock haskey(store.shells, stored) || stored in store.serialized_ids
 end
 
-function Base.delete!(store::DuckDBStore, ::Type{T}, id::AbstractString) where {T}
-    key = stored_key(T, id)
-    delete!(store.recent, key)
+function Base.delete!(store::DuckDBStore, ::Type{T}, key::Integer) where {T}
+    stored = stored_key(T, key)
+    delete!(store.recent, stored)
     @lock store.lock begin
-        _forget_table!(store, key)
-        _forget_serialized!(store, key)
+        _forget_table!(store, stored)
+        _forget_serialized!(store, stored)
     end
     return store
 end
 
 # TODO(perf): the size on disk, not the size in memory.
-DataBrowserAPI.stored_size(store::DuckDBStore, ::Type{T}, id::AbstractString) where {T} =
-    something(stored_weight(store.recent, stored_key(T, id)), 0)
+DataBrowserAPI.stored_size(store::DuckDBStore, ::Type{T}, key::Integer) where {T} =
+    something(stored_weight(store.recent, stored_key(T, key)), 0)
 
 # The caller holds the store lock.
 function _forget_table!(store::DuckDBStore, id::String)::Nothing

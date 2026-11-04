@@ -230,7 +230,7 @@ flowchart LR
     core -->|"recorded_revision"| cache
     cache -->|"recorded version and failure"| records
     records --> core
-    core -->|"store_output!<br/>delete_output!<br/>store_computation_revision!"| cache
+    core -->|"key!<br/>store_output!<br/>delete_output!<br/>store_computation_revision!"| cache
     source -->|"read / process"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111

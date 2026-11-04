@@ -40,6 +40,7 @@ using DataBrowserCache:
     close_cache_db!,
     delete_computation_revision!,
     delete_output!,
+    key!,
     load_outputs,
     open_cache_db,
     output_key!,
@@ -290,12 +291,10 @@ mutable struct Workspace{P<:AbstractProject}
     project::P
     source::AbstractDataSource
     catalog::Catalog
-    # The row that reads each source item, by its id, and the rows of `process`, by their cache key.
+    # The row that reads each source item, by its id, and the rows of `process`, by
+    # "process:x", "group process:g" or "member process:m in g" for a value x, a group g, a member m.
     sources::Dict{String,Row}
     rows::Dict{String,Row}
-    # The cache key of each row, under which the cache keeps its version and its store keeps its
-    # result.
-    cachekeys::Dict{Row,String}
     # The stage of each row of the pipeline, and the values that it gave when it last ran.
     stages::Dict{Row,PipelineStage}
     outputs::Dict{Row,Vector{Output}}
@@ -330,9 +329,9 @@ mutable struct Workspace{P<:AbstractProject}
     executions::Dict{Row,ComputationExecution}
     # TODO: rows that `evaluate` added stay until the workspace closes; release those nothing uses.
     evaluated::Set{Row}
-    # The values that the cache saved for the rows of the pipeline of an earlier session, by cache
-    # key, until the rows restore.
-    saved::Dict{String,Vector{SavedOutput}}
+    # The values that the cache saved for the rows of the pipeline of an earlier session, by the key
+    # of the row, until the rows restore.
+    saved::Dict{Int64,Vector{SavedOutput}}
     workers::Vector{Task}
     # Jobs that run now, and jobs that ended since the workspace opened.
     running::Int
@@ -421,8 +420,9 @@ function Workspace(
     cache_db, disk_error, identity =
         _open_workspace_cache(project, source, metrics; rebuild, cache)
     return Workspace(
-        project, source, Catalog(),
-        Dict{String,Row}(), Dict{String,Row}(), Dict{Row,String}(),
+        # The cache keeps the key of each computation, by its id, for the next session.
+        project, source, Catalog(value -> key!(cache_db, id(value))),
+        Dict{String,Row}(), Dict{String,Row}(),
         Dict{Row,PipelineStage}(), Dict{Row,Vector{Output}}(), Dict{String,Vector{Row}}(),
         Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Set{String}(),
         Dict{Row,Taken}(), Dict{String,Vector{Row}}(),
@@ -430,7 +430,7 @@ function Workspace(
         Dict{Row,Type}(), Dict{Type,Code}(),
         Dict{Row,String}(),
         Dict{Row,ReentrantLock}(), Dict{Row,ComputationExecution}(), Set{Row}(),
-        Dict{String,Vector{SavedOutput}}(),
+        Dict{Int64,Vector{SavedOutput}}(),
         Task[], 0, 0,
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),

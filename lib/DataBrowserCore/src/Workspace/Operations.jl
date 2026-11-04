@@ -257,9 +257,8 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
         @lock catalog.lock begin
             gone = 0
             for (key, outputs) in collect(workspace.saved)
-                read_id = chopprefix(key, "read:")
-                haskey(read_id == key ? workspace.rows : workspace.sources, read_id) && continue
-                gone += read_id != key
+                Row(key) in catalog && continue
+                gone += first(outputs).stage == Int(SOURCE_READ)
                 foreach(output -> delete_output!(db, key, output.id), outputs)
                 delete_computation_revision!(db, key)
                 delete!(workspace.saved, key)

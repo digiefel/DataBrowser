@@ -9,8 +9,10 @@
 # row.
 #
 # Two other parts of the workspace keep information about a row: the stores keep the result of each
-# row, and the cache keeps the error of each failed row (see
-# [`Evaluate.jl`](Workspace/Evaluate.md)).
+# row, and the cache keeps the version of each result and the error of each failed row (see
+# [`Evaluate.jl`](Workspace/Evaluate.md)). Both keep them under the position of the row, which is
+# its *key*. The cache keeps the key of each computation, so that the same computation gets the same
+# position in each session; a position that no row has is empty.
 #
 # When an argument is another computation, that computation is a row too: it is an *input* of the
 # row, and the row is a *reader* of it. The rows and their inputs form a graph. The workspace can
@@ -131,10 +133,11 @@ using ..DataBrowserCore: Computation
 """
     Row
 
-The position of a row in the table of a [`Catalog`](@ref): `Row(3)` is the third row. A new row
-always takes a new position, so a `Row` refers to one row for as long as the catalog exists, even
-when [`replace!`](@ref) gives that row another computation; `in` tells whether the row is still
-there.
+The position of a row in the table of a [`Catalog`](@ref): `Row(3)` is the third row. The position
+is also the key of the row in the cache and in the stores, and the same computation gets the same
+position in each session, because the cache keeps it. A new row always takes a new position, so a
+`Row` refers to one row for as long as the catalog exists, even when [`replace!`](@ref) gives that
+row another computation; `in` tells whether the row is still there.
 """
 struct Row
     index::Int32
@@ -195,10 +198,13 @@ mutable struct Node
 end
 
 """
-    Catalog()
+    Catalog(key)
 
-The table of the computations of one workspace, with one row for each. The workers and the tasks of
-the workspace share it: every function reads and changes the fields inside `@lock catalog.lock`.
+The table of the computations of one workspace, with one row for each. `key(computation)` gives the
+position of each new row, a position that no row of the catalog had: [`add!`](@ref) calls it with
+the computation after it replaced the computations among its arguments with their
+[`Input`](@ref)s. The workers and the tasks of the workspace share the catalog: every function reads
+and changes the fields inside `@lock catalog.lock`.
 """
 # TODO: a row costs about 300 bytes, and each of its inputs an entry of `edges`. Keep the inputs and
 # readers of all rows in flat vectors when a workspace with millions of items needs it.
@@ -206,6 +212,8 @@ mutable struct Catalog
     const lock::ReentrantLock
     ## Notified at every change: for the tasks that wait for a row, and the workers that wait for a job.
     const changed::Threads.Condition
+    const key::Function
+    ## The positions that no row has hold `EMPTY`.
     const nodes::Vector{Node}
     ## The row of each computation, after `add!` instanced it.
     const row_of::Dict{Computation,Row}
@@ -224,11 +232,14 @@ mutable struct Catalog
     closed::Bool
 end
 
-Catalog() = (lock = ReentrantLock(); Catalog(lock, Threads.Condition(lock), Node[], Dict{Computation,Row}(),
+Catalog(key::Function) = (lock = ReentrantLock(); Catalog(lock, Threads.Condition(lock), key, Node[], Dict{Computation,Row}(),
     Dict{Tuple{Row,Row},@NamedTuple{input::Int32, reader::Int32, uses::Int32}}(),
     Dict{Int,Vector{Row}}(), Dict{Row,Int}(), Row[], Dict{Type,Vector{Int}}(), false))
 
-Base.show(io::IO, catalog::Catalog) = print(io, "Catalog(", length(catalog.nodes), " rows)")
+# The node of every position that no row has: removed, and never counted.
+const EMPTY = Node(Computation(nothing), Row[], Row[], REMOVED, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing)
+
+Base.show(io::IO, catalog::Catalog) = print(io, "Catalog(", length(catalog.row_of), " rows)")
 
 """
     Input(catalog, row)
@@ -290,9 +301,10 @@ Base.getindex(catalog::Catalog, row::Row)::Computation = @lock catalog.lock node
 """
     row in catalog -> Bool
 
-Whether `row` is still in the catalog: it was not removed.
+Whether `row` is in the catalog: a row has its position, and it was not removed.
 """
-Base.in(row::Row, catalog::Catalog)::Bool = @lock catalog.lock node(catalog, row).state != REMOVED
+Base.in(row::Row, catalog::Catalog)::Bool =
+    @lock catalog.lock checkbounds(Bool, catalog.nodes, row.index) && node(catalog, row).state != REMOVED
 
 """
     state(catalog, row) -> State
@@ -442,10 +454,10 @@ Base.get(catalog::Catalog, value::Computation, default) =
     add!(catalog, computation) -> Row
 
 The row of `computation`, which `add!` adds when the catalog does not have it, together with each
-computation among its arguments that the catalog does not have. A new row is `MISSING`, and nothing
-wants or holds it. A row is removed only when it loses its last hold or its last reader (see
-[`hold!`](@ref)), so a row that is never held and never read stays. `add!` throws an error when an
-input of the computation was removed.
+computation among its arguments that the catalog does not have. The `key` of the catalog gives the
+position of each new row. A new row is `MISSING`, and nothing wants or holds it. A row is removed
+only when it loses its last hold or its last reader (see [`hold!`](@ref)), so a row that is never
+held and never read stays. `add!` throws an error when an input of the computation was removed.
 """
 function add!(catalog::Catalog, value::Computation)::Row
     @lock catalog.lock begin
@@ -454,9 +466,10 @@ function add!(catalog::Catalog, value::Computation)::Row
         row === nothing || return row
         any(input -> node(catalog, input).state == REMOVED, input_rows(value.args)) &&
             error("An input of the computation was removed from the workspace")
-        row = Row(length(catalog.nodes) + 1)
-        push!(catalog.nodes, Node(value, Row[], Row[], MISSING, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing))
-        tally!(catalog, catalog.nodes[end], 1)
+        row = Row(catalog.key(value))
+        length(catalog.nodes) < row.index && append!(catalog.nodes, fill(EMPTY, row.index - length(catalog.nodes)))
+        catalog.nodes[row.index] = Node(value, Row[], Row[], MISSING, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing)
+        tally!(catalog, catalog.nodes[row.index], 1)
         catalog.row_of[value] = row
         foreach(input -> connect!(catalog, row, input), input_rows(value.args))
         return row

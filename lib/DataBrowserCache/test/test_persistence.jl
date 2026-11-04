@@ -3,10 +3,10 @@ using Test, DataBrowserCache, DataBrowserAPI, Tables
 
 struct CacheItem <: AbstractDataItem end
 
-"""Save the value "item" of the computation "process:item", with `metadata`."""
+"""Save the value "item" of the row with key 1, with `metadata`."""
 store_fixture_item!(cache, metadata=Dict{Symbol,Any}()) =
-    store_output!(cache, "process:item", 1, 1, (; id="item", label="item", type=CacheItem, members=nothing, metadata))
-saved(cache) = only(load_outputs(cache)["process:item"]).metadata
+    store_output!(cache, 1, 1, 1, (; id="item", label="item", type=CacheItem, members=nothing, metadata))
+saved(cache) = only(load_outputs(cache)[1]).metadata
 
 @testset "in-memory storage supports queries without touching the cache file" begin
     mktempdir() do dir
@@ -50,7 +50,7 @@ end
         cache = open_cache_db(identity)
         try
             @test saved(cache)[:total] == 5
-            delete_output!(cache, "process:item", "item")
+            delete_output!(cache, 1, "item")
         finally
             close_cache_db!(cache)
         end

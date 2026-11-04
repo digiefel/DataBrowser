@@ -8,13 +8,13 @@
 # changed since it ran. A window or a script that reads a row *requests* it: a worker runs it ahead
 # of the wanted rows, until it has a result.
 #
-# | Row            | Calls                                  | Cache key                  | Added when                                              |
-# | -------------- | -------------------------------------- | -------------------------- | ------------------------------------------------------- |
-# | read           | `read(project, source, item)`          | `read:a.csv`               | the source reports a source item without members        |
-# | group read     | `read(project, source, item, members)` | `read:.`                   | the source reports a source item with members           |
-# | process        | `process(project, value)`              | `process:a.csv`            | a read gives the value                                  |
-# | group process  | `process(project, group, members)`     | `group process:.`          | a value is a group, and a method of the project takes it |
-# | member process | `process(project, member, group)`      | `member process:a.csv in .` | a value is a member of a group, and a method of the project takes both |
+# | Row            | Calls                                  | Added when                                              |
+# | -------------- | -------------------------------------- | ------------------------------------------------------- |
+# | read           | `read(project, source, item)`          | the source reports a source item without members        |
+# | group read     | `read(project, source, item, members)` | the source reports a source item with members           |
+# | process        | `process(project, value)`              | a read gives the value                                  |
+# | group process  | `process(project, group, members)`     | a value is a group, and a method of the project takes it |
+# | member process | `process(project, member, group)`      | a value is a member of a group, and a method of the project takes both |
 #
 # A row gives one value, or several when its result is a vector of items. Each value has an *id*, a
 # string that the project chooses and that stays the same from one session to the next. A value
@@ -119,7 +119,7 @@ function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Not
     end
     row = add!(catalog, value)
     hold!(catalog, row)
-    workspace.sources[read_id], workspace.cachekeys[row], workspace.stages[row] = row, "read:" * read_id, SOURCE_READ
+    workspace.sources[read_id], workspace.stages[row] = row, SOURCE_READ
     want!(catalog, row, SOURCES_FIRST)
     isempty(held) || members!(workspace, row, held, given)
     restore!(workspace, row) || finished!(workspace, row, nothing)
@@ -225,7 +225,7 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
         if any(found -> found.id == output.id, accepted)
             push!(conflicts, "it gives the id \"$(output.id)\" twice")
         elseif any(other -> workspace.stages[other] == stage, others) || !(isempty(earlier) || reads)
-            push!(conflicts, "the value \"$(output.id)\" comes from $(cachekey(workspace, others[end]))")
+            push!(conflicts, "the value \"$(output.id)\" comes from $(id(catalog[others[end]]))")
         else
             push!(accepted, output)
         end
@@ -242,9 +242,9 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
     for output in something(before, Output[])
         any(found -> found.id == output.id, accepted) && continue
         delete!(workspace.produced, output.key)
-        delete_output!(workspace.cache.db, cachekey(workspace, row), output.id)
+        delete_output!(workspace.cache.db, row.index, output.id)
         place = store(workspace, output.type)
-        place === nothing || delete!(place, output.type, cachekey(cachekey(workspace, row), output.id))
+        place === nothing || delete!(place, output.type, output.key)
     end
     outputs === nothing ? delete!(workspace.outputs, row) : (workspace.outputs[row] = accepted)
     ## The group rows that take one of these values take its latest version now.
@@ -348,9 +348,10 @@ end
 """
     row!(workspace, key, stage, computation, held=String[])
 
-Add the row of `process` with the cache key `key`, or give it `computation` when it has another
-computation. `nothing` releases the row. Until the row has a result, it is a version of the value
-that its `process` takes. A group process takes the values of the members `held`.
+Add the row of `process` that `workspace.rows` holds under `key`, such as `"process:a/1"`, or give
+it `computation` when it has another computation. `nothing` releases the row. Until the row has a
+result, it is a version of the value that its `process` takes. A group process takes the values of
+the members `held`.
 """
 function row!(workspace::Workspace, key::String, stage::PipelineStage, value::Union{Nothing,Computation}, held::Vector{String}=String[])::Nothing
     catalog = workspace.catalog
@@ -362,7 +363,7 @@ function row!(workspace::Workspace, key::String, stage::PipelineStage, value::Un
     elseif row === nothing
         row = add!(catalog, value)
         hold!(catalog, row)
-        workspace.rows[key], workspace.cachekeys[row], workspace.stages[row] = row, key, stage
+        workspace.rows[key], workspace.stages[row] = row, stage
         workspace.background_processing && want!(catalog, row, BACKGROUND_ITEM)
         given!(workspace, row, nothing)
         stage == GROUP_PROCESS && members!(workspace, row, held)
@@ -551,13 +552,13 @@ conflict_message(conflict::MetadataConflict)::String =
     conflicts!(workspace, row, messages)
 
 Add the values of a row that the workspace or the cache did not keep to the error of that row: the
-status panel of the browser shows the error next to the row, and a warning with the cache key of the
-row goes to the log.
+status panel of the browser shows the error next to the row, and a warning with the id of its
+computation goes to the log.
 """
 function conflicts!(workspace::Workspace, row::Row, messages::Vector{String})::Nothing
     isempty(messages) && return nothing
     workspace.errors[row] = join([get(workspace.errors, row, String[]); messages], "; ")
-    @warn("Values were not kept", computation=cachekey(workspace, row), messages)
+    @warn("Values were not kept", computation=id(workspace.catalog[row]), messages)
     return nothing
 end
 

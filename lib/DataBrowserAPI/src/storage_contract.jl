@@ -2,31 +2,32 @@
     AbstractStore
 
 Supertype for stores: objects that save items so that the workspace can reuse them instead of
-computing them again. A store saves at most one item per item type and id.
+computing them again. A store saves at most one item per item type and key. The key is an integer
+that the workspace gives each result; it is not the id of an item.
 
 [`storage`](@ref) chooses the store for an item type, and the workspace calls the methods below.
 A method with a default needs no definition.
 
 # Interface
 
-| Method                     | Default                       | Description |
-|:---------------------------|:------------------------------|:------------|
-| `write(store, id, item)`   |                               | Save `item` under its type and `id`, replacing the saved item with the same type and id. |
-| `read(store, T, ids)`      |                               | Return a vector with a copy of the saved item of type `T` for each of `ids`, or `nothing` where there is none. |
-| `read(store, T, id)`       | calls `read(store, T, [id])`  | Return a copy of the saved item of type `T` and id `id`. Throw a `KeyError` if there is none. |
-| `haskey(store, T, id)`     |                               | Return whether an item of type `T` and id `id` is saved. |
-| `delete!(store, T, id)`    |                               | Remove the saved item of type `T` and id `id`, if there is one. |
-| `stored_size(store, T, id)`|                               | Return the size in bytes of the saved item. |
-| `close(store)`             | does nothing                  | Release open files and connections. The workspace calls it when it closes. |
+| Method                       | Default                        | Description |
+|:-----------------------------|:-------------------------------|:------------|
+| `write(store, key, item)`    |                                | Save `item` under its type and `key`, replacing the saved item with the same type and key. |
+| `read(store, T, keys)`       |                                | Return a vector with a copy of the saved item of type `T` for each of `keys`, or `nothing` where there is none. |
+| `read(store, T, key)`        | calls `read(store, T, [key])`  | Return a copy of the saved item of type `T` and key `key`. Throw a `KeyError` if there is none. |
+| `haskey(store, T, key)`      |                                | Return whether an item of type `T` and key `key` is saved. |
+| `delete!(store, T, key)`     |                                | Remove the saved item of type `T` and key `key`, if there is one. |
+| `stored_size(store, T, key)` |                                | Return the size in bytes of the saved item. |
+| `close(store)`               | does nothing                   | Release open files and connections. The workspace calls it when it closes. |
 
 The workspace passes `write` a copy of the item, so a store may keep `item` itself. `read` returns
 copies, which the caller may modify.
 """
 abstract type AbstractStore end
 
-function Base.read(store::AbstractStore, ::Type{T}, id::AbstractString)::T where {T}
-    item = only(read(store, T, [id]))
-    item === nothing && throw(KeyError(id))
+function Base.read(store::AbstractStore, ::Type{T}, key::Integer)::T where {T}
+    item = only(read(store, T, [key]))
+    item === nothing && throw(KeyError(key))
     return item
 end
 
@@ -46,9 +47,9 @@ function storage end
 storage(::AbstractProject, type::Type) = storage(type)
 
 """
-    stored_size(store, T, id) -> Int
+    stored_size(store, T, key) -> Int
 
-The size in bytes of the item of type `T` and id `id` that `store` saves. See [`AbstractStore`](@ref).
+The size in bytes of the item of type `T` and key `key` that `store` saves. See [`AbstractStore`](@ref).
 """
 function stored_size end
 

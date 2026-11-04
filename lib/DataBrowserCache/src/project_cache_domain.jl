@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 41
+const PROJECT_CACHE_SCHEMA_VERSION = 42
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -46,11 +46,12 @@ struct ProjectCacheIdentity
 end
 
 """
-A value that a computation gave, as the cache saved it: its id, label and type, the ids of its
-members when it is a group, and its metadata.
+A value that a computation gave, as the cache saved it: its id, the stage of the pipeline that the
+computation runs, its label and type, the ids of its members when it is a group, and its metadata.
 """
 const SavedOutput = @NamedTuple{
     id::String,
+    stage::Int8,
     label::String,
     type::Type,
     members::Union{Nothing,Vector{String}},
@@ -60,13 +61,12 @@ const SavedOutput = @NamedTuple{
 # Storage rows (field names are the table columns; `R(database_row)` is the pure decoder)
 
 """
-One value that a computation gave: the cache key of the computation, the stage of the pipeline it
-runs, and the position of the value among the values it gave. `output_key` is the key of the value's
-metadata.
+One value that a computation gave: the key of its row, the stage of the pipeline it runs, and the
+position of the value among the values it gave. `output_key` is the key of the value's metadata.
 """
 struct OutputRow
     output_key::Int64
-    computation::String
+    computation::Int64
     id::String
     stage::Int8
     position::Int64
@@ -75,22 +75,24 @@ struct OutputRow
     members_hex::Union{Nothing,String}
 end
 
-OutputRow(row)::OutputRow = OutputRow(Int64(row.output_key), String(row.computation), String(row.id),
+OutputRow(row)::OutputRow = OutputRow(Int64(row.output_key), Int64(row.computation), String(row.id),
     Int8(row.stage), Int64(row.position), String(row.label), String(row.type_hex), _null_to_nothing(row.members_hex))
 
 """
-The revision of the inputs and code of the result of one computation, by its id, and the item type
-under which its store keeps it; or, when it failed, its message.
+The revision of the inputs and code of the result of one row, by the key of the row, with `call`,
+the id of its computation, and the item type under which its store keeps it; or, when it failed,
+its message.
 """
 struct ComputationRevisionRow
-    id::String
+    key::Int64
+    call::String
     revision::UInt64
     type_hex::String
     failure::String
 end
 
-ComputationRevisionRow(row)::ComputationRevisionRow =
-    ComputationRevisionRow(String(row.id), UInt64(row.revision), String(row.type_hex), String(row.failure))
+ComputationRevisionRow(row)::ComputationRevisionRow = ComputationRevisionRow(
+    Int64(row.key), String(row.call), UInt64(row.revision), String(row.type_hex), String(row.failure))
 
 # Identity
 
@@ -127,12 +129,16 @@ mutable struct CacheDB
     metrics::BuildMetrics
     outputs::RowStore{Int64,OutputRow}
     output_metadata::WideRowStore{Int64}
-    computation_revision_rows::RowStore{String,ComputationRevisionRow}
+    computation_revision_rows::RowStore{Int64,ComputationRevisionRow}
     # The same revisions, read at opening, so that a lookup does not read the table.
-    computation_revisions::Dict{String,ComputationRevisionRow}
-    # The key of each value, by the cache key of its computation and its id, and the next free key.
-    output_keys::Dict{Tuple{String,String},Int64}
-    next_output_key::Int64
+    computation_revisions::Dict{Int64,ComputationRevisionRow}
+    # The key of each call of the revisions at opening, until a row of this session takes it.
+    kept_keys::Dict{String,Int64}
+    # The key of each value, by the key of its row and its id.
+    output_keys::Dict{Tuple{Int64,String},Int64}
+    # The new keys: the keys below `next_key` that nothing had at opening, then `next_key` and up.
+    free_keys::Vector{Int64}
+    next_key::Int64
     key_lock::ReentrantLock
     # The signature of the output_metadata columns backing the query view; the view is
     # recreated only when it changes.
@@ -219,9 +225,12 @@ function open_cache_db(
             DBInterface.close!(connection)
         end
         outputs = started(RowStore{Int64,OutputRow}(db, "outputs", ("output_key",)))
-        computation_revision_rows = started(RowStore{String,ComputationRevisionRow}(
-            db, "computation_revisions", ("id",)))
-        output_keys = Dict{Tuple{String,String},Int64}((row.computation, row.id) => key for (key, row) in read(outputs))
+        computation_revision_rows = started(RowStore{Int64,ComputationRevisionRow}(
+            db, "computation_revisions", ("key",)))
+        revisions = read(computation_revision_rows)
+        output_keys = Dict{Tuple{Int64,String},Int64}((row.computation, row.id) => key for (key, row) in read(outputs))
+        used = union!(Set{Int64}(keys(revisions)), values(output_keys), (key for (key, _) in keys(output_keys)))
+        next_key = maximum(used; init=Int64(0)) + 1
         return CacheDB(
             identity,
             db,
@@ -229,9 +238,12 @@ function open_cache_db(
             outputs,
             started(WideRowStore{Int64}(db, "output_metadata", "output_key")),
             computation_revision_rows,
-            Dict{String,ComputationRevisionRow}(row.id => row for row in values(read(computation_revision_rows))),
+            revisions,
+            Dict{String,Int64}(row.call => key for (key, row) in revisions),
             output_keys,
-            maximum(values(output_keys); init=Int64(0)) + 1,
+            # Reversed, so that `pop!` gives the smallest first.
+            reverse!(setdiff(Int64(1):next_key - 1, used)),
+            next_key,
             ReentrantLock(),
             Symbol[],
         )
@@ -249,16 +261,28 @@ function open_cache_db(
 end
 
 """
-    output_key!(cache, computation, id) -> Int64
+    key!(cache, call) -> Int64
 
-The key of the value with id `id` that the computation with cache key `computation` gives. A value
-keeps its key while the cache keeps it; its metadata is kept under that key.
+The key of a row whose computation has the id `call`: the key that the cache kept for `call`, the
+first time a session asks for it; otherwise a new key. A key is never given twice in one session,
+so a second row with the same call, or a row that was removed and is added again, gets a new key.
 """
-function output_key!(cache::CacheDB, computation::AbstractString, id::AbstractString)::Int64
-    return @lock cache.key_lock get!(cache.output_keys, (String(computation), String(id))) do
-        (cache.next_output_key += 1) - 1
-    end
-end
+key!(cache::CacheDB, call::AbstractString)::Int64 =
+    @lock cache.key_lock haskey(cache.kept_keys, call) ? pop!(cache.kept_keys, call) : key!(cache)
+
+# A new key, which no row and no value of the cache has.
+key!(cache::CacheDB)::Int64 =
+    @lock cache.key_lock isempty(cache.free_keys) ? (cache.next_key += 1) - 1 : pop!(cache.free_keys)
+
+"""
+    output_key!(cache, key, id) -> Int64
+
+The key of the value with id `id` that the row with key `key` gives. A value keeps its key while the
+cache keeps it; its metadata is kept under that key. The new keys of values and of rows are
+different.
+"""
+output_key!(cache::CacheDB, key::Integer, id::AbstractString)::Int64 =
+    @lock cache.key_lock get!(() -> key!(cache), cache.output_keys, (Int64(key), String(id)))
 
 _buffer_rows(data)::Int = Tables.istable(data) ? _payload_rows(data) : 1
 
@@ -271,7 +295,7 @@ function ensure_schema!(connection)::Nothing
     """)
     DBInterface.execute(connection, create_table_sql(OutputRow, "outputs", (:output_key,)))
     DBInterface.execute(connection,
-        create_table_sql(ComputationRevisionRow, "computation_revisions", (:id,)))
+        create_table_sql(ComputationRevisionRow, "computation_revisions", (:key,)))
     DBInterface.execute(connection, """
         CREATE TABLE IF NOT EXISTS wide_columns(
             table_name TEXT,
@@ -288,66 +312,67 @@ end
 # RowStore rows. The stores know none of this; they buffer typed rows.
 
 """
-    store_output!(cache, computation, stage, position, output) -> Vector{String}
+    store_output!(cache, key, stage, position, output) -> Vector{String}
 
-Save one value that the computation with cache key `computation` gave, in place of what the cache
-saved for the value with the same id before. `output` has the fields of a [`SavedOutput`](@ref).
-`stage` is the stage of the pipeline that the computation runs, and `position` the place of the
-value among the values it gave.
+Save one value that the row with key `key` gave, in place of what the cache saved for the value with
+the same id before. `output` has the fields of a [`SavedOutput`](@ref) but `stage`. `stage` is the
+stage of the pipeline that the row runs, and `position` the place of the value among the values it
+gave.
 
 Returns a message for each metadata value that could not be saved.
 """
-function store_output!(cache::CacheDB, computation::AbstractString, stage::Integer, position::Integer,
+function store_output!(cache::CacheDB, key::Integer, stage::Integer, position::Integer,
         output::NamedTuple)::Vector{String}
     started = time_ns()
-    key = output_key!(cache, computation, output.id)
-    edit!(cache.outputs, key, OutputRow(key, computation, output.id, stage, position, output.label,
+    output_key = output_key!(cache, key, output.id)
+    edit!(cache.outputs, output_key, OutputRow(output_key, key, output.id, stage, position, output.label,
         _serialize_type(output.type), _serialize_hex(output.members)))
     record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
     started = time_ns()
-    dropped = edit!(cache.output_metadata, key, output.metadata)
+    dropped = edit!(cache.output_metadata, output_key, output.metadata)
     record_cache_phase!(cache.metrics.metadata_write_ns, cache.metrics.metadata_writes, started)
     return dropped
 end
 
-"""Forget what [`store_output!`](@ref) saved for the value `id` of the computation `computation`."""
-function delete_output!(cache::CacheDB, computation::AbstractString, id::AbstractString)::Nothing
-    key = output_key!(cache, computation, id)
-    delete!(cache.outputs, key)
-    delete!(cache.output_metadata, key)
+"""Forget what [`store_output!`](@ref) saved for the value `id` of the row with key `key`."""
+function delete_output!(cache::CacheDB, key::Integer, id::AbstractString)::Nothing
+    output_key = output_key!(cache, key, id)
+    delete!(cache.outputs, output_key)
+    delete!(cache.output_metadata, output_key)
     return nothing
 end
 
 """
-    store_computation_revision!(cache, id, revision, type; failure="")
+    store_computation_revision!(cache, key, call, revision, type; failure="")
 
-Record the revision of the inputs and code from which the result of the computation `id` was
-computed, and the item type under which its store keeps it. A computation that failed has the
-message `failure` instead of a result.
+Record the revision of the inputs and code from which the result of the row with key `key` was
+computed, and the item type under which its store keeps it. `call` is the id of the computation of
+the row, under which the next session finds the key again (see [`key!`](@ref)). A row that failed
+has the message `failure` instead of a result.
 """
-function store_computation_revision!(cache::CacheDB, id::AbstractString, revision::UInt64, type::Type;
-        failure::AbstractString="")::Nothing
-    row = ComputationRevisionRow(String(id), revision, _serialize_type(type), String(failure))
-    @lock cache.key_lock cache.computation_revisions[row.id] = row
-    edit!(cache.computation_revision_rows, row.id, row)
+function store_computation_revision!(cache::CacheDB, key::Integer, call::AbstractString, revision::UInt64,
+        type::Type; failure::AbstractString="")::Nothing
+    row = ComputationRevisionRow(Int64(key), String(call), revision, _serialize_type(type), String(failure))
+    @lock cache.key_lock cache.computation_revisions[row.key] = row
+    edit!(cache.computation_revision_rows, row.key, row)
     return nothing
 end
 
-"""Forget what [`store_computation_revision!`](@ref) recorded for `id`."""
-function delete_computation_revision!(cache::CacheDB, id::AbstractString)::Nothing
-    @lock cache.key_lock delete!(cache.computation_revisions, String(id))
-    delete!(cache.computation_revision_rows, String(id))
+"""Forget what [`store_computation_revision!`](@ref) recorded for the row with key `key`."""
+function delete_computation_revision!(cache::CacheDB, key::Integer)::Nothing
+    @lock cache.key_lock delete!(cache.computation_revisions, Int64(key))
+    delete!(cache.computation_revision_rows, Int64(key))
     return nothing
 end
 
 """
-    recorded_revision(cache, id) -> Union{Nothing,NamedTuple}
+    recorded_revision(cache, key) -> Union{Nothing,NamedTuple}
 
-What [`store_computation_revision!`](@ref) recorded for `id`, as `(; revision, type, failure)`, or
-`nothing`. A type that no longer exists counts as no record.
+What [`store_computation_revision!`](@ref) recorded for the row with key `key`, as
+`(; revision, type, failure)`, or `nothing`. A type that no longer exists counts as no record.
 """
-function recorded_revision(cache::CacheDB, id::AbstractString)::Union{Nothing,NamedTuple}
-    row = @lock cache.key_lock get(cache.computation_revisions, String(id), nothing)
+function recorded_revision(cache::CacheDB, key::Integer)::Union{Nothing,NamedTuple}
+    row = @lock cache.key_lock get(cache.computation_revisions, Int64(key), nothing)
     row === nothing && return nothing
     type = try
         _deserialize_type(row.type_hex)
@@ -442,12 +467,15 @@ _deserialize_type(value)::Type = _deserialize_hex(value)
 """Map a SQL NULL (`missing`) to `nothing`, passing other values through."""
 _null_to_nothing(value) = ismissing(value) ? nothing : value
 
-"""Delete everything the cache saved, keeping its identity and schema."""
+"""
+Delete everything the cache saved, keeping its identity and schema. The rows of the open session
+keep their keys, and new keys stay new.
+"""
 function clear_cache!(cachedb::CacheDB)::Nothing
     foreach(clear!, cache_stores(cachedb))
     lock(cachedb.key_lock) do
         empty!(cachedb.output_keys)
-        cachedb.next_output_key = Int64(1)
+        empty!(cachedb.kept_keys)
         empty!(cachedb.computation_revisions)
     end
     return nothing
@@ -497,17 +525,17 @@ function _validate_meta(meta::Dict{String,String}, identity::ProjectCacheIdentit
 end
 
 """
-    load_outputs(cache) -> Dict{String,Vector{SavedOutput}}
+    load_outputs(cache) -> Dict{Int64,Vector{SavedOutput}}
 
-What [`store_output!`](@ref) saved, including buffered updates: for the cache key of each
-computation, the values it gave, in their order.
+What [`store_output!`](@ref) saved, including buffered updates: for the key of each row, the values
+it gave, in their order.
 """
-function load_outputs(cache::CacheDB)::Dict{String,Vector{SavedOutput}}
+function load_outputs(cache::CacheDB)::Dict{Int64,Vector{SavedOutput}}
     metadata = read(cache.output_metadata)
     rows = sort!(collect(values(read(cache.outputs))); by=row -> row.position)
-    saved = Dict{String,Vector{SavedOutput}}()
+    saved = Dict{Int64,Vector{SavedOutput}}()
     for row in rows
-        push!(get!(Vector{SavedOutput}, saved, row.computation), (; row.id, row.label,
+        push!(get!(Vector{SavedOutput}, saved, row.computation), (; row.id, row.stage, row.label,
             type=_deserialize_type(row.type_hex), members=_deserialize_hex(row.members_hex),
             metadata=get(metadata, row.output_key, Dict{Symbol,Any}())))
     end

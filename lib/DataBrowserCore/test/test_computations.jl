@@ -13,12 +13,12 @@ ComputationProject() = ComputationProject(Ref(0), Type[])
 struct NativeItemStore{T} <: AbstractStore
     values::typeof(MemoryStore())
 end
-Base.haskey(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = haskey(store.values, T, id)
-Base.write(store::NativeItemStore{T}, id::AbstractString, item::T) where {T} = write(store.values, id, item)
-Base.read(store::NativeItemStore{T}, ::Type{T}, ids::AbstractVector) where {T} = read(store.values, T, ids)
-Base.delete!(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} = delete!(store.values, T, id)
-DataBrowserAPI.stored_size(store::NativeItemStore{T}, ::Type{T}, id::AbstractString) where {T} =
-    DataBrowserAPI.stored_size(store.values, T, id)
+Base.haskey(store::NativeItemStore{T}, ::Type{T}, key::Integer) where {T} = haskey(store.values, T, key)
+Base.write(store::NativeItemStore{T}, key::Integer, item::T) where {T} = write(store.values, key, item)
+Base.read(store::NativeItemStore{T}, ::Type{T}, keys::AbstractVector) where {T} = read(store.values, T, keys)
+Base.delete!(store::NativeItemStore{T}, ::Type{T}, key::Integer) where {T} = delete!(store.values, T, key)
+DataBrowserAPI.stored_size(store::NativeItemStore{T}, ::Type{T}, key::Integer) where {T} =
+    DataBrowserAPI.stored_size(store.values, T, key)
 function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T}
     push!(project.store_types, T)
     return NativeItemStore{T}(MemoryStore())
@@ -385,11 +385,11 @@ struct RefusingStore <: AbstractStore
     refuse::Base.RefValue{Bool}
     values::typeof(MemoryStore())
 end
-Base.write(store::RefusingStore, id::AbstractString, value) =
-    store.refuse[] ? error("the store refuses $id") : write(store.values, id, value)
-Base.haskey(store::RefusingStore, ::Type{T}, id::AbstractString) where {T} = haskey(store.values, T, id)
-Base.read(store::RefusingStore, ::Type{T}, ids::AbstractVector) where {T} = read(store.values, T, ids)
-Base.delete!(store::RefusingStore, ::Type{T}, id::AbstractString) where {T} = delete!(store.values, T, id)
+Base.write(store::RefusingStore, key::Integer, value) =
+    store.refuse[] ? error("the store refuses $key") : write(store.values, key, value)
+Base.haskey(store::RefusingStore, ::Type{T}, key::Integer) where {T} = haskey(store.values, T, key)
+Base.read(store::RefusingStore, ::Type{T}, keys::AbstractVector) where {T} = read(store.values, T, keys)
+Base.delete!(store::RefusingStore, ::Type{T}, key::Integer) where {T} = delete!(store.values, T, key)
 struct RefusingProject <: AbstractProject
     store::RefusingStore
 end

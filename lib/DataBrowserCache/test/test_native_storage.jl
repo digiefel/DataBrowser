@@ -21,22 +21,22 @@ table(id, values) = TableItem(id, (x=values,), Dict{Symbol,Any}())
 
 @testset "native memory storage" begin
     store = MemoryStore(; max_bytes=20_000)
-    write(store, "one", table("one", zeros(1000)))
-    write(store, "two", table("two", ones(1000)))
-    # Reading "one" makes "two" the least recently used item, so it goes first.
-    @test read(store, TableItem, "one").data.x == zeros(1000)
-    write(store, "three", table("three", fill(3.0, 1000)))
-    @test haskey(store, TableItem, "one")
-    @test !haskey(store, TableItem, "two")
-    @test haskey(store, TableItem, "three")
-    @test_throws KeyError read(store, TableItem, "two")
-    @test isnothing.(read(store, TableItem, ["three", "two"])) == [false, true]
-    # An item is saved under its type and its id.
-    write(store, "one", TextItem("one", "text"))
-    @test read(store, TextItem, "one").text == "text"
-    @test haskey(store, TableItem, "one")
-    delete!(store, TextItem, "one")
-    @test !haskey(store, TextItem, "one")
+    write(store, 1, table("one", zeros(1000)))
+    write(store, 2, table("two", ones(1000)))
+    # Reading the item of key 1 makes the item of key 2 the least recently used, so it goes first.
+    @test read(store, TableItem, 1).data.x == zeros(1000)
+    write(store, 3, table("three", fill(3.0, 1000)))
+    @test haskey(store, TableItem, 1)
+    @test !haskey(store, TableItem, 2)
+    @test haskey(store, TableItem, 3)
+    @test_throws KeyError read(store, TableItem, 2)
+    @test isnothing.(read(store, TableItem, [3, 2])) == [false, true]
+    # An item is saved under its type and its key.
+    write(store, 1, TextItem("one", "text"))
+    @test read(store, TextItem, 1).text == "text"
+    @test haskey(store, TableItem, 1)
+    delete!(store, TextItem, 1)
+    @test !haskey(store, TextItem, 1)
     @test_throws ArgumentError MemoryStore(; max_bytes=-1)
 end
 
@@ -44,17 +44,17 @@ end
     mktempdir() do dir
         path = joinpath(dir, "values.duckdb")
         store = DuckDBStore(path)
-        write(store, "table", TableItem("table", (x=[1.0, 2.0], y=[3, 4]), Dict{Symbol,Any}(:n => 2)))
-        write(store, "one", TextItem("one", "kept"))
-        write(store, "two", TextItem("two", "removed"))
-        delete!(store, TextItem, "two")
+        write(store, 4, TableItem("table", (x=[1.0, 2.0], y=[3, 4]), Dict{Symbol,Any}(:n => 2)))
+        write(store, 1, TextItem("one", "kept"))
+        write(store, 2, TextItem("two", "removed"))
+        delete!(store, TextItem, 2)
         close(store)
         store = DuckDBStore(path)
-        @test read(store, TextItem, "one").text == "kept"
-        table = read(store, TableItem, "table")
+        @test read(store, TextItem, 1).text == "kept"
+        table = read(store, TableItem, 4)
         @test (table.data.x, table.data.y, table.metadata[:n]) == ([1.0, 2.0], [3, 4], 2)
-        @test !haskey(store, TextItem, "two")
-        @test_throws KeyError read(store, TextItem, "two")
+        @test !haskey(store, TextItem, 2)
+        @test_throws KeyError read(store, TextItem, 2)
         close(store)
     end
 end
