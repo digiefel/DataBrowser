@@ -13,7 +13,9 @@
 # [`Evaluate.jl`](Workspace/Evaluate.md)).
 #
 # When an argument is another computation, that computation is a row too: it is an *input* of the
-# row, and the row is a *reader* of it. The rows and their inputs form a graph.
+# row, and the row is a *reader* of it. The rows and their inputs form a graph. The workspace can
+# also give a row inputs that are not among its arguments, with `connect!`: the row of a group reads
+# the rows of the values of its members.
 #
 # When a plot window draws a fit of the item `a/1`, which the `process` of the table in the source
 # item `a.csv` gives, the catalog has three rows:
@@ -100,7 +102,7 @@
 #
 # | Caller                      | Calls                                                              |
 # | --------------------------- | ------------------------------------------------------------------ |
-# | the workspace               | `add!`, `replace!`, `hold!`, `release!`, `want!`, `request!`, `invalidate!`, `restore!`, `lost!` |
+# | the workspace               | `add!`, `replace!`, `connect!`, `disconnect!`, `hold!`, `release!`, `want!`, `request!`, `invalidate!`, `restore!`, `lost!` |
 # | a worker                    | `take!`, then `finish!`                                            |
 # | a task that waits for a row | `wait`, which requests the row and gives its state                 |
 # | the progress display        | `count`, `queued`, `CHANGES`                                       |
@@ -170,7 +172,8 @@ The state of a row:
 """One row of the table of a [`Catalog`](@ref): a computation and what the catalog knows of it."""
 mutable struct Node
     computation::Computation
-    ## Each row among its arguments once, and the rows that read it.
+    ## Each input once, in no order: the rows among its arguments and those that `connect!` gave
+    ## it; and the rows that read it.
     inputs::Vector{Row}
     readers::Vector{Row}
     state::State
@@ -197,8 +200,8 @@ end
 The table of the computations of one workspace, with one row for each. The workers and the tasks of
 the workspace share it: every function reads and changes the fields inside `@lock catalog.lock`.
 """
-# TODO: a row costs about 300 bytes. Keep the inputs and readers of all rows in flat vectors when a
-# workspace with millions of items needs it.
+# TODO: a row costs about 300 bytes, and each of its inputs an entry of `edges`. Keep the inputs and
+# readers of all rows in flat vectors when a workspace with millions of items needs it.
 mutable struct Catalog
     const lock::ReentrantLock
     ## Notified at every change: for the tasks that wait for a row, and the workers that wait for a job.
@@ -206,6 +209,9 @@ mutable struct Catalog
     const nodes::Vector{Node}
     ## The row of each computation, after `add!` instanced it.
     const row_of::Dict{Computation,Row}
+    ## For each row and each of its inputs: the place of the input among the inputs of the row, the
+    ## place of the row among the readers of the input, and how many times the row reads the input.
+    const edges::Dict{Tuple{Row,Row},@NamedTuple{input::Int32, reader::Int32, uses::Int32}}
     ## The rows that can run, by priority, in the order they became able to run, and the priority
     ## of each.
     const queue::Dict{Int,Vector{Row}}
@@ -219,6 +225,7 @@ mutable struct Catalog
 end
 
 Catalog() = (lock = ReentrantLock(); Catalog(lock, Threads.Condition(lock), Node[], Dict{Computation,Row}(),
+    Dict{Tuple{Row,Row},@NamedTuple{input::Int32, reader::Int32, uses::Int32}}(),
     Dict{Int,Vector{Row}}(), Dict{Row,Int}(), Row[], Dict{Type,Vector{Int}}(), false))
 
 Base.show(io::IO, catalog::Catalog) = print(io, "Catalog(", length(catalog.nodes), " rows)")
@@ -451,7 +458,7 @@ function add!(catalog::Catalog, value::Computation)::Row
         push!(catalog.nodes, Node(value, Row[], Row[], MISSING, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing))
         tally!(catalog, catalog.nodes[end], 1)
         catalog.row_of[value] = row
-        connect!(catalog, row)
+        foreach(input -> connect!(catalog, row, input), input_rows(value.args))
         return row
     end
 end
@@ -460,24 +467,23 @@ end
     replace!(catalog, row, computation) -> Row
 
 Make `row` compute `computation` from now on. The row and its readers become stale; its holds,
-its priority and its readers stay. The workspace uses it when the source item that a row reads
-changed, or when a group has other member values: its readers keep reading the same row.
+its priority, its readers and the inputs that [`connect!`](@ref) gave it stay. The workspace uses it
+when the source item that a row reads changed, or when a `process` takes its value from another
+row: its readers keep reading the same row.
 """
 function Base.replace!(catalog::Catalog, row::Row, value::Computation)::Row
     @lock catalog.lock begin
         value = instanced(catalog, value; add=true)
         current = node(catalog, row)
+        before = input_rows(current.computation.args)
         delete!(catalog.row_of, current.computation)
         tally!(catalog, current, -1)
         current.computation = value
         tally!(catalog, current, 1)
         catalog.row_of[value] = row
-        before, was_stuck = current.inputs, stuck(current)
-        disconnect!(catalog, row)
-        connect!(catalog, row)
-        ## The new inputs can make the row stuck, or no longer stuck: its readers count it again.
-        stuck(current) == was_stuck || foreach(reader -> block!(catalog, reader, stuck(current) ? 1 : -1), current.readers)
-        foreach(input -> remove_unheld!(catalog, input), before)
+        ## The rows among the new arguments are connected first, so that a row among both stays.
+        foreach(input -> connect!(catalog, row, input), input_rows(value.args))
+        foreach(input -> disconnect!(catalog, row, input), before)
         invalidate!(catalog, row, true)
         ## Wakes the tasks that wait for a row that is stuck now.
         notify(catalog.changed)
@@ -485,32 +491,60 @@ function Base.replace!(catalog::Catalog, row::Row, value::Computation)::Row
     end
 end
 
-# Make the rows among the arguments of a row its inputs.
-function connect!(catalog::Catalog, row::Row)::Nothing
-    current = node(catalog, row)
-    current.inputs = unique!(input_rows(current.computation.args))
-    for input in current.inputs
-        other = node(catalog, input)
-        push!(other.readers, row)
-        current.waiting += other.state != CURRENT
-        current.blocked += stuck(other)
+"""
+    connect!(catalog, row, input)
+    disconnect!(catalog, row, input)
+
+Give `row` one more input, or one less: `add!` connects the rows among the arguments of a
+computation, and the workspace connects the row of a group to the rows of the values of its
+members. A row that is connected to an input more than once reads it until it is disconnected as
+many times. Both make `row` stale, and `connect!` passes on the priority and the request of `row`
+to `input`. Each takes the same time whatever the number of inputs and readers. `disconnect!`
+removes `input` when it is left with no hold and no reader.
+"""
+function connect!(catalog::Catalog, row::Row, input::Row)::Nothing
+    @lock catalog.lock begin
+        current, other = node(catalog, row), node(catalog, input)
+        edge = get(catalog.edges, (row, input), nothing)
+        if edge === nothing
+            push!(current.inputs, input)
+            push!(other.readers, row)
+            catalog.edges[(row, input)] = (input=length(current.inputs), reader=length(other.readers), uses=1)
+            current.waiting += other.state != CURRENT
+            stuck(other) && block!(catalog, row, 1)
+        else
+            catalog.edges[(row, input)] = (; edge..., uses=edge.uses + 1)
+        end
         inherit!(catalog, input, max(current.priority, current.inherited))
         request!(catalog, input, current.requested)
+        invalidate!(catalog, row, true)
     end
-    queue!(catalog, row)
     return nothing
 end
 
-# TODO: removing a reader is linear in the number of readers, so removing the k rows that read one
-# row takes k² steps.
-function disconnect!(catalog::Catalog, row::Row)::Nothing
-    current = node(catalog, row)
-    for input in current.inputs
-        other = node(catalog, input).readers
-        deleteat!(other, findfirst(==(row), other))
+function disconnect!(catalog::Catalog, row::Row, input::Row)::Nothing
+    @lock catalog.lock begin
+        edge = catalog.edges[(row, input)]
+        edge.uses > 1 ? (catalog.edges[(row, input)] = (; edge..., uses=edge.uses - 1)) : unlink!(catalog, row, input)
+        invalidate!(catalog, row, true)
+        remove_unheld!(catalog, input)
     end
-    current.inputs = Row[]
-    current.waiting = current.blocked = 0
+    return nothing
+end
+
+# Take `input` from the inputs of `row`, and `row` from the readers of `input`: the last element of
+# each vector takes the place of the one that leaves.
+function unlink!(catalog::Catalog, row::Row, input::Row)::Nothing
+    edge = pop!(catalog.edges, (row, input))
+    current, other = node(catalog, row), node(catalog, input)
+    moved = pop!(current.inputs)
+    moved == input || (current.inputs[edge.input] = moved;
+        catalog.edges[(row, moved)] = (; catalog.edges[(row, moved)]..., input=edge.input))
+    moved = pop!(other.readers)
+    moved == row || (other.readers[edge.reader] = moved;
+        catalog.edges[(moved, input)] = (; catalog.edges[(moved, input)]..., reader=edge.reader))
+    current.waiting -= other.state != CURRENT
+    stuck(other) && block!(catalog, row, -1)
     return nothing
 end
 
@@ -536,8 +570,8 @@ function remove_unheld!(catalog::Catalog, row::Row)::Nothing
     current = node(catalog, row)
     (current.state == REMOVED || current.holds > 0 || !isempty(current.readers)) && return nothing
     push!(catalog.lost, row)
-    before = current.inputs
-    disconnect!(catalog, row)
+    before = copy(current.inputs)
+    foreach(input -> unlink!(catalog, row, input), before)
     delete!(catalog.row_of, current.computation)
     delete!(catalog.queued_at, row)
     tally!(catalog, current, -1)
@@ -621,10 +655,14 @@ function invalidate!(catalog::Catalog, row::Row, outside::Bool)::Nothing
     (had || current.running || outside) || return nothing
     current.state == REMOVED && return nothing
     current.revision += 1
-    had && (push!(catalog.lost, row); set!(catalog, row, STALE))
-    foreach(reader -> invalidate!(catalog, reader, false), current.readers)
-    ## A reader whose request waits needs this row again.
-    request!(catalog, row, maximum(reader -> node(catalog, reader).requested, current.readers; init=0))
+    ## The readers of a row without a result have none either, and passed their requests on to it.
+    if had
+        push!(catalog.lost, row)
+        set!(catalog, row, STALE)
+        foreach(reader -> invalidate!(catalog, reader, false), current.readers)
+        ## A reader whose request waits needs this row again.
+        request!(catalog, row, maximum(reader -> node(catalog, reader).requested, current.readers; init=0))
+    end
     queue!(catalog, row)
     return nothing
 end

@@ -49,8 +49,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
     visited = IdDict{Computation,Vector{Call}}()
     function calls_of(value::Computation)::Vector{Call}
         haskey(visited, value) && return visited[value]
-        preceding = unique!(reduce(vcat, map(calls_of, inputs(value)); init=Call[]))
-        row, ran_for, failure, result = @lock catalog.lock begin
+        row, ran_for, failure, result, members = @lock catalog.lock begin
             row = get(catalog, value, Catalogs.NOWHERE)
             stage = get(workspace.stages, row, nothing)
             ## The source item that a read reads, or the value that a `process` takes, or the computation.
@@ -58,8 +57,12 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
                 stage !== nothing ? (value.args[2].id, label(workspace, value.args[2].id)) :
                 row == Catalogs.NOWHERE ? (id(value), id(value)) : (cachekey(workspace, row), cachekey(workspace, row))
             current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
-            row, ran_for, get(workspace.errors, row, nothing), current ? Catalogs.result_type(catalog, row) : nothing
+            ## A group also reads the values of its members that it takes, in the order of their ids.
+            taken = haskey(workspace.taken, row) ? sort!(collect(workspace.taken[row].rows); by=first) : []
+            row, ran_for, get(workspace.errors, row, nothing), current ? Catalogs.result_type(catalog, row) : nothing,
+                Computation[catalog[found.row] for (_, found) in taken if found.row != Catalogs.NOWHERE]
         end
+        preceding = unique!(reduce(vcat, map(calls_of, [inputs(value); members]); init=Call[]))
         found = row == Catalogs.NOWHERE ? nothing : stage(@lock catalog.lock get(() -> call_signature(workspace, row), workspace.signatures, row))
         # The call of `value`, with the calls it reads, kept with each call of the same code on the same inputs.
         function made!(title, code, value, preceding, result)

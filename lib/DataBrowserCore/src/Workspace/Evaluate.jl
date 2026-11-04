@@ -271,7 +271,7 @@ Call the function of `computation`, the value of `row`, with the results of its 
 how long it took and whether it threw.
 """
 function call(workspace::Workspace, row::Row, value::Computation)
-    args = map(x -> resolved(workspace, x), value.args)
+    args = map(x -> resolved(workspace, row, x), value.args)
     started, succeeded = time_ns(), false
     try
         output = Base.invokelatest(value.f, args...; value.settings...)
@@ -284,11 +284,17 @@ function call(workspace::Workspace, row::Row, value::Computation)
 end
 
 # The value that a function receives for an argument: an input is the result of its row, a part is
-# the value with its id in that result, and the values of members are read together.
+# the value with its id in that result, and the values of members that the row takes are read
+# together, in the order of their ids.
+function resolved(workspace::Workspace, row::Row, ::MemberValues{T}) where {T}
+    catalog = workspace.catalog
+    taken = @lock catalog.lock sort!([(x, found.row) for (x, found) in workspace.taken[row].rows
+        if found.row != Catalogs.NOWHERE && output(workspace, found.row, x) !== nothing]; by=first)
+    return T[pick(result, x) for ((x, _), result) in zip(taken, results(workspace, last.(taken)))]
+end
+resolved(workspace::Workspace, ::Row, x) = resolved(workspace, x)
 resolved(workspace::Workspace, x::Input) = only(results(workspace, [x.row]))
 resolved(workspace::Workspace, x::Part) = pick(resolved(workspace, x.of), x.id)
-resolved(workspace::Workspace, x::MemberValues{T}) where {T} =
-    T[pick(result, part.id) for (result, part) in zip(results(workspace, Row[part.of.row for part in x]), x)]
 resolved(workspace::Workspace, x::Tuple) = map(v -> resolved(workspace, v), x)
 function resolved(workspace::Workspace, x::AbstractVector)
     ## Results of rows, read together, in a vector of their common type.
@@ -355,7 +361,7 @@ function version(workspace::Workspace, row::Row)::UInt64
     ## Types and symbols hash differently in another session; their names do not.
     seed = hash(function_name(value.f), hash(code!(workspace, signature, value.f).revision.hash))
     for x in value.args
-        seed = hash(argument_version(workspace, x), seed)
+        seed = hash(argument_version(workspace, row, x), seed)
     end
     return hash(repr(value.settings), seed)
 end
@@ -368,6 +374,10 @@ end
 argument_type(::Workspace, ::MemberValues{T}) where {T} = Vector{T}
 argument_type(::Workspace, x) = typeof(x)
 
+# The values of members count as the sum of a hash of the id and the version of each, which the
+# workspace keeps as they change (see `input!`).
+argument_version(workspace::Workspace, row::Row, ::MemberValues)::UInt64 = workspace.taken[row].version
+argument_version(workspace::Workspace, ::Row, x)::UInt64 = argument_version(workspace, x)
 argument_version(workspace::Workspace, x::Input)::UInt64 = Catalogs.version(workspace.catalog, x.row)
 argument_version(workspace::Workspace, x::Part)::UInt64 = hash(x.id, argument_version(workspace, x.of))
 argument_version(workspace::Workspace, x::Union{Tuple,AbstractVector{<:Union{Input,Part}}})::UInt64 =
@@ -677,9 +687,11 @@ function check_code!(workspace::Workspace)::Nothing
         ## now that did not, or the other way around.
         if !isequal(answers, asked)
             workspace.methods = answers
-            ids = collect(keys(workspace.versions))
-            refresh!(workspace, ids)
-            regroup!(workspace, ids, collect(keys(workspace.sources)))
+            refresh!(workspace, collect(keys(workspace.versions)))
+            for row in collect(values(workspace.sources))
+                value = catalog[row]
+                length(value.args) == 4 && source!(workspace, value.args[3])
+            end
         end
         changed = Set{Type}(signature for (signature, code) in current
             if code.revision.hash != workspace.code[signature].revision.hash)

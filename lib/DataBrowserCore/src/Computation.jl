@@ -10,21 +10,16 @@ function pick(result, id::AbstractString)
 end
 
 """
-    MemberValues{T}(parts)
+    MemberValues{T}(group)
 
-The values of the members of a group that the group form of `read`, or the `process` of a group,
-receives: a vector of type `T`, one value for each `Part` of `parts`.
+The values of the members of `group` that a group `read` or a group `process` receives: a
+`Vector{T}` with the latest value of type `T` of each member, in the order of their ids. The
+workspace keeps which rows give these values, so the computation stays the same when they change.
 """
-struct MemberValues{T} <: AbstractVector{Part{Input}}
-    parts::Vector{Part{Input}}
+struct MemberValues{T}
+    group::String
 end
-Base.size(values::MemberValues) = size(values.parts)
-Base.getindex(values::MemberValues, index::Int) = values.parts[index]
-# Values of another type are another argument.
-Base.isequal(a::MemberValues, b::MemberValues) = typeof(a) === typeof(b) && isequal(a.parts, b.parts)
-Base.hash(values::MemberValues, h::UInt) = hash(values.parts, hash(typeof(values), h))
-# The parts hold inputs already, and stay values of type `T`.
-Catalogs.argument(::Catalogs.Catalog, values::MemberValues, ::Bool) = values
+Base.eltype(::Type{MemberValues{T}}) where {T} = T
 
 """
     inputs(computation) -> Vector{Computation}
@@ -58,7 +53,6 @@ evaluated(value::Computation) = evaluate(value)
 # A result of a row of a workspace is computed again, as any other input.
 evaluated(value::Input) = evaluate(value.catalog[value.row])
 evaluated(value::Part) = pick(evaluated(value.of), value.id)
-evaluated(values::MemberValues{T}) where {T} = T[evaluated(value) for value in values]
 evaluated(values::Tuple) = map(evaluated, values)
 evaluated(values::AbstractVector) = isempty(computation_inputs(values)) ? values : map(evaluated, values)
 evaluated(value) = value
