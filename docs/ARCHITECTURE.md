@@ -279,17 +279,26 @@ classDiagram
         Int64 size_bytes
         Int64 mtime_ns
     }
+    class SourceDirectory {
+        String path
+        String relative_path
+        Vector~AbstractDataSourceItem~ members
+    }
 
     AbstractDataSource <|-- DirectorySource
     AbstractDataSourceItem <|-- SourceFile
+    AbstractDataSourceItem <|-- SourceDirectory
     DirectorySource --> SourceFile : scans
+    DirectorySource --> SourceDirectory : scans
     SourceFile *-- FileFingerprint : fingerprint
+    SourceDirectory o-- AbstractDataSourceItem : members
 
     style AbstractDataSource fill:#cfd8e3,stroke:#5a6b80,stroke-width:1px,color:#111
     style AbstractDataSourceItem fill:#cfd8e3,stroke:#5a6b80,stroke-width:1px,color:#111
     style DirectorySource fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
     style SourceFile fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
     style FileFingerprint fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
+    style SourceDirectory fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
 ```
 
 #### Call flow
@@ -336,7 +345,7 @@ flowchart TD
     isf -->|"stat"| FSYS
 
     osrc -->|"isdir"| FSYS
-    wsrc -->|"SourceFile[]"| si
+    wsrc -->|"source items"| si
     wsrc -->|"String"| idsf
     wsrc -->|"FileFingerprint"| fpsf
     wsrc -->|"watch_folder"| BFW

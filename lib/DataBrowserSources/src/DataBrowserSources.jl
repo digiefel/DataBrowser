@@ -7,6 +7,6 @@ using DataBrowserAPI
 
 include("directory_source.jl")
 
-export DirectorySource, SourceFile
+export DirectorySource, SourceDirectory, SourceFile
 
 end

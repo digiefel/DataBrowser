@@ -57,15 +57,18 @@ DataBrowserAPI.label
 DataBrowserAPI.data
 DataBrowserAPI.metadata
 Base.isequal(::DataBrowserAPI.AbstractDataItem, ::DataBrowserAPI.AbstractDataItem)
-DataBrowserAPI.members
+DataBrowserAPI.members(::DataBrowserAPI.AbstractGroup)
 ```
 
 #### Stages
 
-`read` loads a source item, and `process` computes the processed version of an item.
+`read` loads a source item, or makes the group of a source item with members. `process` computes
+results from an item, from a group with the values of its members, or from a member with its group.
 
 ```@docs
 Base.read(::DataBrowserAPI.AbstractProject, ::DataBrowserAPI.AbstractDataSource, ::DataBrowserAPI.AbstractDataSourceItem)
+Base.read(::DataBrowserAPI.AbstractProject, ::DataBrowserAPI.AbstractDataSource, ::DataBrowserAPI.AbstractDataSourceItem, ::AbstractVector{<:DataBrowserAPI.AbstractDataItem})
+DataBrowserAPI.SourceGroup
 DataBrowserAPI.process
 DataBrowserAPI.reconstruct
 DataBrowserAPI.stage_roots
@@ -82,8 +85,8 @@ DataBrowserAPI.stored_size
 ### Sources
 
 A source finds source items and reports when they change. A source item is one unit that `read`
-loads, such as a file, a database record or one acquisition of an instrument. One source type can
-serve many projects.
+loads, such as a file, a database record or one acquisition of an instrument. A source item with
+members, such as a folder, is a group. One source type can serve many projects.
 
 ```@docs
 DataBrowserAPI.AbstractDataSource
@@ -91,6 +94,7 @@ DataBrowserAPI.AbstractDataSourceItem
 DataBrowserAPI.open_source
 DataBrowserAPI.close_source!
 DataBrowserAPI.items
+DataBrowserAPI.members(::DataBrowserAPI.AbstractDataSource, ::DataBrowserAPI.AbstractDataSourceItem)
 DataBrowserAPI.watch_source
 DataBrowserAPI.fingerprint
 ```
@@ -102,6 +106,7 @@ DataBrowserSources implements this contract for a directory of files.
 ```@docs
 DataBrowserSources.DirectorySource
 DataBrowserSources.SourceFile
+DataBrowserSources.SourceDirectory
 ```
 
 ### Visualizers

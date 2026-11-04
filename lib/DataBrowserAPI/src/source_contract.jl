@@ -61,7 +61,8 @@ close_source!(::AbstractDataSource)::Nothing = nothing
 """
     items(source; cancel_token, on_progress, on_item) -> Vector{<:AbstractDataSourceItem}
 
-Return the current source items discovered by a source.
+Return the current source items discovered by a source, also the source items with
+[`members`](@ref).
 
 The engine always passes the three keywords, so every method must accept them — a source that
 discovers everything at once absorbs them with `; kwargs...` and ignores them. A source slow enough
@@ -71,6 +72,16 @@ immediately rather than waiting for the return), reports counts through `on_prog
 source may return its items as well without them being processed twice.
 """
 function items end
+
+"""
+    members(source, item) -> Vector{<:AbstractDataSourceItem}
+
+The members of the source item `item`: the source items that it holds, such as the files and folders
+directly in a folder. A source item with members is a group: the workspace makes its value with the
+group form of `read`, from the values of the members. The default is empty: the source item is not
+a group.
+"""
+members(::AbstractDataSource, ::AbstractDataSourceItem)::Vector{AbstractDataSourceItem} = AbstractDataSourceItem[]
 
 """
 Watch a source and call `on_change` with each `SourceChanges` batch or recoverable `SourceError`.

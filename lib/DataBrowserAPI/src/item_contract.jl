@@ -40,11 +40,13 @@ abstract type AbstractGroup <: AbstractDataItem end
 # TODO: the workspace does not keep groups yet (plans/groupings.md).
 
 """
-    members(group) -> AbstractVector{<:AbstractDataItem}
+    members(group::AbstractGroup) -> Vector{String}
 
-The items `group` was made from.
+The ids of the members of `group`, as the code that made the group gave them: the source, through
+the group form of `read`, the user, or a `process` method. The workspace never decides the members
+of a group. Every group type defines `members`: there is no default.
 """
-function members end
+members(::AbstractGroup)
 
 """Return metadata supplied directly by a data item. The default is an empty `Dict`."""
 metadata(::AbstractDataItem)::Dict = Dict()
@@ -62,8 +64,8 @@ function data end
     hash(item::AbstractDataItem, h::UInt) -> UInt
 
 Two items are equal when they have the same type, `isequal` [`data`](@ref) and `isequal`
-[`metadata`](@ref); their ids are not compared. `hash` gives equal items the same hash, as Julia
-requires of `isequal`.
+[`metadata`](@ref); their ids are not compared. Two groups are equal when, in addition, they have
+equal [`members`](@ref). `hash` gives equal items the same hash, as Julia requires of `isequal`.
 
 Define `isequal` and `hash` for an item type that needs another notion of an unchanged value, such as
 a tolerance on its data. A type whose `data` is the item itself must define both: the default
@@ -71,6 +73,8 @@ methods would call themselves without end.
 """
 Base.isequal(a::AbstractDataItem, b::AbstractDataItem) = typeof(a) === typeof(b) && isequal((data(a), metadata(a)), (data(b), metadata(b)))
 Base.hash(item::AbstractDataItem, h::UInt) = hash((typeof(item), data(item), metadata(item)), h)
+Base.isequal(a::AbstractGroup, b::AbstractGroup) = typeof(a) === typeof(b) && isequal((data(a), metadata(a), members(a)), (data(b), metadata(b), members(b)))
+Base.hash(group::AbstractGroup, h::UInt) = hash((typeof(group), data(group), metadata(group), members(group)), h)
 
 """Process an item. Optional; default identity."""
 process(item::AbstractDataItem) = item

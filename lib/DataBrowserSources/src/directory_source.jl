@@ -11,6 +11,7 @@ import DataBrowserAPI:
     fingerprint,
     id,
     label,
+    members,
     metadata,
     open_source,
     items,
@@ -34,15 +35,17 @@ end
     DirectorySource(root_path; recursive=true)
 
 A data source that reads the files in the folder `root_path`. Each file is one source item, a
-[`SourceFile`](@ref). With `recursive=true`, the files in the folders below `root_path` are source
-items too.
+[`SourceFile`](@ref), and the folder is one too, a [`SourceDirectory`](@ref) whose members are the
+files in it. With `recursive=true`, the files and folders below `root_path` are source items too,
+and the members of each folder are the files and folders directly in it. An empty folder is not a
+source item.
 
 Hidden files and folders, whose names start with `.`, are not source items. Nor are the files that
 DataBrowser keeps in a folder: `tags.txt`, `notes.txt` and `databrowser.toml`, in upper or lower
 case.
 
-While a workspace has the source open, the source watches the folder. It reports files that are
-added, changed or removed.
+While a workspace has the source open, the source watches the folder. It reports files and folders
+that are added, changed or removed. A folder changes when a member is added or removed.
 """
 mutable struct DirectorySource <: AbstractDataSource
     root_path::String
@@ -79,6 +82,26 @@ label(file::SourceFile)::String = file.relative_path
 fingerprint(file::SourceFile)::FileFingerprint = file.fingerprint
 metadata(file::SourceFile)::Dict = Dict{Symbol,Any}(:filename => file.filename)
 
+"""
+One folder of a [`DirectorySource`](@ref): the folder of the source, or, with `recursive=true`, a
+folder below it. Its [`members`](@ref) are the source items directly in it.
+
+`path` is the absolute path of the folder. `relative_path` is its path below the folder of the
+source, `"."` for the folder of the source itself. It is the `id` and the `label` of the folder.
+"""
+struct SourceDirectory <: AbstractDataSourceItem
+    path::String
+    relative_path::String
+    members::Vector{AbstractDataSourceItem}
+end
+
+id(directory::SourceDirectory)::String = directory.relative_path
+label(directory::SourceDirectory)::String = directory.relative_path
+# A folder changes when a member is added, removed or renamed, not when a member changes. Each id is
+# hashed in turn: the `hash` of a long vector reads only some of its elements.
+fingerprint(directory::SourceDirectory)::UInt64 = foldl((h, member) -> hash(id(member), h), directory.members; init=UInt64(0))
+members(::DirectorySource, directory::SourceDirectory)::Vector{AbstractDataSourceItem} = directory.members
+
 id(source::DirectorySource)::String = source.root_path
 label(source::DirectorySource)::String = basename(source.root_path)
 
@@ -103,29 +126,37 @@ function items(
     on_progress::Union{Nothing,Function}=nothing,
     on_item::Union{Nothing,Function}=nothing,
     cancel_token::CancellationToken,
-)::Vector{SourceFile}
-    files = SourceFile[]
-    folders = [source.root_path]
-    while !isempty(folders)
-        folder = popfirst!(folders)
+)::Vector{AbstractDataSourceItem}
+    found = AbstractDataSourceItem[]
+    function report(item::AbstractDataSourceItem)
+        push!(found, item)
+        on_item === nothing || on_item(item)
+        on_progress !== nothing && length(found) % 256 == 0 && on_progress(length(found))
+        return item
+    end
+    # A folder is reported after its members, so that its members are complete when it is. An empty
+    # folder holds nothing, so it is not a source item.
+    function scan(folder::String)::Union{Nothing,SourceDirectory}
+        folder_members = AbstractDataSourceItem[]
         for name in readdir(folder)
             is_cancellation_requested(cancel_token) && throw(OperationCanceledException(cancel_token))
             # Hidden files and folders, such as `.git`, hold no source files.
             startswith(name, ".") && continue
             path = joinpath(folder, name)
-            if isdir(path)
-                # A link to a folder can point to a folder above it, so links are not followed.
-                source.recursive && !islink(path) && push!(folders, path)
+            # A link to a folder can point to a folder above it, so links are not followed.
+            if isdir(path) && source.recursive && !islink(path)
+                directory = scan(path)
+                directory === nothing || push!(folder_members, directory)
             elseif isfile(path) && !(lowercase(name) in DIRECTORY_SOURCE_SIDECARS)
-                file = index_source_file(path, source.root_path)
-                push!(files, file)
-                on_item === nothing || on_item(file)
-                on_progress !== nothing && length(files) % 256 == 0 && on_progress(length(files))
+                push!(folder_members, report(index_source_file(path, source.root_path)))
             end
         end
+        isempty(folder_members) && return nothing
+        return report(SourceDirectory(folder, relpath(folder, source.root_path), folder_members))
     end
-    on_progress === nothing || on_progress(length(files))
-    return files
+    scan(source.root_path)
+    on_progress === nothing || on_progress(length(found))
+    return found
 end
 
 function open_source(source::DirectorySource)::DirectorySource
@@ -146,7 +177,7 @@ function watch_source(
     cancel_source = CancellationTokenSource(cancel_token)
     watch_token = get_token(cancel_source)
     # Typed, as the watcher replaces it: a captured variable that changes is otherwise of unknown type.
-    known::Dict{String,FileFingerprint} = Dict(id(file) => fingerprint(file) for file in items(source; cancel_token=watch_token))
+    known::Dict{String,Any} = Dict(id(item) => fingerprint(item) for item in items(source; cancel_token=watch_token))
     # Ignore what `items` does not read: hidden files and folders, and the folders below a source
     # that is not recursive.
     ignore(path::AbstractString)::Bool =
@@ -155,15 +186,11 @@ function watch_source(
         try
             watch_folder(source.root_path, watch_token; ignore) do _
                 is_cancellation_requested(watch_token) && return
-                files = items(source; cancel_token=watch_token)
+                found = items(source; cancel_token=watch_token)
                 is_cancellation_requested(watch_token) && return
-                current = Dict(id(file) => fingerprint(file) for file in files)
-                upserts = SourceFile[
-                    file for file in files
-                    if !haskey(known, id(file)) ||
-                       !isequal(known[id(file)], fingerprint(file))
-                ]
-                removals = String[file_id for file_id in keys(known) if !haskey(current, file_id)]
+                current = Dict(id(item) => fingerprint(item) for item in found)
+                upserts = AbstractDataSourceItem[item for item in found if !isequal(get(known, id(item), nothing), fingerprint(item))]
+                removals = String[item_id for item_id in keys(known) if !haskey(current, item_id)]
                 isempty(upserts) && isempty(removals) && return
                 known = current
                 on_change(SourceChanges(upserts, removals))
