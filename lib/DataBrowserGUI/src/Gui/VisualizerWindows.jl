@@ -2,7 +2,7 @@ import CImGui as ig
 import CImGui.CSyntax: @c
 using NativeFileDialog: save_file
 
-using DataBrowserAPI: Setting, draw_header!, export!, id, initial_size, label, settings
+using DataBrowserAPI: Setting, draw_header!, export!, initial_size, label, settings
 import DataBrowserCore.Workspace
 
 """
@@ -65,9 +65,7 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
             input!(state, window, LiveSelection())
         else
             # Keep the items the window shows now.
-            workspace = state.workspace
-            ids = [id(workspace, item) for item in itemkeys(window.input, state)]
-            input!(state, window, FixedItems(ids))
+            input!(state, window, FixedItems(item_ids(window.input, state)))
         end
     end
     ig.SetItemTooltip("Follow the selection. When off, the window keeps the items it shows now.")

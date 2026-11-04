@@ -21,9 +21,9 @@ DataBrowserAPI.items(::WindowTestSource; kwargs...) = [WindowTestFile()]
 DataBrowserAPI.id(::WindowTestFile) = "file"
 DataBrowserAPI.label(::WindowTestFile) = "file"
 DataBrowserAPI.fingerprint(::WindowTestFile) = 1
-DataBrowserAPI.read(::WindowTestProject, ::WindowTestSource, ::WindowTestFile) = nothing
-# FIXME(rebuild): the items that a source item holds, which `expand` gave.
-DataBrowserAPI.expand(::WindowTestProject, ::WindowTestFile, ::Nothing) = [WindowTestNumber("n$i", i) for i in 1:3]
+# The file holds the three numbers.
+DataBrowserAPI.read(::WindowTestProject, ::WindowTestSource, ::WindowTestFile) = WindowTestNumber("file", 0)
+DataBrowserAPI.process(::WindowTestProject, ::WindowTestNumber) = [WindowTestNumber("n$i", i) for i in 1:3]
 DataBrowserAPI.id(number::WindowTestNumber) = number.name
 DataBrowserAPI.metadata(number::WindowTestNumber) = Dict{Symbol,Any}(:number => number.value)
 DataBrowserAPI.label(number::WindowTestNumber) = number.name
@@ -190,13 +190,13 @@ end
         window = open_window!(state, CodeView(); input=FixedItems(["n1", "n2", "n3"]))
         timedwait(() -> (refresh!(state, window); !preparing(window) && !isempty(window.visualizer.rows)), 20)
         rows = window.visualizer.rows
-        @test [row.call.title for row in rows] == ["read(::WindowTestFile)"]
+        @test [row.call.title for row in rows] == ["read(::WindowTestFile)", "process(::WindowTestNumber)"]
         # `read` ran for the file, and nothing failed.
         @test rows[1].call.items == Dict("file" => "file")
         @test all(row -> isempty(row.call.failed), rows)
         # After a function, the computed values come after the items they were computed from.
         transform!(window, GlobalRef(@__MODULE__, :doubled))
-        timedwait(() -> (refresh!(state, window); !preparing(window) && length(window.visualizer.rows) == 2), 20)
+        timedwait(() -> (refresh!(state, window); !preparing(window) && length(window.visualizer.rows) == 3), 20)
         @test last(window.visualizer.rows).call.title == "doubled"
         @test length(last(window.visualizer.rows).call.items) == 3
         @test last(window.visualizer.rows).call.result == Int

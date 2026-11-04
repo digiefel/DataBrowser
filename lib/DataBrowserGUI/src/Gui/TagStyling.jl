@@ -13,13 +13,9 @@ function _render_tag_state_error!(state::BrowserState)::Nothing
     return nothing
 end
 
-"""Draw text in the color of the first tag of `key`, the one with the highest priority. Return whether the caller must pop the color."""
-# FIXME(rebuild): the item to draw, now that `ItemKey` is gone.
-function _push_tag_text_style!(
-    workspace::Workspace.Workspace,
-    key::ItemKey,
-)::Bool
-    found = tags(workspace, key)
+"""Draw text in the color of the first tag of the value `x`, the one with the highest priority. Return whether the caller must pop the color."""
+function _push_tag_text_style!(workspace::Workspace.Workspace, x::AbstractString)::Bool
+    found = tags(workspace, x)
     isempty(found) && return false
     red, green, blue = Float32.(first(found).color) ./ 255f0
     ig.PushStyleColor(ig.ImGuiCol_Text, (red, green, blue, 1.0f0))
@@ -27,9 +23,9 @@ function _push_tag_text_style!(
 end
 
 """
-Draw one button per tag above the collection tree, with the name of the tag. A click steps the tag
-through shown (no mark), hidden (a cross) and only (a check mark): hidden hides its rows, only
-hides the items without it.
+Draw one button per tag above the tree, with the name of the tag. A click steps the tag through
+shown (no mark), hidden (a cross) and only (a check mark): hidden hides its rows, only hides the
+items without it.
 """
 function _render_tag_visibility!(state::BrowserState)::Nothing
     _tags_ready(state) || return nothing
@@ -76,12 +72,10 @@ end
 
 """
 Draw the tags as entries of an open context menu, each in its color, with a check mark when every
-key has the tag. A click puts the tag on every key, or takes it off when every key has it.
+value of `ids` has the tag. A click puts the tag on every value, or takes it off when every value
+has it.
 """
-# FIXME(rebuild): the items to tag, now that `ItemKey` is gone.
-function _render_tag_menu!(
-    state::BrowserState, keys::Vector{ItemKey},
-)::Nothing
+function _render_tag_menu!(state::BrowserState, ids::Vector{String})::Nothing
     if !_tags_ready(state)
         ig.TextDisabled("Fix tags.txt and rescan to edit")
         return nothing
@@ -89,12 +83,12 @@ function _render_tag_menu!(
     workspace = state.workspace
     ig.Separator()
     for tag in tags(workspace)
-        own = all(key -> tag in tags(workspace, key), keys)
+        own = all(x -> tag in tags(workspace, x), ids)
         red, green, blue = Float32.(tag.color) ./ 255f0
         ig.PushStyleColor(ig.ImGuiCol_Text, (red, green, blue, 1.0f0))
         clicked = ig.MenuItem(tag.name, C_NULL, own)
         ig.PopStyleColor()
-        clicked && (own ? untag!(workspace, keys, tag) : tag!(workspace, keys, tag))
+        clicked && (own ? untag!(workspace, ids, tag) : tag!(workspace, ids, tag))
     end
     # TODO: choose the color and the priority of a new tag here.
     ig.SetNextItemWidth(max(ig.GetContentRegionAvail().x, ig.GetFontSize() * 10))
@@ -103,7 +97,7 @@ function _render_tag_menu!(
         name = strip(unsafe_string(pointer(state.new_tag)))
         if !isempty(name)
             any(tag -> tag.name == name, tags(workspace)) || tag!(workspace, Tag(name))
-            tag!(workspace, keys, name)
+            tag!(workspace, ids, name)
             fill!(state.new_tag, 0x00)
             ig.CloseCurrentPopup()
         end

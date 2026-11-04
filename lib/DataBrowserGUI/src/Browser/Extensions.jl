@@ -50,9 +50,9 @@ save_view(ext::GuiExtension, state)::Dict{String,Any} = Dict{String,Any}()
 load_view!(ext::GuiExtension, state, view::Dict{String,Any}) = nothing
 
 """
-Called inside the open menu of an item in the item panel, to add entries to it. `item_ids()` gives
-the ids of the items the menu applies to: the selected items when the clicked item is one of them,
-or else the clicked item. Call it only when the user clicks an entry, because it takes time in
+Called inside the open menu of a row of the tree, to add entries to it. `item_ids()` gives the ids
+of the items the menu applies to: the selected items when the item of the clicked row is one of
+them, or else that item. Call it only when the user clicks an entry, because it takes time in
 proportion to the selection. `label` is the label of the clicked item, and `kind` the name of its
 type.
 """

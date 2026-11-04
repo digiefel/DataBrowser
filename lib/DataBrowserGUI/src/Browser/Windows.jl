@@ -8,18 +8,13 @@ import Tables
 using DataBrowserAPI: AbstractVisualizer, id, label, prepare!, settings
 using DataBrowserAPI: @timed_dbg
 import DataBrowserAPI: output
-# FIXME(rebuild): the items a window reads, now that `ItemKey` is gone.
-using DataBrowserCore.Workspace: ItemKey
 using DataBrowserCore.CodeRevisions: code_revision
 import DataBrowserCore.Workspace
 
-"""The items `input` names now, without those the workspace no longer has."""
-itemkeys(::LiveSelection, state::BrowserState)::Vector{ItemKey} =
-    _project_visible_selection(state)[2]
-itemkeys(input::FixedItems, state::BrowserState)::Vector{ItemKey} =
-    _items_for_ids(state, input.ids)
-itemkeys(input::WindowOutput, state::BrowserState)::Vector{ItemKey} =
-    itemkeys(source(input, state).input, state)
+"""The ids of the items `input` names now, without those the workspace does not have."""
+item_ids(::LiveSelection, state::BrowserState)::Vector{String} = _visible_selection(state).ids
+item_ids(input::FixedItems, state::BrowserState)::Vector{String} = filter(x -> haskey(state.workspace, x), input.ids)
+item_ids(input::WindowOutput, state::BrowserState)::Vector{String} = item_ids(source(input, state).input, state)
 
 """The window `input` takes its value from."""
 source(input::WindowOutput, state::BrowserState)::Window =
@@ -58,7 +53,7 @@ end
 function stamp(window::Window, state::BrowserState)
     workspace = state.workspace
     input = window.input
-    named = input isa LiveSelection ? itemkeys(input, state) :
+    named = input isa LiveSelection ? item_ids(input, state) :
         input isa FixedItems ? input.ids : output(source(input, state))
     basis = (input, named, workspace.catalog, Workspace.status_revision(workspace),
         Base.get_world_counter())
@@ -67,12 +62,10 @@ function stamp(window::Window, state::BrowserState)
     window.checked = (basis, current)
     return current
 end
-# Item keys are never reused within a catalog, so their hash tells the items apart without building
-# their ids.
 function stamp(input::Union{LiveSelection,FixedItems}, state::BrowserState)
     workspace = state.workspace
-    items = itemkeys(input, state)
-    return (workspace.catalog, hash(items), Workspace.revision(workspace, items))
+    ids = item_ids(input, state)
+    return (workspace.catalog, hash(ids), Workspace.revision(workspace, ids))
 end
 # A visualizer returns the same object until its output changes.
 function stamp(input::WindowOutput, state::BrowserState)
@@ -89,7 +82,7 @@ end
 # The value `input` gives now: the items as a `Selection`. This runs in the calling task and waits
 # for items that are not processed yet.
 value(input::Union{LiveSelection,FixedItems}, state::BrowserState) =
-    Workspace.select(state.workspace, itemkeys(input, state))
+    Workspace.select(state.workspace, item_ids(input, state))
 value(input::WindowOutput, state::BrowserState) = output(source(input, state))
 
 """
@@ -100,10 +93,10 @@ function title(state::BrowserState, window::Window)::String
     workspace = state.workspace
     # TODO(scale): the browser asks for the title at each frame, and the items of fixed ids are
     # looked up again each time; keep the title until the input or the workspace changes.
-    items = itemkeys(window.input, state)
-    isempty(items) && return "No items"
-    length(items) > 3 && return "$(length(items)) items"
-    return join((label(workspace, item) for item in items), ", ")
+    ids = item_ids(window.input, state)
+    isempty(ids) && return "No items"
+    length(ids) > 3 && return "$(length(ids)) items"
+    return join((label(workspace, x) for x in ids), ", ")
 end
 
 """
@@ -152,7 +145,7 @@ function open_window!(
     input::WindowInput=LiveSelection(),
 )::Window
     state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), ItemKey[], nothing, nothing, nothing, "", "", "", "", true, "auto", "", VisualizerCell[], UInt(0), true, false, nothing)
+    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], nothing, nothing, nothing, "", "", "", "", true, "auto", "", VisualizerCell[], UInt(0), true, false, nothing)
     push!(state.windows, window)
     return window
 end
@@ -309,9 +302,9 @@ function _refresh_window!(state::BrowserState, window::Window)::Nothing
         return nothing
     end
     if !(input isa WindowOutput)
-        items = itemkeys(input, state)
-        if !Workspace.processed(workspace, items)
-            window.waiting = items
+        ids = item_ids(input, state)
+        if !Workspace.processed(workspace, ids)
+            window.waiting = ids
             return nothing
         end
     end

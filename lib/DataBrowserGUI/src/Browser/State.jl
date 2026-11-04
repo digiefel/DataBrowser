@@ -3,21 +3,6 @@ import CImGui as ig
 import DataBrowserCore.Workspace
 using DataBrowserAPI: AbstractVisualizer
 
-"""Saved tree controls from `databrowser.toml`."""
-# FIXME(rebuild): how a group of the tree is saved, which was the path of a collection.
-Base.@kwdef struct PersistedTreeView
-    # Each collection is saved as its path: the type name and id of each level from the top down.
-    expanded::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
-    selected::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
-    filter::String = ""
-end
-
-"""Saved item controls from `databrowser.toml`."""
-Base.@kwdef struct PersistedItemsView
-    selected::Vector{String} = String[]
-    filter::String = ""
-end
-
 """
 A saved window: its visualizer, by type name, where its value comes from, the function the value
 passes through, and the settings of the visualizer. ImGui keeps the place and size of the window in
@@ -49,8 +34,11 @@ Base.@kwdef struct PersistedProjectView
     # Native content-area geometry in screen coordinates; empty until the browser is shown.
     window_size::Vector{Int} = Int[]
     window_position::Vector{Int} = Int[]
-    tree::PersistedTreeView = PersistedTreeView()
-    items::PersistedItemsView = PersistedItemsView()
+    # The ids of the selected values, of the groups that show their members in the tree, and the
+    # text of the filter of the tree.
+    selected::Vector{String} = String[]
+    expanded::Vector{String} = String[]
+    filter::String = ""
     extensions::Dict{String,Dict{String,Any}} = Dict{String,Dict{String,Any}}()
     windows::Vector{PersistedWindow} = PersistedWindow[]
 end
@@ -135,9 +123,9 @@ mutable struct Window
     transform::Union{Nothing,GlobalRef}
     # The world and the code revision of the transform when they were last read.
     code::Tuple{UInt,String}
-    # The items the window waits for before it makes its value again; empty when it waits for none.
-    # FIXME(rebuild): the items to wait for, now that `ItemKey` is gone.
-    waiting::Vector{Workspace.ItemKey}
+    # The ids of the items the window waits for before it makes its value again; empty when it
+    # waits for none.
+    waiting::Vector{String}
     # The value the window shows, and what tells whether the input gives another value now.
     # `stamp` is `nothing` until the visualizer is given the value.
     value::Any
@@ -210,80 +198,57 @@ Base.@kwdef mutable struct PerformanceState
     """Whether a full browser frame has passed through the renderer, after extension warmup."""
     ready::Bool = false
     gl_info::Dict{Symbol,String} = Dict{Symbol,String}()
-    node_count::Int = 0
-    item_rows_visible::Int = 0
-    item_rows_rendered::Int = 0
+    # The rows of the tree, and those drawn in the last frame.
+    rows::Int = 0
+    rows_drawn::Int = 0
     history::PerfHistory = PerfHistory()
     """Set by the Timings tab's Reset button; applied at frame top, where no `@timed` section is open."""
     reset_main_timer::Bool = false
 end
 
 """
-What the tree panel worked out about the collection tree. It is kept from frame to frame and
-replaced when `key` changes: the key covers the workspace, the tree filter and the tags. It is also
-replaced when the workspace changed, at most once per `TREE_REFRESH_SECONDS`: reading it again
-costs time in proportion to the size of the tree, and a workspace at work changes in every frame.
+One row of the tree: the id of its value, the number of groups above it in the tree, and a number
+that names its place in the tree, the same from one making of the rows to the next. `group` tells
+whether the value is a group, and `open` whether the row shows the members below it.
 """
-# FIXME(rebuild): the groups of the tree, which were collections and their `CollectionKey`.
+struct TreeRow
+    id::String
+    depth::Int
+    place::UInt
+    group::Bool
+    open::Bool
+end
+
+"""
+The rows of the tree, kept from frame to frame. They are made again when `key` changes, and when the
+workspace changed, at most once per `TREE_REFRESH_SECONDS`: making them costs time in proportion to
+the rows, and a workspace at work changes in every frame. The key covers the workspace, the groups
+that show their members, the filter and the tags.
+"""
 mutable struct TreeCache
     key::UInt
-    # The generation of the workspace and the time when this was worked out.
+    # The generation of the workspace and the time when the rows were made.
     generation::Int
     built::Float64
-    # The collections directly below each collection, in display order.
-    children::Dict{Workspace.CollectionKey,Vector{Workspace.CollectionKey}}
-    has_visible_leaf::Dict{Workspace.CollectionKey,Bool}
-    subtree_matches::Dict{Workspace.CollectionKey,Bool}
-    # The leaf collections that the filter and the tags leave visible, in display order.
-    visible::Vector{Workspace.CollectionKey}
-    # The number of leaf collections, or -1 before the tree was walked.
-    leaves::Int
-    # The ids of the source items that are not read yet, each split at "/" and all sorted, so that
-    # the source items below one folder follow each other.
-    unread::Vector{Vector{String}}
-    # The path and the metadata of each collection that was drawn.
-    paths::Dict{Workspace.CollectionKey,Workspace.CollectionPath}
-    metadata::Dict{Workspace.CollectionKey,Dict{Symbol,Any}}
+    rows::Vector{TreeRow}
+    # The metadata keys of the groups in the rows, one column each, and the metadata of each value
+    # whose row was drawn.
+    columns::Vector{Symbol}
+    metadata::Dict{String,Dict{Symbol,Any}}
 end
 
 const TREE_REFRESH_SECONDS = 0.1
 
 """
-The items of the selected collections in display order. Kept and replaced like [`TreeCache`](@ref);
-its key covers the workspace, the selected collections and the tags.
+The ids of the selection that the workspace has and that the tags leave visible, as
+`_visible_selection` returns them, and the same ids as a set, for rows that ask whether they are
+selected. Kept while `key` stays the same: the key covers the workspace and its generation, the
+selection and the tags.
 """
-# FIXME(rebuild): the items to list, now that `ItemKey` is gone.
-struct ItemList
-    key::UInt
-    generation::Int
-    built::Float64
-    items::Vector{Workspace.ItemKey}
-end
-
-"""
-The items of an [`ItemList`](@ref) that the tags and the item filter leave visible. Kept while the
-list is the same object and `key` stays the same: the key covers the filter text and the tags.
-"""
-# FIXME(rebuild): the items to list, now that `ItemKey` is gone.
-struct VisibleItems
-    listed::Vector{Workspace.ItemKey}
-    key::UInt
-    items::Vector{Workspace.ItemKey}
-end
-
-"""
-The part of the workspace selection that exists and is visible, as `_project_visible_selection`
-returns it. Kept while `key` stays the same: the key covers the workspace and its generation, the
-selection and the tags. `item_set` holds the same items as `items`, for rows that ask whether they
-are selected.
-"""
-# FIXME(rebuild): the selected groups and items, which were `CollectionKey` and `ItemKey`.
 struct VisibleSelection
     key::UInt
-    collections::Vector{Workspace.CollectionKey}
-    items::Vector{Workspace.ItemKey}
-    item_set::Set{Workspace.ItemKey}
-    path::Vector{String}
+    ids::Vector{String}
+    set::Set{String}
 end
 
 """
@@ -295,8 +260,6 @@ only controls, windows, local persistence, annotations, and rendering state.
 Base.@kwdef mutable struct BrowserState
     workspace::Workspace.Workspace
     tree_cache::Union{Nothing,TreeCache} = nothing
-    item_list::Union{Nothing,ItemList} = nothing
-    visible_items::Union{Nothing,VisibleItems} = nothing
     visible_selection::Union{Nothing,VisibleSelection} = nothing
     # The windows that show a value with a visualizer, and the number of the last one opened.
     windows::Vector{Window} = Window[]
@@ -307,16 +270,12 @@ Base.@kwdef mutable struct BrowserState
     saved_project_view::PersistedProjectView = PersistedProjectView()
     # When the browser last compared its view with `saved_project_view`, as `time()`.
     project_view_checked::Float64 = 0.0
-    # The path of each expanded collection.
-    # FIXME(rebuild): the expanded and the revealed group of the tree, which were collection paths.
-    expanded_collections::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
+    # The ids of the groups that show their members in the tree.
+    expanded::Set{String} = Set{String}()
     tree_filter::String = ""
-    item_filter::String = ""
     tree_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
-    item_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
-    reset_project_filters::Bool = false
-    scroll_to_collection::Union{Nothing,Workspace.CollectionPath} = nothing
-    # The revision of the workspace selection the browser last revealed.
+    # The revision of the workspace selection the browser last revealed, and the id of the row to
+    # scroll the tree to.
     selection_revision::Int = 0
     scroll_to_item_id::Union{Nothing,String} = nothing
     # How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,

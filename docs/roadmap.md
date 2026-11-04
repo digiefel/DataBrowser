@@ -272,9 +272,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
   functions. This is the first concrete step toward the shared command layer of 0.6.0.
 - [x] Share table preparation between the inspector and X/Y plot. GUI owns `ItemTable`,
   table merging, and selected-item table materialization; Core provides processed items.
-- [ ] One hierarchy projection per frame. `_render_hierarchy_tree_panel` is 347 lines and walks the
-  collection tree five times per frame; cache the prepared projection between invalidations and
-  rebuild item-panel rows only when selection, visibility, tags, or item state change.
+- [x] Build the rows of the tree only when the workspace, the filter, the open groups or the tags
+  change, and draw only the visible rows at each frame.
 - [ ] Remove duplicated GUI state: filters held both as Julia strings and ImGui pointers and synced
   every frame; `PROJECT_PLOT_RECIPES` with no removal path; `PlotsExtension.reset!` not clearing
   `MAKIE_CONTEXT`.

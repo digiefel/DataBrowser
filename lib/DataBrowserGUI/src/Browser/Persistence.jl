@@ -2,8 +2,6 @@ using TOML
 import GLFW
 
 using DataBrowserAPI: AbstractVisualizer, prepare!, project_name, select!, selection, settings
-# FIXME(rebuild): the items of the saved ids, now that `ItemKey` is gone.
-using DataBrowserCore.Workspace: ItemKey
 import DataBrowserCore.Workspace
 
 """Convert a user path into the stable absolute form used by persistence."""
@@ -41,12 +39,6 @@ end
 function _project_view_from_toml(::Type{Int}, value::Any)::Int
     value isa Integer && !(value isa Bool) || error("Expected integer, got $(typeof(value))")
     return Int(value)
-end
-
-function _project_view_from_toml(::Type{Tuple{String,String}}, value::Any)::Tuple{String,String}
-    value isa AbstractVector && length(value) == 2 ||
-        error("Expected an array of a type name and an id, got $(repr(value))")
-    return (_project_view_from_toml(String, value[1]), _project_view_from_toml(String, value[2]))
 end
 
 function _project_view_from_toml(::Type{Vector{T}}, value::Any)::Vector{T} where {T}
@@ -95,7 +87,6 @@ end
 _project_view_to_toml(value::AbstractString)::String = String(value)
 _project_view_to_toml(value::Bool)::Bool = value
 _project_view_to_toml(value::Real)::Real = value
-_project_view_to_toml(value::Tuple)::Vector = [_project_view_to_toml(item) for item in value]
 _project_view_to_toml(value::AbstractVector)::Vector = [_project_view_to_toml(item) for item in value]
 _project_view_to_toml(value::AbstractDict)::Dict{String,Any} =
     Dict{String,Any}(String(key) => _project_view_to_toml(item) for (key, item) in value)
@@ -135,16 +126,6 @@ function _save_project_view(root_path::AbstractString, view::PersistedProjectVie
     return nothing
 end
 
-"""Resolve stable item ids against the items the workspace has now."""
-function _items_for_ids(
-    state::BrowserState,
-    ids::Vector{String},
-)::Vector{ItemKey}
-    workspace = state.workspace
-    return ItemKey[
-        item for item in (Workspace.item(workspace, id) for id in ids) if item !== nothing]
-end
-
 """Capture the browser controls that belong in the source-root state file."""
 function _project_view_from_browser(
     state::BrowserState,
@@ -154,16 +135,9 @@ function _project_view_from_browser(
         project=project_name(workspace.project),
         window_size=Int[GLFW.GetWindowSize(ig.current_window())...],
         window_position=Int[GLFW.GetWindowPos(ig.current_window())...],
-        # FIXME(rebuild): the selected groups, which were `selection.collections`.
-        tree=PersistedTreeView(
-            expanded=copy(state.expanded_collections),
-            selected=copy(workspace.selection.collections),
-            filter=state.tree_filter,
-        ),
-        items=PersistedItemsView(
-            selected=copy(workspace.selection.item_ids),
-            filter=state.item_filter,
-        ),
+        selected=copy(workspace.selection.item_ids),
+        expanded=sort!(collect(state.expanded)),
+        filter=state.tree_filter,
         extensions=_persisted_extensions(state),
         windows=[[_persisted_window(window) for window in state.windows]; _waiting_windows(state)],
     )
@@ -280,18 +254,15 @@ function _apply_project_view!(
     view::PersistedProjectView,
 )::Nothing
     workspace = state.workspace
-    # FIXME(rebuild): the selected groups, which were `selection.collections`.
-    state.expanded_collections = copy(view.tree.expanded)
-    workspace.selection.collections = copy(view.tree.selected)
+    state.expanded = Set(view.expanded)
     # The items replaced since the view was saved are selected by their new ids.
     replaced = workspace.selection.replaced
     # Not `select!`: the saved ids may name items the workspace does not have yet.
     # TODO: restore the selection through a workspace operation (see the TODO above).
-    workspace.selection.item_ids = unique!([get(replaced, id, id) for id in view.items.selected])
+    workspace.selection.item_ids = unique!([get(replaced, id, id) for id in view.selected])
     workspace.selection.revision += 1
     state.selection_revision = workspace.selection.revision
-    state.tree_filter = view.tree.filter
-    state.item_filter = view.items.filter
+    state.tree_filter = view.filter
     _restore_windows!(state, view.windows)
 
     for ext in state.extensions
@@ -299,7 +270,7 @@ function _apply_project_view!(
         haskey(view.extensions, id) && load_view!(ext, state, view.extensions[id])
     end
 
-    _reset_project_filter_widgets!(state)
+    _reset_tree_filter!(state)
     return nothing
 end
 

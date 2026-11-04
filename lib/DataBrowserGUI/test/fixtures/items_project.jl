@@ -1,4 +1,5 @@
 # A project whose items are given values, each with its data and metadata.
+import DataBrowserAPI
 using DataBrowserCore: Workspace
 
 struct ItemsProject <: DataBrowserAPI.AbstractProject end
@@ -18,9 +19,9 @@ DataBrowserAPI.items(::ItemsSource; kwargs...) = [ItemsFile()]
 DataBrowserAPI.id(::ItemsFile) = "file"
 DataBrowserAPI.label(::ItemsFile) = "file"
 DataBrowserAPI.fingerprint(::ItemsFile) = 1
-DataBrowserAPI.read(::ItemsProject, source::ItemsSource, ::ItemsFile) = source.entries
-# FIXME(rebuild): the items that a source item holds, which `expand` gave.
-DataBrowserAPI.expand(::ItemsProject, ::ItemsFile, entries) = entries
+# The file holds the entries.
+DataBrowserAPI.read(::ItemsProject, source::ItemsSource, ::ItemsFile) = Entry("file", source.entries, Dict{Symbol,Any}())
+DataBrowserAPI.process(::ItemsProject, file::Entry) = file.data
 DataBrowserAPI.id(entry::Entry) = entry.name
 DataBrowserAPI.metadata(entry::Entry) = entry.metadata
 DataBrowserAPI.data(entry::Entry) = entry.data
@@ -32,7 +33,8 @@ const OPENED = Workspace.Workspace[]
 # The items `(label, data, metadata)` as the selection of a workspace of their own.
 function selection_of(entries...)
     workspace = Workspace.open_workspace(ItemsProject(),
-        ItemsSource([Entry(label, data, Dict{Symbol,Any}(pairs(metadata))) for (label, data, metadata) in entries]); cache=false)
+        ItemsSource([Entry(label, data, Dict{Symbol,Any}(pairs(metadata))) for (label, data, metadata) in entries]);
+        cache=false, background_processing=true)
     push!(OPENED, workspace)
     Workspace.wait_workspace_idle!(workspace)
     return Workspace.select(workspace, String[label for (label, _, _) in entries])

@@ -130,8 +130,7 @@ function _render_cache_controls!(state::BrowserState)::Nothing
             ig.PushID(failed)
             if ig.TextLink(failed) && select_failed!(state, failed)
                 state.tree_filter = ""
-                state.item_filter = ""
-                state.reset_project_filters = true
+                _reset_tree_filter!(state)
             end
             ig.TextWrapped(first(split(message, '\n'; limit=2)))
             ig.PopID()

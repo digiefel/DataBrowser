@@ -4,48 +4,20 @@ import CImGui.CSyntax: @c
 using DataBrowserAPI: kind_label, label
 import DataBrowserCore.Workspace
 
-"""Draw the information panel: the metadata of the selected collection and of the selected item."""
-# FIXME(rebuild): the selected group, which was a collection, and the item, now that `ItemKey` is gone.
+"""Draw the information panel: the type, the source item and the metadata of the selected value."""
 function render_info_window(state::BrowserState)::Nothing
     workspace = state.workspace
-    selected_collections, selected_items, selected_path = _project_visible_selection(state)
-    flags = ig.ImGuiTableFlags_Borders | ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY
-    if ig.Begin("Information Panel") && ig.BeginTable("info_cols", 2, flags)
-        ig.TableSetupColumn("Collection")
-        ig.TableSetupColumn("Item")
-        ig.TableHeadersRow()
-        ig.TableNextRow()
-        ig.TableNextColumn()
-
-        if length(selected_collections) == 1
-            collection = only(selected_collections)
-            ig.Text("Location: $(join(selected_path, "/"))")
-            ig.Separator()
-            metadata = Workspace.metadata(workspace, collection)
-            if !isempty(metadata)
-                ig.Text("Collection metadata")
-                for k in sort!(collect(keys(metadata)); by=String)
-                    ig.BulletText("$(k): $(metadata[k])")
-                end
-            else
-                ig.TextDisabled("No collection metadata found")
-            end
-        elseif isempty(selected_collections)
-            ig.TextDisabled("Select a collection to see details")
-        else
-            ig.TextDisabled("Select a single collection to see details")
-        end
-
-        ig.TableNextColumn()
-        if length(selected_items) == 1
-            item = only(selected_items)
+    selected = _visible_selection(state).ids
+    if ig.Begin("Information Panel")
+        if length(selected) == 1
+            x = only(selected)
             # The metadata that the project's functions and the visualizers receive: that of the
-            # item, and the computed metadata.
-            metadata = Workspace.metadata(workspace, item)
-            ig.Text("Title: $(label(workspace, item))")
+            # value, and the computed metadata.
+            metadata = Workspace.metadata(workspace, x)
+            ig.Text("Title: $(label(workspace, x))")
             ig.Separator()
-            ig.BulletText("Type: $(kind_label(workspace.project, label(Workspace.valuetype(workspace, item))))")
-            ig.BulletText("Source item: $(Workspace.source_item_id(workspace, item))")
+            ig.BulletText("Type: $(kind_label(workspace.project, label(Workspace.valuetype(workspace, x))))")
+            ig.BulletText("Source item: $(Workspace.source_item_id(workspace, x))")
             ig.Separator()
             if !isempty(metadata)
                 ig.Text("Metadata")
@@ -55,12 +27,11 @@ function render_info_window(state::BrowserState)::Nothing
             else
                 ig.TextDisabled("No metadata")
             end
-        elseif isempty(selected_items)
+        elseif isempty(selected)
             ig.TextDisabled("Select an item to view details")
         else
             ig.TextDisabled("Select a single item to view details")
         end
-        ig.EndTable()
     end
     ig.End()
     return nothing

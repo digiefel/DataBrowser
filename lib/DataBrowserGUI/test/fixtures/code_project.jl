@@ -20,13 +20,12 @@ API.data(value::CodeSignal) = value.data
 API.reconstruct(::Type{CodeSignal}, name::AbstractString, data, ::Dict) = CodeSignal(name, data)
 function API.read(project::CodeProject, ::CodeSource, ::CodeFile)
     project.reads[] += 1
-    return (signal=[1, 2, 3],)
+    return CodeSignal("code-file", (signal=[1, 2, 3],))
 end
-# FIXME(rebuild): the items that a source item holds, which `expand` gave.
-API.expand(::CodeProject, ::CodeFile, value) = [CodeSignal("signal", value), CodeSignal("other", (signal=[4, 5],))]
+# The file holds two signals.
 function API.process(project::CodeProject, value::CodeSignal)
     project.processes[] += 1
-    return CodeSignal(API.id(value), (signal=10 .* value.data.signal,))
+    return [CodeSignal("signal", (signal=10 .* value.data.signal,)), CodeSignal("other", (signal=[40, 50],))]
 end
 
 Base.@kwdef mutable struct CodeConsumer <: API.AbstractVisualizer

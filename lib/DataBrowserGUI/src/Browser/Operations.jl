@@ -42,37 +42,35 @@ function _check_cache_error!(
 end
 
 """
-Select what a failure names: the item with the id `id`, or else every item produced by the source
-item `id`. The browser reveals them, as for any `select!`.
+Select what a failure names: the value with the id `id`, or else every value that the source item
+`id` gives. The browser reveals them, as for any `select!`.
 """
 function select_failed!(state::BrowserState, id::AbstractString)::Bool
     workspace = state.workspace
-    found = Workspace.item(workspace, id)
-    # TODO(scale): goes through every item of the workspace; ask Core for the items of the source item.
-    items = found !== nothing ? [found] : [
-        item for item in Workspace.items(workspace) if Workspace.source_item_id(workspace, item) == id]
-    isempty(items) && return false
-    Workspace.select!(workspace, items)
+    # TODO(scale): goes through every value of the workspace; ask Core for the values of the source item.
+    ids = haskey(workspace, id) ? [String(id)] :
+        filter(x -> Workspace.source_item_id(workspace, x) == id, Workspace.items(workspace))
+    isempty(ids) && return false
+    Workspace.select!(workspace, ids)
     return true
 end
 
-"""Reveal the current workspace selection in the tree and item panel."""
-# FIXME(rebuild): the groups that hold the selected items and the groups above them, which were
-# `collection`, `ancestors` and `path` of the tree, and the selected groups.
+"""
+Reveal the current workspace selection in the tree: open the groups that hold a selected value and
+the groups above them, and scroll to the first selected value.
+"""
 function _reveal_selected_items!(state::BrowserState)::Nothing
     workspace = state.workspace
-    items = _items_for_ids(state, workspace.selection.item_ids)
-    isempty(items) && return nothing
-    # Of a known element type: `unique` of a generator would run code of types unknown to the compiler,
-    # that packages loaded later invalidate.
-    holders = unique!(CollectionKey[Workspace.collection(workspace, item) for item in items])
-    for holder in holders, ancestor in Workspace.ancestors(workspace, holder)
-        path = Workspace.path(workspace, ancestor)
-        path in state.expanded_collections || push!(state.expanded_collections, path)
+    selected = filter(x -> haskey(workspace, x), workspace.selection.item_ids)
+    isempty(selected) && return nothing
+    pending, above = String[group for x in selected for group in Workspace.groups(workspace, x)], Set{String}()
+    while !isempty(pending)
+        group = pop!(pending)
+        group in above && continue
+        push!(above, group)
+        append!(pending, Workspace.groups(workspace, group))
     end
-    workspace.selection.collections = [Workspace.path(workspace, holder) for holder in holders]
-    state.scroll_to_collection = first(workspace.selection.collections)
-    state.scroll_to_item_id = id(workspace, first(items))
+    union!(state.expanded, above)
+    state.scroll_to_item_id = first(selected)
     return nothing
 end
-

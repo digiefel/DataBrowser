@@ -89,8 +89,7 @@ function _render_timings_tab(state::BrowserState)::Nothing
     if fps > 0
         ig.Text(@sprintf("FPS: %.1f   Frame: %.2f ms", fps, 1000 / fps))
     end
-    ig.Text("Tree nodes rendered: $(performance.node_count)")
-    ig.Text("Items visible / rendered: $(performance.item_rows_visible) / $(performance.item_rows_rendered)")
+    ig.Text("Tree rows / drawn: $(performance.rows) / $(performance.rows_drawn)")
     ig.Spacing()
 
     if ig.Button("Reset")
