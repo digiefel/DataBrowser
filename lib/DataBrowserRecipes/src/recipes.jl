@@ -10,15 +10,29 @@ specializes the whole stage.
 Re-registering a name replaces the recipe *value* in its project. It never defines methods, so
 registrations cannot accumulate and there is no world-age problem.
 """
-struct ItemRecipe{Detect,Read,Process,Analyze,Label,Id}
+struct ItemRecipe{Detect,Read,Expand,Process,Analyze,Label,Collection,Id}
     kind::Symbol
     detect::Detect
     read::Read
+    expand::Expand
     process::Process
     analyze::Analyze
     label::Label
+    collection::Collection
     id::Id
     # The line of the project's code that registered the recipe.
+    registered::LineNumberNode
+end
+
+"""
+The callbacks that run in every collection of one level, over the items below it of one kind, or of
+every kind when `members` is `nothing`.
+"""
+struct CollectionRecipe{Process,Analyze}
+    level::Symbol
+    members::Union{Nothing,Symbol}
+    process::Process
+    analyze::Analyze
     registered::LineNumberNode
 end
 
@@ -40,6 +54,7 @@ mutable struct Project <: AbstractProject
     name::String
     description::String
     recipes::Vector{ItemRecipe}
+    collections::Vector{CollectionRecipe}
     values::String
 end
 

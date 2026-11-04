@@ -206,6 +206,7 @@ implements the type API for it.
 ```@docs
 DataBrowserRecipes.define_project
 DataBrowserRecipes.register_item!
+DataBrowserRecipes.register_collection!
 DataBrowserRecipes.register_csv!
 ```
 

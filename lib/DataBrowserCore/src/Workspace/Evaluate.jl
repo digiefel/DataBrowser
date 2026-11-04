@@ -189,7 +189,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
     end
     given = output isa AbstractVector ? output : [output]
     pipeline && !all(x -> x isa AbstractDataItem, given) && return failed!(workspace, job, at,
-        ErrorException("$(function_name(value.f)) returned a $(typeof(output)), not an item or a vector of items"), nothing)
+        ErrorException("$(function_name(value.f)) returned a $(typeof(output)), not an item or a vector of items"), backtrace())
     ## The ids, labels, members and metadata of the values are the project's code, which runs
     ## outside the lock.
     outputs = try
@@ -332,6 +332,9 @@ function and the key of each argument, as `fit(a/1)`, or the key that the pipeli
 """
 cachekey(workspace::Workspace, row::Row)::String =
     get!(() -> call_id(workspace.catalog[row], x -> argument_cachekey(workspace, x)), workspace.cachekeys, row)
+# The key under which a store keeps the value `x` of a vector that the row of the pipeline with the
+# cache key `key` gives.
+cachekey(key::String, x::String)::String = "$key[$x]"
 argument_cachekey(workspace::Workspace, x::Input) = cachekey(workspace, x.row)
 argument_cachekey(::Workspace, x::Part) = x.id
 argument_cachekey(workspace::Workspace, x::Union{Tuple,AbstractVector}) = "[" * join(map(v -> argument_cachekey(workspace, v), x), ", ") * "]"
@@ -466,9 +469,11 @@ end
 # ## Results
 #
 # A store keeps results under the cache key of their row, so that a row that is current does not run
-# again for each task that needs its value. `storage(project, T)` chooses the store for results of
-# type `T`: items, or any other Julia value. By default, each result type has its own `MemoryStore`
-# of 64 MiB, which removes the least recently used results first, and loses them when Julia exits.
+# again for each task that needs its value. Each value of a vector that a row of the pipeline gives
+# goes to the store of its own type, under the cache key of the row and its id. `storage(project, T)`
+# chooses the store for results of type `T`: items, or any other Julia value. By default, each
+# result type has its own `MemoryStore` of 64 MiB, which removes the least recently used results
+# first, and loses them when Julia exits.
 # A project made with DataBrowserRecipes keeps the results of every type in one `DuckDBStore`, a
 # file next to the project, so they stay from one session to the next. A project can choose another
 # size, or another store:
@@ -503,17 +508,20 @@ end
 """
     keep!(workspace, row, result)
 
-Save a copy of `result` in the store of its type, under the name of `row`. The result of
+Save a copy of `result` in the store of its type, under the name of `row`. A vector that a row of
+the pipeline gives is saved as its values, each in the store of its own type. The result of
 `view(item, selection)` is not saved: it is made again when needed, and another copy of the item
 would push other results out.
 """
 function keep!(workspace::Workspace, row::Row, output)::Nothing
     catalog = workspace.catalog
-    key, again = @lock catalog.lock (cachekey(workspace, row), catalog[row].f === view)
+    key, again, pipeline = @lock catalog.lock (cachekey(workspace, row), catalog[row].f === view, haskey(workspace.stages, row))
     again && return nothing
-    place = store(workspace, typeof(output))
-    ## `deepcopy` is a dynamic call: a method of a package loaded later then does not invalidate this code.
-    place === nothing || write(place, key, Base.invokelatest(deepcopy, output))
+    for (name, x) in (pipeline && output isa AbstractVector ? [(cachekey(key, id(x)), x) for x in output] : [(key, output)])
+        place = store(workspace, typeof(x))
+        ## `deepcopy` is a dynamic call: a method of a package loaded later then does not invalidate this code.
+        place === nothing || write(place, name, Base.invokelatest(deepcopy, x))
+    end
     return nothing
 end
 
@@ -532,29 +540,33 @@ end
     kept(workspace, rows) -> Vector{Union{Nothing,Some}}
 
 The results of `rows` that a store still has, as `Some(result)`, and `nothing` for each result that
-must be computed again.
+must be computed again. A vector that a row of the pipeline gives is read from the stores of its
+values, and must be computed again when one of them is missing.
 """
 function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Some}}
     catalog = workspace.catalog
-    found = Vector{Union{Nothing,Some}}(nothing, length(rows))
-    by_type = Dict{Type,Vector{Int}}()
-    cachekeys = @lock catalog.lock map(enumerate(rows)) do (position, row)
-        type = Catalogs.result_type(catalog, row)
-        if type === Nothing
-            found[position] = Some(nothing)
-        else
-            push!(get!(Vector{Int}, by_type, type), position)
-        end
-        cachekey(workspace, row)
+    ## Each result as the type and the key of each part that a store keeps: the result, or each value
+    ## of a vector that a row of the pipeline gives.
+    vectors, parts = @lock catalog.lock begin
+        types = [Catalogs.result_type(catalog, row) for row in rows]
+        vectors = [type <: AbstractVector && haskey(workspace.stages, row) for (row, type) in zip(rows, types)]
+        vectors, [vector ? [(output.type, cachekey(cachekey(workspace, row), output.id)) for output in get(workspace.outputs, row, Output[])] :
+            [(type, cachekey(workspace, row))] for (row, type, vector) in zip(rows, types, vectors)]
     end
-    for (type, positions) in by_type
+    found = [Vector{Union{Nothing,Some}}(nothing, length(part)) for part in parts]
+    by_type = Dict{Type,Vector{Tuple{Int,Int}}}()
+    for (position, part) in enumerate(parts), (index, (type, _)) in enumerate(part)
+        type === Nothing ? (found[position][index] = Some(nothing)) : push!(get!(Vector{Tuple{Int,Int}}, by_type, type), (position, index))
+    end
+    for (type, places) in by_type
         place = store(workspace, type)
         place === nothing && continue
-        for (position, value) in zip(positions, read(place, type, cachekeys[positions]))
-            value === nothing || (found[position] = Some(value))
+        for ((position, index), value) in zip(places, read(place, type, [parts[position][index][2] for (position, index) in places]))
+            value === nothing || (found[position][index] = Some(value))
         end
     end
-    return found
+    return Union{Nothing,Some}[any(isnothing, values) ? nothing : vector ? Some(identity.(something.(values))) : only(values)
+        for (values, vector) in zip(found, vectors)]
 end
 
 """

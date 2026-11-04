@@ -44,7 +44,8 @@ end
 
 Perform the one expensive source operation for a source item without members, and return its data
 item. A source item that holds several items, such as a table with one item per cycle, gives one
-item here, and a `process` method that returns a vector makes the several items from it.
+item here, and a `process` method that returns a vector makes the several items from it. A source
+item that gives no value, such as a file the project does not use, gives an empty vector.
 
 This is the only stage that sees the source. Implement the context-free form when the project owns
 its source item type, or the project-aware form when it reuses a shared source.

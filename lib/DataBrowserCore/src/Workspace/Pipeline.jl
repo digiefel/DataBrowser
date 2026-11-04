@@ -181,9 +181,9 @@ end
 Make `outputs` the values of `row`: each is a version of its id, unless another row gives that id
 at the same stage, or an earlier row gives it and `row` does not read it. With `outputs = nothing`,
 for a row without a result, `row` is a version of the value it is expected to give: the value that a
-`process` method takes. The cache forgets the values that `row` no longer gives. Returns the ids of
-the values whose versions changed, or none when `row` gives values of the same ids, types and members
-as before.
+`process` method takes. The cache and the stores forget the values that `row` no longer gives.
+Returns the ids of the values whose versions changed, or none when `row` gives values of the same
+ids, types and members as before.
 """
 function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Vector{String}
     catalog, stage = workspace.catalog, workspace.stages[row]
@@ -213,6 +213,8 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
         any(found -> found.id == output.id, accepted) && continue
         delete!(workspace.produced, output.key)
         delete_output!(workspace.cache.db, cachekey(workspace, row), output.id)
+        place = store(workspace, output.type)
+        place === nothing || delete!(place, output.type, cachekey(cachekey(workspace, row), output.id))
     end
     outputs === nothing ? delete!(workspace.outputs, row) : (workspace.outputs[row] = accepted)
     conflicts!(workspace, row, conflicts)
