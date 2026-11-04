@@ -14,8 +14,9 @@ end
 
 Computation(f, args...; settings...) = Computation(f, args, NamedTuple(settings))
 
-# Two computations are equal when they call equal functions with equal arguments and settings.
-Base.:(==)(a::Computation, b::Computation) = a.f == b.f && a.args == b.args && a.settings == b.settings
+# Two computations are equal when they call equal functions with equal arguments and settings: the
+# call is compared, never its result, which `data` would compute.
+Base.isequal(a::Computation, b::Computation) = isequal((a.f, a.args, a.settings), (b.f, b.args, b.settings))
 Base.hash(value::Computation, h::UInt) = hash(value.settings, hash(value.args, hash(value.f, hash(:Computation, h))))
 
 """

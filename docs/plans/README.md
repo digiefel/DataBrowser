@@ -90,7 +90,7 @@ source-reading/processing macro form remains open. The earlier result/register_r
 and the later DBRecipes macro framing of general analysis are withdrawn. Shared analysis needs
 its own worked code example using the same tools for every user.
 
-Bounded content convergence uses `isequal`, with a supplied field-by-field default for data
-items; project types may specialize it. Recipes does not expose that iteration model. These are
+Bounded content convergence uses `isequal`, with a supplied default for data items that compares
+`data` and `metadata`; project types may specialize it. Recipes does not expose that iteration model. These are
 target decisions, not claims about the current implementation. The source-group abstract type
 is parked; ordinary records and group records should have distinct source-item types.

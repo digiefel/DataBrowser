@@ -15,6 +15,7 @@ struct TextItem <: API.AbstractDataItem
     id::String
     text::String
 end
+API.data(item::TextItem) = item.text
 table(id, values) = TableItem(id, (x=values,), Dict{Symbol,Any}())
 
 @testset "native memory storage" begin

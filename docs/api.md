@@ -57,6 +57,7 @@ DataBrowserAPI.id
 DataBrowserAPI.label
 DataBrowserAPI.data
 DataBrowserAPI.metadata
+Base.isequal(::DataBrowserAPI.AbstractDataItem, ::DataBrowserAPI.AbstractDataItem)
 DataBrowserAPI.collection
 DataBrowserAPI.members
 ```

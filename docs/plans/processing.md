@@ -152,9 +152,9 @@ claiming the fixed stages have been replaced:
   a chain converges, meaning a `process` call returns a value equal in content to its input (equal ids are
   not enough, since a same-id value with new content is a replacement). Core halts with an error
   after a maximum number of rounds. So a `process` method that returns its input type means "repeat until unchanged".
-  Equality is `isequal` (Davide, 21 October). Core supplies a field-by-field `isequal` and
-  `hash` for `AbstractDataItem`, so project types converge without extra code; a project defines its
-  own `isequal` for anything else, for example a tolerance. Julia's default `==` would not work: it
+  Equality is `isequal` (Davide, 21 October). The API supplies `isequal` and `hash` for
+  `AbstractDataItem` that compare `data` and `metadata` (Davide, 4 November), so project types converge
+  without extra code; a project defines its own `isequal` for anything else, for example a tolerance. Julia's default `==` would not work: it
   compares mutable fields such as vectors by object identity, and `missing == missing` is `missing`. Type API
   projects may use this; Recipes does not offer it. Linked UI selections are a separate
   interaction problem.

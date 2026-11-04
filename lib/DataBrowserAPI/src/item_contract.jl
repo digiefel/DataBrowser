@@ -113,8 +113,28 @@ function members end
 """Return metadata supplied directly by a data item. The default is an empty `Dict`."""
 metadata(::AbstractDataItem)::Dict = Dict()
 
-"""The data represented by an item. A custom item is its own data by default."""
-data(item::AbstractDataItem) = item
+"""
+    data(item::AbstractDataItem)
+
+The data of `item`, such as the table of a measurement. Every item type defines `data`: there is no
+default.
+"""
+function data end
+
+"""
+    isequal(a::AbstractDataItem, b::AbstractDataItem) -> Bool
+    hash(item::AbstractDataItem, h::UInt) -> UInt
+
+Two items are equal when they have the same type, `isequal` [`data`](@ref) and `isequal`
+[`metadata`](@ref); their ids are not compared. `hash` gives equal items the same hash, as Julia
+requires of `isequal`.
+
+Define `isequal` and `hash` for an item type that needs another notion of an unchanged value, such as
+a tolerance on its data. A type whose `data` is the item itself must define both: the default
+methods would call themselves without end.
+"""
+Base.isequal(a::AbstractDataItem, b::AbstractDataItem) = typeof(a) === typeof(b) && isequal((data(a), metadata(a)), (data(b), metadata(b)))
+Base.hash(item::AbstractDataItem, h::UInt) = hash((typeof(item), data(item), metadata(item)), h)
 
 """Process an item. Optional; default identity."""
 process(item::AbstractDataItem) = item
