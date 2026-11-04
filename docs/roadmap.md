@@ -715,6 +715,11 @@ the table as a first-class view.
   - [ ] Image: PNG and JPEG files.
   - [ ] Text and Markdown, for strings and notes.
 - [ ] Let users open several independent visualizer windows over different live selections.
+- [ ] Show the tree of groups in a visualizer of a group, like every other window. To settle first:
+  what the tree shows when several groups belong to no group, such as the groups a `process`
+  makes; how the visualizer learns that a group with many members changed without preparing all
+  its members again; how selecting a group differs from selecting its members (see
+  [plans/tabs.md](plans/tabs.md#selection)).
 - [ ] Register every built-in visualizer by defining its type, as any package does.
 
 ## 0.12.0 — Array and image visualizers
