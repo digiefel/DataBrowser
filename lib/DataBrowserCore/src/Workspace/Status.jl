@@ -2,7 +2,9 @@
     workspace_status(workspace) -> WorkspaceStatus
 
 The current [`WorkspaceStatus`](@ref) of a workspace. The status is recomputed only when the
-workspace has changed since the last call, so watchers can call this every frame.
+workspace has changed since the last call, so watchers can call this every frame. It never waits:
+while another task is changing the workspace, it gives the errors and counts of the last status,
+and a later call gives the current ones.
 """
 function workspace_status(workspace::Workspace)::WorkspaceStatus
     # Read the generation first: a change during the computation then triggers the next one.

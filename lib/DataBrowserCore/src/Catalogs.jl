@@ -499,7 +499,8 @@ Give `row` one more input, or one less: `add!` connects the rows among the argum
 computation, and the workspace connects the row of a group to the rows of the values of its
 members. A row that is connected to an input more than once reads it until it is disconnected as
 many times. Both make `row` stale, and `connect!` passes on the priority and the request of `row`
-to `input`. Each takes the same time whatever the number of inputs and readers. `disconnect!`
+to `input`. Apart from making `row` stale, each takes the same time whatever the number of inputs
+and readers. `disconnect!`
 removes `input` when it is left with no hold and no reader.
 """
 function connect!(catalog::Catalog, row::Row, input::Row)::Nothing
