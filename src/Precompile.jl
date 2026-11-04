@@ -3,23 +3,19 @@ using DataFrames: DataFrame, nrow
 
 # A project for the precompile workload, on the CSV files of `PRECOMPILE_FIXTURES`. The functions of
 # a user's project compile when the project first runs; this project runs the package code around
-# them: scan, read, process, analyze, collection analysis and the cache.
+# them: scan, read, process, analyze and the cache.
 function _precompile_project()
     project = define_project("Precompile")
     register_item!(project, :iv;
         detect=file -> endswith(file.filename, ".csv"),
         read=file -> DataFrame(CSV.File(file.filepath; ntasks=1)),
         label=(data, metadata) -> metadata[:filename],
-        collection=(data, metadata) -> (file = splitext(metadata[:filename])[1],),
         process=function (input, metadata)
             data = copy(input)
             data.engine_warm = data.Current_A ./ max.(abs.(data.VoltageHigh_V), 1e-12)
             return data
         end,
         analyze=(data, metadata) -> Dict{Symbol,Any}(:rows => nrow(data)),
-    )
-    register_collection!(project, :file;
-        analyze=(data, metadata) -> Dict{Symbol,Any}(:items => length(data)),
     )
     return project
 end

@@ -19,6 +19,7 @@ DataBrowserAPI.id(::ItemsFile) = "file"
 DataBrowserAPI.label(::ItemsFile) = "file"
 DataBrowserAPI.fingerprint(::ItemsFile) = 1
 DataBrowserAPI.read(::ItemsProject, source::ItemsSource, ::ItemsFile) = source.entries
+# FIXME(rebuild): the items that a source item holds, which `expand` gave.
 DataBrowserAPI.expand(::ItemsProject, ::ItemsFile, entries) = entries
 DataBrowserAPI.id(entry::Entry) = entry.name
 DataBrowserAPI.metadata(entry::Entry) = entry.metadata

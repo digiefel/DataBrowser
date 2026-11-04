@@ -25,13 +25,6 @@ function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T
 end
 struct ComputationSource <: AbstractDataSource end
 struct ComputationFile <: AbstractDataSourceItem end
-struct ComputationCollection <: AbstractCollection
-    metadata::Dict
-end
-ComputationCollection() = ComputationCollection(Dict())
-DataBrowserAPI.id(::ComputationCollection) = "group"
-DataBrowserAPI.metadata(collection::ComputationCollection) = collection.metadata
-DataBrowserAPI.reconstruct(::Type{ComputationCollection}, ::AbstractString, metadata::Dict) = ComputationCollection(metadata)
 struct ComputationItem <: AbstractDataItem
     name::String
     data::NamedTuple{(:signal,),Tuple{Vector{Int}}}
@@ -49,10 +42,11 @@ DataBrowserAPI.fingerprint(::ComputationFile) = 1
 DataBrowserAPI.id(value::ComputationItem) = value.name
 DataBrowserAPI.data(value::ComputationItem) = value.data
 DataBrowserAPI.metadata(value::ComputationItem) = value.metadata
-DataBrowserAPI.collection(::ComputationItem) = [ComputationCollection()]
 DataBrowserAPI.reconstruct(::Type{ComputationItem}, id::AbstractString, data, metadata::Dict) =
     ComputationItem(String(id), data, metadata)
 DataBrowserAPI.read(::ComputationProject, ::ComputationSource, ::ComputationFile) = [1, 2, 3]
+# FIXME(rebuild): the items that a source item holds, which `expand` gave. The projects below
+# reuse this method.
 DataBrowserAPI.expand(::ComputationProject, ::ComputationFile, data) =
     [ComputationItem("sample", (signal=data,), Dict{Symbol,Any}(:step => "read"))]
 function DataBrowserAPI.process(project::ComputationProject, value::ComputationItem)
@@ -195,68 +189,6 @@ DataBrowserAPI.read(::VectorValueProject, ::ComputationSource, ::ComputationFile
     end
 end
 
-struct GroupComputationProject <: AbstractProject end
-struct GroupedComputationItem <: AbstractDataItem
-    name::String
-    data::NamedTuple
-    metadata::Dict{Symbol,Any}
-end
-DataBrowserAPI.id(value::GroupedComputationItem) = value.name
-DataBrowserAPI.data(value::GroupedComputationItem) = value.data
-DataBrowserAPI.metadata(value::GroupedComputationItem) = value.metadata
-DataBrowserAPI.reconstruct(::Type{GroupedComputationItem}, id::AbstractString, data, metadata::Dict) =
-    GroupedComputationItem(String(id), data, metadata)
-DataBrowserAPI.project_name(::GroupComputationProject) = "group-computation-graph"
-DataBrowserAPI.read(::GroupComputationProject, source::ComputationSource, file::ComputationFile) =
-    read(ComputationProject(), source, file)
-DataBrowserAPI.expand(::GroupComputationProject, file::ComputationFile, data) =
-    expand(ComputationProject(), file, data)
-DataBrowserAPI.process(::GroupComputationProject, value::ComputationItem) =
-    process(ComputationProject(), value)
-DataBrowserAPI.process(::GroupComputationProject, ::ComputationCollection, values::AbstractVector) =
-    ComputationCollection(Dict(:members => length(values)))
-DataBrowserAPI.process(::GroupComputationProject, value::ComputationItem, group::ComputationCollection) =
-    GroupedComputationItem(id(value), (signal=value.data.signal .* 3, members=fill(group.metadata[:members], length(value.data.signal))),
-        merge(metadata(value), Dict(:grouped => true)))
-
-@testset "collection computations replay the values supplied to views" begin
-    workspace = CW.open_workspace(GroupComputationProject(), ComputationSource(); cache=false, background_processing=true)
-    try
-        CW.wait_workspace_idle!(workspace)
-        result = evaluate(workspace, computation(workspace, "sample"))
-        @test result.data.signal == [6, 12, 18]
-        @test metadata(result)[:total] == 12
-        @test metadata(result)[:grouped] == true
-        supplied = only(materialize_items(workspace, ["sample"]))
-        @test data(result) == data(supplied)
-        @test metadata(result) == metadata(supplied)
-    finally
-        CW.close_workspace!(workspace)
-    end
-end
-
-@testset "reopening supplies member process outputs with a different item type" begin
-    mktempdir() do depot
-        pushfirst!(DEPOT_PATH, depot)
-        try
-            for _ in 1:2
-                workspace = CW.open_workspace(GroupComputationProject(), ComputationSource(); background_processing=true)
-                try
-                    CW.wait_workspace_idle!(workspace)
-                    value = only(materialize_items(workspace, ["sample"]))
-                    @test value isa GroupedComputationItem
-                    @test value.data.signal == [6, 12, 18]
-                    @test value.data.members == [1, 1, 1]
-                finally
-                    CW.close_workspace!(workspace)
-                end
-            end
-        finally
-            popfirst!(DEPOT_PATH)
-        end
-    end
-end
-
 @testset "project and interactive work share traversable computations" begin
     workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
     try
@@ -273,6 +205,7 @@ end
             push!(ancestors, node)
             append!(pending, inputs(node))
         end
+        # FIXME(rebuild): the computation that reads the source item, which `read_items` was.
         reader = only(filter(node -> node.f === DataBrowserCore.read_items, ancestors))
         @test data(only(evaluate(workspace, reader))).signal == [1, 2, 3]
         @test data(evaluate(workspace, processed)).signal == [2, 4, 6]

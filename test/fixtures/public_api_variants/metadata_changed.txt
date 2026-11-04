@@ -1,3 +1,0 @@
-collection_path,scale
-runs/A,4
-runs/B,3

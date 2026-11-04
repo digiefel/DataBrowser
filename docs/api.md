@@ -16,7 +16,7 @@ surface is a provider surface or a client surface.
 
 | Surface                           | Side     | Contents                                                                  | Package            |
 |:----------------------------------|:---------|:--------------------------------------------------------------------------|:-------------------|
-| [Type API](#Type-API)             | provider | Types and methods that describe a project: its items, collections, processing and storage | DataBrowserAPI |
+| [Type API](#Type-API)             | provider | Types and methods that describe a project: its items, processing and storage | DataBrowserAPI |
 | [Sources](#Sources)               | provider | Types and methods that find source items and report their changes        | DataBrowserAPI, DataBrowserSources |
 | [Visualizers](#Visualizers)       | provider | Types that display data and metadata in the browser, in any form the data needs | DataBrowserAPI   |
 | [GUI extensions](#GUI-extensions) | provider | Types that add windows and menus to the browser                           | DataBrowserGUI     |
@@ -45,34 +45,29 @@ order of the stages below, and keeps their results.
 DataBrowserAPI.AbstractProject
 ```
 
-#### Items and collections
+#### Items
 
-An item has an id, a label, data and metadata. Collections arrange items in a tree.
+An item has an id, a label, data and metadata.
 
 ```@docs
 DataBrowserAPI.AbstractDataItem
-DataBrowserAPI.AbstractCollection
 DataBrowserAPI.AbstractGroup
 DataBrowserAPI.id
 DataBrowserAPI.label
 DataBrowserAPI.data
 DataBrowserAPI.metadata
 Base.isequal(::DataBrowserAPI.AbstractDataItem, ::DataBrowserAPI.AbstractDataItem)
-DataBrowserAPI.collection
 DataBrowserAPI.members
 ```
 
 #### Stages
 
-`read` loads a source item, `expand` turns what it loaded into items, and `process` computes the
-processed version of an item or a collection.
+`read` loads a source item, and `process` computes the processed version of an item.
 
 ```@docs
 Base.read(::DataBrowserAPI.AbstractProject, ::DataBrowserAPI.AbstractDataSource, ::DataBrowserAPI.AbstractDataSourceItem)
-DataBrowserAPI.expand
 DataBrowserAPI.process
 DataBrowserAPI.reconstruct
-DataBrowserAPI.has_stage
 DataBrowserAPI.stage_roots
 ```
 
@@ -206,7 +201,6 @@ implements the type API for it.
 ```@docs
 DataBrowserRecipes.define_project
 DataBrowserRecipes.register_item!
-DataBrowserRecipes.register_collection!
 DataBrowserRecipes.register_csv!
 ```
 

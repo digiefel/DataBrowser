@@ -31,6 +31,7 @@ DataBrowserAPI.items(::FitTestSource; kwargs...) = [FitTestFile()]
 DataBrowserAPI.id(::FitTestFile) = "file"
 DataBrowserAPI.fingerprint(::FitTestFile) = 1
 DataBrowserAPI.read(::FitTestProject, source::FitTestSource, ::FitTestFile) = source.devices
+# FIXME(rebuild): the items that a source item holds, which `expand` gave.
 DataBrowserAPI.expand(::FitTestProject, ::FitTestFile, devices) = devices
 
 const W = DataBrowserCore.Workspace

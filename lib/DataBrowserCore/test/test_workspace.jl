@@ -43,6 +43,7 @@ function DataBrowserAPI.read(p::EngineProject, ::EngineSource, s::EngineSourceIt
     s.fail && error("fixture read failed")
     return s.version
 end
+# FIXME(rebuild): the items that a source item holds, which `expand` gave.
 DataBrowserAPI.expand(::EngineProject, ::EngineSourceItem, version) =
     [EngineItem(string(n), (x=[version],), Dict(:input => version, :total => -1)) for n in 1:version]
 DataBrowserAPI.process(::EngineProject, i::EngineItem) =
@@ -81,46 +82,11 @@ function DataBrowserAPI.process(project::ObservedProject, item::EngineItem)
     return item
 end
 
-struct Outer <: DataBrowserAPI.AbstractCollection
-    metadata::Dict
-end
-struct Inner <: DataBrowserAPI.AbstractCollection
-    metadata::Dict
-end
-struct Other <: DataBrowserAPI.AbstractCollection
-    metadata::Dict
-end
-const NestedCollection = Union{Outer,Inner,Other}
-(::Type{T})() where {T<:NestedCollection} = T(Dict())
-DataBrowserAPI.id(::Outer) = "outer"
-DataBrowserAPI.id(::Union{Inner,Other}) = "same"
-DataBrowserAPI.metadata(collection::NestedCollection) = collection.metadata
-DataBrowserAPI.reconstruct(::Type{T}, ::AbstractString, metadata::Dict) where {T<:NestedCollection} = T(metadata)
-struct NestedItem <: AbstractDataItem
-    key::String
-    data::Any
-    metadata::Dict
-end
-NestedItem(key, data) = NestedItem(key, data, Dict())
-DataBrowserAPI.metadata(i::NestedItem) = i.metadata
-DataBrowserAPI.id(i::NestedItem) = i.key
-DataBrowserAPI.data(i::NestedItem) = i.data
-DataBrowserAPI.reconstruct(::Type{NestedItem}, key::AbstractString, data, metadata::Dict) = NestedItem(key, data, metadata)
-DataBrowserAPI.collection(i::NestedItem) =
-    DataBrowserAPI.AbstractCollection[Outer(), i.key == "a" ? Inner() : Other()]
-struct NestedProject <: AbstractProject end
-DataBrowserAPI.label(::NestedProject, i::NestedItem) = get(i.metadata, :name, i.key)
-DataBrowserAPI.project_name(::NestedProject) = "nested"
-DataBrowserAPI.read(::NestedProject, ::EngineSource, s::EngineSourceItem) = s.version
-DataBrowserAPI.expand(::NestedProject, ::EngineSourceItem, version) =
-    [NestedItem(key, (x=[version],)) for key in ("a", "b")]
-# Each collection counts its members, and each member takes one step per collection above it.
-DataBrowserAPI.process(::NestedProject, ::T, items::AbstractVector) where {T<:Union{Inner,Outer}} =
-    T(Dict(:size => length(items)))
-DataBrowserAPI.process(::NestedProject, i::NestedItem, inner::Inner) =
-    NestedItem(i.key, (x=i.data.x .+ inner.metadata[:size],), Dict(:step => 1, :name => "inner $(i.key)"))
-DataBrowserAPI.process(::NestedProject, i::NestedItem, ::Outer) =
-    NestedItem(i.key, (x=i.data.x .* 10,), merge(i.metadata, Dict(:step => get(i.metadata, :step, 0) + 1)))
+struct TagProject <: AbstractProject end
+DataBrowserAPI.project_name(::TagProject) = "tag"
+# FIXME(rebuild): the items that a source item holds, which `expand` gave.
+DataBrowserAPI.expand(::TagProject, ::EngineSourceItem, version) =
+    [EngineItem(key, (x=[version],), Dict()) for key in ("a", "b")]
 
 struct RootedSource <: AbstractDataSource
     root_path::String
@@ -128,7 +94,7 @@ end
 DataBrowserAPI.id(s::RootedSource) = s.root_path
 DataBrowserAPI.label(s::RootedSource) = s.root_path
 DataBrowserAPI.items(::RootedSource; kwargs...) = [EngineSourceItem(1, false)]
-DataBrowserAPI.read(::NestedProject, ::RootedSource, s::EngineSourceItem) = s.version
+DataBrowserAPI.read(::TagProject, ::RootedSource, s::EngineSourceItem) = s.version
 
 struct GatedProject <: AbstractProject
     gate::Base.Event
@@ -165,35 +131,6 @@ end
         W.materialize_items(ws, ["only"])
         @test busy[]
         settled(ws)
-    finally
-        W.close_workspace!(ws)
-    end
-end
-
-@testset "nested collections: versions, staleness and paths" begin
-    ws = W.open_workspace(NestedProject(), EngineSource("source", 1, false); cache=false, background_processing=true)
-    try
-        settled(ws)
-        x(key) = only(data(only(W.materialize_items(ws, [key]))).x)
-        holder(key) = W.collection(ws, W.item(ws, key))
-        # Members take the inner collection's step first, then the outer one.
-        @test (x("a"), x("b")) == (20, 10)
-        @test W.metadata(ws, holder("a"))[:size] == 1
-        # The metadata and the label that a member `process` changed reach every reader.
-        @test W.metadata(ws, W.item(ws, "a"))[:step] == 2
-        @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
-        @test metadata(only(W.materialize_items(ws, ["a"])))[:step] == 2
-        @test W.label(ws, W.item(ws, "a")) == "inner a"
-        # Two collections with the same id and parent differ by type.
-        @test holder("a") != holder("b")
-        @test all(key -> W.collection(ws, W.path(ws, holder(key))) == holder(key), ("a", "b"))
-        # Without background processing, delivering an item queues the collections above it.
-        W.modify_workspace!(ws; source=EngineSource("source", 5, false), background_processing=false)
-        settled(ws)
-        x("a"), x("b")
-        settled(ws)
-        @test x("a") == 60
-        @test x("b") == 50
     finally
         W.close_workspace!(ws)
     end
@@ -255,6 +192,7 @@ function DataBrowserAPI.read(p::CallbackProject, ::EngineSource, s::EngineSource
     Threads.atomic_add!(CALLBACK_READS, 1)
     return p.count(s)
 end
+# FIXME(rebuild): the items that a source item holds, which `expand` gave.
 DataBrowserAPI.expand(::CallbackProject, ::EngineSourceItem, count) =
     [EngineItem(string(n), (x=[n],), Dict()) for n in 1:count]
 DataBrowserAPI.stage_roots(p::CallbackProject, stage::DataBrowserAPI.PipelineStage, type::Type) =
@@ -365,36 +303,6 @@ DataBrowserAPI.process(::SharedNameProject, i::EngineItem) = EngineItem(id(i), (
     end
 end
 
-struct LateCollection <: DataBrowserAPI.AbstractCollection end
-DataBrowserAPI.id(::LateCollection) = "late"
-DataBrowserAPI.reconstruct(::Type{LateCollection}, ::AbstractString, ::Dict) = LateCollection()
-struct LateCollectionProject <: AbstractProject end
-DataBrowserAPI.project_name(::LateCollectionProject) = "late collection"
-DataBrowserAPI.read(::LateCollectionProject, ::EngineSource, ::EngineSourceItem) = 2
-struct LateItem <: AbstractDataItem
-    key::String
-    data::Any
-end
-DataBrowserAPI.id(i::LateItem) = i.key
-DataBrowserAPI.data(i::LateItem) = i.data
-DataBrowserAPI.reconstruct(::Type{LateItem}, key::AbstractString, data, ::Dict) = LateItem(key, data)
-DataBrowserAPI.collection(::LateItem) = DataBrowserAPI.AbstractCollection[LateCollection()]
-DataBrowserAPI.expand(::LateCollectionProject, ::EngineSourceItem, count) = [LateItem(string(n), (x=[n],)) for n in 1:count]
-
-@testset "a collection stage defined after the workspace opens runs" begin
-    ws = W.open_workspace(LateCollectionProject(), EngineSource("source", 1, false); cache=false, background_processing=true)
-    try
-        settled(ws)
-        x() = only(data(only(W.materialize_items(ws, ["1"]))).x)
-        @test x() == 1
-        @eval DataBrowserAPI.process(::LateCollectionProject, i::LateItem, ::LateCollection) =
-            LateItem(i.key, (x=i.data.x .* 10,))
-        @test timedwait(() -> x() == 10, 10) === :ok
-    finally
-        W.close_workspace!(ws)
-    end
-end
-
 const CLOSED_READS = Threads.Atomic{Int}(0)
 struct ClosedProject <: AbstractProject end
 DataBrowserAPI.project_name(::ClosedProject) = "closed"
@@ -404,6 +312,7 @@ function DataBrowserAPI.read(::ClosedProject, ::EngineSource, ::EngineSourceItem
     Threads.atomic_add!(CLOSED_READS, 1)
     return closed_count()
 end
+# FIXME(rebuild): the items that a source item holds, which `expand` gave.
 DataBrowserAPI.expand(::ClosedProject, ::EngineSourceItem, count) =
     [EngineItem(string(n), (x=[n],), Dict()) for n in 1:count]
 DataBrowserAPI.storage(::ClosedProject, ::Type{EngineItem}) = DuckDBStore(joinpath(first(DEPOT_PATH), "values.duckdb"))
@@ -526,32 +435,6 @@ end
     end end
 end
 
-@testset "metadata and labels from collection process are kept after reopening" begin
-    mktempdir() do depot
-        pushfirst!(DEPOT_PATH, depot)
-        try
-            for opening in 1:2
-                ws = W.open_workspace(
-                    NestedProject(), EngineSource("source", 1, false); background_processing=true)
-                try
-                    settled(ws)
-                    @test W.metadata(ws, W.item(ws, "a"))[:step] == 2
-                    @test W.metadata(ws, W.item(ws, "b"))[:step] == 1
-                    @test W.label(ws, W.item(ws, "a")) == "inner a"
-                    @test only(data(only(W.materialize_items(ws, ["a"]))).x) == 20
-                    if opening == 2
-                        @test W.query_items(ws, "step = 2") == ["a"]
-                    end
-                finally
-                    W.close_workspace!(ws)
-                end
-            end
-        finally
-            popfirst!(DEPOT_PATH)
-        end
-    end
-end
-
 @testset "source items are listed before they are read" begin
     project = GatedProject(Base.Event())
     ws = W.open_workspace(project, GatedSource(); cache=false)
@@ -570,10 +453,10 @@ end
     end
 end
 
-@testset "tags apply below a collection and are kept in tags.txt" begin
+@testset "tags apply to items and are kept in tags.txt" begin
     mktempdir() do root
         names(found) = [tag.name for tag in found]
-        ws = W.open_workspace(NestedProject(), RootedSource(root); cache=false)
+        ws = W.open_workspace(TagProject(), RootedSource(root); cache=false)
         try
             settled(ws)
             a, b = W.item(ws, "a"), W.item(ws, "b")
@@ -582,7 +465,7 @@ end
             tag!(ws, Tag("leaky"))
             tag!(ws, Tag("bad"; priority=5))
             tag!(ws, a, "leaky")
-            tag!(ws, first(W.ancestors(ws, a)), Tag("bad"))
+            tag!(ws, [a, b], Tag("bad"))
             @test names(tags(ws, a)) == ["bad", "leaky"]
             @test names(tags(ws, b)) == ["bad"]
             @test items(ws, Tag("leaky")) == [a]
@@ -595,7 +478,7 @@ end
         finally
             W.close_workspace!(ws)
         end
-        ws = W.open_workspace(NestedProject(), RootedSource(root); cache=false)
+        ws = W.open_workspace(TagProject(), RootedSource(root); cache=false)
         try
             settled(ws)
             @test names(tags(ws)) == ["leaky", "bad"]

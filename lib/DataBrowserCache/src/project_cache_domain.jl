@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 39
+const PROJECT_CACHE_SCHEMA_VERSION = 40
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -37,15 +37,6 @@ end
 Base.showerror(io::IO, err::ProjectCacheSchemaError)::Nothing =
     print(io, "Invalid project cache $(err.path): $(err.message)")
 
-"""Error raised when generated collection values can no longer be reconstructed safely."""
-struct ProjectCacheDataError <: Exception
-    path::String
-    message::String
-end
-
-Base.showerror(io::IO, err::ProjectCacheDataError)::Nothing =
-    print(io, "Invalid project cache $(err.path): $(err.message)")
-
 """The project, source, and DuckDB file belonging to one cache."""
 struct ProjectCacheIdentity
     project_name::String
@@ -54,48 +45,30 @@ struct ProjectCacheIdentity
     cache_path::String
 end
 
-"""A collection as the cache saved it. `parent_key` is `nothing` below the root."""
-const SavedCollection = @NamedTuple{
-    key::Int64,
-    parent_key::Union{Nothing,Int64},
-    id::String,
-    label::String,
-    type::Type,
-    metadata::Dict{Symbol,Any},
-    source_metadata::Dict{Symbol,Any},
-    # The metadata of the value that the `process` of the collection returned.
-    process::Dict{Symbol,Any},
-}
-
 """
 An item as the cache saved it. `metadata` is what its source item gave it, `process` what its
-`process` produced, `member` what the member `process` methods of its collections produced, and
-`delivered` the metadata project code last
-received with the item, or empty when no stage of the item has run. `collection_key` is `nothing`
-for an item at the root.
+`process` produced, and `delivered` the metadata project code last received with the item, or empty
+when no stage of the item has run.
 """
 const SavedItem = @NamedTuple{
     id::String,
     source_key::Int64,
     label::String,
     type::Type,
-    collection_key::Union{Nothing,Int64},
     metadata::Dict{Symbol,Any},
     process::Dict{Symbol,Any},
-    member::Dict{Symbol,Any},
     delivered::Dict{Symbol,Any},
 }
 
 """
 Snapshot returned by `load_cache_index` for workspace restoration.
 
-Contains the saved source items, collections and items. A collection comes after its parent. The snapshot exposes no live cache stores or connections.
+Contains the saved source items and items. The snapshot exposes no live cache stores or connections.
 """
 struct ProjectCacheIndex
     identity::ProjectCacheIdentity
     # Public id of each source item by its cache key.
     sources::Dict{Int64,String}
-    collections::Vector{SavedCollection}
     items::Vector{SavedItem}
 end
 
@@ -118,23 +91,6 @@ SourceItemRow(row)::SourceItemRow = SourceItemRow(
 """Display label of one cached source item, resolved once when its items are published."""
 label(row::SourceItemRow)::String = row.label
 
-"""One persisted collection; no live user collection value is serialized."""
-struct CollectionRow
-    collection_key::Int64
-    parent_key::Union{Nothing,Int64}
-    identity::String
-    label::String
-    type_hex::String
-end
-
-CollectionRow(row)::CollectionRow = CollectionRow(
-    Int64(row.collection_key),
-    _null_to_nothing(row.parent_key),
-    String(row.identity),
-    String(row.label),
-    String(row.type_hex),
-)
-
 """
 The revision of the inputs and code of the result of one computation, by its id, and the item type
 under which its store keeps it; or, when it failed, its message.
@@ -155,7 +111,6 @@ struct ItemRow
     source_item_key::Int64
     label::String
     type_hex::String
-    collection_key::Union{Nothing,Int64}
 end
 
 ItemRow(row)::ItemRow = ItemRow(
@@ -164,7 +119,6 @@ ItemRow(row)::ItemRow = ItemRow(
     Int64(row.source_item_key),
     String(row.label),
     String(row.type_hex),
-    _null_to_nothing(row.collection_key),
 )
 
 # Identity
@@ -201,20 +155,12 @@ mutable struct CacheDB
     db::DuckDB.DB
     metrics::BuildMetrics
     source_items::RowStore{String,SourceItemRow}
-    collections::RowStore{Int64,CollectionRow}
-    # The metadata of each collection value, and the metadata its source provides for it.
-    collection_metadata::WideRowStore{Int64}
-    collection_source_metadata::WideRowStore{Int64}
     items::RowStore{String,ItemRow}
     source_item_metadata::WideRowStore{Int64}
     # The metadata project code last received with each item, which queries read.
     item_metadata::WideRowStore{Int64}
-    # The metadata that the `process` of each collection changed.
-    collection_process::WideRowStore{Int64}
-    # The metadata that item `process` and member `process` produced for each item, apart from the
-    # delivered metadata, where a collection can replace its values.
+    # The metadata that the `process` of each item produced, apart from the delivered metadata.
     item_process_metadata::WideRowStore{Int64}
-    member_process_metadata::WideRowStore{Int64}
     computation_revision_rows::RowStore{String,ComputationRevisionRow}
     # The same revisions, read at opening, so that a lookup does not read the table.
     computation_revisions::Dict{String,ComputationRevisionRow}
@@ -225,7 +171,6 @@ mutable struct CacheDB
     source_item_keys::Dict{String,Int64}
     source_item_ids::Dict{Int64,String}
     next_source_item_key::Int64
-    persisted_collection_keys::Set{Int64}
     key_lock::ReentrantLock
     # The signature of the item_metadata columns backing the query view; the view is
     # recreated only when it changes.
@@ -312,8 +257,6 @@ function open_cache_db(
             DBInterface.close!(connection)
         end
         source_items = started(RowStore{String,SourceItemRow}(db, "source_items", ("id",)))
-        collections = started(RowStore{Int64,CollectionRow}(
-            db, "collections", ("collection_key",)))
         items = started(RowStore{String,ItemRow}(db, "items", ("id",)))
         computation_revision_rows = started(RowStore{String,ComputationRevisionRow}(
             db, "computation_revisions", ("id",)))
@@ -324,15 +267,10 @@ function open_cache_db(
             db,
             metrics,
             source_items,
-            collections,
-            started(WideRowStore{Int64}(db, "collection_metadata", "collection_key")),
-            started(WideRowStore{Int64}(db, "collection_source_metadata", "collection_key")),
             items,
             started(WideRowStore{Int64}(db, "source_item_metadata", "item_key")),
             started(WideRowStore{Int64}(db, "item_metadata", "item_key")),
-            started(WideRowStore{Int64}(db, "collection_process_metadata", "collection_key")),
             started(WideRowStore{Int64}(db, "item_process_metadata", "item_key")),
-            started(WideRowStore{Int64}(db, "member_process_metadata", "item_key")),
             computation_revision_rows,
             Dict{String,ComputationRevisionRow}(row.id => row for row in values(read(computation_revision_rows))),
             item_keys,
@@ -340,7 +278,6 @@ function open_cache_db(
             source_item_keys,
             source_item_ids,
             next_source_item_key,
-            Set{Int64}(keys(read(collections))),
             ReentrantLock(),
             Symbol[],
         )
@@ -450,8 +387,6 @@ function ensure_schema!(connection)::Nothing
             value TEXT)
     """)
     DBInterface.execute(connection, create_table_sql(SourceItemRow, "source_items", (:id,)))
-    DBInterface.execute(connection,
-        create_table_sql(CollectionRow, "collections", (:collection_key,)))
     DBInterface.execute(connection, create_table_sql(ItemRow, "items", (:id,)))
     DBInterface.execute(connection,
         create_table_sql(ComputationRevisionRow, "computation_revisions", (:id,)))
@@ -463,27 +398,23 @@ function ensure_schema!(connection)::Nothing
             sql_type TEXT,
             PRIMARY KEY (table_name, column_name))
     """)
-    for table in ("source_item_metadata", "item_metadata", "item_process_metadata", "member_process_metadata")
+    for table in ("source_item_metadata", "item_metadata", "item_process_metadata")
         DBInterface.execute(connection, "CREATE TABLE IF NOT EXISTS $table(item_key BIGINT PRIMARY KEY)")
-    end
-    for table in ("collection_metadata", "collection_source_metadata", "collection_process_metadata")
-        DBInterface.execute(connection, "CREATE TABLE IF NOT EXISTS $table(collection_key BIGINT PRIMARY KEY)")
     end
     return nothing
 end
 
-# The domain write/read surface over the generic stores: pipeline stages, items and collections map
-# onto RowStore rows. The stores know none of this; they buffer typed rows.
+# The domain write/read surface over the generic stores: pipeline stages and items map onto
+# RowStore rows. The stores know none of this; they buffer typed rows.
 
 """
 One item that a source item produced, in the form the cache stores: its row, the metadata its
-source item gave it. `collection_key` is `nothing` for an item at the root.
+source item gave it.
 """
 struct ItemOutput
     id::String
     label::String
     type::Type
-    collection_key::Union{Nothing,Int64}
     metadata::Dict{Symbol,Any}
 end
 
@@ -508,7 +439,7 @@ function replace_source_output!(
         started = time_ns()
         key = item_key!(cache, output.id; mint=true)
         append!(cache.items, output.id, ItemRow(
-            output.id, key, source_key, output.label, _serialize_type(output.type), output.collection_key))
+            output.id, key, source_key, output.label, _serialize_type(output.type)))
         append!(dropped, edit!(cache.source_item_metadata, key, output.metadata))
         record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
     end
@@ -522,40 +453,9 @@ function store_item_label!(
     source_key::Int64,
     label::AbstractString,
     type::Type,
-    collection_key::Union{Nothing,Int64},
 )::Nothing
-    edit!(cache.items, String(id),
-        ItemRow(id, item_key!(cache, id), source_key, label, _serialize_type(type), collection_key))
+    edit!(cache.items, String(id), ItemRow(id, item_key!(cache, id), source_key, label, _serialize_type(type)))
     return nothing
-end
-
-"""
-Persist one collection: its place, its label, the metadata of its value and the metadata its source
-provides for it. `parent_key` is `nothing` below the root. Arbitrary user-defined
-`AbstractCollection` values never enter the cache. Returns a message for each metadata value that
-could not be saved.
-"""
-function store_collection!(
-    cache::CacheDB,
-    key::Int64,
-    parent_key::Union{Nothing,Int64},
-    identity::AbstractString,
-    label::AbstractString,
-    type::Type,
-    metadata::AbstractDict,
-    source_metadata::AbstractDict,
-)::Vector{String}
-    row = CollectionRow(key, parent_key, identity, label, _serialize_type(type))
-    lock(cache.key_lock) do
-        if key in cache.persisted_collection_keys
-            edit!(cache.collections, key, row)
-        else
-            append!(cache.collections, key, row)
-            push!(cache.persisted_collection_keys, key)
-        end
-    end
-    return unique([edit!(cache.collection_metadata, key, metadata);
-        edit!(cache.collection_source_metadata, key, source_metadata)])
 end
 
 """
@@ -614,23 +514,11 @@ function store_item_metadata!(
 end
 
 """
-Persist the metadata that `stage` of one item produced. It is kept apart from the delivered
-metadata, where a collection can replace its values. Returns a message for each value that could
-not be saved.
+Persist the metadata that the `process` of one item produced, apart from the delivered metadata.
+Returns a message for each value that could not be saved.
 """
-function store_item_stage_metadata!(
-    cache::CacheDB, id::AbstractString, stage::PipelineStage, produced::AbstractDict,
-)::Vector{String}
-    store = stage === ITEM_PROCESS ? cache.item_process_metadata : cache.member_process_metadata
-    return edit!(store, item_key!(cache, id), produced)
-end
-
-"""
-Persist the metadata of the value that the `process` of one collection returned. Returns a
-message for each value that could not be saved.
-"""
-store_collection_process_result!(cache::CacheDB, collection_key::Integer, metadata::AbstractDict)::Vector{String} =
-    edit!(cache.collection_process, Int64(collection_key), metadata)
+store_item_stage_metadata!(cache::CacheDB, id::AbstractString, produced::AbstractDict)::Vector{String} =
+    edit!(cache.item_process_metadata, item_key!(cache, id), produced)
 
 """Delete published items and what the cache saved for them, keeping the source identity."""
 function delete_source_output!(
@@ -644,43 +532,13 @@ function delete_source_output!(
         delete!(cache.source_item_metadata, key)
         delete!(cache.item_metadata, key)
         delete!(cache.item_process_metadata, key)
-        delete!(cache.member_process_metadata, key)
-    end
-    return nothing
-end
-
-"""Delete collection records that the live index pruned after item removal or replacement."""
-function delete_collection_records!(
-    cache::CacheDB,
-    collection_keys::Vector{Int64},
-)::Nothing
-    lock(cache.key_lock) do
-        for collection_key in unique(collection_keys)
-            delete!(cache.collections, collection_key)
-            delete!(cache.collection_metadata, collection_key)
-            delete!(cache.collection_source_metadata, collection_key)
-            delete!(cache.persisted_collection_keys, collection_key)
-        end
-    end
-    return nothing
-end
-
-"""Delete the cached `process` results of collections whose published metadata is invalid."""
-function delete_collection_metadata!(
-    cache::CacheDB,
-    collection_keys::Vector{Int64},
-)::Nothing
-    for collection_key in unique(collection_keys)
-        delete!(cache.collection_process, collection_key)
     end
     return nothing
 end
 
 """Every store of `cache`."""
-cache_stores(cache::CacheDB) = (cache.source_items, cache.collections, cache.collection_metadata,
-    cache.collection_source_metadata, cache.items, cache.source_item_metadata, cache.item_metadata,
-    cache.collection_process, cache.item_process_metadata, cache.member_process_metadata,
-    cache.computation_revision_rows)
+cache_stores(cache::CacheDB) = (cache.source_items, cache.items, cache.source_item_metadata,
+    cache.item_metadata, cache.item_process_metadata, cache.computation_revision_rows)
 
 """
 The number of keys and of rows that are queued or being written, over every store at the
@@ -778,7 +636,6 @@ function clear_cache_index!(cachedb::CacheDB)::Nothing
         empty!(cachedb.source_item_ids)
         cachedb.next_source_item_key = Int64(1)
         empty!(cachedb.computation_revisions)
-        empty!(cachedb.persisted_collection_keys)
     end
     return nothing
 end
@@ -828,73 +685,23 @@ function _validate_meta(meta::Dict{String,String}, identity::ProjectCacheIdentit
     return nothing
 end
 
-"""The saved collections, each after its parent."""
-function _load_collections(cache::CacheDB)::Vector{SavedCollection}
-    rows = read(cache.collections)
-    collection_metadata = read(cache.collection_metadata)
-    source_metadata = read(cache.collection_source_metadata)
-    processed = read(cache.collection_process)
-    saved = SavedCollection[]
-    loaded = Set{Int64}()
-    function load(key::Int64, depth::Int)::Nothing
-        key in loaded && return nothing
-        row = get(rows, key, nothing)
-        # A parent cycle is longer than the number of rows.
-        (row === nothing || depth > length(rows)) &&
-            error("Persisted collection hierarchy is broken at key $key")
-        row.parent_key === nothing || load(row.parent_key, depth + 1)
-        push!(loaded, key)
-        push!(saved, (;
-            key,
-            row.parent_key,
-            id=row.identity,
-            row.label,
-            type=_deserialize_type(row.type_hex),
-            metadata=get(collection_metadata, key, Dict{Symbol,Any}()),
-            source_metadata=get(source_metadata, key, Dict{Symbol,Any}()),
-            process=get(processed, key, Dict{Symbol,Any}()),
-        ))
-        return nothing
-    end
-    foreach(key -> load(key, 0), keys(rows))
-    return saved
-end
-
 """
 Return a restore snapshot from the open cache, including buffered updates. A newly initialized or
 cleared cache returns an empty index. Disk and in-memory databases use the same snapshot format.
 """
 function load_cache_index(cache::CacheDB)::ProjectCacheIndex
-    identity = cache.identity
-    collections = try
-        _load_collections(cache)
-    catch error
-        throw(ProjectCacheDataError(
-            identity.cache_path,
-            "cached collection records are incompatible: $(sprint(showerror, error))",
-        ))
-    end
-    collection_keys = Set(collection.key for collection in collections)
     item_layer = read(cache.source_item_metadata)
     delivered = read(cache.item_metadata)
     processed = read(cache.item_process_metadata)
-    member = read(cache.member_process_metadata)
     items = SavedItem[]
     for row in values(read(cache.items))
-        row.collection_key === nothing || row.collection_key in collection_keys ||
-            throw(ProjectCacheDataError(
-                identity.cache_path,
-                "item '$(row.id)' refers to missing collection key $(row.collection_key)",
-            ))
         push!(items, (;
             row.id,
             source_key=row.source_item_key,
             row.label,
             type=_deserialize_type(row.type_hex),
-            row.collection_key,
             metadata=get(item_layer, row.item_key, Dict{Symbol,Any}()),
             process=get(processed, row.item_key, Dict{Symbol,Any}()),
-            member=get(member, row.item_key, Dict{Symbol,Any}()),
             delivered=get(delivered, row.item_key, Dict{Symbol,Any}()),
         ))
     end
@@ -902,7 +709,7 @@ function load_cache_index(cache::CacheDB)::ProjectCacheIndex
     sort!(items; by=item -> (item.source_key, item.id))
     sources = Dict{Int64,String}(
         row.source_item_key => row.id for row in values(read(cache.source_items)))
-    return ProjectCacheIndex(identity, sources, collections, items)
+    return ProjectCacheIndex(cache.identity, sources, items)
 end
 
 # Query surface

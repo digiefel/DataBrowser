@@ -2,7 +2,7 @@
 The dialect's implementation of the typed stage contract.
 
 Every registration callback runs through these adapter methods over the same stage runners and work
-keys as a typed project's methods. Nothing here is privileged: the engine calls `read`, `expand` and
+keys as a typed project's methods. Nothing here is privileged: the engine calls `read` and
 `process`, and this file answers them. A registered `analyze` callback runs inside `process`.
 """
 
@@ -47,17 +47,6 @@ _detects(recipe::ItemRecipe, source_item::AbstractDataSourceItem)::Bool =
     recipe.detect(source_item)::Bool
 
 
-"""The collections that the result of a `collection` callback names, from the top level down."""
-function _registration_collections(value)::Vector{AbstractCollection}
-    value isa NamedTuple || throw(ArgumentError(
-        "a register_item! collection callback must return a named tuple that names each level, " *
-        "such as (wafer = \"W1\", device = \"A\"); got $(repr(value))",
-    ))
-    return AbstractCollection[
-        NamedCollection{level}(string(name)) for (level, name) in pairs(value)]
-end
-
-
 """
 Adapt one registration callback result into a `RegisteredDataItem`.
 
@@ -69,12 +58,12 @@ builds one from the source item, the registration, and either the `id` callback'
 entry's position. A `register_item!` user never supplies or sees it.
 """
 function _registered_item(
-    recipe::ItemRecipe{<:Any,<:Any,<:Any,<:Any,<:Any,Label,Collection,Id},
+    recipe::ItemRecipe{<:Any,<:Any,<:Any,<:Any,Label,Id},
     value,
     inherited_metadata::Dict{Symbol,Any},
     source_item_id::AbstractString,
     position::Integer,
-)::RegisteredDataItem where {Label,Collection,Id}
+)::RegisteredDataItem where {Label,Id}
     data, entry_metadata = _data_and_metadata(value)
     local_metadata = merge(copy(inherited_metadata), entry_metadata)
     supplied_key = recipe.id === nothing ? nothing : recipe.id(data, local_metadata)
@@ -116,21 +105,9 @@ function label(project::Project, item::RegisteredDataItem{K})::String where {K}
     return String(recipe.label(item.data, item.metadata))
 end
 
-"""
-The collection of one registered item through its `collection` callback, or none when there is no
-callback.
-"""
-function collection(project::Project, item::RegisteredDataItem{K})::Vector{AbstractCollection} where {K}
-    recipe = _recipe(project, K)
-    recipe === nothing && error("Missing registration $K")
-    recipe.collection === nothing && return AbstractCollection[]
-    return _registration_collections(recipe.collection(item.data, item.metadata))
-end
-
-"""
-Run the matching registration's `read` callback and return its value unchanged. Expansion has
-its source item and resolves its registration there; no recipe tag is attached to user data.
-"""
+# FIXME(rebuild): make the registration's items from what its `read` callback returns, as the
+# deleted `expand` did with `_registered_item`; and a source item that no registration detects.
+"""Run the matching registration's `read` callback and return its value unchanged."""
 function read(project::Project, ::AbstractDataSource, item::AbstractDataSourceItem)
     recipe = @timed_dbg _detect_recipe(project, item)
     recipe === nothing && return nothing
@@ -139,80 +116,20 @@ end
 
 _invoke_read(recipe::ItemRecipe, item::AbstractDataSourceItem) = recipe.read(item)
 
-function expand(project::Project, source_item::AbstractDataSourceItem, loaded)::Vector{AbstractDataItem}
-    recipe = @timed_dbg _detect_recipe(project, source_item)
-    recipe === nothing && return AbstractDataItem[]
-    return @timed_dbg "expand" _expand_recipe(recipe, source_item, loaded)
-end
-
-function _expand_recipe(recipe::ItemRecipe, source_item::AbstractDataSourceItem, loaded)
-    data, read_metadata = _data_and_metadata(loaded)
-    inherited_metadata = merge(metadata_dict(metadata(source_item)), read_metadata)
-    values = recipe.expand === nothing ? Any[data] : recipe.expand(data, inherited_metadata)
-    values isa AbstractVector || error(
-        "expand callback for registration $(recipe.kind) must return a vector; got $(typeof(values))")
-    return AbstractDataItem[
-        _registered_item(recipe, value, inherited_metadata, id(source_item), position)
-        for (position, value) in pairs(values)]
-end
-
-
-"""
-Run the callbacks registered for the level of a collection: the new data of each member goes into
-the collection's data, by member id, and the analysis into its metadata. A collection that a
-`collection` callback did not name falls through to its typed `process`.
-"""
-function process(
-    project::Project,
-    collection_value::AbstractCollection,
-    items::AbstractVector,
-)::AbstractCollection
-    collection_value isa NamedCollection || return process(collection_value, items)
-    level = label(typeof(collection_value))
-    by_member = Dict{String,Any}()
-    analysis = Dict{Symbol,Any}()
-    for recipe in project.collections
-        recipe.level === level || continue
-        group = recipe.members === nothing ? items :
-            filter(item -> item isa RegisteredDataItem && label(typeof(item)) === recipe.members, items)
-        isempty(group) && continue
-        outputs = data.(group)
-        if recipe.process !== nothing
-            outputs = recipe.process(outputs, metadata.(group))
-            outputs isa AbstractVector && length(outputs) == length(group) || error(
-                "collection process for level $level must return a vector with one value per member; " *
-                "got $(typeof(outputs)) for $(length(group)) members")
-            for (item, output) in zip(group, outputs)
-                by_member[id(item)] = output
-            end
-        end
-        recipe.analyze === nothing ||
-            merge!(analysis, metadata_dict(recipe.analyze(outputs, metadata.(group))))
-    end
-    return typeof(collection_value)(collection_value.name, by_member, merge(metadata(collection_value), analysis))
-end
-
-"""A registered item gets its new data and the metadata of each collection above it."""
-process(::Project, member::RegisteredDataItem, collection_value::NamedCollection)::RegisteredDataItem =
-    _with_metadata(_with_data(member, get(collection_value.data, id(member), member.data)), metadata(collection_value))
-
 """
 The registered callbacks that run `stage`. Registering a name again replaces them, so an open
 workspace sees the change. Every registration's `detect` decides which `read` runs, so reading
 depends on all of them.
 """
 function stage_roots(project::Project, stage::DataBrowserAPI.PipelineStage, type::Type)::Vector
-    # The methods that apply, as for any project: typed items and collections may have their own.
+    # The methods that apply, as for any project: typed items may have their own.
     roots = invoke(stage_roots, Tuple{AbstractProject,DataBrowserAPI.PipelineStage,Type}, project, stage, type)
     if stage == DataBrowserAPI.SOURCE_READ
-        append!(roots, getfield(recipe, name) for recipe in project.recipes
-            for name in (:detect, :read, :expand, :label, :collection, :id))
-    elseif stage == DataBrowserAPI.ITEM_PROCESS
+        append!(roots, getfield(recipe, name) for recipe in project.recipes for name in (:detect, :read, :label, :id))
+    else
         recipe = type <: RegisteredDataItem ? _recipe(project, label(type)) : nothing
         # Labels are made again after processing.
         recipe === nothing || append!(roots, (recipe.process, recipe.analyze, recipe.label))
-    else
-        append!(roots, getfield(recipe, name) for recipe in project.collections for name in (:process, :analyze))
     end
     return roots
 end
@@ -222,37 +139,12 @@ function Base.which(project::Project, stage::DataBrowserAPI.PipelineStage, value
     A = DataBrowserAPI
     if value isa AbstractDataSourceItem
         recipe = _detect_recipe(project, value)
-        recipe === nothing && return nothing
-        return stage == A.SOURCE_READ || recipe.expand !== nothing ? recipe.registered : nothing
+        return recipe === nothing ? nothing : recipe.registered
     elseif value <: RegisteredDataItem && stage == A.ITEM_PROCESS
         recipe = _recipe(project, label(value))
         recipe === nothing && return nothing
         return recipe.process === nothing && recipe.analyze === nothing ? nothing : recipe.registered
-    elseif value isa Type && value <: NamedCollection && isconcretetype(value)
-        index = findfirst(recipe -> recipe.level === label(value), project.collections)
-        index === nothing || return project.collections[index].registered
     end
-    # Typed items and collections may have their own methods.
+    # Typed items may have their own methods.
     return invoke(which, Tuple{AbstractProject,A.PipelineStage,Any}, project, stage, value)
-end
-
-"""
-A collection stage is defined when its level has registered callbacks, or the collection type has a
-method.
-"""
-has_stage(project::Project, collection_value::AbstractCollection, stage::DataBrowserAPI.PipelineStage)::Bool =
-    collection_value isa NamedCollection &&
-        any(recipe -> recipe.level === label(typeof(collection_value)), project.collections) ||
-    has_stage(collection_value, stage)
-
-"""Group item positions by kind, preserving first-seen kind order."""
-function _group_positions_by_kind(items::AbstractVector)::Vector{Vector{Int}}
-    groups = Dict{Tuple{Bool,Symbol},Vector{Int}}()
-    order = Tuple{Bool,Symbol}[]
-    for (position, item) in pairs(items)
-        key = (item isa RegisteredDataItem, label(typeof(item)))
-        haskey(groups, key) || push!(order, key)
-        push!(get!(() -> Int[], groups, key), position)
-    end
-    return Vector{Int}[groups[key] for key in order]
 end

@@ -1,8 +1,7 @@
-# Tags on the items and collections of a workspace.
+# Tags on the items of a workspace.
 #
 # The tags live in `tags.txt` in the source root, and every change is written to that file at once.
-# A source without a root folder keeps its tags in memory. The file names an item by its public id
-# and a collection by its labels from the top level down, joined with `/`.
+# A source without a root folder keeps its tags in memory. The file names an item by its public id.
 
 """The folder that holds `tags.txt`, or `""` for a source without a root folder."""
 tag_root(source::AbstractDataSource)::String =
@@ -27,57 +26,31 @@ end
 
 """
     tags(workspace) -> Vector{Tag}
-    tags(workspace, key; inherited=true) -> Vector{Tag}
+    tags(workspace, item) -> Vector{Tag}
 
-The tags defined in a workspace, or the tags of one item or collection. Give an item as one of
-the values that [`items`](@ref) returns, as its public id, or as a data item.
-
-The tags of an item or collection are its own and those of every collection above it, with the
-highest priority first. With `inherited=false` they are only its own.
+The tags defined in a workspace, or the tags of one item, with the highest priority first. Give an
+item as one of the values that [`items`](@ref) returns, as its public id, or as a data item.
 """
 tags(workspace::Workspace)::Vector{Tag} = copy(workspace.tags.state.catalog)
 
-tags(workspace::Workspace, item::Union{AbstractString,AbstractDataItem}; inherited::Bool=true)::Vector{Tag} =
-    tags(workspace, key(workspace, item); inherited)
+# FIXME(rebuild): the item of an id, which `key` found in the tree.
+tags(workspace::Workspace, item::Union{AbstractString,AbstractDataItem})::Vector{Tag} =
+    tags(workspace, key(workspace, item))
 
-function tags(
-    workspace::Workspace, key::Union{ItemKey,CollectionKey}; inherited::Bool=true,
-)::Vector{Tag}
+# FIXME(rebuild): the id of an item, now that `ItemKey` is gone.
+function tags(workspace::Workspace, key::ItemKey)::Vector{Tag}
     assignments = workspace.tags.state.assignments
     isempty(assignments) && return Tag[]
-    # Views ask at every frame for the tags of each row they draw. Finding the inherited ones
-    # builds the path of every collection above; they are kept until the tags or the rows change.
-    known = workspace.tags
-    stamp = (known.revision, generation(workspace))
-    if inherited
-        found = @lock known.lock begin
-            known.resolved_at == stamp || (empty!(known.resolved); known.resolved_at = stamp)
-            get(known.resolved, key, nothing)
-        end
-        found === nothing || return copy(found)
-    end
-    names = Set{String}()
-    if inherited
-        path = ""
-        for collection in ancestors(workspace, key)
-            path = isempty(path) ? label(workspace, collection) : string(path, '/', label(workspace, collection))
-            union!(names, get(assignments, path, ()))
-        end
-    end
-    union!(names, get(assignments, tag_key(workspace, key), ()))
-    found = isempty(names) ? Tag[] :
+    names = get(assignments, tag_key(workspace, key), ())
+    return isempty(names) ? Tag[] :
         sort!(filter(tag -> tag.name in names, workspace.tags.state.catalog); by=tag -> -tag.priority)
-    # Computed outside the lock: the catalog takes its own lock, which a view may already hold.
-    inherited && @lock known.lock (known.resolved_at == stamp && (known.resolved[key] = found))
-    return copy(found)
 end
 
 """
     items(workspace, tag::Tag) -> Vector{ItemKey}
     items(workspace, !tag) -> Vector{ItemKey}
 
-The items of a workspace that have a tag, or with `!`, the items that do not have it. An item has
-the tags of the collections above it.
+The items of a workspace that have a tag, or with `!`, the items that do not have it.
 
     items(workspace, !Tag("bad"))
 """
@@ -92,14 +65,12 @@ function items(workspace::Workspace, condition::Untagged)::Vector{ItemKey}
 end
 
 """
-The name of an item or a collection in `tags.txt`. An item is given as its key, its public id, or
-a data item.
+The name of an item in `tags.txt`. An item is given as its key, its public id, or a data item.
 """
+# FIXME(rebuild): the id of an item, now that `ItemKey` and `key` are gone.
 tag_key(workspace::Workspace, item::ItemKey)::String = id(workspace, item)
 tag_key(workspace::Workspace, item::Union{AbstractString,AbstractDataItem})::String =
     id(workspace, key(workspace, item))
-tag_key(workspace::Workspace, collection::CollectionKey)::String =
-    join((label(workspace, key) for key in push!(ancestors(workspace, collection), collection)), '/')
 
 """The name of a defined tag, given the tag or its name."""
 function tag_name(workspace::Workspace, tag::Union{Tag,AbstractString})::String
@@ -128,14 +99,14 @@ end
     tag!(workspace, tag::Tag)
     tag!(workspace, keys, tag)
 
-Define a tag in a workspace, or put a defined tag on items and collections.
+Define a tag in a workspace, or put a defined tag on items.
 
 `tag!(workspace, Tag("leaky"; color="ffaa00"))` defines the tag, or replaces the colour and
 priority of the tag with that name.
 
-`tag!(workspace, keys, tag)` puts the tag on one item or collection, or on each one of a list. Give
-an item as one of the values that [`items`](@ref) returns, as its public id, or as a data item.
-Give the tag or its name. A tag on a collection also applies to everything below it.
+`tag!(workspace, keys, tag)` puts the tag on one item, or on each one of a list. Give an item as one
+of the values that [`items`](@ref) returns, as its public id, or as a data item. Give the tag or its
+name.
 """
 function tag!(workspace::Workspace, tag::Tag)::Nothing
     change_tags!(workspace) do state
@@ -154,7 +125,7 @@ function tag!(workspace::Workspace, keys::AbstractVector, tag::Union{Tag,Abstrac
 end
 
 tag!(
-    workspace::Workspace, key::Union{ItemKey,CollectionKey,AbstractString,AbstractDataItem},
+    workspace::Workspace, key::Union{ItemKey,AbstractString,AbstractDataItem},
     tag::Union{Tag,AbstractString},
 )::Nothing = tag!(workspace, [key], tag)
 
@@ -162,10 +133,9 @@ tag!(
     untag!(workspace, keys, tag)
     untag!(workspace, tag)
 
-Take a tag off items and collections, or remove a tag from a workspace.
+Take a tag off items, or remove a tag from a workspace.
 
-`untag!(workspace, keys, tag)` takes the tag off one key or off each key of a list. A tag that an
-item has from a collection above it stays; take it off that collection.
+`untag!(workspace, keys, tag)` takes the tag off one key or off each key of a list.
 
 `untag!(workspace, tag)` removes the definition of the tag and takes it off everything.
 """
@@ -183,7 +153,7 @@ function untag!(workspace::Workspace, keys::AbstractVector, tag::Union{Tag,Abstr
 end
 
 untag!(
-    workspace::Workspace, key::Union{ItemKey,CollectionKey,AbstractString,AbstractDataItem},
+    workspace::Workspace, key::Union{ItemKey,AbstractString,AbstractDataItem},
     tag::Union{Tag,AbstractString},
 )::Nothing = untag!(workspace, [key], tag)
 

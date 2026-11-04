@@ -175,7 +175,7 @@ function _render_workspace_tab!(workspace::Workspace.Workspace)::Nothing
     ig.Spacing()
 
     memory = Workspace.workspace_memory_snapshot(workspace)
-    ig.Text("Index: $(memory.index_items) items, $(memory.index_collections) collections")
+    ig.Text("Index: $(memory.index_items) items")
     return nothing
 end
 

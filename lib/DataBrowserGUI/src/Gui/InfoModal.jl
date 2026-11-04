@@ -5,6 +5,7 @@ using DataBrowserAPI: kind_label, label
 import DataBrowserCore.Workspace
 
 """Draw the information panel: the metadata of the selected collection and of the selected item."""
+# FIXME(rebuild): the selected group, which was a collection, and the item, now that `ItemKey` is gone.
 function render_info_window(state::BrowserState)::Nothing
     workspace = state.workspace
     selected_collections, selected_items, selected_path = _project_visible_selection(state)
@@ -39,7 +40,7 @@ function render_info_window(state::BrowserState)::Nothing
         if length(selected_items) == 1
             item = only(selected_items)
             # The metadata that the project's functions and the visualizers receive: that of the
-            # collections above, of the item, and the computed metadata.
+            # item, and the computed metadata.
             metadata = Workspace.metadata(workspace, item)
             ig.Text("Title: $(label(workspace, item))")
             ig.Separator()

@@ -15,7 +15,7 @@ include("fixtures/code_project.jl")
         ready(window) = timedwait(() -> (refresh!(state, window); !preparing(code) && !preparing(window) && window.has_value && isempty(window.waiting) && isempty(window.error) && isempty(window.failed)), 60) === :ok
         @test ready(code)
         view = code.visualizer
-        @test [row.call.title for row in view.rows] == ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)"]
+        @test [row.call.title for row in view.rows] == ["read(::CodeFile)", "process(::CodeSignal)"]
         before = project.processes[]
         indexed_before = Workspace.query_items(workspace)
         API.select!(view; row=1)
@@ -27,14 +27,14 @@ include("fixtures/code_project.jl")
         @test API.last_execution(workspace, only(chosen)).succeeded
         @test only(linked.visualizer.values).signal == [1, 2, 3]
         @test project.processes[] == before
-        API.select!(view; row=3)
+        API.select!(view; row=2)
         @test output(code) !== chosen
         @test ready(linked)
         @test only(linked.visualizer.values).signal == [10, 20, 30]
         @test project.processes[] == before
         input!(state, code, FixedItems(["signal", "other"]))
         @test ready(linked)
-        @test view.selected == 3
+        @test view.selected == 2
         @test sort([first(value.signal) for value in linked.visualizer.values]) == [10, 40]
         API.select!(view; row=1)
         @test length(output(code)) == 1 # Siblings share one source read.
@@ -48,7 +48,7 @@ include("fixtures/code_project.jl")
         history = open_window!(state, CodeView(); input=WindowOutput(table.id))
         @test ready(history)
         @test [row.call.title for row in history.visualizer.rows] ==
-            ["read(::CodeFile)", "expand(::CodeFile)", "process(::CodeSignal)", "view"]
+            ["read(::CodeFile)", "process(::CodeSignal)", "view"]
         @test project.processes[] == before
         @test Workspace.query_items(workspace) == indexed_before
         close_window!(state, history)

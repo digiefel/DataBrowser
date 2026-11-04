@@ -1,5 +1,5 @@
 """
-Notes: text that the user writes about items and collections. [`read_section`](@ref) and
+Notes: text that the user writes about items. [`read_section`](@ref) and
 [`write_section!`](@ref) keep them in the file `notes.txt` of a folder.
 
 Each note is a section: a key in brackets on its own line, then the text between two lines of
@@ -22,7 +22,7 @@ its end.
 """
 module Notes
 
-# TODO: nothing reads notes yet. Roadmap 0.4.0 connects them to items and collections.
+# TODO: nothing reads notes yet. Roadmap 0.4.0 connects them to items.
 
 export read_section, merged_view, write_section!, notes_path,
        NOTES_FILENAME, NotesParseError

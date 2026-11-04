@@ -1,5 +1,5 @@
 """
-The registration dialect: `define_project`, `register_item!`, `register_collection!`.
+The registration dialect: `define_project`, `register_item!`.
 
 This is a convenience layer written over ordinary `(data, metadata)` values, and nothing more. It
 holds no privileged position in the engine: its recipes become methods of the same typed stage
@@ -16,17 +16,13 @@ using CSV: CSV
 using DataFrames: DataFrame
 using DataBrowserAPI
 using DataBrowserAPI:
-    AbstractCollection,
     AbstractDataItem,
     AbstractDataSource,
     AbstractDataSourceItem,
     AbstractProject,
     @timed_dbg
 import DataBrowserAPI:
-    expand,
-    has_stage,
     stage_roots,
-    collection,
     id,
     data,
     label,
@@ -47,7 +43,6 @@ include("stages.jl")
 include("premade.jl")
 
 export define_project,
-    register_collection!,
     register_csv!,
     register_item!
 

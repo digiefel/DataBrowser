@@ -9,15 +9,12 @@ struct ToyCounters
     expand::Threads.Atomic{Int}
     processes::Threads.Atomic{Int}
     analyses::Threads.Atomic{Int}
-    collection_processes::Threads.Atomic{Int}
-    collection_analyses::Threads.Atomic{Int}
 end
 
 ToyCounters() = ToyCounters(
     Dict(name => Threads.Atomic{Int}(0) for name in
         ("a.dbitem", "b.dbitem", "extra.dbitem")),
     Threads.Atomic{Int}(0), Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
-    Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
 )
 
 function toy_project(name::AbstractString, counters::ToyCounters)
@@ -28,20 +25,20 @@ function toy_project(name::AbstractString, counters::ToyCounters)
             Threads.atomic_add!(counters.reads[file.filename], 1)
             return (data=TOML.parsefile(file.filepath), metadata=Dict(:instrument => "toy"))
         end,
+        # FIXME(rebuild): a source item that holds several items, one per channel, as `expand` gave.
         expand=function (source, _metadata)
             Threads.atomic_add!(counters.expand, 1)
             values = Float64.(source["values"])
             return [(
                 # Keep the native item type stable across stages so this fixture exercises
-                # restoration by the persistent table cache, including collection results.
-                data=(x=Float64.(eachindex(values)), y=values .+ (index - 1), members=zeros(Int, length(values))),
+                # restoration by the persistent table cache.
+                data=(x=Float64.(eachindex(values)), y=values .+ (index - 1)),
                 metadata=Dict{Symbol,Any}(
                     :device => source["device"], :channel => channel),
             ) for (index, channel) in pairs(source["channels"])]
         end,
         id=(_data, metadata) -> metadata[:channel],
         label=(_data, metadata) -> "$(metadata[:filename])/$(metadata[:channel])",
-        collection=(_data, metadata) -> (set = "runs", device = metadata[:device]),
         process=function (data, metadata)
             Threads.atomic_add!(counters.processes, 1)
             return (; data..., y=data.y .* 2)
@@ -49,16 +46,6 @@ function toy_project(name::AbstractString, counters::ToyCounters)
         analyze=function (data, _metadata)
             Threads.atomic_add!(counters.analyses, 1)
             return Dict{Symbol,Any}(:peak => maximum(data.y))
-        end,
-    )
-    register_collection!(project, :set;
-        process=function (items, _metadata)
-            Threads.atomic_add!(counters.collection_processes, 1)
-            return [(; item..., members=fill(length(items), length(item.x))) for item in items]
-        end,
-        analyze=function (items, _metadata)
-            Threads.atomic_add!(counters.collection_analyses, 1)
-            return Dict{Symbol,Any}(:members => length(items))
         end,
     )
     return project

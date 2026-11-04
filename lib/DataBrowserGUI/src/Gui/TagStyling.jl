@@ -14,9 +14,10 @@ function _render_tag_state_error!(state::BrowserState)::Nothing
 end
 
 """Draw text in the color of the first tag of `key`, the one with the highest priority. Return whether the caller must pop the color."""
+# FIXME(rebuild): the item to draw, now that `ItemKey` is gone.
 function _push_tag_text_style!(
     workspace::Workspace.Workspace,
-    key::Union{ItemKey,CollectionKey},
+    key::ItemKey,
 )::Bool
     found = tags(workspace, key)
     isempty(found) && return false
@@ -75,11 +76,11 @@ end
 
 """
 Draw the tags as entries of an open context menu, each in its color, with a check mark when every
-key has the tag. A click puts the tag on every key, or takes it off when every key has it. A tag
-that comes from a collection above cannot be taken off here.
+key has the tag. A click puts the tag on every key, or takes it off when every key has it.
 """
+# FIXME(rebuild): the items to tag, now that `ItemKey` is gone.
 function _render_tag_menu!(
-    state::BrowserState, keys::Vector{<:Union{ItemKey,CollectionKey}},
+    state::BrowserState, keys::Vector{ItemKey},
 )::Nothing
     if !_tags_ready(state)
         ig.TextDisabled("Fix tags.txt and rescan to edit")
@@ -88,18 +89,11 @@ function _render_tag_menu!(
     workspace = state.workspace
     ig.Separator()
     for tag in tags(workspace)
-        own = all(key -> tag in tags(workspace, key; inherited=false), keys)
-        from_above = !own && all(key -> tag in tags(workspace, key), keys) &&
-            !any(key -> tag in tags(workspace, key; inherited=false), keys)
+        own = all(key -> tag in tags(workspace, key), keys)
         red, green, blue = Float32.(tag.color) ./ 255f0
         ig.PushStyleColor(ig.ImGuiCol_Text, (red, green, blue, 1.0f0))
-        # A tag from a collection above shows its check mark and takes no click.
-        clicked = ig.MenuItem(tag.name, C_NULL, own || from_above, !from_above)
+        clicked = ig.MenuItem(tag.name, C_NULL, own)
         ig.PopStyleColor()
-        if from_above && ig.BeginItemTooltip()
-            ig.TextUnformatted("From a collection above. Take it off that collection.")
-            ig.EndTooltip()
-        end
         clicked && (own ? untag!(workspace, keys, tag) : tag!(workspace, keys, tag))
     end
     # TODO: choose the color and the priority of a new tag here.

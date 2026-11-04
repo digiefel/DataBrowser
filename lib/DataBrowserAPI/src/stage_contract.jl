@@ -4,7 +4,7 @@ The typed pipeline stage contract.
 Source discovery belongs to the source (`items`). Everything after it is these stages:
 
 ```text
-read → (expand) → process → collection process → member process
+read → process
 ```
 
 Each stage has a project-aware form, which the engine calls, and a context-free form, which
@@ -12,49 +12,31 @@ projects usually implement. The project-aware defaults forward to the context-fr
 project that owns its own source and item types never mentions the project, while a project reusing
 a shared source (`DirectorySource`) dispatches on its own project type instead.
 
-`read` obtains the content of one source item. When that content is one data item, `read` returns
-the item directly. When one source item holds zero or several data items, `read` returns the loaded
-content and an `expand` method turns it into items.
-
-The workspace runs `read` and `expand` in one job and records two results for it: whether reading
-succeeded, and whether the items were created. Read results are cached in memory by default and
-may be evicted. When `expand` has to run again, it reuses the cached read result; `read` runs again
-only when that result is missing. Source changes invalidate both results. A failure belongs to the
-result it prevented and remains cached until the source item is invalidated.
-
-`expand` still receives the source item because identity is not payload: the loaded value stays
-purely the expensive data, while ids, labels, and collection placement derive from the source item —
-which the engine can supply without touching the origin.
+`read` obtains the content of one source item as a data item.
 """
 
 """
     PipelineStage
 
 The stage identified by a scheduled job, cached payload, or cached completion record.
-Values follow pipeline order. `SOURCE_READ` records the result of `read`; `SOURCE_EXPAND` records
-the result of `expand` together with the creation of the item records: identity, labels and
-collection placement. `ITEM_PROCESS` is the `process` of an item, `COLLECTION_PROCESS` the `process`
-of a collection with its members, and `MEMBER_PROCESS` the member `process` methods that the
-collections holding an item apply to it.
+Values follow pipeline order. `SOURCE_READ` records the result of `read`, and `ITEM_PROCESS` is the
+`process` of an item.
 """
 @enum PipelineStage::Int8 begin
     SOURCE_READ = 0
-    SOURCE_EXPAND = 1
-    ITEM_PROCESS = 2
-    COLLECTION_PROCESS = 3
-    MEMBER_PROCESS = 4
+    ITEM_PROCESS = 1
 end
 
 # ---------------------------------------------------------------------------
 # read
 # ---------------------------------------------------------------------------
 
+# FIXME(rebuild): a source item that holds zero or several items.
 """
-    read(project, source, item) -> AbstractDataItem or loaded content
-    read(source, item) -> AbstractDataItem or loaded content
+    read(project, source, item) -> AbstractDataItem
+    read(source, item) -> AbstractDataItem
 
-Perform the one expensive source operation for a source item. Return a data item when the source
-item holds exactly one; otherwise return the loaded content and define `expand` for it.
+Perform the one expensive source operation for a source item, and return its data item.
 
 This is the only stage that sees the source. Implement the context-free form when the project owns
 its source item type, or the project-aware form when it reuses a shared source.
@@ -67,27 +49,6 @@ read(source::AbstractDataSource, item::AbstractDataSourceItem) = error(
     "`DataBrowser.read(::$(typeof(source)), ::$(typeof(item)))`, or the project-aware " *
     "`DataBrowser.read(::YourProject, source, item)` when reusing a shared source.",
 )
-
-# ---------------------------------------------------------------------------
-# expand
-# ---------------------------------------------------------------------------
-
-"""
-    expand(project, item, loaded) -> Vector{<:AbstractDataItem}
-    expand(item, loaded) -> Vector{<:AbstractDataItem}
-
-Turn the value returned by `read` into zero, one, or many data items, without rereading the source.
-
-Define a method when `read` returns content that is not itself a single data item: a table with one
-item per cycle, or a file that produces no items. The default keeps the value returned by `read` as
-the only item, so it must be an `AbstractDataItem`.
-
-The workspace may call `expand` again with the same cached `loaded` value. Preserve that value for
-reuse; copy data that needs modification.
-"""
-expand(project::AbstractProject, item::AbstractDataSourceItem, loaded) = expand(item, loaded)
-
-expand(::AbstractDataSourceItem, loaded) = [loaded]
 
 # ---------------------------------------------------------------------------
 # process
@@ -103,67 +64,6 @@ it to keep it.
 """
 process(project::AbstractProject, item::AbstractDataItem) = process(item)
 
-"""
-    process(project, collection, members) -> AbstractCollection
-    process(collection, members) -> AbstractCollection
-
-Process one collection with its members: every item below it, at any depth, each as its own
-`process` returned it. Return a later version of the collection, for example with metadata
-computed from the members. The default returns `collection` unchanged.
-
-The members are not changed here: a member `process` method changes them, and receives the
-collection this method returns.
-"""
-process(project::AbstractProject, collection::AbstractCollection, members::AbstractVector) =
-    process(collection, members)
-
-process(collection::AbstractCollection, ::AbstractVector) = collection
-
-"""
-    process(project, member, collection) -> AbstractDataItem
-    process(member, collection) -> AbstractDataItem
-
-A member `process` method: process one item with a collection that holds it, directly or at any
-depth. `collection` is the value that the collection's own `process` returned. Return a later
-version of `member`, with the same id. The default returns `member` unchanged.
-
-Each collection above an item applies its member `process` method in turn, from the collection
-that holds the item directly up to the outermost one; each receives the result of the one below.
-The last result is the item's value: views, queries and the item list show it.
-"""
-process(project::AbstractProject, member::AbstractDataItem, collection::AbstractCollection) =
-    process(member, collection)
-
-process(member::AbstractDataItem, ::AbstractCollection) = member
-
-"""
-    has_stage(project, collection, stage) -> Bool
-    has_stage(collection, stage) -> Bool
-
-Whether `stage` is defined for `collection`: `COLLECTION_PROCESS` for the `process` of the
-collection, or `MEMBER_PROCESS` for a member `process` method of the collection. A workspace runs no
-job for a stage that is not defined, and shows no work in progress for it. It asks once for each
-type of collection, and again after the code of the project changes.
-
-The default answers from the methods: the stage is defined when a `process` method other than the
-default of this package applies to the collection. A project that decides in another way which
-collections have a stage adds a method; the default forwards to `has_stage(collection, stage)`.
-"""
-function has_stage(project::AbstractProject, collection::AbstractCollection, stage::PipelineStage)::Bool
-    P, C = typeof(project), typeof(collection)
-    signature = stage == MEMBER_PROCESS ? Tuple{P,AbstractDataItem,C} : Tuple{P,C,Vector{AbstractDataItem}}
-    return defines(signature) || has_stage(collection, stage)
-end
-
-function has_stage(collection::AbstractCollection, stage::PipelineStage)::Bool
-    C = typeof(collection)
-    return defines(stage == MEMBER_PROCESS ? Tuple{AbstractDataItem,C} : Tuple{C,Vector{AbstractDataItem}})
-end
-
-# Whether a `process` method of another module can apply to arguments of these types. A member
-# `process` method usually names a narrower item type than `AbstractDataItem`.
-defines(signature) = any(method -> method.module != (@__MODULE__), methods(process, signature))
-
 # ---------------------------------------------------------------------------
 # stage_roots
 # ---------------------------------------------------------------------------
@@ -171,9 +71,8 @@ defines(signature) = any(method -> method.module != (@__MODULE__), methods(proce
 """
     stage_roots(project, stage, type) -> Vector
 
-The code that runs `stage` for values of `type`: a source item type for `SOURCE_READ`, which also
-covers `expand`; an item type for `ITEM_PROCESS`; a collection type for `COLLECTION_PROCESS`; an
-item type or a collection type for `MEMBER_PROCESS`, the member `process` methods for that type.
+The code that runs `stage` for values of `type`: a source item type for `SOURCE_READ`, and an item
+type for `ITEM_PROCESS`.
 
 A workspace asks again while it is open. When the answer changes, the results of `stage` for values
 of `type` are out of date and are computed again when they are needed. So a method defined or
@@ -188,29 +87,18 @@ code in values, such as callbacks stored in the project, adds a method that retu
 """
 function stage_roots(project::AbstractProject, stage::PipelineStage, type::Type)::Vector
     P = typeof(project)
-    signatures =
-        stage == SOURCE_READ ? Any[
-            (read, Tuple{P,Any,type}), (read, Tuple{Any,type}),
-            (expand, Tuple{P,type,Any}), (expand, Tuple{type,Any})] :
-        stage == ITEM_PROCESS ? Any[
-            (process, Tuple{P,type}), (process, Tuple{type}), (label, Tuple{P,type}), (label, Tuple{type})] :
-        stage == COLLECTION_PROCESS ? Any[(process, Tuple{P,type,AbstractVector}), (process, Tuple{type,AbstractVector})] :
-        stage == MEMBER_PROCESS ? Any[(process, member_signature(P, type)), (process, Base.tuple_type_tail(member_signature(P, type)))] :
-        Any[]
+    signatures = stage == SOURCE_READ ? Any[(read, Tuple{P,Any,type}), (read, Tuple{Any,type})] : Any[
+        (process, Tuple{P,type}), (process, Tuple{type}), (label, Tuple{P,type}), (label, Tuple{type})]
     return Any[type; [method for (callback, signature) in signatures for method in methods(callback, signature)]]
 end
-
-# The arguments of the member `process` methods for an item type or a collection type.
-member_signature(P, T) = T <: AbstractCollection ? Tuple{P,AbstractDataItem,T} : Tuple{P,T,AbstractCollection}
 
 """
     which(project, stage, source_item) -> Union{Method,LineNumberNode,Nothing}
     which(project, stage, type) -> Union{Method,LineNumberNode,Nothing}
 
-The code of the project that `stage` runs: for `SOURCE_READ` and `SOURCE_EXPAND`, the code that
-reads `source_item`; for the other stages, the code that runs for values of `type`, an item type or
-a collection type. The browser shows it where it shows how an item was made, and opens it in an
-editor.
+The code of the project that `stage` runs: for `SOURCE_READ`, the code that reads `source_item`; for
+`ITEM_PROCESS`, the code that runs for values of `type`, an item type. The browser shows it where it
+shows how an item was made, and opens it in an editor.
 
 The answer is a method, whose docstring the browser shows too, or a place in a file. `nothing`
 means that the stage does nothing of the project's for these values.
@@ -223,12 +111,8 @@ returns where they are.
 function Base.which(project::AbstractProject, stage::PipelineStage, value)::Union{Method,LineNumberNode,Nothing}
     P = typeof(project)
     T = value isa Type ? value : typeof(value)
-    signatures =
-        stage == SOURCE_READ ? Any[(read, Tuple{P,Any,T}), (read, Tuple{Any,T})] :
-        stage == SOURCE_EXPAND ? Any[(expand, Tuple{P,T,Any}), (expand, Tuple{T,Any})] :
-        stage == ITEM_PROCESS ? Any[(process, Tuple{P,T}), (process, Tuple{T})] :
-        stage == MEMBER_PROCESS ? Any[(process, member_signature(P, T)), (process, Base.tuple_type_tail(member_signature(P, T)))] :
-        Any[(process, Tuple{P,T,AbstractVector}), (process, Tuple{T,AbstractVector})]
+    signatures = stage == SOURCE_READ ? Any[(read, Tuple{P,Any,T}), (read, Tuple{Any,T})] :
+        Any[(process, Tuple{P,T}), (process, Tuple{T})]
     for (callback, signature) in signatures
         for method in methods(callback, signature)
             # `methods` also lists the methods of Base that accept anything, such as `read(io, x)`.
@@ -246,43 +130,19 @@ end
     reconstruct(::Type{T}, id, data, metadata::Dict) -> Union{Nothing,T}
 
 Rebuild one concrete item from its stored id, cached payload, and the metadata of the item when it
-was stored. The engine can call this method before or after item processing, or while preparing
-collection input. The item id, payload, and metadata must therefore contain everything
-the method needs at that point.
+was stored. The engine can call this method before or after item processing. The item id, payload,
+and metadata must therefore contain everything the method needs at that point.
 
 The default returns the payload when it is already a `T`, preserving the identity of custom items
 whose `data(item)` is the item itself. Otherwise it returns `nothing`. While preparing an
-unprocessed input, the engine reruns `expand`, reusing its cached read input or calling `read` if
-that input is absent. While preparing a processed input, it also reruns `process`. The fallback
-restores those stage outputs, but it cannot add later metadata to a custom item. A type that needs later metadata must retain it in its `reconstruct` result.
-Cached payloads remain available for views either way; reconstruction is needed to run further
-project dispatch on a cached item.
+unprocessed input, the engine reruns `read`. While preparing a processed input, it also reruns
+`process`. The fallback restores those stage outputs, but it cannot add later metadata to a custom
+item. A type that needs later metadata must retain it in its `reconstruct` result. Cached payloads
+remain available for views either way; reconstruction is needed to run further project dispatch on
+a cached item.
 
 Rehydration must be a pure function of cached content. Anything a type needs to rebuild itself
 belongs in its id, data, or metadata, never in live workspace state.
 """
 reconstruct(::Type{T}, id::AbstractString, data, metadata::Dict) where {T} =
     data isa T ? data : nothing
-
-"""
-    reconstruct(::Type{T}, id, metadata::Dict) -> T
-
-Rebuild one collection value from its stored id and its own metadata. These two are everything the
-row keeps about a collection before its `process`.
-
-Unlike the item method there is no default and no way to opt out: an item that cannot be rebuilt is
-recreated by rerunning `read` and `expand`, but a collection has no such path, so a project that
-defines collection types must make them rebuildable. The engine rebuilds collections as soon as their
-items are first published, not only after reopening, so a missing method fails immediately.
-"""
-reconstruct(::Type{T}, id::AbstractString, metadata::Dict) where {T<:AbstractCollection} =
-    error("Collection type $T must implement reconstruct(::Type{$T}, id, metadata)")
-
-"""
-    reconstruct(::Type{T}, id, data, metadata::Dict) -> T
-
-Rebuild the collection value that `process` returned, from its id, its `data` and its metadata.
-The default ignores `data` and calls `reconstruct(T, id, metadata)`.
-"""
-reconstruct(::Type{T}, id::AbstractString, data, metadata::Dict) where {T<:AbstractCollection} =
-    reconstruct(T, id, metadata)

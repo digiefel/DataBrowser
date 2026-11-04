@@ -21,26 +21,20 @@ using ..Catalogs
 using ..Catalogs: Catalog, Row, Part, Job, add!, hold!, release!, want!, request!, finish!, keepable, lost!, queued
 using ..CodeRevisions: CodeRevision, code_revision
 using DataBrowserAPI:
-    COLLECTION_PROCESS,
     ITEM_PROCESS,
-    MEMBER_PROCESS,
     SOURCE_READ,
-    SOURCE_EXPAND,
     metadata_dict
 
 using DataBrowserCache:
     CacheDB,
     BuildMetrics,
     ProjectCacheSchemaError,
-    ProjectCacheDataError,
     ProjectCacheIdentity,
     ProjectCacheIndex,
     cache_has_pending_writes,
     cache_pending_counts,
     clear_cache_index!,
     close_cache_db!,
-    delete_collection_records!,
-    delete_collection_metadata!,
     delete_computation_revision!,
     delete_source_item!,
     replace_source_output!,
@@ -49,8 +43,6 @@ using DataBrowserCache:
     open_cache_db,
     project_cache_identity,
     reset_build_metrics!,
-    store_collection!,
-    store_collection_process_result!,
     store_item_label!,
     store_item_metadata!,
     store_item_stage_metadata!,
@@ -63,7 +55,6 @@ import DataBrowserCache: query_items
 import DataBrowserAnnotations: Tags
 import DataBrowserAnnotations.Tags: Tag, TagState, Untagged
 import ..DataBrowserCore
-using ..DataBrowserCore: ExpandedItems, read_items, process_input
 using ..Catalogs: Input
 using ..DataBrowserCore: Computation
 using DataBrowserAPI: ComputationExecution
@@ -72,7 +63,6 @@ using DataBrowserAPI: AbstractStore
 import DataBrowserAPI: computation, inputs, evaluate
 import DataBrowserAPI
 import DataBrowserAPI:
-    AbstractCollection,
     AbstractDataSource,
     AbstractDataSourceItem,
     AbstractDataItem,
@@ -81,14 +71,12 @@ import DataBrowserAPI:
     SourceChanges,
     SourceError,
     close_source!,
-    collection,
     fingerprint,
     id,
     data,
     label,
     metadata,
     process,
-    has_stage,
     stage_roots,
     read,
     reconstruct,
@@ -113,10 +101,9 @@ end
 WorkspaceScan()::WorkspaceScan = WorkspaceScan(:idle, "", nothing, Base.Threads.Atomic{Int}(0))
 
 """
-What is selected in a workspace: items by public id, and each collection by its
-[`CollectionPath`](@ref) (the root is the empty path). Both stay the same when
-the workspace is closed and opened again, so a selection may name rows the workspace does not have
-yet or no longer has.
+What is selected in a workspace: items by public id. The ids stay the same when the workspace is
+closed and opened again, so a selection may name items the workspace does not have yet or no longer
+has.
 
 `revision` rises with each change of `item_ids`: with each [`select!`](@ref), and when selected
 items are removed or replaced. A browser compares it to tell whether the selection changed, without
@@ -127,7 +114,6 @@ it produces in its place, as when another recipe reads the source item now. The 
 it, and so should a browser that restores ids it saved.
 """
 Base.@kwdef mutable struct WorkspaceSelection
-    collections::Vector{Vector{Tuple{String,String}}} = Vector{Tuple{String,String}}[]
     item_ids::Vector{String} = String[]
     revision::Int = 0
     replaced::Dict{String,String} = Dict{String,String}()
@@ -138,21 +124,13 @@ The tags of a workspace: the content of `tags.txt` in the source root.
 
 `error` says why the file could not be read; tags cannot change while it is set. `revision`
 increases with every change, for views that keep what they computed from the tags.
-
-`resolved` keeps the tags of each item and collection that [`tags`](@ref) was asked for, with
-the tags inherited from above, while `resolved_at` (the revision and the workspace generation)
-stays the same.
 """
 mutable struct WorkspaceTags
     state::TagState
     error::String
     revision::Int
-    resolved::Dict{Any,Vector{Tag}}
-    resolved_at::Tuple{Int,Int}
-    lock::ReentrantLock
 end
-WorkspaceTags(state::TagState, error::String) =
-    WorkspaceTags(state, error, 0, Dict{Any,Vector{Tag}}(), (-1, -1), ReentrantLock())
+WorkspaceTags(state::TagState, error::String) = WorkspaceTags(state, error, 0)
 
 """
 Loaded cache state for one workspace.
@@ -194,7 +172,7 @@ cached value instead of rebuilding strings every frame.
   absent bar.
 - `counts` carries the numbers shown by status watchers.
 - `errors` lists failures as `failed => message`, streamed as they occur. `failed` is the id of the
-  source item, item or collection that failed, or else the name of the computation.
+  source item or item that failed, or else the name of the computation.
 """
 struct WorkspaceStatus
     level::Symbol
@@ -222,41 +200,87 @@ struct Code
     revision::CodeRevision
 end
 
-include("Workspace/Tree.jl")
+# Metadata
+
+"""
+A metadata value that was not stored: its name already holds values of type `expected`, and the
+value has type `found`.
+"""
+struct MetadataConflict
+    name::Symbol
+    expected::Type
+    found::Type
+end
+
+"""
+The metadata of many items or rows, one column per name, holding `missing` for those without a
+value. The first value stored under a name fixes the type of its column.
+"""
+struct MetadataColumns
+    columns::Dict{Symbol,Vector}
+end
+
+MetadataColumns() = MetadataColumns(Dict{Symbol,Vector}())
+
+"""The metadata at `index`, without the names it has no value for. A vector value is a copy."""
+Base.getindex(layer::MetadataColumns, index::Integer)::Dict{Symbol,Any} = Dict{Symbol,Any}(
+    name => (column[index] isa Vector ? copy(column[index]) : column[index])
+    for (name, column) in layer.columns if index <= length(column) && column[index] !== missing)
+
+"""Clear the metadata at `index`."""
+function Base.delete!(layer::MetadataColumns, index::Integer)::MetadataColumns
+    for column in values(layer.columns)
+        index <= length(column) && (column[index] = missing)
+    end
+    return layer
+end
+
+"""
+Replace the metadata at `index` with `values`, keeping a copy of each vector value. Returns the
+values that were not stored because their name holds values of another type.
+"""
+function store!(layer::MetadataColumns, index::Integer, values::AbstractDict{Symbol})::Vector{MetadataConflict}
+    delete!(layer, index)
+    dropped = MetadataConflict[]
+    for (name, value) in values
+        value === missing && continue
+        column = get!(() -> Vector{Union{Missing,typeof(value)}}(), layer.columns, name)
+        expected = nonmissingtype(eltype(column))
+        typeof(value) == expected || (push!(dropped, MetadataConflict(name, expected, typeof(value))); continue)
+        length(column) < index && append!(column, Iterators.repeated(missing, index - length(column)))
+        column[index] = value isa Vector ? copy(value) : value
+    end
+    return dropped
+end
 
 """
 One open project/source pair and all package-managed state belonging to it.
 
-The computations are the rows of `catalog`, and `tree` holds the items and collections that their
-results give. Every field from `catalog` to `completed` is read and written under `catalog.lock`.
+The computations are the rows of `catalog`. Every field from `catalog` to `completed` is read and
+written under `catalog.lock`.
 """
 mutable struct Workspace{P<:AbstractProject}
     project::P
     source::AbstractDataSource
     catalog::Catalog
-    tree::Tree
-    # The metadata of the result of each row that gives an item or a collection, by row index.
+    # FIXME(rebuild): the items of the workspace, with the rows of each, which the tree held.
+    # The metadata of the result of each row that gives an item, by row index.
     produced::MetadataColumns
     # The row that reads each source item, and the items it gives, by the id of the source item.
     sources::Dict{String,Row}
+    # FIXME(rebuild): the items of a source item, now that `ItemKey` is gone.
     by_source::Dict{String,Vector{ItemKey}}
     # The cache key of each row, under which the cache keeps its version and its store keeps its
-    # result, and what it gives: a source item's items (by its id), an item, or a collection.
+    # result, and what it gives: a source item's items (by its id), or an item.
     cachekeys::Dict{Row,String}
-    places::Dict{Row,Union{String,ItemKey,CollectionKey}}
+    # FIXME(rebuild): the item that a row gives, now that `ItemKey` is gone.
+    places::Dict{Row,Union{String,ItemKey}}
     # The code each row ran with, as the signature of its call, and the code of each signature.
     # When the revision of a signature's code changes, the rows of that signature are stale.
     signatures::Dict{Row,Type}
     code::Dict{Type,Code}
-    # Whether each collection type has a collection `process` and member `process` methods.
-    stages::Dict{Type,Tuple{Bool,Bool}}
     # The message of each failed row, and of each row whose metadata was stored only in part.
     errors::Dict{Row,String}
-    # The items that each source row gave, kept in memory until the `process` of each has run, with
-    # their size in bytes; the sum of those sizes; and the priority of source rows that follows it.
-    expanded::Dict{Row,Tuple{ExpandedItems,Int}}
-    expanded_bytes::Int
-    pace::Int
     # One lock per row whose result is computed again outside its job.
     row_locks::Dict{Row,ReentrantLock}
     executions::Dict{Row,ComputationExecution}
@@ -264,11 +288,6 @@ mutable struct Workspace{P<:AbstractProject}
     evaluated::Set{Row}
     # Metadata that the cache saved for rows of an earlier session, by row name, until they restore.
     saved::Dict{String,Dict{Symbol,Any}}
-    # Collections whose members or values changed since their rows were last made.
-    changed::Set{CollectionKey}
-    # The key the cache uses for each collection. The cache keeps its keys from session to session.
-    collection_keys::Dict{CollectionKey,Int64}
-    next_collection_key::Int64
     workers::Vector{Task}
     # Jobs that run now, and jobs that ended since the workspace opened.
     running::Int
@@ -290,8 +309,6 @@ mutable struct Workspace{P<:AbstractProject}
     # Requested disk cache. Kept even when a schema error falls back to a memory cache, so a
     # rebuild can open a real disk cache again.
     disk_cache::Bool
-    # Memory limit (MiB) for `expanded`.
-    expanded_data_limit::Int
     background_tasks::Vector{Task}
     metrics::BuildMetrics
     # Held for the whole of `modify_workspace!` / `close_workspace!` so a frame cannot read a
@@ -309,23 +326,11 @@ mutable struct Workspace{P<:AbstractProject}
     closed::Bool
 end
 
-"""
-    default_expanded_data_limit() -> Int
-
-The default of `expanded_data_limit` in [`open_workspace`](@ref), in MiB: 512, or a quarter of the
-memory of the machine when that is less.
-"""
-default_expanded_data_limit()::Int = min(512, Sys.total_memory() ÷ 4 ÷ 1024^2)
-
-# The priorities of rows. Source rows come before the background work on items, or between it and
-# the background work on collections while the items they gave fill the memory limit (see `pace!`).
+# The priorities of rows. Source rows come before the background work on items.
 const SOURCES_FIRST = 4
 const BACKGROUND_ITEM = 3
-const ITEMS_FIRST = 2
-const BACKGROUND_COLLECTION = 1
 # What a view asks for: above all background work.
 const VIEWED_ITEM = 6
-const VIEWED_COLLECTION = 5
 
 """
 Open the cache for one project/source pair, falling back to memory on a schema error.
@@ -366,21 +371,18 @@ function Workspace(
     rebuild::Bool=false,
     cache::Bool=true,
     background_processing::Bool=false,
-    expanded_data_limit::Integer=default_expanded_data_limit(),
 )::Workspace{P} where {P<:AbstractProject}
     metrics = BuildMetrics()
     cache_db, disk_error, identity =
         _open_workspace_cache(project, source, metrics; rebuild, cache)
     return Workspace(
-        project, source, Catalog(), Tree(), MetadataColumns(),
+        project, source, Catalog(), MetadataColumns(),
         Dict{String,Row}(), Dict{String,Vector{ItemKey}}(),
-        Dict{Row,String}(), Dict{Row,Union{String,ItemKey,CollectionKey}}(),
-        Dict{Row,Type}(), Dict{Type,Code}(), Dict{Type,Tuple{Bool,Bool}}(),
+        Dict{Row,String}(), Dict{Row,Union{String,ItemKey}}(),
+        Dict{Row,Type}(), Dict{Type,Code}(),
         Dict{Row,String}(),
-        Dict{Row,Tuple{ExpandedItems,Int}}(), 0, SOURCES_FIRST,
         Dict{Row,ReentrantLock}(), Dict{Row,ComputationExecution}(), Set{Row}(),
-        Dict{String,Dict{Symbol,Any}}(), Set{CollectionKey}(),
-        Dict{CollectionKey,Int64}(), Int64(1),
+        Dict{String,Dict{Symbol,Any}}(),
         Task[], 0, 0,
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),
@@ -388,7 +390,7 @@ function Workspace(
         WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),
         :idle, "", "",
-        background_processing, cache, Int(expanded_data_limit),
+        background_processing, cache,
         Task[], metrics, ReentrantLock(), true,
         Base.Threads.Atomic{Int}(0), -1 => WorkspaceStatus(),
         CancellationTokenSource(), false,
@@ -433,7 +435,6 @@ function open_workspace(
     rebuild::Bool=false,
     cache::Bool=true,
     background_processing::Bool=false,
-    expanded_data_limit::Integer=default_expanded_data_limit(),
 )::Workspace
     return open_workspace(
         project,
@@ -441,7 +442,6 @@ function open_workspace(
         rebuild,
         cache,
         background_processing,
-        expanded_data_limit,
     )
 end
 

@@ -1,6 +1,5 @@
 using DataBrowserAPI: AbstractDataSourceItem, AbstractDataItem
 using Test, DataBrowserCache, DataBrowserAPI, Tables
-using DataBrowserAPI: SOURCE_READ, SOURCE_EXPAND, ITEM_PROCESS
 
 struct CacheSourceItem <: AbstractDataSourceItem end
 DataBrowserAPI.id(::CacheSourceItem) = "source"
@@ -12,7 +11,7 @@ struct CacheItem <: AbstractDataItem end
 function store_fixture_item!(cache, source_key)
     store_source_identity!(cache, CacheSourceItem(), "source")
     replace_source_output!(cache, source_key, String[],
-        [ItemOutput("item", "item", CacheItem, nothing, Dict{Symbol,Any}())])
+        [ItemOutput("item", "item", CacheItem, Dict{Symbol,Any}())])
 end
 delivered(cache) = only(load_cache_index(cache).items).delivered
 

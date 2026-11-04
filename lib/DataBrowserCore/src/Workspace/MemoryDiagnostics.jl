@@ -4,7 +4,6 @@ struct WorkspaceMemorySnapshot
     gc_live_bytes::Int64
     gc_allocated_bytes::Int64
     index_items::Int64
-    index_collections::Int64
     analysis_errors::Int64
     processing_jobs::Int64
     pending_writes::Int64
@@ -26,7 +25,6 @@ function workspace_memory_snapshot(workspace::Workspace)::WorkspaceMemorySnapsho
         gc_live_bytes,
         Int64(gc.total_allocd),
         Int64(length(items(workspace))),
-        Int64(length(collections(workspace))),
         Int64(length(workspace.errors)),
         processing.jobs,
         Int64(staged.items),

@@ -2,13 +2,6 @@
 Start cache loading and source scanning for one new workspace.
 With `cache=false`, keep the cache in memory and discard it on close; the project cache file is untouched.
 
-`expanded_data_limit` is the limit, in MiB, for expanded data: the data that `expand` gave each
-item, kept in memory until the `process` of the item has used it. The default
-is 512, or a quarter of the memory of the machine when that is less. While the expanded data is
-under half the limit, the workspace reads its source items first. Above that, it processes items
-first, which replaces their expanded data. A lower limit keeps less expanded data and lists the
-items of all source items later. The size of the data is estimated.
-
 Close the workspace with [`close_workspace!`](@ref). A workspace that is still open when Julia exits
 is closed then.
 
@@ -25,11 +18,10 @@ function open_workspace(
     rebuild::Bool=false,
     cache::Bool=true,
     background_processing::Bool=false,
-    expanded_data_limit::Integer=default_expanded_data_limit(),
 )::Workspace
     opened_source = open_source(source)
     workspace = try
-        Workspace(project, opened_source; rebuild, cache, background_processing, expanded_data_limit)
+        Workspace(project, opened_source; rebuild, cache, background_processing)
     catch
         close_source!(opened_source)
         rethrow()
@@ -47,9 +39,9 @@ function open_workspace(
 end
 
 """
-Rebuild `workspace` in place. The project cannot change. Omitted `source`, `cache`,
-`background_processing` and `expanded_data_limit` stay as they are. Omitted `source` is a `copy` of
-the current source so the closed source's watchers are not reused. `rebuild=true` empties the cache
+Rebuild `workspace` in place. The project cannot change. Omitted `source`, `cache` and
+`background_processing` stay as they are. Omitted `source` is a `copy` of the current source so the
+closed source's watchers are not reused. `rebuild=true` empties the cache
 first; it is not a stored setting. The selection stays.
 
 A failed rebuild leaves the workspace closed. Changes to project code do not need a rebuild: an open
@@ -61,7 +53,6 @@ function modify_workspace!(
     rebuild::Bool=false,
     cache::Union{Nothing,Bool}=nothing,
     background_processing::Union{Nothing,Bool}=nothing,
-    expanded_data_limit::Union{Nothing,Integer}=nothing,
 )::Nothing
     lock(workspace.lifecycle_lock) do
         workspace.closed && error("Cannot modify a closed workspace")
@@ -70,8 +61,7 @@ function modify_workspace!(
         try
             fresh = Workspace(workspace.project, opened_source; rebuild,
                 cache=something(cache, workspace.disk_cache),
-                background_processing=something(background_processing, workspace.background_processing),
-                expanded_data_limit=something(expanded_data_limit, workspace.expanded_data_limit))
+                background_processing=something(background_processing, workspace.background_processing))
             # What a browser keeps of the workspace stays: its lock, its selection, its generation.
             for field in fieldnames(typeof(workspace))
                 field in (:lifecycle_lock, :selection, :generation, :code_updates_active, :status) ||
@@ -101,7 +91,6 @@ function rebuild_cache!(workspace::Workspace)::Nothing
             row = pop!(workspace.sources, source, nothing)
             row === nothing || release!(workspace.catalog, row)
         end
-        collections!(workspace)
         clear_cache_index!(workspace.cache.db)
         publish!(workspace)
     end
@@ -165,6 +154,7 @@ function select!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::N
     end
     return nothing
 end
+# FIXME(rebuild): the id of an item, now that `ItemKey` is gone.
 select!(workspace::Workspace, items::AbstractVector{ItemKey})::Nothing =
     select!(workspace, [id(workspace, item) for item in items])
 
@@ -222,8 +212,8 @@ function cancel_scan!(workspace::Workspace)::Nothing
 end
 
 """
-Scan the source once. The tree first shows the items and collections that the cache saved. Then the
-walk lists the source items, and after it each gets its row: a source item that is unchanged since
+Scan the source once. The workspace first shows the items that the cache saved. Then the walk lists
+the source items, and after it each gets its row: a source item that is unchanged since
 the cache saved it is current at once, with the items the cache saved for it. Source items that the
 walk no longer finds are removed with their items. `rebuild=true` means the cache was just emptied.
 """
@@ -244,15 +234,7 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
     token = get_token(cancel_source)
     canceled() = is_cancellation_requested(token) && throw(OperationCanceledException(token))
     task = Threads.@spawn @timed_dbg "scan_source" try
-        index = rebuild ? nothing : try
-            @timed_dbg load_cache_index(db)
-        catch error
-            error isa ProjectCacheDataError || rethrow()
-            @warn("Generated collection cache is incompatible; rebuilding it",
-                cache=workspace.cache.identity.cache_path, error)
-            clear_cache_index!(db)
-            nothing
-        end
+        index = rebuild ? nothing : @timed_dbg load_cache_index(db)
         @lock catalog.lock begin
             index === nothing || restore!(workspace, index)
             workspace.cache_state = index === nothing ? :missing : :ready
@@ -282,11 +264,9 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
             # TODO: the records of the rows of a removed source item that had no rows stay in the cache.
             gone = index === nothing ? String[] : setdiff(values(index.sources), Set(id(item) for item in walked))
             foreach(source -> remove_source_item!(workspace, source), gone)
-            refresh_source_metadata!(workspace)
             scan.state = read_again == 0 && isempty(gone) ? :unchanged : :done
             workspace.cache_state = :ready
             scan.cancel_token = nothing
-            collections!(workspace)
             publish!(workspace)
         end
     catch error
@@ -301,7 +281,6 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
                 @error "Source scan failed" source=id(workspace.source) exception=(error, backtrace)
             end
             scan.cancel_token = nothing
-            collections!(workspace)
             publish!(workspace)
         end
     end
@@ -313,7 +292,7 @@ end
 Return the ids of the items that satisfy a SQL predicate.
 
 The predicate can use the metadata names that project code gave the items, and the columns the cache
-keeps for every item: `id`, `label`, `item_key`, `source_item_key`, `type_hex` and `collection_key`.
+keeps for every item: `id`, `label`, `item_key`, `source_item_key` and `type_hex`.
 The query reads what the cache has written to disk, so a value from the last 2 seconds may be
 missing. A workspace without a cache returns an empty vector.
 """

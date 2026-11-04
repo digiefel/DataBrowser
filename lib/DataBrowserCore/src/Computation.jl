@@ -31,6 +31,7 @@ evaluate(value::Computation) = Base.invokelatest(value.f, map(evaluated, value.a
 evaluated(value::Computation) = evaluate(value)
 # A result of a row of a workspace is computed again, as any other input.
 evaluated(value::Input) = evaluate(value.catalog[value.row])
+# FIXME(rebuild): the item `value.id` among the items that a row gives, which `process_input` found.
 evaluated(value::Part) = process_input(evaluated(value.of), value.id)
 evaluated(values::Tuple) = map(evaluated, values)
 evaluated(values::AbstractVector) = isempty(computation_inputs(values)) ? values : map(evaluated, values)

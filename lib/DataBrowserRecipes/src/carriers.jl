@@ -10,9 +10,8 @@ items behave like any other typed item rather than like a tagged bag.
 """
 Private carrier for ordinary data produced by `register_item!`.
 
-The carrier holds the id, the data and the metadata. Its label and its collection come from the
-`label` and `collection` callbacks of the registration, through `label(project, item)` and
-`collection(project, item)`.
+The carrier holds the id, the data and the metadata. Its label comes from the `label` callback of
+the registration, through `label(project, item)`.
 """
 struct RegisteredDataItem{K,D} <: AbstractDataItem
     id::String
@@ -41,28 +40,3 @@ survives the round trip without entering the payload.
 # a concrete `RegisteredDataItem{kind,D}` remembered from a live item.
 reconstruct(::Type{<:RegisteredDataItem{K}}, id::AbstractString, data, metadata::Dict) where {K} =
     RegisteredDataItem{K}(String(id), data, metadata_dict(metadata))
-
-"""
-One collection that a `collection` callback names. `Level` is the name the callback gives the
-level, such as `:wafer`, and `name` is the value at that level, such as `"W1"`. `data` holds the
-new data of each member, by id, that the collection `process` callbacks returned, and `metadata`
-what the collection `analyze` callbacks computed.
-"""
-struct NamedCollection{Level} <: AbstractCollection
-    name::String
-    data::Dict{String,Any}
-    metadata::Dict{Symbol,Any}
-end
-
-NamedCollection{Level}(name::AbstractString) where {Level} =
-    NamedCollection{Level}(String(name), Dict{String,Any}(), Dict{Symbol,Any}())
-
-id(collection::NamedCollection)::String = collection.name
-label(collection::NamedCollection)::String = collection.name
-label(::Type{NamedCollection{Level}}) where {Level} = Level
-metadata(collection::NamedCollection)::Dict{Symbol,Any} = collection.metadata
-data(collection::NamedCollection) = isempty(collection.data) ? nothing : collection.data
-reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, metadata::Dict) where {Level} =
-    NamedCollection{Level}(String(identity), Dict{String,Any}(), metadata_dict(metadata))
-reconstruct(::Type{NamedCollection{Level}}, identity::AbstractString, data, metadata::Dict) where {Level} =
-    NamedCollection{Level}(String(identity), something(data, Dict{String,Any}()), metadata_dict(metadata))

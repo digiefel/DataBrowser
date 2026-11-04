@@ -4,6 +4,7 @@ using DataBrowserAPI:
     id,
     kind_label,
     label
+# FIXME(rebuild): the keys of the items and groups to list, now that the Tree is gone.
 using DataBrowserCore.Workspace: CollectionKey, ItemKey, ROOT
 import DataBrowserCore.Workspace
 
@@ -13,9 +14,7 @@ a tooltip. A row that is current or not processed has no mark and keeps the squa
 """
 function _render_readiness_mark!(readiness::Workspace.Readiness)::Nothing
     size = ig.GetTextLineHeight()
-    if readiness == Workspace.PARTIAL
-        ig.TextDisabled(ICON_PARTIAL)
-    elseif readiness == Workspace.FAILED
+    if readiness == Workspace.FAILED
         ig.TextColored(ig.ImVec4(0.9f0, 0.3f0, 0.3f0, 1.0f0), ICON_FAILED)
     elseif readiness == Workspace.WORKING
         # A spinner: spokes that fade around the circle and turn with time. A font cannot animate.
@@ -36,7 +35,6 @@ function _render_readiness_mark!(readiness::Workspace.Readiness)::Nothing
     end
     if ig.IsItemHovered()
         readiness == Workspace.WORKING && ig.SetTooltip("Processing")
-        readiness == Workspace.PARTIAL && ig.SetTooltip("Shown without the later stages; they are not queued")
         readiness == Workspace.FAILED && ig.SetTooltip("A stage failed")
     end
     return nothing
@@ -110,6 +108,8 @@ function _visible_items(
 end
 
 """Draw the tree of collections, and change the collections the workspace selects on a click."""
+# FIXME(rebuild): the tree of groups and their members, which was the tree of collections: `ROOT`,
+# `children`, `path`, `metadata_keys`, the readiness of a collection and `selection.collections`.
 function _render_hierarchy_tree_panel(
     state::BrowserState,
     filter_tree::Ptr{ig.lib.ImGuiTextFilter},
@@ -575,6 +575,8 @@ function _render_selection_toolbar!(
 end
 
 """Draw the items of the selected collections, and change the items the workspace selects on a click."""
+# FIXME(rebuild): the members of the selected groups, which were the items of the selected
+# collections, and the item of an id, now that `ItemKey` is gone.
 function _render_items_panel(
     state::BrowserState,
     filter_item::Ptr{ig.lib.ImGuiTextFilter},

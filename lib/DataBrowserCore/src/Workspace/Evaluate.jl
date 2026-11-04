@@ -4,18 +4,15 @@
 # computation: missing, stale, current or failed ([`Catalogs.jl`](../Catalogs.md)). To compute a
 # row, the workspace runs a *job*.
 #
-# The workspace adds four kinds of rows for the project ([`Pipeline.jl`](Pipeline.md)), and one row
+# The workspace adds two kinds of rows for the project ([`Pipeline.jl`](Pipeline.md)), and one row
 # for each computation that a script or a window asks for:
 #
-# | Row            | Calls                                                     | Name, for the item `a/1` of `a.csv` |
-# |:---------------|:----------------------------------------------------------|:------------------------------------|
-# | source row     | `read_items(project, source, source_item)`: `read`, then `expand` | `read:a.csv`, which gives `a/1` |
-# | own row        | `process(project, item)`                                  | `a/1`                               |
-# | collection row | `process(project, collection, members)`                   | `collection:Runs(runs)`             |
-# | member row     | `process(project, item, collection)`                      | `member:a/1`                        |
+# | Row        | Calls                                | Name, for the item `a/1` of `a.csv` |
+# |:-----------|:-------------------------------------|:------------------------------------|
+# | source row | `read(project, source, source_item)` | `read:a.csv`, which gives `a/1`     |
+# | own row    | `process(project, item)`             | `a/1`                               |
 #
-# Windows show the *latest value* of an item: the result of its last member row when that row is
-# current, and else the result of its own row.
+# Windows show the *latest value* of an item: the result of its own row.
 #
 # Scripts ask for results with these functions:
 #
@@ -29,9 +26,9 @@
 # ```text
 #     catalog, in memory          the state of each row, its inputs and its priority
 #     cache, a DuckDB file        for each row name: the version of its last result, or its error;
-#                                 and the tree, with the metadata and labels of items and
-#                                 collections. The next session knows from it which rows are
-#                                 current, and shows the tree at once
+#                                 and the items, with their metadata and labels. The next
+#                                 session knows from it which rows are current, and shows the
+#                                 items at once
 #     stores, one for each        for each row name: its result. A MemoryStore, the default, loses
 #       type of result            the results when Julia exits; a DuckDBStore, as a project made
 #                                 with DataBrowserRecipes uses, keeps them in a file
@@ -74,27 +71,17 @@
 # Worker tasks run the jobs: one for each Julia thread, and at least two. Jobs run in this order of
 # priority, highest first:
 #
-# 1. what a window shows and what a script asks for: its items and computations (`VIEWED_ITEM`),
-#    then the member rows of its items (`VIEWED_COLLECTION`);
-# 2. source items, while the items that wait in memory take less than half of
-#    `expanded_data_limit` (`SOURCES_FIRST`);
-# 3. the `process` of items, in the background (`BACKGROUND_ITEM`);
-# 4. source items, while the waiting items take more than half of `expanded_data_limit`
-#    (`ITEMS_FIRST`);
-# 5. collection rows and member rows, in the background (`BACKGROUND_COLLECTION`).
+# 1. what a window shows and what a script asks for: its items and computations (`VIEWED_ITEM`);
+# 2. source items (`SOURCES_FIRST`);
+# 3. the `process` of items, in the background (`BACKGROUND_ITEM`).
 #
-# Items read from a source item wait in memory until their `process` runs. Once they take more than
-# half of `expanded_data_limit`, workers process waiting items before they read more source items,
-# which frees that memory (`pace!` in [`Pipeline.jl`](Pipeline.md)). `expanded_data_limit` is an
-# option of `open_workspace`, in MiB: 512 by default, or a quarter of the memory of the machine when
-# that is less. By default, `open_workspace` sets `background_processing=false`: the workers read
-# every source item, but process an item only when a window or a script asks for it.
+# By default, `open_workspace` sets `background_processing=false`: the workers read every source
+# item, but process an item only when a window or a script asks for it.
 #
-# The `process` of an item read from the source must return a data item, and a collection `process`
-# must return a collection; any other result fails the row. When a function throws, the row fails:
-# the error is logged, the status panel of the browser shows the error next to its item, and the
-# cache saves it. When reading a source item fails, its items leave the tree until a later read
-# succeeds. A failed row does not run again, even in a later session, until its version changes: its
+# The `process` of an item read from the source must return a data item; any other result fails the
+# row. When a function throws, the row fails: the error is logged, the status panel of the browser
+# shows the error next to its item, and the cache saves it. When reading a source item fails, its
+# items leave the workspace until a later read succeeds. A failed row does not run again, even in a later session, until its version changes: its
 # code, an input or an argument changed. To run failed rows again without a change, open the
 # workspace with `rebuild=true`, which empties its cache.
 #
@@ -167,7 +154,7 @@ end
 Compute the row of `job`, keep its result, and add the rows that its result needs. A row whose
 current version is the one the cache saved becomes current, or failed, without running. A result of
 the wrong type fails the row: the `process` of an item read from the source must return an
-`AbstractDataItem`, and a collection `process` an `AbstractCollection`.
+`AbstractDataItem`.
 """
 function run!(workspace::Workspace, job::Job)::Nothing
     catalog, row = workspace.catalog, job.row
@@ -178,8 +165,8 @@ function run!(workspace::Workspace, job::Job)::Nothing
         @lock catalog.lock begin
             place = get(workspace.places, row, nothing)
             at = version(workspace, row)
-            expected = place isa CollectionKey ? AbstractCollection :
-                place isa ItemKey ? AbstractDataItem : Any
+            # FIXME(rebuild): whether a row gives an item, now that `ItemKey` is gone.
+            expected = place isa ItemKey ? AbstractDataItem : Any
             catalog[row], place, expected, at, recorded(workspace, row, at)
         end
     catch error
@@ -210,9 +197,6 @@ function run!(workspace::Workspace, job::Job)::Nothing
         delete!(workspace.errors, row)
         store_computation_revision!(workspace.cache.db, cachekey(workspace, row), at, typeof(output))
         finished!(workspace, row, place, output)
-        output isa ExpandedItems && keep_expanded!(workspace, row, output)
-        foreach(input -> drop_used!(workspace, input), Catalogs.inputs(catalog, row))
-        place isa String && collections!(workspace)
         publish!(workspace)
     end
     return nothing
@@ -230,9 +214,9 @@ function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, erro
     catalog, row = workspace.catalog, job.row
     context = @lock catalog.lock begin
         f, place = catalog[row].f, get(workspace.places, row, nothing)
+        # FIXME(rebuild): the id of the item that a row gives, which the tree held.
         subject = place isa String ? "Source item: $place" :
             place isa ItemKey ? "Function: $(function_name(f))\n  Item: $(workspace.tree[place].id)" :
-            place isa CollectionKey ? "Function: $(function_name(f))\n  Collection: $(workspace.tree[place].id)" :
             "Computation: $(cachekey(workspace, row))"
         "A computation failed\n  $subject\n  Source: $(DataBrowserAPI.source_description(workspace.source))"
     end
@@ -242,13 +226,14 @@ function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, erro
         workspace.errors[row] = failure_prefix(catalog[row].f) * message
         at === nothing || store_computation_revision!(workspace.cache.db, cachekey(workspace, row), at, Nothing; failure=message)
         place = get(workspace.places, row, nothing)
-        place isa String && (remove_items!(workspace, place); collections!(workspace))
+        place isa String && remove_items!(workspace, place)
         publish!(workspace)
     end
     DataBrowserAPI.report_error(context, error, backtrace)
     return nothing
 end
 
+# FIXME(rebuild): the function of a source row, which was `read_items`.
 failure_prefix(f)::String = f === read_items ? "could not create items: " : "$(function_name(f)) failed: "
 
 """
@@ -288,10 +273,11 @@ end
 # The value that a function receives for an argument: an input is the result of its row, and a
 # part is the item that `process` receives.
 resolved(workspace::Workspace, x::Input) = only(results(workspace, [x.row]))
+# FIXME(rebuild): the item `x.id` among the items that a row gives, which `process_input` found.
 resolved(workspace::Workspace, x::Part) = process_input(resolved(workspace, x.of), x.id)
 resolved(workspace::Workspace, x::Tuple) = map(v -> resolved(workspace, v), x)
 function resolved(workspace::Workspace, x::AbstractVector)
-    ## The members of a collection, read together, in a vector of their common type.
+    ## Results of rows, read together, in a vector of their common type.
     eltype(x) === Input && return identity.(results(workspace, Row[v.row for v in x]))
     return any(v -> v isa Union{Input,Part,Tuple,AbstractVector}, x) ? map(v -> resolved(workspace, v), x) : x
 end
@@ -358,6 +344,7 @@ function version(workspace::Workspace, row::Row)::UInt64
 end
 
 argument_type(workspace::Workspace, x::Input) = Catalogs.result_type(workspace.catalog, x.row)
+# FIXME(rebuild): the item type of an id, which the tree held.
 argument_type(workspace::Workspace, x::Part) = workspace.tree[workspace.tree.item_ids[x.id]].type
 argument_type(::Workspace, x) = typeof(x)
 
@@ -371,8 +358,6 @@ argument_version(workspace::Workspace, x::Selection)::UInt64 =
 # one.
 argument_version(::Workspace, x::AbstractDataSourceItem)::UInt64 =
     fingerprint(x) === nothing ? rand(UInt64) : hash(id(x), hash(repr(fingerprint(x))))
-argument_version(::Workspace, x::AbstractCollection)::UInt64 = hash(string(typeof(x)), hash(id(x),
-    hash(repr(sort!(collect(metadata_dict(metadata(x))); by=first)))))
 argument_version(::Workspace, x)::UInt64 = hash(argument_id(x))
 
 """
@@ -405,23 +390,23 @@ function code_roots(project::AbstractProject, signature::Type, f)::Vector
     return f isa Function ? Any[f] : Any[typeof(f); collect(methods(f))]
 end
 
+# FIXME(rebuild): the function of a source row, which was `read_items`.
 stage(::Type{<:Tuple{typeof(read_items),Any,Any,S}}) where {S} = (SOURCE_READ, S)
 stage(::Type{<:Tuple{typeof(process),Any,I}}) where {I} = (ITEM_PROCESS, I)
-stage(::Type{<:Tuple{typeof(process),Any,C,AbstractVector}}) where {C<:AbstractCollection} = (COLLECTION_PROCESS, C)
-stage(::Type{<:Tuple{typeof(process),Any,Any,C}}) where {C<:AbstractCollection} = (MEMBER_PROCESS, C)
 stage(_) = nothing
 
 """
     recorded(workspace, row, version)
 
 What the cache saved for the result of `row` at `version`, when it can be used now: a failure,
-or a result whose metadata the cache saved for an item or a collection; else `nothing`. The caller
-holds the catalog lock.
+or a result whose metadata the cache saved for an item; else `nothing`. The caller holds the catalog
+lock.
 """
 function recorded(workspace::Workspace, row::Row, at::UInt64)
     record = recorded_revision(workspace.cache.db, cachekey(workspace, row))
     (record === nothing || record.revision != at) && return nothing
-    saves = get(workspace.places, row, nothing) isa Union{CollectionKey,ItemKey}
+    # FIXME(rebuild): whether a row gives an item, now that `ItemKey` is gone.
+    saves = get(workspace.places, row, nothing) isa ItemKey
     isempty(record.failure) && saves && !haskey(workspace.saved, cachekey(workspace, row)) && return nothing
     return record
 end
@@ -471,11 +456,9 @@ end
 #
 # A store of `nothing` keeps no results of that type: the row runs again when something needs its
 # value. A store receives a copy of each result and gives copies; the docstring of `AbstractStore`
-# gives its methods. Four kinds of results never go to a store:
+# gives its methods. Three kinds of results never go to a store:
 #
 # - `nothing`;
-# - `ExpandedItems`, the items that reading a source item gives, which wait in memory for their
-#   `process` (`keep_expanded!` in [`Pipeline.jl`](Pipeline.md));
 # - a `Selection`, which reads the workspace each time something takes an item from it;
 # - the result of `view(item, selection)`, the part of an item that a window chose.
 
@@ -483,11 +466,11 @@ end
     store(workspace, type) -> Union{Nothing,AbstractStore}
 
 The store that the project chooses for results of `type`, asked once for each type. It is `nothing`
-for the types of results that never go to a store, `Nothing`, `ExpandedItems` and `Selection`, and
-when `storage` gives `nothing`. [`keep!`](@ref) also skips the result of `view`.
+for the types of results that never go to a store, `Nothing` and `Selection`, and when `storage`
+gives `nothing`. [`keep!`](@ref) also skips the result of `view`.
 """
 function store(workspace::Workspace, type::Type)::Union{Nothing,AbstractStore}
-    type <: Union{Nothing,ExpandedItems,Selection} && return nothing
+    type <: Union{Nothing,Selection} && return nothing
     return @lock workspace.stores_lock get!(workspace.stores, type) do
         Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
     end
@@ -513,8 +496,8 @@ end
 """
     results(workspace, rows) -> Vector{Any}
 
-The results of `rows`, which are current: from memory, from their stores, read together for each
-type, or else computed again with [`computed!`](@ref).
+The results of `rows`, which are current: from their stores, read together for each type, or else
+computed again with [`computed!`](@ref).
 """
 function results(workspace::Workspace, rows::Vector{Row})::Vector{Any}
     found = kept(workspace, rows)
@@ -524,19 +507,16 @@ end
 """
     kept(workspace, rows) -> Vector{Union{Nothing,Some}}
 
-The results of `rows` that memory or a store still has, as `Some(result)`, and `nothing` for each
-result that must be computed again.
+The results of `rows` that a store still has, as `Some(result)`, and `nothing` for each result that
+must be computed again.
 """
 function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Some}}
     catalog = workspace.catalog
     found = Vector{Union{Nothing,Some}}(nothing, length(rows))
     by_type = Dict{Type,Vector{Int}}()
     cachekeys = @lock catalog.lock map(enumerate(rows)) do (position, row)
-        given = get(workspace.expanded, row, nothing)
         type = Catalogs.result_type(catalog, row)
-        if given !== nothing
-            found[position] = Some(first(given))
-        elseif type === Nothing
+        if type === Nothing
             found[position] = Some(nothing)
         else
             push!(get!(Vector{Int}, by_type, type), position)
@@ -568,10 +548,7 @@ function computed!(workspace::Workspace, row::Row)
         found === nothing || return something(found)
         value, before = @lock catalog.lock (catalog[row], Catalogs.revision(catalog, row))
         output = call(workspace, row, value)
-        @lock catalog.lock begin
-            Catalogs.revision(catalog, row) == before || return output
-            output isa ExpandedItems && return (keep_expanded!(workspace, row, output); output)
-        end
+        @lock catalog.lock Catalogs.revision(catalog, row) == before || return output
         keep!(workspace, row, output)
         return output
     end
@@ -587,7 +564,6 @@ for the workspace, and the browser. The caller holds the catalog lock.
 function publish!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
     for row in lost!(catalog)
-        forget_expanded!(workspace, row)
         delete!(workspace.executions, row)
         delete!(workspace.errors, row)
         Catalogs.state(catalog, row) == Catalogs.REMOVED || continue
@@ -624,10 +600,10 @@ end
 # After a method definition, or when the roots differ, the workspace computes the code revision
 # again; `evaluate` does the same check first when a method was defined since the last check. When
 # the revision changed, the rows of that signature become stale, and with them every row that reads
-# them: source items are read again, as if the source had changed them, and items and collections
-# are processed again when a window shows them or a script reads them, or in the background with
-# `background_processing=true`. Collections ask `has_stage` again, so a collection `process` defined
-# later gets its rows. The same code defined again, as when a script runs again, changes nothing.
+# them: source items are read again, as if the source had changed them, and items are processed
+# again when a window shows them or a script reads them, or in the background with
+# `background_processing=true`. The same code defined again, as when a script runs again, changes
+# nothing.
 #
 # While a browser is open, the keyboard focus of its main window controls these checks: an inactive
 # window pauses them, and gaining focus resumes them. Without a browser, including after closing
@@ -644,8 +620,7 @@ end
 
 Make the rows whose code changed stale, so that they are computed again. The code revision of a
 signature is computed again only when a method was defined since the last check, or when
-[`code_roots`](@ref) gives other roots. Collections ask `has_stage` again, since a collection
-`process` or member `process` methods may be defined now, or no longer.
+[`code_roots`](@ref) gives other roots.
 """
 function check_code!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
@@ -672,13 +647,6 @@ function check_code!(workspace::Workspace)::Nothing
         for (row, signature) in workspace.signatures
             signature in changed && Catalogs.invalidate!(catalog, row)
         end
-        before = copy(workspace.stages)
-        empty!(workspace.stages)
-        for key in collections(workspace)
-            value = workspace.tree[key].value
-            stages(workspace, value) == get(before, typeof(value), nothing) || members_changed!(workspace, key)
-        end
-        collections!(workspace)
         publish!(workspace)
     end
     return nothing
@@ -736,10 +704,11 @@ lock.
 bound(workspace::Workspace, value::Computation) =
     Computation(value.f, map(x -> bound_argument(workspace, x), value.args), value.settings)
 bound_argument(workspace::Workspace, x::Computation) = bound(workspace, x)
+# FIXME(rebuild): the row of an id, which the tree held.
 function bound_argument(workspace::Workspace, x::AbstractDataItem)
     key = get(workspace.tree.item_ids, id(x), nothing)
     key === nothing && return x
-    return something(workspace.tree[key].member, workspace.tree[key].row, Some(x))
+    return something(workspace.tree[key].row, Some(x))
 end
 bound_argument(workspace::Workspace, x::Tuple) = map(v -> bound_argument(workspace, v), x)
 bound_argument(workspace::Workspace, x::AbstractVector) =
@@ -753,7 +722,8 @@ function Catalogs.input_rows(selection::Selection)::Vector{Row}
     workspace = getfield(data, :workspace)
     found = Row[]
     for x in getfield(data, :items)
-        row = x isa ItemKey ? something(workspace.tree[x].member, workspace.tree[x].row, Catalogs.NOWHERE) :
+        # FIXME(rebuild): the row of an item, which the tree held.
+        row = x isa ItemKey ? something(workspace.tree[x].row, Catalogs.NOWHERE) :
             get(workspace.catalog, bound(workspace, x), Catalogs.NOWHERE)
         row == Catalogs.NOWHERE || push!(found, row)
     end
@@ -789,16 +759,16 @@ end
     computation(workspace, item) -> Computation
 
 The computation that gives the latest value of an item, given as a key, a public id or a data item:
-its member `process`, when the collections above it have member `process` methods, or else its own
-`process`. Its [`inputs`](@ref) lead back to the source item it comes from. `computation` gives the
-computation without running it.
+its own `process`. Its [`inputs`](@ref) lead back to the source item it comes from. `computation`
+gives the computation without running it.
 """
+# FIXME(rebuild): the row of an id, which the tree held.
 computation(workspace::Workspace, value::Union{AbstractString,AbstractDataItem}) =
     computation(workspace, key(workspace, value))
 function computation(workspace::Workspace, key::ItemKey)::Computation
     @lock workspace.catalog.lock begin
         item = workspace.tree[key]
-        row = something(item.member, item.row, Some(nothing))
+        row = something(item.row, Some(nothing))
         row === nothing && error("The item \"$(item.id)\" waits for the source to report its source item")
         return workspace.catalog[row]
     end
@@ -869,8 +839,7 @@ call_id(value::Computation, name) = string(function_name(value.f), "(",
     join(map(name, value.args), ", "),
     isempty(value.settings) ? "" : "; " * join(("$name = $(repr(setting))" for (name, setting) in pairs(value.settings)), ", "),
     ")")
-# TODO: the id of a computation repeats the ids of its inputs, so that the id of a member `process`
-# contains the id of every member of the collection.
+# TODO: the id of a computation repeats the ids of its inputs.
 argument_id(x::Input) = id(x.catalog[x.row])
 argument_id(x::Part) = x.id
 argument_id(x::AbstractDataItem) = id(x)
@@ -890,17 +859,15 @@ label(value::Computation) = function_name(value.f)
 """
     materialize_items(workspace, items) -> Vector{AbstractDataItem}
 
-The processed items for `items`, given as item keys or public ids, in the same order. Each item
-comes with its latest value: the one its member `process` returned, when that is current, or else
-its own processed data.
+The processed items for `items`, given as item keys or public ids, in the same order.
 
 An item that is not processed yet is processed now, ahead of background work, and `materialize_items`
-waits for it. The member `process` of each item is requested too, without waiting for it: a later
-`materialize_items` gives the later value once it is ready. A failed item throws its error.
+waits for it. A failed item throws its error.
 
 The data and the metadata of each delivered item belong together: when an item changes while it is
 loaded, it is loaded again.
 """
+# FIXME(rebuild): the items of ids, now that `ItemKey` is gone.
 function materialize_items(workspace::Workspace, keys::Vector{ItemKey})::Vector{AbstractDataItem}
     catalog = workspace.catalog
     while true
@@ -910,13 +877,15 @@ function materialize_items(workspace::Workspace, keys::Vector{ItemKey})::Vector{
     end
 end
 
+# FIXME(rebuild): the item of an id, which `key` found in the tree.
 function materialize_items(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{AbstractDataItem}
     return materialize_items(workspace, ItemKey[key(workspace, id) for id in ids])
 end
 
 # Ask for the items ahead of background work: their own `process`, or the source item that they
-# wait for, and their member `process`. A request ends when its row has a result, so the callers ask
-# again for an item that waited for its source item.
+# wait for. A request ends when its row has a result, so the callers ask again for an item that
+# waited for its source item.
+# FIXME(rebuild): the row of an item, which the tree held.
 function Catalogs.request!(workspace::Workspace, keys::Vector{ItemKey})::Nothing
     catalog = workspace.catalog
     @lock catalog.lock for key in keys
@@ -927,7 +896,6 @@ function Catalogs.request!(workspace::Workspace, keys::Vector{ItemKey})::Nothing
         else
             request!(catalog, item.row, VIEWED_ITEM)
         end
-        item.member === nothing || request!(catalog, item.member, VIEWED_COLLECTION)
     end
     return nothing
 end
@@ -939,6 +907,7 @@ Ask for `items` ahead of background work, as `materialize_items` does, and tell 
 is processed now, or failed. The call does not wait, so a window can keep showing what it showed until
 the items are ready.
 """
+# FIXME(rebuild): the row of an item, which the tree held.
 function processed(workspace::Workspace, keys::Vector{ItemKey})::Bool
     catalog = workspace.catalog
     @lock catalog.lock begin
@@ -956,6 +925,7 @@ end
 Ask for `items` ahead of background work, wait until each is processed, and return their
 [`revision`](@ref). A failed item throws its error.
 """
+# FIXME(rebuild): the row of an item, which the tree held.
 function wait_processed(workspace::Workspace, keys::Vector{ItemKey})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
@@ -982,14 +952,15 @@ end
     revision(workspace, items) -> UInt
 
 A number that changes when `materialize_items` would deliver other values of `items`: an item was
-processed again, or its member `process` became current or stopped being so. A window keeps the
-number it drew with, and draws again when it differs.
+processed again. A window keeps the number it drew with, and draws again when it differs.
 """
+# FIXME(rebuild): the row of an item, which the tree held.
 function revision(workspace::Workspace, keys::Vector{ItemKey})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
         seed = UInt(0)
-        for key in keys, row in (workspace.tree[key].row, workspace.tree[key].member)
+        for key in keys
+            row = workspace.tree[key].row
             seed = row === nothing ? hash(0, seed) : hash(row.index, hash(Catalogs.state(catalog, row) == Catalogs.CURRENT,
                 hash(Catalogs.revision(catalog, row), seed)))
         end
@@ -1011,8 +982,7 @@ status_revision(::Workspace)::Int = Catalogs.CHANGES[]
 """
     read_first!(workspace, ids)
 
-Read the source items with public ids `ids` ahead of background work, and ahead of the memory limit
-for the items that wait for `process`. The call does not wait. Ids of source items that are read
+Read the source items with public ids `ids` ahead of background work. The call does not wait. Ids of source items that are read
 already, or that the workspace does not have, are ignored. See [`unread`](@ref).
 """
 function read_first!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Nothing

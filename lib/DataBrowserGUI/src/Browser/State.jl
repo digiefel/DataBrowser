@@ -4,6 +4,7 @@ import DataBrowserCore.Workspace
 using DataBrowserAPI: AbstractVisualizer
 
 """Saved tree controls from `databrowser.toml`."""
+# FIXME(rebuild): how a group of the tree is saved, which was the path of a collection.
 Base.@kwdef struct PersistedTreeView
     # Each collection is saved as its path: the type name and id of each level from the top down.
     expanded::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
@@ -135,6 +136,7 @@ mutable struct Window
     # The world and the code revision of the transform when they were last read.
     code::Tuple{UInt,String}
     # The items the window waits for before it makes its value again; empty when it waits for none.
+    # FIXME(rebuild): the items to wait for, now that `ItemKey` is gone.
     waiting::Vector{Workspace.ItemKey}
     # The value the window shows, and what tells whether the input gives another value now.
     # `stamp` is `nothing` until the visualizer is given the value.
@@ -222,6 +224,7 @@ replaced when `key` changes: the key covers the workspace, the tree filter and t
 replaced when the workspace changed, at most once per `TREE_REFRESH_SECONDS`: reading it again
 costs time in proportion to the size of the tree, and a workspace at work changes in every frame.
 """
+# FIXME(rebuild): the groups of the tree, which were collections and their `CollectionKey`.
 mutable struct TreeCache
     key::UInt
     # The generation of the workspace and the time when this was worked out.
@@ -249,6 +252,7 @@ const TREE_REFRESH_SECONDS = 0.1
 The items of the selected collections in display order. Kept and replaced like [`TreeCache`](@ref);
 its key covers the workspace, the selected collections and the tags.
 """
+# FIXME(rebuild): the items to list, now that `ItemKey` is gone.
 struct ItemList
     key::UInt
     generation::Int
@@ -260,6 +264,7 @@ end
 The items of an [`ItemList`](@ref) that the tags and the item filter leave visible. Kept while the
 list is the same object and `key` stays the same: the key covers the filter text and the tags.
 """
+# FIXME(rebuild): the items to list, now that `ItemKey` is gone.
 struct VisibleItems
     listed::Vector{Workspace.ItemKey}
     key::UInt
@@ -272,6 +277,7 @@ returns it. Kept while `key` stays the same: the key covers the workspace and it
 selection and the tags. `item_set` holds the same items as `items`, for rows that ask whether they
 are selected.
 """
+# FIXME(rebuild): the selected groups and items, which were `CollectionKey` and `ItemKey`.
 struct VisibleSelection
     key::UInt
     collections::Vector{Workspace.CollectionKey}
@@ -302,6 +308,7 @@ Base.@kwdef mutable struct BrowserState
     # When the browser last compared its view with `saved_project_view`, as `time()`.
     project_view_checked::Float64 = 0.0
     # The path of each expanded collection.
+    # FIXME(rebuild): the expanded and the revealed group of the tree, which were collection paths.
     expanded_collections::Vector{Workspace.CollectionPath} = Workspace.CollectionPath[]
     tree_filter::String = ""
     item_filter::String = ""

@@ -97,34 +97,6 @@ end
     end
 end
 
-# Each item of a folder passes through a member `process` of the folder, which adds 1.
-struct FolderProject <: API.AbstractProject end
-API.project_name(::FolderProject) = "folder members"
-API.read(::FolderProject, source::DirectorySource, file::SourceFile) = API.read(FileProject(), source, file)
-API.process(::FolderProject, item::FileReading) = API.process(FileProject(), item)
-API.process(::FolderProject, item::FileReading, ::DataBrowserSources.DirectoryCollection) =
-    FileReading(API.id(item), (value=API.data(item).value .+ 1,), API.metadata(item))
-
-@testset "removing a failed item lets the other items of its folder be processed" begin
-    mktempdir() do root
-        mkpath(joinpath(root, "run"))
-        a, b = joinpath(root, "run", "a.dat"), joinpath(root, "run", "b.dat")
-        write(a, "a 4")
-        write(b, "b -1")
-        # Without background processing, a `process` runs only when something reads its item.
-        ws = open_workspace(FolderProject(), DirectorySource(root); cache=false, background_processing=false)
-        try
-            wait_workspace_idle!(ws; timeout=20)
-            @test_throws ErrorException materialize_items(ws, ["b"])
-            rm(b)
-            @test timedwait(() -> query_items(ws) == ["a"], 20) === :ok
-            @test API.data(evaluate(ws, computation(ws, "a"))).value == [3.0]
-        finally
-            close_workspace!(ws)
-        end
-    end
-end
-
 @testset "conflicting item ids do not prevent recovery after the conflicting file is removed" begin
     mktempdir() do root
         a, b = joinpath(root, "a.dat"), joinpath(root, "b.dat")

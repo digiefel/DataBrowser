@@ -1,7 +1,6 @@
 """
-Files in which the user annotates items and collections: [`Tags`](@ref) in `tags.txt` and
-[`Notes`](@ref) in `notes.txt`. Both name an item by its id, and a collection by the labels of the
-collections from the top down, joined with `/`.
+Files in which the user annotates items: [`Tags`](@ref) in `tags.txt` and [`Notes`](@ref) in
+`notes.txt`. Both name an item by its id.
 """
 module DataBrowserAnnotations
 

@@ -1,2 +1,0 @@
-collection_path
-runs/A

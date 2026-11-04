@@ -37,7 +37,6 @@ so a premade recipe is a starting point rather than a different kind of thing:
 register_csv!(project, :sweep;
     extensions=[".csv", ".txt"],
     read_options=(; delim='\\t', comment="#"),
-    collection=(data, metadata) -> (measurement = "sweeps", device = metadata[:device]),
     analyze=(data, _metadata) -> Dict(:rows => nrow(data)),
 )
 ```

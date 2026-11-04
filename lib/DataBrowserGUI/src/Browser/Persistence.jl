@@ -2,6 +2,7 @@ using TOML
 import GLFW
 
 using DataBrowserAPI: AbstractVisualizer, prepare!, project_name, select!, selection, settings
+# FIXME(rebuild): the items of the saved ids, now that `ItemKey` is gone.
 using DataBrowserCore.Workspace: ItemKey
 import DataBrowserCore.Workspace
 
@@ -153,6 +154,7 @@ function _project_view_from_browser(
         project=project_name(workspace.project),
         window_size=Int[GLFW.GetWindowSize(ig.current_window())...],
         window_position=Int[GLFW.GetWindowPos(ig.current_window())...],
+        # FIXME(rebuild): the selected groups, which were `selection.collections`.
         tree=PersistedTreeView(
             expanded=copy(state.expanded_collections),
             selected=copy(workspace.selection.collections),
@@ -278,6 +280,7 @@ function _apply_project_view!(
     view::PersistedProjectView,
 )::Nothing
     workspace = state.workspace
+    # FIXME(rebuild): the selected groups, which were `selection.collections`.
     state.expanded_collections = copy(view.tree.expanded)
     workspace.selection.collections = copy(view.tree.selected)
     # The items replaced since the view was saved are selected by their new ids.

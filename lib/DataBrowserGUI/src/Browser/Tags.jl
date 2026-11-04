@@ -1,6 +1,7 @@
 import DataBrowserCore.Workspace
 import DataBrowserCore.Workspace: Tag, tags, tag!, untag!
 using DataBrowserAPI: id, label
+# FIXME(rebuild): the keys of the items and groups to show, now that the Tree is gone.
 using DataBrowserCore.Workspace: CollectionKey, ItemKey, ROOT
 
 """Whether the workspace read its tags; they cannot be shown or changed otherwise."""
@@ -27,6 +28,8 @@ The selection in the workspace is left untouched; this returns only the part of 
 is visible now. The root is never among the returned collections. The returned vectors are kept for
 the next calls: do not change them.
 """
+# FIXME(rebuild): the selected groups, which were `selection.collections` and their `path`, `ROOT`,
+# `children` and `ancestors`.
 function _project_visible_selection(
     state::BrowserState,
 )::Tuple{Vector{CollectionKey},Vector{ItemKey},Vector{String}}
@@ -76,6 +79,7 @@ Return every item belonging to the selected visible collections, ordered by the 
 item that produced it. Items whose source item gives no time come last. Items that the time does
 not order follow the natural order of their labels: `run2` comes before `run10`.
 """
+# FIXME(rebuild): the members of the selected groups, which were the items of the selected collections.
 function _items_of_selected_collections(state::BrowserState)::Vector{ItemKey}
     workspace = state.workspace
     key = hash((

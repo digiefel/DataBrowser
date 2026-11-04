@@ -57,6 +57,8 @@ function select_failed!(state::BrowserState, id::AbstractString)::Bool
 end
 
 """Reveal the current workspace selection in the tree and item panel."""
+# FIXME(rebuild): the groups that hold the selected items and the groups above them, which were
+# `collection`, `ancestors` and `path` of the tree, and the selected groups.
 function _reveal_selected_items!(state::BrowserState)::Nothing
     workspace = state.workspace
     items = _items_for_ids(state, workspace.selection.item_ids)

@@ -1,8 +1,6 @@
 using BetterFileWatching
 using CancellationTokens: CancellationToken, CancellationTokenSource, OperationCanceledException, cancel, get_token, is_cancellation_requested
 
-import DataBrowserAPI
-import DataBrowserAPI: collection, reconstruct
 using DataBrowserAPI:
     AbstractDataSource,
     AbstractDataSourceItem,
@@ -37,7 +35,7 @@ end
 
 A data source that reads the files in the folder `root_path`. Each file is one source item, a
 [`SourceFile`](@ref). With `recursive=true`, the files in the folders below `root_path` are source
-items too, and the folders of a file are its collections, from the top down.
+items too.
 
 Hidden files and folders, whose names start with `.`, are not source items. Nor are the files that
 DataBrowser keeps in a folder: `tags.txt`, `notes.txt` and `databrowser.toml`, in upper or lower
@@ -98,24 +96,6 @@ function index_source_file(path::AbstractString, root::AbstractString)::SourceFi
         relpath(filepath, expanduser(root)),
         FileFingerprint(filepath, info.size, Int64(info.mtime * 1_000_000_000)),
     )
-end
-
-"""One collection level of a directory tree, identified by the directory's name."""
-struct DirectoryCollection <: DataBrowserAPI.AbstractCollection
-    name::String
-end
-
-id(level::DirectoryCollection)::String = level.name
-label(level::DirectoryCollection)::String = level.name
-label(::Type{DirectoryCollection})::Symbol = :folder
-reconstruct(::Type{DirectoryCollection}, identity::AbstractString, ::Dict) =
-    DirectoryCollection(String(identity))
-
-"""The folders of a file, from the top down, below the folder of the source."""
-function collection(file::SourceFile)::Vector{DataBrowserAPI.AbstractCollection}
-    # A file at the root has the directory "", which `splitpath` returns as one empty name.
-    return DataBrowserAPI.AbstractCollection[
-        DirectoryCollection(name) for name in splitpath(dirname(file.relative_path)) if !isempty(name)]
 end
 
 function items(

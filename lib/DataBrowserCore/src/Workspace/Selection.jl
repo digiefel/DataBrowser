@@ -50,6 +50,7 @@ function Base.iterate(data::ItemData, (items, index)=(nothing, 1))
 end
 
 # The items themselves: those of the workspace are read from the cache together.
+# FIXME(rebuild): the items of the workspace, now that `ItemKey` is gone.
 loaded(workspace::Workspace, items::Vector{ItemKey}) = materialize_items(workspace, items)
 loaded(::Workspace, items::Vector) = items
 
@@ -148,13 +149,13 @@ end
     select(workspace, ids) -> Selection
 
 The items with the public `ids` as a [`Selection`](@ref): a table with one row for each item. Its
-columns are `id`, `label`, one column for each level of the collection tree, named after the level,
-then each metadata key. A value that an item does not have is `missing`. `selection.data` is the
-data of each item.
+columns are `id`, `label`, then each metadata key. A value that an item does not have is `missing`.
+`selection.data` is the data of each item.
 
 To change the selection of the workspace, use [`select!`](@ref); [`selection`](@ref) gives it.
 Items that are not processed yet are processed now, and the call waits for them.
 """
+# FIXME(rebuild): the item of an id, now that `ItemKey` is gone.
 function select(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Selection
     found = [item(workspace, id) for id in ids]
     unknown = findfirst(isnothing, found)
@@ -162,28 +163,16 @@ function select(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Se
     return select(workspace, ItemKey[found...])
 end
 
+# FIXME(rebuild): the items of the workspace, now that `ItemKey` is gone.
 function select(workspace::Workspace, items::Vector{ItemKey})::Selection
     wait_processed(workspace, items)
-    levels = map(items) do item
-        joined = Pair{Symbol,String}[]
-        for holder in ancestors(workspace, item)
-            name, value = Symbol(label(valuetype(workspace, holder))), label(workspace, holder)
-            # Nested levels of one name, such as folders, join from the top down: "72b/L/bigTLM".
-            # TODO: the joining suits folders only; it joins unrelated levels of one name and skips
-            # the levels between them. Let each collection type give its own value, such as the
-            # folder's path relative to the source.
-            above = findfirst(level -> first(level) == name, joined)
-            above === nothing ? push!(joined, name => value) : (joined[above] = name => "$(last(joined[above]))/$value")
-        end
-        joined
-    end
     return Selection(ItemData(workspace, items), [id(workspace, item) for item in items],
-        [label(workspace, item) for item in items], [metadata(workspace, item) for item in items], levels)
+        [label(workspace, item) for item in items], [metadata(workspace, item) for item in items])
 end
 
-# The columns `id` and `label`, the tree levels, then each metadata key. A value that an item does
-# not have is `missing`.
-function Selection(data::ItemData, ids, labels, metadatas, levels=[Pair{Symbol,String}[] for _ in ids])
+# The columns `id` and `label`, then each metadata key. A value that an item does not have is
+# `missing`.
+function Selection(data::ItemData, ids, labels, metadatas)
     names = [:id, :label]
     # Typed, so that `select(workspace, selection.id)` takes the ids of an empty selection too.
     properties = Dict{Symbol,Vector}(:id => String[ids...], :label => String[labels...])
@@ -191,9 +180,6 @@ function Selection(data::ItemData, ids, labels, metadatas, levels=[Pair{Symbol,S
     function put!(name::Symbol, index::Int, value)
         haskey(properties, name) || (push!(names, name); properties[name] = Vector{Any}(missing, length(ids)))
         properties[name][index] = value
-    end
-    for (index, item_levels) in enumerate(levels), (name, value) in item_levels
-        put!(name, index, value)
     end
     # A metadata key never replaces a property named above.
     # TODO: show such a key under another name, once the user has a case for it.
@@ -213,6 +199,7 @@ end
 The workspace's selection, which [`select!`](@ref) and the browser change, as a [`Selection`](@ref).
 Selected ids that the workspace has no item for are left out.
 """
+# FIXME(rebuild): the item of an id, now that `ItemKey` is gone.
 function selection(workspace::Workspace)::Selection
     ids = @lock workspace.lifecycle_lock copy(workspace.selection.item_ids)
     return select(workspace, ItemKey[key for key in item.(Ref(workspace), ids) if key !== nothing])

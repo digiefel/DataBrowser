@@ -13,7 +13,7 @@ not claims about the engine described below.
 DataBrowser is a Julia working environment for data projects. It should be strictly
 better than opening a REPL, finding files, loading them, extracting useful tables, computing values,
 and writing figure code by hand. The app makes that workflow interactive: open a project, browse the
-source structure, select collections or items, inspect data-derived values, and switch plots or views
+source structure, select items, inspect data-derived values, and switch plots or views
 without repeating the same parsing work.
 
 Project code should describe the project in the same terms a script would use: which logical items a
@@ -22,9 +22,9 @@ package owns scanning, cache storage, background jobs, and UI state.
 
 The intended experience is live and composable. A project can stay open while source files are added
 or changed, and the browser should update without forcing the user back through startup or manual
-reload steps. Views should be able to follow selections, collections, or matching rules, so a plot or
+reload steps. Views should be able to follow selections or matching rules, so a plot or
 inspection tool can continue to show the relevant data as the source tree changes. Built-in
-visualizers should handle common inspection tasks, while project code adds only the expansion
+visualizers should handle common inspection tasks, while project code adds only the reading
 and presentation details that are specific to the experiment.
 
 ## Package map
@@ -78,7 +78,7 @@ flowchart TB
     userpkg --> api
     prof --> api
 
-    core -.->|"read<br/>expand<br/>process"| projects
+    core -.->|"read<br/>process"| projects
     gui -.->|"draw!<br/>menu!<br/>init!"| plots
     cache -.->|"@timed_dbg"| prof
     core -.->|"@timed_dbg"| prof
@@ -114,26 +114,22 @@ flowchart TB
 
 ## Core Flow
 
-A workspace opens one project on one source. The project says how to read each source item, how to
-turn what it holds into items, and how to process items and collections. The workspace makes each of
-these calls a computation, keeps all of them in one catalog, and keeps their results. It runs a
+A workspace opens one project on one source. The project says how to read each source item and how
+to process items. The workspace makes each of these calls a computation, keeps all of them in one catalog, and keeps their results. It runs a
 computation when its result is needed, and runs it again when the source or the code that it
 depends on changes.
 
 The project defines:
 
 - reading each source item (`read`);
-- turning what `read` loaded into items, when a source item holds none or several (`expand`);
 - processing one item (`process`);
-- a later version of a collection from its items (collection `process`), and a later version of
-  each item from its collections (member `process`);
 - project-specific visualizers, when generic ones are not enough.
 
 The workspace owns:
 
 - the open source and its identity (several sources in one workspace are a target, not the current
   implementation);
-- the catalog of computations, and the tree of items and collections that their results give;
+- the catalog of computations, and the items that their results give;
 - the order in which computations run, their results, and the cache;
 - scanning the source, progress, failures and cancellation;
 - the selection.
@@ -162,7 +158,6 @@ flowchart LR
     workers -->|versions and failures| cache["cache"]
     workers -->|finished rows| pipeline
     code["code changes"] -->|stale rows| catalog
-    pipeline --> tree["tree of items and collections"]
 ```
 
 The code of each part explains it:
@@ -170,31 +165,19 @@ The code of each part explains it:
 | Page | What it explains |
 | --- | --- |
 | [`Catalogs.jl`](code/lib/DataBrowserCore/src/Catalogs.md) | rows, their states, and the rules that decide what runs and what stays |
-| [`Pipeline.jl`](code/lib/DataBrowserCore/src/Workspace/Pipeline.md) | the rows of source items, items and collections, and when they are added |
+| [`Pipeline.jl`](code/lib/DataBrowserCore/src/Workspace/Pipeline.md) | the rows of source items and items, and when they are added |
 | [`Evaluate.jl`](code/lib/DataBrowserCore/src/Workspace/Evaluate.md) | how rows run, their names and versions, where results are kept, code changes |
 | [`CodeRevisions.jl`](code/lib/DataBrowserCore/src/CodeRevisions.md) | the code revision of a function: what it follows and what it cannot see |
 
-<!-- TODO: move the sections below into the code that they describe (Tree.jl, Items.jl, Calls.jl). -->
+<!-- TODO: move the sections below into the code that they describe (Items.jl, Calls.jl). -->
 
-### The tree
+### Items
 
-Items and collections form a tree, kept apart from the catalog. Each item and each collection has a
-key (`ItemKey`, `CollectionKey`) that stays the same while the workspace is open, and an item names
-the rows that give its value. The workspace accessors (`items`, `children`, `label`, `metadata` and
-others) read the tree, and the browser passes keys. The tree view of the browser is one visualizer
-among others.
+Views, queries and the item list use the latest value of an item, with its metadata and label, once
+it is current, and the result of its own row until then.
 
-A collection is identified by its parent and by the type and `id` of its value. An item goes where
-`collection(project, item)` says, or where `collection(source_item)` says when that is empty. A
-collection contains every item below it, at any depth. Views, queries and the item list use the
-latest value of an item, with its metadata and label, once it is current, and the result of its own
-row until then.
-
-The source items that are not read yet (`unread`) are in the collection tree of the browser from the
-moment the source lists them. Their ids, split at `/`, give folders. A folder with the label of a
-collection is shown as that collection, and other folders and source items are gray rows. Selecting
-such a collection, or clicking a gray row, reads the source items below it before any other
-(`read_first!`).
+The source items that are not read yet (`unread`) are known from the moment the source lists them.
+`read_first!` reads some of them before any other.
 
 ### Other computations
 
@@ -210,8 +193,7 @@ after the item changed. Windows evaluate computations this way in their backgrou
 ### The code view
 
 The code view shows the computations as calls, in the order they ran. The row of a source item shows
-as two calls, `read` and `expand`; the `read` call gives what `read` returns, computed when a window
-asks for it. Each call keeps the computations of its items, and the selection passes them on through
+as one call, `read`. Each call keeps the computations of its items, and the selection passes them on through
 `output`. Linked windows evaluate those computations the same way as table selections.
 
 A window holds the values it computed as a selection of computations, whose data is their results.
@@ -245,7 +227,7 @@ flowchart LR
     cache -->|"recorded version and failure"| records
     records --> core
     core -->|"replace_source_output!<br/>store_item_metadata!<br/>store_computation_revision!"| cache
-    source -->|"read / expand / process"| core
+    source -->|"read / process"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111
     classDef cacheC fill:#f5d6a8,stroke:#c08a3f,color:#111
@@ -279,7 +261,6 @@ classDiagram
     direction TB
     class AbstractDataSource
     class AbstractDataSourceItem
-    class AbstractCollection
 
     class DirectorySource {
         String root_path
@@ -298,24 +279,17 @@ classDiagram
         Int64 size_bytes
         Int64 mtime_ns
     }
-    class DirectoryCollection {
-        String name
-    }
 
     AbstractDataSource <|-- DirectorySource
     AbstractDataSourceItem <|-- SourceFile
-    AbstractCollection <|-- DirectoryCollection
     DirectorySource --> SourceFile : scans
-    DirectorySource --> DirectoryCollection : places files
     SourceFile *-- FileFingerprint : fingerprint
 
     style AbstractDataSource fill:#cfd8e3,stroke:#5a6b80,stroke-width:1px,color:#111
     style AbstractDataSourceItem fill:#cfd8e3,stroke:#5a6b80,stroke-width:1px,color:#111
-    style AbstractCollection fill:#cfd8e3,stroke:#5a6b80,stroke-width:1px,color:#111
     style DirectorySource fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
     style SourceFile fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
     style FileFingerprint fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
-    style DirectoryCollection fill:#c9e4c5,stroke:#5a9a52,stroke-width:1px,color:#111
 ```
 
 #### Call flow
@@ -340,12 +314,8 @@ flowchart TD
         lblsf("label(::SourceFile) → String")
         fpsf("fingerprint(::SourceFile) → FileFingerprint")
         metasf("metadata(::SourceFile) → Dict")
-        csi("collection(::SourceFile)")
         sid("id(::DirectorySource) → String")
         slbl("label(::DirectorySource) → String")
-        iddc("id(::DirectoryCollection) → String")
-        lbldc("label(::DirectoryCollection) → String")
-        recon("reconstruct(::DirectoryCollection) → DirectoryCollection")
     end
 
     extCore["DataBrowserCore"]
@@ -377,7 +347,6 @@ flowchart TD
     extCore ==> si
     extCore ==> wsrc
     extCore ==> csrc
-    extCore ==> csi
     extCore ==> sid
     extCore ==> idsf
     extCore ==> lblsf
@@ -388,13 +357,12 @@ flowchart TD
     extCache ==> fpsf
     extAPI ==> sid
     extAPI ==> slbl
-    extAPI ==> recon
     extGUI ==> slbl
     extPlots ==> slbl
 
     wsrc -.->|"SourceChanges<br/>SourceError"| extCore
 
-    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ csi ~~~ sid ~~~ slbl ~~~ iddc ~~~ lbldc ~~~ recon
+    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ sid ~~~ slbl
 
     classDef srcExp fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111;
     classDef srcInt fill:#c9e4c5,stroke:#5a9a52,stroke-width:1px,color:#111;
@@ -407,7 +375,7 @@ flowchart TD
     classDef plotsC fill:#f2c6d4,stroke:#b0466a,color:#111;
 
     class isf srcExp;
-    class si,csi,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl,iddc,lbldc,recon srcInt;
+    class si,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl srcInt;
     class extCore coreC;
     class extAPI apiC;
     class extCache cacheC;

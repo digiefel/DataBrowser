@@ -9,8 +9,8 @@ abstract type AbstractDataSourceItem end
 """
     metadata(value) -> Dict
 
-Return metadata supplied directly by `value`. It does not include metadata supplied by source
-items or collections around that value.
+Return metadata supplied directly by `value`. It does not include metadata supplied by the source
+item of that value.
 
 A metadata value may have any type that `StructUtils.lower` saves and `StructUtils.make` builds
 again: numbers, strings, symbols, dates, vectors of them, and structs of those, field by field. A
@@ -81,9 +81,8 @@ watch_source(::AbstractDataSource, ::Function; cancel_token::CancellationToken) 
 """
     id(value)::String
 
-Stable identity supplied by `value`, used exactly as returned. Sources, source items, data items,
-and collections all implement it; none has a default, and none has its answer wrapped or
-namespaced. An id has to stay stable across scans and reopenings, and two values answering the same
+Stable identity supplied by `value`, used exactly as returned. Sources, source items and data items
+all implement it; none has a default, and none has its answer wrapped or namespaced. An id has to stay stable across scans and reopenings, and two values answering the same
 id collide. The id of a source says which cache belongs to it.
 """
 function id end
@@ -92,7 +91,7 @@ function id end
     label(value) -> String
 
 Human-readable label supplied by `value`. Sources and source items must implement this; data items
-and collections have defaults (see the item contract).
+have a default (see the item contract).
 """
 function label end
 

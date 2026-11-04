@@ -181,9 +181,9 @@ that view — the user can then register their own support. Shapes whose support
 dependencies (audio codecs, for example) belong in extension packages even when generic, on the same
 host/extension pattern as the GUI itself.
 
-**Group.** An item whose inputs are other items, generalizing hierarchical collections. Its own
-result is reusable independently of its members; selecting the group and selecting its members
-are separate actions. Formation and hierarchy APIs remain under design in [groups](plans/groupings.md).
+**Group.** An item whose inputs are other items. Its own result is reusable independently of its
+members; selecting the group and selecting its members are separate actions. Formation and
+hierarchy APIs remain under design in [groups](plans/groupings.md).
 
 **Selection.** A concrete list of items, or a *rule* that resolves to items as the project changes.
 Concrete selections reproduce exactly; live rules keep views attached as items are added, removed, or
@@ -211,7 +211,7 @@ detailed in §8.
 
 A note on the registration API: `define_project` / `register_*` is one convenient way to describe a
 data pipeline with ordinary values and functions. Its reader is the only required callback; identity,
-labels, collection placement, metadata, processing, and analysis have useful defaults. The type API
+labels, metadata, processing, and analysis have useful defaults. The type API
 is the fundamental layer for packages that model sources and items directly with multiple dispatch.
 The registration dialect ships as `DataBrowserRecipes`, an ordinary package built purely on that
 layer and re-exported by default; it also carries premade recipes (CSV first) so common files work
@@ -316,17 +316,14 @@ phasing.
 The registration API defines named or default pipelines over ordinary Julia data. It ships as
 `DataBrowserRecipes`, an ordinary package implemented purely as a client of the typed stage
 contract; the engine never learns it exists. `read` obtains the content of one source item.
-Its result is one data item unless the registration supplies `expand`, which splits the result into
-zero or several data items. Item construction supplies cheap
-sibling identity, labels, collection placement, and metadata at the same time data is split.
-Deferred `process` and `analyze` callbacks receive data and effective metadata. A registration
-name provides stable replacement and associates extension or collection operations. It is not a
-property of the user's data.
+Its result is one data item. Deferred `process` and `analyze` callbacks receive data and effective
+metadata. A registration name provides stable replacement and associates extension operations. It
+is not a property of the user's data.
 
 The type API models `AbstractDataSource`, `AbstractDataSourceItem`, and `AbstractDataItem` values
 directly. Concrete item types survive materialization, processing, and visualization. Their behavior
 comes from multiple dispatch, and item methods have defaults for source-derived identity, labels,
-collections, empty metadata, identity processing, and source-backed storage.
+empty metadata, identity processing, and source-backed storage.
 
 Project code stays close to natural scripts: identify data, load it, compute results, and define
 domain views. The workspace owns cache files, UI state, background jobs, and package lifecycle.

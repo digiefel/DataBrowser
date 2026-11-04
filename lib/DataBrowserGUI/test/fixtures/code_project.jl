@@ -22,6 +22,7 @@ function API.read(project::CodeProject, ::CodeSource, ::CodeFile)
     project.reads[] += 1
     return (signal=[1, 2, 3],)
 end
+# FIXME(rebuild): the items that a source item holds, which `expand` gave.
 API.expand(::CodeProject, ::CodeFile, value) = [CodeSignal("signal", value), CodeSignal("other", (signal=[4, 5],))]
 function API.process(project::CodeProject, value::CodeSignal)
     project.processes[] += 1

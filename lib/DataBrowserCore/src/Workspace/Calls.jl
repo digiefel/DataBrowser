@@ -7,8 +7,8 @@ function of another computation. Items that went through the same code share the
 - `title`: the function's name, with the type of the values a stage of the project ran for;
 - `code`: the method, or the place in a file, that [`which`](@ref) gives; `nothing` when it is not
   known;
-- `items`: the label of each item it ran for, by id: the source items for `read`, the items and
-  collections for `process`, the computations for a function;
+- `items`: the label of each item it ran for, by id: the source items for `read`, the items for
+  `process`, the computations for a function;
 - `failed`: the first line of the error of each item it failed for, by id;
 - `result`: the type of the values a function gives, as Julia infers it before running it;
   `nothing` when Julia cannot tell, and for a stage of the project;
@@ -58,9 +58,10 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         row, place, ran_for, failure, result = @lock catalog.lock begin
             row = get(catalog, value, Catalogs.NOWHERE)
             place = row == Catalogs.NOWHERE ? nothing : get(workspace.places, row, nothing)
+            # FIXME(rebuild): the id and label of the item that a row gives, which the tree held.
             ran_for = place isa String ? (id(value.args[3]), label(value.args[3])) :
                 place === nothing ? (row == Catalogs.NOWHERE ? (id(value), id(value)) : (cachekey(workspace, row), cachekey(workspace, row))) :
-                (workspace.tree[place].id, place isa ItemKey ? workspace.tree[place].label : label(workspace.tree[place].value))
+                (workspace.tree[place].id, workspace.tree[place].label)
             current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
             row, place, ran_for, get(workspace.errors, row, nothing), current ? Catalogs.result_type(catalog, row) : nothing
         end
@@ -77,13 +78,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
             made = made!(function_name(value.f), which(value), value, preceding,
                 something(result, Base.infer_return_type(value.f, argument_types(value))))
         elseif found[1] == SOURCE_READ
-            # The row of a source item runs `read` and then `expand`, which are two calls of the
-            # project's code. The call of `read` gives what `read` returns, computed when asked for.
-            type = string(nameof(found[2]))
-            expand = which(workspace.project, SOURCE_EXPAND, found[2])
-            made = made!("read(::$type)", which(workspace.project, SOURCE_READ, found[2]),
-                expand === nothing ? value : Computation(DataBrowserAPI.read, value.args...), preceding, nothing)
-            expand === nothing || (made = made!("expand(::$type)", expand, value, Call[made], nothing))
+            made = made!("read(::$(nameof(found[2])))", which(workspace.project, SOURCE_READ, found[2]), value, preceding, nothing)
         else
             code = which(workspace.project, found...)
             # A stage the project does not define passes on what it receives.
@@ -103,12 +98,10 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
     return filter(call -> !(call in preceding), found)
 end
 
-# The signature of a row that did not run yet. The result type of a collection row that did not run
-# is the type of its collection.
+# The signature of a row that did not run yet.
 function call_signature(workspace::Workspace, row::Row)::Type
     value = workspace.catalog[row]
-    type(x::Input) = Catalogs.result_type(workspace.catalog, x.row) !== Nothing ? Catalogs.result_type(workspace.catalog, x.row) :
-        get(workspace.places, x.row, nothing) isa CollectionKey ? typeof(workspace.tree[workspace.places[x.row]].value) : Any
+    type(x::Input) = Catalogs.result_type(workspace.catalog, x.row) !== Nothing ? Catalogs.result_type(workspace.catalog, x.row) : Any
     type(x) = argument_type(workspace, x)
     return Tuple{typeof(value.f),map(type, value.args)...}
 end

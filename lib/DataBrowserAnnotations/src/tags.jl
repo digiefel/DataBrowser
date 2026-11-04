@@ -1,7 +1,7 @@
 """
-Tags: named labels that the user puts on items and collections. [`load`](@ref) and
-[`save`](@ref) keep them in the file `tags.txt` of a folder. The file has two sections, each after
-a header in brackets. `\\t` stands for a tab:
+Tags: named labels that the user puts on items. [`load`](@ref) and [`save`](@ref) keep them in the
+file `tags.txt` of a folder. The file has two sections, each after a header in brackets. `\\t`
+stands for a tab:
 
     # Lines that start with `#` are comments.
     [catalog]
@@ -9,13 +9,10 @@ a header in brackets. `\\t` stands for a tab:
     todo\\t30c0ff\\t50
 
     [assignments]
-    A9/VI/D1\\tbad
-    A10/VI\\ttodo
     A9/VI/D1/3V FE PUND.csv\\tbad
 
 A catalog row is `<name>\\t<color>\\t<priority>`: it defines one [`Tag`](@ref). An assignment row
-is `<key>\\t<name>`: it puts the tag `name` on `key`. A key is the id of an item, or the path of a
-collection: the labels of the collections from the top down, joined with `/`.
+is `<key>\\t<name>`: it puts the tag `name` on `key`, the id of an item.
 
 [`save`](@ref) separates fields with tabs. [`load`](@ref) also accepts spaces between fields, when
 a row has no tab. A row that does not follow this format raises a `TagsParseError`.
@@ -31,7 +28,7 @@ tags_path(root::AbstractString) = joinpath(String(root), TAGS_FILENAME)
 """
     Tag(name; color="808080", priority=0)
 
-A label that the user puts on items and collections, for example `Tag("bad")`.
+A label that the user puts on items, for example `Tag("bad")`.
 
 The name identifies the tag. `color` is six hexadecimal digits, and is the color of tagged rows
 in the browser. When several tags apply to one row, the tag with the highest `priority` gives the
@@ -70,9 +67,6 @@ Base.show(io::IO, tag::Tag) =
 
 The content of `tags.txt`: the `catalog` of defined tags, and the `assignments` from each key to
 the names of the tags put on it.
-
-Only the tags put on a key itself are stored. A reader applies the tags of a collection to
-everything below it.
 """
 struct TagState
     catalog::Vector{Tag}

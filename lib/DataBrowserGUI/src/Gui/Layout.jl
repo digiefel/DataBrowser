@@ -231,7 +231,6 @@ end
 
 # The Lucide icon font, version 1.52.0 (ISC licence, in `assets/lucide-LICENSE`). Its icons are
 # characters in the private-use range, so a string can hold text and icons together.
-const ICON_PARTIAL = "\ue4b0"  # circle-dashed
 const ICON_FAILED = "\ue084"   # circle-x
 const ICON_COPY = "\ue09e"     # copy
 const ICON_FILTER = "\ue0dc"   # funnel

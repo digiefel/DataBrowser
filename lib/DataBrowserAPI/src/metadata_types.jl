@@ -1,6 +1,6 @@
 """
-The metadata of an item or a collection as a `Dict{Symbol,Any}`, from a dictionary, a named tuple,
-a pair, or pairs that `Dict` accepts. Keys become symbols; values stay as they are.
+The metadata of an item as a `Dict{Symbol,Any}`, from a dictionary, a named tuple, a pair, or pairs
+that `Dict` accepts. Keys become symbols; values stay as they are.
 """
 metadata_dict(values)::Dict{Symbol,Any} = metadata_dict(Dict(values))
 metadata_dict(values::NamedTuple)::Dict{Symbol,Any} = metadata_dict(pairs(values))

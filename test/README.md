@@ -53,7 +53,7 @@ julia --project=bench --threads=auto test/runtests.jl precompile --force
 | `Sources` | `test_directory.jl`: discovery, exclusions, recursion and change fingerprints. |
 | `Recipes` | `test_stages.jl`: registration through typed stages and CSV loading. |
 | `Cache` | `test_persistence.jl`: payload replacement/deletion across reopen; cached `nothing`. `test_native_storage.jl`: typed native reads, eviction, cached `nothing`, payload capability and retention independent of completion. |
-| `Core` | `test_computations.jl`: input traversal, native-value evaluation, per-item storage policy, computation caching, complete native fields, strict store types, a store that refuses a result until the next opening, collection replay, copied cache results and uncached materialization across reopening, and execution information for successful and failed calls, and pipeline calls reused as computation inputs. `test_workspace.jl`: reconstruction, collections, reopening, code changes, failure recovery, tags and status during on-demand processing. `test_selection.jl`: selection, filtering and table access. `test_source_updates.jl`: actual directory-file edits, collection metadata changes, removal/recreation, recovery from reader/processor failures, and the other items of a folder once its failed item is removed. |
+| `Core` | `test_computations.jl`: input traversal, native-value evaluation, per-item storage policy, computation caching, complete native fields, strict store types, a store that refuses a result until the next opening, copied cache results and uncached materialization across reopening, and execution information for successful and failed calls, and pipeline calls reused as computation inputs. `test_workspace.jl`: reconstruction, reopening, code changes, failure recovery, tags and status during on-demand processing. `test_selection.jl`: selection, filtering and table access. `test_source_updates.jl`: actual directory-file edits, removal/recreation, and recovery from reader/processor failures. |
 | `GUI` | `test_tables.jl`: prepared table values, columns and provenance. `test_code_file.jl`: editing, saving and noticing changes by another editor. `test_code_view.jl`: selecting earlier calls, linked-window results, cache reuse without replay, and no catalog insertion. `test_windows.jl`: a window's function as one computed value for each item, the rows a table passes on, and exclusive background preparation of the same visualizer instance with failure recovery. `test_vector_view.jl`: vector and signal plots without a graphics backend; density, FFT amplitude, PSD power and autocorrelation normalization. None of them exercises GUI controls. |
 | `Plots` | `test_declaration.jl`, `test_fitting.jl`, `test_legend.jl`: ordinary plot declarations, plotted values, grouped fits and legend content. `test_plot_editing.jl`: adding a layer and changing an analysis from code, keeping the rest of the plot code. `test_secondary_axis.jl`: second y axes, their scales and the settings they share with the first. |
 | `Profiling` | `test_timings.jl`: concurrent instrumentation, snapshots and lifecycle. |
@@ -66,8 +66,8 @@ data and analysis metadata update without a REPL command or an explicit call to 
 - TODO: test window creation, transforms, reopening, table selection/copy, plot-file recovery,
   editor controls and axis gestures when public GUI operations exist. No tests simulate these by
   calling private window helpers or changing fields that force an update.
-- TODO: exercise cancellation of requests and changes during collection processing through supported
-  workspace operations. Exact scheduler queues and job counts are not application contracts.
+- TODO: exercise cancellation of requests and changes during processing through supported workspace
+  operations. Exact scheduler queues and job counts are not application contracts.
 - TODO: test recovery from a missing stored payload when public storage/workspace operations can
   reproduce it. Core tests do not reach into the workspace's cache to delete individual rows.
 - TODO: cover live recipe registration changes in an application workflow. A different list of
@@ -130,8 +130,8 @@ Throughput uses logical uncompressed payload bytes. User callbacks return prepar
 numerical analysis or parsing is profiled. Measurements are medians of three runs after one warmup;
 `MB_BENCH_REPEATS` controls repetitions.
 
-The browser smoke project has three items in two collections. It exercises directory discovery,
-registered item/collection stages, workspace selection, saved-cache reuse, source/metadata
+The browser smoke project has three items. It exercises directory discovery, registered item
+stages, workspace selection, saved-cache reuse, source
 updates and live addition/removal. Expected values and callback counts check correctness. It opens
 actual windows and requires a working graphics session; unavailable graphics or renderer errors
 fail the workload. It uses public browser lifecycle operations, without creating or configuring
