@@ -26,7 +26,7 @@
 #
 # A group is a value with members: [`members`](@ref) gives their ids. A group read and a group
 # process take the values of its members of the type `T` that their method takes: for each member,
-# its latest version of type `T`, in the order of their ids. A member that is a group with no value
+# its latest version of type `T`, in the order of the members. A member that is a group with no value
 # of type `T` gives the values of type `T` of its own members instead, and so on below them. The
 # workspace reads `T` from the signature of the method, and asks again when the code changes.
 #
@@ -95,9 +95,10 @@ function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Not
         T = something(asked(workspace, member_type, read, P, S, I), asked(workspace, member_type, read, S, I), AbstractDataItem)
         Computation(read, project, source, source_item, MemberValues{T}(read_id))
     end
-    ## A group read takes the values of its members, and a member stands for its read until it gives them.
+    ## A group read takes its members and the values that they give, and a member stands for its read
+    ## until it gives them.
     # TODO: when the members of a source item change, this takes the time of the number of members.
-    taken = String[held; [x for member in held for x in values(workspace, member)]]
+    given = String[x for member in held for x in values(workspace, member)]
     for member in held
         above = get!(Vector{String}, workspace.parents, member)
         read_id in above || push!(above, read_id)
@@ -111,14 +112,14 @@ function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Not
         fingerprint(source_item) !== nothing && isequal(fingerprint(before.args[3]), fingerprint(source_item)) &&
             isequal(before.args[4:end], value.args[4:end]) && return nothing
         replace!(catalog, row, value)
-        isempty(held) || members!(workspace, row, taken)
+        members!(workspace, row, isempty(held) ? nothing : held, given)
         return nothing
     end
     row = add!(catalog, value)
     hold!(catalog, row)
     workspace.sources[read_id], workspace.cachekeys[row], workspace.stages[row] = row, "read:" * read_id, SOURCE_READ
     want!(catalog, row, SOURCES_FIRST)
-    isempty(held) || members!(workspace, row, taken)
+    isempty(held) || members!(workspace, row, held, given)
     restore!(workspace, row)
     return nothing
 end
@@ -398,21 +399,50 @@ function output(workspace::Workspace, x::String)::Union{Nothing,Output}
 end
 
 """
-    members!(workspace, row, ids)
+    members!(workspace, row, ids, given=String[])
 
-Make the row of a group read or a group process take the values of the members `ids`, of the type
-`T` of its argument `MemberValues{T}`, in place of those it took; `nothing` takes none, for a row
-that leaves. It changes nothing when the row takes these members already, and else takes the time
-of the number of members.
+Make the row of a group read or a group process take the values of the members `ids`, in their
+order, and the values `given` that the members give, of the type `T` of its argument
+`MemberValues{T}`, in place of those it took. `nothing` takes none, for a row that leaves or has no
+members any more. It changes nothing when the row takes these members already, and else takes the
+time of the number of members.
 """
-function members!(workspace::Workspace, row::Row, ids::Union{Nothing,Vector{String}})::Nothing
-    T, before = eltype(workspace.catalog[row].args[end]), get(workspace.taken, row, nothing)
+function members!(workspace::Workspace, row::Row, ids::Union{Nothing,Vector{String}}, given::Vector{String}=String[])::Nothing
+    catalog, before = workspace.catalog, get(workspace.taken, row, nothing)
+    T = ids === nothing ? nothing : eltype(catalog[row].args[end])
     before !== nothing && before.T == T && isequal(before.root, ids) && return nothing
-    before === nothing || foreach(x -> input!(workspace, row, x, -1), before.root)
-    ids === nothing && return (delete!(workspace.taken, row); nothing)
-    workspace.taken[row] = Taken(T, ids, Dict(), 0)
-    foreach(x -> input!(workspace, row, x, 1), ids)
+    ## Leave every value that the row takes, also those that it took after it got its members.
+    for (x, found) in (before === nothing ? () : before.rows)
+        found.row == Catalogs.NOWHERE || Catalogs.disconnect!(catalog, row, found.row)
+        takers = filter!(!=(row), workspace.takers[x])
+        isempty(takers) && delete!(workspace.takers, x)
+    end
+    delete!(workspace.taken, row)
+    ids === nothing && return nothing
+    ## The order of the members counts in the version, as the values do.
+    workspace.taken[row] = Taken(T, ids, Dict(), hash(ids))
+    foreach(x -> input!(workspace, row, x, 1), [ids; given])
     return nothing
+end
+
+"""
+    member_values(workspace, row) -> Vector{Pair{String,Row}}
+
+The ids of the values that the row of a group read or a group process takes, each with the row of
+the version that it takes, in the order of the members: each member, then the values that it gives
+when it is a source item, and the members of a group that stands for its members. It takes the time
+of the number of members, as the call that reads these values does.
+"""
+function member_values(workspace::Workspace, row::Row)::Vector{Pair{String,Row}}
+    rows, found, seen = workspace.taken[row].rows, Pair{String,Row}[], Set{String}()
+    function visit(x)
+        (x in seen || !haskey(rows, x)) && return
+        push!(seen, x)
+        rows[x].row == Catalogs.NOWHERE ? foreach(visit, get(workspace.members, x, String[])) : push!(found, x => rows[x].row)
+        foreach(visit, values(workspace, x))
+    end
+    foreach(visit, workspace.taken[row].root)
+    return found
 end
 
 """

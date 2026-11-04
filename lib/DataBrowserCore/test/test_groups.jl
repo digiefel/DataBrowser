@@ -88,6 +88,12 @@ share(ws, x) = get(W.metadata(ws, x), :share, nothing)
             write(joinpath(root, "run", "a.dat"), "a 9")
             @test timedwait(() -> share(ws, "b") == 0.25 && share(ws, "c") == 0.25, 20) === :ok
             @test total(ws, ".") == 16 && total(ws, "run") == 12
+
+            # A file that comes and a file that goes change the totals of the folders above them.
+            write(joinpath(root, "run", "d.dat"), "d 2")
+            rm(joinpath(root, "run", "a.dat"))
+            @test timedwait(() -> total(ws, "run") == 5, 20) === :ok
+            @test total(ws, ".") == 9
         end
     end
 end
@@ -99,12 +105,13 @@ end
         write_files(root)
         write(joinpath(root, "c.dat"), "c x")
         in_workspace(root, depot) do ws
-            @test !isempty(workspace_status(ws).errors)
+            @test timedwait(() -> !isempty(workspace_status(ws).errors), 20) === :ok
             @test total(ws, ".") == 4
 
             write(joinpath(root, "c.dat"), "c 4")
             @test timedwait(() -> share(ws, "c") == 0.5, 20) === :ok
-            @test total(ws, ".") == 8 && isempty(workspace_status(ws).errors)
+            @test total(ws, ".") == 8
+            @test timedwait(() -> isempty(workspace_status(ws).errors), 20) === :ok
         end
     end; end
 end

@@ -285,11 +285,10 @@ end
 
 # The value that a function receives for an argument: an input is the result of its row, a part is
 # the value with its id in that result, and the values of members that the row takes are read
-# together, in the order of their ids.
+# together, in the order of the members.
 function resolved(workspace::Workspace, row::Row, ::MemberValues{T}) where {T}
     catalog = workspace.catalog
-    taken = @lock catalog.lock sort!([(x, found.row) for (x, found) in workspace.taken[row].rows
-        if found.row != Catalogs.NOWHERE && output(workspace, found.row, x) !== nothing]; by=first)
+    taken = @lock catalog.lock filter!(((x, at),) -> output(workspace, at, x) !== nothing, member_values(workspace, row))
     return T[pick(result, x) for ((x, _), result) in zip(taken, results(workspace, last.(taken)))]
 end
 resolved(workspace::Workspace, ::Row, x) = resolved(workspace, x)

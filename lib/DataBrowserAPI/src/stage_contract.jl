@@ -64,8 +64,8 @@ read(source::AbstractDataSource, item::AbstractDataSourceItem) = error(
     read(source, group, members::AbstractVector{T}) -> AbstractGroup
 
 Make a group from `group`, a source item with [`members`](@ref), and the values of its members. `T`
-is a subtype of `AbstractDataItem`. For each member, `members` holds its latest value of type `T`,
-in the order of their ids.
+is a subtype of `AbstractDataItem`. For each member, in order, `members` holds its latest value of
+type `T`.
 
 The values of a member are the value that `read` gives for it, and every value that `process` makes
 from those, also the values with other ids. A member that is a group and has no value of type `T`
