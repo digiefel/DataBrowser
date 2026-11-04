@@ -49,6 +49,9 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
     visited = IdDict{Computation,Vector{Call}}()
     function calls_of(value::Computation)::Vector{Call}
         haskey(visited, value) && return visited[value]
+        ## A value picked from the result of a call that gives several: that call, for that value.
+        given = value
+        value.f === pick && (value = value.args[1])
         row, ran_for, failure, result, members = @lock catalog.lock begin
             row = get(catalog, value, Catalogs.NOWHERE)
             stage = get(workspace.stages, row, nothing)
@@ -56,6 +59,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
             ran_for = stage == SOURCE_READ ? (id(value.args[3]), label(value.args[3])) :
                 stage !== nothing ? (value.args[2].id, label(workspace, value.args[2].id)) :
                 row == Catalogs.NOWHERE ? (id(value), id(value)) : (cachekey(workspace, row), cachekey(workspace, row))
+            given === value || (ran_for = (given.args[2], label(workspace, given.args[2])))
             current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
             ## A group also reads the values of its members that it takes.
             taken = haskey(workspace.taken, row) ? member_values(workspace, row) : Pair{String,Row}[]
@@ -68,7 +72,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         function made!(title, code, value, preceding, result)
             made = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding), known, (title, code, map(objectid, preceding)))
             made.items[first(ran_for)] = last(ran_for)
-            made.computations[first(ran_for)] = value
+            made.computations[first(ran_for)] = given
             result === nothing || result === Any || (made.result = made.result === nothing ? result : typejoin(made.result, result))
             return made
         end
@@ -80,11 +84,11 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         else
             code = which(workspace.project, found...)
             # A stage the project does not define passes on what it receives.
-            code === nothing && return (visited[value] = preceding)
+            code === nothing && return (visited[given] = preceding)
             made = made!("process(::" * string(label(found[2])) * ")", code, value, preceding, nothing)
         end
         failure === nothing || (made.failed[first(ran_for)] = first(split(failure, '\n')))
-        return (visited[value] = Call[made])
+        return (visited[given] = Call[made])
     end
     found = reduce(vcat, map(calls_of, definitions); init=Call[])
     unique!(found)

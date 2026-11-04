@@ -204,7 +204,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
         delete!(workspace.errors, row)
         store_computation_revision!(workspace.cache.db, key, at, typeof(output))
         if outputs !== nothing
-            finished!(workspace, row, first.(outputs))
+            finished!(workspace, row, Output[output for (output, _) in outputs])
             ## The cache saves the values that the workspace kept.
             messages = String[]
             for (position, (output, values)) in enumerate(outputs)
@@ -519,12 +519,12 @@ end
 
 Save a copy of `result` in the store of its type, under the name of `row`. A vector that a row of
 the pipeline gives is saved as its values, each in the store of its own type. The result of
-`view(item, selection)` is not saved: it is made again when needed, and another copy of the item
-would push other results out.
+`view(item, selection)`, and one value picked from the result of another row, is not saved: it is
+made again when needed, and another copy of the item would push other results out.
 """
 function keep!(workspace::Workspace, row::Row, output)::Nothing
     catalog = workspace.catalog
-    key, again, pipeline = @lock catalog.lock (cachekey(workspace, row), catalog[row].f === view, haskey(workspace.stages, row))
+    key, again, pipeline = @lock catalog.lock (cachekey(workspace, row), catalog[row].f in (view, pick), haskey(workspace.stages, row))
     again && return nothing
     for (name, x) in (pipeline && output isa AbstractVector ? [(cachekey(key, id(x)), x) for x in output] : [(key, output)])
         place = store(workspace, typeof(x))
@@ -834,7 +834,9 @@ The computation that gives one value of a selection, without loading its data.
 function computation(selection::Selection, index::Integer)::Computation
     data = selection.data::ItemData
     item = getfield(data, :items)[index]
-    return item isa Computation ? item : computation(getfield(data, :workspace), item)
+    item isa Computation && return item
+    ## The call that gives a value can give other values too: pick the value from its result.
+    return Computation(pick, computation(getfield(data, :workspace), item), item)
 end
 
 # The row of a computation, or `nothing` when the workspace does not have it. The catalog stays as
