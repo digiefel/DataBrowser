@@ -4,21 +4,24 @@
 # computation: missing, stale, current or failed ([`Catalogs.jl`](../Catalogs.md)). To compute a
 # row, the workspace runs a *job*.
 #
-# The workspace adds two kinds of rows for the project ([`Pipeline.jl`](Pipeline.md)), and one row
-# for each computation that a script or a window asks for:
+# The workspace adds a row for each call of the project's code ([`Pipeline.jl`](Pipeline.md)), and
+# one row for each computation that a script or a window asks for:
 #
-# | Row        | Calls                                | Name, for the item `a/1` of `a.csv` |
-# |:-----------|:-------------------------------------|:------------------------------------|
-# | source row | `read(project, source, source_item)` | `read:a.csv`, which gives `a/1`     |
-# | own row    | `process(project, item)`             | `a/1`                               |
+# | Row            | Calls                                  | Cache key, for the value `a/1` of `a.csv` |
+# |:---------------|:---------------------------------------|:------------------------------------------|
+# | read           | `read(project, source, source_item)`   | `read:a.csv`, which gives `a.csv`         |
+# | process        | `process(project, value)`              | `process:a.csv`, which gives `a/1`        |
+# | group process  | `process(project, group, members)`     | `group process:a`                         |
+# | member process | `process(project, member, group)`      | `member process:a/1 in a`                 |
 #
-# Windows show the *latest value* of an item: the result of its own row.
+# Windows show the *latest version* of a value: the value of that id that the last of these rows
+# gives.
 #
 # Scripts ask for results with these functions:
 #
 # | Call                                | Gives                                  | Waits | Keeps in the workspace          |
 # |:------------------------------------|:---------------------------------------|:------|:--------------------------------|
-# | `materialize_items(workspace, ids)` | the items, with their latest value     | yes   | nothing new                     |
+# | `materialize_items(workspace, ids)` | the latest version of each value       | yes   | nothing new                     |
 # | `evaluate(workspace, computation)`  | the result of a computation            | yes   | its row, until the workspace closes |
 #
 # Three parts of the workspace keep information about a row:
@@ -26,9 +29,9 @@
 # ```text
 #     catalog, in memory          the state of each row, its inputs and its priority
 #     cache, a DuckDB file        for each row name: the version of its last result, or its error;
-#                                 and the items, with their metadata and labels. The next
-#                                 session knows from it which rows are current, and shows the
-#                                 items at once
+#                                 and for a row of the pipeline, the values it gives, with their
+#                                 metadata and labels. The next session knows from it which rows
+#                                 are current, and has their values without running them
 #     stores, one for each        for each row name: its result. A MemoryStore, the default, loses
 #       type of result            the results when Julia exits; a DuckDBStore, as a project made
 #                                 with DataBrowserRecipes uses, keeps them in a file
@@ -57,10 +60,10 @@
 #                          current                failed
 #                                      │
 #                                      ▼
-#                          finished!: the pipeline adds the rows that the result needs
+#                          finished!: the pipeline adds the rows that the values of the result need
 #
 #     finish! belongs to the catalog: it ends the job and sets the state of the row.
-#     finished! belongs to the pipeline: it adds rows, such as the own row of each new item.
+#     finished! belongs to the pipeline: it adds rows, such as the process of each new value.
 # ```
 #
 # The version of a row identifies its result (see "Names and versions"). A current row whose store
@@ -71,18 +74,20 @@
 # Worker tasks run the jobs: one for each Julia thread, and at least two. Jobs run in this order of
 # priority, highest first:
 #
-# 1. what a window shows and what a script asks for: its items and computations (`VIEWED_ITEM`);
+# 1. what a window shows and what a script asks for: its values and computations (`VIEWED_ITEM`);
 # 2. source items (`SOURCES_FIRST`);
-# 3. the `process` of items, in the background (`BACKGROUND_ITEM`).
+# 3. the `process` methods, in the background (`BACKGROUND_ITEM`).
 #
 # By default, `open_workspace` sets `background_processing=false`: the workers read every source
-# item, but process an item only when a window or a script asks for it.
+# item, but run a `process` method only when a window or a script asks for its value.
 #
-# The `process` of an item read from the source must return a data item; any other result fails the
-# row. When a function throws, the row fails: the error is logged, the status panel of the browser
-# shows the error next to its item, and the cache saves it. When reading a source item fails, its
-# items leave the workspace until a later read succeeds. A failed row does not run again, even in a later session, until its version changes: its
-# code, an input or an argument changed. To run failed rows again without a change, open the
+# A `read` or a `process` must return a data item, or a vector of data items; any other result
+# fails the row. When a function throws, the row fails: the error is logged, the status panel of the
+# browser shows the error next to its value, and the cache saves it. When reading a source item
+# fails, its values leave the workspace until a later read succeeds. A `process` that fails gives
+# no values, and the value it was given keeps the failed row as its latest version, until the row
+# runs again. A failed row does not run again, even in a later session, until its version changes:
+# its code, an input or an argument changed. To run failed rows again without a change, open the
 # workspace with `rebuild=true`, which empties its cache.
 #
 # When the store refuses a result, as a `DuckDBStore` refuses metadata of another type than the
@@ -151,23 +156,20 @@ end
 """
     run!(workspace, job)
 
-Compute the row of `job`, keep its result, and add the rows that its result needs. A row whose
+Compute the row of `job`, keep its result, and add the rows that its values need. A row whose
 current version is the one the cache saved becomes current, or failed, without running. A result of
-the wrong type fails the row: the `process` of an item read from the source must return an
-`AbstractDataItem`.
+the wrong type fails the row: a `read` or a `process` must return an `AbstractDataItem`, or a vector
+of them.
 """
 function run!(workspace::Workspace, job::Job)::Nothing
     catalog, row = workspace.catalog, job.row
     ## Until `finish!` ends the job, every error fails the row, so that no row stays running without
     ## a job. The cache saves only the error of the function, under the version of the row: after
     ## any other error, the next session runs the row again.
-    value, place, expected, at, record = try
+    value, key, pipeline, at, record = try
         @lock catalog.lock begin
-            place = get(workspace.places, row, nothing)
             at = version(workspace, row)
-            # FIXME(rebuild): whether a row gives an item, now that `ItemKey` is gone.
-            expected = place isa ItemKey ? AbstractDataItem : Any
-            catalog[row], place, expected, at, recorded(workspace, row, at)
+            catalog[row], cachekey(workspace, row), haskey(workspace.stages, row), at, recorded(workspace, row, at)
         end
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
@@ -185,18 +187,34 @@ function run!(workspace::Workspace, job::Job)::Nothing
     catch error
         return failed!(workspace, job, at, error, catch_backtrace())
     end
-    output isa expected || return failed!(workspace, job, at,
-        ErrorException("$(function_name(value.f)) returned a $(typeof(output)), not a $expected"), nothing)
-    try
+    given = output isa AbstractVector ? output : [output]
+    pipeline && !all(x -> x isa AbstractDataItem, given) && return failed!(workspace, job, at,
+        ErrorException("$(function_name(value.f)) returned a $(typeof(output)), not an item or a vector of items"), nothing)
+    ## The ids, labels, members and metadata of the values are the project's code, which runs
+    ## outside the lock.
+    outputs = try
         keepable(catalog, job) && keep!(workspace, row, output)
+        pipeline ? [(Output(id(x), typeof(x), label(workspace.project, x), x isa AbstractGroup ? members(x) : nothing,
+            output_key!(workspace.cache.db, key, id(x))), metadata_dict(metadata(x))) for x in given] : nothing
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
     end
     @lock catalog.lock begin
         finish!(catalog, job; version=at, type=typeof(output)) || return nothing
         delete!(workspace.errors, row)
-        store_computation_revision!(workspace.cache.db, cachekey(workspace, row), at, typeof(output))
-        finished!(workspace, row, place, output)
+        store_computation_revision!(workspace.cache.db, key, at, typeof(output))
+        if outputs !== nothing
+            finished!(workspace, row, first.(outputs))
+            ## The cache saves the values that the workspace kept.
+            messages = String[]
+            for (position, (output, values)) in enumerate(outputs)
+                output in get(workspace.outputs, row, Output[]) || continue
+                append!(messages, conflict_message.(store!(workspace.produced, output.key, values)))
+                append!(messages, store_output!(workspace.cache.db, key, Int(workspace.stages[row]), position,
+                    (; output.id, output.label, output.type, output.members, metadata=values)))
+            end
+            conflicts!(workspace, row, unique!(messages))
+        end
         publish!(workspace)
     end
     return nothing
@@ -207,34 +225,29 @@ end
 
 Fail the row of `job` and save its message in the cache under `version`, so that the next session
 shows the same failure without running the row; a `version` of `nothing` saves nothing. The message
-goes to `report_error`, and the status panel of the browser shows the message next to the item. A
-source item that fails loses its items.
+goes to `report_error`, and the status panel of the browser shows the message next to the value. A
+row of the pipeline that fails gives no values.
 """
 function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, error, backtrace)::Nothing
     catalog, row = workspace.catalog, job.row
     context = @lock catalog.lock begin
-        f, place = catalog[row].f, get(workspace.places, row, nothing)
-        # FIXME(rebuild): the id of the item that a row gives, which the tree held.
-        subject = place isa String ? "Source item: $place" :
-            place isa ItemKey ? "Function: $(function_name(f))\n  Item: $(workspace.tree[place].id)" :
-            "Computation: $(cachekey(workspace, row))"
-        "A computation failed\n  $subject\n  Source: $(DataBrowserAPI.source_description(workspace.source))"
+        stage, f = get(workspace.stages, row, nothing), catalog[row].f
+        about = stage == SOURCE_READ ? "Source item: $(subject(workspace, row))" :
+            stage !== nothing ? "Function: $(function_name(f))\n  Item: $(subject(workspace, row))" :
+            "Computation: $(subject(workspace, row))"
+        "A computation failed\n  $about\n  Source: $(DataBrowserAPI.source_description(workspace.source))"
     end
     message = DataBrowserAPI.error_summary(error, backtrace) * "\n\n" * context
     @lock catalog.lock begin
         finish!(catalog, job; failed=true) || return nothing
-        workspace.errors[row] = failure_prefix(catalog[row].f) * message
+        workspace.errors[row] = "$(function_name(catalog[row].f)) failed: " * message
         at === nothing || store_computation_revision!(workspace.cache.db, cachekey(workspace, row), at, Nothing; failure=message)
-        place = get(workspace.places, row, nothing)
-        place isa String && remove_items!(workspace, place)
+        haskey(workspace.stages, row) && finished!(workspace, row, nothing)
         publish!(workspace)
     end
     DataBrowserAPI.report_error(context, error, backtrace)
     return nothing
 end
-
-# FIXME(rebuild): the function of a source row, which was `read_items`.
-failure_prefix(f)::String = f === read_items ? "could not create items: " : "$(function_name(f)) failed: "
 
 """
     failure(workspace, row) -> String
@@ -270,11 +283,12 @@ function call(workspace::Workspace, row::Row, value::Computation)
     end
 end
 
-# The value that a function receives for an argument: an input is the result of its row, and a
-# part is the item that `process` receives.
+# The value that a function receives for an argument: an input is the result of its row, a part is
+# the value with its id in that result, and the values of members are read together.
 resolved(workspace::Workspace, x::Input) = only(results(workspace, [x.row]))
-# FIXME(rebuild): the item `x.id` among the items that a row gives, which `process_input` found.
-resolved(workspace::Workspace, x::Part) = process_input(resolved(workspace, x.of), x.id)
+resolved(workspace::Workspace, x::Part) = pick(resolved(workspace, x.of), x.id)
+resolved(workspace::Workspace, x::MemberValues{T}) where {T} =
+    T[pick(result, part.id) for (result, part) in zip(results(workspace, Row[part.of.row for part in x]), x)]
 resolved(workspace::Workspace, x::Tuple) = map(v -> resolved(workspace, v), x)
 function resolved(workspace::Workspace, x::AbstractVector)
     ## Results of rows, read together, in a vector of their common type.
@@ -344,13 +358,16 @@ function version(workspace::Workspace, row::Row)::UInt64
 end
 
 argument_type(workspace::Workspace, x::Input) = Catalogs.result_type(workspace.catalog, x.row)
-# FIXME(rebuild): the item type of an id, which the tree held.
-argument_type(workspace::Workspace, x::Part) = workspace.tree[workspace.tree.item_ids[x.id]].type
+function argument_type(workspace::Workspace, x::Part)
+    found = output(workspace, x.of.row, x.id)
+    return found === nothing ? Any : found.type
+end
+argument_type(::Workspace, ::MemberValues{T}) where {T} = Vector{T}
 argument_type(::Workspace, x) = typeof(x)
 
 argument_version(workspace::Workspace, x::Input)::UInt64 = Catalogs.version(workspace.catalog, x.row)
 argument_version(workspace::Workspace, x::Part)::UInt64 = hash(x.id, argument_version(workspace, x.of))
-argument_version(workspace::Workspace, x::Union{Tuple,AbstractVector{Input}})::UInt64 =
+argument_version(workspace::Workspace, x::Union{Tuple,AbstractVector{<:Union{Input,Part}}})::UInt64 =
     foldl((seed, v) -> hash(argument_version(workspace, v), seed), x; init=UInt64(0))
 argument_version(workspace::Workspace, x::Selection)::UInt64 =
     foldl((seed, row) -> hash(Catalogs.version(workspace.catalog, row), seed), Catalogs.input_rows(x); init=hash(argument_id(x)))
@@ -390,24 +407,26 @@ function code_roots(project::AbstractProject, signature::Type, f)::Vector
     return f isa Function ? Any[f] : Any[typeof(f); collect(methods(f))]
 end
 
-# FIXME(rebuild): the function of a source row, which was `read_items`.
-stage(::Type{<:Tuple{typeof(read_items),Any,Any,S}}) where {S} = (SOURCE_READ, S)
+stage(::Type{<:Tuple{typeof(read),Any,Any,S}}) where {S} = (SOURCE_READ, S)
+stage(::Type{<:Tuple{typeof(read),Any,Any,S,Any}}) where {S} = (SOURCE_READ, S)
 stage(::Type{<:Tuple{typeof(process),Any,I}}) where {I} = (ITEM_PROCESS, I)
+stage(::Type{<:Tuple{typeof(process),Any,G,AbstractVector}}) where {G} = (GROUP_PROCESS, G)
+stage(::Type{<:Tuple{typeof(process),Any,M,G}}) where {M,G} = (MEMBER_PROCESS, G)
 stage(_) = nothing
 
 """
     recorded(workspace, row, version)
 
-What the cache saved for the result of `row` at `version`, when it can be used now: a failure,
-or a result whose metadata the cache saved for an item; else `nothing`. The caller holds the catalog
-lock.
+What the cache saved for the result of `row` at `version`, when it can be used now: a failure, or a
+result, and for a row of the pipeline the values it gave; else `nothing`. The caller holds the
+catalog lock.
 """
 function recorded(workspace::Workspace, row::Row, at::UInt64)
     record = recorded_revision(workspace.cache.db, cachekey(workspace, row))
     (record === nothing || record.revision != at) && return nothing
-    # FIXME(rebuild): whether a row gives an item, now that `ItemKey` is gone.
-    saves = get(workspace.places, row, nothing) isa ItemKey
-    isempty(record.failure) && saves && !haskey(workspace.saved, cachekey(workspace, row)) && return nothing
+    # TODO: a row of the pipeline that gave no values has nothing saved, so it runs again in each
+    # session.
+    isempty(record.failure) && haskey(workspace.stages, row) && !haskey(workspace.saved, cachekey(workspace, row)) && return nothing
     return record
 end
 
@@ -429,12 +448,17 @@ function restore!(workspace::Workspace, row::Row)::Bool
     return true
 end
 
+# The values and the metadata of a row, or its error, as the cache saved them.
 function restored!(workspace::Workspace, row::Row, record)::Nothing
-    saved = pop!(workspace.saved, cachekey(workspace, row), nothing)
-    if !isempty(record.failure)
-        workspace.errors[row] = failure_prefix(workspace.catalog[row].f) * record.failure
-    elseif saved !== nothing
-        store!(workspace.produced, row.index, saved)
+    key = cachekey(workspace, row)
+    saved = pop!(workspace.saved, key, SavedOutput[])
+    failed = !isempty(record.failure)
+    failed && (workspace.errors[row] = "$(function_name(workspace.catalog[row].f)) failed: " * record.failure)
+    haskey(workspace.stages, row) || return nothing
+    outputs = [Output(value.id, value.type, value.label, value.members, output_key!(workspace.cache.db, key, value.id)) for value in saved]
+    finished!(workspace, row, failed ? nothing : outputs)
+    for (output, value) in zip(outputs, saved)
+        output in get(workspace.outputs, row, Output[]) && store!(workspace.produced, output.key, value.metadata)
     end
     return nothing
 end
@@ -574,8 +598,7 @@ function publish!(workspace::Workspace)::Nothing
             place === nothing || delete!(place, type, key)
             delete_computation_revision!(workspace.cache.db, key)
         end
-        delete!(workspace.produced, row.index)
-        foreach(found -> delete!(found, row), (workspace.places, workspace.signatures, workspace.row_locks, workspace.evaluated))
+        foreach(found -> delete!(found, row), (workspace.outputs, workspace.signatures, workspace.row_locks, workspace.evaluated))
     end
     ## Wakes the tasks that wait for the scan or for the workspace to be idle.
     notify(catalog.changed)
@@ -618,13 +641,14 @@ end
 """
     check_code!(workspace)
 
-Make the rows whose code changed stale, so that they are computed again. The code revision of a
-signature is computed again only when a method was defined since the last check, or when
+Make the rows whose code changed stale, so that they are computed again, and add or release the
+rows of the pipeline whose methods apply now, or no longer apply. The code revision of a signature
+is computed again only when a method was defined since the last check, or when
 [`code_roots`](@ref) gives other roots.
 """
 function check_code!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
-    known = @lock catalog.lock copy(workspace.code)
+    known, asked = @lock catalog.lock (copy(workspace.code), copy(workspace.methods))
     world = Base.get_world_counter()
     current = Dict{Type,Code}()
     for (signature, code) in known
@@ -634,8 +658,17 @@ function check_code!(workspace::Workspace)::Nothing
         warn_untracked(signature, current[signature], code)
     end
     isempty(current) && return nothing
+    answers = Dict{Tuple,Any}(question => first(question)(Base.tail(question)...) for question in keys(asked))
     @lock catalog.lock begin
         workspace.closed && return nothing
+        ## Every value, group and source item with members is checked again when a method applies
+        ## now that did not, or the other way around.
+        if !isequal(answers, asked)
+            workspace.methods = answers
+            ids = collect(keys(workspace.versions))
+            refresh!(workspace, ids)
+            regroup!(workspace, ids, collect(keys(workspace.sources)))
+        end
         changed = Set{Type}(signature for (signature, code) in current
             if code.revision.hash != workspace.code[signature].revision.hash)
         for signature in changed
@@ -675,17 +708,17 @@ end
 # ```
 #
 # `fit` is a function of your own. `evaluate` adds the computation as a row, keeps the row until the
-# workspace closes, runs it ahead of background work, and waits for its result. An item of the
-# workspace among the arguments stands for the row of its latest value, so the next `evaluate`
-# computes it again after that item changed:
+# workspace closes, runs it ahead of background work, and waits for its result. A value of the
+# workspace among the arguments stands for its latest version, so the next `evaluate` computes it
+# again after that value changed:
 #
 # ```text
-#   Computation(fit, item)  ──bound──▶  fit(the row of the latest value of a/1)
+#   Computation(fit, item)  ──bound──▶  fit(the value a/1 of the row of its latest version)
 # ```
 #
 # A `Selection` can hold computations, as the values that a visualizer passes through a function:
-# the data of each is its result. `computation(workspace, item)` gives the computation of the latest
-# value of an item. In the browser, a visualizer draws again when the `revision` of what it shows
+# the data of each is its result. `computation(workspace, id)` gives the computation of the latest
+# version of a value. In the browser, a visualizer draws again when the `revision` of what it shows
 # changes.
 #
 # Give computations named functions. An anonymous function has a generated name, such as `#3`,
@@ -697,18 +730,16 @@ end
 """
     bound(workspace, computation) -> Computation
 
-`computation` with each data item among its arguments that is an item of the workspace replaced by the
-row of its latest value, so that it follows the changes of that item. The caller holds the catalog
+`computation` with each data item among its arguments that is a value of the workspace replaced by
+its latest version, so that it follows the changes of that value. The caller holds the catalog
 lock.
 """
 bound(workspace::Workspace, value::Computation) =
     Computation(value.f, map(x -> bound_argument(workspace, x), value.args), value.settings)
 bound_argument(workspace::Workspace, x::Computation) = bound(workspace, x)
-# FIXME(rebuild): the row of an id, which the tree held.
 function bound_argument(workspace::Workspace, x::AbstractDataItem)
-    key = get(workspace.tree.item_ids, id(x), nothing)
-    key === nothing && return x
-    return something(workspace.tree[key].row, Some(x))
+    rows = get(workspace.versions, id(x), nothing)
+    return rows === nothing ? x : Part(Input(workspace.catalog, rows[end]), id(x))
 end
 bound_argument(workspace::Workspace, x::Tuple) = map(v -> bound_argument(workspace, v), x)
 bound_argument(workspace::Workspace, x::AbstractVector) =
@@ -716,14 +747,14 @@ bound_argument(workspace::Workspace, x::AbstractVector) =
 bound_argument(::Workspace, x::Selection) = x
 bound_argument(::Workspace, x) = x
 
-# A selection reads the latest value of each of its items, and the result of each of its computations.
+# A selection reads the latest version of each of its values, and the result of each of its
+# computations.
 function Catalogs.input_rows(selection::Selection)::Vector{Row}
     data = selection.data::ItemData
     workspace = getfield(data, :workspace)
     found = Row[]
     for x in getfield(data, :items)
-        # FIXME(rebuild): the row of an item, which the tree held.
-        row = x isa ItemKey ? something(workspace.tree[x].row, Catalogs.NOWHERE) :
+        row = x isa String ? last(get(workspace.versions, x, [Catalogs.NOWHERE])) :
             get(workspace.catalog, bound(workspace, x), Catalogs.NOWHERE)
         row == Catalogs.NOWHERE || push!(found, row)
     end
@@ -756,28 +787,26 @@ function evaluate(workspace::Workspace, value::Computation)
 end
 
 """
-    computation(workspace, item) -> Computation
+    computation(workspace, id) -> Computation
 
-The computation that gives the latest value of an item, given as a key, a public id or a data item:
-its own `process`. Its [`inputs`](@ref) lead back to the source item it comes from. `computation`
-gives the computation without running it.
+The computation that gives the latest version of a value, given as its id or as a data item: the
+`read` or the `process` of the project that gave it. Its result can hold other values too. Its
+[`inputs`](@ref) lead back to the source item the value comes from. `computation` gives the
+computation without running it.
 """
-# FIXME(rebuild): the row of an id, which the tree held.
-computation(workspace::Workspace, value::Union{AbstractString,AbstractDataItem}) =
-    computation(workspace, key(workspace, value))
-function computation(workspace::Workspace, key::ItemKey)::Computation
+function computation(workspace::Workspace, value::Union{AbstractString,AbstractDataItem})::Computation
+    x = value isa AbstractDataItem ? id(value) : String(value)
     @lock workspace.catalog.lock begin
-        item = workspace.tree[key]
-        row = something(item.row, Some(nothing))
-        row === nothing && error("The item \"$(item.id)\" waits for the source to report its source item")
-        return workspace.catalog[row]
+        rows = get(workspace.versions, x, nothing)
+        rows === nothing && error("The workspace has no value with the id \"$x\"")
+        return workspace.catalog[rows[end]]
     end
 end
 
 """
     computation(selection, index) -> Computation
 
-The computation that gives one item of a selection, without loading its data.
+The computation that gives one value of a selection, without loading its data.
 """
 function computation(selection::Selection, index::Integer)::Computation
     data = selection.data::ItemData
@@ -854,115 +883,102 @@ argument_id(xs::Union{AbstractVector,Tuple}) = "[" * join(map(argument_id, xs), 
 argument_id(x) = repr(x)
 label(value::Computation) = function_name(value.f)
 
-# ## Items
+# ## Values
 
 """
-    materialize_items(workspace, items) -> Vector{AbstractDataItem}
+    materialize_items(workspace, ids) -> Vector{AbstractDataItem}
 
-The processed items for `items`, given as item keys or public ids, in the same order.
+The latest version of the values with the ids `ids`, in the same order.
 
-An item that is not processed yet is processed now, ahead of background work, and `materialize_items`
-waits for it. A failed item throws its error.
+A version that is not computed yet is computed now, ahead of background work, and
+`materialize_items` waits for it. A failed value throws its error.
 
-The data and the metadata of each delivered item belong together: when an item changes while it is
+The data and the metadata of each delivered value belong together: when a value changes while it is
 loaded, it is loaded again.
 """
-# FIXME(rebuild): the items of ids, now that `ItemKey` is gone.
-function materialize_items(workspace::Workspace, keys::Vector{ItemKey})::Vector{AbstractDataItem}
+function materialize_items(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{AbstractDataItem}
     catalog = workspace.catalog
     while true
-        seen = wait_processed(workspace, keys)
-        delivered = results(workspace, @lock(catalog.lock, Row[value_row(workspace, key) for key in keys]))
-        revision(workspace, keys) == seen && return delivered
+        seen = wait_processed(workspace, ids)
+        rows = @lock catalog.lock revision(workspace, ids) == seen ? Row[workspace.versions[x][end] for x in ids] : nothing
+        rows === nothing && continue
+        delivered = AbstractDataItem[pick(result, x) for (result, x) in zip(results(workspace, rows), ids)]
+        revision(workspace, ids) == seen && return delivered
     end
 end
 
-# FIXME(rebuild): the item of an id, which `key` found in the tree.
-function materialize_items(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{AbstractDataItem}
-    return materialize_items(workspace, ItemKey[key(workspace, id) for id in ids])
-end
-
-# Ask for the items ahead of background work: their own `process`, or the source item that they
-# wait for. A request ends when its row has a result, so the callers ask again for an item that
-# waited for its source item.
-# FIXME(rebuild): the row of an item, which the tree held.
-function Catalogs.request!(workspace::Workspace, keys::Vector{ItemKey})::Nothing
+# Ask for the latest version of each value ahead of background work. A request ends when its row has
+# a result, so the callers ask again when the latest version moved to another row.
+function Catalogs.request!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Nothing
     catalog = workspace.catalog
-    @lock catalog.lock for key in keys
-        item = workspace.tree[key]
-        if item.row === nothing
-            source = get(workspace.sources, item.source, nothing)
-            source === nothing || request!(catalog, source, VIEWED_ITEM)
-        else
-            request!(catalog, item.row, VIEWED_ITEM)
-        end
+    @lock catalog.lock for x in ids
+        rows = get(workspace.versions, x, nothing)
+        rows === nothing || request!(catalog, rows[end], VIEWED_ITEM)
     end
     return nothing
 end
 
 """
-    processed(workspace, items) -> Bool
+    processed(workspace, ids) -> Bool
 
-Ask for `items` ahead of background work, as `materialize_items` does, and tell whether every item
-is processed now, or failed. The call does not wait, so a window can keep showing what it showed until
-the items are ready.
+Ask for the values `ids` ahead of background work, as `materialize_items` does, and tell whether the
+latest version of each is computed now, or failed. The call does not wait, so a window can keep
+showing what it showed until the values are ready.
 """
-# FIXME(rebuild): the row of an item, which the tree held.
-function processed(workspace::Workspace, keys::Vector{ItemKey})::Bool
+function processed(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Bool
     catalog = workspace.catalog
     @lock catalog.lock begin
-        request!(workspace, keys)
-        return catalog.closed || all(keys) do key
-            row = workspace.tree[key].row
-            row !== nothing && (Catalogs.state(catalog, row) in (Catalogs.CURRENT, Catalogs.FAILED) || Catalogs.stuck(catalog, row))
+        request!(workspace, ids)
+        return catalog.closed || all(ids) do x
+            rows = get(workspace.versions, x, nothing)
+            rows !== nothing && (Catalogs.state(catalog, rows[end]) in (Catalogs.CURRENT, Catalogs.FAILED) || Catalogs.stuck(catalog, rows[end]))
         end
     end
 end
 
 """
-    wait_processed(workspace, items) -> UInt
+    wait_processed(workspace, ids) -> UInt
 
-Ask for `items` ahead of background work, wait until each is processed, and return their
-[`revision`](@ref). A failed item throws its error.
+Ask for the values `ids` ahead of background work, wait until the latest version of each is
+computed, and return their [`revision`](@ref). A failed value throws its error.
 """
-# FIXME(rebuild): the row of an item, which the tree held.
-function wait_processed(workspace::Workspace, keys::Vector{ItemKey})::UInt
+function wait_processed(workspace::Workspace, ids::AbstractVector{<:AbstractString})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
-        request!(workspace, keys)
-        for key in keys
-            item = workspace.tree[key]
-            ## The rows of the item can be new, or stale again, since the request above.
-            request!(workspace, [key])
-            while item.row === nothing && !item.removed && !catalog.closed
-                wait(catalog.changed)
-                request!(workspace, [key])
+        for x in ids
+            ## When a row runs, the latest version of its value can move to another row.
+            row = Catalogs.NOWHERE
+            while true
+                rows = get(workspace.versions, x, nothing)
+                rows === nothing && error(catalog.closed ? "The workspace was closed" : "The workspace has no value with the id \"$x\"")
+                rows[end] == row && break
+                row = rows[end]
+                state = wait(catalog, row, VIEWED_ITEM)
+                state == Catalogs.CURRENT && continue
+                catalog.closed && error("The workspace was closed")
+                state == Catalogs.REMOVED && continue
+                error(failure(workspace, row))
             end
-            state = item.row === nothing ? Catalogs.REMOVED : wait(catalog, item.row, VIEWED_ITEM)
-            state == Catalogs.CURRENT && continue
-            catalog.closed && error("The workspace was closed")
-            state == Catalogs.REMOVED && error("The item \"$(item.id)\" was removed from the workspace while it was loaded")
-            error(failure(workspace, item.row))
         end
-        return revision(workspace, keys)
+        return revision(workspace, ids)
     end
 end
 
 """
-    revision(workspace, items) -> UInt
+    revision(workspace, ids) -> UInt
 
-A number that changes when `materialize_items` would deliver other values of `items`: an item was
-processed again. A window keeps the number it drew with, and draws again when it differs.
+A number that changes when `materialize_items` would deliver other values for `ids`: a value has a
+later version, or its latest version was computed again. A window keeps the number it drew with,
+and draws again when it differs.
 """
-# FIXME(rebuild): the row of an item, which the tree held.
-function revision(workspace::Workspace, keys::Vector{ItemKey})::UInt
+function revision(workspace::Workspace, ids::AbstractVector{<:AbstractString})::UInt
     catalog = workspace.catalog
     @lock catalog.lock begin
         seed = UInt(0)
-        for key in keys
-            row = workspace.tree[key].row
-            seed = row === nothing ? hash(0, seed) : hash(row.index, hash(Catalogs.state(catalog, row) == Catalogs.CURRENT,
-                hash(Catalogs.revision(catalog, row), seed)))
+        for x in ids
+            rows = get(workspace.versions, x, nothing)
+            seed = rows === nothing ? hash(0, seed) : hash(rows[end].index, hash(Catalogs.state(catalog, rows[end]) == Catalogs.CURRENT,
+                hash(Catalogs.revision(catalog, rows[end]), seed)))
         end
         return seed
     end
@@ -973,8 +989,8 @@ end
 
 A number that rises whenever a computation of this or any other workspace changes its state, is
 added or is removed. All workspaces of the Julia session share it, so it may also rise for a change
-in another workspace. Items are added and removed only together with such a change. While the number
-stays the same, so do the [`revision`](@ref) of any items and the item of each public id.
+in another workspace. Values are added and removed only together with such a change. While the
+number stays the same, so do the [`revision`](@ref) of any values and the latest version of each id.
 Reading it costs the same for any number of items.
 """
 status_revision(::Workspace)::Int = Catalogs.CHANGES[]
@@ -998,7 +1014,7 @@ end
     unread(workspace) -> Vector{String}
 
 The public ids of the source items that the source has and the workspace has not read yet: their
-items are not in the workspace. A source item that failed is not included. For a directory source,
+values are not in the workspace. A source item that failed is not included. For a directory source,
 an id is the path of a file below the source root.
 
 [`read_first!`](@ref) reads chosen source items ahead of the others.

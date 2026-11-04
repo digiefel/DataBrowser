@@ -27,7 +27,7 @@ are put together only when the values are named together.
 """
 struct ItemData <: AbstractVector{Any}
     workspace::Workspace
-    # Keys of the workspace's items, or computations, such as the values of a window.
+    # Ids of the workspace's values, or computations, such as the values of a window.
     items::Vector
     # The names followed inside each item's data, from the outside in; empty for the data itself.
     path::Vector{Symbol}
@@ -49,9 +49,8 @@ function Base.iterate(data::ItemData, (items, index)=(nothing, 1))
     return follow(getfield(data, :workspace), items[index], getfield(data, :path)), (items, index + 1)
 end
 
-# The items themselves: those of the workspace are read from the cache together.
-# FIXME(rebuild): the items of the workspace, now that `ItemKey` is gone.
-loaded(workspace::Workspace, items::Vector{ItemKey}) = materialize_items(workspace, items)
+# The items themselves: the values of the workspace are read from their stores together.
+loaded(workspace::Workspace, items::Vector{String}) = materialize_items(workspace, items)
 loaded(::Workspace, items::Vector) = items
 
 # The value at `path` inside the data of `item`. The data of a computation is its result, which the
@@ -148,26 +147,19 @@ end
 """
     select(workspace, ids) -> Selection
 
-The items with the public `ids` as a [`Selection`](@ref): a table with one row for each item. Its
-columns are `id`, `label`, then each metadata key. A value that an item does not have is `missing`.
-`selection.data` is the data of each item.
+The values with the public `ids` as a [`Selection`](@ref): a table with one row for each value. Its
+columns are `id`, `label`, then each metadata key. A metadata key that a value does not have is
+`missing`. `selection.data` is the data of each value.
 
 To change the selection of the workspace, use [`select!`](@ref); [`selection`](@ref) gives it.
-Items that are not processed yet are processed now, and the call waits for them.
+Values whose latest version is not computed yet are computed now, and the call waits for them.
 """
-# FIXME(rebuild): the item of an id, now that `ItemKey` is gone.
 function select(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Selection
-    found = [item(workspace, id) for id in ids]
-    unknown = findfirst(isnothing, found)
-    unknown === nothing || error("The workspace has no item with the id '$(ids[unknown])'")
-    return select(workspace, ItemKey[found...])
-end
-
-# FIXME(rebuild): the items of the workspace, now that `ItemKey` is gone.
-function select(workspace::Workspace, items::Vector{ItemKey})::Selection
-    wait_processed(workspace, items)
-    return Selection(ItemData(workspace, items), [id(workspace, item) for item in items],
-        [label(workspace, item) for item in items], [metadata(workspace, item) for item in items])
+    found = String[ids...]
+    unknown = @lock workspace.catalog.lock findfirst(x -> !haskey(workspace.versions, x), found)
+    unknown === nothing || error("The workspace has no item with the id '$(found[unknown])'")
+    wait_processed(workspace, found)
+    return Selection(ItemData(workspace, found), found, [label(workspace, x) for x in found], [metadata(workspace, x) for x in found])
 end
 
 # The columns `id` and `label`, then each metadata key. A value that an item does not have is
@@ -197,12 +189,11 @@ end
     selection(workspace) -> Selection
 
 The workspace's selection, which [`select!`](@ref) and the browser change, as a [`Selection`](@ref).
-Selected ids that the workspace has no item for are left out.
+Selected ids that the workspace has no value for are left out.
 """
-# FIXME(rebuild): the item of an id, now that `ItemKey` is gone.
 function selection(workspace::Workspace)::Selection
     ids = @lock workspace.lifecycle_lock copy(workspace.selection.item_ids)
-    return select(workspace, ItemKey[key for key in item.(Ref(workspace), ids) if key !== nothing])
+    return select(workspace, @lock(workspace.catalog.lock, filter(x -> haskey(workspace.versions, x), ids)))
 end
 
 """

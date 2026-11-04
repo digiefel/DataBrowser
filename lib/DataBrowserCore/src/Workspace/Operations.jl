@@ -86,12 +86,8 @@ end
 function rebuild_cache!(workspace::Workspace)::Nothing
     @lock workspace.catalog.lock begin
         can_rebuild_cache(workspace) || error("The cache can be rebuilt only while the workspace is open and no scan runs")
-        for source in union(keys(workspace.sources), keys(workspace.by_source))
-            remove_items!(workspace, source)
-            row = pop!(workspace.sources, source, nothing)
-            row === nothing || release!(workspace.catalog, row)
-        end
-        clear_cache_index!(workspace.cache.db)
+        foreach(source -> remove_source_item!(workspace, source), collect(keys(workspace.sources)))
+        clear_cache!(workspace.cache.db)
         publish!(workspace)
     end
     scan_source!(workspace; rebuild=true)
@@ -142,11 +138,12 @@ end
 """
     select!(workspace, ids)
 
-Make the items with the public `ids` the workspace's selection. A browser open on the workspace
-follows it, and reveals the items. An empty list clears the selection. [`selection`](@ref) reads it.
+Make the values with the public `ids` the workspace's selection. A browser open on the workspace
+follows it, and reveals the values. An empty list clears the selection. [`selection`](@ref) reads
+it.
 """
 function select!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Nothing
-    unknown = filter(id -> item(workspace, id) === nothing, ids)
+    unknown = @lock workspace.catalog.lock filter(x -> !haskey(workspace.versions, x), ids)
     isempty(unknown) || error("The workspace has no item with the id(s) ", join(unknown, ", "))
     @lock workspace.lifecycle_lock begin
         workspace.selection.item_ids = collect(String, ids)
@@ -154,9 +151,6 @@ function select!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::N
     end
     return nothing
 end
-# FIXME(rebuild): the id of an item, now that `ItemKey` is gone.
-select!(workspace::Workspace, items::AbstractVector{ItemKey})::Nothing =
-    select!(workspace, [id(workspace, item) for item in items])
 
 source_scan_running(workspace::Workspace)::Bool =
     workspace.scan.state in (:discovering, :canceling)
@@ -212,10 +206,11 @@ function cancel_scan!(workspace::Workspace)::Nothing
 end
 
 """
-Scan the source once. The workspace first shows the items that the cache saved. Then the walk lists
-the source items, and after it each gets its row: a source item that is unchanged since
-the cache saved it is current at once, with the items the cache saved for it. Source items that the
-walk no longer finds are removed with their items. `rebuild=true` means the cache was just emptied.
+Scan the source once. The walk lists the source items, and after it each gets its row: a source
+item that is unchanged since the cache saved it is current at once, with the values the cache saved
+for it, and so are the rows of `process` whose inputs are current. The cache forgets what it saved
+for the rows that the workspace no longer has, such as those of source items that the walk no
+longer finds. `rebuild=true` means the cache was just emptied.
 """
 function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
     scan, catalog, db = workspace.scan, workspace.catalog, workspace.cache.db
@@ -234,11 +229,10 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
     token = get_token(cancel_source)
     canceled() = is_cancellation_requested(token) && throw(OperationCanceledException(token))
     task = Threads.@spawn @timed_dbg "scan_source" try
-        index = rebuild ? nothing : @timed_dbg load_cache_index(db)
+        saved = rebuild ? nothing : @timed_dbg load_outputs(db)
         @lock catalog.lock begin
-            index === nothing || restore!(workspace, index)
-            workspace.cache_state = index === nothing ? :missing : :ready
-            index === nothing && !rebuild && (workspace.cache.operation = :build)
+            saved === nothing || (workspace.saved = saved)
+            workspace.cache_state = saved === nothing ? :missing : :ready
             publish!(workspace)
         end
         # Jobs that start during the walk slow it down: the source items get their rows after it.
@@ -261,10 +255,16 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
         end
         canceled()
         @lock catalog.lock begin
-            # TODO: the records of the rows of a removed source item that had no rows stay in the cache.
-            gone = index === nothing ? String[] : setdiff(values(index.sources), Set(id(item) for item in walked))
-            foreach(source -> remove_source_item!(workspace, source), gone)
-            scan.state = read_again == 0 && isempty(gone) ? :unchanged : :done
+            gone = 0
+            for (key, outputs) in collect(workspace.saved)
+                read_id = chopprefix(key, "read:")
+                haskey(read_id == key ? workspace.rows : workspace.sources, read_id) && continue
+                gone += read_id != key
+                foreach(output -> delete_output!(db, key, output.id), outputs)
+                delete_computation_revision!(db, key)
+                delete!(workspace.saved, key)
+            end
+            scan.state = read_again == 0 && gone == 0 ? :unchanged : :done
             workspace.cache_state = :ready
             scan.cancel_token = nothing
             publish!(workspace)
@@ -291,17 +291,17 @@ end
 """
 Return the ids of the items that satisfy a SQL predicate.
 
-The predicate can use the metadata names that project code gave the items, and the columns the cache
-keeps for every item: `id`, `label`, `item_key`, `source_item_key` and `type_hex`.
+The predicate can use the metadata names that project code gave the values, and the columns the
+cache keeps for every value: `id`, `label` and `type_hex`. It reads the latest version of each value
+that the cache saved.
 The query reads what the cache has written to disk, so a value from the last 2 seconds may be
 missing. A workspace without a cache returns an empty vector.
 """
 query_items(workspace::Workspace, predicate::AbstractString)::Vector{String} =
     query_items(workspace.cache.db, predicate)
 
-"""Return the stable IDs of all items currently published in a workspace."""
-query_items(workspace::Workspace)::Vector{String} =
-    sort!(String[id(workspace, item) for item in items(workspace)])
+"""Return the stable IDs of all values currently published in a workspace, sorted."""
+query_items(workspace::Workspace)::Vector{String} = sort!(items(workspace))
 
 """
 Block until the workspace has no running scan and no queued or running work, or until `timeout`

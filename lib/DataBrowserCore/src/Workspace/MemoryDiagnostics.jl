@@ -24,7 +24,7 @@ function workspace_memory_snapshot(workspace::Workspace)::WorkspaceMemorySnapsho
         time_ns(),
         gc_live_bytes,
         Int64(gc.total_allocd),
-        Int64(length(items(workspace))),
+        Int64(@lock workspace.catalog.lock length(workspace.versions)),
         Int64(length(workspace.errors)),
         processing.jobs,
         Int64(staged.items),

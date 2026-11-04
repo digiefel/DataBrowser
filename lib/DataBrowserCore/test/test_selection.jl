@@ -15,7 +15,6 @@ DataBrowserAPI.label(::ChipsFile) = "file"
 DataBrowserAPI.items(::ChipsSource; kwargs...) = [ChipsFile()]
 DataBrowserAPI.id(::ChipsFile) = "file"
 DataBrowserAPI.fingerprint(::ChipsFile) = 1
-DataBrowserAPI.read(::ChipsProject, ::ChipsSource, ::ChipsFile) = nothing
 
 struct Sweep <: AbstractDataItem
     name::String
@@ -27,8 +26,9 @@ DataBrowserAPI.label(sweep::Sweep) = sweep.name
 DataBrowserAPI.data(sweep::Sweep) = sweep.data
 DataBrowserAPI.metadata(sweep::Sweep) = sweep.meta
 DataBrowserAPI.reconstruct(::Type{Sweep}, name::AbstractString, data, meta::Dict) = Sweep(name, data, meta)
-# FIXME(rebuild): the items that a source item holds, which `expand` gave.
-DataBrowserAPI.expand(::ChipsProject, ::ChipsFile, ::Nothing) = [
+DataBrowserAPI.read(::ChipsProject, ::ChipsSource, ::ChipsFile) = Sweep("file", nothing, Dict())
+# The file holds two sweeps.
+DataBrowserAPI.process(::ChipsProject, ::Sweep) = [
     Sweep("IV_A", (V=[0.0, 1.0],), Dict(:device => "D2", :gap => 5.0)),
     Sweep("IV_B", (V=[0.0, 2.0],), Dict(:device => "D3")),
 ]

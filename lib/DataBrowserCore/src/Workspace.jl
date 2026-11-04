@@ -21,8 +21,11 @@ using ..Catalogs
 using ..Catalogs: Catalog, Row, Part, Job, add!, hold!, release!, want!, request!, finish!, keepable, lost!, queued
 using ..CodeRevisions: CodeRevision, code_revision
 using DataBrowserAPI:
-    ITEM_PROCESS,
+    PipelineStage,
     SOURCE_READ,
+    ITEM_PROCESS,
+    GROUP_PROCESS,
+    MEMBER_PROCESS,
     metadata_dict
 
 using DataBrowserCache:
@@ -30,33 +33,28 @@ using DataBrowserCache:
     BuildMetrics,
     ProjectCacheSchemaError,
     ProjectCacheIdentity,
-    ProjectCacheIndex,
+    SavedOutput,
     cache_has_pending_writes,
     cache_pending_counts,
-    clear_cache_index!,
+    clear_cache!,
     close_cache_db!,
     delete_computation_revision!,
-    delete_source_item!,
-    replace_source_output!,
-    ItemOutput,
-    load_cache_index,
+    delete_output!,
+    load_outputs,
     open_cache_db,
+    output_key!,
     project_cache_identity,
     reset_build_metrics!,
-    store_item_label!,
-    store_item_metadata!,
-    store_item_stage_metadata!,
     store_computation_revision!,
-    recorded_revision,
-    store_source_identity!,
-    source_item_key!
+    store_output!,
+    recorded_revision
 import DataBrowserCache
 import DataBrowserCache: query_items
 import DataBrowserAnnotations: Tags
 import DataBrowserAnnotations.Tags: Tag, TagState, Untagged
 import ..DataBrowserCore
 using ..Catalogs: Input
-using ..DataBrowserCore: Computation
+using ..DataBrowserCore: Computation, MemberValues, pick
 using DataBrowserAPI: ComputationExecution
 import DataBrowserAPI: last_execution, cache_info
 using DataBrowserAPI: AbstractStore
@@ -75,6 +73,7 @@ import DataBrowserAPI:
     id,
     data,
     label,
+    members,
     metadata,
     process,
     stage_roots,
@@ -254,6 +253,19 @@ function store!(layer::MetadataColumns, index::Integer, values::AbstractDict{Sym
 end
 
 """
+One value that a row of the pipeline gave: its id, its type and label, the ids of its members when
+it is a group, and the key under which the cache keeps its metadata, which is also the index of its
+metadata in `workspace.produced`.
+"""
+struct Output
+    id::String
+    type::Type
+    label::String
+    members::Union{Nothing,Vector{String}}
+    key::Int64
+end
+
+"""
 One open project/source pair and all package-managed state belonging to it.
 
 The computations are the rows of `catalog`. Every field from `catalog` to `completed` is read and
@@ -263,18 +275,29 @@ mutable struct Workspace{P<:AbstractProject}
     project::P
     source::AbstractDataSource
     catalog::Catalog
-    # FIXME(rebuild): the items of the workspace, with the rows of each, which the tree held.
-    # The metadata of the result of each row that gives an item, by row index.
-    produced::MetadataColumns
-    # The row that reads each source item, and the items it gives, by the id of the source item.
+    # The row that reads each source item, by its id, and the rows of `process`, by their cache key.
     sources::Dict{String,Row}
-    # FIXME(rebuild): the items of a source item, now that `ItemKey` is gone.
-    by_source::Dict{String,Vector{ItemKey}}
+    rows::Dict{String,Row}
     # The cache key of each row, under which the cache keeps its version and its store keeps its
-    # result, and what it gives: a source item's items (by its id), or an item.
+    # result.
     cachekeys::Dict{Row,String}
-    # FIXME(rebuild): the item that a row gives, now that `ItemKey` is gone.
-    places::Dict{Row,Union{String,ItemKey}}
+    # The stage of each row of the pipeline, and the values that it gave when it last ran.
+    stages::Dict{Row,PipelineStage}
+    outputs::Dict{Row,Vector{Output}}
+    # The rows that give a version of each value, by its id, in the order of their stages: the last
+    # one gives its latest version. A row that did not run yet counts for the value it is expected
+    # to give.
+    versions::Dict{String,Vector{Row}}
+    # The ids of the members of each group, of the groups of each value, and of the source items
+    # with members that each source item is a member of.
+    members::Dict{String,Vector{String}}
+    groups::Dict{String,Vector{String}}
+    parents::Dict{String,Vector{String}}
+    # What the methods of the project answered about the types of the values, until the next code
+    # change (see `asked`).
+    methods::Dict{Tuple,Any}
+    # The metadata of each value that a row of the pipeline gave, by the key of its `Output`.
+    produced::MetadataColumns
     # The code each row ran with, as the signature of its call, and the code of each signature.
     # When the revision of a signature's code changes, the rows of that signature are stale.
     signatures::Dict{Row,Type}
@@ -286,8 +309,9 @@ mutable struct Workspace{P<:AbstractProject}
     executions::Dict{Row,ComputationExecution}
     # TODO: rows that `evaluate` added stay until the workspace closes; release those nothing uses.
     evaluated::Set{Row}
-    # Metadata that the cache saved for rows of an earlier session, by row name, until they restore.
-    saved::Dict{String,Dict{Symbol,Any}}
+    # The values that the cache saved for the rows of the pipeline of an earlier session, by cache
+    # key, until the rows restore.
+    saved::Dict{String,Vector{SavedOutput}}
     workers::Vector{Task}
     # Jobs that run now, and jobs that ended since the workspace opened.
     running::Int
@@ -326,7 +350,7 @@ mutable struct Workspace{P<:AbstractProject}
     closed::Bool
 end
 
-# The priorities of rows. Source rows come before the background work on items.
+# The priorities of rows. Source rows come before the background work on values.
 const SOURCES_FIRST = 4
 const BACKGROUND_ITEM = 3
 # What a view asks for: above all background work.
@@ -376,13 +400,15 @@ function Workspace(
     cache_db, disk_error, identity =
         _open_workspace_cache(project, source, metrics; rebuild, cache)
     return Workspace(
-        project, source, Catalog(), MetadataColumns(),
-        Dict{String,Row}(), Dict{String,Vector{ItemKey}}(),
-        Dict{Row,String}(), Dict{Row,Union{String,ItemKey}}(),
+        project, source, Catalog(),
+        Dict{String,Row}(), Dict{String,Row}(), Dict{Row,String}(),
+        Dict{Row,PipelineStage}(), Dict{Row,Vector{Output}}(), Dict{String,Vector{Row}}(),
+        Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(),
+        Dict{Tuple,Any}(), MetadataColumns(),
         Dict{Row,Type}(), Dict{Type,Code}(),
         Dict{Row,String}(),
         Dict{Row,ReentrantLock}(), Dict{Row,ComputationExecution}(), Set{Row}(),
-        Dict{String,Dict{Symbol,Any}}(),
+        Dict{String,Vector{SavedOutput}}(),
         Task[], 0, 0,
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),

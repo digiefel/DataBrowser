@@ -121,15 +121,17 @@ depends on changes.
 
 The project defines:
 
-- reading each source item (`read`);
-- processing one item (`process`);
+- reading each source item (`read`), and making a group from a source item with members and the
+  values of its members (the group form of `read`);
+- processing one item (`process`), a group with the values of its members, and a member with its
+  group;
 - project-specific visualizers, when generic ones are not enough.
 
 The workspace owns:
 
 - the open source and its identity (several sources in one workspace are a target, not the current
   implementation);
-- the catalog of computations, and the items that their results give;
+- the catalog of computations, and the values that their results give, each addressed by its id;
 - the order in which computations run, their results, and the cache;
 - scanning the source, progress, failures and cancellation;
 - the selection.
@@ -165,7 +167,7 @@ The code of each part explains it:
 | Page | What it explains |
 | --- | --- |
 | [`Catalogs.jl`](code/lib/DataBrowserCore/src/Catalogs.md) | rows, their states, and the rules that decide what runs and what stays |
-| [`Pipeline.jl`](code/lib/DataBrowserCore/src/Workspace/Pipeline.md) | the rows of source items and items, and when they are added |
+| [`Pipeline.jl`](code/lib/DataBrowserCore/src/Workspace/Pipeline.md) | the rows of the project's calls, the versions of each value, groups and their members, and when rows are added |
 | [`Evaluate.jl`](code/lib/DataBrowserCore/src/Workspace/Evaluate.md) | how rows run, their names and versions, where results are kept, code changes |
 | [`CodeRevisions.jl`](code/lib/DataBrowserCore/src/CodeRevisions.md) | the code revision of a function: what it follows and what it cannot see |
 
@@ -173,8 +175,10 @@ The code of each part explains it:
 
 ### Items
 
-Views, queries and the item list use the latest value of an item, with its metadata and label, once
-it is current, and the result of its own row until then.
+A value is addressed by its id. The rows that give a value with that id are its versions, in the
+order of the pipeline, and the last one is its current version: the readiness of the value is the
+state of that row. Views, queries and the item list use the latest version that gave the value, with
+its metadata and label.
 
 The source items that are not read yet (`unread`) are known from the moment the source lists them.
 `read_first!` reads some of them before any other.
@@ -187,7 +191,7 @@ computation)` gives the result of such a computation: the workspace adds its row
 runs it ahead of background work, and keeps it until it closes. An item of the workspace among its
 arguments stands for the row of the item's latest value, so the next `evaluate` computes it again
 after the item changed. Windows evaluate computations this way in their background preparation.
-`computation(workspace, item)` gives the computation of the latest value of an item, and
+`computation(workspace, id)` gives the computation of the current version of a value, and
 `inputs(computation)` the computations it reads. Neither loads a value nor runs project code.
 
 ### The code view
@@ -216,17 +220,17 @@ cache file. The values of items are in the stores of their item types, not in th
 flowchart LR
     core["DataBrowserCore<br/>workspace and catalog"]
     cache["DataBrowserCache<br/>storage and cache buffers"]
-    snapshot[("ProjectCacheIndex<br/>restoration snapshot")]
+    snapshot[("saved outputs<br/>of each computation")]
     records[("version and failure<br/>of each computation")]
     source["project callbacks"]
 
-    core -->|"load_cache_index"| cache
-    cache -->|"ProjectCacheIndex"| snapshot
+    core -->|"load_outputs"| cache
+    cache -->|"id, label, type, members<br/>and metadata of each output"| snapshot
     snapshot --> core
     core -->|"recorded_revision"| cache
     cache -->|"recorded version and failure"| records
     records --> core
-    core -->|"replace_source_output!<br/>store_item_metadata!<br/>store_computation_revision!"| cache
+    core -->|"store_output!<br/>delete_output!<br/>store_computation_revision!"| cache
     source -->|"read / process"| core
 
     classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111

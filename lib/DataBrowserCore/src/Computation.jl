@@ -1,5 +1,31 @@
 using .Catalogs: Input, Part
 
+# The value with id `id` among the values that a row gives: its result, or an element of the vector
+# it gives.
+function pick(result, id::AbstractString)
+    for value in (result isa AbstractVector ? result : (result,))
+        value isa AbstractDataItem && DataBrowserAPI.id(value) == id && return value
+    end
+    error("The result has no value with the id \"$id\"")
+end
+
+"""
+    MemberValues{T}(parts)
+
+The values of the members of a group that the group form of `read`, or the `process` of a group,
+receives: a vector of type `T`, one value for each `Part` of `parts`.
+"""
+struct MemberValues{T} <: AbstractVector{Part{Input}}
+    parts::Vector{Part{Input}}
+end
+Base.size(values::MemberValues) = size(values.parts)
+Base.getindex(values::MemberValues, index::Int) = values.parts[index]
+# Values of another type are another argument.
+Base.isequal(a::MemberValues, b::MemberValues) = typeof(a) === typeof(b) && isequal(a.parts, b.parts)
+Base.hash(values::MemberValues, h::UInt) = hash(values.parts, hash(typeof(values), h))
+# The parts hold inputs already, and stay values of type `T`.
+Catalogs.argument(::Catalogs.Catalog, values::MemberValues, ::Bool) = values
+
 """
     inputs(computation) -> Vector{Computation}
 
@@ -31,8 +57,8 @@ evaluate(value::Computation) = Base.invokelatest(value.f, map(evaluated, value.a
 evaluated(value::Computation) = evaluate(value)
 # A result of a row of a workspace is computed again, as any other input.
 evaluated(value::Input) = evaluate(value.catalog[value.row])
-# FIXME(rebuild): the item `value.id` among the items that a row gives, which `process_input` found.
-evaluated(value::Part) = process_input(evaluated(value.of), value.id)
+evaluated(value::Part) = pick(evaluated(value.of), value.id)
+evaluated(values::MemberValues{T}) where {T} = T[evaluated(value) for value in values]
 evaluated(values::Tuple) = map(evaluated, values)
 evaluated(values::AbstractVector) = isempty(computation_inputs(values)) ? values : map(evaluated, values)
 evaluated(value) = value

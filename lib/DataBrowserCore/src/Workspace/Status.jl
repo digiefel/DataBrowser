@@ -18,10 +18,9 @@ function workspace_status(workspace::Workspace)::WorkspaceStatus
     if locked
         try
             errors = sort!(Pair{String,String}[subject(workspace, row) => message for (row, message) in workspace.errors]; by=first)
-            # FIXME(rebuild): the function of a source row, which was `read_items`, and the items, which the tree held.
             counts = WorkspaceStageCounts(length(workspace.sources),
-                count(catalog, typeof(read_items), Catalogs.CURRENT) + count(catalog, typeof(read_items), Catalogs.FAILED),
-                length(workspace.tree.item_ids), count(catalog, typeof(process), Catalogs.CURRENT))
+                count(catalog, typeof(read), Catalogs.CURRENT) + count(catalog, typeof(read), Catalogs.FAILED),
+                length(workspace.versions), count(catalog, typeof(process), Catalogs.CURRENT))
         finally
             unlock(catalog.lock)
         end
@@ -101,13 +100,11 @@ function build_status(workspace::Workspace, previous::WorkspaceStatus, counts::W
 end
 
 """
-What a failed row computes, for a reader: the source item it reads, the item it gives, or else its
-name. The caller holds the catalog lock.
+What a failed row computes, for a reader: the source item it reads, the value its `process` takes,
+or else its name. The caller holds the catalog lock.
 """
-# FIXME(rebuild): the id of the item that a row gives, which the tree held.
 function subject(workspace::Workspace, row::Row)::String
-    place = get(workspace.places, row, nothing)
-    place isa String && return place
-    place === nothing || return workspace.tree[place].id
-    return cachekey(workspace, row)
+    stage = get(workspace.stages, row, nothing)
+    stage === nothing && return cachekey(workspace, row)
+    return stage == SOURCE_READ ? id(workspace.catalog[row].args[3]) : workspace.catalog[row].args[2].id
 end

@@ -15,25 +15,24 @@
 # When an argument is another computation, that computation is a row too: it is an *input* of the
 # row, and the row is a *reader* of it. The rows and their inputs form a graph.
 #
-# When a plot window draws a fit of the item `a/1`, which comes from the source item `a.csv`, the
-# catalog has three rows:
+# When a plot window draws a fit of the item `a/1`, which the `process` of the table in the source
+# item `a.csv` gives, the catalog has three rows:
 #
 # ```text
-#     row 1   read_items(project, source, a.csv)      read the source item a.csv
+#     row 1   read(project, source, a.csv)                read the table of the source item a.csv
 #               │
 #               ▼
-#     row 2   process(project, Part(row 1, "a/1"))    process the item a/1, one part of row 1
+#     row 2   process(project, Part(row 1, "a.csv"))      process it into the items a/1 and a/2
 #               │
 #               ▼
-#     row 3   fit(row 2)                              the fit that the plot window draws
+#     row 3   fit(Part(row 2, "a/1"))                     the fit that the plot window draws
 #
 #     ▼  the row below reads the result of the row above
 # ```
 #
-# The workspace adds row 1 when it finds `a.csv`, and row 2 when reading `a.csv` gives the item
-# `a/1`. It *holds* row 1 with `hold!` while `a.csv` is in the workspace, and row 2 while `a/1` is,
-# so that the rows stay in the catalog. When `a/1` is removed, the workspace calls `release!` on
-# row 2.
+# The workspace adds row 1 when it finds `a.csv`, and row 2 when reading `a.csv` gives the table.
+# It *holds* both rows with `hold!` while `a.csv` is in the workspace, so that they stay in the
+# catalog. When `a.csv` is removed, the workspace calls `release!` on both.
 #
 # When the plot window opens, the workspace adds row 3, holds it, and *requests* it with `request!`,
 # with the priority of what a window shows: a requested row runs before the rows with a lower
@@ -87,12 +86,12 @@
 #   while it has no hold.
 #
 # Holding and wanting are separate. A row that is held stays, but it runs only when it is wanted or
-# requested. The workspace holds the row of each item while the item is in the workspace. It always
-# wants the rows of source items; it wants the rows of items in the background only when it was
-# opened with `background_processing=true`. A window that shows an item, or a script that reads it,
-# requests its row, which then runs before everything else. The priorities of the workspace go from
-# `VIEWED_ITEM` (6), for what a window shows or a script reads, down to `BACKGROUND_COLLECTION` (1),
-# and 0 means that nothing wants or requests the row (see "Workers" in
+# requested. The workspace holds the rows of each value while the value is in the workspace. It
+# always wants the rows of source items; it wants the rows of `process` in the background only when
+# it was opened with `background_processing=true`. A window that shows an item, or a script that
+# reads it, requests its row, which then runs before everything else. The priorities of the
+# workspace go from `VIEWED_ITEM` (6), for what a window shows or a script reads, down to
+# `BACKGROUND_ITEM` (3), and 0 means that nothing wants or requests the row (see "Workers" in
 # [`Evaluate.jl`](Workspace/Evaluate.md)).
 #
 # ## Who calls what
@@ -142,11 +141,11 @@ end
 """
     Part(of, id)
 
-The item with id `id` among the items that `of` gives. When reading the source item `a.csv` gives
-the items `a/1` and `a/2`, the `process` of `a/1` receives `Part(row, "a/1")`, where `row` reads
-`a.csv`. `of` is a computation, its row, or its [`Input`](@ref): `add!` replaces the first two with
-the third. When the row of `of` becomes stale, so does each row that reads one of its parts, and
-each of those rows runs again once `of` has run.
+The value with id `id` among the values that `of` gives: its result, or an element of the vector
+it gives. When the `process` of the table of `a.csv` gives the items `a/1` and `a/2`, a fit of `a/1`
+receives `Part(row, "a/1")`, where `row` is that `process`. `of` is a computation, its row, or its
+[`Input`](@ref): `add!` replaces the first two with the third. When the row of `of` becomes stale,
+so does each row that reads one of its parts, and each of those rows runs again once `of` has run.
 """
 struct Part{T}
     of::T
@@ -462,7 +461,7 @@ end
 
 Make `row` compute `computation` from now on. The row and its readers become stale; its holds,
 its priority and its readers stay. The workspace uses it when the source item that a row reads
-changed, or when a collection has other members: its readers keep reading the same row.
+changed, or when a group has other member values: its readers keep reading the same row.
 """
 function Base.replace!(catalog::Catalog, row::Row, value::Computation)::Row
     @lock catalog.lock begin
@@ -502,8 +501,8 @@ function connect!(catalog::Catalog, row::Row)::Nothing
     return nothing
 end
 
-# TODO: removing a reader is linear in the number of readers, so removing the k items of one source
-# item takes k² steps.
+# TODO: removing a reader is linear in the number of readers, so removing the k rows that read one
+# row takes k² steps.
 function disconnect!(catalog::Catalog, row::Row)::Nothing
     current = node(catalog, row)
     for input in current.inputs
@@ -589,8 +588,7 @@ and so does each row that it reads, directly or through other rows, until that r
 failed. A row that is current or failed does not change. A row that reads a failed row keeps its
 request, and runs once the failed row is current again. When a row becomes stale while the request
 of a reader waits, it gets that request. The workspace requests what a window shows and what a
-script reads with `VIEWED_ITEM`, and the member `process` of each of these items with
-`VIEWED_COLLECTION`.
+script reads with `VIEWED_ITEM`.
 """
 function request!(catalog::Catalog, row::Row, priority::Int)::Nothing
     @lock catalog.lock begin

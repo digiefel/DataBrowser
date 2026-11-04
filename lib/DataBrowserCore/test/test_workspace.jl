@@ -41,13 +41,11 @@ DataBrowserAPI.storage(p::EngineProject, ::Type{EngineItem}) =
 function DataBrowserAPI.read(p::EngineProject, ::EngineSource, s::EngineSourceItem)
     p.reads += 1
     s.fail && error("fixture read failed")
-    return s.version
+    return EngineItem("source", (x=[s.version],), Dict(:input => s.version))
 end
-# FIXME(rebuild): the items that a source item holds, which `expand` gave.
-DataBrowserAPI.expand(::EngineProject, ::EngineSourceItem, version) =
-    [EngineItem(string(n), (x=[version],), Dict(:input => version, :total => -1)) for n in 1:version]
+# The source item holds one item for each number up to its version.
 DataBrowserAPI.process(::EngineProject, i::EngineItem) =
-    EngineItem(i.key, (x=i.data.x .* 2,), merge(i.meta, Dict(:total => sum(i.data.x .* 2))))
+    [EngineItem(string(n), (x=i.data.x .* 2,), merge(i.meta, Dict(:total => sum(i.data.x .* 2)))) for n in 1:only(i.data.x)]
 
 mutable struct ControlledSource <: AbstractDataSource
     release::Channel{Nothing}
@@ -84,9 +82,7 @@ end
 
 struct TagProject <: AbstractProject end
 DataBrowserAPI.project_name(::TagProject) = "tag"
-# FIXME(rebuild): the items that a source item holds, which `expand` gave.
-DataBrowserAPI.expand(::TagProject, ::EngineSourceItem, version) =
-    [EngineItem(key, (x=[version],), Dict()) for key in ("a", "b")]
+DataBrowserAPI.process(::TagProject, i::EngineItem) = [EngineItem(key, i.data, Dict()) for key in ("a", "b")]
 
 struct RootedSource <: AbstractDataSource
     root_path::String
@@ -94,7 +90,7 @@ end
 DataBrowserAPI.id(s::RootedSource) = s.root_path
 DataBrowserAPI.label(s::RootedSource) = s.root_path
 DataBrowserAPI.items(::RootedSource; kwargs...) = [EngineSourceItem(1, false)]
-DataBrowserAPI.read(::TagProject, ::RootedSource, s::EngineSourceItem) = s.version
+DataBrowserAPI.read(::TagProject, ::RootedSource, s::EngineSourceItem) = EngineItem("source", (x=[s.version],), Dict())
 
 struct GatedProject <: AbstractProject
     gate::Base.Event
@@ -190,22 +186,20 @@ DataBrowserAPI.project_name(::CallbackProject) = "callback"
 const CALLBACK_READS = Threads.Atomic{Int}(0)
 function DataBrowserAPI.read(p::CallbackProject, ::EngineSource, s::EngineSourceItem)
     Threads.atomic_add!(CALLBACK_READS, 1)
-    return p.count(s)
+    return EngineItem("source", (x=[p.count(s)],), Dict())
 end
-# FIXME(rebuild): the items that a source item holds, which `expand` gave.
-DataBrowserAPI.expand(::CallbackProject, ::EngineSourceItem, count) =
-    [EngineItem(string(n), (x=[n],), Dict()) for n in 1:count]
 DataBrowserAPI.stage_roots(p::CallbackProject, stage::DataBrowserAPI.PipelineStage, type::Type) =
     stage == DataBrowserAPI.SOURCE_READ ? Any[p.count] : Any[]
 
 @testset "a callback replaced after the workspace opens reads the source again" begin
     project = CallbackProject(_ -> 0)
     ws = W.open_workspace(project, EngineSource("source", 1, false); cache=false)
+    read_count() = data(only(W.materialize_items(ws, ["source"]))).x
     try
         settled(ws)
-        @test isempty(W.query_items(ws))
+        @test read_count() == [0]
         project.count = _ -> 2
-        @test timedwait(() -> length(W.query_items(ws)) == 2, 10) === :ok
+        @test timedwait(() -> read_count() == [2], 10) === :ok
         settled(ws)
         reads = CALLBACK_READS[]
         # The same code again, as when a script runs again.
@@ -273,7 +267,7 @@ end
                     TypedProject(), EngineSource("source", 3, false); background_processing=true)
                 try
                     settled(ws)
-                    @test W.label(ws, W.item(ws, "only")) == "only · total 3"
+                    @test W.label(ws, "only") == "only · total 3"
                 finally
                     W.close_workspace!(ws)
                 end
@@ -310,14 +304,11 @@ closed_count() = 1
 closed_scale() = 2
 function DataBrowserAPI.read(::ClosedProject, ::EngineSource, ::EngineSourceItem)
     Threads.atomic_add!(CLOSED_READS, 1)
-    return closed_count()
+    return EngineItem("source", (x=[closed_count()],), Dict())
 end
-# FIXME(rebuild): the items that a source item holds, which `expand` gave.
-DataBrowserAPI.expand(::ClosedProject, ::EngineSourceItem, count) =
-    [EngineItem(string(n), (x=[n],), Dict()) for n in 1:count]
 DataBrowserAPI.storage(::ClosedProject, ::Type{EngineItem}) = DuckDBStore(joinpath(first(DEPOT_PATH), "values.duckdb"))
 DataBrowserAPI.process(::ClosedProject, i::EngineItem) =
-    EngineItem(id(i), (x=i.data.x .* closed_scale(),), metadata(i))
+    [EngineItem(string(n), (x=[n * closed_scale()],), Dict()) for n in 1:only(i.data.x)]
 
 @testset "code changed while the workspace is closed replaces the saved results" begin
     mktempdir() do depot
@@ -340,7 +331,7 @@ DataBrowserAPI.process(::ClosedProject, i::EngineItem) =
             @eval closed_scale() = 3
             reopened(ws -> @test first_value(ws) == [3])
             @eval closed_count() = 2
-            reopened(ws -> @test W.query_items(ws) == ["1", "2"])
+            reopened(ws -> @test W.query_items(ws) == ["1", "2", "source"])
         finally
             popfirst!(DEPOT_PATH)
         end
@@ -355,8 +346,8 @@ end
             ws = W.open_workspace(project, EngineSource("source", 2, false); cache, background_processing=true)
             try
                 settled(ws)
-                items = W.materialize_items(ws, sort(W.query_items(ws)))
-                @test id.(items) == ["1", "2"]
+                @test W.query_items(ws) == ["1", "2", "source"]
+                items = W.materialize_items(ws, ["1", "2"])
                 @test all(i -> data(i).x == [4] && metadata(i)[:total] == 4, items)
             finally
                 W.close_workspace!(ws)
@@ -369,7 +360,7 @@ end
                 W.select!(ws, ["1", "2"])
                 W.modify_workspace!(ws; source=EngineSource("source", 1, false))
                 settled(ws)
-                @test W.query_items(ws) == ["1"]
+                @test W.query_items(ws) == ["1", "source"]
                 # The item that the source still produces stays selected.
                 @test W.selection(ws).id == ["1"]
                 @test data(only(W.materialize_items(ws, ["1"]))).x == [2]
@@ -421,7 +412,7 @@ end
             finally
                 W.close_workspace!(ws)
             end
-            ws = W.open_workspace(project, EngineSource("source", 1, false); cache)
+            ws = W.open_workspace(project, EngineSource("source", 1, false); cache, background_processing=true)
             try
                 settled(ws)
                 @test isempty(W.workspace_status(ws).errors)
@@ -456,10 +447,10 @@ end
 @testset "tags apply to items and are kept in tags.txt" begin
     mktempdir() do root
         names(found) = [tag.name for tag in found]
-        ws = W.open_workspace(TagProject(), RootedSource(root); cache=false)
+        ws = W.open_workspace(TagProject(), RootedSource(root); cache=false, background_processing=true)
         try
             settled(ws)
-            a, b = W.item(ws, "a"), W.item(ws, "b")
+            a, b = "a", "b"
             # A name that is not defined is refused.
             @test_throws ErrorException tag!(ws, a, "leaky")
             tag!(ws, Tag("leaky"))
@@ -469,10 +460,8 @@ end
             @test names(tags(ws, a)) == ["bad", "leaky"]
             @test names(tags(ws, b)) == ["bad"]
             @test items(ws, Tag("leaky")) == [a]
-            # An item can be given by its public id.
-            @test names(tags(ws, "a")) == ["bad", "leaky"]
             @test W.select(ws, items(ws, Tag("leaky"))).id == ["a"]
-            @test items(ws, !Tag("leaky")) == [b]
+            @test sort(items(ws, !Tag("leaky"))) == [b, "source"]
             untag!(ws, [a, b], "leaky")
             @test names(tags(ws, a)) == ["bad"]
         finally
@@ -482,10 +471,10 @@ end
         try
             settled(ws)
             @test names(tags(ws)) == ["leaky", "bad"]
-            @test names(tags(ws, W.item(ws, "b"))) == ["bad"]
+            @test names(tags(ws, "b")) == ["bad"]
             untag!(ws, "bad")
             @test names(tags(ws)) == ["leaky"]
-            @test isempty(tags(ws, W.item(ws, "b")))
+            @test isempty(tags(ws, "b"))
         finally
             W.close_workspace!(ws)
         end

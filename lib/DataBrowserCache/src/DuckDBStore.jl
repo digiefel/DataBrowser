@@ -1,9 +1,10 @@
-"""The item type, hex-serialized, of an item whose data is kept as a table."""
+"""The id and the item type, hex-serialized, of an item whose data is kept as a table."""
 struct StoredShell
     id::String
+    item_id::String
     type_hex::String
 end
-StoredShell(row)::StoredShell = StoredShell(String(row.id), String(row.type_hex))
+StoredShell(row)::StoredShell = StoredShell(String(row.id), String(row.item_id), String(row.type_hex))
 
 """
     DuckDBStore(path; max_bytes=64 * 1024^2)
@@ -96,7 +97,7 @@ function Base.write(store::DuckDBStore, id::AbstractString, item)
                 error("$(typeof(item)) $id cannot be stored: " * join(dropped, "; "))
             end
             store.metadata[key] = given
-            shell = StoredShell(key, _serialize_type(typeof(item)))
+            shell = StoredShell(key, DataBrowserAPI.id(item), _serialize_type(typeof(item)))
             append!(store.tables, key, data)
             edit!(store.shell_rows, key, shell)
             store.shells[key] = shell
@@ -142,7 +143,7 @@ function Base.read(store::DuckDBStore, ::Type{T}, ids::AbstractVector)::Vector{U
         for (position, shell) in tables
             data = get(found, keys[position], nothing)
             data === nothing && continue
-            item = _rebuilt(shell, String(ids[position]), data, store.metadata[keys[position]])
+            item = _rebuilt(shell, data, store.metadata[keys[position]])
             item isa T && (items[position] = item)
         end
     end
@@ -158,9 +159,9 @@ end
 
 const READ_BATCH_IDS = 1_000
 
-function _rebuilt(shell::StoredShell, id::String, data, given::Dict{Symbol,Any})
+function _rebuilt(shell::StoredShell, data, given::Dict{Symbol,Any})
     try
-        return DataBrowserAPI.reconstruct(_deserialize_type(shell.type_hex), id, data, given)
+        return DataBrowserAPI.reconstruct(_deserialize_type(shell.type_hex), shell.item_id, data, given)
     catch
         # Written by another Julia or package version: compute it again.
         return nothing

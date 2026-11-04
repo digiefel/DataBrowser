@@ -214,7 +214,7 @@ end
 """
     reconstruct(::Type{T}, id, data, metadata::Dict) -> Union{Nothing,T}
 
-Rebuild one concrete item from its stored id, cached payload, and the metadata of the item when it
+Rebuild one concrete item from its id, cached payload, and the metadata of the item when it
 was stored. The engine can call this method before or after item processing. The item id, payload,
 and metadata must therefore contain everything the method needs at that point.
 

@@ -44,11 +44,8 @@ DataBrowserAPI.data(value::ComputationItem) = value.data
 DataBrowserAPI.metadata(value::ComputationItem) = value.metadata
 DataBrowserAPI.reconstruct(::Type{ComputationItem}, id::AbstractString, data, metadata::Dict) =
     ComputationItem(String(id), data, metadata)
-DataBrowserAPI.read(::ComputationProject, ::ComputationSource, ::ComputationFile) = [1, 2, 3]
-# FIXME(rebuild): the items that a source item holds, which `expand` gave. The projects below
-# reuse this method.
-DataBrowserAPI.expand(::ComputationProject, ::ComputationFile, data) =
-    [ComputationItem("sample", (signal=data,), Dict{Symbol,Any}(:step => "read"))]
+DataBrowserAPI.read(::ComputationProject, ::ComputationSource, ::ComputationFile) =
+    ComputationItem("sample", (signal=[1, 2, 3],), Dict{Symbol,Any}(:step => "read"))
 function DataBrowserAPI.process(project::ComputationProject, value::ComputationItem)
     project.processes[] += 1
     signal = value.data.signal .* 2
@@ -76,8 +73,6 @@ DataBrowserAPI.storage(project::UncachedComputationProject, ::Type{T}) where {T}
     storage(project.project, T)
 DataBrowserAPI.read(project::UncachedComputationProject, source::ComputationSource, file::ComputationFile) =
     read(project.project, source, file)
-DataBrowserAPI.expand(project::UncachedComputationProject, file::ComputationFile, data) =
-    expand(project.project, file, data)
 DataBrowserAPI.process(project::UncachedComputationProject, value::ComputationItem) =
     process(project.project, value)
 
@@ -88,7 +83,7 @@ DataBrowserAPI.process(project::UncachedComputationProject, value::ComputationIt
         workspace = CW.open_workspace(project, ComputationSource(); cache=false, background_processing=true)
         try
             CW.wait_workspace_idle!(workspace)
-            step = computation(workspace, only(CW.items(workspace)))
+            step = computation(workspace, "sample")
             before = counter.processes[]
             previous_execution = last_execution(workspace, step)
             @test previous_execution isa ComputationExecution
@@ -134,7 +129,6 @@ DataBrowserAPI.items(source::PolicySource; kwargs...) = (source.scans[] += 1; [C
 DataBrowserAPI.storage(project::PolicyProject, ::Type{ComputationItem}) = project.retain[] ? MemoryStore() : nothing
 DataBrowserAPI.read(project::PolicyProject, ::PolicySource, file::ComputationFile) =
     read(project.project, ComputationSource(), file)
-DataBrowserAPI.expand(project::PolicyProject, file::ComputationFile, data) = expand(project.project, file, data)
 DataBrowserAPI.process(project::PolicyProject, value::ComputationItem) = process(project.project, value)
 
 @testset "disabling type storage also bypasses an earlier persisted payload" begin
@@ -193,8 +187,7 @@ end
     workspace = CW.open_workspace(ComputationProject(), ComputationSource(); cache=false, background_processing=true)
     try
         CW.wait_workspace_idle!(workspace)
-        key = only(CW.items(workspace))
-        processed = computation(workspace, key)
+        processed = computation(workspace, "sample")
         # The item's value is the processed item, and its graph reaches the read of its source item.
         @test processed.f === DataBrowserAPI.process
         pending = Computation[processed]
@@ -205,9 +198,8 @@ end
             push!(ancestors, node)
             append!(pending, inputs(node))
         end
-        # FIXME(rebuild): the computation that reads the source item, which `read_items` was.
-        reader = only(filter(node -> node.f === DataBrowserCore.read_items, ancestors))
-        @test data(only(evaluate(workspace, reader))).signal == [1, 2, 3]
+        reader = only(filter(node -> node.f === DataBrowserAPI.read, ancestors))
+        @test data(evaluate(workspace, reader)).signal == [1, 2, 3]
         @test data(evaluate(workspace, processed)).signal == [2, 4, 6]
         latest = evaluate(workspace, computation(workspace, "sample"))
         @test latest isa ComputationItem
@@ -215,7 +207,7 @@ end
         @test latest.data.signal == [2, 4, 6]
         @test metadata(latest)[:total] == 12
         # An ordinary computation can consume any earlier call, without a stage-specific adapter.
-        @test evaluate(workspace, Computation(items -> sum(data(only(items)).signal), reader)) == 6
+        @test evaluate(workspace, Computation(item -> sum(data(item).signal), reader)) == 6
         # Changing an evaluated cached result leaves the retained value available for replay.
         raw = evaluate(workspace, processed)
         raw.data.signal[1] = 99
@@ -247,8 +239,7 @@ end
     workspace = CW.open_workspace(project, ComputationSource(); cache=false, background_processing=true)
     try
         CW.wait_workspace_idle!(workspace)
-        item = only(CW.items(workspace))
-        process_step = computation(workspace, item)
+        process_step = computation(workspace, "sample")
         before = project.processes[]
         calls = CW.calls(workspace, ["sample"])
         @test project.processes[] == before
@@ -285,7 +276,7 @@ DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueIte
             foreach(visit, history)
             read_call = only(filter(call -> startswith(call.title, "read("), order))
             step = only(values(read_call.computations))
-            @test only(evaluate(workspace, step)).data == [1.0, 2.0]
+            @test evaluate(workspace, step).data == [1.0, 2.0]
             write(path, "3 4")
             current() = try
                 only(materialize_items(workspace, ["vector"])).data == [6.0, 8.0]
@@ -293,7 +284,7 @@ DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueIte
                 false
             end
             @test timedwait(current, 60) === :ok
-            @test only(evaluate(workspace, step)).data == [3.0, 4.0]
+            @test evaluate(workspace, step).data == [3.0, 4.0]
         finally
             CW.close_workspace!(workspace)
         end
@@ -363,7 +354,6 @@ end
 DataBrowserAPI.project_name(::KeptProject) = "kept-computations"
 DataBrowserAPI.read(::KeptProject, source::ComputationSource, file::ComputationFile) =
     read(ComputationProject(), source, file)
-DataBrowserAPI.expand(::KeptProject, file::ComputationFile, data) = expand(ComputationProject(), file, data)
 DataBrowserAPI.process(::KeptProject, value::ComputationItem) = process(ComputationProject(), value)
 DataBrowserAPI.storage(project::KeptProject, ::Type) = DuckDBStore(project.values)
 const KEPT_CALLS = Threads.Atomic{Int}(0)
@@ -406,7 +396,6 @@ end
 DataBrowserAPI.project_name(::RefusingProject) = "refusing-store"
 DataBrowserAPI.read(::RefusingProject, source::ComputationSource, file::ComputationFile) =
     read(ComputationProject(), source, file)
-DataBrowserAPI.expand(::RefusingProject, file::ComputationFile, data) = expand(ComputationProject(), file, data)
 DataBrowserAPI.process(::RefusingProject, value::ComputationItem) = process(ComputationProject(), value)
 DataBrowserAPI.storage(project::RefusingProject, ::Type) = project.store
 

@@ -43,15 +43,16 @@ end
             select!(ws, ["a", "b"])
 
             write(b, "c 16")
-            @test timedwait(() -> sort(query_items(ws)) == ["a", "c"], 20) === :ok
+            # The folders are groups, whose ids are their paths.
+            @test timedwait(() -> query_items(ws) == [".", "a", "c", "run"], 20) === :ok
             # The file produces `c` in place of `b`, so `c` is selected in its place.
             @test selection(ws).id == ["a", "c"]
             @test API.data(only(materialize_items(ws, ["c"]))).value == [4.0]
 
             rm(b)
-            @test timedwait(() -> query_items(ws) == ["a"], 20) === :ok
+            @test timedwait(() -> query_items(ws) == [".", "a", "run"], 20) === :ok
             write(b, "b 25")
-            @test timedwait(() -> sort(query_items(ws)) == ["a", "b"], 20) === :ok
+            @test timedwait(() -> query_items(ws) == [".", "a", "b", "run"], 20) === :ok
             @test [API.data(item).value for item in materialize_items(ws, ["a", "b"])] == [[2.0], [5.0]]
             @test isempty(workspace_status(ws).errors)
         finally
@@ -84,7 +85,7 @@ end
             @test isempty(workspace_status(ws).errors)
 
             write(path, "sample invalid")
-            @test timedwait(() -> isempty(query_items(ws)) && !isempty(workspace_status(ws).errors), 20) === :ok
+            @test timedwait(() -> query_items(ws) == ["."] && !isempty(workspace_status(ws).errors), 20) === :ok
             @test occursin("Source item: sample", last(only(workspace_status(ws).errors)))
             @test_throws ErrorException materialize_items(ws, ["sample"])
 
@@ -106,7 +107,7 @@ end
         try
             wait_workspace_idle!(ws; timeout=20)
             @test !isempty(workspace_status(ws).errors)
-            @test query_items(ws) == ["sample"]
+            @test query_items(ws) == [".", "sample"]
             @test API.data(only(materialize_items(ws, ["sample"]))).value in ([2.0], [3.0])
             rm(b)
             write(a, "sample 16")

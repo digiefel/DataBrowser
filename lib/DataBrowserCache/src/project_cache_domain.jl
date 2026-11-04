@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 40
+const PROJECT_CACHE_SCHEMA_VERSION = 41
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -46,50 +46,37 @@ struct ProjectCacheIdentity
 end
 
 """
-An item as the cache saved it. `metadata` is what its source item gave it, `process` what its
-`process` produced, and `delivered` the metadata project code last received with the item, or empty
-when no stage of the item has run.
+A value that a computation gave, as the cache saved it: its id, label and type, the ids of its
+members when it is a group, and its metadata.
 """
-const SavedItem = @NamedTuple{
+const SavedOutput = @NamedTuple{
     id::String,
-    source_key::Int64,
     label::String,
     type::Type,
+    members::Union{Nothing,Vector{String}},
     metadata::Dict{Symbol,Any},
-    process::Dict{Symbol,Any},
-    delivered::Dict{Symbol,Any},
 }
-
-"""
-Snapshot returned by `load_cache_index` for workspace restoration.
-
-Contains the saved source items and items. The snapshot exposes no live cache stores or connections.
-"""
-struct ProjectCacheIndex
-    identity::ProjectCacheIdentity
-    # Public id of each source item by its cache key.
-    sources::Dict{Int64,String}
-    items::Vector{SavedItem}
-end
 
 # Storage rows (field names are the table columns; `R(database_row)` is the pure decoder)
 
-struct SourceItemRow
+"""
+One value that a computation gave: the cache key of the computation, the stage of the pipeline it
+runs, and the position of the value among the values it gave. `output_key` is the key of the value's
+metadata.
+"""
+struct OutputRow
+    output_key::Int64
+    computation::String
     id::String
-    source_item_key::Int64
+    stage::Int8
+    position::Int64
     label::String
-    fingerprint_hex::Union{Nothing,String}
+    type_hex::String
+    members_hex::Union{Nothing,String}
 end
 
-SourceItemRow(row)::SourceItemRow = SourceItemRow(
-    String(row.id),
-    Int64(row.source_item_key),
-    String(row.label),
-    _null_to_nothing(row.fingerprint_hex),
-)
-
-"""Display label of one cached source item, resolved once when its items are published."""
-label(row::SourceItemRow)::String = row.label
+OutputRow(row)::OutputRow = OutputRow(Int64(row.output_key), String(row.computation), String(row.id),
+    Int8(row.stage), Int64(row.position), String(row.label), String(row.type_hex), _null_to_nothing(row.members_hex))
 
 """
 The revision of the inputs and code of the result of one computation, by its id, and the item type
@@ -104,22 +91,6 @@ end
 
 ComputationRevisionRow(row)::ComputationRevisionRow =
     ComputationRevisionRow(String(row.id), UInt64(row.revision), String(row.type_hex), String(row.failure))
-
-struct ItemRow
-    id::String
-    item_key::Int64
-    source_item_key::Int64
-    label::String
-    type_hex::String
-end
-
-ItemRow(row)::ItemRow = ItemRow(
-    String(row.id),
-    Int64(row.item_key),
-    Int64(row.source_item_key),
-    String(row.label),
-    String(row.type_hex),
-)
 
 # Identity
 
@@ -154,25 +125,16 @@ mutable struct CacheDB
     identity::ProjectCacheIdentity
     db::DuckDB.DB
     metrics::BuildMetrics
-    source_items::RowStore{String,SourceItemRow}
-    items::RowStore{String,ItemRow}
-    source_item_metadata::WideRowStore{Int64}
-    # The metadata project code last received with each item, which queries read.
-    item_metadata::WideRowStore{Int64}
-    # The metadata that the `process` of each item produced, apart from the delivered metadata.
-    item_process_metadata::WideRowStore{Int64}
+    outputs::RowStore{Int64,OutputRow}
+    output_metadata::WideRowStore{Int64}
     computation_revision_rows::RowStore{String,ComputationRevisionRow}
     # The same revisions, read at opening, so that a lookup does not read the table.
     computation_revisions::Dict{String,ComputationRevisionRow}
-    # One integer surrogate per item id; minted when items are published.
-    item_keys::Dict{String,Int64}
-    next_item_key::Int64
-    # One integer surrogate per source-item id; the mapping is persisted once in `source_items`.
-    source_item_keys::Dict{String,Int64}
-    source_item_ids::Dict{Int64,String}
-    next_source_item_key::Int64
+    # The key of each value, by the cache key of its computation and its id, and the next free key.
+    output_keys::Dict{Tuple{String,String},Int64}
+    next_output_key::Int64
     key_lock::ReentrantLock
-    # The signature of the item_metadata columns backing the query view; the view is
+    # The signature of the output_metadata columns backing the query view; the view is
     # recreated only when it changes.
     query_view_signature::Vector{Symbol}
 end
@@ -256,28 +218,20 @@ function open_cache_db(
         finally
             DBInterface.close!(connection)
         end
-        source_items = started(RowStore{String,SourceItemRow}(db, "source_items", ("id",)))
-        items = started(RowStore{String,ItemRow}(db, "items", ("id",)))
+        outputs = started(RowStore{Int64,OutputRow}(db, "outputs", ("output_key",)))
         computation_revision_rows = started(RowStore{String,ComputationRevisionRow}(
             db, "computation_revisions", ("id",)))
-        item_keys, next_item_key = _load_item_keys(db)
-        source_item_keys, source_item_ids, next_source_item_key = _load_source_item_keys(db)
+        output_keys = Dict{Tuple{String,String},Int64}((row.computation, row.id) => key for (key, row) in read(outputs))
         return CacheDB(
             identity,
             db,
             metrics,
-            source_items,
-            items,
-            started(WideRowStore{Int64}(db, "source_item_metadata", "item_key")),
-            started(WideRowStore{Int64}(db, "item_metadata", "item_key")),
-            started(WideRowStore{Int64}(db, "item_process_metadata", "item_key")),
+            outputs,
+            started(WideRowStore{Int64}(db, "output_metadata", "output_key")),
             computation_revision_rows,
             Dict{String,ComputationRevisionRow}(row.id => row for row in values(read(computation_revision_rows))),
-            item_keys,
-            next_item_key,
-            source_item_keys,
-            source_item_ids,
-            next_source_item_key,
+            output_keys,
+            maximum(values(output_keys); init=Int64(0)) + 1,
             ReentrantLock(),
             Symbol[],
         )
@@ -294,86 +248,15 @@ function open_cache_db(
     end
 end
 
-"""Load the committed item-id → surrogate map and the next free surrogate from the `items` table."""
-function _load_item_keys(db::DuckDB.DB)::Tuple{Dict{String,Int64},Int64}
-    connection = DBInterface.connect(db)
-    try
-        item_keys = Dict{String,Int64}()
-        for row in DBInterface.execute(connection, "SELECT id, item_key FROM items")
-            item_keys[String(row.id)] = Int64(row.item_key)
-        end
-        next = isempty(item_keys) ? Int64(1) : maximum(values(item_keys)) + 1
-        return item_keys, next
-    finally
-        DBInterface.close!(connection)
-    end
-end
-
-"""Mint or resolve the integer surrogate for one item id. Minting happens only when items are published."""
-function item_key!(cache::CacheDB, id::AbstractString; mint::Bool=false)::Int64
-    key = String(id)
-    return lock(cache.key_lock) do
-        existing = get(cache.item_keys, key, nothing)
-        existing !== nothing && return existing
-        mint || error("no item_key minted for item '$key'")
-        minted = cache.next_item_key
-        cache.next_item_key += 1
-        cache.item_keys[key] = minted
-        minted
-    end
-end
-
-"""Load the committed source-item id ↔ surrogate maps and the next free surrogate."""
-function _load_source_item_keys(
-    db::DuckDB.DB,
-)::Tuple{Dict{String,Int64},Dict{Int64,String},Int64}
-    connection = DBInterface.connect(db)
-    try
-        keys_by_id = Dict{String,Int64}()
-        ids_by_key = Dict{Int64,String}()
-        for row in DBInterface.execute(
-            connection, "SELECT id, source_item_key FROM source_items")
-            keys_by_id[String(row.id)] = Int64(row.source_item_key)
-            ids_by_key[Int64(row.source_item_key)] = String(row.id)
-        end
-        next = isempty(ids_by_key) ? Int64(1) : maximum(keys(ids_by_key)) + 1
-        return keys_by_id, ids_by_key, next
-    finally
-        DBInterface.close!(connection)
-    end
-end
-
 """
-Mint or resolve the package-owned integer surrogate for one source-item id. The mapping persists
-in the `source_items` table, so a source item keeps its key across sessions and re-appearances.
+    output_key!(cache, computation, id) -> Int64
+
+The key of the value with id `id` that the computation with cache key `computation` gives. A value
+keeps its key while the cache keeps it; its metadata is kept under that key.
 """
-function source_item_key!(cache::CacheDB, id::AbstractString; mint::Bool=false)::Int64
-    key = String(id)
-    return lock(cache.key_lock) do
-        existing = get(cache.source_item_keys, key, nothing)
-        existing !== nothing && return existing
-        mint || error("no source_item_key minted for source item '$key'")
-        minted = cache.next_source_item_key
-        cache.next_source_item_key += 1
-        cache.source_item_keys[key] = minted
-        cache.source_item_ids[minted] = key
-        minted
-    end
-end
-
-"""Resolve one source-item id to its surrogate, or `nothing` when the id was never minted."""
-function source_item_key(cache::CacheDB, id::AbstractString)::Union{Nothing,Int64}
-    return lock(cache.key_lock) do
-        get(cache.source_item_keys, String(id), nothing)
-    end
-end
-
-"""Resolve one source-item surrogate back to its stable public id."""
-function source_item_id(cache::CacheDB, key::Integer)::String
-    return lock(cache.key_lock) do
-        id = get(cache.source_item_ids, Int64(key), nothing)
-        id === nothing && error("no source item minted for key $key")
-        id
+function output_key!(cache::CacheDB, computation::AbstractString, id::AbstractString)::Int64
+    return @lock cache.key_lock get!(cache.output_keys, (String(computation), String(id))) do
+        (cache.next_output_key += 1) - 1
     end
 end
 
@@ -386,8 +269,7 @@ function ensure_schema!(connection)::Nothing
             key TEXT PRIMARY KEY,
             value TEXT)
     """)
-    DBInterface.execute(connection, create_table_sql(SourceItemRow, "source_items", (:id,)))
-    DBInterface.execute(connection, create_table_sql(ItemRow, "items", (:id,)))
+    DBInterface.execute(connection, create_table_sql(OutputRow, "outputs", (:output_key,)))
     DBInterface.execute(connection,
         create_table_sql(ComputationRevisionRow, "computation_revisions", (:id,)))
     DBInterface.execute(connection, """
@@ -398,63 +280,41 @@ function ensure_schema!(connection)::Nothing
             sql_type TEXT,
             PRIMARY KEY (table_name, column_name))
     """)
-    for table in ("source_item_metadata", "item_metadata", "item_process_metadata")
-        DBInterface.execute(connection, "CREATE TABLE IF NOT EXISTS $table(item_key BIGINT PRIMARY KEY)")
-    end
+    DBInterface.execute(connection, "CREATE TABLE IF NOT EXISTS output_metadata(output_key BIGINT PRIMARY KEY)")
     return nothing
 end
 
-# The domain write/read surface over the generic stores: pipeline stages and items map onto
+# The domain write/read surface over the generic stores: the values of computations map onto
 # RowStore rows. The stores know none of this; they buffer typed rows.
 
 """
-One item that a source item produced, in the form the cache stores: its row, the metadata its
-source item gave it.
+    store_output!(cache, computation, stage, position, output) -> Vector{String}
+
+Save one value that the computation with cache key `computation` gave, in place of what the cache
+saved for the value with the same id before. `output` has the fields of a [`SavedOutput`](@ref).
+`stage` is the stage of the pipeline that the computation runs, and `position` the place of the
+value among the values it gave.
+
+Returns a message for each metadata value that could not be saved.
 """
-struct ItemOutput
-    id::String
-    label::String
-    type::Type
-    metadata::Dict{Symbol,Any}
+function store_output!(cache::CacheDB, computation::AbstractString, stage::Integer, position::Integer,
+        output::NamedTuple)::Vector{String}
+    started = time_ns()
+    key = output_key!(cache, computation, output.id)
+    edit!(cache.outputs, key, OutputRow(key, computation, output.id, stage, position, output.label,
+        _serialize_type(output.type), _serialize_hex(output.members)))
+    record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
+    started = time_ns()
+    dropped = edit!(cache.output_metadata, key, output.metadata)
+    record_cache_phase!(cache.metrics.metadata_write_ns, cache.metrics.metadata_writes, started)
+    return dropped
 end
 
-"""
-    replace_source_output!(cache, source_key, previous, outputs) -> conflicts
-
-Replace what the source item `source_key` produced. The items with the ids in `previous` and every
-result made from them are deleted, and `outputs` are stored. An id in both lists is a new item: its earlier results do not survive.
-`outputs` may be empty.
-
-Returns type-conflict messages for metadata keys that could not be stored.
-"""
-function replace_source_output!(
-    cache::CacheDB,
-    source_key::Int64,
-    previous::Vector{String},
-    outputs::Vector{ItemOutput},
-)::Vector{String}
-    isempty(previous) || delete_source_output!(cache, source_key, previous)
-    dropped = String[]
-    for output in outputs
-        started = time_ns()
-        key = item_key!(cache, output.id; mint=true)
-        append!(cache.items, output.id, ItemRow(
-            output.id, key, source_key, output.label, _serialize_type(output.type)))
-        append!(dropped, edit!(cache.source_item_metadata, key, output.metadata))
-        record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
-    end
-    return unique(dropped)
-end
-
-"""Persist the label of one existing item, which later stages may recompute."""
-function store_item_label!(
-    cache::CacheDB,
-    id::AbstractString,
-    source_key::Int64,
-    label::AbstractString,
-    type::Type,
-)::Nothing
-    edit!(cache.items, String(id), ItemRow(id, item_key!(cache, id), source_key, label, _serialize_type(type)))
+"""Forget what [`store_output!`](@ref) saved for the value `id` of the computation `computation`."""
+function delete_output!(cache::CacheDB, computation::AbstractString, id::AbstractString)::Nothing
+    key = output_key!(cache, computation, id)
+    delete!(cache.outputs, key)
+    delete!(cache.output_metadata, key)
     return nothing
 end
 
@@ -497,48 +357,8 @@ function recorded_revision(cache::CacheDB, id::AbstractString)::Union{Nothing,Na
     return (; row.revision, type, row.failure)
 end
 
-"""
-Persist the metadata project code receives with one item, which queries read. Returns type-conflict messages for dropped keys.
-"""
-function store_item_metadata!(
-    cache::CacheDB, id::AbstractString, effective::AbstractDict,
-)::Vector{String}
-    started = time_ns()
-    dropped = edit!(cache.item_metadata, item_key!(cache, id), effective)
-    record_cache_phase!(
-        cache.metrics.metadata_write_ns,
-        cache.metrics.metadata_writes,
-        started,
-    )
-    return dropped
-end
-
-"""
-Persist the metadata that the `process` of one item produced, apart from the delivered metadata.
-Returns a message for each value that could not be saved.
-"""
-store_item_stage_metadata!(cache::CacheDB, id::AbstractString, produced::AbstractDict)::Vector{String} =
-    edit!(cache.item_process_metadata, item_key!(cache, id), produced)
-
-"""Delete published items and what the cache saved for them, keeping the source identity."""
-function delete_source_output!(
-    cache::CacheDB,
-    source_item_key_value::Integer,
-    item_ids::Vector{String},
-)::Nothing
-    for id in item_ids
-        key = item_key!(cache, id)
-        delete!(cache.items, id)
-        delete!(cache.source_item_metadata, key)
-        delete!(cache.item_metadata, key)
-        delete!(cache.item_process_metadata, key)
-    end
-    return nothing
-end
-
 """Every store of `cache`."""
-cache_stores(cache::CacheDB) = (cache.source_items, cache.items, cache.source_item_metadata,
-    cache.item_metadata, cache.item_process_metadata, cache.computation_revision_rows)
+cache_stores(cache::CacheDB) = (cache.outputs, cache.output_metadata, cache.computation_revision_rows)
 
 """
 The number of keys and of rows that are queued or being written, over every store at the
@@ -622,25 +442,16 @@ _deserialize_type(value)::Type = _deserialize_hex(value)
 """Map a SQL NULL (`missing`) to `nothing`, passing other values through."""
 _null_to_nothing(value) = ismissing(value) ? nothing : value
 
-# Index construction + comparison (in memory)
-
-"""Delete cached results and reset item keys while preserving the cache identity and schema."""
-function clear_cache_index!(cachedb::CacheDB)::Nothing
-    for buffer in cache_stores(cachedb)
-        clear!(buffer)
-    end
+"""Delete everything the cache saved, keeping its identity and schema."""
+function clear_cache!(cachedb::CacheDB)::Nothing
+    foreach(clear!, cache_stores(cachedb))
     lock(cachedb.key_lock) do
-        empty!(cachedb.item_keys)
-        cachedb.next_item_key = Int64(1)
-        empty!(cachedb.source_item_keys)
-        empty!(cachedb.source_item_ids)
-        cachedb.next_source_item_key = Int64(1)
+        empty!(cachedb.output_keys)
+        cachedb.next_output_key = Int64(1)
         empty!(cachedb.computation_revisions)
     end
     return nothing
 end
-
-# Incremental writing (per source item, as the scan streams)
 
 """Initialize all identity fields together before opening cache stores."""
 function _write_meta_header!(connection, identity::ProjectCacheIdentity)::Nothing
@@ -686,40 +497,31 @@ function _validate_meta(meta::Dict{String,String}, identity::ProjectCacheIdentit
 end
 
 """
-Return a restore snapshot from the open cache, including buffered updates. A newly initialized or
-cleared cache returns an empty index. Disk and in-memory databases use the same snapshot format.
+    load_outputs(cache) -> Dict{String,Vector{SavedOutput}}
+
+What [`store_output!`](@ref) saved, including buffered updates: for the cache key of each
+computation, the values it gave, in their order.
 """
-function load_cache_index(cache::CacheDB)::ProjectCacheIndex
-    item_layer = read(cache.source_item_metadata)
-    delivered = read(cache.item_metadata)
-    processed = read(cache.item_process_metadata)
-    items = SavedItem[]
-    for row in values(read(cache.items))
-        push!(items, (;
-            row.id,
-            source_key=row.source_item_key,
-            row.label,
-            type=_deserialize_type(row.type_hex),
-            metadata=get(item_layer, row.item_key, Dict{Symbol,Any}()),
-            process=get(processed, row.item_key, Dict{Symbol,Any}()),
-            delivered=get(delivered, row.item_key, Dict{Symbol,Any}()),
-        ))
+function load_outputs(cache::CacheDB)::Dict{String,Vector{SavedOutput}}
+    metadata = read(cache.output_metadata)
+    rows = sort!(collect(values(read(cache.outputs))); by=row -> row.position)
+    saved = Dict{String,Vector{SavedOutput}}()
+    for row in rows
+        push!(get!(Vector{SavedOutput}, saved, row.computation), (; row.id, row.label,
+            type=_deserialize_type(row.type_hex), members=_deserialize_hex(row.members_hex),
+            metadata=get(metadata, row.output_key, Dict{Symbol,Any}())))
     end
-    # A source item publishes its items in a stable order.
-    sort!(items; by=item -> (item.source_key, item.id))
-    sources = Dict{Int64,String}(
-        row.source_item_key => row.id for row in values(read(cache.source_items)))
-    return ProjectCacheIndex(cache.identity, sources, items)
+    return saved
 end
 
 # Query surface
 
 """
-Return the ids of the items that satisfy a SQL predicate.
+Return the ids of the values that satisfy a SQL predicate.
 
-The predicate runs over `items LEFT JOIN item_metadata USING (item_key)`: the columns of
-the `items` table, and one column per metadata name that project code gave the items. The query
-reads what is written to disk, so a value from the last 2 seconds may be missing.
+The predicate runs over the latest version of each value: the columns `id`, `label` and `type_hex`,
+and one column per metadata name that project code gave the values. The query reads what is written
+to disk, so a value from the last 2 seconds may be missing.
 """
 function query_items(cache::CacheDB, predicate::AbstractString)::Vector{String}
     _ensure_items_view!(cache)
@@ -732,14 +534,14 @@ function query_items(cache::CacheDB, predicate::AbstractString)::Vector{String}
     end
 end
 
-"""Recreate the query view when the effective-metadata column signature changed."""
+"""Recreate the query view when the metadata column signature changed."""
 function _ensure_items_view!(cache::CacheDB)::Nothing
     connection = DBInterface.connect(cache.db)
     try
         signature = Symbol[]
         for row in DBInterface.execute(connection, """
             SELECT column_name FROM information_schema.columns
-            WHERE table_schema = 'main' AND table_name = 'item_metadata'
+            WHERE table_schema = 'main' AND table_name = 'output_metadata'
             ORDER BY ordinal_position
         """)
             push!(signature, Symbol(String(row.column_name)))
@@ -749,7 +551,9 @@ function _ensure_items_view!(cache::CacheDB)::Nothing
             signature == cache.query_view_signature && return nothing
             DBInterface.execute(connection, """
                 CREATE OR REPLACE VIEW mb_item_query AS
-                SELECT * FROM items LEFT JOIN item_metadata USING (item_key)
+                SELECT * EXCLUDE (output_key, computation, stage, position, members_hex)
+                FROM outputs LEFT JOIN output_metadata USING (output_key)
+                QUALIFY row_number() OVER (PARTITION BY id ORDER BY stage DESC) = 1
             """)
             cache.query_view_signature = signature
         end

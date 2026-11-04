@@ -22,17 +22,18 @@ struct FitTestProject <: DataBrowserAPI.AbstractProject end
 struct FitTestSource <: DataBrowserAPI.AbstractDataSource
     devices::Vector{FitTestDevice}
 end
-struct FitTestFile <: DataBrowserAPI.AbstractDataSourceItem end
+# One file for each device.
+struct FitTestFile <: DataBrowserAPI.AbstractDataSourceItem
+    device::FitTestDevice
+end
 DataBrowserAPI.project_name(::FitTestProject) = "fits"
 DataBrowserAPI.id(::FitTestSource) = "devices"
 DataBrowserAPI.label(::FitTestSource) = "devices"
-DataBrowserAPI.label(::FitTestFile) = "file"
-DataBrowserAPI.items(::FitTestSource; kwargs...) = [FitTestFile()]
-DataBrowserAPI.id(::FitTestFile) = "file"
+DataBrowserAPI.items(source::FitTestSource; kwargs...) = FitTestFile.(source.devices)
+DataBrowserAPI.id(file::FitTestFile) = file.device.name
+DataBrowserAPI.label(file::FitTestFile) = file.device.name
 DataBrowserAPI.fingerprint(::FitTestFile) = 1
-DataBrowserAPI.read(::FitTestProject, source::FitTestSource, ::FitTestFile) = source.devices
-# FIXME(rebuild): the items that a source item holds, which `expand` gave.
-DataBrowserAPI.expand(::FitTestProject, ::FitTestFile, devices) = devices
+DataBrowserAPI.read(::FitTestProject, ::FitTestSource, file::FitTestFile) = file.device
 
 const W = DataBrowserCore.Workspace
 

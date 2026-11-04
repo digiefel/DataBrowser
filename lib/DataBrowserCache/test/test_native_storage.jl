@@ -6,6 +6,7 @@ struct TableItem <: API.AbstractDataItem
     data::NamedTuple
     metadata::Dict{Symbol,Any}
 end
+API.id(item::TableItem) = item.id
 API.data(item::TableItem) = item.data
 API.metadata(item::TableItem) = item.metadata
 API.reconstruct(::Type{TableItem}, id::AbstractString, data, metadata::Dict) =

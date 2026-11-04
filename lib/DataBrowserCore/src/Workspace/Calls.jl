@@ -28,18 +28,13 @@ end
 """
     calls(workspace, ids) -> Vector{Call}
 
-How the items `ids` were made: for each way of making them, its last call, which reads the calls
-before it through `inputs`. Items whose calls run the same code, on results made in the same way,
-share them.
+How the values `ids` were made: for each way of making them, its last call, which reads the calls
+before it through `inputs`. Values whose calls run the same code, on results made in the same way,
+share them. Ids that the workspace has no value for are left out.
 """
 function calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{Call}
-    definitions = Computation[]
-    for id in ids
-        key = item(workspace, id)
-        key === nothing && continue
-        push!(definitions, computation(workspace, key))
-    end
-    return calls(workspace, definitions)
+    known = @lock workspace.catalog.lock filter(x -> haskey(workspace.versions, x), ids)
+    return calls(workspace, Computation[computation(workspace, x) for x in known])
 end
 
 """The calls producing a selection, including unindexed computation results."""
@@ -55,15 +50,15 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
     function calls_of(value::Computation)::Vector{Call}
         haskey(visited, value) && return visited[value]
         preceding = unique!(reduce(vcat, map(calls_of, inputs(value)); init=Call[]))
-        row, place, ran_for, failure, result = @lock catalog.lock begin
+        row, ran_for, failure, result = @lock catalog.lock begin
             row = get(catalog, value, Catalogs.NOWHERE)
-            place = row == Catalogs.NOWHERE ? nothing : get(workspace.places, row, nothing)
-            # FIXME(rebuild): the id and label of the item that a row gives, which the tree held.
-            ran_for = place isa String ? (id(value.args[3]), label(value.args[3])) :
-                place === nothing ? (row == Catalogs.NOWHERE ? (id(value), id(value)) : (cachekey(workspace, row), cachekey(workspace, row))) :
-                (workspace.tree[place].id, workspace.tree[place].label)
+            stage = get(workspace.stages, row, nothing)
+            ## The source item that a read reads, or the value that a `process` takes, or the computation.
+            ran_for = stage == SOURCE_READ ? (id(value.args[3]), label(value.args[3])) :
+                stage !== nothing ? (value.args[2].id, label(workspace, value.args[2].id)) :
+                row == Catalogs.NOWHERE ? (id(value), id(value)) : (cachekey(workspace, row), cachekey(workspace, row))
             current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
-            row, place, ran_for, get(workspace.errors, row, nothing), current ? Catalogs.result_type(catalog, row) : nothing
+            row, ran_for, get(workspace.errors, row, nothing), current ? Catalogs.result_type(catalog, row) : nothing
         end
         found = row == Catalogs.NOWHERE ? nothing : stage(@lock catalog.lock get(() -> call_signature(workspace, row), workspace.signatures, row))
         # The call of `value`, with the calls it reads, kept with each call of the same code on the same inputs.

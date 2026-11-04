@@ -29,48 +29,40 @@ end
     tags(workspace, item) -> Vector{Tag}
 
 The tags defined in a workspace, or the tags of one item, with the highest priority first. Give an
-item as one of the values that [`items`](@ref) returns, as its public id, or as a data item.
+item as its public id, or as a data item.
 """
 tags(workspace::Workspace)::Vector{Tag} = copy(workspace.tags.state.catalog)
 
-# FIXME(rebuild): the item of an id, which `key` found in the tree.
-tags(workspace::Workspace, item::Union{AbstractString,AbstractDataItem})::Vector{Tag} =
-    tags(workspace, key(workspace, item))
-
-# FIXME(rebuild): the id of an item, now that `ItemKey` is gone.
-function tags(workspace::Workspace, key::ItemKey)::Vector{Tag}
+function tags(workspace::Workspace, item::Union{AbstractString,AbstractDataItem})::Vector{Tag}
     assignments = workspace.tags.state.assignments
     isempty(assignments) && return Tag[]
-    names = get(assignments, tag_key(workspace, key), ())
+    names = get(assignments, tag_key(item), ())
     return isempty(names) ? Tag[] :
         sort!(filter(tag -> tag.name in names, workspace.tags.state.catalog); by=tag -> -tag.priority)
 end
 
 """
-    items(workspace, tag::Tag) -> Vector{ItemKey}
-    items(workspace, !tag) -> Vector{ItemKey}
+    items(workspace, tag::Tag) -> Vector{String}
+    items(workspace, !tag) -> Vector{String}
 
-The items of a workspace that have a tag, or with `!`, the items that do not have it.
+The ids of the values of a workspace that have a tag, or with `!`, of the values that do not have
+it.
 
     items(workspace, !Tag("bad"))
 """
-function items(workspace::Workspace, tag::Tag)::Vector{ItemKey}
+function items(workspace::Workspace, tag::Tag)::Vector{String}
     name = tag_name(workspace, tag)
-    return filter(key -> any(found -> found.name == name, tags(workspace, key)), items(workspace))
+    return filter(x -> any(found -> found.name == name, tags(workspace, x)), items(workspace))
 end
 
-function items(workspace::Workspace, condition::Untagged)::Vector{ItemKey}
+function items(workspace::Workspace, condition::Untagged)::Vector{String}
     name = tag_name(workspace, condition.tag)
-    return filter(key -> !any(found -> found.name == name, tags(workspace, key)), items(workspace))
+    return filter(x -> !any(found -> found.name == name, tags(workspace, x)), items(workspace))
 end
 
-"""
-The name of an item in `tags.txt`. An item is given as its key, its public id, or a data item.
-"""
-# FIXME(rebuild): the id of an item, now that `ItemKey` and `key` are gone.
-tag_key(workspace::Workspace, item::ItemKey)::String = id(workspace, item)
-tag_key(workspace::Workspace, item::Union{AbstractString,AbstractDataItem})::String =
-    id(workspace, key(workspace, item))
+"""The name of an item in `tags.txt`: its public id. An item is given as its id, or a data item."""
+tag_key(item::AbstractString)::String = String(item)
+tag_key(item::AbstractDataItem)::String = id(item)
 
 """The name of a defined tag, given the tag or its name."""
 function tag_name(workspace::Workspace, tag::Union{Tag,AbstractString})::String
@@ -104,9 +96,8 @@ Define a tag in a workspace, or put a defined tag on items.
 `tag!(workspace, Tag("leaky"; color="ffaa00"))` defines the tag, or replaces the colour and
 priority of the tag with that name.
 
-`tag!(workspace, keys, tag)` puts the tag on one item, or on each one of a list. Give an item as one
-of the values that [`items`](@ref) returns, as its public id, or as a data item. Give the tag or its
-name.
+`tag!(workspace, keys, tag)` puts the tag on one item, or on each one of a list. Give an item as its
+public id, or as a data item. Give the tag or its name.
 """
 function tag!(workspace::Workspace, tag::Tag)::Nothing
     change_tags!(workspace) do state
@@ -119,13 +110,13 @@ function tag!(workspace::Workspace, keys::AbstractVector, tag::Union{Tag,Abstrac
     name = tag_name(workspace, tag)
     change_tags!(workspace) do state
         for key in keys
-            push!(get!(() -> Set{String}(), state.assignments, tag_key(workspace, key)), name)
+            push!(get!(() -> Set{String}(), state.assignments, tag_key(key)), name)
         end
     end
 end
 
 tag!(
-    workspace::Workspace, key::Union{ItemKey,AbstractString,AbstractDataItem},
+    workspace::Workspace, key::Union{AbstractString,AbstractDataItem},
     tag::Union{Tag,AbstractString},
 )::Nothing = tag!(workspace, [key], tag)
 
@@ -143,7 +134,7 @@ function untag!(workspace::Workspace, keys::AbstractVector, tag::Union{Tag,Abstr
     name = tag_name(workspace, tag)
     change_tags!(workspace) do state
         for key in keys
-            row = tag_key(workspace, key)
+            row = tag_key(key)
             names = get(state.assignments, row, nothing)
             names === nothing && continue
             delete!(names, name)
@@ -153,7 +144,7 @@ function untag!(workspace::Workspace, keys::AbstractVector, tag::Union{Tag,Abstr
 end
 
 untag!(
-    workspace::Workspace, key::Union{ItemKey,AbstractString,AbstractDataItem},
+    workspace::Workspace, key::Union{AbstractString,AbstractDataItem},
     tag::Union{Tag,AbstractString},
 )::Nothing = untag!(workspace, [key], tag)
 

@@ -1,19 +1,12 @@
-using DataBrowserAPI: AbstractDataSourceItem, AbstractDataItem
+using DataBrowserAPI: AbstractDataItem
 using Test, DataBrowserCache, DataBrowserAPI, Tables
 
-struct CacheSourceItem <: AbstractDataSourceItem end
-DataBrowserAPI.id(::CacheSourceItem) = "source"
-DataBrowserAPI.label(::CacheSourceItem) = "source"
-DataBrowserAPI.fingerprint(::CacheSourceItem) = 1
 struct CacheItem <: AbstractDataItem end
 
-"""Store the item "item" of the source item "source"."""
-function store_fixture_item!(cache, source_key)
-    store_source_identity!(cache, CacheSourceItem(), "source")
-    replace_source_output!(cache, source_key, String[],
-        [ItemOutput("item", "item", CacheItem, Dict{Symbol,Any}())])
-end
-delivered(cache) = only(load_cache_index(cache).items).delivered
+"""Save the value "item" of the computation "process:item", with `metadata`."""
+store_fixture_item!(cache, metadata=Dict{Symbol,Any}()) =
+    store_output!(cache, "process:item", 1, 1, (; id="item", label="item", type=CacheItem, members=nothing, metadata))
+saved(cache) = only(load_outputs(cache)["process:item"]).metadata
 
 @testset "in-memory storage supports queries without touching the cache file" begin
     mktempdir() do dir
@@ -23,10 +16,8 @@ delivered(cache) = only(load_cache_index(cache).items).delivered
         identity = ProjectCacheIdentity("memory", "source", "source", path)
         cache = open_cache_db(identity; persistent=false, rebuild=true)
         try
-            source_key = source_item_key!(cache, "source"; mint=true)
-            store_fixture_item!(cache, source_key)
-            store_item_metadata!(cache, "item", Dict(:total => 2))
-            @test delivered(cache)[:total] == 2
+            store_fixture_item!(cache, Dict{Symbol,Any}(:total => 2))
+            @test saved(cache)[:total] == 2
             @test timedwait(() -> !cache_has_pending_writes(cache), 20) === :ok
             @test query_items(cache, "total = 2") == ["item"]
         finally
@@ -35,7 +26,7 @@ delivered(cache) = only(load_cache_index(cache).items).delivered
         @test read(path, String) == existing
         cache = open_cache_db(identity; persistent=false)
         try
-            @test isempty(load_cache_index(cache).items)
+            @test isempty(load_outputs(cache))
         finally
             close_cache_db!(cache)
         end
@@ -46,11 +37,9 @@ end
     mktempdir() do dir
         identity = ProjectCacheIdentity("test", "source", "source", joinpath(dir, "cache.duckdb"))
         cache = open_cache_db(identity)
-        source_key = source_item_key!(cache, "source"; mint=true)
         try
-            @test isempty(load_cache_index(cache).items)
-            store_fixture_item!(cache, source_key)
-            store_item_metadata!(cache, "item", Dict(:total => 5))
+            @test isempty(load_outputs(cache))
+            store_fixture_item!(cache, Dict{Symbol,Any}(:total => 5))
         finally
             close_cache_db!(cache)
         end
@@ -60,30 +49,30 @@ end
         @test_throws ProjectCacheError open_cache_db(other_project)
         cache = open_cache_db(identity)
         try
-            @test delivered(cache)[:total] == 5
-            delete_source_output!(cache, source_key, ["item"])
+            @test saved(cache)[:total] == 5
+            delete_output!(cache, "process:item", "item")
         finally
             close_cache_db!(cache)
         end
         cache = open_cache_db(identity)
         try
-            @test isempty(load_cache_index(cache).items)
-            store_fixture_item!(cache, source_key)
-            clear_cache_index!(cache)
-            @test isempty(load_cache_index(cache).items)
+            @test isempty(load_outputs(cache))
+            store_fixture_item!(cache)
+            clear_cache!(cache)
+            @test isempty(load_outputs(cache))
         finally
             close_cache_db!(cache)
         end
         @test_throws ProjectCacheError open_cache_db(other_source)
         cache = open_cache_db(identity)
         try
-            @test isempty(load_cache_index(cache).items)
+            @test isempty(load_outputs(cache))
         finally
             close_cache_db!(cache)
         end
         cache = open_cache_db(other_source; rebuild=true)
         try
-            @test isempty(load_cache_index(cache).items)
+            @test isempty(load_outputs(cache))
         finally
             close_cache_db!(cache)
         end
