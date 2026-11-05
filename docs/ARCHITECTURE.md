@@ -184,35 +184,42 @@ among the versions that have a result or will run. `background_processing` is of
 workspace adds every row, runs the reads, and runs a `process` row only when a window shows its item
 or a script asks for it. Row 5 then takes rows 1 and 3, because rows 2 and 4 will not run.
 
-### One key for each row
+### Keys and revisions
 
 The *cache* is a DuckDB file that DataBrowser keeps for each project in the Julia depot. It gives
 each row a *key*, a number, and keeps it under the *id of the computation* of the row: the name of
 its function and the ids of its arguments, such as `process(myproject, a)` for a project named
 `myproject`. So the same computation gets the same key in the next session, and the catalog puts
-the row at the position of its key. A `process` can give several items, each in the store of its
-own type, so the cache also gives each item that a row of the project gives a key of its own, from
-the same counter. Under these keys the cache keeps what the next session needs to know, and a
-*store* keeps the results:
+the row at the position of its key. A `process` can give several items, so the cache also gives
+each item that a row of the project gives a key of its own, from the same counter. Under these
+keys the cache keeps what the next session needs to know.
+
+A *store* keeps the results. It keeps each result under its *revision*, a hash that identifies the
+result (see "When a row runs"), and each item that a row of the project gives under a revision of
+its own: a hash of its id and the revision of the result of the row. The same revision means the
+same result, in any workspace and in any session, so several workspaces can share a store, and a
+store can keep its results from one session to the next:
 
 ```text
-    part                    key      what it holds, for row 2: process(project, a)
-    catalog, in memory      2        the computation, its state, its inputs and the rows that
-                                     have it as an input, and its priority
-    cache, a DuckDB file    2        the id of the computation, and the revision of its result, or
-                                     its error
-                            12       the item a that row 2 gives: its id, label, type and metadata
-    store of its type       12       the item a
+    part                    under                  what it holds, for row 2: process(project, a)
+    catalog, in memory      key 2                  the computation, its state, its inputs and the
+                                                   rows that have it as an input, and its priority
+    cache, a DuckDB file    key 2                  the id of the computation, and the revision of
+                                                   its result, or its error
+                            key 12                 the item a that row 2 gives: its id, label, type
+                                                   and metadata
+    store of its type       the revision of a      the item a
 ```
 
 The row of a computation that a script or a window evaluates gives one result, which its store
-keeps under the key of the row. `storage(project, T)` chooses the store for results of type `T`:
+keeps under the revision of the result. When a row gets a result with another revision, its last
+result leaves the store. `storage(project, T)` chooses the store for results of type `T`:
 
 | Part | Where it is | After Julia exits |
 | --- | --- | --- |
 | the cache | a DuckDB file for each project in the Julia depot; in memory with `open_workspace(...; cache=false)` | kept, unless `cache=false` |
 | a `MemoryStore`, the default store | the memory of Julia | lost: the rows run again when something needs their results |
-| a `DuckDBStore`, the store of a project made with DataBrowserRecipes | a file next to the project | kept |
+| a `DuckDBStore`, the store of a project made with DataBrowserRecipes | the file `values.duckdb` in the folder of the Julia environment, which all such projects of the environment share | kept |
 
 ### When a row runs
 

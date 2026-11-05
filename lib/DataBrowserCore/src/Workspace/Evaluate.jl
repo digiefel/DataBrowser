@@ -32,9 +32,10 @@
 #                                 error; and for a row of the pipeline, the values it gives, with
 #                                 their metadata and labels. The next session knows from it which
 #                                 rows are current, and has their values without running them
-#     stores, one for each        for each row, by its key: its result. A MemoryStore, the default,
-#       type of result            loses the results when Julia exits; a DuckDBStore, as a project
-#                                 made with DataBrowserRecipes uses, keeps them in a file
+#     stores, one for each        each result, by its revision; for a row of the pipeline, each
+#       type of result            value it gives, by the revision of the value. A MemoryStore, the
+#                                 default, loses the results when Julia exits; a DuckDBStore, as a
+#                                 project made with DataBrowserRecipes uses, keeps them in a file
 # ```
 #
 # The key of a row is its position in the catalog. The cache keeps the key of each computation by
@@ -179,10 +180,22 @@ function run!(workspace::Workspace, job::Job)::Nothing
         @timed_dbg "job.revision" @lock catalog.lock begin
             at = revision(workspace, row)
             record = recorded(workspace, row, at)
-            ## A row that runs no longer gives the values that the cache saved in an earlier session.
-            record === nothing && foreach(saved -> delete_output!(workspace.cache.db, row.index, saved.id), pop!(workspace.saved, row.index, SavedOutput[]))
-            catalog[row], haskey(workspace.stages, row), at, record,
-                (revision=Catalogs.revision(catalog, row), type=Catalogs.result_type(catalog, row))
+            previous = (revision=Catalogs.revision(catalog, row), type=Catalogs.result_type(catalog, row))
+            if record === nothing
+                ## A row that runs no longer gives the result that the cache saved in an earlier
+                ## session: its values leave the cache, and the result or its values leave the stores.
+                # TODO: a row outside the pipeline that failed keeps its last result in its store, and
+                # the cache saves the failure without the revision of that result: when the session
+                # ends before the row has a result again, the store keeps that result for good.
+                saved = pop!(workspace.saved, row.index, SavedOutput[])
+                foreach(x -> delete_output!(workspace.cache.db, row.index, x.id), saved)
+                earlier = previous.revision == 0 ? recorded_revision(workspace.cache.db, row.index) : nothing
+                if earlier !== nothing && isempty(earlier.failure)
+                    haskey(workspace.stages, row) || forget!(workspace, earlier.type, earlier.result_revision)
+                    foreach(x -> forget!(workspace, x.type, value_revision(x.id, earlier.result_revision)), saved)
+                end
+            end
+            catalog[row], haskey(workspace.stages, row), at, record, previous
         end
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
@@ -216,21 +229,25 @@ function run!(workspace::Workspace, job::Job)::Nothing
     catch
         false
     end
-    ## The ids, labels, members and metadata of the values are the project's code, which runs
-    ## outside the lock.
+    ## The same result keeps its revision, under which its store has it already. The ids, labels,
+    ## members and metadata of the values are the project's code, which runs outside the lock.
+    result, written = same ? previous.revision : at, !same && keepable(catalog, job)
     outputs = @timed_dbg "job.keep" try
-        @timed_dbg "job.keep.store" keepable(catalog, job) && keep!(workspace, row, output)
+        @timed_dbg "job.keep.store" written && keep!(workspace, row, output, result)
         pipeline ? [(Output(id(x), typeof(x), label(workspace.project, x), x isa AbstractGroup ? members(x) : nothing,
-            output_key!(workspace.cache.db, row.index, id(x))), metadata_dict(metadata(x))) for x in given] : nothing
+            output_key!(workspace.cache.db, row.index, id(x)), value_revision(id(x), result)), metadata_dict(metadata(x))) for x in given] : nothing
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
     end
     @timed_dbg "job.finish" @lock catalog.lock begin
-        ## A result that the row does not keep leaves the store: the next run compares with the store.
-        finish!(catalog, job; revision=same ? previous.revision : at, type=typeof(output)) ||
-            return keep!(workspace, row, output; forget=true)
+        ## A result that the row does not keep leaves the store.
+        finish!(catalog, job; revision=result, type=typeof(output)) ||
+            return written ? keep!(workspace, row, output, result; forget=true) : nothing
+        ## The last result of the row leaves its store; for a row of the pipeline, `given!` does the
+        ## same with each value.
+        pipeline || previous.revision in (0, result) || forget!(workspace, previous.type, previous.revision)
         delete!(workspace.errors, row)
-        store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); result_revision=same ? previous.revision : at)
+        store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); result_revision=result)
         if outputs !== nothing
             @timed_dbg "job.finish.finished!" finished!(workspace, row, Output[output for (output, _) in outputs])
             ## The cache saves the values that the workspace kept.
@@ -345,7 +362,9 @@ resolved(::Workspace, x::Selection) = x
 # the ids of its values must be equal too. The readers of the row then compute the revisions they
 # last ran with, and become current without calling their functions: when an edit of a `process`
 # method changes nothing in what it returns, the rows that read its values do not call their
-# functions again. The cache saves, under the key of each row, the id of its computation, the
+# functions again. Each value that a row of the pipeline gives has a revision of its own, a hash of
+# its id and the revision of the result of the row, which the `process` of the value uses as the
+# revision of its input. The cache saves, under the key of each row, the id of its computation, the
 # revision that it computed before it ran, the revision of its result, and its error when it failed.
 # The next session gives the key to the first row whose computation has that id.
 #
@@ -386,6 +405,14 @@ function revision(workspace::Workspace, row::Row)::UInt64
     return hash(repr(value.settings), seed)
 end
 
+"""
+    value_revision(id, revision) -> UInt64
+
+The revision of the value `id` that a row of the pipeline gives, when `revision` is the revision of
+the result of the row: the rows that read the value, and the store of its type, use it.
+"""
+value_revision(x::AbstractString, at::UInt64)::UInt64 = hash(x, at)
+
 argument_type(workspace::Workspace, x::Input) = Catalogs.result_type(workspace.catalog, x.row)
 function argument_type(workspace::Workspace, x::Part)
     found = output(workspace, x.of.row, x.id)
@@ -399,7 +426,7 @@ argument_type(::Workspace, x) = typeof(x)
 argument_revision(workspace::Workspace, row::Row, ::MemberValues)::UInt64 = workspace.taken[row].revision
 argument_revision(workspace::Workspace, ::Row, x)::UInt64 = argument_revision(workspace, x)
 argument_revision(workspace::Workspace, x::Input)::UInt64 = Catalogs.revision(workspace.catalog, x.row)
-argument_revision(workspace::Workspace, x::Part)::UInt64 = hash(x.id, argument_revision(workspace, x.of))
+argument_revision(workspace::Workspace, x::Part)::UInt64 = value_revision(x.id, argument_revision(workspace, x.of))
 argument_revision(workspace::Workspace, x::Union{Tuple,AbstractVector{<:Union{Input,Part}}})::UInt64 =
     foldl((seed, v) -> hash(argument_revision(workspace, v), seed), x; init=UInt64(0))
 argument_revision(workspace::Workspace, x::Selection)::UInt64 =
@@ -492,7 +519,8 @@ function restored!(workspace::Workspace, row::Row, record)::Nothing
     failed && (workspace.errors[row] = "$(function_name(workspace.catalog[row].f)) failed: " * record.failure)
     haskey(workspace.stages, row) || return nothing
     saved === nothing && return finished!(workspace, row, failed ? nothing : workspace.outputs[row])
-    outputs = @timed_dbg "restored.outputs" [Output(value.id, value.type, value.label, value.members, output_key!(workspace.cache.db, row.index, value.id)) for value in saved]
+    outputs = @timed_dbg "restored.outputs" [Output(value.id, value.type, value.label, value.members,
+        output_key!(workspace.cache.db, row.index, value.id), value_revision(value.id, record.result_revision)) for value in saved]
     @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
     for (output, value) in zip(outputs, saved)
         output in get(workspace.outputs, row, Output[]) && store!(workspace.produced, output.key, value.metadata)
@@ -502,14 +530,17 @@ end
 
 # ## Results
 #
-# A store keeps results under the key of their row, so that a row that is current does not run
-# again for each task that needs its value. Each value of a vector that a row of the pipeline gives
-# goes to the store of its own type, under the key that the cache gives the value. `storage(project, T)`
-# chooses the store for results of type `T`: items, or any other Julia value. By default, each
-# result type has its own `MemoryStore` of 64 MiB, which removes the least recently used results
-# first, and loses them when Julia exits.
-# A project made with DataBrowserRecipes keeps the results of every type in one `DuckDBStore`, a
-# file next to the project, so they stay from one session to the next. A project can choose another
+# A store keeps each result under its revision, so that a row that is current does not run again
+# for each task that needs its value. Each value that a row of the pipeline gives goes to the store
+# of its own type, under the revision of the value. The same revision means the same result, in any
+# workspace and session: workspaces can share a store, and a store can keep its results from one
+# session to the next. When a row gets a result with another revision, its last result leaves the
+# store. `storage(project, T)` chooses the store for results of type `T`: items, or any other Julia
+# value. By default, each result type has its own `MemoryStore` of 64 MiB, which removes the least
+# recently used results first, and loses them when Julia exits.
+# A project made with DataBrowserRecipes keeps the results of every type in one `DuckDBStore`, the
+# file `values.duckdb` in the folder of its Julia environment, which all such projects of that
+# environment share, so the results stay from one session to the next. A project can choose another
 # size, or another store:
 #
 # ```julia
@@ -518,8 +549,11 @@ end
 # ```
 #
 # A store of `nothing` keeps no results of that type: the row runs again when something needs its
-# value. A store receives a copy of each result and gives copies; the docstring of `AbstractStore`
-# gives its methods. Three kinds of results never go to a store:
+# value. When `storage` throws, as when another Julia process has the file of a `DuckDBStore` open,
+# the workspace warns and keeps the results of that type in a `MemoryStore`. A result that its
+# store cannot read counts as lost: the row runs again. A store receives a copy of each result and
+# gives copies; the docstring of `AbstractStore` gives its methods. Three kinds of results never go
+# to a store:
 #
 # - `nothing`;
 # - a `Selection`, which reads the workspace each time something takes an item from it;
@@ -530,35 +564,56 @@ end
 
 The store that the project chooses for results of `type`, asked once for each type. It is `nothing`
 for the types of results that never go to a store, `Nothing` and `Selection`, and when `storage`
-gives `nothing`. [`keep!`](@ref) also skips the result of `view`.
+gives `nothing`. When `storage` throws, it is a `MemoryStore`, with a warning. [`keep!`](@ref) also
+skips the result of `view`.
 """
 function store(workspace::Workspace, type::Type)::Union{Nothing,AbstractStore}
     type <: Union{Nothing,Selection} && return nothing
     return @lock workspace.stores_lock get!(workspace.stores, type) do
-        Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
+        try
+            Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
+        catch error
+            @warn("The store of a result type cannot be used: its results are kept in memory", type,
+                exception=(error, catch_backtrace()), maxlog=1)
+            DataBrowserCache.MemoryStore()
+        end
     end
 end
 
 """
-    keep!(workspace, row, result; forget=false)
+    keep!(workspace, row, result, revision; forget=false)
 
-Save a copy of `result` in the store of its type, under the key of `row`. A vector that a row of
-the pipeline gives is saved as its values, each in the store of its own type. The result of
-`view(item, selection)`, and one value picked from the result of another row, is not saved: it is
-made again when needed, and another copy of the item would push other results out. With
-`forget=true`, delete from the stores what `keep!` saves for `result`.
+Save a copy of `result` in the store of its type, under `revision`, the revision of the result. A
+row of the pipeline saves each value of its result in the store of the type of the value, under the
+revision of the value (see [`value_revision`](@ref)). The result of `view(item, selection)`, and one
+value picked from the result of another row, is not saved: it is made again when needed, and
+another copy of the item would push other results out. With `forget=true`, delete from the stores
+what `keep!` saves for `result`.
 """
-function keep!(workspace::Workspace, row::Row, output; forget::Bool=false)::Nothing
+function keep!(workspace::Workspace, row::Row, output, at::UInt64; forget::Bool=false)::Nothing
     catalog = workspace.catalog
     again, pipeline = @lock catalog.lock (catalog[row].f in (view, pick), haskey(workspace.stages, row))
     again && return nothing
-    for (key, x) in (pipeline && output isa AbstractVector ? [(output_key!(workspace.cache.db, row.index, id(x)), x) for x in output] : [(row.index, output)])
+    for (key, x) in (pipeline ? [(value_revision(id(x), at), x) for x in (output isa AbstractVector ? output : [output])] : [(at, output)])
         place = store(workspace, typeof(x))
         ## `deepcopy` is a dynamic call: a method of a package loaded later then does not invalidate this code.
         place === nothing || (forget ? delete!(place, typeof(x), key) : write(place, key, Base.invokelatest(deepcopy, x)))
     end
     return nothing
 end
+
+# Delete the result of type `type` and revision `at` from its store.
+function forget!(workspace::Workspace, type::Type, at::UInt64)::Nothing
+    place = store(workspace, type)
+    place === nothing || delete!(place, type, at)
+    return nothing
+end
+
+# The type and the revision under which the stores keep the result of `row`, or for a row of the
+# pipeline, each value that it gives. The caller holds the catalog lock.
+store_keys(workspace::Workspace, row::Row)::Vector{Tuple{Type,UInt64}} = haskey(workspace.stages, row) ?
+    Tuple{Type,UInt64}[(output.type, output.revision) for output in get(workspace.outputs, row, Output[])] :
+    Tuple{Type,UInt64}[(Catalogs.result_type(workspace.catalog, row), Catalogs.revision(workspace.catalog, row))]
 
 """
     results(workspace, rows) -> Vector{Any}
@@ -575,23 +630,16 @@ end
     kept(workspace, rows) -> Vector{Union{Nothing,Some}}
 
 The results of `rows` that a store still has, as `Some(result)`, and `nothing` for each result that
-must be computed again. A vector that a row of the pipeline gives is read from the stores of its
-values, and must be computed again when one of them is missing, or when the row has no values, as
-after it failed. The results that `keep!` does not save are always computed again: under their key,
-a store can only have the result of another row that had the key in an earlier session.
+must be computed again. The result of a row of the pipeline is read from the stores of its values,
+and must be computed again when one of them is missing, or when the row has no values, as after it
+failed. The results of `view` and `pick`, which `keep!` does not save, are always computed again.
 """
-## TODO: a row whose result was never saved in the session that recorded it (no store then, or Julia
-## stopped first) can still read the result of another row that had its key in an earlier session.
 function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Some}}
     catalog = workspace.catalog
-    ## Each result as the type and the key of each part that a store keeps: the result, or each value
-    ## of a vector that a row of the pipeline gives.
     unsaved, vectors, parts = @lock catalog.lock begin
-        types = [Catalogs.result_type(catalog, row) for row in rows]
-        vectors = [type <: AbstractVector && haskey(workspace.stages, row) for (row, type) in zip(rows, types)]
+        vectors = [haskey(workspace.stages, row) && Catalogs.result_type(catalog, row) <: AbstractVector for row in rows]
         [catalog[row].f in (view, pick) || vector && !haskey(workspace.outputs, row) for (row, vector) in zip(rows, vectors)], vectors,
-            [vector ? [(output.type, output.key) for output in get(workspace.outputs, row, Output[])] :
-            [(type, Int64(row.index))] for (row, type, vector) in zip(rows, types, vectors)]
+            [store_keys(workspace, row) for row in rows]
     end
     found = [Vector{Union{Nothing,Some}}(nothing, length(part)) for part in parts]
     by_type = Dict{Type,Vector{Tuple{Int,Int}}}()
@@ -601,11 +649,19 @@ function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Som
     for (type, places) in by_type
         place = store(workspace, type)
         place === nothing && continue
-        for ((position, index), value) in zip(places, read(place, type, [parts[position][index][2] for (position, index) in places]))
+        read_values = try
+            read(place, type, [parts[position][index][2] for (position, index) in places])
+        catch error
+            @warn("A store could not read results: they are computed again", type, exception=(error, catch_backtrace()), maxlog=1)
+            continue
+        end
+        for ((position, index), value) in zip(places, read_values)
             value === nothing || (found[position][index] = Some(value))
         end
     end
-    return Union{Nothing,Some}[again || any(isnothing, values) ? nothing : vector ? Some(identity.(something.(values))) : only(values)
+    ## Any other result has one part: none when a row of the pipeline failed, or its value conflicts
+    ## with the value of another row.
+    return Union{Nothing,Some}[again || any(isnothing, values) ? nothing : vector ? Some(identity.(something.(values))) : get(values, 1, nothing)
         for (values, vector, again) in zip(found, vectors, unsaved)]
 end
 
@@ -622,10 +678,10 @@ function computed!(workspace::Workspace, row::Row)
     @lock one begin
         found = only(kept(workspace, [row]))
         found === nothing || return something(found)
-        value, before = @lock catalog.lock (catalog[row], Catalogs.changes(catalog, row))
+        value, before, at = @lock catalog.lock (catalog[row], Catalogs.changes(catalog, row), Catalogs.revision(catalog, row))
         output = call(workspace, row, value)
         @lock catalog.lock Catalogs.changes(catalog, row) == before || return output
-        keep!(workspace, row, output)
+        keep!(workspace, row, output, at)
         return output
     end
 end
@@ -643,9 +699,7 @@ function publish!(workspace::Workspace)::Nothing
         delete!(workspace.executions, row)
         delete!(workspace.errors, row)
         Catalogs.state(catalog, row) == Catalogs.REMOVED || continue
-        type = Catalogs.result_type(catalog, row)
-        place = store(workspace, type)
-        place === nothing || delete!(place, type, row.index)
+        forget!(workspace, Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row))
         delete_computation_revision!(workspace.cache.db, row.index)
         foreach(found -> delete!(found, row), (workspace.outputs, workspace.signatures, workspace.row_locks, workspace.evaluated))
     end
@@ -884,15 +938,20 @@ function last_execution(workspace::Workspace, value::Computation)::Union{Nothing
         get(workspace.executions, found, nothing) : nothing
 end
 
-# The method of `DataBrowserAPI.cache_info` for a workspace: whether the store of its type has the
-# result of a current computation, and its size.
+# The method of `DataBrowserAPI.cache_info` for a workspace: whether the stores have the result of a
+# current computation, or each value of a row of the pipeline, and its size.
 function cache_info(workspace::Workspace, value::Computation)
     found, catalog = row(workspace, value), workspace.catalog
     found === nothing && return (cached=false, bytes=nothing)
-    type, current = @lock catalog.lock (Catalogs.result_type(catalog, found), Catalogs.state(catalog, found) == Catalogs.CURRENT)
-    place = store(workspace, type)
-    (current && place !== nothing && haskey(place, type, found.index)) || return (cached=false, bytes=nothing)
-    return (cached=true, bytes=DataBrowserAPI.stored_size(place, type, found.index))
+    parts, current = @lock catalog.lock (store_keys(workspace, found), Catalogs.state(catalog, found) == Catalogs.CURRENT)
+    current || return (cached=false, bytes=nothing)
+    bytes = 0
+    for (type, key) in parts
+        place = store(workspace, type)
+        (place !== nothing && haskey(place, type, key)) || return (cached=false, bytes=nothing)
+        bytes += DataBrowserAPI.stored_size(place, type, key)
+    end
+    return (cached=true, bytes)
 end
 
 """

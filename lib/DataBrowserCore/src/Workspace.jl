@@ -255,8 +255,9 @@ end
 
 """
 One value that a row of the pipeline gave: its id, its type and label, the ids of its members when
-it is a group, and the key under which the cache keeps its metadata, which is also the index of its
-metadata in `workspace.produced`.
+it is a group, the key under which the cache keeps its metadata, which is also the index of its
+metadata in `workspace.produced`, and its revision, under which the store of its type keeps it (see
+`value_revision`).
 """
 struct Output
     id::String
@@ -264,15 +265,16 @@ struct Output
     label::String
     members::Union{Nothing,Vector{String}}
     key::Int64
+    revision::UInt64
 end
 
 """
 The member values that the row of a group read or a group process takes: the values of type `T`
 of the ids `root`, and for a group without one, those of its members, and so on below them. For
 each id that it reaches, `rows` holds the row of the version that it takes, or `NOWHERE` when it
-takes none or takes the members of the group in its place; a hash of the id and the revision of
-the result of that row; and the number of ids above that lead to it. `revision` is the sum of these
-hashes, so that it follows the change of one member value at once, whatever the number of members.
+takes none or takes the members of the group in its place; the revision of the value that it takes
+(see `value_revision`); and the number of ids above that lead to it. `revision` is the sum of these
+revisions, so that it follows the change of one member value at once, whatever the number of members.
 """
 mutable struct Taken
     T::Type
@@ -336,7 +338,8 @@ mutable struct Workspace{P<:AbstractProject}
     # Jobs that run now, and jobs that ended since the workspace opened.
     running::Int
     completed::Int
-    # The store that the project chooses for each result type.
+    # The store that the project chooses for each result type, or a `MemoryStore` when `storage`
+    # throws.
     stores::Dict{Type,Union{Nothing,AbstractStore}}
     stores_lock::ReentrantLock
     selection::WorkspaceSelection

@@ -380,6 +380,35 @@ kept_total(value) = (Threads.atomic_add!(KEPT_CALLS, 1); sum(data(value).signal)
     end
 end
 
+# Projects whose reads give different items, with one file for the results of all of them.
+struct SharingProject <: AbstractProject
+    name::String
+    values::String
+end
+DataBrowserAPI.project_name(project::SharingProject) = project.name
+DataBrowserAPI.read(project::SharingProject, ::ComputationSource, ::ComputationFile) =
+    ComputationItem("sample", (signal=[length(project.name)],), Dict{Symbol,Any}())
+DataBrowserAPI.storage(project::SharingProject, ::Type) = DuckDBStore(project.values)
+
+@testset "workspaces that share the file of their results each get their own results" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            for name in ("one", "three", "one")
+                workspace = CW.open_workspace(SharingProject(name, joinpath(depot, "values.duckdb")), ComputationSource())
+                try
+                    CW.wait_workspace_idle!(workspace)
+                    @test only(materialize_items(workspace, ["sample"])).data.signal == [length(name)]
+                finally
+                    CW.close_workspace!(workspace)
+                end
+            end
+        finally
+            popfirst!(DEPOT_PATH)
+        end
+    end
+end
+
 const EQUAL_INPUTS = Threads.Atomic{Int}(0)
 const EQUAL_READERS = Threads.Atomic{Int}(0)
 equal_input(value) = (Threads.atomic_add!(EQUAL_INPUTS, 1); value)

@@ -10,27 +10,27 @@ Each default store keeps the results of one type for one workspace opening. To c
 of a type, define `DataBrowserAPI.storage(project, ::Type{MyItem}) = MemoryStore(; max_bytes=...)`.
 """
 function MemoryStore(; max_bytes::Integer=64 * 1024^2)
-    return MemoryStore{Tuple{Type,Int64},Any}(; capacity=Int(max_bytes), weight=Base.summarysize)
+    return MemoryStore{Tuple{Type,UInt64},Any}(; capacity=Int(max_bytes), weight=Base.summarysize)
 end
 
 DataBrowserAPI.storage(::Type) = MemoryStore()
 
-function Base.write(store::MemoryStore{Tuple{Type,Int64},Any}, key::Integer, item)
-    append!(store, (typeof(item), Int64(key)), item)
+function Base.write(store::MemoryStore{Tuple{Type,UInt64},Any}, key::Integer, item)
+    append!(store, (typeof(item), UInt64(key)), item)
     return nothing
 end
 
-function Base.read(store::MemoryStore{Tuple{Type,Int64},Any}, ::Type{T}, keys::AbstractVector)::Vector{Union{Nothing,T}} where {T}
-    return Union{Nothing,T}[something(read_hit(store, (T, Int64(key))), Some(nothing)) for key in keys]
+function Base.read(store::MemoryStore{Tuple{Type,UInt64},Any}, ::Type{T}, keys::AbstractVector)::Vector{Union{Nothing,T}} where {T}
+    return Union{Nothing,T}[something(read_hit(store, (T, UInt64(key))), Some(nothing)) for key in keys]
 end
 
-Base.haskey(store::MemoryStore{Tuple{Type,Int64},Any}, ::Type{T}, key::Integer) where {T} =
-    haskey(store, (T, Int64(key)))
+Base.haskey(store::MemoryStore{Tuple{Type,UInt64},Any}, ::Type{T}, key::Integer) where {T} =
+    haskey(store, (T, UInt64(key)))
 
-function Base.delete!(store::MemoryStore{Tuple{Type,Int64},Any}, ::Type{T}, key::Integer) where {T}
-    delete!(store, (T, Int64(key)))
+function Base.delete!(store::MemoryStore{Tuple{Type,UInt64},Any}, ::Type{T}, key::Integer) where {T}
+    delete!(store, (T, UInt64(key)))
     return store
 end
 
-DataBrowserAPI.stored_size(store::MemoryStore{Tuple{Type,Int64},Any}, ::Type{T}, key::Integer) where {T} =
-    something(stored_weight(store, (T, Int64(key))), 0)
+DataBrowserAPI.stored_size(store::MemoryStore{Tuple{Type,UInt64},Any}, ::Type{T}, key::Integer) where {T} =
+    something(stored_weight(store, (T, UInt64(key))), 0)

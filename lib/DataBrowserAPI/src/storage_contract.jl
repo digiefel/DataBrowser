@@ -2,8 +2,10 @@
     AbstractStore
 
 Supertype for stores: objects that save items so that the workspace can reuse them instead of
-computing them again. A store saves at most one item per item type and key. The key is an integer
-that the workspace gives each result; it is not the id of an item.
+computing them again. A store saves at most one item per item type and key. The key is the
+*revision* of the result: a 64-bit hash that identifies the result, not the id of an item. The same
+key always means the same result, in any workspace and session, so several workspaces may share a
+store, and a store may keep its items from one session to the next.
 
 [`storage`](@ref) chooses the store for an item type, and the workspace calls the methods below.
 A method with a default needs no definition.
@@ -40,7 +42,8 @@ Base.close(::AbstractStore) = nothing
 The store for computation results of type `T`: items, and any other value a computation returns.
 The project form defaults to `storage(T)`. Return `nothing` to keep no results of type `T`. The
 default is a bounded `DataBrowserCache.MemoryStore`. Core calls this once per result type and
-workspace opening.
+workspace opening; when it throws, the workspace warns and keeps the results of type `T` in a
+`MemoryStore`.
 """
 function storage end
 

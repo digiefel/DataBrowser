@@ -211,9 +211,11 @@ end
 Make `outputs` the values of `row`: each is a version of its id, unless another row gives that id
 at the same stage, or an earlier row gives it and `row` does not read it. With `outputs = nothing`,
 for a row without a result, `row` is a version of the value it is expected to give: the value that a
-`process` method takes, or for a read, the source item itself, with its id. The cache and the stores forget the values that `row` no longer gives.
-Returns the ids of the values whose versions changed, or none when `row` gives values of the same
-ids, types and members as before.
+`process` method takes, or for a read, the source item itself, with its id. The cache forgets the
+values of the ids that `row` no longer gives. The stores forget the values that `row` no longer
+gives with the same revision, and those that the workspace does not keep. Returns the ids of the
+values whose versions changed, or none when `row` gives values of the same ids, types and members
+as before.
 """
 function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Vector{String}
     catalog, stage = workspace.catalog, workspace.stages[row]
@@ -239,12 +241,16 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
             insert!(rows, something(findfirst(other -> workspace.stages[other] > stage, rows), length(rows) + 1), row)
         isempty(rows) && delete!(workspace.versions, x)
     end
-    for output in something(before, Output[])
-        any(found -> found.id == output.id, accepted) && continue
-        delete!(workspace.produced, output.key)
-        delete_output!(workspace.cache.db, row.index, output.id)
-        place = store(workspace, output.type)
-        place === nothing || delete!(place, output.type, output.key)
+    ## The cache forgets the values of the ids that the row no longer gives. The stores forget the
+    ## values that it gave before, unless it gives them again with the same revision, and the values
+    ## that it gives and the workspace does not keep.
+    for output in [something(before, Output[]); filter(!in(accepted), something(outputs, Output[]))]
+        if !any(found -> found.id == output.id, accepted)
+            delete!(workspace.produced, output.key)
+            delete_output!(workspace.cache.db, row.index, output.id)
+        end
+        any(found -> (found.type, found.revision) == (output.type, output.revision), accepted) ||
+            forget!(workspace, output.type, output.revision)
     end
     outputs === nothing ? delete!(workspace.outputs, row) : (workspace.outputs[row] = accepted)
     ## The group rows that take one of these values take its latest version now.
@@ -496,7 +502,7 @@ function input!(workspace::Workspace, row::Row, x::String, change::Int=0)::Nothi
     ## The new row is connected first, so that a row that the group reads twice stays.
     after == before.row || after == Catalogs.NOWHERE || Catalogs.connect!(catalog, row, after)
     after == before.row || before.row == Catalogs.NOWHERE || Catalogs.disconnect!(catalog, row, before.row)
-    term = after == Catalogs.NOWHERE ? UInt64(0) : hash(x, Catalogs.revision(catalog, after))
+    term = after == Catalogs.NOWHERE ? UInt64(0) : value_revision(x, Catalogs.revision(catalog, after))
     taken.revision += term - before.term
     if paths > 0
         taken.rows[x] = (row=after, term, paths)
