@@ -176,7 +176,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
     ## a job. The cache saves only the error of the function, under the version of the row: after
     ## any other error, the next session runs the row again.
     value, pipeline, at, record, previous = try
-        @lock catalog.lock begin
+        @timed_dbg "job.version" @lock catalog.lock begin
             at = version(workspace, row)
             record = recorded(workspace, row, at)
             ## A row that runs no longer gives the values that the cache saved in an earlier session.
@@ -188,7 +188,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
         return failed!(workspace, job, nothing, error, catch_backtrace())
     end
     if record !== nothing
-        @lock catalog.lock begin
+        @timed_dbg "job.restore" @lock catalog.lock begin
             finish!(catalog, job; failed=!isempty(record.failure), version=record.version, type=record.type) &&
                 restored!(workspace, row, record)
             publish!(workspace)
@@ -196,7 +196,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
         return nothing
     end
     output = try
-        call(workspace, row, value)
+        @timed_dbg "job.call" call(workspace, row, value)
     catch error
         return failed!(workspace, job, at, error, catch_backtrace())
     end
@@ -209,7 +209,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
     ## the results differ.
     # TODO: compare each value of a row of the pipeline on its own. A `Part` follows the version of the
     # whole row, so one changed value of a read runs the `process` of every value again.
-    same = previous.version != 0 && typeof(output) === previous.type && try
+    same = previous.version != 0 && typeof(output) === previous.type && @timed_dbg "job.compare" try
         found = only(kept(workspace, [row]))
         before = found === nothing ? nothing : output isa AbstractVector ? something(found) : [something(found)]
         before !== nothing && Base.invokelatest(isequal, before, given) && (!pipeline || isequal(id.(before), id.(given)))
@@ -218,32 +218,32 @@ function run!(workspace::Workspace, job::Job)::Nothing
     end
     ## The ids, labels, members and metadata of the values are the project's code, which runs
     ## outside the lock.
-    outputs = try
-        keepable(catalog, job) && keep!(workspace, row, output)
+    outputs = @timed_dbg "job.keep" try
+        @timed_dbg "job.keep.store" keepable(catalog, job) && keep!(workspace, row, output)
         pipeline ? [(Output(id(x), typeof(x), label(workspace.project, x), x isa AbstractGroup ? members(x) : nothing,
             output_key!(workspace.cache.db, row.index, id(x))), metadata_dict(metadata(x))) for x in given] : nothing
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
     end
-    @lock catalog.lock begin
+    @timed_dbg "job.finish" @lock catalog.lock begin
         ## A result that the row does not keep leaves the store: the next run compares with the store.
         finish!(catalog, job; version=same ? previous.version : at, type=typeof(output)) ||
             return keep!(workspace, row, output; forget=true)
         delete!(workspace.errors, row)
         store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); version=same ? previous.version : at)
         if outputs !== nothing
-            finished!(workspace, row, Output[output for (output, _) in outputs])
+            @timed_dbg "job.finish.finished!" finished!(workspace, row, Output[output for (output, _) in outputs])
             ## The cache saves the values that the workspace kept.
             messages = String[]
             for (position, (output, values)) in enumerate(outputs)
                 output in get(workspace.outputs, row, Output[]) || continue
                 append!(messages, conflict_message.(store!(workspace.produced, output.key, values)))
-                append!(messages, store_output!(workspace.cache.db, row.index, Int(workspace.stages[row]), position,
+                @timed_dbg "job.finish.store_output!" append!(messages, store_output!(workspace.cache.db, row.index, Int(workspace.stages[row]), position,
                     (; output.id, output.label, output.type, output.members, metadata=values)))
             end
             conflicts!(workspace, row, unique!(messages))
         end
-        publish!(workspace)
+        @timed_dbg "job.finish.publish!" publish!(workspace)
     end
     return nothing
 end
@@ -476,10 +476,11 @@ function restore!(workspace::Workspace, row::Row)::Bool
     catalog = workspace.catalog
     Catalogs.state(catalog, row) in (Catalogs.MISSING, Catalogs.STALE) || return false
     all(input -> Catalogs.state(catalog, input) == Catalogs.CURRENT, Catalogs.inputs(catalog, row)) || return false
-    record = recorded(workspace, row, version(workspace, row))
+    at = @timed_dbg "restore.version" version(workspace, row)
+    record = @timed_dbg "restore.recorded" recorded(workspace, row, at)
     record === nothing && return false
     Catalogs.restore!(catalog, row; failed=!isempty(record.failure), version=record.version, type=record.type) || return false
-    restored!(workspace, row, record)
+    @timed_dbg "restore.restored!" restored!(workspace, row, record)
     return true
 end
 
@@ -491,8 +492,8 @@ function restored!(workspace::Workspace, row::Row, record)::Nothing
     failed && (workspace.errors[row] = "$(function_name(workspace.catalog[row].f)) failed: " * record.failure)
     haskey(workspace.stages, row) || return nothing
     saved === nothing && return finished!(workspace, row, failed ? nothing : workspace.outputs[row])
-    outputs = [Output(value.id, value.type, value.label, value.members, output_key!(workspace.cache.db, row.index, value.id)) for value in saved]
-    finished!(workspace, row, failed ? nothing : outputs)
+    outputs = @timed_dbg "restored.outputs" [Output(value.id, value.type, value.label, value.members, output_key!(workspace.cache.db, row.index, value.id)) for value in saved]
+    @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
     for (output, value) in zip(outputs, saved)
         output in get(workspace.outputs, row, Output[]) && store!(workspace.produced, output.key, value.metadata)
     end

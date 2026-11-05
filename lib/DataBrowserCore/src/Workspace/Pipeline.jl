@@ -117,12 +117,12 @@ function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Not
         members!(workspace, row, isempty(held) ? nothing : held, given)
         return nothing
     end
-    row = add!(catalog, value)
+    row = @timed_dbg "source.add!" add!(catalog, value)
     hold!(catalog, row)
     workspace.sources[read_id], workspace.stages[row] = row, SOURCE_READ
     want!(catalog, row, SOURCES_FIRST)
     isempty(held) || members!(workspace, row, held, given)
-    restore!(workspace, row) || finished!(workspace, row, nothing)
+    @timed_dbg "source.restore" restore!(workspace, row) || finished!(workspace, row, nothing)
     return nothing
 end
 
@@ -191,8 +191,8 @@ and so does `restore!` when the cache saved its result.
 function finished!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Nothing
     read_id = source(workspace, row)
     before = values(workspace, read_id)
-    ids = given!(workspace, row, outputs)
-    refresh!(workspace, ids)
+    ids = @timed_dbg "finished.given!" given!(workspace, row, outputs)
+    @timed_dbg "finished.refresh!" refresh!(workspace, ids)
     after = values(workspace, read_id)
     ## The group reads above take the values that the source item gives now, in place of its read.
     for above in get(workspace.parents, read_id, String[])
