@@ -1,45 +1,36 @@
 # DataBrowser Architecture
 
-This document describes the current implementation unless a section explicitly states a target.
-The broader product direction is in `docs/vision.md`; proposed contract evolution is in
-`docs/plans/scientific-workspace.md` (Scientific workspace: analysis and acquisition). In particular,
-production non-repeatable sources, multiple live sources in one workspace, and headless tab/view
-definitions are not implied by the current diagrams. The [active plan index](plans/README.md)
-records the newer group, processing and storage proposals. Their decisions and candidate APIs are
-not claims about the engine described below.
+This page describes how DataBrowser works today. The direction of the project is in
+`docs/vision.md`, and the proposals for its next steps are in `docs/plans/README.md`.
 
-## What this is
+## What DataBrowser does
 
-DataBrowser is a Julia working environment for data projects. It should be strictly
-better than opening a REPL, finding files, loading them, extracting useful tables, computing values,
-and writing figure code by hand. The app makes that workflow interactive: open a project, browse the
-source structure, select items, inspect data-derived values, and switch plots or views
-without repeating the same parsing work.
+DataBrowser is a Julia environment for scientific data. It does what a person otherwise does by
+hand in a REPL: find the files or records of the data, load them, extract tables, compute values,
+and write the code of figures. In the browser you open a project, select measurements, and change
+the plots and tables that show them, without reading the same data again.
 
-Project code should describe the project in the same terms a script would use: which logical items a
-source item contains, how to load data for those items, and how to present that data. The
-package owns scanning, cache storage, background jobs, and UI state.
-
-The intended experience is live and composable. A project can stay open while source files are added
-or changed, and the browser should update without forcing the user back through startup or manual
-reload steps. Views should be able to follow selections or matching rules, so a plot or
-inspection tool can continue to show the relevant data as the source tree changes. Built-in
-visualizers should handle common inspection tasks, while project code adds only the reading
-and presentation details that are specific to the experiment.
+Project code describes the project as a script would: which measurements the data holds, how to
+load them, and how to show them. The packages of DataBrowser scan the source, keep the cache,
+run the background jobs, and keep the state of the browser. A workspace stays open while source
+items are added or changed, and its windows update without a reload.
 
 ## Package map
 
-A solid arrow from A to B means A depends on B at compile time: A needs B to build.
-A dotted arrow from A to B means A calls functions whose methods live in B through dispatch, even though A has no dependency on B.
-🦆 marks DuckDB, 📈 GLMakie, 🖼 CImGui / GLFW.
+A solid arrow from A to B means that A depends on B: A needs B to build. An arrow to a box around
+several packages points to each package in the box. A dotted arrow from A to B means that A calls
+functions whose methods B defines, although A does not depend on B. An arrow labeled with an
+extension of A, such as DataBrowserPlotsGUIExt, means that the extension depends on B: Julia loads
+it when B is loaded too. The other labels name functions and types that A uses from B; `@timed_dbg`
+marks the code that DataBrowserProfiling times. 🦆 marks DuckDB, 📈 GLMakie, 🖼 CImGui / GLFW.
 
 ```mermaid
 flowchart TB
-    db["<b>DataBrowser</b><br/>install target<br/>defines the public API"]
+    db["<b>DataBrowser</b><br/>install target<br/>re-exports the public API"]
     prof["<b>DataBrowserProfiling</b><br/>internal tooling"]
     fitting["<b>DataBrowserFitting</b><br/>least-squares solver of fit<br/>loads on the first fit"]
 
-    subgraph projects["Project packages"]
+    subgraph projects["Project code"]
         recipes["<b>DataBrowserRecipes</b><br/>user-friendly register_*! API"]
         userpkg["⋯<br/>any user-authored<br/>project package"]
     end
@@ -57,23 +48,29 @@ flowchart TB
     end
 
     subgraph contracts["Contracts"]
-        api["<b>DataBrowserAPI</b><br/>AbstractProject, stage, source, item and visualizer interfaces"]
+        api["<b>DataBrowserAPI</b><br/>project, source, item, group,<br/>store and visualizer interfaces"]
     end
 
     db --> recipes
-    db --> plots
+    db --> frontend
+    db --> engine
+    db --> fitting
+    db --> contracts
     gui -->|"open_workspace<br/>modify_workspace!<br/>select!<br/>select<br/>materialize_items<br/>workspace_status"| core
     gui --> cache
-    plots -->|"GUI extension hooks<br/>ItemTable<br/>merge_item_tables"| gui
+    gui --> api
+    plots -->|"DataBrowserPlotsGUIExt:<br/>ItemTable<br/>merge_item_tables"| gui
     plots -->|"materialize_items"| core
     plots --> fitting
+    plots --> api
     core --> src
     core --> cache
     core --> ann
     core --> api
     src --> api
     cache --> api
-    ann --> api
+    recipes --> src
+    recipes --> cache
     recipes --> api
     userpkg --> api
     prof --> api
@@ -112,152 +109,227 @@ flowchart TB
     class api apiC
 ```
 
-## Core Flow
+## The workspace
 
-A workspace opens one project on one source. The project says how to read each source item and how
-to process items. The workspace makes each of these calls a computation, keeps all of them in one catalog, and keeps their results. It runs a
-computation when its result is needed, and runs it again when the source or the code that it
-depends on changes.
+A *workspace* is one opening of a project. It reads one source, such as a folder of files, a
+database or an instrument, which lists *source items*, such as files or the tables of a database.
+The project, a value of a subtype of `AbstractProject`, says in Julia how to read each source item
+and how to process the items that reading gives. The workspace calls these functions, keeps their
+results, and calls them again when the source or the code changes. The browser shows a workspace in
+windows, and a script opens a workspace from the REPL:
 
-The project defines:
-
-- reading each source item (`read`), and making a group from a source item with members and the
-  values of its members (the group form of `read`);
-- processing one item (`process`), a group with the values of its members, and a member with its
-  group;
-- project-specific visualizers, when generic ones are not enough.
-
-The workspace owns:
-
-- the open source and its identity (several sources in one workspace are a target, not the current
-  implementation);
-- the catalog of computations, and the values that their results give, each addressed by its id;
-- the order in which computations run, their results, and the cache;
-- scanning the source, progress, failures and cancellation;
-- the selection.
-
-The browser owns windows, controls, filters and temporary rendering state. Annotations store tags,
-notes and other metadata that people write. Project code does not know whether a value came from
-memory, the cache or the source, and the package does not know what a source item means beyond the
-methods of the contract it calls.
-
-### The engine
-
-The workspace makes each call of the project a computation, and keeps all of its computations in one
-catalog: a graph whose rows are computations, linked by the results that one row reads from another.
-Workers run the rows that something wants or requests. They keep each result in the store that the
-project chooses for its type, and record its version in the cache, so that a workspace that opens
-again computes only what changed. A change to the source or to the code makes the rows that depend
-on it stale, and they run again when something wants or requests them. A row whose new result is
-`isequal` to its last one keeps the version of its last result, so the rows that read it become
-current without calling their functions. A row that throws an error is failed: it keeps its error
-until its code or an input changes.
-
-```mermaid
-flowchart LR
-    source["source"] -->|source items| pipeline["pipeline: adds rows"]
-    pipeline --> catalog["catalog: rows and their states"]
-    catalog -->|jobs| workers["workers: call project code"]
-    workers -->|results| stores["stores"]
-    workers -->|versions and failures| cache["cache"]
-    workers -->|finished rows| pipeline
-    code["code changes"] -->|stale rows| catalog
+```text
+                                     windows of the browser and scripts
+                                         │ ask for items and their results
+                                         ▼
+    the source ── source items ──▶ the workspace, with its catalog ─ reads, writes ─▶ the cache
+                                         │       ▲                                    and the stores
+                          function calls │       │ results                            of the project
+                                         ▼       │
+                                   the project: read and process
 ```
 
-The code of each part explains it:
+### Items and groups
+
+An *item* is one value of the project, such as one measurement: a value of a type that the project
+defines as a subtype of `AbstractDataItem`, with an *id*, a label, data and metadata. The id is a
+string that the project chooses and that stays the same from one session to the next. A *group* is
+an item with *members*, of a subtype of `AbstractGroup`: `members(g)` gives the ids of the members
+of the group `g`. The `read` of a source item that holds other source items, such as a sample that
+holds its measurements, gives a group, by default a `SourceGroup`, whose members are the items of
+those source items.
+
+The project defines these methods, which the [API](api.md) page describes:
+
+| Function call | Gives |
+| --- | --- |
+| `read(project, source, s)` | the item of the source item `s` |
+| `read(project, source, s, members)` | the group of the source item `s`, from `members`, the vector of the items that the source items in `s` give; by default a `SourceGroup` |
+| `process(project, x)` | an item or a vector of items made from the item `x`; by default `x` itself |
+| `process(project, g, members)` | items made from the group `g` and the vector `members` of the items of its members, such as a fit through all of them; no default |
+| `process(project, x, g)` | items made from the member `x` with its group `g`; no default |
+
+Without a method `process(project, g, members)`, the catalog has no group process row, and without
+a method `process(project, x, g)`, no member process rows.
+
+The workspace keeps each function call in a row of its *catalog*, a table with one row for each
+*computation*, a function call before it runs. The rows whose results a row takes are its *inputs*.
+When the source has a source item `g` with the members `a` and `b`, the project defines the three
+methods of `process`, and the workspace was opened with `background_processing=true`, which runs
+every row, the catalog has these rows:
+
+```text
+    row  function call                      kind             inputs   gives
+    1    read(project, source, a)           read                      a
+    2    process(project, a)                process          1        a later version of a
+    3    read(project, source, b)           read                      b
+    4    process(project, b)                process          3        a later version of b
+    5    read(project, source, g, [a, b])   group read       2, 4     g, a group with members a and b
+    6    process(project, g)                process          5        a later version of g
+    7    process(project, g, [a, b])        group process    6, 2, 4  fit, a new item
+    8    process(project, a, g)             member process   2, 6     a later version of a
+    9    process(project, b, g)             member process   4, 6     a later version of b
+
+    Each item has the id of its source item. [a, b] is the items of the members a and b.
+```
+
+The workspace adds a read row when the source lists a source item, and a `process` row when the item
+that it takes exists. A row runs after its inputs: row 2 calls `process` with the item that row 1
+gives. Several rows can give an item with the same id, in this order of their kinds: read or group
+read, process, group process, member process. Each of them gives a later *version* of the item, and
+windows show the *latest version* of each item: here `a` from row 8, `b` from row 9, `g` from row 6,
+and `fit` from row 7, a new item that the group `process` of the project gives. A group read and a
+group process take, for each member, its latest version from before the member `process` methods,
+among the versions that have a result or will run. `background_processing` is off by default: the
+workspace adds every row, runs the reads, and runs a `process` row only when a window shows its item
+or a script asks for it. Row 5 then takes rows 1 and 3, because rows 2 and 4 will not run.
+
+### One key for each row
+
+The *cache* is a DuckDB file that DataBrowser keeps for each project in the Julia depot. It gives
+each row a *key*, a number, and keeps it under the *id of the computation* of the row: the name of
+its function and the ids of its arguments, such as `process(myproject, a)` for a project named
+`myproject`. So the same computation gets the same key in the next session, and the catalog puts
+the row at the position of its key. A `process` can give several items, each in the store of its
+own type, so the cache also gives each item that a row of the project gives a key of its own, from
+the same counter. Under these keys the cache keeps what the next session needs to know, and a
+*store* keeps the results:
+
+```text
+    part                    key      what it holds, for row 2: process(project, a)
+    catalog, in memory      2        the computation, its state, its inputs and the rows that
+                                     have it as an input, and its priority
+    cache, a DuckDB file    2        the id of the computation, and the version of its result, or
+                                     its error
+                            12       the item a that row 2 gives: its id, label, type and metadata
+    store of its type       12       the item a
+```
+
+The row of a computation that a script or a window evaluates gives one result, which its store
+keeps under the key of the row. `storage(project, T)` chooses the store for results of type `T`:
+
+| Part | Where it is | After Julia exits |
+| --- | --- | --- |
+| the cache | a DuckDB file for each project in the Julia depot; in memory with `open_workspace(...; cache=false)` | kept, unless `cache=false` |
+| a `MemoryStore`, the default store | the memory of Julia | lost: the rows run again when something needs their results |
+| a `DuckDBStore`, the store of a project made with DataBrowserRecipes | a file next to the project | kept |
+
+### When a row runs
+
+A row is *missing* until it first runs. It is then *current*, with a result, or *failed*, with the
+error that its function threw. A failure is a result of the code and the inputs, as a value is: a
+failed row runs again only when it becomes *stale*. A row becomes stale when the code of its
+function changes, when one of its inputs becomes stale, or when a source item that it reads
+changes:
+
+```text
+    missing ──┐                    ┌──▶ current ──┐
+              ├── a worker runs it ┤              │
+    stale ────┘                    └──▶ failed ───┤
+      ▲                                           │
+      └── its code, an input or its source item changes
+
+    A worker that runs a row calls its function only when the cache did not save its version.
+```
+
+The workspace *wants* every read row, and with `background_processing=true` every other row, so
+that it runs in the background. A window or a script *requests* the rows that it needs, which run
+before the wanted rows. Worker tasks, one for each Julia thread and at least two, run the rows that
+are missing or stale, and wanted or requested. The *version of a result* identifies the result: the
+same version means the same result, even in another session. Before a row runs, the workspace
+computes the *version of the row*, which its result gets:
+
+```text
+    the version of the row, a hash of:
+        the code revision of its function   a hash of the code that the function can reach
+        the versions of the results of its inputs
+        its other arguments                 such as a source item, with its fingerprint
+        its settings                        the keyword arguments of its computation
+        │
+        ▼
+    did the cache save this version? ── yes ─▶ current, or failed with the saved error,
+        │ no                                    without calling the function
+        ▼
+    call the function ── throws ─▶ failed: the cache saves the error with the version
+        │ returns
+        ▼
+    current: the result gets the version of the row, or the version of the last result when the
+    two results are isequal, and the cache saves it
+```
+
+When the source item `a` is saved again with the same content, row 1 becomes stale, because the
+*fingerprint* of `a`, a value that changes when a source item may have changed, such as the size
+and modification time of a file, changed. Rows 2 and 5 to 9 have row 1 among their inputs, directly
+or through other rows, and become stale too. Row 1 runs again and gives an item `isequal` to the
+last one, so its result keeps the version of the last result. Rows 2 and 5 to 9 then compute the
+versions that they last ran with, which the cache saved: they become current without calling their
+functions, and only `read` ran. An edit of a function that still returns `isequal` results ends the
+same way.
+
+When a workspace opens again, each row computes its version in the same way. A row whose version
+the cache saved is current or failed without running. It takes its result from its store when
+something needs it, and runs again when the store lost the result, as a `MemoryStore` does when
+Julia exits. A read row whose source item has the same fingerprint is current without calling
+`read`. To run failed rows again without a change, open the workspace with `rebuild=true`, which
+empties its cache, so that every row calls its function again.
+
+These pages of DataBrowserCore give the details:
 
 | Page | What it explains |
 | --- | --- |
 | [`Catalogs.jl`](code/lib/DataBrowserCore/src/Catalogs.md) | rows, their states, and the rules that decide what runs and what stays |
-| [`Pipeline.jl`](code/lib/DataBrowserCore/src/Workspace/Pipeline.md) | the rows of the project's calls, the versions of each value, groups and their members, and when rows are added |
-| [`Evaluate.jl`](code/lib/DataBrowserCore/src/Workspace/Evaluate.md) | how rows run, their names and versions, where results are kept, code changes |
+| [`Pipeline.jl`](code/lib/DataBrowserCore/src/Workspace/Pipeline.md) | the rows of the project's function calls, the versions of each item, groups and their members, and when rows are added |
+| [`Evaluate.jl`](code/lib/DataBrowserCore/src/Workspace/Evaluate.md) | how rows run, the ids of computations and the versions of results, where results are kept, code changes |
 | [`CodeRevisions.jl`](code/lib/DataBrowserCore/src/CodeRevisions.md) | the code revision of a function: what it follows and what it cannot see |
 
 <!-- TODO: move the sections below into the code that they describe (Items.jl, Calls.jl). -->
 
-### Items
-
-A value is addressed by its id. The rows that give a value with that id are its versions, in the
-order of the pipeline, and the last one is its current version: the readiness of the value is the
-state of that row. Views, queries and the tree of the browser use the latest version that gave the
-value, with its metadata and label.
-
-Until its read has a result, a source item is a value of its own, with its id, from the moment the
-source lists it: the tree shows it, and selecting it reads it before other source items.
-
 ### Other computations
 
-Scripts, windows and plots also compute what no `process` of the project describes, because its
-inputs are chosen elsewhere, such as the groups of a fit in a plot. `evaluate(workspace,
-computation)` gives the result of such a computation: the workspace adds its row to the catalog,
-runs it ahead of background work, and keeps it until it closes. An item of the workspace among its
-arguments stands for the row of the item's latest value, so the next `evaluate` computes it again
-after the item changed. Windows evaluate computations this way in their background preparation.
-`computation(workspace, id)` gives the computation of the current version of a value, and
-`inputs(computation)` the computations it reads. Neither loads a value nor runs project code.
+Scripts and windows also compute what no `process` of the project describes, because a person
+chooses their inputs, such as the items that a plot fits. `evaluate(workspace, c)` gives the result
+of a computation `c = Computation(f, args...; settings...)`: the workspace adds its row to the
+catalog, runs it ahead of background work, waits for its result, and keeps the row until the
+workspace closes. In the next session, the same computation gets the same key, and its result comes
+from its store when the store kept it. An item of the workspace among its arguments stands for the
+row of its latest version, so the next `evaluate` of the computation runs it again after the item
+changed. Windows evaluate computations this way when they prepare their data in a background task.
+`computation(workspace, id)` gives the computation of the latest version of an item, and
+`inputs(c)` the computations among the arguments of `c`. Neither loads a result nor runs project
+code.
 
 ### The code view
 
-The code view shows the computations as calls, in the order they ran. The row of a source item shows
-as one call, `read`. Each call keeps the computations of its items, and the selection passes them on through
-`output`. Linked windows evaluate those computations the same way as table selections.
-
-A window holds the values it computed as a selection of computations, whose data is their results.
-A value computed from one item keeps the metadata of that item, and a computation that gives an item
-has the id and label of that item, with its metadata on top. Scientific transforms receive the
-result of the call before them.
-
-## Core–Cache boundary
-
-Core owns the workspace, catalog, and scan. Cache owns cache storage and returns data
-snapshots or payloads through its exported interface. Core does not inspect Cache stores or use its
-private buffer helpers.
-
-Both persistent and in-memory workspaces use the same DuckDB stores and cache operations.
-`cache=false` opens a private `:memory:` database that moves data it cannot hold in memory to a
-temporary directory of its own; closing the workspace discards it without changing the project's
-cache file. The values of items are in the stores of their item types, not in the cache.
-
-```mermaid
-flowchart LR
-    core["DataBrowserCore<br/>workspace and catalog"]
-    cache["DataBrowserCache<br/>storage and cache buffers"]
-    snapshot[("saved outputs<br/>of each computation")]
-    records[("version and failure<br/>of each computation")]
-    source["project callbacks"]
-
-    core -->|"load_outputs"| cache
-    cache -->|"id, label, type, members<br/>and metadata of each output"| snapshot
-    snapshot --> core
-    core -->|"recorded_revision"| cache
-    cache -->|"recorded version and failure"| records
-    records --> core
-    core -->|"key!<br/>store_output!<br/>delete_output!<br/>store_computation_revision!"| cache
-    source -->|"read / process"| core
-
-    classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111
-    classDef cacheC fill:#f5d6a8,stroke:#c08a3f,color:#111
-    classDef stateC fill:#c9e4c5,stroke:#5a9a52,color:#111
-    class core,source coreC
-    class cache cacheC
-    class snapshot,records stateC
-```
+The *code view*, a window of the browser, shows the computations of the selected items as function
+calls, in the order they ran: the `read` of their source items first, then each `process`. Items
+that went through the same code share a call. The computations of the call that you select are the
+output of the window: another window can take them as its input and show their results.
 
 ## Subpackages
 
-Each package gets two views. A class diagram shows its data model: the structs, their fields, and
-how they subtype the API abstractions and compose. The call flow diagram shows which functions
-call which as arrows, with A -data-> B meaning "A calls B, which returns `data`".
+<!-- TODO: diagrams for the other packages. -->
 
-A solid arrow is a call, labelled with the value the callee returns.
-External calls from other packages are shown as thicker arrows.
+Each package of this section has two diagrams. A class diagram shows its data model: the structs,
+their fields, and how they subtype the API abstractions and compose. The call flow diagram shows
+which functions call which as arrows, with A -data-> B meaning "A calls B, which returns `data`".
+
+A solid arrow is a call, labelled with the value the callee returns, or for an external library,
+with the function that it calls. External calls from other packages are shown as thicker arrows.
 "hot path" calls which are very frequent and performance-critical are shown in red.
-A dashed arrow is data written to or read from storage.
+A dashed arrow is a value that a function passes to another package through a function that the
+other package gave it, as the watcher passes the changes of the source to DataBrowserCore.
 
 A thick border marks a symbol the package exports.
 `X_or_Nothing` means a field may contain either `X` or `nothing`.
 
 ### DataBrowserSources
+
+DataBrowserSources gives `DirectorySource`, a source that lists the files of a folder as
+`SourceFile`s and its folders as `SourceDirectory`s, and watches the folder for changes. A
+`SourceDirectory` has members, so its `read` gives a group. The `FileFingerprint` of a file, its
+size and modification time, is its fingerprint. DataBrowserSources adds methods to functions of
+DataBrowserAPI, such as `id` and `label` of a `SourceFile`: DataBrowserCache, DataBrowserGUI and
+DataBrowserPlots call them through DataBrowserAPI, without depending on DataBrowserSources.
 
 #### Data model
 
@@ -389,8 +461,7 @@ flowchart TD
     classDef guiC fill:#d9c6ec,stroke:#7d54b0,color:#111;
     classDef plotsC fill:#f2c6d4,stroke:#b0466a,color:#111;
 
-    class isf srcExp;
-    class si,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl srcInt;
+    class si,isf,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl srcInt;
     class extCore coreC;
     class extAPI apiC;
     class extCache cacheC;

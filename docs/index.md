@@ -5,7 +5,7 @@ instruments and other sources, processes it with your Julia code, keeps the resu
 in an interactive browser.
 
 You describe your data once, in a Julia project: how to read it, which measurements it contains and
-how to process each of them. DataBrowser reads all of the data, processes first what you select,
+how to process each of them. DataBrowser reads all of the data, processes what you select,
 keeps the results between sessions, and updates them when the data changes.
 
 In the browser you select measurements, compare them and show them in windows: plots, tables,
