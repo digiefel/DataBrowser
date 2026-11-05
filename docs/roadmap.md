@@ -204,6 +204,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] Open a workspace with no work per item: the tree, the selection and the values come from the
   cache when they are shown. The check for source items and code that changed while the workspace
   was closed runs after the open, in the background, and only the rows that take them run again.
+  Delayed; the [catalog plan](plans/catalog.md) has the steps.
 - [x] Keep one live workspace index. Derive source-check status from scan completion and rebuild
   availability from workspace lifecycle. `SourceScan` remains the Cache load result only.
 - [x] Name item metadata layers after the pipeline stages, so each item's own, process and analyze

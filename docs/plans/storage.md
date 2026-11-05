@@ -138,7 +138,8 @@ examined. No end-to-end speedup is established.
 Open work:
 
 1. Type API store declaration, automatic Recipes storage selection and a consistent protocol.
-2. Metadata ownership in `read`, restoration of native values and rebuilding the internal index.
+2. Metadata ownership in `read`, restoration of native values and rebuilding the internal index,
+   which the [catalog plan](catalog.md) covers.
 3. Core/store interaction for replacement, invalidation, missing values, errors and interrupted work.
 4. Lifetime/mutation of values held by callers; member access after replacement or close.
 6. Supported default value shapes and measured behavior on actual tables, arrays and domain values.

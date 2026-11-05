@@ -43,6 +43,7 @@ The [discussion archive](archive/2026-10-21-discussion/README.md) preserves the 
 | [Processing and Recipes](processing.md) | Item/group steps, invocation, reconstruction and authoring | Invocation/completion, bound members and runtime analysis integration |
 | [Analysis walkthrough (being rewritten)](recipes-walkthrough.md) | Combining processed items, exploration and reproducible analysis | Replace the incorrect Recipes framing with the shared analysis API |
 | [Storage](storage.md) | Payload retention, internal index and domain extensions | Per-type storage declaration, native restoration and result lifetime |
+| [Catalog](catalog.md) | What the cache file and memory keep of the catalog, and how a workspace opens | Delayed; source items by id, methods changed while closed |
 | [Graphics grammar](graphics-grammar.md) | Plot declarations and reusable graphical operations | Grammar coverage, shared computation integration, complete GUI authoring |
 | [Fitting](fitting.md) | Fitting behavior and numerical contracts | Noise models, uncertainty, failure states and solver validation |
 | [Plot editor](../plot-editor.md) | Panels, Inspector and source editing | Supported source edits, external edits, defaults and code selection |

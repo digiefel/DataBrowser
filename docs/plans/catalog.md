@@ -1,0 +1,146 @@
+# The catalog in memory and in the cache file
+
+Proposal of 5 November 2026, delayed: Davide asked for the plan, and the change waits.
+[Architecture](../ARCHITECTURE.md) describes the running system. The roadmap entry "Open a
+workspace with no work per item" in [0.2.3](../roadmap.md) tracks the change.
+
+## Goal
+
+- Opening a workspace does no work per item. The browser shows the tree, the selection and the
+  windows of the last session at once.
+- Memory stays bounded. The catalog is small enough to stay whole in memory up to about 100 million
+  items; bounding the catalog too waits until a project needs a billion items.
+- Each question to the workspace is at least as fast as with the whole catalog in memory.
+- A failed row stays a result, as a value is. A row still becomes stale when its code, an input or
+  its source item changes, also when the change happened while the workspace was closed.
+
+## Today
+
+Measured on 5 November 2026 with the bench project of `bench/workloads.jl`: items of one table row,
+10 Julia threads, an M1 Pro.
+
+The cache saves results, and not the catalog. So each open runs the pipeline again for every
+source item:
+
+```text
+    second open                     40,000 items   400,000 items
+      read 3 cache tables whole         0.4 s          5.7 s
+      run the pipeline again            1.0 s         14   s    for each source item: add its rows,
+                                                                compute their revisions, find the
+                                                                saved results, rebuild the tables
+                                                                by id
+      total                             1.6 s         20.8 s
+```
+
+The engine's tables take about 4.5 KB of memory per item, without the project's own objects, at
+40,000 items with 3 rows each:
+
+```text
+    rows of the catalog                   930 B per item
+    computation id → key, as text         880
+    computation → row                     660
+    cache: saved records                  610
+    values that rows gave                 490
+    cache: keys of values                 200
+    10 other tables                       720
+```
+
+The cache file lacks these parts of the catalog:
+
+- the inputs of each row;
+- the stage of a row that gave no value, such as a failed `process`;
+- the fingerprint of each source item, which only enters the revision of its read row;
+- the code revision of each function;
+- the rows that never ran, such as each `process` row without background processing;
+- the members of each source item, as `members(source, item)` gives them;
+- the members of each group as ids: the file saves them as serialized Julia values.
+
+DuckDB keeps the pages of the file that it read in memory, up to `memory_limit`, which the cache sets
+to 1 GiB. A query from Julia still costs at least 55 µs, also when its pages are in memory. One row
+by key takes 200 µs, 100 rows by key 2 ms, and one column of 400,000 numbers 13 ms. Only the keys
+have indexes, so one query by id takes 1 to 6 ms.
+
+## Proposal
+
+The cache file holds the whole catalog. Memory holds the numbers of each row, and caches of the
+rest for the rows in use:
+
+```text
+                      in the cache file                         in memory
+    per row           computation id, stage, state, revision,   state, function, revisions,
+                      revision of the result, type, error,      inputs and readers, as numbers:
+                      inputs                                    ≈ 35 B
+    per value         id, row, label, type, members, metadata   id → key: ≈ 20 B
+    per source item   id, fingerprint, members
+    per function      code revision                             code revision
+    per row in use                                              priority and requests; ids,
+                                                                labels, metadata, errors and
+                                                                values, in caches of bounded size
+
+    ≈ 130 B per item (estimate): 130 MB at a million items, 13 GB at 100 million, 130 GB at a billion
+```
+
+Each job reads the state, inputs and readers of rows many times, so these live in Julia vectors at
+the position of the row's key. A Julia vector answers in nanoseconds, and DuckDB in 55 µs or more.
+DuckDB answers the questions over many rows, such as a filter, a sort or a count, in one query each.
+
+When a workspace opens:
+
+```text
+    open the file                                    nothing per item
+    load the rows that the last session showed:      a few queries
+      the tree, the selection, the windows             → the browser shows them
+    then, in the background:
+      load the numbers of every row in one scan      13 ms for 3 columns of 400,000 rows
+      compare the code revision of each function     one comparison per function
+        with the saved one                             → the rows of a changed function become stale
+      walk the source and compare each fingerprint   one fingerprint per source item, compared with
+        with the saved one                             the saved ones in one query
+                                                       → the rows of a changed source item become
+                                                         stale; a new source item adds rows; a
+                                                         missing one removes its rows
+```
+
+A question about a row that is not loaded yet moves the row to the front of the load and waits for
+it: one query. Compared with loading the whole catalog before the workspace is usable:
+
+```text
+                                  whole catalog at open      this proposal
+    open                          ≈ 1 µs per item            nothing per item
+    first look at a row           0                          the rows shown load first: a few ms
+    later looks                   memory                     memory
+    work over many rows, such     memory, after the load     one scan, at the cost of that load
+    as a code change of `read`
+    writes                        the same rows              the same rows
+```
+
+## Steps
+
+Each step ends with a measured change.
+
+1. The cache file saves the whole catalog, and the open builds the catalog from the file instead
+   of running the pipeline again. Then code and fingerprints are checked in the background.
+   Measured: the second open, 40 µs per item today.
+2. The catalog keeps numbers only: rows as columns of numbers, and each computation rebuilt from the
+   file when its row runs. Measured: memory per item, 4.5 KB today.
+3. The open loads the catalog in the background, the rows that the last session showed first.
+   Measured: the time to the first frame, which then does not grow with the number of items.
+4. Ids, labels, metadata and errors leave memory, except for the caches of rows in use. The tree,
+   the status line and selecting all items ask the file in batches. Today, each rebuild of the
+   tree sorts every item at the top by label, and the status line goes through every error.
+5. At a billion items: the catalog's numbers in memory are bounded too.
+
+## Open questions
+
+- A read row needs its source item to run, and before the walk the workspace has only the id of
+  the source item. Either the source gives a source item by its id, or a read row that must run
+  waits for the walk.
+- The methods that a project defines also decide which rows exist: without a method
+  `process(project, g, members)`, the catalog has no group process rows. A method added or removed
+  while the workspace was closed must add or remove those rows, so the file saves what the open
+  compares.
+- A table from id to key that keeps no ids: two of a billion ids have the same 64-bit hash with a
+  probability of about 3 %. Either each match is checked against the file, or the hash is longer.
+- The file is up to 2 s behind memory, the interval between two writes of the cache. After a crash,
+  the rows of those 2 s run again, as today.
+- The order of the tree by label, with millions of items at the top.
