@@ -97,7 +97,8 @@ function browser_workload(root, opening, started_ns)
             finish_work(workspace)
             check_items(workspace, [6.0, 10.0, 40.0, 42.0])
             rm(extra)
-            wait_for(() -> length(traces(workspace)) == 3, session)
+            ## `traces` would throw for the ids that the removal takes away while it runs.
+            wait_for(() -> !haskey(workspace, "extra.dbitem"), session)
             finish_work(workspace)
             check_items(workspace, [6.0, 40.0, 42.0])
         end
