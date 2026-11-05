@@ -148,8 +148,10 @@ catalog: a graph whose rows are computations, linked by the results that one row
 Workers run the rows that something wants or requests. They keep each result in the store that the
 project chooses for its type, and record its version in the cache, so that a workspace that opens
 again computes only what changed. A change to the source or to the code makes the rows that depend
-on it stale, and they run again when something wants or requests them. A row that throws an error is
-failed: it keeps its error until its code or an input changes.
+on it stale, and they run again when something wants or requests them. A row whose new result is
+`isequal` to its last one keeps the version of its last result, so the rows that read it become
+current without calling their functions. A row that throws an error is failed: it keeps its error
+until its code or an input changes.
 
 ```mermaid
 flowchart LR

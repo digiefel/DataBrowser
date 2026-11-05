@@ -380,6 +380,37 @@ kept_total(value) = (Threads.atomic_add!(KEPT_CALLS, 1); sum(data(value).signal)
     end
 end
 
+const EQUAL_INPUTS = Threads.Atomic{Int}(0)
+const EQUAL_READERS = Threads.Atomic{Int}(0)
+equal_input(value) = (Threads.atomic_add!(EQUAL_INPUTS, 1); value)
+equal_reader(value) = (Threads.atomic_add!(EQUAL_READERS, 1); 2value)
+
+@testset "a computation whose input gives an equal result after a code change is not computed again" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            project = KeptProject(joinpath(depot, "values.duckdb"))
+            for _ in 1:2
+                workspace = CW.open_workspace(project, ComputationSource(); background_processing=true)
+                try
+                    CW.wait_workspace_idle!(workspace)
+                    value = Computation(equal_reader, Computation(equal_input, 4))
+                    @test evaluate(workspace, value) == 8
+                    @eval equal_input(value) = (Threads.atomic_add!(EQUAL_INPUTS, 1); value + 0)
+                    @test evaluate(workspace, value) == 8
+                finally
+                    CW.close_workspace!(workspace)
+                end
+            end
+            # The input runs again after the code change, in the first session only.
+            @test EQUAL_INPUTS[] == 2
+            @test EQUAL_READERS[] == 1
+        finally
+            popfirst!(DEPOT_PATH)
+        end
+    end
+end
+
 # A store that refuses each result while `refuse` is set.
 struct RefusingStore <: AbstractStore
     refuse::Base.RefValue{Bool}

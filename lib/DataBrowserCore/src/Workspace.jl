@@ -330,7 +330,7 @@ mutable struct Workspace{P<:AbstractProject}
     # TODO: rows that `evaluate` added stay until the workspace closes; release those nothing uses.
     evaluated::Set{Row}
     # The values that the cache saved for the rows of the pipeline of an earlier session, by the key
-    # of the row, until the rows restore.
+    # of the row, until the rows restore or run.
     saved::Dict{Int64,Vector{SavedOutput}}
     workers::Vector{Task}
     # Jobs that run now, and jobs that ended since the workspace opened.

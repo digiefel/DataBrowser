@@ -46,7 +46,8 @@
 #
 # When the code of `process` changes, row 2 becomes *stale*: it ran with code that is no longer
 # current. Row 3 reads row 2, so row 3 becomes stale too. The plot window then requests row 3
-# again, and both rows run again.
+# again, and both rows run again. When row 2 gives items `isequal` to those it gave before, with the
+# same ids, row 3 becomes current without calling `fit`.
 #
 # Two computations are one row when their functions, arguments and settings are equal with
 # `isequal`, as the keys of a `Dict` are. When two windows draw the same fit of the same item, the
@@ -115,10 +116,13 @@
 #
 # Two numbers follow each row. Its *version* identifies its result: the workspace computes it from
 # the code of the function, the versions of the inputs, and the other arguments and settings. The
-# same version means the same result, even in another session. Its *revision* is a counter that
-# protects a running job: a job keeps the revision of its row from its start, and the revision rises
-# when the code, an input, a file that it reads or the computation of the row changes, or when the
-# row is removed. When the revision differs at the end of the job, `finish!` drops its result.
+# same version means the same result, even in another session. When a row runs again and its result
+# is `isequal` to its last result, the workspace gives it the version of its last result, so that
+# its readers find the versions they last ran with and do not call their functions again. Its
+# *revision* is a counter that protects a running job: a job keeps the revision of its row from its
+# start, and the revision rises when the code, an input, a file that it reads or the computation of
+# the row changes, or when the row is removed. When the revision differs at the end of the job,
+# `finish!` drops its result.
 
 """
 The computations of a workspace as one table and one graph. Each row of a [`Catalog`](@ref) is one
@@ -806,8 +810,9 @@ keepable(catalog::Catalog, job::Job)::Bool = @lock catalog.lock (
     finish!(catalog, job; failed=true) -> Bool
 
 End `job`. Its row becomes current, with the `version` and the `type` of its result, or failed; then
-`finish!` gives `true`. The workspace computes the version before the job runs (see
-[`Evaluate.jl`](Workspace/Evaluate.md)), and chooses the store of the result by its type. When the
+`finish!` gives `true`. The workspace computes the version before the job runs, and gives the
+version of the last result of the row instead when the new result is `isequal` to it (see
+[`Evaluate.jl`](Workspace/Evaluate.md)); it chooses the store of the result by its type. When the
 result is not [`keepable`](@ref), the row does not change, `finish!` gives `false`, and the row runs
 again when it can.
 """
@@ -830,9 +835,10 @@ end
     restore!(catalog, row; version, type) -> Bool
     restore!(catalog, row; failed=true) -> Bool
 
-Give `row` a result that an earlier session computed, without a job: the row becomes current or
-failed. Gives `false`, and changes nothing, when an input is not current or the row is not missing
-or stale. The workspace restores the rows of a source item first, then the rows that read them.
+Give `row` a result that the cache saved, with the `version` and the `type` of that result, without
+a job: the row becomes current or failed. Gives `false`, and changes nothing, when an input is not
+current or the row is not missing or stale. The workspace restores the rows of a source item first,
+then the rows that read them.
 """
 function restore!(catalog::Catalog, row::Row; failed::Bool=false, version::UInt64=UInt64(0), type::Type=Nothing)::Bool
     @lock catalog.lock begin

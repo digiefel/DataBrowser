@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 42
+const PROJECT_CACHE_SCHEMA_VERSION = 43
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -81,18 +81,20 @@ OutputRow(row)::OutputRow = OutputRow(Int64(row.output_key), Int64(row.computati
 """
 The revision of the inputs and code of the result of one row, by the key of the row, with `call`,
 the id of its computation, and the item type under which its store keeps it; or, when it failed,
-its message.
+its message. `version` is the version of the result, which the rows that read it see: the revision,
+or the version of an earlier result of the row that is `isequal` to this one.
 """
 struct ComputationRevisionRow
     key::Int64
     call::String
     revision::UInt64
+    version::UInt64
     type_hex::String
     failure::String
 end
 
-ComputationRevisionRow(row)::ComputationRevisionRow = ComputationRevisionRow(
-    Int64(row.key), String(row.call), UInt64(row.revision), String(row.type_hex), String(row.failure))
+ComputationRevisionRow(row)::ComputationRevisionRow = ComputationRevisionRow(Int64(row.key), String(row.call),
+    UInt64(row.revision), UInt64(row.version), String(row.type_hex), String(row.failure))
 
 # Identity
 
@@ -343,16 +345,16 @@ function delete_output!(cache::CacheDB, key::Integer, id::AbstractString)::Nothi
 end
 
 """
-    store_computation_revision!(cache, key, call, revision, type; failure="")
+    store_computation_revision!(cache, key, call, revision, type; failure="", version=revision)
 
 Record the revision of the inputs and code from which the result of the row with key `key` was
-computed, and the item type under which its store keeps it. `call` is the id of the computation of
-the row, under which the next session finds the key again (see [`key!`](@ref)). A row that failed
-has the message `failure` instead of a result.
+computed, the `version` of that result, and the item type under which its store keeps it. `call` is
+the id of the computation of the row, under which the next session finds the key again (see
+[`key!`](@ref)). A row that failed has the message `failure` instead of a result.
 """
 function store_computation_revision!(cache::CacheDB, key::Integer, call::AbstractString, revision::UInt64,
-        type::Type; failure::AbstractString="")::Nothing
-    row = ComputationRevisionRow(Int64(key), String(call), revision, _serialize_type(type), String(failure))
+        type::Type; failure::AbstractString="", version::UInt64=revision)::Nothing
+    row = ComputationRevisionRow(Int64(key), String(call), revision, version, _serialize_type(type), String(failure))
     @lock cache.key_lock cache.computation_revisions[row.key] = row
     edit!(cache.computation_revision_rows, row.key, row)
     return nothing
@@ -369,7 +371,8 @@ end
     recorded_revision(cache, key) -> Union{Nothing,NamedTuple}
 
 What [`store_computation_revision!`](@ref) recorded for the row with key `key`, as
-`(; revision, type, failure)`, or `nothing`. A type that no longer exists counts as no record.
+`(; revision, version, type, failure)`, or `nothing`. A type that no longer exists counts as no
+record.
 """
 function recorded_revision(cache::CacheDB, key::Integer)::Union{Nothing,NamedTuple}
     row = @lock cache.key_lock get(cache.computation_revisions, Int64(key), nothing)
@@ -379,7 +382,7 @@ function recorded_revision(cache::CacheDB, key::Integer)::Union{Nothing,NamedTup
     catch
         return nothing
     end
-    return (; row.revision, type, row.failure)
+    return (; row.revision, row.version, type, row.failure)
 end
 
 """Every store of `cache`."""
