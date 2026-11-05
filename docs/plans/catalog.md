@@ -16,6 +16,9 @@ workspace with no work per item" in [0.2.3](../roadmap.md) tracks the change.
   metadata and errors stay in memory while their rows are in use; a question about one that left
   memory costs one query.
 - Each question to the workspace is at least as fast as with the whole catalog in memory.
+- Running the project's functions through the workspace costs little more than a loop, written by
+  hand, that calls them. The engine's own work for each row stays small next to the cheapest `read`
+  or `process`: a few hashes and writes, and no take of a shared lock for each row.
 - A failed row stays a result, as a value is. A row still becomes stale when its code, an input or
   its source item changes, also when the change happened while the workspace was closed.
 
@@ -59,6 +62,21 @@ The cache file lacks these parts of the catalog:
 - the rows that never ran, such as each `process` row without background processing;
 - the members of each source item, as `members(source, item)` gives them;
 - the members of each group as ids: the file saves them as serialized Julia values.
+
+The first open runs the project's functions, and the engine's own work costs far more than the
+calls. With `background_processing=true`, a `read` and a `process` that return prepared values, and
+40,000 items:
+
+```text
+    a threaded loop that calls read and process      0.14 µs per item
+    the workspace                                    163   µs per item, about 1,200 times the loop
+      of which the catalog lock is held               97   µs per item, by one worker at a time
+```
+
+Each job takes the catalog lock four times and holds it for 48 µs in all. Only one worker holds it
+at a time, so the workspace runs at most about 20,000 jobs per second, for any number of threads.
+Inside the lock, a finished row spends 23 µs on the tables by id (`finished!`) and 10 µs on the
+records of the cache.
 
 DuckDB keeps the pages of the file that it read in memory, up to `memory_limit`, which the cache sets
 to 1 GiB. A query from Julia still costs at least 55 µs, also when its pages are in memory. One row
@@ -119,6 +137,32 @@ it: one query. Compared with loading the whole catalog before the workspace is u
     writes                        the same rows              the same rows
 ```
 
+### Running rows
+
+A worker takes a batch of rows of one function, such as 1,000 rows of `process(project, x)` for
+items `x` of one type, in one take of the catalog lock:
+
+```text
+    today, for each row                           proposed, for each batch of rows of one function
+      take the lock: count the end of the last      take the lock: take up to N rows
+        job, take the row
+      take the lock: compute the revision           compute the N revisions, outside the lock
+      call the function, one dynamic dispatch       call the function N times in one loop,
+                                                      compiled for their types
+      take the lock: save the time of the call
+      keep the result in its store                  keep the N results: one call to the store
+      take the lock: save the record, update the    take the lock: write the N states and
+        tables by id, spread to the readers           revisions, update the tables by id, spread
+                                                      to the readers
+                                                    save the N records: one write to the cache
+
+    target (estimate): under 1 µs of the engine's own work per row
+```
+
+A function that throws fails its own row, and the other rows of the batch go on. A batch is
+smaller when a window or a script requests rows, so that a requested row does not wait behind a
+large batch.
+
 ## Steps
 
 Each step ends with a measured change.
@@ -128,12 +172,15 @@ Each step ends with a measured change.
    Measured: the second open, 40 µs per item today.
 2. The catalog keeps numbers only: rows as columns of numbers, and each computation rebuilt from the
    file when its row runs. Measured: memory per item, 4.5 KB today.
-3. The open loads the catalog in the background, the rows that the last session showed first.
+3. Rows run in batches of one function. Measured: the first open per item against the loop that
+   calls the same functions, 163 µs against 0.14 µs today, at 10 threads and at 1. The benchmark
+   gains that loop, so that each run shows both.
+4. The open loads the catalog in the background, the rows that the last session showed first.
    Measured: the time to the first frame, which then does not grow with the number of items.
-4. Ids, labels, metadata and errors leave memory, except for the caches of rows in use. The tree,
+5. Ids, labels, metadata and errors leave memory, except for the caches of rows in use. The tree,
    the status line and selecting all items ask the file in batches. Today, each rebuild of the
    tree sorts every item at the top by label, and the status line goes through every error.
-5. At a billion items: the catalog's numbers in memory are bounded too.
+6. At a billion items: the catalog's numbers in memory are bounded too.
 
 ## Open questions
 
@@ -149,3 +196,5 @@ Each step ends with a measured change.
 - The file is up to 2 s behind memory, the interval between two writes of the cache. After a crash,
   the rows of those 2 s run again, as today.
 - The order of the tree by label, with millions of items at the top.
+- A store saves one item for each call of `write(store, key, item)` today. Keeping a batch in one
+  call changes the store contract.
