@@ -1,6 +1,6 @@
 include("smoke_project.jl")
 using DataBrowserPlots
-using DataBrowserAPI: data
+using DataBrowserAPI: data, id, metadata
 using DataBrowserGUI: merge_item_tables, gui_timings
 using DataBrowserGUI.Browser: TimerOutputs, _extensions_ready
 
@@ -21,8 +21,12 @@ function finish_work(ws)
         error("Workspace did not complete successfully: $status")
 end
 
+# The ids of the traces: the items that `expand` makes, one for each channel of a source item. The
+# workspace also has the groups of the folders and the items that the reads give.
+traces(ws) = sort!([id(item) for item in materialize_items(ws, query_items(ws)) if haskey(metadata(item), :channel)])
+
 function check_items(ws, expected_peaks)
-    ids = sort(query_items(ws))
+    ids = traces(ws)
     select!(ws, ids)
     items = materialize_items(ws, ids)
     sort([metadata(item)[:peak] for item in items]) == expected_peaks || error("Incorrect analysis results")
@@ -89,11 +93,11 @@ function browser_workload(root, opening, started_ns)
             check_items(workspace, [6.0, 40.0, 42.0])
             extra = joinpath(root, "extra.dbitem")
             cp(joinpath(PUBLIC_VARIANTS, "extra.dbitem"), extra)
-            wait_for(() -> length(query_items(workspace)) == 4, session)
+            wait_for(() -> length(traces(workspace)) == 4, session)
             finish_work(workspace)
             check_items(workspace, [6.0, 10.0, 40.0, 42.0])
             rm(extra)
-            wait_for(() -> length(query_items(workspace)) == 3, session)
+            wait_for(() -> length(traces(workspace)) == 3, session)
             finish_work(workspace)
             check_items(workspace, [6.0, 40.0, 42.0])
         end
