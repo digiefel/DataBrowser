@@ -133,30 +133,29 @@ end
     work!(workspace)
 
 The loop of one worker task: take the job of highest priority, run it, and wait when there is
-none, until the catalog closes.
+none, until the catalog closes. The worker counts the end of a job, even one that threw, in the
+same take of the catalog lock as the next job, before it waits or returns.
 """
 function work!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
+    job = nothing
     while true
         job = @lock catalog.lock begin
+            job === nothing || (workspace.running -= 1; workspace.completed += 1; notify(catalog.changed); changed!(workspace))
             job = take!(catalog)
             while job === nothing && !catalog.closed
                 wait(catalog.changed)
                 job = take!(catalog)
             end
-            catalog.closed || (workspace.running += 1)
+            catalog.closed || (workspace.running += 1; changed!(workspace))
             catalog.closed ? nothing : job
         end
         job === nothing && return nothing
-        changed!(workspace)
         try
             ## The latest world, so that a job runs the code defined after the worker started.
             Base.invokelatest(run!, workspace, job)
         catch error
             @error "A job of the workspace failed" exception=(error, catch_backtrace())
-        finally
-            @lock catalog.lock (workspace.running -= 1; workspace.completed += 1; notify(catalog.changed))
-            changed!(workspace)
         end
     end
 end
@@ -177,7 +176,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
     ## a job. The cache saves only the error of the function, under the revision of the row: after
     ## any other error, the next session runs the row again.
     value, pipeline, at, record, previous = try
-        @timed_dbg "job.revision" @lock catalog.lock begin
+        @timed_dbg "job.revision" @lock catalog.lock @timed_dbg "job.revision.held" begin
             at = revision(workspace, row)
             record = recorded(workspace, row, at)
             previous = (revision=Catalogs.revision(catalog, row), type=Catalogs.result_type(catalog, row))
@@ -233,21 +232,21 @@ function run!(workspace::Workspace, job::Job)::Nothing
     ## members and metadata of the values are the project's code, which runs outside the lock.
     result, written = same ? previous.revision : at, !same && keepable(catalog, job)
     outputs = @timed_dbg "job.keep" try
-        @timed_dbg "job.keep.store" written && keep!(workspace, row, output, result)
+        @timed_dbg "job.keep.store" written && keep!(workspace, value, output, result; pipeline)
         pipeline ? [(Output(id(x), typeof(x), label(workspace.project, x), x isa AbstractGroup ? members(x) : nothing,
             output_key!(workspace.cache.db, row.index, id(x)), value_revision(id(x), result)), metadata_dict(metadata(x))) for x in given] : nothing
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
     end
-    @timed_dbg "job.finish" @lock catalog.lock begin
+    @timed_dbg "job.finish" @lock catalog.lock @timed_dbg "job.finish.held" begin
         ## A result that the row does not keep leaves the store.
         finish!(catalog, job; revision=result, type=typeof(output)) ||
-            return written ? keep!(workspace, row, output, result; forget=true) : nothing
+            return written ? keep!(workspace, value, output, result; pipeline, forget=true) : nothing
         ## The last result of the row leaves its store; for a row of the pipeline, `given!` does the
         ## same with each value.
         pipeline || previous.revision in (0, result) || forget!(workspace, previous.type, previous.revision)
         delete!(workspace.errors, row)
-        store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); result_revision=result)
+        @timed_dbg "job.finish.record" store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); result_revision=result)
         if outputs !== nothing
             @timed_dbg "job.finish.finished!" finished!(workspace, row, Output[output for (output, _) in outputs])
             ## The cache saves the values that the workspace kept.
@@ -581,19 +580,18 @@ function store(workspace::Workspace, type::Type)::Union{Nothing,AbstractStore}
 end
 
 """
-    keep!(workspace, row, result, revision; forget=false)
+    keep!(workspace, computation, result, revision; pipeline, forget=false)
 
-Save a copy of `result` in the store of its type, under `revision`, the revision of the result. A
-row of the pipeline saves each value of its result in the store of the type of the value, under the
-revision of the value (see [`value_revision`](@ref)). The result of `view(item, selection)`, and one
-value picked from the result of another row, is not saved: it is made again when needed, and
-another copy of the item would push other results out. With `forget=true`, delete from the stores
-what `keep!` saves for `result`.
+Save a copy of `result`, the result of `computation`, in the store of its type, under `revision`,
+the revision of the result. With `pipeline=true`, for a row of the pipeline, save each value of the
+result in the store of the type of the value, under the revision of the value (see
+[`value_revision`](@ref)). The result of `view(item, selection)`, and one value picked from the
+result of another row, is not saved: it is made again when needed, and another copy of the item
+would push other results out. With `forget=true`, delete from the stores what `keep!` saves for
+`result`.
 """
-function keep!(workspace::Workspace, row::Row, output, at::UInt64; forget::Bool=false)::Nothing
-    catalog = workspace.catalog
-    again, pipeline = @lock catalog.lock (catalog[row].f in (view, pick), haskey(workspace.stages, row))
-    again && return nothing
+function keep!(workspace::Workspace, value::Computation, output, at::UInt64; pipeline::Bool, forget::Bool=false)::Nothing
+    value.f in (view, pick) && return nothing
     for (key, x) in (pipeline ? [(value_revision(id(x), at), x) for x in (output isa AbstractVector ? output : [output])] : [(at, output)])
         place = store(workspace, typeof(x))
         ## `deepcopy` is a dynamic call: a method of a package loaded later then does not invalidate this code.
@@ -678,10 +676,11 @@ function computed!(workspace::Workspace, row::Row)
     @lock one begin
         found = only(kept(workspace, [row]))
         found === nothing || return something(found)
-        value, before, at = @lock catalog.lock (catalog[row], Catalogs.changes(catalog, row), Catalogs.revision(catalog, row))
+        value, pipeline, before, at = @lock catalog.lock (catalog[row], haskey(workspace.stages, row),
+            Catalogs.changes(catalog, row), Catalogs.revision(catalog, row))
         output = call(workspace, row, value)
         @lock catalog.lock Catalogs.changes(catalog, row) == before || return output
-        keep!(workspace, row, output, at)
+        keep!(workspace, value, output, at; pipeline)
         return output
     end
 end
