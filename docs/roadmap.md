@@ -168,7 +168,7 @@ Decisions taken during the audit:
 - [x] Replace one source's output through one Cache operation, `replace_source_output!`. Core
   supplies the earlier item ids and the new items; Cache deletes the earlier items with their
   results, stores the new ones and records the expand stage.
-- [ ] Test source replacement with moved members and with collections that two source items share.
+- [ ] Test source replacement with moved members and with groups that two source items share.
 - [x] Keep the selection when the source changes: items that still exist stay selected, with a
   disk cache and with a memory cache. Selected ids without an item are left out when the
   selection is read.
@@ -195,6 +195,15 @@ workloads, completed disk writes, cache reads and process memory measurements.
   collection edge cases. The outcome is a redesign: the workspace runs on one catalog of source
   items, items and collections that also holds stage status and the job queue
   ([plans/workspace-graph](plans/workspace-graph/workspace-graph.md)).
+- [x] Collections become groups: a group is an item of a subtype of `AbstractGroup`, and
+  `members(g)` gives the ids of its members. Each `read` and `process` is a row of the catalog, and
+  each row has one integer key in the catalog, the cache and the stores. Users hold only ids. A
+  later item with an id that the workspace has is a new version of that id; when the new version
+  is `isequal` to the earlier one, the rows that take it do not run again
+  ([Architecture](ARCHITECTURE.md)).
+- [ ] Open a workspace with no work per item: the tree, the selection and the values come from the
+  cache when they are shown. The check for source items and code that changed while the workspace
+  was closed runs after the open, in the background, and only the rows that take them run again.
 - [x] Keep one live workspace index. Derive source-check status from scan completion and rebuild
   availability from workspace lifecycle. `SourceScan` remains the Cache load result only.
 - [x] Name item metadata layers after the pipeline stages, so each item's own, process and analyze
@@ -220,8 +229,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] Recipes: `register_collection!(project, level; members, process, analyze)` registers the
   callbacks of one collection level, optionally for the items of one registration. The new data of
   each member is the data of the collection, and a member `process` takes its own part.
-- [ ] Run collection and member `process` again until the members stop changing, with an error
-  after a maximum number of rounds. Today each runs once.
+- [ ] Run group and member `process` again until the members stop changing, with an error after a
+  maximum number of rounds. Today each runs once.
 - [x] Items carry all their metadata: they no longer inherit the metadata of their collections. A
   member `process` method copies it when needed; the Recipes one does.
 - [x] The workspace hands out each item as its `process` returned it, without rebuilding it.
@@ -241,7 +250,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
   chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
   one copy of data that a member `process` returned unchanged.
 - [ ] A `DuckDBStore <: AbstractStore` replaces the cache's payload tables and becomes the default
-  store. The rest of the cache becomes the workspace file next to the project: items, collections,
+  store. The rest of the cache becomes the workspace file next to the project: items, groups,
   metadata and result states, no results. Its `source_reads` and `unprocessed` buffers go away.
 - [ ] Let a store hand out a kept value without copying it, for callers that do not change it.
 - [x] Stop exporting names that neither project authors nor extension authors use: the concrete
@@ -333,15 +342,13 @@ workloads, completed disk writes, cache reads and process memory measurements.
   collection's values from the top down. Core owns composition and invalidation. A collection's own
   metadata and the source's are stored separately, and the source's part is replaced on item
   publication, refresh and reopen, so removed keys reveal the collection's own values beneath them.
-- [ ] Test `metadata(source, collections)` with a source other than DirectorySource.
 - [ ] The `DirectorySource` watcher rescans the whole tree and fingerprints every file on each
   event; `readdir` order is not sorted; two concurrent `watch_source` calls race and a crashed
   watcher task is reported as "already watching".
 - [x] `tags.txt` lives in the source root, as the vision states. The GUI read it from the cache
   folder under `DEPOT_PATH`.
-- [ ] The GUI uses
-  `item_annotation_key`/`ancestor_annotation_keys` instead of rebuilding keys; enforce or drop the
-  "item ids and collection paths never overlap" claim; one parse-error type for the three stores.
+- [ ] One parse-error type for the files of tags and notes, which have `TagsParseError` and
+  `NotesParseError` today.
 - [x] Profiling: sampling profiler API and `process_rss_bytes` removed; TimerOutputs is the profiler.
 
 ### 0.2.8 Tests
@@ -385,7 +392,7 @@ Every change keeps `tags.txt` human-readable and recoverable independently of th
   collections: `Tag`, `tags`, `tag!` and `untag!`.
 - [x] Find the items with or without a tag: `items(workspace, Tag("bad"))` and
   `items(workspace, !Tag("bad"))`.
-- [ ] A tag can leave its items out of collection `process`.
+- [ ] A tag can leave its items out of group `process`.
 - [x] Provide GUI controls to assign and unassign tags, including multi-selection: the context
   menu of items and collections lists the tags, and a click toggles one. A field in the menu
   defines a new tag.
@@ -744,7 +751,7 @@ Add visualizers for comparing many items and groups. This release builds on filt
 the plot builder so overlays and summaries remain attached to the selections that created them.
 
 - [ ] Add enhanced table plots and multi-trace overlays.
-- [ ] Group and style traces by metadata, tags, and collection.
+- [ ] Group and style traces by metadata, tags, and group.
 - [ ] Add parameter-sweep and pivoted-table views.
 - [ ] Add summaries and histograms across selections and groups.
 - [ ] Add fit views for common models, beginning with linear fits.

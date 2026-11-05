@@ -1,7 +1,9 @@
 # Source groups and source metadata
 
 Proposal by the external agent, 21 October 2026, for discussion with Davide and the reviewers.
-Not implemented. Points Davide decided in conversation are marked **Davide**; the rest is proposed.
+Partly built: the [Architecture](../ARCHITECTURE.md) page describes groups as built, and is right
+where the two differ. Points Davide decided in conversation are marked **Davide**; the rest is
+proposed.
 It answers two questions for any source, not only directories:
 
 1. How does a source say which items belong in which group?
