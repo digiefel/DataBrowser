@@ -199,7 +199,7 @@ the same counter. Under these keys the cache keeps what the next session needs t
     part                    key      what it holds, for row 2: process(project, a)
     catalog, in memory      2        the computation, its state, its inputs and the rows that
                                      have it as an input, and its priority
-    cache, a DuckDB file    2        the id of the computation, and the version of its result, or
+    cache, a DuckDB file    2        the id of the computation, and the revision of its result, or
                                      its error
                             12       the item a that row 2 gives: its id, label, type and metadata
     store of its type       12       the item a
@@ -229,31 +229,31 @@ changes:
       ▲                                           │
       └── its code, an input or its source item changes
 
-    A worker that runs a row calls its function only when the cache did not save its version.
+    A worker that runs a row calls its function only when the cache did not save its revision.
 ```
 
 The workspace *wants* every read row, and with `background_processing=true` every other row, so
 that it runs in the background. A window or a script *requests* the rows that it needs, which run
 before the wanted rows. Worker tasks, one for each Julia thread and at least two, run the rows that
-are missing or stale, and wanted or requested. The *version of a result* identifies the result: the
-same version means the same result, even in another session. Before a row runs, the workspace
-computes the *version of the row*, which its result gets:
+are missing or stale, and wanted or requested. The *revision of a result* is a hash that
+identifies the result: the same revision means the same result, even in another session. Before a
+row runs, the workspace computes the *revision of the row*, which its result gets:
 
 ```text
-    the version of the row, a hash of:
+    the revision of the row, a hash of:
         the code revision of its function   a hash of the code that the function can reach
-        the versions of the results of its inputs
+        the revisions of the results of its inputs
         its other arguments                 such as a source item, with its fingerprint
         its settings                        the keyword arguments of its computation
         │
         ▼
-    did the cache save this version? ── yes ─▶ current, or failed with the saved error,
-        │ no                                    without calling the function
+    did the cache save this revision? ── yes ─▶ current, or failed with the saved error,
+        │ no                                     without calling the function
         ▼
-    call the function ── throws ─▶ failed: the cache saves the error with the version
+    call the function ── throws ─▶ failed: the cache saves the error with the revision
         │ returns
         ▼
-    current: the result gets the version of the row, or the version of the last result when the
+    current: the result gets the revision of the row, or the revision of the last result when the
     two results are isequal, and the cache saves it
 ```
 
@@ -261,12 +261,12 @@ When the source item `a` is saved again with the same content, row 1 becomes sta
 *fingerprint* of `a`, a value that changes when a source item may have changed, such as the size
 and modification time of a file, changed. Rows 2 and 5 to 9 have row 1 among their inputs, directly
 or through other rows, and become stale too. Row 1 runs again and gives an item `isequal` to the
-last one, so its result keeps the version of the last result. Rows 2 and 5 to 9 then compute the
-versions that they last ran with, which the cache saved: they become current without calling their
+last one, so its result keeps the revision of the last result. Rows 2 and 5 to 9 then compute the
+revisions that they last ran with, which the cache saved: they become current without calling their
 functions, and only `read` ran. An edit of a function that still returns `isequal` results ends the
 same way.
 
-When a workspace opens again, each row computes its version in the same way. A row whose version
+When a workspace opens again, each row computes its revision in the same way. A row whose revision
 the cache saved is current or failed without running. It takes its result from its store when
 something needs it, and runs again when the store lost the result, as a `MemoryStore` does when
 Julia exits. A read row whose source item has the same fingerprint is current without calling
@@ -279,7 +279,7 @@ These pages of DataBrowserCore give the details:
 | --- | --- |
 | [`Catalogs.jl`](code/lib/DataBrowserCore/src/Catalogs.md) | rows, their states, and the rules that decide what runs and what stays |
 | [`Pipeline.jl`](code/lib/DataBrowserCore/src/Workspace/Pipeline.md) | the rows of the project's function calls, the versions of each item, groups and their members, and when rows are added |
-| [`Evaluate.jl`](code/lib/DataBrowserCore/src/Workspace/Evaluate.md) | how rows run, the ids of computations and the versions of results, where results are kept, code changes |
+| [`Evaluate.jl`](code/lib/DataBrowserCore/src/Workspace/Evaluate.md) | how rows run, the ids of computations and the revisions of results, where results are kept, code changes |
 | [`CodeRevisions.jl`](code/lib/DataBrowserCore/src/CodeRevisions.md) | the code revision of a function: what it follows and what it cannot see |
 
 <!-- TODO: move the sections below into the code that they describe (Items.jl, Calls.jl). -->

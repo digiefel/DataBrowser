@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 43
+const PROJECT_CACHE_SCHEMA_VERSION = 44
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -79,22 +79,22 @@ OutputRow(row)::OutputRow = OutputRow(Int64(row.output_key), Int64(row.computati
     Int8(row.stage), Int64(row.position), String(row.label), String(row.type_hex), _null_to_nothing(row.members_hex))
 
 """
-The revision of the inputs and code of the result of one row, by the key of the row, with `call`,
-the id of its computation, and the item type under which its store keeps it; or, when it failed,
-its message. `version` is the version of the result, which the rows that read it see: the revision,
-or the version of an earlier result of the row that is `isequal` to this one.
+The revision that one row computed before it ran, by the key of the row, with `call`, the id of its
+computation, and the item type under which its store keeps its result; or, when it failed, its
+message. `result_revision` is the revision of the result, which the rows that read it see:
+`revision`, or the revision of an earlier result of the row that is `isequal` to this one.
 """
 struct ComputationRevisionRow
     key::Int64
     call::String
     revision::UInt64
-    version::UInt64
+    result_revision::UInt64
     type_hex::String
     failure::String
 end
 
 ComputationRevisionRow(row)::ComputationRevisionRow = ComputationRevisionRow(Int64(row.key), String(row.call),
-    UInt64(row.revision), UInt64(row.version), String(row.type_hex), String(row.failure))
+    UInt64(row.revision), UInt64(row.result_revision), String(row.type_hex), String(row.failure))
 
 # Identity
 
@@ -345,16 +345,16 @@ function delete_output!(cache::CacheDB, key::Integer, id::AbstractString)::Nothi
 end
 
 """
-    store_computation_revision!(cache, key, call, revision, type; failure="", version=revision)
+    store_computation_revision!(cache, key, call, revision, type; failure="", result_revision=revision)
 
-Record the revision of the inputs and code from which the result of the row with key `key` was
-computed, the `version` of that result, and the item type under which its store keeps it. `call` is
-the id of the computation of the row, under which the next session finds the key again (see
+Record the `revision` that the row with key `key` computed before it ran, the revision of its
+result, `result_revision`, and the item type under which its store keeps the result. `call` is the
+id of the computation of the row, under which the next session finds the key again (see
 [`key!`](@ref)). A row that failed has the message `failure` instead of a result.
 """
 function store_computation_revision!(cache::CacheDB, key::Integer, call::AbstractString, revision::UInt64,
-        type::Type; failure::AbstractString="", version::UInt64=revision)::Nothing
-    row = ComputationRevisionRow(Int64(key), String(call), revision, version, _serialize_type(type), String(failure))
+        type::Type; failure::AbstractString="", result_revision::UInt64=revision)::Nothing
+    row = ComputationRevisionRow(Int64(key), String(call), revision, result_revision, _serialize_type(type), String(failure))
     @lock cache.key_lock cache.computation_revisions[row.key] = row
     edit!(cache.computation_revision_rows, row.key, row)
     return nothing
@@ -371,8 +371,8 @@ end
     recorded_revision(cache, key) -> Union{Nothing,NamedTuple}
 
 What [`store_computation_revision!`](@ref) recorded for the row with key `key`, as
-`(; revision, version, type, failure)`, or `nothing`. A type that no longer exists counts as no
-record.
+`(; revision, result_revision, type, failure)`, or `nothing`. A type that no longer exists counts as
+no record.
 """
 function recorded_revision(cache::CacheDB, key::Integer)::Union{Nothing,NamedTuple}
     row = @lock cache.key_lock get(cache.computation_revisions, Int64(key), nothing)
@@ -382,7 +382,7 @@ function recorded_revision(cache::CacheDB, key::Integer)::Union{Nothing,NamedTup
     catch
         return nothing
     end
-    return (; row.revision, row.version, type, row.failure)
+    return (; row.revision, row.result_revision, type, row.failure)
 end
 
 """Every store of `cache`."""

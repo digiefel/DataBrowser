@@ -191,7 +191,7 @@ WorkspaceStatus() =
 
 """
 The code that the rows of one signature run: the function, the roots that [`code_roots`](@ref)
-gives, the world they were read in, and their revision.
+gives, the world they were read in, and their code revision.
 """
 struct Code
     f::Any
@@ -270,15 +270,15 @@ end
 The member values that the row of a group read or a group process takes: the values of type `T`
 of the ids `root`, and for a group without one, those of its members, and so on below them. For
 each id that it reaches, `rows` holds the row of the version that it takes, or `NOWHERE` when it
-takes none or takes the members of the group in its place; a hash of the id and the version of that
-row; and the number of ids above that lead to it. `version` is the sum of these hashes, so that it
-follows the change of one member value at once, whatever the number of members.
+takes none or takes the members of the group in its place; a hash of the id and the revision of
+the result of that row; and the number of ids above that lead to it. `revision` is the sum of these
+hashes, so that it follows the change of one member value at once, whatever the number of members.
 """
 mutable struct Taken
     T::Type
     root::Vector{String}
     rows::Dict{String,@NamedTuple{row::Row, term::UInt64, paths::Int32}}
-    version::UInt64
+    revision::UInt64
 end
 
 """

@@ -28,7 +28,7 @@
 #
 # ```text
 #     catalog, in memory          the state of each row, its inputs and its priority
-#     cache, a DuckDB file        for each row, by its key: the version of its last result, or its
+#     cache, a DuckDB file        for each row, by its key: the revision of its last result, or its
 #                                 error; and for a row of the pipeline, the values it gives, with
 #                                 their metadata and labels. The next session knows from it which
 #                                 rows are current, and has their values without running them
@@ -38,14 +38,14 @@
 # ```
 #
 # The key of a row is its position in the catalog. The cache keeps the key of each computation by
-# its id (see "Names and versions"), so that the computation gets the same key in the next session.
+# its id (see "Names and revisions"), so that the computation gets the same key in the next session.
 #
 # Each worker takes a job from the catalog and runs it:
 #
 # ```text
-#     take! a job ─▶ compute the version of its row ─▶ did the cache save this version?
-#                                                       │ no                    │ yes
-#                                                       ▼                       ▼
+#     take! a job ─▶ compute the revision of its row ─▶ did the cache save this revision?
+#                                                        │ no                    │ yes
+#                                                        ▼                       ▼
 #                                    call the function with the       finish!: the row is current,
 #                                    results of its inputs            or failed with the saved
 #                                      │                │             error. The function does not
@@ -55,11 +55,11 @@
 #                                      ▼                ▼
 #                          keep the result in     save the error
 #                          the store of its type  in the cache
-#                          and its version in
+#                          and its revision in
 #                          the cache. A result
 #                          isequal to the last
 #                          result of the row
-#                          keeps the version of
+#                          keeps the revision of
 #                          the last result
 #                                      │                │
 #                                      ▼                ▼
@@ -73,7 +73,7 @@
 #     finished! belongs to the pipeline: it adds rows, such as the process of each new value.
 # ```
 #
-# The version of a row identifies its result (see "Names and versions"). A current row whose store
+# The revision of a row identifies its result (see "Names and revisions"). A current row whose store
 # no longer has its result runs again when something needs the result.
 
 # ## Workers
@@ -93,7 +93,7 @@
 # browser shows the error next to its value, and the cache saves it. When reading a source item
 # fails, its values leave the workspace until a later read succeeds. A `process` that fails gives
 # no values, and the value it was given keeps the failed row as its latest version, until the row
-# runs again. A failed row does not run again, even in a later session, until its version changes:
+# runs again. A failed row does not run again, even in a later session, until its revision changes:
 # its code, an input or an argument changed. To run failed rows again without a change, open the
 # workspace with `rebuild=true`, which empties its cache.
 #
@@ -164,32 +164,32 @@ end
     run!(workspace, job)
 
 Compute the row of `job`, keep its result, and add the rows that its values need. A row whose
-current version is the one the cache saved becomes current, or failed, without running, with the
-version of its saved result. A result `isequal` to the last result of the row keeps the version of
-the last result, so that the rows that read it find the versions they last ran with. A result of
+current revision is the one the cache saved becomes current, or failed, without running, with the
+revision of its saved result. A result `isequal` to the last result of the row keeps the revision of
+the last result, so that the rows that read it find the revisions they last ran with. A result of
 the wrong type fails the row: a `read` or a `process` must return an `AbstractDataItem`, or a vector
 of them.
 """
 function run!(workspace::Workspace, job::Job)::Nothing
     catalog, row = workspace.catalog, job.row
     ## Until `finish!` ends the job, every error fails the row, so that no row stays running without
-    ## a job. The cache saves only the error of the function, under the version of the row: after
+    ## a job. The cache saves only the error of the function, under the revision of the row: after
     ## any other error, the next session runs the row again.
     value, pipeline, at, record, previous = try
-        @timed_dbg "job.version" @lock catalog.lock begin
-            at = version(workspace, row)
+        @timed_dbg "job.revision" @lock catalog.lock begin
+            at = revision(workspace, row)
             record = recorded(workspace, row, at)
             ## A row that runs no longer gives the values that the cache saved in an earlier session.
             record === nothing && foreach(saved -> delete_output!(workspace.cache.db, row.index, saved.id), pop!(workspace.saved, row.index, SavedOutput[]))
             catalog[row], haskey(workspace.stages, row), at, record,
-                (version=Catalogs.version(catalog, row), type=Catalogs.result_type(catalog, row))
+                (revision=Catalogs.revision(catalog, row), type=Catalogs.result_type(catalog, row))
         end
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
     end
     if record !== nothing
         @timed_dbg "job.restore" @lock catalog.lock begin
-            finish!(catalog, job; failed=!isempty(record.failure), version=record.version, type=record.type) &&
+            finish!(catalog, job; failed=!isempty(record.failure), revision=record.result_revision, type=record.type) &&
                 restored!(workspace, row, record)
             publish!(workspace)
         end
@@ -204,12 +204,12 @@ function run!(workspace::Workspace, job::Job)::Nothing
     pipeline && !all(x -> x isa AbstractDataItem, given) && return failed!(workspace, job, at,
         ErrorException("$(function_name(value.f)) returned a $(typeof(output)), not an item or a vector of items"), backtrace())
     ## A result `isequal` to the last result of the row, which its store still has, is the same
-    ## result: the row keeps the version of the last result. The readers of a row of the pipeline
+    ## result: the row keeps the revision of the last result. The readers of a row of the pipeline
     ## find its values by id, so the ids count too. `isequal` is the project's code: when it throws,
     ## the results differ.
-    # TODO: compare each value of a row of the pipeline on its own. A `Part` follows the version of the
-    # whole row, so one changed value of a read runs the `process` of every value again.
-    same = previous.version != 0 && typeof(output) === previous.type && @timed_dbg "job.compare" try
+    # TODO: compare each value of a row of the pipeline on its own. A `Part` follows the revision of
+    # the whole row, so one changed value of a read runs the `process` of every value again.
+    same = previous.revision != 0 && typeof(output) === previous.type && @timed_dbg "job.compare" try
         found = only(kept(workspace, [row]))
         before = found === nothing ? nothing : output isa AbstractVector ? something(found) : [something(found)]
         before !== nothing && Base.invokelatest(isequal, before, given) && (!pipeline || isequal(id.(before), id.(given)))
@@ -227,10 +227,10 @@ function run!(workspace::Workspace, job::Job)::Nothing
     end
     @timed_dbg "job.finish" @lock catalog.lock begin
         ## A result that the row does not keep leaves the store: the next run compares with the store.
-        finish!(catalog, job; version=same ? previous.version : at, type=typeof(output)) ||
+        finish!(catalog, job; revision=same ? previous.revision : at, type=typeof(output)) ||
             return keep!(workspace, row, output; forget=true)
         delete!(workspace.errors, row)
-        store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); version=same ? previous.version : at)
+        store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); result_revision=same ? previous.revision : at)
         if outputs !== nothing
             @timed_dbg "job.finish.finished!" finished!(workspace, row, Output[output for (output, _) in outputs])
             ## The cache saves the values that the workspace kept.
@@ -249,10 +249,10 @@ function run!(workspace::Workspace, job::Job)::Nothing
 end
 
 """
-    failed!(workspace, job, version, error, backtrace)
+    failed!(workspace, job, revision, error, backtrace)
 
-Fail the row of `job` and save its message in the cache under `version`, so that the next session
-shows the same failure without running the row; a `version` of `nothing` saves nothing. The message
+Fail the row of `job` and save its message in the cache under `revision`, so that the next session
+shows the same failure without running the row; a `revision` of `nothing` saves nothing. The message
 goes to `report_error`, and the status panel of the browser shows the message next to the value. A
 row of the pipeline that fails gives no values.
 """
@@ -331,57 +331,57 @@ end
 resolved(::Workspace, x) = x
 resolved(::Workspace, x::Selection) = x
 
-# ## Names and versions
+# ## Names and revisions
 #
 # The computation of each row has an id, which is its function with the id of each argument, as
-# `fit(a/1)`. Before a row runs, the workspace computes its version, a hash of the name of its
-# function, the code revision of the function, the versions of its inputs, and its other arguments
-# and settings: the same version means the same result, even in another session. A source item
-# contributes its id and its fingerprint, such as the modification time of a file; a source item
-# without a fingerprint gives a new version each time, so that it is always read again.
+# `fit(a/1)`. Before a row runs, the workspace computes its revision, a hash of the name of its
+# function, the code revision of the function, the revisions of the results of its inputs, and its
+# other arguments and settings: the same revision means the same result, even in another session. A
+# source item contributes its id and its fingerprint, such as the modification time of a file; a
+# source item without a fingerprint gives a new revision each time, so that it is always read again.
 #
-# The result of the row gets this version, unless the row had a result before and the new result is
-# `isequal` to it: then the row keeps the version of its last result. For a row of the pipeline, the
-# ids of its values must be equal too. The readers of the row then compute the versions they last
-# ran with, and become current without calling their functions: when an edit of a `process` method
-# changes nothing in what it returns, the rows that read its values do not call their functions
-# again. The cache saves, under the key of each row, the id of its computation, the version that it
-# computed before it ran, the version of its result, and its error when it failed. The next session
-# gives the key to the first row whose computation has that id.
+# The result of the row gets this revision, unless the row had a result before and the new result is
+# `isequal` to it: then the row keeps the revision of its last result. For a row of the pipeline,
+# the ids of its values must be equal too. The readers of the row then compute the revisions they
+# last ran with, and become current without calling their functions: when an edit of a `process`
+# method changes nothing in what it returns, the rows that read its values do not call their
+# functions again. The cache saves, under the key of each row, the id of its computation, the
+# revision that it computed before it ran, the revision of its result, and its error when it failed.
+# The next session gives the key to the first row whose computation has that id.
 #
-# The *code revision* of a function, which the version uses, is a hash of the code that the function
-# can reach; the workspace keeps it in memory (see "Code changes"). The catalog also gives each row
-# a *revision*, a counter that rises when the code, an input or the computation of the row changes,
-# so that the workspace drops the result of a job that started before (see
+# The *code revision* of a function, which the revision of a row uses, is a hash of the code that
+# the function can reach; the workspace keeps it in memory (see "Code changes"). The catalog also
+# counts the *changes* of each row: the number rises when the code, an input or the computation of
+# the row changes, so that the workspace drops the result of a job that started before (see
 # [`Catalogs.jl`](../Catalogs.md)).
 #
 # `revision(workspace, computation)` and `revision(workspace, items)` are numbers that a window
-# compares to know when to draw again; they follow the revisions of the rows. The cache functions
-# `store_computation_revision!` and `recorded_revision` keep and read versions.
+# compares to know when to draw again; they follow the changes of the rows. The cache functions
+# `store_computation_revision!` and `recorded_revision` keep and read the revisions of rows.
 #
-# When a workspace opens again, a row whose saved version is the version it computes now is current,
-# with the version of its saved result, or failed with its saved error, without running. Its
-# metadata is the metadata that the cache saved, and its value comes from its store; when the store
-# no longer has it, as a `MemoryStore` after a restart, the row runs again when something needs its
-# value.
+# When a workspace opens again, a row whose saved revision is the revision it computes now is
+# current, with the revision of its saved result, or failed with its saved error, without running.
+# Its metadata is the metadata that the cache saved, and its value comes from its store; when the
+# store no longer has it, as a `MemoryStore` after a restart, the row runs again when something
+# needs its value.
 
 """
-    version(workspace, row) -> UInt64
+    revision(workspace, row) -> UInt64
 
-The version that `row` computes before it runs: the same version means the same result, even in
-another session. It follows the code of its function, the versions of its inputs, and its other
-arguments and settings. When the new result of the row is `isequal` to its last result, the row
-keeps the version of the last result instead (see [`run!`](@ref)). The caller holds the catalog
+The revision of `row`, which it computes before it runs: the same revision means the same result,
+even in another session. It follows the code of its function, the revisions of the results of its
+inputs, and its other arguments and settings. Its result gets this revision, or keeps the revision
+of the last result when the two are `isequal` (see [`run!`](@ref)). The caller holds the catalog
 lock.
 """
-function version(workspace::Workspace, row::Row)::UInt64
+function revision(workspace::Workspace, row::Row)::UInt64
     value = workspace.catalog[row]
     signature = Tuple{typeof(value.f),map(x -> argument_type(workspace, x), value.args)...}
     workspace.signatures[row] = signature
     ## Types and symbols hash differently in another session; their names do not.
     seed = hash(function_name(value.f), hash(code!(workspace, signature, value.f).revision.hash))
     for x in value.args
-        seed = hash(argument_version(workspace, row, x), seed)
+        seed = hash(argument_revision(workspace, row, x), seed)
     end
     return hash(repr(value.settings), seed)
 end
@@ -394,21 +394,21 @@ end
 argument_type(::Workspace, ::MemberValues{T}) where {T} = Vector{T}
 argument_type(::Workspace, x) = typeof(x)
 
-# The values of members count as the sum of a hash of the id and the version of each, which the
+# The values of members count as the sum of a hash of the id and the revision of each, which the
 # workspace keeps as they change (see `input!`).
-argument_version(workspace::Workspace, row::Row, ::MemberValues)::UInt64 = workspace.taken[row].version
-argument_version(workspace::Workspace, ::Row, x)::UInt64 = argument_version(workspace, x)
-argument_version(workspace::Workspace, x::Input)::UInt64 = Catalogs.version(workspace.catalog, x.row)
-argument_version(workspace::Workspace, x::Part)::UInt64 = hash(x.id, argument_version(workspace, x.of))
-argument_version(workspace::Workspace, x::Union{Tuple,AbstractVector{<:Union{Input,Part}}})::UInt64 =
-    foldl((seed, v) -> hash(argument_version(workspace, v), seed), x; init=UInt64(0))
-argument_version(workspace::Workspace, x::Selection)::UInt64 =
-    foldl((seed, row) -> hash(Catalogs.version(workspace.catalog, row), seed), Catalogs.input_rows(x); init=hash(argument_id(x)))
+argument_revision(workspace::Workspace, row::Row, ::MemberValues)::UInt64 = workspace.taken[row].revision
+argument_revision(workspace::Workspace, ::Row, x)::UInt64 = argument_revision(workspace, x)
+argument_revision(workspace::Workspace, x::Input)::UInt64 = Catalogs.revision(workspace.catalog, x.row)
+argument_revision(workspace::Workspace, x::Part)::UInt64 = hash(x.id, argument_revision(workspace, x.of))
+argument_revision(workspace::Workspace, x::Union{Tuple,AbstractVector{<:Union{Input,Part}}})::UInt64 =
+    foldl((seed, v) -> hash(argument_revision(workspace, v), seed), x; init=UInt64(0))
+argument_revision(workspace::Workspace, x::Selection)::UInt64 =
+    foldl((seed, row) -> hash(Catalogs.revision(workspace.catalog, row), seed), Catalogs.input_rows(x); init=hash(argument_id(x)))
 # A source item without a fingerprint may have changed at any time: its result is never the saved
 # one.
-argument_version(::Workspace, x::AbstractDataSourceItem)::UInt64 =
+argument_revision(::Workspace, x::AbstractDataSourceItem)::UInt64 =
     fingerprint(x) === nothing ? rand(UInt64) : hash(id(x), hash(repr(fingerprint(x))))
-argument_version(::Workspace, x)::UInt64 = hash(argument_id(x))
+argument_revision(::Workspace, x)::UInt64 = hash(argument_id(x))
 
 """
     code!(workspace, signature, f) -> Code
@@ -448,10 +448,10 @@ stage(::Type{<:Tuple{typeof(process),Any,M,G}}) where {M,G} = (MEMBER_PROCESS, G
 stage(_) = nothing
 
 """
-    recorded(workspace, row, version)
+    recorded(workspace, row, revision)
 
-What the cache saved for the result of `row` when the row computed `version` before it ran, when it
-can be used now: a failure, or a result with the version of that result; else `nothing`. A row of
+What the cache saved for the result of `row` when the row computed `revision` before it ran, when it
+can be used now: a failure, or a result with the revision of that result; else `nothing`. A row of
 the pipeline also needs the values it gave: those that the cache saved in an earlier session, or
 those it gave when it last ran in this session. The caller holds the catalog lock.
 """
@@ -468,18 +468,18 @@ end
 """
     restore!(workspace, row) -> Bool
 
-Give `row` the result that the cache saved for it, with the version of that result, when the
-version of the row is the saved one and its inputs are current, without a job. Return whether it
+Give `row` the result that the cache saved for it, with the revision of that result, when the
+revision of the row is the saved one and its inputs are current, without a job. Return whether it
 did. The caller holds the catalog lock.
 """
 function restore!(workspace::Workspace, row::Row)::Bool
     catalog = workspace.catalog
     Catalogs.state(catalog, row) in (Catalogs.MISSING, Catalogs.STALE) || return false
     all(input -> Catalogs.state(catalog, input) == Catalogs.CURRENT, Catalogs.inputs(catalog, row)) || return false
-    at = @timed_dbg "restore.version" version(workspace, row)
+    at = @timed_dbg "restore.revision" revision(workspace, row)
     record = @timed_dbg "restore.recorded" recorded(workspace, row, at)
     record === nothing && return false
-    Catalogs.restore!(catalog, row; failed=!isempty(record.failure), version=record.version, type=record.type) || return false
+    Catalogs.restore!(catalog, row; failed=!isempty(record.failure), revision=record.result_revision, type=record.type) || return false
     @timed_dbg "restore.restored!" restored!(workspace, row, record)
     return true
 end
@@ -613,7 +613,7 @@ end
     computed!(workspace, row)
 
 Compute the result of a current row again, once for all the tasks that ask for it at the same
-time, and keep it. The row stays current: it ran before with the same version, and its store had
+time, and keep it. The row stays current: it ran before with the same revision, and its store had
 dropped the result.
 """
 function computed!(workspace::Workspace, row::Row)
@@ -622,9 +622,9 @@ function computed!(workspace::Workspace, row::Row)
     @lock one begin
         found = only(kept(workspace, [row]))
         found === nothing || return something(found)
-        value, before = @lock catalog.lock (catalog[row], Catalogs.revision(catalog, row))
+        value, before = @lock catalog.lock (catalog[row], Catalogs.changes(catalog, row))
         output = call(workspace, row, value)
-        @lock catalog.lock Catalogs.revision(catalog, row) == before || return output
+        @lock catalog.lock Catalogs.changes(catalog, row) == before || return output
         keep!(workspace, row, output)
         return output
     end
@@ -667,25 +667,25 @@ end
 # a local folder (`Pkg.develop`); for every other package, the Julia version and the Manifest count
 # instead.
 #
-# The version of each result includes the revision of its code. Twice a second, the workspace asks
-# Revise to load saved edits, including files tracked with `includet`, even when the REPL is idle.
-# After a method definition, or when the roots differ, the workspace computes the code revision
-# again; `evaluate` does the same check first when a method was defined since the last check. When
-# the revision changed, the rows of that signature become stale, and with them every row that reads
-# them: source items are read again, as if the source had changed them, and items are processed
-# again when a window shows them or a script reads them, or in the background with
-# `background_processing=true`. The same code defined again, as when a script runs again, changes
-# nothing.
+# The revision of each row includes the code revision of its signature. Twice a second, the
+# workspace asks Revise to load saved edits, including files tracked with `includet`, even when the
+# REPL is idle. After a method definition, or when the roots differ, the workspace computes the code
+# revision again; `evaluate` does the same check first when a method was defined since the last
+# check. When the code revision changed, the rows of that signature become stale, and with them
+# every row that reads them: source items are read again, as if the source had changed them, and
+# items are processed again when a window shows them or a script reads them, or in the background
+# with `background_processing=true`. The same code defined again, as when a script runs again,
+# changes nothing.
 #
 # While a browser is open, the keyboard focus of its main window controls these checks: an inactive
 # window pauses them, and gaining focus resumes them. Without a browser, including after closing
 # one, the workspace keeps checking.
 #
-# The revision does not see a mutable value changed in place, nor a change to a macro: the functions
-# that use a macro keep their old expansion until they are defined again. The workspace warns about
-# code that it cannot follow: a non-constant global, a call through `eval`, `invokelatest` or a
-# computed name, a generated function, and a value it cannot read. The warning shows the way from
-# the root to it.
+# The code revision does not see a mutable value changed in place, nor a change to a macro: the
+# functions that use a macro keep their old expansion until they are defined again. The workspace
+# warns about code that it cannot follow: a non-constant global, a call through `eval`,
+# `invokelatest` or a computed name, a generated function, and a value it cannot read. The warning
+# shows the way from the root to it.
 
 """
     check_code!(workspace)
@@ -905,7 +905,7 @@ computes nothing.
 function revision(workspace::Workspace, value::Computation)::UInt
     found, catalog = row(workspace, value), workspace.catalog
     found === nothing && return UInt(0)
-    return @lock catalog.lock hash(found.index, hash(Catalogs.state(catalog, found) == Catalogs.CURRENT, hash(Catalogs.revision(catalog, found))))
+    return @lock catalog.lock hash(found.index, hash(Catalogs.state(catalog, found) == Catalogs.CURRENT, hash(Catalogs.changes(catalog, found))))
 end
 
 # The name of the function of a computation: the start of its id, under which the cache keeps the
@@ -1029,7 +1029,7 @@ function revision(workspace::Workspace, ids::AbstractVector{<:AbstractString})::
         for x in ids
             rows = get(workspace.versions, x, nothing)
             seed = rows === nothing ? hash(0, seed) : hash(rows[end].index, hash(Catalogs.state(catalog, rows[end]) == Catalogs.CURRENT,
-                hash(Catalogs.revision(catalog, rows[end]), seed)))
+                hash(Catalogs.changes(catalog, rows[end]), seed)))
         end
         return seed
     end

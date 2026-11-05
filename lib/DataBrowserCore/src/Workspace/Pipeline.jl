@@ -37,7 +37,7 @@
 # nothing wants does not run for its group: the group takes the version before it, and runs again
 # when a window or a script asks for that `process`. A member whose row fails is left out until it
 # runs again. When a member gets a later version, the workspace changes what the group takes for
-# that member alone, and the version of the group follows from a sum over its members, so that the
+# that member alone, and the revision of the group follows from a sum over its members, so that the
 # change takes the same time whatever the number of members.
 #
 # Windows come first: the rows of the values that a window shows run before all others (see
@@ -47,7 +47,7 @@
 # asks for them.
 #
 # When a workspace opens again, the cache gives back the values of each row, with their metadata and
-# labels, and its version; a row whose version is the saved one is current without running. The
+# labels, and its revision; a row whose revision is the saved one is current without running. The
 # results themselves come from the stores ([`Evaluate.jl`](Evaluate.md)).
 #
 # All the values under one metadata name have one type in the whole workspace, because the cache
@@ -439,7 +439,7 @@ function members!(workspace::Workspace, row::Row, ids::Union{Nothing,Vector{Stri
     end
     delete!(workspace.taken, row)
     ids === nothing && return nothing
-    ## The order of the members counts in the version, as the values do.
+    ## The order of the members counts in the revision, as the values do.
     workspace.taken[row] = Taken(T, ids, Dict(), hash(ids))
     foreach(x -> input!(workspace, row, x, 1), [ids; given])
     return nothing
@@ -474,7 +474,7 @@ takes the latest version of the type `T` of its argument `MemberValues{T}`, from
 `process` methods, or a later version that did not run yet but will: it is wanted or requested, and
 does not read a failed row. A source item stands for its values while its read will run, and a
 group without such a version stands for its members. The row reads the row of each version that it
-takes, and its version follows theirs.
+takes, and its revision follows theirs.
 """
 # TODO: a group read and a group process see the values of members from before the member `process`
 # methods, of their own group too. Choose how they converge (docs/plans/processing.md).
@@ -496,8 +496,8 @@ function input!(workspace::Workspace, row::Row, x::String, change::Int=0)::Nothi
     ## The new row is connected first, so that a row that the group reads twice stays.
     after == before.row || after == Catalogs.NOWHERE || Catalogs.connect!(catalog, row, after)
     after == before.row || before.row == Catalogs.NOWHERE || Catalogs.disconnect!(catalog, row, before.row)
-    term = after == Catalogs.NOWHERE ? UInt64(0) : hash(x, Catalogs.version(catalog, after))
-    taken.version += term - before.term
+    term = after == Catalogs.NOWHERE ? UInt64(0) : hash(x, Catalogs.revision(catalog, after))
+    taken.revision += term - before.term
     if paths > 0
         taken.rows[x] = (row=after, term, paths)
         before.paths > 0 || push!(get!(Vector{Row}, workspace.takers, x), row)

@@ -9,7 +9,7 @@
 # row.
 #
 # Two other parts of the workspace keep information about a row: the stores keep the result of each
-# row, and the cache keeps the version of each result and the error of each failed row (see
+# row, and the cache keeps the revision of each result and the error of each failed row (see
 # [`Evaluate.jl`](Workspace/Evaluate.md)). Both keep them under the position of the row, which is
 # its *key*. The cache keeps the key of each computation, so that the same computation gets the same
 # position in each session; a position that no row has is empty.
@@ -114,15 +114,15 @@
 # to add when a row finishes: see [`Evaluate.jl`](Workspace/Evaluate.md) and
 # [`Pipeline.jl`](Workspace/Pipeline.md).
 #
-# Two numbers follow each row. Its *version* identifies its result: the workspace computes it from
-# the code of the function, the versions of the inputs, and the other arguments and settings. The
-# same version means the same result, even in another session. When a row runs again and its result
-# is `isequal` to its last result, the workspace gives it the version of its last result, so that
-# its readers find the versions they last ran with and do not call their functions again. Its
-# *revision* is a counter that protects a running job: a job keeps the revision of its row from its
-# start, and the revision rises when the code, an input, a file that it reads or the computation of
-# the row changes, or when the row is removed. When the revision differs at the end of the job,
-# `finish!` drops its result.
+# Two numbers follow each row. Its *revision* identifies its result: the workspace computes it from
+# the code of the function, the revisions of the results of the inputs, and the other arguments and
+# settings. The same revision means the same result, even in another session. When a row runs again
+# and its result is `isequal` to its last result, the workspace gives it the revision of its last
+# result, so that its readers find the revisions they last ran with and do not call their functions
+# again. Its number of *changes* protects a running job: a job keeps the number of changes of its
+# row from its start, and the number rises when the code, an input, a file that it reads or the
+# computation of the row changes, or when the row is removed. When the number differs at the end of
+# the job, `finish!` drops its result.
 
 """
 The computations of a workspace as one table and one graph. Each row of a [`Catalog`](@ref) is one
@@ -185,8 +185,8 @@ mutable struct Node
     readers::Vector{Row}
     state::State
     running::Bool
-    ## See `revision`.
-    revision::UInt32
+    ## See `changes`.
+    changes::UInt32
     ## How many inputs are not current, and how many failed or are stuck.
     waiting::Int32
     blocked::Int32
@@ -196,8 +196,8 @@ mutable struct Node
     inherited::Int
     requested::Int
     holds::Int32
-    ## The version and the type of its result; see `finish!`.
-    version::UInt64
+    ## The revision and the type of its result; see `finish!`.
+    revision::UInt64
     type::Type
 end
 
@@ -318,13 +318,13 @@ The state of `row`; see [`State`](@ref). Call it inside `@lock catalog.lock`.
 state(catalog::Catalog, row::Row)::State = node(catalog, row).state
 
 """
-    revision(catalog, row) -> UInt32
+    changes(catalog, row) -> UInt32
 
-A counter that rises when the code, an input, a file that it reads or the computation of `row`
-changes, or when `row` is removed. A job of the row keeps the revision from its start; see
-[`keepable`](@ref). Call it inside `@lock catalog.lock`.
+The number of changes of `row`: it rises when the code, an input, a file that it reads or the
+computation of `row` changes, or when `row` is removed. A job of the row keeps the number from its
+start; see [`keepable`](@ref). Call it inside `@lock catalog.lock`.
 """
-revision(catalog::Catalog, row::Row)::UInt32 = node(catalog, row).revision
+changes(catalog::Catalog, row::Row)::UInt32 = node(catalog, row).changes
 
 """
     inputs(catalog, row) -> Vector{Row}
@@ -361,14 +361,14 @@ stuck(catalog::Catalog, row::Row)::Bool = stuck(node(catalog, row))
 stuck(node::Node)::Bool = node.state == FAILED || node.blocked > 0
 
 """
-    version(catalog, row) -> UInt64
+    revision(catalog, row) -> UInt64
     result_type(catalog, row) -> Type
 
-The version and the type of the result of `row`, as [`finish!`](@ref) or [`restore!`](@ref) gave
-them: `0` and `Nothing` for a row that never had a result. A stale or failed row keeps the version
+The revision and the type of the result of `row`, as [`finish!`](@ref) or [`restore!`](@ref) gave
+them: `0` and `Nothing` for a row that never had a result. A stale or failed row keeps the revision
 and the type of its last result. Call them inside `@lock catalog.lock`.
 """
-version(catalog::Catalog, row::Row)::UInt64 = node(catalog, row).version
+revision(catalog::Catalog, row::Row)::UInt64 = node(catalog, row).revision
 result_type(catalog::Catalog, row::Row)::Type = node(catalog, row).type
 
 """
@@ -594,7 +594,7 @@ function remove_unheld!(catalog::Catalog, row::Row)::Nothing
     delete!(catalog.queued_at, row)
     tally!(catalog, current, -1)
     current.state = REMOVED
-    current.revision += 1
+    current.changes += 1
     foreach(input -> remove_unheld!(catalog, input), before)
     notify(catalog.changed)
     return nothing
@@ -672,7 +672,7 @@ function invalidate!(catalog::Catalog, row::Row, outside::Bool)::Nothing
     had = current.state in (CURRENT, FAILED)
     (had || current.running || outside) || return nothing
     current.state == REMOVED && return nothing
-    current.revision += 1
+    current.changes += 1
     ## The readers of a row without a result have none either, and passed their requests on to it.
     if had
         push!(catalog.lost, row)
@@ -750,24 +750,24 @@ end
 #     job === nothing && break        # the catalog closed
 #     try
 #         result = ...                # call `catalog[job.row]` with the results of its inputs
-#         finish!(catalog, job; version, type=typeof(result))   # `false`: the row changed
+#         finish!(catalog, job; revision, type=typeof(result))   # `false`: the row changed
 #     catch
 #         finish!(catalog, job; failed=true)
 #     end
 # end
 # ```
 #
-# The workspace computes `version` before it calls the function; `work!` in
+# The workspace computes `revision` before it calls the function; `work!` in
 # [`Evaluate.jl`](Workspace/Evaluate.md) is the loop of the workers.
 
 """
     Job
 
-One row to compute, with the [`revision`](@ref) of the row when the job started.
+One row to compute, with the number of [`changes`](@ref) of the row when the job started.
 """
 struct Job
     row::Row
-    revision::UInt32
+    changes::UInt32
 end
 
 """
@@ -790,7 +790,7 @@ function Base.take!(catalog::Catalog)::Union{Job,Nothing}
         startable(current) || (notify(catalog.changed); continue)
         current.running = true
         notify(catalog.changed)
-        return Job(row, current.revision)
+        return Job(row, current.changes)
     end
     return nothing
 end
@@ -798,25 +798,24 @@ end
 """
     keepable(catalog, job) -> Bool
 
-Whether the result of `job` can still be kept: its row is in the catalog, and its
-[`revision`](@ref) did not change since the job started, as it does when its code or an input
-changes.
+Whether the result of `job` can still be kept: its row is in the catalog, and its number of
+[`changes`](@ref) did not rise since the job started, as it does when its code or an input changes.
 """
 keepable(catalog::Catalog, job::Job)::Bool = @lock catalog.lock (
-    node(catalog, job.row).state != REMOVED && node(catalog, job.row).revision == job.revision)
+    node(catalog, job.row).state != REMOVED && node(catalog, job.row).changes == job.changes)
 
 """
-    finish!(catalog, job; version, type) -> Bool
+    finish!(catalog, job; revision, type) -> Bool
     finish!(catalog, job; failed=true) -> Bool
 
-End `job`. Its row becomes current, with the `version` and the `type` of its result, or failed; then
-`finish!` gives `true`. The workspace computes the version before the job runs, and gives the
-version of the last result of the row instead when the new result is `isequal` to it (see
+End `job`. Its row becomes current, with the `revision` and the `type` of its result, or failed;
+then `finish!` gives `true`. The workspace computes the revision before the job runs, and gives the
+revision of the last result of the row instead when the new result is `isequal` to it (see
 [`Evaluate.jl`](Workspace/Evaluate.md)); it chooses the store of the result by its type. When the
 result is not [`keepable`](@ref), the row does not change, `finish!` gives `false`, and the row runs
 again when it can.
 """
-function finish!(catalog::Catalog, job::Job; failed::Bool=false, version::UInt64=UInt64(0), type::Type=Nothing)::Bool
+function finish!(catalog::Catalog, job::Job; failed::Bool=false, revision::UInt64=UInt64(0), type::Type=Nothing)::Bool
     @lock catalog.lock begin
         current = node(catalog, job.row)
         current.running = false
@@ -825,26 +824,26 @@ function finish!(catalog::Catalog, job::Job; failed::Bool=false, version::UInt64
             notify(catalog.changed)
             return false
         end
-        failed || (current.version = version; current.type = type)
+        failed || (current.revision = revision; current.type = type)
         set!(catalog, job.row, failed ? FAILED : CURRENT)
         return true
     end
 end
 
 """
-    restore!(catalog, row; version, type) -> Bool
+    restore!(catalog, row; revision, type) -> Bool
     restore!(catalog, row; failed=true) -> Bool
 
-Give `row` a result that the cache saved, with the `version` and the `type` of that result, without
+Give `row` a result that the cache saved, with the `revision` and the `type` of that result, without
 a job: the row becomes current or failed. Gives `false`, and changes nothing, when an input is not
 current or the row is not missing or stale. The workspace restores the rows of a source item first,
 then the rows that read them.
 """
-function restore!(catalog::Catalog, row::Row; failed::Bool=false, version::UInt64=UInt64(0), type::Type=Nothing)::Bool
+function restore!(catalog::Catalog, row::Row; failed::Bool=false, revision::UInt64=UInt64(0), type::Type=Nothing)::Bool
     @lock catalog.lock begin
         current = node(catalog, row)
         (current.waiting == 0 && current.state in (MISSING, STALE) && !current.running) || return false
-        failed || (current.version = version; current.type = type)
+        failed || (current.revision = revision; current.type = type)
         set!(catalog, row, failed ? FAILED : CURRENT)
         return true
     end
