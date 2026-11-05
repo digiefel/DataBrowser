@@ -62,8 +62,9 @@ end
 """
     last_execution(workspace, computation) -> Union{Nothing,ComputationExecution}
 
-The most recent execution of this computation's current revision in this workspace opening.
-Return `nothing` when it has not run here. Reading this information does not read stored data or
-execute the computation. Reusing a cached result does not count as another execution.
+The call of the function of `computation` that gave its current result, or its error, in
+`workspace` since the workspace opened. Return `nothing` when no such call happened: when the result
+came from the cache, or when the computation is missing or stale. Reading it calls no function and
+reads no store.
 """
 function last_execution end

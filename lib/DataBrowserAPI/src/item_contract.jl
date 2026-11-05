@@ -1,3 +1,7 @@
+"""
+Supertype for the items of a project. An item is one value of the project, such as one measurement,
+with an [`id`](@ref), a [`label`](@ref), [`data`](@ref) and [`metadata`](@ref).
+"""
 abstract type AbstractDataItem end
 
 """
@@ -33,11 +37,11 @@ label(item::AbstractDataItem)::String = id(item)
 label(T::Type{<:AbstractDataItem})::Symbol = nameof(T)
 
 """
-An item made from other items, its [`members`](@ref). A group has its own data and metadata, as
-any item does: the members of a fit are the items whose points it fits, and its data is the curve.
+Supertype for the items that have members, whose ids [`members`](@ref) gives. A group has its own
+data and metadata, as any item does: the members of a fit are the items whose points it fits, and
+its data is the curve.
 """
 abstract type AbstractGroup <: AbstractDataItem end
-# TODO: the workspace does not keep groups yet (plans/groupings.md).
 
 """
     members(group::AbstractGroup) -> Vector{String}
