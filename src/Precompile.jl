@@ -26,9 +26,12 @@ const PRECOMPILE_FIXTURES = joinpath(@__DIR__, "..", "test", "fixtures", "TASE")
 # every item; then open it again from the cache.
 function _precompile_engine()::Nothing
     project = _precompile_project()
-    # A workspace keeps its cache in the first depot. A temporary depot keeps the user's depot clean.
+    # A workspace keeps its cache in the first depot, and the project keeps its results beside the
+    # active environment, which is the user's: a temporary folder keeps both away from the user's
+    # files.
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
+        project.values = joinpath(depot, "values.duckdb")
         # The browser saves its view beside the data, so the workspace opens a copy of the fixtures.
         folder = cp(PRECOMPILE_FIXTURES, joinpath(depot, "fixtures"))
         workspace = open_workspace(project, folder)
