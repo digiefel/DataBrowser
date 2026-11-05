@@ -272,7 +272,8 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
     catalog, project = workspace.catalog, workspace.project
     for x in ids
         versions = get(workspace.versions, x, Row[])
-        read_row = findfirst(row -> workspace.stages[row] == SOURCE_READ, versions)
+        ## The `process` of a value starts when a read gives the value, not while the read runs.
+        read_row = findfirst(row -> workspace.stages[row] == SOURCE_READ && output(workspace, row, x) !== nothing, versions)
         # TODO: `process` runs once, on what `read` gave; call it again on its results until they are
         # `isequal` to its inputs.
         row!(workspace, "process:" * x, ITEM_PROCESS, read_row === nothing ? nothing :

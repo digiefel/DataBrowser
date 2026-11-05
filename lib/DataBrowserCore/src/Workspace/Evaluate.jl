@@ -502,6 +502,8 @@ function restore!(workspace::Workspace, row::Row)::Bool
     catalog = workspace.catalog
     Catalogs.state(catalog, row) in (Catalogs.MISSING, Catalogs.STALE) || return false
     all(input -> Catalogs.state(catalog, input) == Catalogs.CURRENT, Catalogs.inputs(catalog, row)) || return false
+    ## The revision of the row is computed only when the cache saved something for the row.
+    recorded_revision(workspace.cache.db, row.index) === nothing && return false
     at = @timed_dbg "restore.revision" revision(workspace, row)
     record = @timed_dbg "restore.recorded" recorded(workspace, row, at)
     record === nothing && return false
