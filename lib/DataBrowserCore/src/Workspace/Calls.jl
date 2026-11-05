@@ -68,26 +68,25 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         preceding = unique!(reduce(vcat, map(calls_of, [inputs(value); members]); init=Call[]))
         found = row == Catalogs.NOWHERE ? nothing : stage(@lock catalog.lock get(() -> call_signature(workspace, row), workspace.signatures, row))
         # The call of `value`, with the calls it reads, kept with each call of the same code on the same inputs.
-        function made!(title, code, value, preceding, result)
-            made = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding), known, (title, code, map(objectid, preceding)))
-            made.items[first(ran_for)] = last(ran_for)
-            made.computations[first(ran_for)] = given
-            result === nothing || result === Any || (made.result = made.result === nothing ? result : typejoin(made.result, result))
-            return made
+        function call!(title, code, result)::Call
+            entry = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding), known, (title, code, map(objectid, preceding)))
+            entry.items[first(ran_for)] = last(ran_for)
+            entry.computations[first(ran_for)] = given
+            result === nothing || result === Any || (entry.result = entry.result === nothing ? result : typejoin(entry.result, result))
+            return entry
         end
-        if found === nothing
-            made = made!(function_name(value.f), which(value), value, preceding,
-                something(result, Base.infer_return_type(value.f, argument_types(value))))
+        entry = if found === nothing
+            call!(function_name(value.f), which(value), something(result, Base.infer_return_type(value.f, argument_types(value))))
         elseif found[1] == SOURCE_READ
-            made = made!("read(::$(nameof(found[2])))", which(workspace.project, SOURCE_READ, found[2]), value, preceding, nothing)
+            call!("read(::$(nameof(found[2])))", which(workspace.project, SOURCE_READ, found[2]), nothing)
         else
             code = which(workspace.project, found...)
             # A stage the project does not define passes on what it receives.
             code === nothing && return (visited[given] = preceding)
-            made = made!("process(::" * string(label(found[2])) * ")", code, value, preceding, nothing)
+            call!("process(::" * string(label(found[2])) * ")", code, nothing)
         end
-        failure === nothing || (made.failed[first(ran_for)] = first(split(failure, '\n')))
-        return (visited[given] = Call[made])
+        failure === nothing || (entry.failed[first(ran_for)] = first(split(failure, '\n')))
+        return (visited[given] = Call[entry])
     end
     found = reduce(vcat, map(calls_of, definitions); init=Call[])
     unique!(found)
