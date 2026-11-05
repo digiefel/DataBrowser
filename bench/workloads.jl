@@ -2,12 +2,16 @@ using DataBrowserAPI
 using DataBrowserCache: MemoryStore, DuckDBStore
 import DataBrowserAPI as API
 import DataBrowserCore.Workspace as Workspace
-using Statistics: median
+using Statistics: cov, median, var
 
 const BENCH_TIMEOUT = 120.0
 const PAYLOAD_ITEMS = 400
 const PAYLOAD_ROWS = 10_000
-const INDEX_ITEMS = 10_000
+# Numbers of one-row items in the scaling sweep. Times per item are recorded at the largest.
+const SCALING_ITEMS = (2_500, 10_000, 40_000)
+# An exponent of 1 is time proportional to the number of items, 2 is quadratic growth. Timing noise
+# and n log n growth (about 1.1 over these sizes) stay below this limit.
+const MAX_EXPONENT = 1.3
 const SELECTION_SIZE = 10
 const SELECTION_REPEATS = 5
 
@@ -111,24 +115,45 @@ function with_benchmark_cache(f)
     end
 end
 
-"""Per-item indexing overhead, including saving the index at close; callbacks only return prepared data."""
-function measure_index(source)
-    with_benchmark_cache() do
-        ws = nothing
-        project = BenchProject()
-        try
-            elapsed = @elapsed begin
-                ws = Workspace.open_workspace(project, source)
-                settle!(ws)
-                sort(Workspace.query_items(ws)) == sort(API.id.(source.items)) || error("Incorrect indexed items")
-                Workspace.close_workspace!(ws)
+# TODO: give the per-frame work of the browser (bench/browser.jl) the same scaling check.
+"""
+Time of the first scan, including saving the index at close, and of a reopen from that index, for
+sources of increasing size; callbacks only return prepared data. Each exponent is the least-squares
+slope of log(time) against log(number of items).
+"""
+function measure_scaling(sources)
+    scan_s, reopen_s = Float64[], Float64[]
+    for source in sources
+        ids = sort(API.id.(source.items))
+        with_benchmark_cache() do
+            ws = nothing
+            try
+                project = BenchProject()
+                scan = @elapsed begin
+                    ws = Workspace.open_workspace(project, source)
+                    settle!(ws)
+                end
+                sort(Workspace.query_items(ws)) == ids || error("Incorrect indexed items")
+                push!(scan_s, scan + @elapsed(Workspace.close_workspace!(ws)))
+                callback_counts(project) == (length(ids), 0) || error("Unexpected scan callbacks")
+                project = BenchProject()
+                reopen = @elapsed begin
+                    ws = Workspace.open_workspace(project, source)
+                    settle!(ws)
+                end
+                push!(reopen_s, reopen)
+                sort(Workspace.query_items(ws)) == ids || error("Reopen lost items")
+                callback_counts(project) == (0, 0) || error("Reopen reran user callbacks")
+            finally
+                ws === nothing || Workspace.close_workspace!(ws)
             end
-            callback_counts(project) == (length(source.items), 0) || error("Unexpected indexing callbacks")
-            return elapsed * 1e6 / length(source.items)
-        finally
-            ws === nothing || Workspace.close_workspace!(ws)
         end
     end
+    items = [length(source.items) for source in sources]
+    return (scan_exponent=cov(log.(items), log.(scan_s)) / var(log.(items)),
+        scan_us_per_item=last(scan_s) * 1e6 / last(items),
+        reopen_exponent=cov(log.(items), log.(reopen_s)) / var(log.(items)),
+        reopen_us_per_item=last(reopen_s) * 1e6 / last(items))
 end
 
 """Cache throughput and materialization latency, with identity processing."""
@@ -188,18 +213,25 @@ function measure_cache(source)
     end
 end
 
-"""Warm each operation once, then measure identical workloads with fresh caches."""
+"""
+Warm each operation once, then measure identical workloads with fresh caches. Return the median of
+each measurement; fail when time grows faster than the number of items.
+"""
 function run_benchmark(repeats::Int)
     payload_source = prepared_source(PAYLOAD_ITEMS, PAYLOAD_ROWS)
-    index_source = prepared_source(INDEX_ITEMS, 1)
+    scaling_sources = [prepared_source(n, 1) for n in SCALING_ITEMS]
     measure_cache(payload_source)
-    measure_index(index_source)
+    measure_scaling(scaling_sources)
     samples = NamedTuple[]
     for _ in 1:repeats
         GC.gc()
-        cache = measure_cache(payload_source)
-        overhead = measure_index(index_source)
-        push!(samples, merge(cache, (index_us_per_item=overhead,)))
+        push!(samples, merge(measure_cache(payload_source), measure_scaling(scaling_sources)))
     end
-    return samples
+    result = Dict(String(name) => median(getproperty.(samples, name))
+        for name in keys(first(samples)))
+    for name in ("scan_exponent", "reopen_exponent")
+        result[name] <= MAX_EXPONENT || error("$name is $(round(result[name]; digits=2)), above " *
+            "$MAX_EXPONENT: time grows faster than the number of items")
+    end
+    return result
 end

@@ -1,4 +1,4 @@
-using TOML, Statistics
+using TOML
 
 workload, output = ARGS[1:2]
 # The browser loads GLMakie itself, after its first frame.
@@ -8,8 +8,7 @@ if workload == "engine"
     include("workloads.jl")
     repeats = parse(Int, get(ENV, "MB_BENCH_REPEATS", "3"))
     repeats > 0 || error("MB_BENCH_REPEATS must be positive")
-    samples = run_benchmark(repeats)
-    result = Dict(String(name) => median(getproperty.(samples, name)) for name in keys(first(samples)))
+    result = run_benchmark(repeats)
 else
     include("browser.jl")
     root, depot, opening, started_ns = ARGS[3:6]

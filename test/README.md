@@ -126,9 +126,21 @@ The snapshot identifies measurement dates and input fingerprints. Review its dif
 Compare timings on the same machine, Julia version, thread count and workload.
 
 The engine workload uses prepared type-API values: 400 items × 10,000 rows × four Float64 columns.
-Throughput uses logical uncompressed payload bytes. User callbacks return prepared values; no
+Throughput uses logical uncompressed payload bytes. `reopen_ms` is the time to open the workspace
+of these 400 items again from its cache, until it is idle. User callbacks return prepared values; no
 numerical analysis or parsing is profiled. Measurements are medians of three runs after one warmup;
 `MB_BENCH_REPEATS` controls repetitions.
+
+A scaling sweep checks that the time to open a workspace grows in proportion to its number of
+items. It opens workspaces of 2,500, 10,000 and 40,000 items of one row each, each in a new cache.
+`scan_us_per_item` is the time per item of the first opening at 40,000 items: the scan of the
+source until the workspace is idle, plus closing the workspace, which saves the index.
+`reopen_us_per_item` is the time per item to open the workspace again from that index until it is
+idle. `scan_exponent` and `reopen_exponent` are the slopes of log(time) against log(number of
+items) over the three sizes: 1 means the time is proportional to the number of items, 2 means it
+is proportional to its square. Fixed costs weigh more at small sizes, so exponents below 1 are
+common. The workload fails when an exponent is above 1.3. This limit leaves room for timing noise
+and for n log n growth, about 1.1 at these sizes.
 
 The browser smoke project has three items. It exercises directory discovery, registered item
 stages, workspace selection, saved-cache reuse, source
