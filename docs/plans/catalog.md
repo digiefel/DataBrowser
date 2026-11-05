@@ -6,10 +6,15 @@ workspace with no work per item" in [0.2.3](../roadmap.md) tracks the change.
 
 ## Goal
 
-- Opening a workspace does no work per item. The browser shows the tree, the selection and the
-  windows of the last session at once.
+- Opening a workspace takes the same time for any number of items: it does no work per item. The
+  browser shows the tree, the selection and the windows of the last session at once.
+- Once a row is in memory, a question about it costs no more than with today's catalog: a read of
+  a Julia vector, with no query and no lock that today's catalog does not take. Until the
+  background load ends, the question also checks whether its row is loaded.
 - Memory stays bounded. The catalog is small enough to stay whole in memory up to about 100 million
-  items; bounding the catalog too waits until a project needs a billion items.
+  items; bounding the catalog too waits until a project needs a billion items. Ids, labels,
+  metadata and errors stay in memory while their rows are in use; a question about one that left
+  memory costs one query.
 - Each question to the workspace is at least as fast as with the whole catalog in memory.
 - A failed row stays a result, as a value is. A row still becomes stale when its code, an input or
   its source item changes, also when the change happened while the workspace was closed.
