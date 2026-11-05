@@ -110,13 +110,28 @@ items are removed or replaced. A browser compares it to tell whether the selecti
 reading the ids, and reveals a selection it did not make itself.
 
 `replaced` gives, for the id of an item that its source item no longer produces, the id of the item
-it produces in its place, as when another recipe reads the source item now. The selection follows
-it, and so should a browser that restores ids it saved.
+it produces in its place, as when another recipe reads the source item now. That item may be
+replaced in turn, and [`replacement`](@ref) follows the replacements to the last one. The selection
+follows them, and so should a browser that restores ids it saved.
 """
 Base.@kwdef mutable struct WorkspaceSelection
     item_ids::Vector{String} = String[]
     revision::Int = 0
     replaced::Dict{String,String} = Dict{String,String}()
+end
+
+"""
+    replacement(selection, id) -> String
+
+The id of the item that replaced the item `id`, after each replacement since; `id` itself when no
+item replaced it.
+"""
+function replacement(selection::WorkspaceSelection, x::String)::String
+    ## No chain returns to an id: an id leaves `replaced` when its source item produces it again.
+    while haskey(selection.replaced, x)
+        x = selection.replaced[x]
+    end
+    return x
 end
 
 """

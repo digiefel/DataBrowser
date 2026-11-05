@@ -583,15 +583,10 @@ function replaced!(selection::WorkspaceSelection, before::Vector{String}, after:
     gone, added = setdiff(before, after), setdiff(after, before)
     replaced = selection.replaced
     foreach(id -> delete!(replaced, id), added)
-    if length(gone) == length(added)
-        for (old, new) in zip(gone, added)
-            ## An item replaced before is replaced by the newest item.
-            map!(id -> id == old ? new : id, values(replaced))
-            replaced[old] = new
-        end
-    end
+    length(gone) == length(added) && foreach((old, new) -> replaced[old] = new, gone, added)
     ids = length(gone) == 1 && only(gone) in selection.item_ids ? [selection.item_ids; added] : selection.item_ids
-    selected = unique!([get(replaced, id, id) for id in ids if !(id in gone) || haskey(replaced, id)])
+    # TODO(perf): this takes the time of the number of selected items, for each row that finishes.
+    selected = unique!([replacement(selection, id) for id in ids if !(id in gone) || haskey(replaced, id)])
     selected == selection.item_ids || (selection.item_ids = selected; selection.revision += 1)
     return nothing
 end

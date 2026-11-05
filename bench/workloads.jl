@@ -30,7 +30,8 @@ API.reconstruct(::Type{BenchItem}, id::AbstractString, data, metadata::Dict) = B
 struct BenchSourceItem <: API.AbstractDataSourceItem
     item::BenchItem
 end
-API.id(item::BenchSourceItem) = API.id(item.item)
+# A source item has the id of a file, and its read gives an item with another id, as for most projects.
+API.id(item::BenchSourceItem) = API.id(item.item) * ".csv"
 API.label(item::BenchSourceItem) = API.id(item)
 API.fingerprint(::BenchSourceItem) = 1
 
@@ -124,7 +125,7 @@ slope of log(time) against log(number of items).
 function measure_scaling(sources)
     scan_s, reopen_s = Float64[], Float64[]
     for source in sources
-        ids = sort(API.id.(source.items))
+        ids = sort([API.id(x.item) for x in source.items])
         with_benchmark_cache() do
             ws = nothing
             try
@@ -160,7 +161,7 @@ end
 function measure_cache(source)
     with_benchmark_cache() do
         project = BenchProject(; values=joinpath(first(DEPOT_PATH), "values.duckdb"))
-        ids = API.id.(source.items)
+        ids = [API.id(x.item) for x in source.items]
         selected, remaining = ids[1:SELECTION_SIZE], ids[SELECTION_SIZE+1:end]
         ws = nothing
         bulk = nothing
