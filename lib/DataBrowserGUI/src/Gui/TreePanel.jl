@@ -110,7 +110,8 @@ function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter
     if length(top) == 1 && Workspace.valuetype(workspace, only(top)) <: AbstractGroup
         top = [Workspace.members(workspace, only(top)); Workspace.items(workspace, only(top))]
     end
-    for x in sort!(top; by=x -> Workspace.natural_key(label(workspace, x)))
+    ## The sort key of each row once: `sort!` with `by` computes it again at every comparison.
+    for x in top[sortperm([Workspace.natural_key(label(workspace, x)) for x in top])]
         add!(x, 0, hash(x), !ig.ImGuiTextFilter_IsActive(filter_tree))
     end
     return rows
