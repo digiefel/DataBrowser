@@ -69,8 +69,9 @@ function browser_workload(root, opening, started_ns)
         # The plot windows are ready once their extension has drawn a first figure in a hidden window.
         wait_for(session) do
             next_frames()
+            # The latest world: this function started before the extension and its `is_ready` loaded.
             any(ext -> nameof(typeof(ext)) == :PlotsExtension, session.state.extensions) &&
-                _extensions_ready(session.state)
+                @invokelatest(_extensions_ready(session.state))
         end
         ready = frames
         wait_for(() -> next_frames() >= ready + 60, session)
