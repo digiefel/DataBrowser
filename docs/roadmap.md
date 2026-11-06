@@ -438,7 +438,9 @@ selection model.
 - [ ] Support flattening, grouping, sorting, and filtering without copying item state into the GUI.
 - [x] Sort the rows of the tree, at each depth, with any Julia function:
   `sort!(workspace; by, lt, rev)`.
-- [ ] Set the order of the tree in the GUI, with a click on the header of a column or with a builder.
+- [x] Set the order of the tree in the GUI, with the Sort menu beside the filter: keys of a row,
+  each with its direction.
+- [ ] Save the order of the Sort menu with the view of the browser.
 - [ ] Group across a collection level, for example "group across wafer": collections whose values
   are equal once that level is left out form one group, and collection analysis runs on each group.
   The Recipes `collection` callback names the levels, `(wafer = …, device = …)`.

@@ -74,6 +74,10 @@ end
         # IV_B has no gap: its field is `missing`, which sorts last, and first in reverse.
         sort!(workspace; by=row -> row.gap, rev=true)
         @test sort(["IV_A", "IV_B"], workspace, nothing) == ["IV_B", "IV_A"]
+        # The order of the Sort menu leaves a row without the key last in both directions.
+        order = W.SortKeys([:gap => true])
+        sort!(workspace; by=order, lt=order)
+        @test sort(["IV_B", "IV_A"], workspace, nothing) == ["IV_A", "IV_B"]
         # An order that fails leaves the labels in order.
         sort!(workspace; by=row -> error("no order"))
         @test (@test_logs (:error,) sort(ids, workspace, nothing)) == ["IV_A", "IV_B"]

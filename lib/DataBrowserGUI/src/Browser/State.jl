@@ -303,6 +303,8 @@ Base.@kwdef mutable struct BrowserState
     new_tag::Vector{UInt8} = zeros(UInt8, 64)
     # The typed text and the highlight of the list of visualizers in the "+ Window" menu.
     window_picker::ListPicker = ListPicker()
+    # The typed text and the highlight of the list of keys in the Sort menu of the tree.
+    sort_picker::ListPicker = ListPicker()
     show_performance_window::Bool = false
     show_imgui_metrics::Bool = false
     show_imgui_debug_log::Bool = false

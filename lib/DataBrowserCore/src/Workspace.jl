@@ -477,7 +477,7 @@ function Workspace(
         Task[], 0, 0,
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),
-        TreeOrder(; by=row -> natural_key(row.label)),
+        let order = SortKeys([:label => false]); TreeOrder(; by=order, lt=order) end,
         WorkspaceTags(project, folder),
         WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),

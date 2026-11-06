@@ -187,8 +187,12 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     ig.SameLine()
     _helpmarker("Words separated by commas. A word that starts with - hides what it matches: run,-old")
     ig.SameLine()
+    # The Sort button is at the end of the line, and the filter takes the line up to it.
+    start = ig.GetCursorPosX()
+    stop = _render_tree_sort!(state)
+    ig.SameLine(start)
     ig.SetNextItemShortcut(ig.ImGuiMod_Ctrl | ig.ImGuiKey_F, ig.ImGuiInputFlags_Tooltip)
-    ig.SetNextItemWidth(-1)
+    ig.SetNextItemWidth(stop - start - unsafe_load(ig.GetStyle()).ItemSpacing.x)
     ig.ImGuiTextFilter_Draw(filter_tree, "##tree_filter")
     if ig.IsKeyPressed(ig.ImGuiKey_A) && ig.IsWindowFocused() && unsafe_load(ig.GetIO().KeyCtrl)
         Workspace.select!(workspace, unique!([row.id for row in rows]))
@@ -295,6 +299,66 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     state.performance.rows, state.performance.rows_drawn = length(rows), drawn
     ig.EndChild()
     return nothing
+end
+
+# TODO: the browser does not save the order of the Sort menu with its view.
+"""
+Draw the Sort button at the end of the line, with the order of the tree, and the popup that changes
+it: a line for each key of the order, with its direction, and a button that adds a key. An order
+that code set with `sort!` has no keys to show, and a key picked in the popup replaces it. Return
+where the button starts, from the left of the window.
+"""
+function _render_tree_sort!(state::BrowserState)::Float32
+    workspace = state.workspace
+    by = workspace.order.by
+    lines = by isa Workspace.SortKeys ? copy(by.keys) : Pair{Symbol,Bool}[]
+    name(key) = key === :label ? "Label" : key === :id ? "Id" : String(key)
+    shown = by isa Workspace.SortKeys ? join(("$(name(key)) $(reverse ? "▼" : "▲")" for (key, reverse) in lines), ", ") :
+        "set by code"
+    text = "Sort: $shown ▾"
+    width = ig.CalcTextSize(text).x + 2 * unsafe_load(ig.GetStyle()).FramePadding.x
+    ig.SetCursorPosX(ig.GetCursorPosX() + ig.GetContentRegionAvail().x - width)
+    stop = ig.GetCursorPosX()
+    if ig.Button(text)
+        ig.SetNextWindowPos(ig.ImVec2(ig.GetItemRectMin().x, ig.GetItemRectMax().y))
+        ig.OpenPopup("##tree_sort")
+    end
+    ig.SetItemTooltip("The order of the rows at each depth of the tree")
+    ig.BeginPopup("##tree_sort") || return stop
+    changed, removed = false, 0
+    ## The list of the keys, which the typed letters narrow, for the line `index` or for a new line.
+    function pick!(index)
+        ig.IsWindowAppearing() && (state.sort_picker = ListPicker())
+        choices = [:label; :id; sort!(collect(keys(workspace.produced.columns)))]
+        picked = render_list_picker!(state.sort_picker, [ListItem(name(key)) for key in choices])
+        picked === nothing && return
+        index > length(lines) ? push!(lines, choices[picked] => false) :
+            (lines[index] = choices[picked] => last(lines[index]))
+        changed = true
+        ig.CloseCurrentPopup()
+    end
+    by isa Workspace.SortKeys || ig.TextDisabled("Set by code")
+    for (index, (key, reverse)) in enumerate(lines)
+        ig.PushID(index)
+        ig.AlignTextToFramePadding()
+        ig.Text(index == 1 ? "by" : "then")
+        ig.SameLine(3 * ig.GetFontSize())
+        ig.Button("$(name(key)) ▾") && ig.OpenPopup("##key")
+        ig.BeginPopup("##key") && (pick!(index); ig.EndPopup())
+        ig.SameLine()
+        ig.Button(reverse ? "▼" : "▲") && (lines[index] = key => !reverse; changed = true)
+        ig.SetItemTooltip(reverse ? "Descending" : "Ascending")
+        ## The only key stays: the tree has an order.
+        length(lines) > 1 && (ig.SameLine(); ig.Button("×") && (removed = index))
+        ig.PopID()
+    end
+    removed > 0 && (deleteat!(lines, removed); changed = true)
+    ig.Button(isempty(lines) ? "+ Sort by" : "+ Then by") && ig.OpenPopup("##new_key")
+    ig.BeginPopup("##new_key") && (pick!(length(lines) + 1); ig.EndPopup())
+    ig.EndPopup()
+    ## The menu sets the order as code does.
+    changed && (order = Workspace.SortKeys(lines); sort!(workspace; by=order, lt=order))
+    return stop
 end
 
 """Draw the window with the tree, and keep the text of its filter."""

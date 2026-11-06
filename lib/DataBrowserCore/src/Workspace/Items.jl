@@ -80,6 +80,34 @@ natural_key(text::AbstractString)::Tuple = Tuple(
     for part in eachmatch(r"\d+|\D+", String(text)))
 
 """
+    SortKeys(keys)
+
+Internal. An order of the tree by keys of a row, to give as both `by` and `lt` to
+[`sort!`](@ref): `keys` holds `key => reverse` pairs, where `key` is `:label`, `:id` or a metadata
+key. The rows sort by the first key, then by the second where the first is equal, and so on. Text
+sorts with the numbers in it by their value, and a row without a key sorts after the rows with it,
+in both directions. The tree sorts by `SortKeys([:label => false])` until a call to `sort!`, and the
+Sort menu of the browser makes one.
+"""
+struct SortKeys
+    keys::Vector{Pair{Symbol,Bool}}
+end
+
+# As `by`: the value of each key of the row, and for text its `natural_key`.
+(order::SortKeys)(row) = Tuple(
+    (value = getproperty(row, key); value isa AbstractString ? natural_key(value) : value) for (key, _) in order.keys)
+
+# As `lt`: the first key where the rows differ decides, in its direction.
+function (order::SortKeys)(a::Tuple, b::Tuple)::Bool
+    for (x, y, (_, reverse)) in zip(a, b, order.keys)
+        isequal(x, y) && continue
+        (ismissing(x) || ismissing(y)) && return ismissing(y)
+        return reverse ? isless(y, x) : isless(x, y)
+    end
+    return false
+end
+
+"""
     sort!(workspace; by, lt=isless, rev=false) -> workspace
 
 Set the order of the items in the tree of the browser, at each depth, with the keywords of `sort`.
