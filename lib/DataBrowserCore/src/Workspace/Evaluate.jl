@@ -1026,6 +1026,8 @@ function Catalogs.request!(workspace::Workspace, ids::AbstractVector{<:AbstractS
         rows = get(workspace.versions, x, nothing)
         rows === nothing || request!(catalog, rows[end], VIEWED_ITEM)
     end
+    ## The rows of the items show that they are wanted now.
+    notify(workspace.item_rows.event)
     return nothing
 end
 

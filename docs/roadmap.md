@@ -431,8 +431,8 @@ selection model.
   ([#4](https://github.com/digiefel/MeasurementBrowser/pull/4))
 - [ ] Define one query model over metadata and tags, with concrete results for Julia callers and live
   results for GUI views. Its conditions include which groups hold an item and which `process` gave
-  it, so it replaces the internal stand-ins that the browser uses until then: `members(workspace)`,
-  `members(workspace, id)`, `groups(workspace, id)` and `items(workspace, id)`.
+  it. `select(workspace, f)` keeps the answer of one function current; the browser still reads the
+  groups above an item with the internal stand-in `groups(workspace, id)`.
 - [ ] Add a visual filter builder to the GUI.
 - [ ] Add a flat item table with selectable metadata columns alongside the hierarchy view.
 - [ ] Support flattening, grouping, sorting, and filtering without copying item state into the GUI.
@@ -731,7 +731,7 @@ the table as a first-class view.
   - [ ] Text and Markdown, for strings and notes.
 - [ ] Let users open several independent visualizer windows over different live selections.
 - [ ] Show the tree of groups in a visualizer of a group, like every other window. To settle first:
-  its input, since the items at the top of the tree, `members(workspace)`, are no group; how the
+  its input, since the items at the top of the tree are no group; how the
   visualizer learns that a group with many members changed without preparing all
   its members again; how selecting a group differs from selecting its members (see
   [plans/tabs.md](plans/tabs.md#selection)).

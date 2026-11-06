@@ -65,22 +65,28 @@ DataBrowserAPI.process(::ChipsProject, ::Sweep) = [
     end
 end
 
-@testset "sort! sets the order of the tree" begin
+@testset "select(workspace, f) follows the items and the order of sort!" begin
     workspace = W.open_workspace(ChipsProject(), ChipsSource(); cache=false, background_processing=true)
     try
         W.wait_workspace_idle!(workspace; timeout=20)
-        ids = ["IV_B", "IV_A"]
-        @test sort(ids, workspace, nothing) == ["IV_A", "IV_B"]
+        sweeps() = W.select(workspace, row -> startswith(row.id, "IV") && !("bad" in row.tags)).id
+        follows(ids) = timedwait(() -> sweeps() == ids, 20) === :ok
+        @test sweeps() == ["IV_A", "IV_B"]
         # IV_B has no gap: its field is `missing`, which sorts last, and first in reverse.
         sort!(workspace; by=row -> row.gap, rev=true)
-        @test sort(["IV_A", "IV_B"], workspace, nothing) == ["IV_B", "IV_A"]
-        # The order of the Sort menu leaves a row without the key last in both directions.
+        @test follows(["IV_B", "IV_A"])
+        # The order of the Sort menu leaves an item without the key last in both directions.
         order = W.SortKeys([:gap => true])
         sort!(workspace; by=order, lt=order)
-        @test sort(["IV_B", "IV_A"], workspace, nothing) == ["IV_A", "IV_B"]
+        @test follows(["IV_A", "IV_B"])
+        sort!(workspace; by=row -> row.gap, rev=true)
+        @test follows(["IV_B", "IV_A"])
         # An order that fails leaves the labels in order.
         sort!(workspace; by=row -> error("no order"))
-        @test (@test_logs (:error,) sort(ids, workspace, nothing)) == ["IV_A", "IV_B"]
+        @test follows(["IV_A", "IV_B"])
+        W.tag!(workspace, W.Tag("bad"))
+        W.tag!(workspace, "IV_A", "bad")
+        @test follows(["IV_B"])
     finally
         W.close_workspace!(workspace)
     end

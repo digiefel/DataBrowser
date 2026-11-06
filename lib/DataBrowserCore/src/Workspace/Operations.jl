@@ -108,6 +108,7 @@ end
 
 # Start the workers, the scan, and the watchers of the source and of the code.
 function start!(workspace::Workspace; rebuild::Bool)::Nothing
+    track_task!(workspace, Threads.@spawn keep!(workspace.item_rows, workspace))
     start_workers!(workspace)
     scan_source!(workspace; rebuild)
     watch_source(workspace.source, event -> publish_source_event!(workspace, event);
@@ -122,6 +123,7 @@ end
 function stop!(workspace::Workspace)::Nothing
     cancel(workspace.cancel_source)
     cancel_scan!(workspace)
+    close(workspace.item_rows)
     foreach(task -> istaskdone(task) || wait(task), workspace.background_tasks)
     empty!(workspace.background_tasks)
     stop_workers!(workspace)
@@ -166,11 +168,16 @@ can_rebuild_cache(workspace::Workspace)::Bool =
 cache_work_running(workspace::Workspace)::Bool =
     workspace.cache_state in (:loading, :canceling)
 
-"""Whether the scan runs, or any job is queued or runs."""
+"""
+Whether the scan runs, a job is queued or runs, or the rows of the items that `select` gives do not
+follow the catalog yet.
+"""
 function engine_work_running(workspace::Workspace)::Bool
     catalog = workspace.catalog
     return source_scan_running(workspace) || cache_work_running(workspace) ||
-        @lock catalog.lock (workspace.running > 0 || queued(catalog) > 0)
+        @lock catalog.lock (workspace.running > 0 || queued(catalog) > 0 ||
+            !workspace.item_rows.closed && (workspace.item_rows.reading || workspace.item_rows.all ||
+                !isempty(workspace.item_rows.marked) || !isempty(catalog.touched)))
 end
 
 """
@@ -380,8 +387,23 @@ changed.
 """
 generation(workspace::Workspace)::Int = workspace.generation[]
 
-"""Record that the workspace changed, for `generation` and `workspace_status`."""
+"""
+    changed!(workspace)
+    changed!(workspace, id)
+
+Record that the workspace changed, for `generation` and `workspace_status`; with an `id`, that the
+item `id` changed, so that its row and the answers of `select(workspace, f)` follow. Both forms
+wake the task that keeps the rows of the items, [`keep!`](@ref). The second form runs inside
+`@lock catalog.lock`.
+"""
 function changed!(workspace::Workspace)::Nothing
     Base.Threads.atomic_add!(workspace.generation, 1)
+    notify(workspace.item_rows.event)
+    return nothing
+end
+
+function changed!(workspace::Workspace, x::AbstractString)::Nothing
+    push!(workspace.item_rows.marked, x)
+    notify(workspace.item_rows.event)
     return nothing
 end

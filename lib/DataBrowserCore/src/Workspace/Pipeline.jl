@@ -103,12 +103,10 @@ function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Not
         above = get!(Vector{String}, workspace.parents, member)
         read_id in above || push!(above, read_id)
     end
-    foreach(x -> top!(workspace, x), given)
     if row !== nothing
         before = catalog[row]
         for gone in setdiff(map(id, members(source, before.args[3])), held)
             filter!(!=(read_id), get(workspace.parents, gone, String[]))
-            foreach(x -> top!(workspace, x), values(workspace, gone))
         end
         ## A source item without a fingerprint may have changed whenever it is reported.
         fingerprint(source_item) !== nothing && isequal(fingerprint(before.args[3]), fingerprint(source_item)) &&
@@ -141,10 +139,7 @@ function remove_source_item!(workspace::Workspace, read_id::String)::Nothing
     ## The source items with members above no longer wait for its read.
     foreach(above -> input!(workspace, workspace.sources[above], read_id), get(workspace.parents, read_id, String[]))
     delete!(workspace.parents, read_id)
-    for member in members(workspace.source, source_item)
-        filter!(!=(read_id), get(workspace.parents, id(member), String[]))
-        foreach(x -> top!(workspace, x), values(workspace, id(member)))
-    end
+    foreach(member -> filter!(!=(read_id), get(workspace.parents, id(member), String[])), members(workspace.source, source_item))
     return nothing
 end
 
@@ -253,8 +248,7 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
             forget!(workspace, output.type, output.revision)
     end
     outputs === nothing ? delete!(workspace.outputs, row) : (workspace.outputs[row] = accepted)
-    ## The tree computes the keys of its order again for these values.
-    foreach(x -> haskey(workspace.order.keys, x) && push!(workspace.order.stale, x), ids)
+    foreach(x -> changed!(workspace, x), ids)
     ## The group rows that take one of these values take its latest version now.
     foreach(x -> foreach(group -> input!(workspace, group, x), get(workspace.takers, x, Row[])), ids)
     conflicts!(workspace, row, conflicts)
@@ -287,7 +281,8 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
         for member in setdiff(before, held)
             groups = get(workspace.groups, member, String[])
             filter!(!=(x), groups)
-            isempty(groups) && (delete!(workspace.groups, member); top!(workspace, member))
+            isempty(groups) && delete!(workspace.groups, member)
+            changed!(workspace, member)
             row!(workspace, "member process:$member in $x", MEMBER_PROCESS, nothing)
         end
         isempty(held) ? delete!(workspace.members, x) : (workspace.members[x] = held)
@@ -299,23 +294,11 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
         end
         for member in held
             groups = get!(Vector{String}, workspace.groups, member)
-            x in groups || push!(groups, x)
-            delete!(workspace.top, member)
+            x in groups || (push!(groups, x); changed!(workspace, member))
             member!(workspace, member, x)
         end
         foreach(group -> member!(workspace, x, group), copy(get(workspace.groups, x, String[])))
-        top!(workspace, x)
     end
-    return nothing
-end
-
-# Keep `x` among the values at the top of the workspace when no group holds it, a `read` gave it, and
-# no source item holds the source item of that read.
-function top!(workspace::Workspace, x::String)::Nothing
-    versions = get(workspace.versions, x, Row[])
-    top = !isempty(versions) && !haskey(workspace.groups, x) && workspace.stages[first(versions)] == SOURCE_READ &&
-        isempty(get(workspace.parents, source(workspace, first(versions)), String[]))
-    top ? push!(workspace.top, x) : delete!(workspace.top, x)
     return nothing
 end
 

@@ -300,22 +300,45 @@ mutable struct Taken
 end
 
 """
-The order of the rows of the tree that [`sort!`](@ref) sets, with the keywords of `sort`, and what
-it keeps between two sorts: the key of each item with the revision at which it last changed, the
-items with a new version since their key, and for each depth of the tree, by the id of the row
-above it, the ids it was given, the sorted ids and the revision of the keys then.
+How far the work for one item is. See [`readiness`](@ref).
+
+- `CURRENT`: its latest version is current.
+- `WORKING`: a result that is not current is wanted or requested, or its job runs.
+- `UNPROCESSED`: its latest version is not current and nothing wants or requests it.
+- `FAILED`: a computation failed, or waits for one that failed.
 """
-mutable struct TreeOrder
-    by::Any
-    order::Base.Order.Ordering
-    keys::Dict{String,Tuple{Any,Int}}
-    stale::Set{String}
-    revision::Int
-    sorted::Dict{Union{Nothing,String},Tuple{Vector{String},Vector{String},Int}}
+@enum Readiness CURRENT WORKING UNPROCESSED FAILED
+
+"""
+The rows of the items, which [`select`](@ref) gives, and the answers of `select(workspace, f)` that
+the workspace keeps current. A task of the workspace keeps them: a worker only marks the items that
+it changed, with `changed!(workspace, id)`, and the task reads those items in parts of the catalog
+lock. A reader takes `lock` only to look up one row or one answer, so it never waits for a worker.
+"""
+mutable struct ItemRows
+    const lock::ReentrantLock
+    ## Notified when an answer is ready, or when the task stops.
+    const answered::Threads.Condition
+    ## Notified at each mark, at each new function, and when the task stops.
+    const event::Base.Event
+    ## Under the catalog lock: the items that changed since the task last read them, whether all
+    ## of them did, as after `sort!`, and whether the task reads and publishes them now.
+    marked::Set{String}
+    all::Bool
+    reading::Bool
+    ## Under `lock`: the row of each item, the order that `sort!` sets, and for each function that
+    ## `select` was called with, its answer and when it was last asked for.
+    rows::Dict{String,@NamedTuple{label::String, type::Type, metadata::Dict{Symbol,Any},
+        groups::Vector{String}, tags::Vector{String}, readiness::Readiness}}
+    order::@NamedTuple{by::Any, order::Base.Order.Ordering}
+    answers::Dict{Any,@NamedTuple{selection::Any, asked::Float64}}
+    closed::Bool
 end
-TreeOrder(; by, lt=isless, rev::Bool=false) = TreeOrder(by, Base.Order.ord(lt, identity, rev),
-    Dict{String,Tuple{Any,Int}}(), Set{String}(), 0,
-    Dict{Union{Nothing,String},Tuple{Vector{String},Vector{String},Int}}())
+ItemRows() = (lock = ReentrantLock(); ItemRows(lock, Threads.Condition(lock), Base.Event(true), Set{String}(), false, false,
+    Dict{String,@NamedTuple{label::String, type::Type, metadata::Dict{Symbol,Any}, groups::Vector{String},
+        tags::Vector{String}, readiness::Readiness}}(),
+    let order = SortKeys([:label => false]); (by = order, order = Base.Order.ord(order, identity, false)) end,
+    Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false))
 
 """
 One open project/source pair and all package-managed state belonging to it.
@@ -342,12 +365,10 @@ mutable struct Workspace{P<:AbstractProject}
     # to give.
     versions::Dict{String,Vector{Row}}
     # The ids of the members of each group, of the groups of each value, and of the source items
-    # with members that each source item is a member of. `top` holds the values that no group holds
-    # and that a `read` gave.
+    # with members that each source item is a member of.
     members::Dict{String,Vector{String}}
     groups::Dict{String,Vector{String}}
     parents::Dict{String,Vector{String}}
-    top::Set{String}
     # The member values that each row of a group read or a group process takes, and the rows that
     # take each value, by its id (see `input!`).
     taken::Dict{Row,Taken}
@@ -380,8 +401,7 @@ mutable struct Workspace{P<:AbstractProject}
     stores::Dict{Type,Union{Nothing,AbstractStore}}
     stores_lock::ReentrantLock
     selection::WorkspaceSelection
-    # The order of the rows of the tree, read and written under `catalog.lock`.
-    order::TreeOrder
+    item_rows::ItemRows
     tags::WorkspaceTags
     cache::WorkspaceCache
     scan::WorkspaceScan
@@ -467,7 +487,7 @@ function Workspace(
         project, source, folder, Catalog(value -> key!(cache_db, id(value))),
         Dict{String,Row}(), Dict{String,Row}(),
         Dict{Row,PipelineStage}(), Dict{Row,Vector{Output}}(), Dict{String,Vector{Row}}(),
-        Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Set{String}(),
+        Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(),
         Dict{Row,Taken}(), Dict{String,Vector{Row}}(),
         Dict{Tuple,Any}(), MetadataColumns(),
         Dict{Row,Type}(), Dict{Type,Code}(),
@@ -477,7 +497,7 @@ function Workspace(
         Task[], 0, 0,
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),
-        let order = SortKeys([:label => false]); TreeOrder(; by=order, lt=order) end,
+        ItemRows(),
         WorkspaceTags(project, folder),
         WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),

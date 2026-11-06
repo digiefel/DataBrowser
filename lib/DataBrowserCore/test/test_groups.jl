@@ -79,7 +79,7 @@ share(ws, x) = get(W.metadata(ws, x), :share, nothing)
         root, depot = mkpath(joinpath(dir, "files")), mkpath(joinpath(dir, "depot"))
         write_files(root)
         in_workspace(root, depot) do ws
-            @test query_items(ws) == [".", "a", "b", "c", "run"] && W.members(ws) == ["."]
+            @test query_items(ws) == [".", "a", "b", "c", "run"] && W.select(ws, row -> isempty(row.groups)).id == ["."]
             @test API.members(only(materialize_items(ws, ["run"]))) == ["a", "b"]
             # The folder "run" has no reading, so it gives the readings of its files.
             @test total(ws, ".") == 8 && total(ws, "run") == 4
@@ -130,33 +130,5 @@ end
             @test timedwait(() -> total(ws, ".") == 16 && share(ws, "a") == 0.125, 20) === :ok
             @test READS[] == reads
         end
-    end
-end
-
-# A source whose source items have no members, and a `process` that returns new items.
-struct FlatProject <: API.AbstractProject end
-API.project_name(::FlatProject) = "flat"
-struct Entries <: API.AbstractDataSource end
-struct Entry <: API.AbstractDataSourceItem
-    name::String
-end
-API.id(::Entries) = "entries"
-API.label(source::Entries) = API.id(source)
-API.items(::Entries; kwargs...) = [Entry("x"), Entry("y")]
-API.id(entry::Entry) = entry.name
-API.label(entry::Entry) = entry.name
-API.fingerprint(::Entry) = 1
-API.read(::FlatProject, ::Entries, entry::Entry) = Reading(entry.name, (value=[1.0],), Dict{Symbol,Any}())
-API.process(::FlatProject, reading::Reading) = reading.name == "x" ?
-    [Reading("x$i", reading.data, reading.metadata) for i in 1:2] : reading
-
-@testset "items that no group holds are at the top, or below the item whose process returned them" begin
-    ws = open_workspace(FlatProject(), Entries(); cache=false, background_processing=true)
-    try
-        wait_workspace_idle!(ws; timeout=20)
-        @test sort(W.members(ws)) == ["x", "y"]
-        @test W.items(ws, "x") == ["x1", "x2"] && isempty(W.items(ws, "y"))
-    finally
-        close_workspace!(ws)
     end
 end

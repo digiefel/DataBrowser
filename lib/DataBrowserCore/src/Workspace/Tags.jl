@@ -73,8 +73,18 @@ function change_tags!(change::Function, workspace::Workspace)::Nothing
     isempty(workspace.tags.error) ||
         error("Tags cannot change until tags.txt is fixed: $(workspace.tags.error)")
     lock(workspace.lifecycle_lock) do
-        change(workspace.tags.state)
-        Tags.save(workspace.folder, project_name(workspace.project), workspace.tags.state)
+        state = deepcopy(workspace.tags.state)
+        change(state)
+        Tags.save(workspace.folder, project_name(workspace.project), state)
+        ## The task that keeps the rows of the items reads the tags under the catalog lock, so the
+        ## new tags replace the old ones there, and the rows of the items whose tags changed follow.
+        before, after = workspace.tags.state.assignments, state.assignments
+        @lock workspace.catalog.lock begin
+            workspace.tags.state = state
+            for x in union(keys(before), keys(after))
+                get(before, x, Set{String}()) == get(after, x, Set{String}()) || changed!(workspace, x)
+            end
+        end
         workspace.tags.revision += 1
     end
     return nothing

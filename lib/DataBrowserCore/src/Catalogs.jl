@@ -230,6 +230,9 @@ mutable struct Catalog
     const queued_at::Dict{Row,Int}
     ## The rows that lost their result or were removed since the last `lost!`.
     const lost::Vector{Row}
+    ## The rows whose state, priority or job changed, until the workspace reads them for the rows
+    ## of its items (see `select`).
+    const touched::Vector{Row}
     ## The number of rows in each state, by the type of their function.
     const counts::Dict{Type,Vector{Int}}
     ## Set by `close`: tasks in `wait` return, and workers stop waiting for jobs.
@@ -238,7 +241,7 @@ end
 
 Catalog(key::Function) = (lock = ReentrantLock(); Catalog(lock, Threads.Condition(lock), key, Node[], Dict{Computation,Row}(),
     Dict{Tuple{Row,Row},@NamedTuple{input::Int32, reader::Int32, uses::Int32}}(),
-    Dict{Int,Vector{Row}}(), Dict{Row,Int}(), Row[], Dict{Type,Vector{Int}}(), false))
+    Dict{Int,Vector{Row}}(), Dict{Row,Int}(), Row[], Row[], Dict{Type,Vector{Int}}(), false))
 
 # The node of every position that no row has: removed, and never counted.
 const EMPTY = Node(Computation(nothing), Row[], Row[], REMOVED, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing)
@@ -616,6 +619,7 @@ function want!(catalog::Catalog, row::Row, priority::Int)::Nothing
     @lock catalog.lock begin
         current = node(catalog, row)
         current.priority = priority
+        push!(catalog.touched, row)
         queue!(catalog, row)
         foreach(input -> inherit!(catalog, input, priority), current.inputs)
     end
@@ -627,6 +631,7 @@ function inherit!(catalog::Catalog, row::Row, priority::Int)::Nothing
     current = node(catalog, row)
     current.inherited >= priority && return nothing
     current.inherited = priority
+    push!(catalog.touched, row)
     queue!(catalog, row)
     foreach(input -> inherit!(catalog, input, priority), current.inputs)
     return nothing
@@ -647,6 +652,7 @@ function request!(catalog::Catalog, row::Row, priority::Int)::Nothing
         current = node(catalog, row)
         (current.state in (MISSING, STALE) && current.requested < priority) || return nothing
         current.requested = priority
+        push!(catalog.touched, row)
         queue!(catalog, row)
         foreach(input -> request!(catalog, input, priority), current.inputs)
     end
@@ -692,6 +698,7 @@ function set!(catalog::Catalog, row::Row, state::State)::Nothing
     was_current, was_stuck = current.state == CURRENT, stuck(current)
     tally!(catalog, current, -1)
     current.state = state
+    push!(catalog.touched, row)
     ## A request ends with a result.
     state in (CURRENT, FAILED) && (current.requested = 0)
     tally!(catalog, current, 1)
@@ -711,6 +718,7 @@ function block!(catalog::Catalog, row::Row, change::Int)::Nothing
     current = node(catalog, row)
     was_stuck = stuck(current)
     current.blocked += change
+    push!(catalog.touched, row)
     stuck(current) == was_stuck || foreach(reader -> block!(catalog, reader, stuck(current) ? 1 : -1), current.readers)
     return nothing
 end
@@ -789,6 +797,7 @@ function Base.take!(catalog::Catalog)::Union{Job,Nothing}
         ## Fewer rows are queued: wake the tasks that wait for the catalog to have no work.
         startable(current) || (notify(catalog.changed); continue)
         current.running = true
+        push!(catalog.touched, row)
         notify(catalog.changed)
         return Job(row, current.changes)
     end
@@ -819,6 +828,7 @@ function finish!(catalog::Catalog, job::Job; failed::Bool=false, revision::UInt6
     @lock catalog.lock begin
         current = node(catalog, job.row)
         current.running = false
+        push!(catalog.touched, job.row)
         if !keepable(catalog, job)
             queue!(catalog, job.row)
             notify(catalog.changed)
