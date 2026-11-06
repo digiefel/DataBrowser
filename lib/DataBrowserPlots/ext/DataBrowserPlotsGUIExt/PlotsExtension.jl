@@ -51,6 +51,14 @@ function Browser.warmup!(ext::PlotsExtension, ::Browser.BrowserState)
     return nothing
 end
 
+# Julia frees the fonts of Makie when it exits. Text layout that still runs on another thread then
+# reads freed memory and crashes the process, so the browser does not close before the warmup ends.
+function Browser.shutdown!(ext::PlotsExtension, ::Browser.BrowserState)
+    # The browser closes, so an error of the warmup no longer matters.
+    ext.warmup_task === nothing || wait(ext.warmup_task; throw=false)
+    return nothing
+end
+
 function Browser.item_context_menu!(
     ::PlotsExtension,
     state::Browser.BrowserState;

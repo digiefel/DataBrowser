@@ -322,7 +322,9 @@ Base.show(io::IO, session::BrowserSession) = print(
 """Call `shutdown!` on every extension instance."""
 function _shutdown_extensions!(state::BrowserState)::Nothing
     for ext in state.extensions
-        shutdown!(ext, state)
+        # The latest world: the browser calls this in the world where it started, which lacks the
+        # methods of the extensions that loaded later.
+        Base.invokelatest(shutdown!, ext, state)
     end
     return nothing
 end
