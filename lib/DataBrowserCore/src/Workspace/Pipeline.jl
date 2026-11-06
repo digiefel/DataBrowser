@@ -584,9 +584,12 @@ function replaced!(selection::WorkspaceSelection, before::Vector{String}, after:
     gone, added = setdiff(before, after), setdiff(after, before)
     replaced = selection.replaced
     foreach(id -> delete!(replaced, id), added)
+    ## A source item that still gives all the ids it gave leaves the selection as it is.
+    isempty(gone) && return nothing
     length(gone) == length(added) && foreach((old, new) -> replaced[old] = new, gone, added)
     ids = length(gone) == 1 && only(gone) in selection.item_ids ? [selection.item_ids; added] : selection.item_ids
-    # TODO(perf): this takes the time of the number of selected items, for each row that finishes.
+    # TODO(perf): when a source item stops giving an id, this takes the time of the number of
+    # selected items.
     selected = unique!([replacement(selection, id) for id in ids if !(id in gone) || haskey(replaced, id)])
     selected == selection.item_ids || (selection.item_ids = selected; selection.revision += 1)
     return nothing
