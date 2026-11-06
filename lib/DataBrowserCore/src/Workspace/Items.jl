@@ -125,6 +125,8 @@ function Base.sort(ids::Vector{String}, workspace::Workspace, x::Union{Nothing,S
             at == order.revision && isequal(given, ids) && return copy(before)
             ## The rows that were there the last time, with the same keys, keep their order, and the
             ## other rows are sorted and merged in.
+            ## TODO(scale): this still goes through all the ids of the depth, about 30 ms for 40,000
+            ## ids while they are read.
             present, old = Set(ids), Set(before)
             kept = filter(y -> y in present && last(order.keys[y]) <= at, before)
             moved = filter(y -> !(y in old) || last(order.keys[y]) > at, ids)
