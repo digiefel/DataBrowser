@@ -78,7 +78,7 @@ function TreeRows(state::BrowserState, ids::Vector{String}, depth::Int, place::U
         x in state.expanded || continue
         row = TreeRow(workspace, x, depth, hash(x, place), above, true)
         row.open || continue
-        below = sort([Workspace.members(workspace, x); Workspace.items(workspace, x)], workspace)
+        below = sort([Workspace.members(workspace, x); Workspace.items(workspace, x)], workspace, x)
         push!(open, index => TreeRows(state, below, depth + 1, row.place, [above; x]))
     end
     return TreeRows(workspace, ids, depth, place, above, open, length(ids) + sum(length ∘ last, open; init=0))
@@ -128,7 +128,7 @@ function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter
         # TODO(scale): with a filter, this reads every row below the rows that do not pass it.
         if row.open || (row.parent && !passed)
             push!(above, x)
-            for y in sort([Workspace.members(workspace, x); Workspace.items(workspace, x)], workspace)
+            for y in sort([Workspace.members(workspace, x); Workspace.items(workspace, x)], workspace, x)
                 kept |= add!(y, depth + 1, hash(y, place), passed)
             end
             pop!(above)
@@ -164,8 +164,8 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
             ## When the top of the tree is one group, such as the folder of a `DirectorySource`, the
             ## group has no row: the rows below it are the top rows.
             top = length(top) == 1 && Workspace.valuetype(workspace, only(top)) <: AbstractGroup ?
-                sort([Workspace.members(workspace, only(top)); Workspace.items(workspace, only(top))], workspace) :
-                sort(top, workspace)
+                sort([Workspace.members(workspace, only(top)); Workspace.items(workspace, only(top))], workspace, only(top)) :
+                sort(top, workspace, nothing)
             hidden = _tags_ready(state) && !isempty(state.tag_visibility)
             ig.ImGuiTextFilter_IsActive(filter_tree) || hidden ? _tree_rows(state, filter_tree, top) :
                 TreeRows(state, top, 0, zero(UInt), String[])

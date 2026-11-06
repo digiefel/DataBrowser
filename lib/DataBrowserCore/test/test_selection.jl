@@ -70,13 +70,13 @@ end
     try
         W.wait_workspace_idle!(workspace; timeout=20)
         ids = ["IV_B", "IV_A"]
-        @test sort(ids, workspace) == ["IV_A", "IV_B"]
+        @test sort(ids, workspace, nothing) == ["IV_A", "IV_B"]
         # IV_B has no gap: its field is `missing`, which sorts last, and first in reverse.
         sort!(workspace; by=row -> row.gap, rev=true)
-        @test sort(["IV_A", "IV_B"], workspace) == ["IV_B", "IV_A"]
+        @test sort(["IV_A", "IV_B"], workspace, nothing) == ["IV_B", "IV_A"]
         # An order that fails leaves the labels in order.
         sort!(workspace; by=row -> error("no order"))
-        @test (@test_logs (:error,) sort(ids, workspace)) == ["IV_A", "IV_B"]
+        @test (@test_logs (:error,) sort(ids, workspace, nothing)) == ["IV_A", "IV_B"]
     finally
         W.close_workspace!(workspace)
     end

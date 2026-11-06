@@ -301,19 +301,21 @@ end
 
 """
 The order of the rows of the tree that [`sort!`](@ref) sets, with the keywords of `sort`, and what
-it keeps between two sorts: the key of each item, the items with a new version since their key, and
-the sorted ids of each depth of the tree, by the hash of the ids, with the revision of the keys.
+it keeps between two sorts: the key of each item with the revision at which it last changed, the
+items with a new version since their key, and for each depth of the tree, by the id of the row
+above it, the ids it was given, the sorted ids and the revision of the keys then.
 """
 mutable struct TreeOrder
     by::Any
     order::Base.Order.Ordering
-    keys::Dict{String,Any}
+    keys::Dict{String,Tuple{Any,Int}}
     stale::Set{String}
     revision::Int
-    sorted::Dict{UInt,Tuple{Vector{String},Int,Vector{String}}}
+    sorted::Dict{Union{Nothing,String},Tuple{Vector{String},Vector{String},Int}}
 end
 TreeOrder(; by, lt=isless, rev::Bool=false) = TreeOrder(by, Base.Order.ord(lt, identity, rev),
-    Dict{String,Any}(), Set{String}(), 0, Dict{UInt,Tuple{Vector{String},Int,Vector{String}}}())
+    Dict{String,Tuple{Any,Int}}(), Set{String}(), 0,
+    Dict{Union{Nothing,String},Tuple{Vector{String},Vector{String},Int}}())
 
 """
 One open project/source pair and all package-managed state belonging to it.

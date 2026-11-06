@@ -103,33 +103,42 @@ end
 # TODO(query model): the tree asks for its rows in this order until the query model of roadmap 0.5.0
 # sorts.
 """
-    sort(ids, workspace) -> Vector{String}
+    sort(ids, workspace, x) -> Vector{String}
 
-Internal. The ids in the order of the tree, as a new vector. See [`sort!`](@ref).
+Internal. The ids in the order of the tree, as a new vector: the rows below the row `x`, or the top
+rows when `x` is `nothing`. See [`sort!`](@ref).
 """
-function Base.sort(ids::Vector{String}, workspace::Workspace)::Vector{String}
+function Base.sort(ids::Vector{String}, workspace::Workspace, x::Union{Nothing,String})::Vector{String}
     @lock workspace.catalog.lock begin
         order = workspace.order
         try
-            fresh = filter(x -> x in order.stale || !haskey(order.keys, x), ids)
+            fresh = filter(y -> y in order.stale || !haskey(order.keys, y), ids)
             ## The rows of the items whose keys are not known, in one `Selection`.
             names = collect(keys(workspace.produced.columns))
-            metadatas = [merge!(Dict{Symbol,Any}(name => missing for name in names), metadata(workspace, x)) for x in fresh]
-            for (x, row) in zip(fresh, Selection(ItemData(workspace, fresh), fresh, label.(Ref(workspace), fresh), metadatas))
+            metadatas = [merge!(Dict{Symbol,Any}(name => missing for name in names), metadata(workspace, y)) for y in fresh]
+            for (y, row) in zip(fresh, Selection(ItemData(workspace, fresh), fresh, label.(Ref(workspace), fresh), metadatas))
                 key = order.by(row)
-                haskey(order.keys, x) && isequal(order.keys[x], key) || (order.revision += 1)
-                order.keys[x] = key
-                delete!(order.stale, x)
+                haskey(order.keys, y) && isequal(first(order.keys[y]), key) || (order.keys[y] = (key, order.revision += 1))
+                delete!(order.stale, y)
             end
-            ## A depth of the tree whose ids and keys stayed the same keeps its order.
-            ## TODO(scale): this goes through all the ids of the depth, and while source items are
-            ## read, the ids change and the whole depth is sorted again. A merge of the changed ids
-            ## into the last order would leave the others in place.
-            before = get(order.sorted, hash(ids), nothing)
-            before !== nothing && before[2] == order.revision && isequal(before[1], ids) && return copy(before[3])
-            sorted = ids[sortperm([order.keys[x] for x in ids]; order=order.order)]
+            given, before, at = get(order.sorted, x, (String[], String[], -1))
+            at == order.revision && isequal(given, ids) && return copy(before)
+            ## The rows that were there the last time, with the same keys, keep their order, and the
+            ## other rows are sorted and merged in.
+            present, old = Set(ids), Set(before)
+            kept = filter(y -> y in present && last(order.keys[y]) <= at, before)
+            moved = filter(y -> !(y in old) || last(order.keys[y]) > at, ids)
+            moved = moved[sortperm([first(order.keys[y]) for y in moved]; order=order.order)]
+            sorted, next = sizehint!(String[], length(ids)), 1
+            for y in moved
+                stop = searchsortedlast(kept, y; by=z -> first(order.keys[z]), order=order.order)
+                append!(sorted, @view kept[next:stop])
+                push!(sorted, y)
+                next = stop + 1
+            end
+            append!(sorted, @view kept[next:end])
             length(order.sorted) > 64 && empty!(order.sorted)
-            order.sorted[hash(ids)] = (copy(ids), order.revision, sorted)
+            order.sorted[x] = (copy(ids), sorted, order.revision)
             return copy(sorted)
         catch error
             @error("The order that `sort!` set failed: the tree sorts the labels",
