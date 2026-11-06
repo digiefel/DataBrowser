@@ -93,9 +93,11 @@ struct SortKeys
     keys::Vector{Pair{Symbol,Bool}}
 end
 
-# As `by`: the value of each key of the row, and for text its `natural_key`.
+# As `by`: the value of each key of the row, and for text its `natural_key`. A key that the
+# workspace does not have, such as one saved with the browser's view, is `missing`.
 (order::SortKeys)(row) = Tuple(
-    (value = getproperty(row, key); value isa AbstractString ? natural_key(value) : value) for (key, _) in order.keys)
+    (value = hasproperty(row, key) ? getproperty(row, key) : missing; value isa AbstractString ? natural_key(value) : value)
+    for (key, _) in order.keys)
 
 # As `lt`: the first key where the rows differ decides, in its direction.
 function (order::SortKeys)(a::Tuple, b::Tuple)::Bool

@@ -301,7 +301,6 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     return nothing
 end
 
-# TODO: the browser does not save the order of the Sort menu with its view.
 """
 Draw the Sort button at the end of the line, with the order of the tree, and the popup that changes
 it: a line for each key of the order, with its direction, and a button that adds a key. An order

@@ -34,11 +34,13 @@ Base.@kwdef struct PersistedProjectView
     # Native content-area geometry in screen coordinates; empty until the browser is shown.
     window_size::Vector{Int} = Int[]
     window_position::Vector{Int} = Int[]
-    # The ids of the selected values, of the groups that show their members in the tree, and the
-    # text of the filter of the tree.
+    # The ids of the selected values, of the groups that show their members in the tree, the text
+    # of the filter of the tree, and the keys of its Sort menu, each with "ascending" or
+    # "descending".
     selected::Vector{String} = String[]
     expanded::Vector{String} = String[]
     filter::String = ""
+    sort::Vector{Vector{String}} = Vector{String}[]
     extensions::Dict{String,Dict{String,Any}} = Dict{String,Dict{String,Any}}()
     windows::Vector{PersistedWindow} = PersistedWindow[]
 end

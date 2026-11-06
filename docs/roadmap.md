@@ -440,7 +440,7 @@ selection model.
   `sort!(workspace; by, lt, rev)`.
 - [x] Set the order of the tree in the GUI, with the Sort menu beside the filter: keys of a row,
   each with its direction.
-- [ ] Save the order of the Sort menu with the view of the browser.
+- [x] Save the order of the Sort menu with the view of the browser.
 - [ ] Group across a collection level, for example "group across wafer": collections whose values
   are equal once that level is left out form one group, and collection analysis runs on each group.
   The Recipes `collection` callback names the levels, `(wafer = …, device = …)`.
