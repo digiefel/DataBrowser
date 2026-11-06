@@ -300,6 +300,22 @@ mutable struct Taken
 end
 
 """
+The order of the rows of the tree that [`sort!`](@ref) sets, with the keywords of `sort`, and what
+it keeps between two sorts: the key of each item, the items with a new version since their key, and
+the sorted ids of each depth of the tree, by the hash of the ids, with the revision of the keys.
+"""
+mutable struct TreeOrder
+    by::Any
+    order::Base.Order.Ordering
+    keys::Dict{String,Any}
+    stale::Set{String}
+    revision::Int
+    sorted::Dict{UInt,Tuple{Vector{String},Int,Vector{String}}}
+end
+TreeOrder(; by, lt=isless, rev::Bool=false) = TreeOrder(by, Base.Order.ord(lt, identity, rev),
+    Dict{String,Any}(), Set{String}(), 0, Dict{UInt,Tuple{Vector{String},Int,Vector{String}}}())
+
+"""
 One open project/source pair and all package-managed state belonging to it.
 
 The computations are the rows of `catalog`. Every field from `catalog` to `completed` is read and
@@ -362,6 +378,8 @@ mutable struct Workspace{P<:AbstractProject}
     stores::Dict{Type,Union{Nothing,AbstractStore}}
     stores_lock::ReentrantLock
     selection::WorkspaceSelection
+    # The order of the rows of the tree, read and written under `catalog.lock`.
+    order::TreeOrder
     tags::WorkspaceTags
     cache::WorkspaceCache
     scan::WorkspaceScan
@@ -457,6 +475,7 @@ function Workspace(
         Task[], 0, 0,
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),
+        TreeOrder(; by=row -> natural_key(row.label)),
         WorkspaceTags(project, folder),
         WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),

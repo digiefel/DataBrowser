@@ -220,19 +220,37 @@ struct TreeRow
 end
 
 """
+The rows of the tree while no filter and no tag hides rows: `ids` are the rows at one depth, in the
+order of the tree, and `open` holds the rows below each open one, by its index in `ids`. A row is
+made only when it is drawn, so that a frame takes time in proportion to the rows on the screen.
+"""
+struct TreeRows <: AbstractVector{TreeRow}
+    workspace::Workspace.Workspace
+    ids::Vector{String}
+    depth::Int
+    # The place of the row above, and the ids from the top down to that row.
+    place::UInt
+    above::Vector{String}
+    open::Vector{Pair{Int,TreeRows}}
+    length::Int
+end
+
+"""
 The rows of the tree, kept from frame to frame. They are made again when `key` changes, and when the
-workspace changed, at most once per `TREE_REFRESH_SECONDS`: making them costs time in proportion to
-the rows, and a workspace at work changes in every frame. The key covers the workspace, the groups
-that show their members, the filter and the tags.
+workspace changed, at most once per `TREE_REFRESH_SECONDS`: a workspace at work changes in every
+frame. The key covers the workspace, the order, the groups that show their members, the filter and
+the tags.
 """
 mutable struct TreeCache
     key::UInt
     # The generation of the workspace and the time when the rows were made.
     generation::Int
     built::Float64
-    rows::Vector{TreeRow}
-    # The metadata keys of the groups in the rows, one column each, and the metadata of each value
-    # whose row was drawn.
+    rows::AbstractVector{TreeRow}
+    # The metadata keys of the groups whose rows were drawn, one column each, and the metadata of
+    # each value whose row was drawn since the rows were made.
+    # TODO(query model): a column stays once a drawn group had its key; the query model can give the
+    # keys of the groups in the tree.
     columns::Vector{Symbol}
     metadata::Dict{String,Dict{Symbol,Any}}
 end

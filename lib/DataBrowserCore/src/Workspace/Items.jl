@@ -79,6 +79,66 @@ natural_key(text::AbstractString)::Tuple = Tuple(
     all(isdigit, part.match) ? (1, parse(Int, part.match)) : (0, lowercase(part.match))
     for part in eachmatch(r"\d+|\D+", String(text)))
 
+"""
+    sort!(workspace; by, lt=isless, rev=false) -> workspace
+
+Set the order of the items in the tree of the browser, at each depth, with the keywords of `sort`.
+`by` takes a row as [`select`](@ref) gives it: `row.id`, `row.label`, and one field for each
+metadata key of the workspace, `missing` where the item has none. Before a call to `sort!`, the
+tree sorts the labels, with the numbers in them by their value: `a2` comes before `a10`.
+
+```julia
+using NaturalSort
+sort!(workspace; by=row -> row.label, lt=natural)
+sort!(workspace; by=row -> row.timestamp, rev=true)  # the latest first
+```
+
+When `by` or `lt` throws, the tree sorts the labels again and logs the error once.
+"""
+function Base.sort!(workspace::Workspace; by, lt=isless, rev::Bool=false)::Workspace
+    @lock workspace.catalog.lock workspace.order = TreeOrder(; by, lt, rev)
+    return workspace
+end
+
+# TODO(query model): the tree asks for its rows in this order until the query model of roadmap 0.5.0
+# sorts.
+"""
+    sort(ids, workspace) -> Vector{String}
+
+Internal. The ids in the order of the tree, as a new vector. See [`sort!`](@ref).
+"""
+function Base.sort(ids::Vector{String}, workspace::Workspace)::Vector{String}
+    @lock workspace.catalog.lock begin
+        order = workspace.order
+        try
+            fresh = filter(x -> x in order.stale || !haskey(order.keys, x), ids)
+            ## The rows of the items whose keys are not known, in one `Selection`.
+            names = collect(keys(workspace.produced.columns))
+            metadatas = [merge!(Dict{Symbol,Any}(name => missing for name in names), metadata(workspace, x)) for x in fresh]
+            for (x, row) in zip(fresh, Selection(ItemData(workspace, fresh), fresh, label.(Ref(workspace), fresh), metadatas))
+                key = order.by(row)
+                haskey(order.keys, x) && isequal(order.keys[x], key) || (order.revision += 1)
+                order.keys[x] = key
+                delete!(order.stale, x)
+            end
+            ## A depth of the tree whose ids and keys stayed the same keeps its order.
+            ## TODO(scale): this goes through all the ids of the depth, and while source items are
+            ## read, the ids change and the whole depth is sorted again. A merge of the changed ids
+            ## into the last order would leave the others in place.
+            before = get(order.sorted, hash(ids), nothing)
+            before !== nothing && before[2] == order.revision && isequal(before[1], ids) && return copy(before[3])
+            sorted = ids[sortperm([order.keys[x] for x in ids]; order=order.order)]
+            length(order.sorted) > 64 && empty!(order.sorted)
+            order.sorted[hash(ids)] = (copy(ids), order.revision, sorted)
+            return copy(sorted)
+        catch error
+            @error("The order that `sort!` set failed: the tree sorts the labels",
+                exception = (error, catch_backtrace()), _id = objectid(order), maxlog = 1)
+            return ids[sortperm(natural_key.(label.(Ref(workspace), ids)))]
+        end
+    end
+end
+
 """The label of a value: the one its latest version gave it, or its id before it has one."""
 function label(workspace::Workspace, x::AbstractString)::String
     found = @lock workspace.catalog.lock output(workspace, String(x))

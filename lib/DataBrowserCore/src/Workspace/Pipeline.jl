@@ -253,6 +253,8 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
             forget!(workspace, output.type, output.revision)
     end
     outputs === nothing ? delete!(workspace.outputs, row) : (workspace.outputs[row] = accepted)
+    ## The tree computes the keys of its order again for these values.
+    foreach(x -> haskey(workspace.order.keys, x) && push!(workspace.order.stale, x), ids)
     ## The group rows that take one of these values take its latest version now.
     foreach(x -> foreach(group -> input!(workspace, group, x), get(workspace.takers, x, Row[])), ids)
     conflicts!(workspace, row, conflicts)

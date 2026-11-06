@@ -62,15 +62,52 @@ function _kind(workspace::Workspace.Workspace, x::AbstractString)::Union{Nothing
 end
 
 """
-The rows of the tree: the values that no group holds and that a `read` gave, and below each row that
-shows what is below it the members of its group, then the new values that a `process` of it gave and
-that no group holds. When the top is one group, the rows below it are the top rows. A value that is
-a member of several groups has a row below each of them. With a filter, a row shows when its label
-or its kind passes the filter, or when a row below it does, and a row with such a row below it shows
-what is below it. Below a row that passes, the rows show as without a filter. The tags hide rows as
-`state.tag_visibility` says.
+The row of the value `x` below the rows `above`. Rows can show below it when it is a group or values
+come from it, unless it repeats a row above it; they show when it is `open`.
 """
-function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter})::Vector{TreeRow}
+function TreeRow(workspace::Workspace.Workspace, x::String, depth::Int, place::UInt, above::Vector{String}, open::Bool)
+    parent = !(x in above) && (Workspace.valuetype(workspace, x) <: AbstractGroup || !isempty(Workspace.items(workspace, x)))
+    return TreeRow(x, depth, place, parent, parent && open)
+end
+
+"""The rows `ids` at `depth`, below the rows `above`, and the rows below each one that is open."""
+function TreeRows(state::BrowserState, ids::Vector{String}, depth::Int, place::UInt, above::Vector{String})::TreeRows
+    workspace, open = state.workspace, Pair{Int,TreeRows}[]
+    ## TODO(scale): each row of a depth is looked up in the open rows; few rows are open.
+    for (index, x) in enumerate(ids)
+        x in state.expanded || continue
+        row = TreeRow(workspace, x, depth, hash(x, place), above, true)
+        row.open || continue
+        below = sort([Workspace.members(workspace, x); Workspace.items(workspace, x)], workspace)
+        push!(open, index => TreeRows(state, below, depth + 1, row.place, [above; x]))
+    end
+    return TreeRows(workspace, ids, depth, place, above, open, length(ids) + sum(length ∘ last, open; init=0))
+end
+
+Base.size(rows::TreeRows) = (rows.length,)
+
+function Base.getindex(rows::TreeRows, index::Int)::TreeRow
+    ## The rows below the open rows before it come first.
+    before = 0
+    for (at, below) in rows.open
+        index <= at + before && break
+        index <= at + before + length(below) && return below[index-at-before]
+        before += length(below)
+    end
+    x = rows.ids[index-before]
+    return TreeRow(rows.workspace, x, rows.depth, hash(x, rows.place), rows.above,
+        any(pair -> first(pair) == index - before, rows.open))
+end
+
+"""
+The rows of the tree with a filter, or when tags hide rows: the rows `top`, and below each row that
+shows what is below it, the members of its group and the values that come from it. A value that is
+a member of several groups has a row below each of them. With a filter, a row shows when its label
+or its kind passes the filter, or when a row below it does, and a row with such a row below it
+shows what is below it. Below a row that passes, the rows show as without a filter. The tags hide
+rows as `state.tag_visibility` says.
+"""
+function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter}, top::Vector{String})::Vector{TreeRow}
     workspace = state.workspace
     rows = TreeRow[]
     # The rows from the top down to the row being added: a group that holds itself shows nothing
@@ -79,22 +116,19 @@ function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter
     # Add the row of `x` and the rows below it, and return whether the row stays.
     function add!(x::String, depth::Int, place::UInt, passed::Bool)::Bool
         _is_visible(state, x) || return false
-        type = Workspace.valuetype(workspace, x)
-        from = Workspace.items(workspace, x)
-        parent = !(x in above) && (type <: AbstractGroup || !isempty(from))
+        row = TreeRow(workspace, x, depth, place, above, x in state.expanded)
         if !passed
             kind = _kind(workspace, x)
             text = kind === nothing ? label(workspace, x) :
                 string(label(workspace, x), "\n", kind_label(workspace.project, kind))
             passed = ig.ImGuiTextFilter_PassFilter(filter_tree, text, C_NULL)
         end
-        open = parent && x in state.expanded
-        push!(rows, TreeRow(x, depth, place, parent, open))
+        push!(rows, row)
         index, kept = length(rows), false
         # TODO(scale): with a filter, this reads every row below the rows that do not pass it.
-        if open || (parent && !passed)
+        if row.open || (row.parent && !passed)
             push!(above, x)
-            for y in (type <: AbstractGroup ? [Workspace.members(workspace, x); from] : from)
+            for y in sort([Workspace.members(workspace, x); Workspace.items(workspace, x)], workspace)
                 kept |= add!(y, depth + 1, hash(y, place), passed)
             end
             pop!(above)
@@ -104,14 +138,7 @@ function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter
         kept ? (rows[index] = TreeRow(x, depth, place, true, true)) : resize!(rows, index - 1)
         return kept
     end
-    top = Workspace.members(workspace)
-    ## When the top of the tree is one group, such as the folder of a `DirectorySource`, the group has
-    ## no row: its members and the new values that a `process` of it gave are the top rows.
-    if length(top) == 1 && Workspace.valuetype(workspace, only(top)) <: AbstractGroup
-        top = [Workspace.members(workspace, only(top)); Workspace.items(workspace, only(top))]
-    end
-    ## The sort key of each row once: `sort!` with `by` computes it again at every comparison.
-    for x in top[sortperm([Workspace.natural_key(label(workspace, x)) for x in top])]
+    for x in top
         add!(x, 0, hash(x), !ig.ImGuiTextFilter_IsActive(filter_tree))
     end
     return rows
@@ -126,22 +153,29 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     _render_tag_state_error!(state)
     _render_tag_visibility!(state)
     workspace = state.workspace
-    key = hash((objectid(workspace), _imgui_text_filter_text(filter_tree), hash(state.expanded),
-        hash(state.tag_visibility), workspace.tags.revision, _tags_ready(state)))
+    key = hash((objectid(workspace), objectid(workspace.order), _imgui_text_filter_text(filter_tree),
+        hash(state.expanded), hash(state.tag_visibility), workspace.tags.revision, _tags_ready(state)))
     generation = Workspace.generation(workspace)
     kept = state.tree_cache
     cache = if kept === nothing || kept.key != key ||
                (kept.generation != generation && time() - kept.built >= TREE_REFRESH_SECONDS)
-        rows = @timed "tree_rows" _tree_rows(state, filter_tree)
-        # One column for each metadata key of the groups.
-        metadata = Dict{String,Dict{Symbol,Any}}(row.id => Workspace.metadata(workspace, row.id)
-            for row in rows if Workspace.valuetype(workspace, row.id) <: AbstractGroup)
-        columns = sort!(unique!(Symbol[name for found in values(metadata) for name in keys(found)]))
-        state.tree_cache = TreeCache(key, generation, time(), rows, columns, metadata)
+        rows = @timed "tree_rows" begin
+            top = Workspace.members(workspace)
+            ## When the top of the tree is one group, such as the folder of a `DirectorySource`, the
+            ## group has no row: the rows below it are the top rows.
+            top = length(top) == 1 && Workspace.valuetype(workspace, only(top)) <: AbstractGroup ?
+                sort([Workspace.members(workspace, only(top)); Workspace.items(workspace, only(top))], workspace) :
+                sort(top, workspace)
+            hidden = _tags_ready(state) && !isempty(state.tag_visibility)
+            ig.ImGuiTextFilter_IsActive(filter_tree) || hidden ? _tree_rows(state, filter_tree, top) :
+                TreeRows(state, top, 0, zero(UInt), String[])
+        end
+        columns = kept === nothing ? Symbol[] : kept.columns
+        state.tree_cache = TreeCache(key, generation, time(), rows, columns, Dict{String,Dict{Symbol,Any}}())
     else
         kept
     end
-    rows = cache.rows
+    rows, columns = cache.rows, cache.columns
     selected = _visible_selection(state)
 
     selected_count = length(selected.ids)
@@ -171,10 +205,10 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
         ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_Reorderable | ig.ImGuiTableFlags_Hideable
     if isempty(rows)
         ig.TextDisabled(ig.ImGuiTextFilter_IsActive(filter_tree) ? "No items match filter" : "No data loaded")
-    elseif ig.BeginTable("tree_table", 2 + length(cache.columns), table_flags)
+    elseif ig.BeginTable("tree_table", 2 + length(columns), table_flags)
         ig.TableSetupColumn("Item", ig.ImGuiTableColumnFlags_NoHide | ig.ImGuiTableColumnFlags_NoReorder |
             ig.ImGuiTableColumnFlags_WidthStretch, 5.0)
-        for column in cache.columns
+        for column in columns
             ig.TableSetupColumn(String(column), ig.ImGuiTableColumnFlags_AngledHeader | ig.ImGuiTableColumnFlags_WidthFixed)
         end
         ig.TableSetupColumn("")
@@ -238,8 +272,15 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                     ig.SameLine()
                     _render_readiness_mark!(readiness)
                     row.depth > 0 && ig.Unindent(indent)
-                    for (column, field) in enumerate(cache.columns)
-                        found = get!(() -> Workspace.metadata(workspace, row.id), cache.metadata, row.id)
+                    found = get!(cache.metadata, row.id) do
+                        value = Workspace.metadata(workspace, row.id)
+                        ## One column for each metadata key of the groups whose rows were drawn,
+                        ## from the next frame.
+                        Workspace.valuetype(workspace, row.id) <: AbstractGroup && !issubset(keys(value), columns) &&
+                            (cache.columns = sort!(union(cache.columns, keys(value))))
+                        value
+                    end
+                    for (column, field) in enumerate(columns)
                         ig.TableSetColumnIndex(column)
                         haskey(found, field) && ig.TextUnformatted(string(found[field]))
                     end

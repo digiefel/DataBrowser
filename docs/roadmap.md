@@ -436,6 +436,9 @@ selection model.
 - [ ] Add a visual filter builder to the GUI.
 - [ ] Add a flat item table with selectable metadata columns alongside the hierarchy view.
 - [ ] Support flattening, grouping, sorting, and filtering without copying item state into the GUI.
+- [x] Sort the rows of the tree, at each depth, with any Julia function:
+  `sort!(workspace; by, lt, rev)`.
+- [ ] Set the order of the tree in the GUI, with a click on the header of a column or with a builder.
 - [ ] Group across a collection level, for example "group across wafer": collections whose values
   are equal once that level is left out form one group, and collection analysis runs on each group.
   The Recipes `collection` callback names the levels, `(wafer = …, device = …)`.
