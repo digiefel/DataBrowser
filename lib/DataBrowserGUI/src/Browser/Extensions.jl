@@ -54,7 +54,7 @@ Called inside the open menu of a row of the tree, to add entries to it. `item_id
 of the items the menu applies to: the selected items when the item of the clicked row is one of
 them, or else that item. Call it only when the user clicks an entry, because it takes time in
 proportion to the selection. `label` is the label of the clicked item, and `kind` the name of its
-type.
+type, or `nothing` while the item has no value yet, as a source item whose `read` runs or failed.
 """
 item_context_menu!(ext::GuiExtension, state; item_ids, label, kind) = nothing
 

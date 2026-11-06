@@ -53,6 +53,15 @@ function _imgui_text_filter_text(filter::Ptr{ig.lib.ImGuiTextFilter})::String
 end
 
 """
+The kind of the value `x`: the name of its type. A value has none until a version of it gives a
+result, as a source item whose `read` runs or failed.
+"""
+function _kind(workspace::Workspace.Workspace, x::AbstractString)::Union{Nothing,Symbol}
+    type = Workspace.valuetype(workspace, x)
+    return type === Any ? nothing : label(type)
+end
+
+"""
 The rows of the tree: the values that no group holds and that a `read` gave, and below each row that
 shows what is below it the members of its group, then the new values that a `process` of it gave and
 that no group holds. A value that is a member of several groups has a row below each of them. With a
@@ -72,8 +81,12 @@ function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter
         type = Workspace.valuetype(workspace, x)
         from = Workspace.items(workspace, x)
         parent = !(x in above) && (type <: AbstractGroup || !isempty(from))
-        passed = passed || ig.ImGuiTextFilter_PassFilter(filter_tree,
-            string(label(workspace, x), "\n", kind_label(workspace.project, label(type))), C_NULL)
+        if !passed
+            kind = _kind(workspace, x)
+            text = kind === nothing ? label(workspace, x) :
+                string(label(workspace, x), "\n", kind_label(workspace.project, kind))
+            passed = ig.ImGuiTextFilter_PassFilter(filter_tree, text, C_NULL)
+        end
         open = parent && x in state.expanded
         push!(rows, TreeRow(x, depth, place, parent, open))
         index, kept = length(rows), false
@@ -208,7 +221,7 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                         # invalidate the compiled code here.
                         for ext in state.extensions
                             Base.invokelatest(item_context_menu!, ext, state; item_ids=() -> targets,
-                                label=name, kind=label(Workspace.valuetype(workspace, row.id)))
+                                label=name, kind=_kind(workspace, row.id))
                         end
                         _render_tag_menu!(state, targets)
                         ig.EndPopup()
