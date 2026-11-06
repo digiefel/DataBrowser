@@ -88,10 +88,10 @@ end
             expand=(data, _) -> [(data=(x=[n],), metadata=Dict(:channel => n)) for n in data],
             id=(_, meta) -> meta[:channel],
             collection=(_, meta) -> (wafer="W1", device=meta[:filename]))
-        register_collection!(project, :wafer; analyze=(data, _) -> Dict(:wafer_count => length(data)))
+        register_collection!(project, :wafer; analyze=(data, _) -> [Dict(:wafer_count => length(data)) for _ in data])
         register_collection!(project, :device; members=:trace,
             process=(data, _) -> [(x=d.x .+ length(data),) for d in data],
-            analyze=(data, _) -> Dict(:count => length(data)))
+            analyze=(data, meta) -> [(count=length(data), rank=count(n -> n[:channel] < m[:channel], meta) + 1) for m in meta])
         workspace = open_workspace(project, DirectorySource(root); cache=false, background_processing=true)
         try
             wait_workspace_idle!(workspace; timeout=20)
@@ -100,6 +100,7 @@ end
             entries = materialize_items(workspace, ["a.dat#trace:1", "a.dat#trace:2", "b.dat#trace:3"])
             @test [data(entry).x for entry in entries] == [[3], [4], [4]]
             @test [metadata(entry)[:count] for entry in entries] == [2, 2, 1]
+            @test [metadata(entry)[:rank] for entry in entries] == [1, 2, 1]
             @test all(metadata(entry)[:wafer_count] == 3 for entry in entries)
         finally
             close_workspace!(workspace)

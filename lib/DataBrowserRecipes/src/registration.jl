@@ -116,8 +116,9 @@ the `collection` callback of [`register_item!`](@ref) names.
 
 `process(data, metadata)` receives the data and the metadata of the items below the collection, as
 vectors, and returns new data for each item, in the same order. `analyze(data, metadata)` receives
-the data that `process` returned and the metadata of the items, and returns metadata that the
-collection and each item below it get. When collections of two levels give an item new data, or
+the data that `process` returned and the metadata of the items, and returns metadata for each item,
+in the same order. A value that is the same for every item, such as the number of items, is
+repeated in each item's metadata. When collections of two levels give an item new data, or
 metadata under the same name, the higher level wins.
 
 `members` limits both callbacks to the items of one registration, such as `:trace`; by default they

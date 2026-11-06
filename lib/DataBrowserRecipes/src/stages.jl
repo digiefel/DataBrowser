@@ -184,20 +184,31 @@ function process(project::Project, folder::SourceGroup, items::AbstractVector{Re
                 collection.data[item.id] = output
             end
         end
-        recipe.analyze === nothing ||
-            merge!(collection.metadata, metadata_dict(recipe.analyze(outputs, metadata.(group))))
+        if recipe.analyze !== nothing
+            analysis = recipe.analyze(outputs, metadata.(group))
+            analysis isa AbstractVector && length(analysis) == length(group) || error(
+                "collection analyze for level $(recipe.level) must return a vector with one metadata set per member; " *
+                "got $(typeof(analysis)) for $(length(group)) members")
+            for (item, item_metadata) in zip(group, analysis)
+                merge!(get!(Dict{Symbol,Any}, collection.member_metadata, item.id), metadata_dict(item_metadata))
+            end
+        end
     end
     return NamedCollection[found[x] for x in order]
 end
 
-"""A registered item gets its new data and the metadata of its collection."""
+"""A registered item gets the new data and the metadata that its collection has for it."""
 process(::Project, member::RegisteredDataItem, collection::NamedCollection)::RegisteredDataItem =
-    _with_metadata(_with_data(member, get(collection.data, id(member), member.data)), metadata(collection))
+    _with_metadata(_with_data(member, get(collection.data, id(member), member.data)),
+        get(collection.member_metadata, id(member), Dict{Symbol,Any}()))
 
-"""A collection gets the new data and the metadata of the collection above it, for the items below it."""
+"""
+A collection gets the new data and the metadata that the collection above it has for the items
+below it. Where both have a value, the one above wins.
+"""
 process(::Project, member::NamedCollection, collection::NamedCollection)::NamedCollection =
     typeof(member)(member.id, member.name, member.members,
-        merge(member.data, collection.data), merge(member.metadata, collection.metadata))
+        merge(member.data, collection.data), mergewith(merge, member.member_metadata, collection.member_metadata))
 
 """
 The registered callbacks that run `stage`. Registering a name again replaces them, so an open

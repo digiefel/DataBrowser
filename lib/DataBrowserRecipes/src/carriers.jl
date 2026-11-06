@@ -61,24 +61,25 @@ reconstruct(::Type{<:ReadData{K}}, id::AbstractString, data, metadata::Dict) whe
 One collection that a `collection` callback names, as a group. `Level` is the name the callback
 gives the level, such as `:wafer`, and `name` is the value at that level, such as `"W1"`. Its
 members are the collections and the items directly below it. `data` holds the new data of items
-below it, by id, that the collection `process` callbacks returned, and `metadata` what the
-collection `analyze` callbacks computed; both include those of the collections above it once it is
-a later version of itself as their member.
+below it, by id, that the collection `process` callbacks returned, and `member_metadata` the
+metadata of items below it, by id, that the collection `analyze` callbacks returned; both include
+those of the collections above it once it is a later version of itself as their member. The
+collection has no metadata of its own.
 """
 struct NamedCollection{Level} <: AbstractGroup
     id::String
     name::String
     members::Vector{String}
     data::Dict{String,Any}
-    metadata::Dict{Symbol,Any}
+    member_metadata::Dict{String,Dict{Symbol,Any}}
 end
 
 NamedCollection{Level}(id::AbstractString, name::AbstractString) where {Level} =
-    NamedCollection{Level}(String(id), String(name), String[], Dict{String,Any}(), Dict{Symbol,Any}())
+    NamedCollection{Level}(String(id), String(name), String[], Dict{String,Any}(), Dict{String,Dict{Symbol,Any}}())
 
 id(collection::NamedCollection)::String = collection.id
 label(collection::NamedCollection)::String = collection.name
 label(::Type{NamedCollection{Level}}) where {Level} = Level
 members(collection::NamedCollection)::Vector{String} = collection.members
-metadata(collection::NamedCollection)::Dict{Symbol,Any} = collection.metadata
+metadata(::NamedCollection)::Dict{Symbol,Any} = Dict{Symbol,Any}()
 data(collection::NamedCollection) = isempty(collection.data) ? nothing : collection.data
