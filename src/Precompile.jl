@@ -61,7 +61,7 @@ let Browser = DataBrowserGUI.Browser, State = DataBrowserGUI.Browser.BrowserStat
         ProjectWorkspace = DataBrowserCore.Workspace.Workspace{DataBrowserRecipes.Project}
     for part in (
         Browser._reveal_selected_items!, Browser._add_new_extensions!, Browser._extensions_ready,
-        Browser.render_selection_window, Browser.render_project_window, Browser.render_info_window,
+        Browser.render_toolbar!, Browser.render_selection_window, Browser.render_info_window,
         Browser.render_windows!, Browser.render_perf_window, Browser.render_debug_tools!,
         Browser._save_project_view_if_changed!, Browser.render_cache_rebuild_modal,
     )

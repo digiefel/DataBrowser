@@ -283,7 +283,8 @@ Base.@kwdef mutable struct BrowserState
     tag_visibility::Dict{String,Symbol} = Dict{String,Symbol}()
     # The text typed in the "New tag" field of the tag menu.
     new_tag::Vector{UInt8} = zeros(UInt8, 64)
-    show_project_window::Bool = false
+    # The typed text and the highlight of the list of visualizers in the "+ Window" menu.
+    window_picker::ListPicker = ListPicker()
     show_performance_window::Bool = false
     show_imgui_metrics::Bool = false
     show_imgui_debug_log::Bool = false

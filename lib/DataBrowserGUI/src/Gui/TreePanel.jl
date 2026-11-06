@@ -64,10 +64,11 @@ end
 """
 The rows of the tree: the values that no group holds and that a `read` gave, and below each row that
 shows what is below it the members of its group, then the new values that a `process` of it gave and
-that no group holds. A value that is a member of several groups has a row below each of them. With a
-filter, a row shows when its label or its kind passes the filter, or when a row below it does, and a
-row with such a row below it shows what is below it. Below a row that passes, the rows show as
-without a filter. The tags hide rows as `state.tag_visibility` says.
+that no group holds. When the top is one group, the rows below it are the top rows. A value that is
+a member of several groups has a row below each of them. With a filter, a row shows when its label
+or its kind passes the filter, or when a row below it does, and a row with such a row below it shows
+what is below it. Below a row that passes, the rows show as without a filter. The tags hide rows as
+`state.tag_visibility` says.
 """
 function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter})::Vector{TreeRow}
     workspace = state.workspace
@@ -103,7 +104,13 @@ function _tree_rows(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter
         kept ? (rows[index] = TreeRow(x, depth, place, true, true)) : resize!(rows, index - 1)
         return kept
     end
-    for x in sort!(Workspace.members(workspace); by=x -> Workspace.natural_key(label(workspace, x)))
+    top = Workspace.members(workspace)
+    ## When the top of the tree is one group, such as the folder of a `DirectorySource`, the group has
+    ## no row: its members and the new values that a `process` of it gave are the top rows.
+    if length(top) == 1 && Workspace.valuetype(workspace, only(top)) <: AbstractGroup
+        top = [Workspace.members(workspace, only(top)); Workspace.items(workspace, only(top))]
+    end
+    for x in sort!(top; by=x -> Workspace.natural_key(label(workspace, x)))
         add!(x, 0, hash(x), !ig.ImGuiTextFilter_IsActive(filter_tree))
     end
     return rows
@@ -254,8 +261,7 @@ function render_selection_window(state::BrowserState)::Nothing
         state.tree_filter_widget = ig.ImGuiTextFilter_ImGuiTextFilter(state.tree_filter)
     end
     filter_tree = state.tree_filter_widget
-    if ig.Begin("Hierarchy", C_NULL, ig.ImGuiWindowFlags_MenuBar)
-        render_menu_bar(state)
+    if ig.Begin("Hierarchy")
         # The tree reads many rows of the catalog. Holding its lock for the panel keeps it from
         # waiting for the workers at every row.
         @lock state.workspace.catalog.lock @timed "tree" _render_tree_panel(state, filter_tree)
