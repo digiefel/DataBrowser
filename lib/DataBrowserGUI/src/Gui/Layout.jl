@@ -365,8 +365,9 @@ With `wait=false`, returns a [`BrowserSession`](@ref) (`task` + `state`). Use
 full browser frame has been presented. Use [`close_browser!`](@ref) to exit the loop cleanly.
 
 Panel positions, docking and table widths use ImGui’s `imgui.ini` in the current working
-directory. The native window position and size are saved in the source directory's
-`databrowser.toml` and used when creating the window, before the first ImGui frame.
+directory. The native window position and size are saved with the view of the project in
+`databrowser.toml`, in the folder of the Julia environment that was active when the workspace
+opened, and used when creating the window, before the first ImGui frame.
 
 Closing the window closes the browser only. The workspace stays open and keeps processing items,
 and `open_browser` can show it again. Use `close_workspace!` to close the workspace.

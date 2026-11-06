@@ -1,17 +1,11 @@
 # Tags on the items of a workspace.
 #
-# The tags live in `tags.txt` in the source root, and every change is written to that file at once.
-# A source without a root folder keeps its tags in memory. The file names an item by its public id.
+# The tags live in `tags.txt` in the folder of the workspace, in the sections of its project, and
+# every change is written to that file at once. The file names an item by its public id.
 
-"""The folder that holds `tags.txt`, or `""` for a source without a root folder."""
-tag_root(source::AbstractDataSource)::String =
-    hasproperty(source, :root_path) ? source.root_path : ""
-
-function WorkspaceTags(source::AbstractDataSource)::WorkspaceTags
-    root = tag_root(source)
-    isempty(root) && return WorkspaceTags(TagState(), "")
+function WorkspaceTags(project::AbstractProject, folder::String)::WorkspaceTags
     state = try
-        Tags.load(root)
+        Tags.load(folder, project_name(project))
     catch error
         error isa Union{Tags.TagsParseError,Base.IOError} || rethrow()
         return WorkspaceTags(TagState(), sprint(showerror, error))
@@ -80,8 +74,7 @@ function change_tags!(change::Function, workspace::Workspace)::Nothing
         error("Tags cannot change until tags.txt is fixed: $(workspace.tags.error)")
     lock(workspace.lifecycle_lock) do
         change(workspace.tags.state)
-        root = tag_root(workspace.source)
-        isempty(root) || Tags.save(root, workspace.tags.state)
+        Tags.save(workspace.folder, project_name(workspace.project), workspace.tags.state)
         workspace.tags.revision += 1
     end
     return nothing

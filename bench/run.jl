@@ -39,6 +39,14 @@ function measure_benchmark(workload, julia::Cmd)
             depot = mkpath(joinpath(dir, "data-cache"))
             rss = 0.0
             result = Dict{String,Any}()
+            # The browser saves its view in the folder of the active environment, bench: the first
+            # opening starts without the view of an earlier run.
+            views = joinpath(@__DIR__, "databrowser.toml")
+            if isfile(views)
+                saved = TOML.parsefile(views)
+                delete!(saved, "BrowserSmoke")
+                open(io -> TOML.print(io, saved), views, "w")
+            end
             for opening in ("open", "reopen")
                 peak = run_worker(`$julia $worker browser $output $root $depot $opening $(time_ns())`)
                 rss = max(rss, peak)

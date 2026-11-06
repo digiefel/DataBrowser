@@ -84,13 +84,7 @@ struct TagProject <: AbstractProject end
 DataBrowserAPI.project_name(::TagProject) = "tag"
 DataBrowserAPI.process(::TagProject, i::EngineItem) = [EngineItem(key, i.data, Dict()) for key in ("a", "b")]
 
-struct RootedSource <: AbstractDataSource
-    root_path::String
-end
-DataBrowserAPI.id(s::RootedSource) = s.root_path
-DataBrowserAPI.label(s::RootedSource) = s.root_path
-DataBrowserAPI.items(::RootedSource; kwargs...) = [EngineSourceItem(1, false)]
-DataBrowserAPI.read(::TagProject, ::RootedSource, s::EngineSourceItem) = EngineItem("source", (x=[s.version],), Dict())
+DataBrowserAPI.read(::TagProject, ::EngineSource, s::EngineSourceItem) = EngineItem("source", (x=[s.version],), Dict())
 
 struct GatedProject <: AbstractProject
     gate::Base.Event
@@ -443,39 +437,39 @@ end
     end
 end
 
+# The tags file is in the folder of the active environment: under `Pkg.test`, a temporary folder.
 @testset "tags apply to items and are kept in tags.txt" begin
-    mktempdir() do root
-        names(found) = [tag.name for tag in found]
-        ws = W.open_workspace(TagProject(), RootedSource(root); cache=false, background_processing=true)
-        try
-            settled(ws)
-            a, b = "a", "b"
-            # A name that is not defined is refused.
-            @test_throws ErrorException tag!(ws, a, "leaky")
-            tag!(ws, Tag("leaky"))
-            tag!(ws, Tag("bad"; priority=5))
-            tag!(ws, a, "leaky")
-            tag!(ws, [a, b], Tag("bad"))
-            @test names(tags(ws, a)) == ["bad", "leaky"]
-            @test names(tags(ws, b)) == ["bad"]
-            @test items(ws, Tag("leaky")) == [a]
-            @test W.select(ws, items(ws, Tag("leaky"))).id == ["a"]
-            @test sort(items(ws, !Tag("leaky"))) == [b, "source"]
-            untag!(ws, [a, b], "leaky")
-            @test names(tags(ws, a)) == ["bad"]
-        finally
-            W.close_workspace!(ws)
-        end
-        ws = W.open_workspace(TagProject(), RootedSource(root); cache=false)
-        try
-            settled(ws)
-            @test names(tags(ws)) == ["leaky", "bad"]
-            @test names(tags(ws, "b")) == ["bad"]
-            untag!(ws, "bad")
-            @test names(tags(ws)) == ["leaky"]
-            @test isempty(tags(ws, "b"))
-        finally
-            W.close_workspace!(ws)
-        end
+    names(found) = [tag.name for tag in found]
+    ws = W.open_workspace(TagProject(), EngineSource("source", 1, false); cache=false, background_processing=true)
+    try
+        settled(ws)
+        a, b = "a", "b"
+        # A name that is not defined is refused.
+        @test_throws ErrorException tag!(ws, a, "leaky")
+        tag!(ws, Tag("leaky"))
+        tag!(ws, Tag("bad"; priority=5))
+        tag!(ws, a, "leaky")
+        tag!(ws, [a, b], Tag("bad"))
+        @test names(tags(ws, a)) == ["bad", "leaky"]
+        @test names(tags(ws, b)) == ["bad"]
+        @test items(ws, Tag("leaky")) == [a]
+        @test W.select(ws, items(ws, Tag("leaky"))).id == ["a"]
+        @test sort(items(ws, !Tag("leaky"))) == [b, "source"]
+        untag!(ws, [a, b], "leaky")
+        @test names(tags(ws, a)) == ["bad"]
+    finally
+        W.close_workspace!(ws)
+    end
+    @test isfile(joinpath(dirname(Base.active_project()), "tags.txt"))
+    ws = W.open_workspace(TagProject(), EngineSource("source", 1, false); cache=false)
+    try
+        settled(ws)
+        @test names(tags(ws)) == ["leaky", "bad"]
+        @test names(tags(ws, "b")) == ["bad"]
+        untag!(ws, "bad")
+        @test names(tags(ws)) == ["leaky"]
+        @test isempty(tags(ws, "b"))
+    finally
+        W.close_workspace!(ws)
     end
 end

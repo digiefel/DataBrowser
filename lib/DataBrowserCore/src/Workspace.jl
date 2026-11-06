@@ -135,7 +135,8 @@ function replacement(selection::WorkspaceSelection, x::String)::String
 end
 
 """
-The tags of a workspace: the content of `tags.txt` in the source root.
+The tags of a workspace: the sections of its project in `tags.txt`, in the folder of the
+workspace.
 
 `error` says why the file could not be read; tags cannot change while it is set. `revision`
 increases with every change, for views that keep what they computed from the tags.
@@ -307,6 +308,9 @@ written under `catalog.lock`.
 mutable struct Workspace{P<:AbstractProject}
     project::P
     source::AbstractDataSource
+    # The folder of the Julia environment that was active when the workspace opened; it holds
+    # `tags.txt` and the browser's `databrowser.toml`.
+    folder::String
     catalog::Catalog
     # The row that reads each source item, by its id, and the rows of `process`, by
     # "process:x", "group process:g" or "member process:m in g" for a value x, a group g, a member m.
@@ -437,9 +441,10 @@ function Workspace(
     metrics = BuildMetrics()
     cache_db, disk_error, identity =
         _open_workspace_cache(project, source, metrics; rebuild, cache)
+    folder = dirname(Base.active_project())
     return Workspace(
         # The cache keeps the key of each computation, by its id, for the next session.
-        project, source, Catalog(value -> key!(cache_db, id(value))),
+        project, source, folder, Catalog(value -> key!(cache_db, id(value))),
         Dict{String,Row}(), Dict{String,Row}(),
         Dict{Row,PipelineStage}(), Dict{Row,Vector{Output}}(), Dict{String,Vector{Row}}(),
         Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Set{String}(),
@@ -452,7 +457,7 @@ function Workspace(
         Task[], 0, 0,
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),
-        WorkspaceTags(source),
+        WorkspaceTags(project, folder),
         WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),
         :idle, "", "",

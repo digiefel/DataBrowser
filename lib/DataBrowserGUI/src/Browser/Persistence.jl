@@ -4,22 +4,11 @@ import GLFW
 using DataBrowserAPI: AbstractVisualizer, prepare!, project_name, select!, selection, settings
 import DataBrowserCore.Workspace
 
-"""Convert a user path into the stable absolute form used by persistence."""
-function _normalize_project_path(path::AbstractString)::String
-    # The assertion keeps the calls after it compiled for a `String`, whatever string the caller
-    # passes: methods of packages loaded later then do not invalidate them.
-    return normpath(abspath(expanduser(String(path)::String)))
-end
-
 # ---------------------------------------------------------------------------
-# Project-local browser state
+# The view of the browser, saved in `databrowser.toml`
 # ---------------------------------------------------------------------------
 
 const PROJECT_VIEW_FILENAME = "databrowser.toml"
-
-function _project_view_file_path(root_path::AbstractString)::String
-    return joinpath(_normalize_project_path(root_path), PROJECT_VIEW_FILENAME)
-end
 
 """
 Decode TOML values according to the fields of the requested browser-state type.
@@ -99,40 +88,23 @@ function _project_view_to_toml(value::Any)::Dict{String,Any}
     )
 end
 
-"""Read project-local browser state when it exists."""
-function _load_project_view(root_path::AbstractString)::PersistedProjectView
-    path = _project_view_file_path(root_path)
-    isfile(path) || return PersistedProjectView()
-    return _project_view_from_toml(
-        PersistedProjectView,
-        TOML.parsefile(path),
-    )
-end
-
-"""Read the saved view belonging to this workspace's source and project."""
+"""
+Read the saved view of the workspace's project: its table in `databrowser.toml`, in the folder of
+the workspace. Without the file or the table, the view has the defaults.
+"""
 function _load_project_view(workspace::Workspace.Workspace)::PersistedProjectView
-    view = hasproperty(workspace.source, :root_path) ?
-        _load_project_view(workspace.source.root_path) : PersistedProjectView()
-    project = project_name(workspace.project)
-    return !isempty(view.project) && view.project != project ?
-        PersistedProjectView(project=project) : view
+    path = joinpath(workspace.folder, PROJECT_VIEW_FILENAME)
+    views = isfile(path) ? TOML.parsefile(path) : Dict{String,Any}()
+    return _project_view_from_toml(
+        PersistedProjectView, get(views, project_name(workspace.project), Dict{String,Any}()))
 end
 
-"""Write project-local browser state beside the source data."""
-function _save_project_view(root_path::AbstractString, view::PersistedProjectView)::Nothing
-    open(_project_view_file_path(root_path), "w") do io
-        TOML.print(io, _project_view_to_toml(view))
-    end
-    return nothing
-end
-
-"""Capture the browser controls that belong in the source-root state file."""
+"""Capture the browser controls that `databrowser.toml` saves."""
 function _project_view_from_browser(
     state::BrowserState,
 )::PersistedProjectView
     workspace = state.workspace
     return PersistedProjectView(
-        project=project_name(workspace.project),
         window_size=Int[GLFW.GetWindowSize(ig.current_window())...],
         window_position=Int[GLFW.GetWindowPos(ig.current_window())...],
         selected=copy(workspace.selection.item_ids),
@@ -246,7 +218,7 @@ function _persisted_extensions(state::BrowserState)::Dict{String,Dict{String,Any
     return extensions
 end
 
-"""Apply loaded project-local state to browser controls and workspace selection."""
+"""Apply a saved view to the browser controls and the workspace selection."""
 # TODO: Expose view restoration through the browser session API.
 function _apply_project_view!(
     state::BrowserState,
@@ -273,8 +245,8 @@ function _apply_project_view!(
 end
 
 """
-Write project-local state only when its serialized value changed. The frames compare it twice a
-second at most; `every=0` compares it now, as when the browser closes.
+Write the view to `databrowser.toml` only when its serialized value changed. The frames compare it
+twice a second at most; `every=0` compares it now, as when the browser closes.
 """
 function _save_project_view_if_changed!(state::BrowserState; every::Real=0.5)::Nothing
     # A failed initial restore must not overwrite the saved view with startup defaults.
@@ -285,9 +257,11 @@ function _save_project_view_if_changed!(state::BrowserState; every::Real=0.5)::N
     view = _project_view_from_browser(state)
     _project_view_to_toml(state.saved_project_view) ==
         _project_view_to_toml(view) && return nothing
-    workspace = state.workspace
-    hasproperty(workspace.source, :root_path) || return nothing
-    _save_project_view(workspace.source.root_path, view)
+    ## The file holds one table for each project: the tables of other projects stay.
+    path = joinpath(state.workspace.folder, PROJECT_VIEW_FILENAME)
+    views = isfile(path) ? TOML.parsefile(path) : Dict{String,Any}()
+    views[project_name(state.workspace.project)] = _project_view_to_toml(view)
+    open(io -> TOML.print(io, views), path, "w")
     state.saved_project_view = view
     return nothing
 end

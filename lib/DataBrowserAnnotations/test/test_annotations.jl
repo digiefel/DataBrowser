@@ -8,7 +8,7 @@ const ANNOT_FIXTURES = joinpath(@__DIR__, "fixtures", "annotations")
     @testset "Tags" begin
         @testset "missing files" begin
             mktempdir() do dir
-                state = Tags.load(dir)
+                state = Tags.load(dir, "P")
                 @test isempty(state.catalog)
                 @test isempty(state.assignments)
             end
@@ -16,7 +16,7 @@ const ANNOT_FIXTURES = joinpath(@__DIR__, "fixtures", "annotations")
 
         @testset "parse and roundtrip" begin
             fixture = joinpath(ANNOT_FIXTURES, "tags_full")
-            state = Tags.load(fixture)
+            state = Tags.load(fixture, "RuO2 test")
             names = [t.name for t in state.catalog]
             @test "bad" in names && "todo" in names
             bad = state.catalog[findfirst(t -> t.name == "bad", state.catalog)]
@@ -26,11 +26,25 @@ const ANNOT_FIXTURES = joinpath(@__DIR__, "fixtures", "annotations")
             @test "todo" in state.assignments["RuO2test/A10/VI"]
 
             mktempdir() do tmp
-                Tags.save(tmp, state)
-                roundtripped = Tags.load(tmp)
+                Tags.save(tmp, "RuO2 test", state)
+                roundtripped = Tags.load(tmp, "RuO2 test")
                 @test Set(t.name for t in roundtripped.catalog) ==
                     Set(t.name for t in state.catalog)
                 @test roundtripped.assignments == state.assignments
+            end
+        end
+
+        @testset "each project keeps its own tags" begin
+            mktempdir() do dir
+                Tags.save(dir, "A", Tags.TagState([Tags.Tag("bad")], Dict("x" => Set(["bad"]))))
+                Tags.save(dir, "B", Tags.TagState([Tags.Tag("todo")], Dict{String,Set{String}}()))
+                @test [t.name for t in Tags.load(dir, "A").catalog] == ["bad"]
+                @test [t.name for t in Tags.load(dir, "B").catalog] == ["todo"]
+                Tags.save(dir, "A", Tags.TagState())
+                @test isempty(Tags.load(dir, "A").catalog)
+                @test [t.name for t in Tags.load(dir, "B").catalog] == ["todo"]
+                Tags.save(dir, "B", Tags.TagState())
+                @test !isfile(Tags.tags_path(dir))
             end
         end
 
@@ -40,13 +54,13 @@ const ANNOT_FIXTURES = joinpath(@__DIR__, "fixtures", "annotations")
                 write(joinpath(dir, "tags.txt"),
                     """
                     # sample generated tags file
-                    [catalog]
+                    [P catalog]
                     bad\t#ff3030\t100
 
-                    [assignments]
+                    [P assignments]
                     $key\tbad
                     """)
-                state = Tags.load(dir)
+                state = Tags.load(dir, "P")
                 @test state.catalog[1].color == (0xff, 0x30, 0x30)
                 @test state.assignments[key] == Set(["bad"])
             end
@@ -54,11 +68,12 @@ const ANNOT_FIXTURES = joinpath(@__DIR__, "fixtures", "annotations")
 
         @testset "malformed rows raise an error" begin
             mktempdir() do dir
+                ## A malformed row of another project also raises.
                 write(joinpath(dir, "tags.txt"),
-                    "[catalog]\nbad\tff3030\t100\n\n[assignments]\nonlyone\n")
-                @test_throws Tags.TagsParseError Tags.load(dir)
-                write(joinpath(dir, "tags.txt"), "[catalog]\nbad\tred\t100\n")
-                @test_throws Tags.TagsParseError Tags.load(dir)
+                    "[A catalog]\nbad\tff3030\t100\n\n[B assignments]\nonlyone\n")
+                @test_throws Tags.TagsParseError Tags.load(dir, "A")
+                write(joinpath(dir, "tags.txt"), "[A catalog]\nbad\tred\t100\n")
+                @test_throws Tags.TagsParseError Tags.load(dir, "A")
             end
         end
     end

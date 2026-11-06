@@ -1,14 +1,15 @@
 """
 Tags: named labels that the user puts on items. [`load`](@ref) and [`save`](@ref) keep them in the
-file `tags.txt` of a folder. The file has two sections, each after a header in brackets. `\\t`
-stands for a tab:
+file `tags.txt` of a folder, which holds the tags of several projects. Each project has two
+sections, each after a header in brackets: the name of the project, a space, and the name of the
+section. `\\t` stands for a tab:
 
     # Lines that start with `#` are comments.
-    [catalog]
+    [IV catalog]
     bad\\tff3030\\t100
     todo\\t30c0ff\\t50
 
-    [assignments]
+    [IV assignments]
     A9/VI/D1/3V FE PUND.csv\\tbad
 
 A catalog row is `<name>\\t<color>\\t<priority>`: it defines one [`Tag`](@ref). An assignment row
@@ -65,8 +66,8 @@ Base.show(io::IO, tag::Tag) =
 """
     TagState
 
-The content of `tags.txt`: the `catalog` of defined tags, and the `assignments` from each key to
-the names of the tags put on it.
+The tags of one project in `tags.txt`: the `catalog` of defined tags, and the `assignments` from
+each key to the names of the tags put on it.
 """
 struct TagState
     catalog::Vector{Tag}
@@ -93,23 +94,31 @@ function _split_row(line::AbstractString)
 end
 
 """
-    load(root) -> TagState
+    load(root, project) -> TagState
 
-Read `tags.txt` in the folder `root`. A folder without the file has no tags.
+Read the tags of the project named `project` from `tags.txt` in the folder `root`. A folder without
+the file, or a file without sections for `project`, has no tags. A row that does not follow the
+format raises a `TagsParseError`, also in the sections of another project.
 """
-function load(root::AbstractString)::TagState
-    path = tags_path(root)
-    state = TagState()
-    isfile(path) || return state
-    section = :none
+load(root::AbstractString, project::AbstractString)::TagState =
+    get(TagState, _projects(tags_path(root)), project)
+
+# The tags of each project in the file `path`, by the name of the project.
+function _projects(path::AbstractString)::Dict{String,TagState}
+    projects = Dict{String,TagState}()
+    isfile(path) || return projects
+    state, section = TagState(), :none
     for (line_number, raw) in enumerate(eachline(path))
         body = strip(raw)
         (isempty(body) || startswith(body, '#')) && continue
         if startswith(body, '[') && endswith(body, ']')
             header = strip(body[2:end-1])
-            header in ("catalog", "assignments") ||
+            ## The name of a project may contain spaces: the section's name follows the last one.
+            space = findlast(' ', header)
+            section = space === nothing ? :none : Symbol(header[space+1:end])
+            section in (:catalog, :assignments) ||
                 throw(TagsParseError(path, line_number, "unknown section '[$header]'"))
-            section = Symbol(header)
+            state = get!(TagState, projects, header[1:prevind(header, space)])
             continue
         end
         fields = _split_row(body)
@@ -131,11 +140,11 @@ function load(root::AbstractString)::TagState
                 "expected '<key>\\t<tag_name>'"))
             push!(get!(() -> Set{String}(), state.assignments, String(fields[1])), String(fields[2]))
         else
-            throw(TagsParseError(path, line_number,
-                "row outside of any section; expected '[catalog]' or '[assignments]' header first"))
+            throw(TagsParseError(path, line_number, "row outside of any section; expected a " *
+                "'[<project> catalog]' or '[<project> assignments]' header first"))
         end
     end
-    return state
+    return projects
 end
 
 function _format_color(color::NTuple{3,UInt8})
@@ -147,31 +156,35 @@ function _format_color(color::NTuple{3,UInt8})
 end
 
 """
-    save(root, state::TagState)
+    save(root, project, state::TagState)
 
-Write `state` to `tags.txt` in the folder `root`. Without tags, the file is removed.
+Write `state` as the tags of the project named `project` to `tags.txt` in the folder `root`. The
+sections of other projects stay. When no project has tags, the file is removed.
 """
-function save(root::AbstractString, state::TagState)
+function save(root::AbstractString, project::AbstractString, state::TagState)
     path = tags_path(root)
-    if isempty(state.catalog) && isempty(state.assignments)
+    projects = _projects(path)
+    isempty(state.catalog) && isempty(state.assignments) ?
+        delete!(projects, project) : (projects[String(project)] = state)
+    if isempty(projects)
         rm(path; force=true)
         return
     end
 
     open(path, "w") do io
-        println(io, "[catalog]")
-        for tag in state.catalog
-            println(io, tag.name, '\t', _format_color(tag.color), '\t', tag.priority)
-        end
+        for (number, (name, tags)) in enumerate(sort!(collect(projects); by=first))
+            number == 1 || println(io)
+            println(io, "[", name, " catalog]")
+            for tag in tags.catalog
+                println(io, tag.name, '\t', _format_color(tag.color), '\t', tag.priority)
+            end
 
-        if !isempty(state.assignments)
+            isempty(tags.assignments) && continue
             println(io)
-            println(io, "[assignments]")
-            for key in sort!(collect(keys(state.assignments)))
-                tags = sort!(collect(state.assignments[key]))
-                for tag in tags
-                    println(io, key, '\t', tag)
-                end
+            println(io, "[", name, " assignments]")
+            for key in sort!(collect(keys(tags.assignments))),
+                    tag in sort!(collect(tags.assignments[key]))
+                println(io, key, '\t', tag)
             end
         end
     end

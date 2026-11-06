@@ -8,7 +8,6 @@ using CancellationTokens: CancellationTokenSource, get_token
         mkpath(joinpath(dir, "empty"))
         write(joinpath(dir, "a.dat"), "1")
         write(joinpath(dir, "nested", "b.dat"), "2")
-        write(joinpath(dir, "notes.txt"), "annotation")
         write(joinpath(dir, ".hidden"), "hidden")
         mkpath(joinpath(dir, ".git"))
         write(joinpath(dir, ".git", "HEAD"), "hidden")

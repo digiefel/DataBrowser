@@ -24,13 +24,13 @@ Base.@kwdef struct PersistedWindow
 end
 
 """
-The browser state written inside one project directory.
+The view of the browser for one project: the table of the project in `databrowser.toml`, in the
+folder of the workspace.
 
 Only stable ids and text are persisted. Runtime objects, loaded data, figures, and background work
 remain in memory.
 """
 Base.@kwdef struct PersistedProjectView
-    project::String = ""
     # Native content-area geometry in screen coordinates; empty until the browser is shown.
     window_size::Vector{Int} = Int[]
     window_position::Vector{Int} = Int[]

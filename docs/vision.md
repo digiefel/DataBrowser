@@ -485,7 +485,7 @@ thing the GUI observes and mutates through the same operations available to Juli
 | Retained item values and metadata | Type-selected store, supplied by default | Project storage policy; Core mediates source/code changes. |
 | Internal metadata/index | Core and supplied storage | Rebuildable query/browser copy of stored item metadata. |
 | Recorded source input | Project store, coordinated through Core | Retained or removed according to project policy; not a special protected result class. |
-| GUI state | Browser window | Mostly transient; per-dataset state in `databrowser.toml`. App-wide prefs TBD with project-file persistence. |
+| GUI state | Browser window | Mostly transient; per-project state in `databrowser.toml`, beside `values.duckdb`. App-wide prefs TBD with project-file persistence. |
 | Item annotations | Project storage | Hand-editable tags, notes, coordinates, spatial positions; a remote source need not have a writable root. |
 | Workflow state | Workspace, saved through public operations | Julia/tab files and result references, usable from GUI or API. |
 | Figure state | Figure / workflow model | Produced from workflows or exported separately. |

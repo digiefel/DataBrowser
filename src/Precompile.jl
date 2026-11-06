@@ -32,9 +32,7 @@ function _precompile_engine()::Nothing
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
         project.values = joinpath(depot, "values.duckdb")
-        # The browser saves its view beside the data, so the workspace opens a copy of the fixtures.
-        folder = cp(PRECOMPILE_FIXTURES, joinpath(depot, "fixtures"))
-        workspace = open_workspace(project, folder)
+        workspace = open_workspace(project, PRECOMPILE_FIXTURES)
         wait_workspace_idle!(workspace)
         workspace_status(workspace)
         ids = query_items(workspace)
@@ -43,7 +41,7 @@ function _precompile_engine()::Nothing
         selection(workspace)
         close_workspace!(workspace)
         # Open the folder again: now the items come from the cache.
-        workspace = open_workspace(project, folder)
+        workspace = open_workspace(project, PRECOMPILE_FIXTURES)
         wait_workspace_idle!(workspace)
         materialize_items(workspace, query_items(workspace))
         close_workspace!(workspace)

@@ -346,8 +346,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] The `DirectorySource` watcher rescans the whole tree and fingerprints every file on each
   event; `readdir` order is not sorted; two concurrent `watch_source` calls race and a crashed
   watcher task is reported as "already watching".
-- [x] `tags.txt` lives in the source root, as the vision states. The GUI read it from the cache
-  folder under `DEPOT_PATH`.
+- [x] The GUI no longer reads `tags.txt` from the cache folder under `DEPOT_PATH`. The file lives
+  beside `values.duckdb` (see 0.15.0).
 - [ ] One parse-error type for the files of tags and notes, which have `TagsParseError` and
   `NotesParseError` today.
 - [x] Profiling: sampling profiler API and `process_rss_bytes` removed; TimerOutputs is the profiler.
@@ -400,8 +400,9 @@ Every change keeps `tags.txt` human-readable and recoverable independently of th
 - [x] Set the visibility of each tag with a button above the collection tree: shown, hidden, or
   only, marked on the button with nothing, a cross, or a check mark.
 - [ ] Edit the colour and the priority of a tag, and remove a tag, in the GUI.
-- [ ] Open question: what the GUI may define. It can write only to files beside the data, while
-  a project is defined in Julia. Find a rule that feels obvious before adding more GUI editing.
+- [ ] Open question: what the GUI may define. It can write only to its own files, such as
+  `tags.txt`, while a project is defined in Julia. Find a rule that feels obvious before adding
+  more GUI editing.
 - [ ] Save the visibility of each tag with the view. With `only`, hide the collections that hold
   no item with the tag.
 - [ ] Apply tags consistently to colours, visibility, and the selected item set.
@@ -810,8 +811,10 @@ opens the workspace. Reopening means rerunning the same entry code.
   code or in the file, never in both, so rerunning entry code never undoes browser changes.
 - [ ] Load or create the config from Julia and Python entry code.
 - [ ] Edit project settings through the API and GUI and write them back predictably.
-- [ ] Place `tags.txt` and the notes file beside `dbproject.toml`: one set per project, not one per
-  data folder. The directory scan then no longer skips their names.
+- [x] `tags.txt` and `databrowser.toml` live beside `values.duckdb`, in the folder of the Julia
+  environment that is active when the workspace opens. The projects of that environment share one
+  file of each kind, with one section per project. The directory scan no longer skips their names.
+  The notes file is not connected to items yet; when it is, it goes in the same folder.
 - [ ] Reopen the saved analysis tabs and layout when the same entry code reopens the project.
 - [ ] Keep cache reuse and source changes correct across repeated openings.
 

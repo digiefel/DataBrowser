@@ -17,11 +17,6 @@ import DataBrowserAPI:
     items,
     watch_source
 
-# Files that DataBrowser keeps in the folder of a source. They are never source files.
-# TODO: delete this list. Tags, notes and the saved view move beside the project, one set per
-# project (roadmap 0.15.0).
-const DIRECTORY_SOURCE_SIDECARS = Set(["tags.txt", "notes.txt", "databrowser.toml"])
-
 """
 Fingerprint used to decide whether a physical source file has changed.
 """
@@ -40,9 +35,7 @@ files in it. With `recursive=true`, the files and folders below `root_path` are 
 and the members of each folder are the files and folders directly in it. An empty folder is not a
 source item.
 
-Hidden files and folders, whose names start with `.`, are not source items. Nor are the files that
-DataBrowser keeps in a folder: `tags.txt`, `notes.txt` and `databrowser.toml`, in upper or lower
-case.
+Hidden files and folders, whose names start with `.`, are not source items.
 
 While a workspace has the source open, the source watches the folder. It reports files and folders
 that are added, changed or removed. A folder changes when a member is added or removed.
@@ -147,7 +140,7 @@ function items(
             if isdir(path) && source.recursive && !islink(path)
                 directory = scan(path)
                 directory === nothing || push!(folder_members, directory)
-            elseif isfile(path) && !(lowercase(name) in DIRECTORY_SOURCE_SIDECARS)
+            elseif isfile(path)
                 push!(folder_members, report(index_source_file(path, source.root_path)))
             end
         end

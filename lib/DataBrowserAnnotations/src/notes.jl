@@ -22,7 +22,8 @@ its end.
 """
 module Notes
 
-# TODO: nothing reads notes yet. Roadmap 0.4.0 connects them to items.
+# TODO: nothing reads notes yet. Roadmap 0.4.0 connects them to items. When connected, `notes.txt`
+# lives in the same folder as `tags.txt`, with one section per project.
 
 export read_section, merged_view, write_section!, notes_path,
        NOTES_FILENAME, NotesParseError

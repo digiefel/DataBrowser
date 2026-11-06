@@ -1,5 +1,8 @@
 /data/
 /results/
-# Kept results of recipe projects defined while bench is the active environment, as in tests.
+# The files that recipe projects and the browser keep in the folder of the active environment,
+# when bench is the active environment, as in tests: kept results, tags and the saved view.
 /values.duckdb
 /values.duckdb.wal
+/databrowser.toml
+/tags.txt
