@@ -347,7 +347,9 @@ function _resolve_window_input(workspace, given, transform)
                 push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
             end
         end
-        return Workspace.Selection(Workspace.ItemData(workspace, computed), id.(named), label.(named), metadatas)
+        ## A computed value belongs to no group and has no tags.
+        return Workspace.Selection(Workspace.ItemData(workspace, computed), id.(named), label.(named),
+            [String[] for _ in named], [String[] for _ in named], metadatas)
     end
     given isa AbstractVector{<:Workspace.Computation} && (given = resolve(given))
     if transform !== nothing
@@ -358,9 +360,9 @@ function _resolve_window_input(workspace, given, transform)
                     item isa Workspace.Computation ? Workspace.evaluate(workspace, item) : item), Workspace.items(given))
             calls = whole ? [Workspace.Computation(f, given)] :
                 [Workspace.Computation(f, Workspace.computation(given, i)) for i in eachindex(given)]
-            # A value computed from one item keeps the columns of its row, other than `id` and `label`:
-            # the metadata of the item.
-            columns = pairs(Base.structdiff(Tables.columns(given), NamedTuple{(:id, :label)}))
+            # A value computed from one item keeps the columns of its row, other than `id`, `label`,
+            # `groups` and `tags`: the metadata of the item.
+            columns = pairs(Base.structdiff(Tables.columns(given), NamedTuple{(:id, :label, :groups, :tags)}))
             inherited = whole ? [Dict{Symbol,Any}()] : [Dict{Symbol,Any}(name => column[i]
                 for (name, column) in columns if !ismissing(column[i])) for i in eachindex(given)]
             given = resolve(calls, inherited)

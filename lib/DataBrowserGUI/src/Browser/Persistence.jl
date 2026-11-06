@@ -105,7 +105,7 @@ function _project_view_from_browser(
 )::PersistedProjectView
     workspace = state.workspace
     ## An order that code set has no keys: the saved keys stay in the file.
-    by = @lock workspace.catalog.lock workspace.order.by
+    by = @lock workspace.item_rows.lock workspace.item_rows.order.by
     return PersistedProjectView(
         window_size=Int[GLFW.GetWindowSize(ig.current_window())...],
         window_position=Int[GLFW.GetWindowPos(ig.current_window())...],
@@ -238,7 +238,7 @@ function _apply_project_view!(
     state.selection_revision = workspace.selection.revision
     state.tree_filter = view.filter
     ## The order of the Sort menu, unless code set an order with `sort!`.
-    if !isempty(view.sort) && workspace.order.by isa Workspace.SortKeys
+    if !isempty(view.sort) && (@lock workspace.item_rows.lock workspace.item_rows.order.by) isa Workspace.SortKeys
         order = Workspace.SortKeys([Symbol(key) => direction == "descending" for (key, direction) in view.sort])
         sort!(workspace; by=order, lt=order)
     end

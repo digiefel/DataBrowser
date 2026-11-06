@@ -209,12 +209,14 @@ Base.@kwdef mutable struct PerformanceState
 end
 
 """
-One row of the tree: the id of its value, the number of rows above it in the tree, and a number that
-stands for its place in the tree, the same from one making of the rows to the next. `parent` tells
-whether rows can show below it, and `open` whether they show.
+One line of the tree: the id of its item, the row of the item in the `Selection` that the line
+comes from, the number of lines above it in the tree, and a number that stands for its place in
+the tree, the same from one making of the lines to the next. `parent` tells whether lines can show
+below it, and `open` whether they show.
 """
 struct TreeRow
     id::String
+    row::Any
     depth::Int
     place::UInt
     parent::Bool
@@ -222,42 +224,19 @@ struct TreeRow
 end
 
 """
-The rows of the tree while no filter and no tag hides rows: `ids` are the rows at one depth, in the
-order of the tree, and `open` holds the rows below each open one, by its index in `ids`. A row is
-made only when it is drawn, so that a frame takes time in proportion to the rows on the screen.
-"""
-struct TreeRows <: AbstractVector{TreeRow}
-    workspace::Workspace.Workspace
-    ids::Vector{String}
-    depth::Int
-    # The place of the row above, and the ids from the top down to that row.
-    place::UInt
-    above::Vector{String}
-    open::Vector{Pair{Int,TreeRows}}
-    length::Int
-end
-
-"""
-The rows of the tree, kept from frame to frame. They are made again when `key` changes, and when the
-workspace changed, at most once per `TREE_REFRESH_SECONDS`: a workspace at work changes in every
-frame. The key covers the workspace, the order, the groups that show their members, the filter and
-the tags.
+The lines of the tree, kept from frame to frame, with the answer of `select` for each function that
+they come from. The lines are made again when one of these answers changes, or when `key` changes:
+the key covers the groups that show their members, the filter and the tags.
 """
 mutable struct TreeCache
     key::UInt
-    # The generation of the workspace and the time when the rows were made.
-    generation::Int
-    built::Float64
-    rows::AbstractVector{TreeRow}
-    # The metadata keys of the groups whose rows were drawn, one column each, and the metadata of
-    # each value whose row was drawn since the rows were made.
+    answers::Vector{Pair{Function,Any}}
+    lines::Vector{TreeRow}
+    # The metadata keys of the groups whose lines were drawn, one column each.
     # TODO(query model): a column stays once a drawn group had its key; the query model can give the
     # keys of the groups in the tree.
     columns::Vector{Symbol}
-    metadata::Dict{String,Dict{Symbol,Any}}
 end
-
-const TREE_REFRESH_SECONDS = 0.1
 
 """
 The ids of the selection that the workspace has and that the tags leave visible, as

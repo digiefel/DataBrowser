@@ -6,18 +6,18 @@ using DataBrowserAPI: AbstractGroup
 _tags_ready(state::BrowserState)::Bool = isempty(state.workspace.tags.error)
 
 """
-Return whether the value `x` remains visible under the visibility chosen for each tag. Everything
-stays visible when tags cannot be loaded, so a broken `tags.txt` never hides data.
+Return whether an item of the type `type`, with the tags `names`, remains visible under the
+visibility chosen for each tag. Everything stays visible when tags cannot be loaded, so a broken
+`tags.txt` never hides data.
 """
-function _is_visible(state::BrowserState, x::AbstractString)::Bool
+function _is_visible(state::BrowserState, names, type::Type)::Bool
     visibility = state.tag_visibility
     (isempty(visibility) || !_tags_ready(state)) && return true
-    found = tags(state.workspace, x)
-    any(tag -> get(visibility, tag.name, :shown) == :hidden, found) && return false
-    # TODO: `:only` hides the values that are not groups; a group without any value with the tag
+    any(name -> get(visibility, name, :shown) == :hidden, names) && return false
+    # TODO: `:only` hides the items that are not groups; a group without any item with the tag
     # stays in the tree.
-    :only in values(visibility) && !(Workspace.valuetype(state.workspace, x) <: AbstractGroup) &&
-        return any(tag -> get(visibility, tag.name, :shown) == :only, found)
+    :only in values(visibility) && !(type <: AbstractGroup) &&
+        return any(name -> get(visibility, name, :shown) == :only, names)
     return true
 end
 
@@ -33,7 +33,9 @@ function _visible_selection(state::BrowserState)::VisibleSelection
         hash(state.tag_visibility), workspace.tags.revision, _tags_ready(state)))
     kept = state.visible_selection
     kept !== nothing && kept.key == key && return kept
-    ids = filter(x -> haskey(workspace, x) && _is_visible(state, x), workspace.selection.item_ids)
+    ids = filter(x -> haskey(workspace, x) &&
+        _is_visible(state, (tag.name for tag in tags(workspace, x)), Workspace.valuetype(workspace, x)),
+        workspace.selection.item_ids)
     visible = VisibleSelection(key, ids, Set(ids))
     state.visible_selection = visible
     return visible

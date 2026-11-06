@@ -60,7 +60,6 @@ Reveal the current workspace selection in the tree: open the groups that hold a 
 the groups above them, and scroll to the first selected value.
 """
 function _reveal_selected_items!(state::BrowserState)::Nothing
-    # TODO: also open the row that a selected value shows under when no group holds it (`Workspace.items`).
     workspace = state.workspace
     selected = filter(x -> haskey(workspace, x), workspace.selection.item_ids)
     isempty(selected) && return nothing
