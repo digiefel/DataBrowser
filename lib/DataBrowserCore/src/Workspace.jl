@@ -326,13 +326,15 @@ const ROWS = (readiness = (Readiness, UNPROCESSED), failure = (String, ""), chan
 
 """
 A published version of the table `items`, which never changes: the number of each item by its id,
-the cells of each column, the cells of each row of the catalog, and the metadata.
+the cells of each column, the cells of each row of the catalog, the metadata, and the `errors` of
+the workspace.
 """
 struct Version
     index::Base.PersistentDict{String,Int32}
     columns::NamedTuple{keys(COLUMNS),Tuple{(Cells{T} for (T, _) in COLUMNS)...}}
     rows::NamedTuple{keys(ROWS),Tuple{(Cells{T} for (T, _) in ROWS)...}}
     metadata::Dict{Symbol,Cells}
+    errors::Base.PersistentDict{Row,Pair{String,String}}
 end
 
 """
@@ -395,7 +397,8 @@ function Items()
     lock, index, columns = ReentrantLock(), Base.PersistentDict{String,Int32}(), map(((T, default),) -> Column{T}(default), COLUMNS)
     rows, order = map(((T, default),) -> Column{T}(default), ROWS), SortKeys([:label => false])
     return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
-        Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}()),
+        Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
+            Base.PersistentDict{Row,Pair{String,String}}()),
         Set{Int32}[], lock, Threads.Condition(lock), Set{String}(),
         (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
 end
@@ -456,8 +459,9 @@ mutable struct Workspace{P<:AbstractProject}
     # When the revision of a signature's code changes, the rows of that signature are stale.
     signatures::Dict{Row,Type}
     code::Dict{Type,Code}
-    # The message of each failed row, and of each row whose metadata was stored only in part.
-    errors::Dict{Row,String}
+    # The subject and the message of each failed row, and of each row whose metadata was stored only
+    # in part; see `subject`. Each version of the table `items` keeps the errors of its time.
+    errors::Base.PersistentDict{Row,Pair{String,String}}
     # One lock per row whose result is computed again outside its job.
     row_locks::Dict{Row,ReentrantLock}
     executions::Dict{Row,ComputationExecution}
@@ -565,7 +569,7 @@ function Workspace(
         Dict{Row,Taken}(), Dict{String,Vector{Row}}(),
         Dict{Tuple,Any}(),
         Dict{Row,Type}(), Dict{Type,Code}(),
-        Dict{Row,String}(),
+        Base.PersistentDict{Row,Pair{String,String}}(),
         Dict{Row,ReentrantLock}(), Dict{Row,ComputationExecution}(), Set{Row}(),
         Dict{Int64,Vector{SavedOutput}}(),
         Task[], 0, 0,
@@ -600,7 +604,7 @@ function Base.show(io::IO, ::MIME"text/plain", workspace::Workspace)
     println(io, "  scan:         ", workspace.scan.state)
     println(io, "  cache:        ", workspace.cache_state)
     println(io, "  items:        ", length(items(workspace)))
-    print(io,   "  failures:     ", length(workspace.errors))
+    print(io,   "  failures:     ", length((@atomic workspace.items.version).errors))
     workspace.closed && print(io, "\n  (closed)")
 end
 

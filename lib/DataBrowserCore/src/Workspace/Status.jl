@@ -3,8 +3,8 @@
 
 The current [`WorkspaceStatus`](@ref) of a workspace. The status is recomputed only when the
 workspace has changed since the last call, so watchers can call this every frame. It never waits:
-while another task is changing the workspace, it gives the errors and counts of the last status,
-and a later call gives the current ones.
+while another task is changing the workspace, it gives the counts of the last status, and a later
+call gives the current ones.
 """
 function workspace_status(workspace::Workspace)::WorkspaceStatus
     # Read the generation first: a change during the computation then triggers the next one.
@@ -12,14 +12,13 @@ function workspace_status(workspace::Workspace)::WorkspaceStatus
     seen, previous = @atomic workspace.status
     current == seen && return previous
     # Never wait for the catalog lock here: a publication can hold it for a while, and this runs
-    # every GUI frame. If one is in flight, show the errors and counts of the last status and keep its
-    # generation, so that the next call reads the errors again.
+    # every GUI frame. If one is in flight, show the counts of the last status and keep its
+    # generation, so that the next call reads the counts again.
     catalog = workspace.catalog
     locked = trylock(catalog.lock)
-    errors, counts = previous.errors, previous.counts
+    errors, counts = sort!(collect(values((@atomic workspace.items.version).errors)); by=first), previous.counts
     if locked
         try
-            errors = sort!(Pair{String,String}[subject(workspace, row) => message for (row, message) in workspace.errors]; by=first)
             counts = WorkspaceStageCounts(length(workspace.sources),
                 count(catalog, typeof(read), Catalogs.CURRENT) + count(catalog, typeof(read), Catalogs.FAILED),
                 length(workspace.versions), count(catalog, typeof(process), Catalogs.CURRENT))

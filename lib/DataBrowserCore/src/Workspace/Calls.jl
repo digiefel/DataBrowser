@@ -62,7 +62,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
             current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
             ## A group also reads the values of its members that it takes.
             taken = haskey(workspace.taken, row) ? member_values(workspace, row) : Pair{String,Row}[]
-            row, ran_for, get(workspace.errors, row, nothing), current ? Catalogs.result_type(catalog, row) : nothing,
+            row, ran_for, last(get(workspace.errors, row, nothing => nothing)), current ? Catalogs.result_type(catalog, row) : nothing,
                 Computation[catalog[at] for (_, at) in taken]
         end
         preceding = unique!(reduce(vcat, map(calls_of, [inputs(value); members]); init=Call[]))

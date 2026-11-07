@@ -614,7 +614,8 @@ computation goes to the log.
 """
 function conflicts!(workspace::Workspace, row::Row, messages::Vector{String})::Nothing
     isempty(messages) && return nothing
-    workspace.errors[row] = join([get(workspace.errors, row, String[]); messages], "; ")
+    workspace.errors = Base.PersistentDict(workspace.errors,
+        row => subject(workspace, row) => join(filter(!isempty, [last(get(workspace.errors, row, "" => "")); messages]), "; "))
     @warn("Values were not kept", computation=id(workspace.catalog[row]), messages)
     return nothing
 end

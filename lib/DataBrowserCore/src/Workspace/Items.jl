@@ -57,10 +57,11 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                     end
                     if isempty(catalog.touched)
                         shown = Set{Int32}()
-                        if items.changed
+                        if items.changed || workspace.errors !== (@atomic items.version).errors
                             @atomic items.version = Version(items.index, map(column -> Cells(column, items.count), columns),
                                 map(column -> Cells(column, BLOCK * length(column.blocks)), rows),
-                                Dict{Symbol,Cells}(name => Cells(column, BLOCK * length(column.blocks)) for (name, column) in items.metadata))
+                                Dict{Symbol,Cells}(name => Cells(column, BLOCK * length(column.blocks)) for (name, column) in items.metadata),
+                                workspace.errors)
                             items.draft, items.changed, shown, items.shown = items.draft + 1, false, items.shown, shown
                             last = time()
                             ## A window reads the `revision` of its items again when

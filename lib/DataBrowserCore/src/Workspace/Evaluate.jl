@@ -245,7 +245,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
         ## The last result of the row leaves its store; for a row of the pipeline, `given!` does the
         ## same with each value.
         pipeline || previous.revision in (0, result) || forget!(workspace, previous.type, previous.revision)
-        delete!(workspace.errors, row)
+        haskey(workspace.errors, row) && (workspace.errors = Base.delete(workspace.errors, row))
         @timed_dbg "job.finish.record" store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); result_revision=result)
         if outputs !== nothing
             @timed_dbg "job.finish.finished!" finished!(workspace, row, Output[output for (output, _) in outputs])
@@ -284,7 +284,7 @@ function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, erro
     message = DataBrowserAPI.error_summary(error, backtrace) * "\n\n" * context
     @lock catalog.lock begin
         finish!(catalog, job; failed=true) || return nothing
-        workspace.errors[row] = "$(function_name(catalog[row].f)) failed: " * message
+        workspace.errors = Base.PersistentDict(workspace.errors, row => subject(workspace, row) => "$(function_name(catalog[row].f)) failed: " * message)
         at === nothing || store_computation_revision!(workspace.cache.db, row.index, id(catalog[row]), at, Nothing; failure=message)
         workspace.items.rows.stage[row] === nothing || finished!(workspace, row, nothing)
         publish!(workspace)
@@ -305,7 +305,7 @@ function failure(workspace::Workspace, row::Row)::String
         stuck === nothing && return catalog.closed ? "The workspace was closed" : "The computation was removed from the workspace"
         row = Catalogs.inputs(catalog, row)[stuck]
     end
-    return get(workspace.errors, row, "The computation failed")
+    return last(get(workspace.errors, row, "" => "The computation failed"))
 end
 
 """
@@ -517,7 +517,8 @@ end
 function restored!(workspace::Workspace, row::Row, record)::Nothing
     saved = pop!(workspace.saved, row.index, nothing)
     failed = !isempty(record.failure)
-    failed && (workspace.errors[row] = "$(function_name(workspace.catalog[row].f)) failed: " * record.failure)
+    failed && (workspace.errors = Base.PersistentDict(workspace.errors,
+        row => subject(workspace, row) => "$(function_name(workspace.catalog[row].f)) failed: " * record.failure))
     workspace.items.rows.stage[row] === nothing && return nothing
     saved === nothing && return finished!(workspace, row, failed ? nothing : workspace.items.rows.outputs[row])
     outputs = @timed_dbg "restored.outputs" [Output(value.id, value.type, value.label, value.members,
@@ -710,7 +711,7 @@ function publish!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
     for row in lost!(catalog)
         delete!(workspace.executions, row)
-        delete!(workspace.errors, row)
+        haskey(workspace.errors, row) && (workspace.errors = Base.delete(workspace.errors, row))
         Catalogs.state(catalog, row) == Catalogs.REMOVED || continue
         forget!(workspace, Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row))
         delete_computation_revision!(workspace.cache.db, row.index)
