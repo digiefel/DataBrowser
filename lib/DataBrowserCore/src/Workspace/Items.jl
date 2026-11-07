@@ -41,29 +41,30 @@ natural_key(text::AbstractString)::Tuple = Tuple(
 
 Internal. An order of the items by keys of their rows, to give as both `by` and `lt` to
 [`sort!`](@ref): `keys` holds `key => reverse` pairs, where `key` is `:label`, `:id` or a metadata
-key. The items sort by the first key, then by the second where the first is equal, and so on. Text
-sorts with the numbers in it by their value, and an item without a key sorts after the items with
-it, in both directions. The workspace sorts by `SortKeys([:label => false])` until a call to
-`sort!`, and the Sort menu of the browser makes one.
+key. The items sort by the first key, then by the second where the first is equal, and so on, and
+last by their ids. Text sorts with the numbers in it by their value, and an item without a key
+sorts after the items with it, in both directions. The workspace sorts by
+`SortKeys([:label => false])` until a call to `sort!`, and the Sort menu of the browser makes one.
 """
 struct SortKeys
     keys::Vector{Pair{Symbol,Bool}}
 end
 
-# As `by`: the value of each key of the row, and for text its `natural_key`. A key that the
-# workspace does not have, such as one saved with the browser's view, is `missing`.
-(order::SortKeys)(row) = Tuple(
+# As `by`: the value of each key of the row, and for text its `natural_key`, then the id. A key that
+# the workspace does not have, such as one saved with the browser's view, is `missing`.
+(order::SortKeys)(row) = (Tuple(
     (value = hasproperty(row, key) ? getproperty(row, key) : missing; value isa AbstractString ? natural_key(value) : value)
-    for (key, _) in order.keys)
+    for (key, _) in order.keys)..., (natural_key(row.id), row.id))
 
-# As `lt`: the first key where the rows differ decides, in its direction.
+# As `lt`: the first key where the rows differ decides, in its direction, and else the id, so that
+# the items have one order.
 function (order::SortKeys)(a::Tuple, b::Tuple)::Bool
     for (x, y, (_, reverse)) in zip(a, b, order.keys)
         isequal(x, y) && continue
         (ismissing(x) || ismissing(y)) && return ismissing(y)
         return reverse ? isless(y, x) : isless(x, y)
     end
-    return false
+    return isless(last(a), last(b))
 end
 
 """
