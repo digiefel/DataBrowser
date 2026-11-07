@@ -45,14 +45,15 @@ end
             write(b, "c 16")
             # The folders are groups, whose ids are their paths.
             @test timedwait(() -> query_items(ws) == [".", "a", "c", "run"], 20) === :ok
-            # The file produces `c` in place of `b`, so `c` is selected in its place.
-            @test selection(ws).id == ["a", "c"]
             @test API.data(only(materialize_items(ws, ["c"]))).value == [4.0]
 
             rm(b)
             @test timedwait(() -> query_items(ws) == [".", "a", "run"], 20) === :ok
             write(b, "b 25")
             @test timedwait(() -> query_items(ws) == [".", "a", "b", "run"], 20) === :ok
+            # `b` stays selected while the file gives other items or none, and is shown again when
+            # the file gives it again.
+            @test selection(ws).id == ["a", "b"]
             @test [API.data(item).value for item in materialize_items(ws, ["a", "b"])] == [[2.0], [5.0]]
             @test isempty(workspace_status(ws).errors)
         finally

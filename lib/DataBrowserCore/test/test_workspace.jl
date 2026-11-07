@@ -430,7 +430,6 @@ end
         notify(project.gate)
         settled(ws)
         @test sort(W.items(ws)) == ["folder/a/1", "folder/b/1"]
-        @test W.selection(ws).id == ["folder/b/1"]
     finally
         notify(project.gate)
         W.close_workspace!(ws)

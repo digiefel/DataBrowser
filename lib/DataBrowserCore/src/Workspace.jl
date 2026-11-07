@@ -101,37 +101,17 @@ end
 WorkspaceScan()::WorkspaceScan = WorkspaceScan(:idle, "", nothing, Base.Threads.Atomic{Int}(0))
 
 """
-What is selected in a workspace: items by public id. The ids stay the same when the workspace is
-closed and opened again, so a selection may name items the workspace does not have yet or no longer
-has.
+What is selected in a workspace: items by public id. The selection changes only when items are
+selected, with [`select!`](@ref) or by a browser that restores its saved view. The ids stay the same
+when the workspace is closed and opened again, and when a source item stops giving an item. So a
+selection may name an item before the workspace has it, or after the workspace loses it.
 
-`revision` rises with each change of `item_ids`: with each [`select!`](@ref), and when selected
-items are removed or replaced. A browser compares it to tell whether the selection changed, without
-reading the ids, and reveals a selection it did not make itself.
-
-`replaced` gives, for the id of an item that its source item no longer produces, the id of the item
-it produces in its place, as when another recipe reads the source item now. That item may be
-replaced in turn, and [`replacement`](@ref) follows the replacements to the last one. The selection
-follows them, and so should a browser that restores ids it saved.
+`revision` rises with each change of `item_ids`. A browser compares it to tell whether the selection
+changed, without reading the ids, and reveals a selection it did not make itself.
 """
 Base.@kwdef mutable struct WorkspaceSelection
     item_ids::Vector{String} = String[]
     revision::Int = 0
-    replaced::Dict{String,String} = Dict{String,String}()
-end
-
-"""
-    replacement(selection, id) -> String
-
-The id of the item that replaced the item `id`, after each replacement since; `id` itself when no
-item replaced it.
-"""
-function replacement(selection::WorkspaceSelection, x::String)::String
-    ## No chain returns to an id: an id leaves `replaced` when its source item produces it again.
-    while haskey(selection.replaced, x)
-        x = selection.replaced[x]
-    end
-    return x
 end
 
 """

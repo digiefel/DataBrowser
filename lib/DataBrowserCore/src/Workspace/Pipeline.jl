@@ -179,9 +179,9 @@ end
     finished!(workspace, row, outputs)
 
 Make `outputs` the values that the row of the pipeline `row` gives, and add, change or release the
-rows that read them. `nothing` stands for a row without a result, which did not run yet or failed. The
-selection follows the values of its source item. A worker calls `finished!` when the row finishes,
-and so does `restore!` when the cache saved its result.
+rows that read them. `nothing` stands for a row without a result, which did not run yet or failed. A
+worker calls `finished!` when the row finishes, and so does `restore!` when the cache saved its
+result.
 """
 function finished!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Nothing
     read_id = source(workspace, row)
@@ -196,7 +196,6 @@ function finished!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector
         foreach(x -> input!(workspace, group, x, 1), setdiff(after, before))
         foreach(x -> input!(workspace, group, x, -1), setdiff(before, after))
     end
-    replaced!(workspace.selection, before, after)
     return nothing
 end
 
@@ -551,31 +550,5 @@ function conflicts!(workspace::Workspace, row::Row, messages::Vector{String})::N
     isempty(messages) && return nothing
     workspace.errors[row] = join([get(workspace.errors, row, String[]); messages], "; ")
     @warn("Values were not kept", computation=id(workspace.catalog[row]), messages)
-    return nothing
-end
-
-"""
-    replaced!(selection, before, after)
-
-Let the selection follow the values of a source item that gave the ids `before` and gives `after`
-now. The values that it no longer gives leave the selection. When it gives as many new ids as it
-lost, the first new id replaces the first lost id, and so on, in the order that the source item gave
-them: when another recipe reads the source item, it usually gives the same measurements under other
-ids. With `a/1` selected, a source item that gave `a/1` and `a/2` and gives `a/x` and `a/y` now
-leaves `a/x` selected. When it lost one id, all its new ids replace it in the selection, as for a
-source item before and after its read.
-"""
-function replaced!(selection::WorkspaceSelection, before::Vector{String}, after::Vector{String})::Nothing
-    gone, added = setdiff(before, after), setdiff(after, before)
-    replaced = selection.replaced
-    foreach(id -> delete!(replaced, id), added)
-    ## A source item that still gives all the ids it gave leaves the selection as it is.
-    isempty(gone) && return nothing
-    length(gone) == length(added) && foreach((old, new) -> replaced[old] = new, gone, added)
-    ids = length(gone) == 1 && only(gone) in selection.item_ids ? [selection.item_ids; added] : selection.item_ids
-    # TODO(perf): when a source item stops giving an id, this takes the time of the number of
-    # selected items.
-    selected = unique!([replacement(selection, id) for id in ids if !(id in gone) || haskey(replaced, id)])
-    selected == selection.item_ids || (selection.item_ids = selected; selection.revision += 1)
     return nothing
 end

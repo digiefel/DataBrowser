@@ -193,8 +193,7 @@ function _open_saved_window!(state::BrowserState, window::PersistedWindow, V::Ty
         hasfield(V, name) || continue
         push!(values, name => fieldtype(V, name) === Symbol ? Symbol(value) : value)
     end
-    # TODO: a window of fixed items that are replaced while the browser is open keeps the old ids.
-    input = window.input == "items" ? FixedItems([Workspace.replacement(state.workspace.selection, id) for id in window.ids]) :
+    input = window.input == "items" ? FixedItems(collect(String, window.ids)) :
         window.input == "window" ? WindowOutput(only(window.ids)) : LiveSelection()
     visualizer = V(; values...)
     # A dynamic call: packages add `select!` methods for their visualizers when they load, and a static
@@ -230,10 +229,9 @@ function _apply_project_view!(
 )::Nothing
     workspace = state.workspace
     state.expanded = Set(view.expanded)
-    # The items replaced since the view was saved are selected by their new ids.
     # Not `select!`: the saved ids may name items the workspace does not have yet.
     # TODO: restore the selection through a workspace operation (see the TODO above).
-    workspace.selection.item_ids = unique!([Workspace.replacement(workspace.selection, id) for id in view.selected])
+    workspace.selection.item_ids = collect(String, view.selected)
     workspace.selection.revision += 1
     state.selection_revision = workspace.selection.revision
     state.tree_filter = view.filter
