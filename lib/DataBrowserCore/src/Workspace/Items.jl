@@ -32,7 +32,7 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                 for x in requested
                     haskey(workspace.versions, x) && request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
                 end
-                any(numbers -> any(in(numbers), items.pending), readers)
+                any(numbers -> any(in(items.pending), numbers), readers)
             end
             waited || sleep(max(0.0, last + PUBLISH_INTERVAL - time()))
             ## The items of the catalog rows whose state, priority or job changed join the pending
