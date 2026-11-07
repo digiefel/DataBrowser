@@ -607,8 +607,8 @@ end
 # Memory-only least-recently-used store
 
 """
-A memory-only cache that drops the least recently used values first. `weight(value)` measures each
-entry against `capacity`.
+A memory-only cache that drops the least recently used values first. Each entry counts against
+`capacity` by its weight: the one given to `append!`, by default `weight(value)`.
 
 Weights are recorded on insertion so later mutation cannot corrupt eviction accounting. One value
 larger than the capacity remains usable until another value arrives. Cache eviction only releases
@@ -630,8 +630,8 @@ function MemoryStore{K,R}(; capacity::Int, weight::Function=_buffer_rows)::Memor
     return MemoryStore{K,R}(ReentrantLock(), OrderedDict{K,Tuple{R,Int}}(), 0, capacity, weight, false)
 end
 
-function Base.append!(store::MemoryStore{K,R}, key::K, row::R)::Bool where {K,R}
-    cost = max(1, store.weight(row))
+function Base.append!(store::MemoryStore{K,R}, key::K, row::R, weight::Int=store.weight(row))::Bool where {K,R}
+    cost = max(1, weight)
     lock(store.lock) do
         store.closed && error("memory store is closed")
         replaced = pop!(store.entries, key, nothing)

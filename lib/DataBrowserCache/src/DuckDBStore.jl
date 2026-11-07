@@ -16,8 +16,9 @@ of its values), and the item is rebuilt with `reconstruct` from them. Other valu
 Julia's `Serialization`. A background task writes the values to the file in batches.
 
 Writing an item whose metadata value has another type than the values written before under its
-name is an error. Recently written or read values also stay in memory, up to `max_bytes`, as in
-[`MemoryStore`](@ref).
+name is an error. Recently written or read values also stay in memory, as in
+[`MemoryStore`](@ref), up to `max_bytes` in all, where a table counts the bytes of its columns and
+another value the bytes of its serialized form.
 
 While a store is open on `path`, `DuckDBStore(path)` returns that store, so several item types can
 share one file. `close` closes it for all of them; closing it again does nothing.
@@ -76,12 +77,25 @@ function open_duckdb_store(path::String, max_bytes::Integer)
         RowStore{String,@NamedTuple{id::String, value::Vector{UInt8}}}(database, "stored_values", ("id",)),
         TabularFamilyStore(database; row_limit=CACHE_BUFFER_ROW_LIMIT),
         shell_rows, read(shell_rows), metadata_rows, read(metadata_rows),
-        MemoryStore{String,Any}(; capacity=Int(max_bytes), weight=Base.summarysize))
+        MemoryStore{String,Any}(; capacity=Int(max_bytes)))
 end
 
-# The text under which the file and `recent` keep the item of type `T` and key `key`.
+# The text under which the file and `recent` keep the item of type `T` and key `key`. Each thread
+# keeps the text of each type in `TYPE_TEXTS`: printing a type can take hundreds of microseconds,
+# and one lock for all threads would make them wait for each other.
 # TODO(perf): integer keys, so that the file needs no VARCHAR primary key.
-stored_key(::Type{T}, key::Integer) where {T} = string(T, '\x1f', key)
+# FIXME: `string(T)` depends on the modules that Main uses ("DataFrame" after `using DataFrames`,
+# else "DataFrames.DataFrame"), so a value written in another session may count as missing.
+const TYPE_TEXTS = OncePerThread{Dict{Type,String}}(() -> Dict{Type,String}())
+function stored_key(::Type{T}, key::Integer) where {T}
+    text = get(TYPE_TEXTS(), T, nothing)
+    if text === nothing
+        text = string(T)
+        ## Printing may move the task to another thread, so the texts are taken again.
+        TYPE_TEXTS()[T] = text
+    end
+    return string(text, '\x1f', key)
+end
 
 function Base.write(store::DuckDBStore, key::Integer, item)
     stored = stored_key(typeof(item), key)
@@ -106,14 +120,21 @@ function Base.write(store::DuckDBStore, key::Integer, item)
             edit!(store.shell_rows, stored, shell)
             store.shells[stored] = shell
             _forget_serialized!(store, stored)
+            columns = Tables.columns(data)
+            weight = sum(Tables.columnnames(columns); init=0) do name
+                Base.summarysize(Tables.getcolumn(columns, name))
+            end
         else
             _forget_table!(store, stored)
             buffer = IOBuffer()
             serialize(buffer, item)
-            edit!(store.serialized_rows, stored, (id=stored, value=take!(buffer)))
+            bytes = take!(buffer)
+            edit!(store.serialized_rows, stored, (id=stored, value=bytes))
             push!(store.serialized_ids, stored)
+            weight = length(bytes)
         end
-        append!(store.recent, stored, item)
+        ## `recent` weighs a table by its columns, and another value by its serialized form.
+        append!(store.recent, stored, item, weight)
     end
     return nothing
 end
@@ -218,7 +239,7 @@ function Base.delete!(store::DuckDBStore, ::Type{T}, key::Integer) where {T}
     return store
 end
 
-# TODO(perf): the size on disk, not the size in memory.
+# TODO(perf): the size in the file, also once the value has left `recent`.
 DataBrowserAPI.stored_size(store::DuckDBStore, ::Type{T}, key::Integer) where {T} =
     something(stored_weight(store.recent, stored_key(T, key)), 0)
 
