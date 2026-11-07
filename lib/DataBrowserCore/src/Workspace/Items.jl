@@ -9,12 +9,12 @@ The task that keeps the table `items` of `workspace` current, and the answers of
 once each `PUBLISH_INTERVAL` unless a reader waits, it requests in the catalog the latest versions
 of the ids asked for by readers, ahead of background work. Then it computes the readiness, failure
 and revision of the items of the catalog rows whose state, priority or job changed, and of the
-items whose cells workers wrote. When a cell changed, it stores the draft as a new version. All
-this happens under the catalog lock, in one take. Then, without a lock, it runs each function given
-to `select` in the last 10 seconds on the rows of the items whose cells shown by `select` changed
-in that version, and merges the items that pass into the order set by `sort!`. A new function runs
-on the row of every item, and a new order sorts every item again. An error stops the task, and
-readers that wait throw from then on.
+items whose cells workers wrote, 1000 at a time, each part under the catalog lock. Once none is
+left and a cell changed, it stores the draft as a new version. Then, without a lock, it runs each
+function given to `select` in the last 10 seconds on the rows of the items whose cells shown by
+`select` changed in that version, and merges the items that pass into the order set by `sort!`. A
+new function runs on the row of every item, and a new order sorts every item again. An error stops
+the task, and readers that wait throw from then on.
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
     catalog, columns, last = workspace.catalog, items.columns, 0.0
@@ -29,47 +29,56 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             ## changed no cell answers its requests at once.
             (@atomic items.readers) > 0 || sleep(max(0.0, last + PUBLISH_INTERVAL - time()))
             requested = @lock items.lock collect(items.requested)
-            ## TODO(scale): the items of every touched row are read in one take of the catalog lock.
-            changed = @lock catalog.lock begin
-                for x in requested
-                    haskey(workspace.versions, x) && request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
-                end
-                for row in catalog.touched
-                    stage = get(workspace.stages, row, nothing)
-                    stage === nothing && continue
-                    expected = stage == SOURCE_READ ? id(catalog[row].args[3]) : catalog[row].args[2].id
-                    for x in [expected; [output.id for output in get(workspace.outputs, row, Output[])]]
-                        number = get(items.index, x, Int32(0))
-                        number == 0 || push!(items.pending, number)
+            @lock catalog.lock for x in requested
+                haskey(workspace.versions, x) && request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
+            end
+            ## The items of the catalog rows whose state, priority or job changed join the pending
+            ## items, whose readiness, failure and revision then follow the catalog. Both are taken
+            ## 1000 at a time, each part under the catalog lock, so that a worker waits for one
+            ## part at most. The last part takes all that is left, and in the same take of the
+            ## lock, the draft becomes the new version when a cell changed.
+            changed = nothing
+            while changed === nothing
+                changed = @lock catalog.lock begin
+                    part = length(catalog.touched) + length(items.pending) > 1000 ? 1000 : typemax(Int)
+                    for row in [pop!(catalog.touched) for _ in 1:min(part, length(catalog.touched))]
+                        stage = get(workspace.stages, row, nothing)
+                        stage === nothing && continue
+                        expected = stage == SOURCE_READ ? id(catalog[row].args[3]) : catalog[row].args[2].id
+                        for x in [expected; [output.id for output in get(workspace.outputs, row, Output[])]]
+                            number = get(items.index, x, Int32(0))
+                            number == 0 || push!(items.pending, number)
+                        end
+                    end
+                    for number in [pop!(items.pending) for _ in 1:min(part, length(items.pending))]
+                        row = columns.version[number]
+                        current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
+                        readiness = row == Catalogs.NOWHERE ? UNPROCESSED : current ? CURRENT :
+                            Catalogs.stuck(catalog, row) ? FAILED :
+                            Catalogs.running(catalog, row) || Catalogs.wanted(catalog, row) ? WORKING : UNPROCESSED
+                        write!(items, columns.readiness, number, readiness)
+                        write!(items, columns.failure, number, readiness == FAILED ? failure(workspace, row) : "")
+                        write!(items, columns.revision, number, row == Catalogs.NOWHERE ? UInt64(0) :
+                            hash(row.index, hash(current, hash(Catalogs.changes(catalog, row)))))
+                    end
+                    if isempty(catalog.touched) && isempty(items.pending)
+                        shown = Set{Int32}()
+                        if items.changed
+                            @atomic items.version = Version(items.index, map(column -> Cells(column, items.count), columns),
+                                Dict{Symbol,Cells}(name => Cells(column, items.count) for (name, column) in items.metadata))
+                            items.draft, items.changed, shown, items.shown = items.draft + 1, false, items.shown, shown
+                            last = time()
+                            ## A window reads the `revision` of its items again when
+                            ## `status_revision` rises, and a view that keeps what it read, by
+                            ## `generation`, reads again.
+                            Threads.atomic_add!(Catalogs.CHANGES, 1)
+                            Threads.atomic_add!(workspace.generation, 1)
+                        end
+                        ## `wait_workspace_idle!` waits until the cells follow the catalog.
+                        notify(catalog.changed)
+                        shown
                     end
                 end
-                empty!(catalog.touched)
-                for number in items.pending
-                    row = columns.version[number]
-                    current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
-                    readiness = row == Catalogs.NOWHERE ? UNPROCESSED : current ? CURRENT :
-                        Catalogs.stuck(catalog, row) ? FAILED :
-                        Catalogs.running(catalog, row) || Catalogs.wanted(catalog, row) ? WORKING : UNPROCESSED
-                    write!(items, columns.readiness, number, readiness)
-                    write!(items, columns.failure, number, readiness == FAILED ? failure(workspace, row) : "")
-                    write!(items, columns.revision, number, row == Catalogs.NOWHERE ? UInt64(0) :
-                        hash(row.index, hash(current, hash(Catalogs.changes(catalog, row)))))
-                end
-                empty!(items.pending)
-                shown = Set{Int32}()
-                if items.changed
-                    @atomic items.version = Version(items.index, map(column -> Cells(column, items.count), columns),
-                        Dict{Symbol,Cells}(name => Cells(column, items.count) for (name, column) in items.metadata))
-                    items.draft, items.changed, shown, items.shown = items.draft + 1, false, items.shown, shown
-                    last = time()
-                    ## A window reads the `revision` of its items again when `status_revision`
-                    ## rises, and a view that keeps what it read, by `generation`, reads again.
-                    Threads.atomic_add!(Catalogs.CHANGES, 1)
-                    Threads.atomic_add!(workspace.generation, 1)
-                end
-                ## `wait_workspace_idle!` waits until the cells follow the catalog.
-                notify(catalog.changed)
-                shown
             end
             ## The requests end with this version, or with the last one when no cell changed. The
             ## answers that nobody asked for in the last 10 seconds are dropped.
@@ -120,7 +129,7 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                     ## The items that did not change keep their order, and the others that pass are
                     ## merged in.
                     ## TODO(scale): this goes through all the items of the answer.
-                    kept = before === nothing ? Int32[] : filter(n -> !(n in changed), before)
+                    kept = before === nothing ? Int32[] : filter(!in(changed), before)
                     numbers, next = sizehint!(Int32[], length(kept) + length(moved)), 1
                     for n in moved
                         stop = Base.invokelatest(searchsortedlast, kept, n; by=m -> keys_of[m], order=order.order)
