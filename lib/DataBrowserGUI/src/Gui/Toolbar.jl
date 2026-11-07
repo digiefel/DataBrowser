@@ -137,7 +137,7 @@ function _render_cache_controls!(state::BrowserState)::Nothing
         ig.BeginChild("##cache_errors", (0.0f0, 120.0f0), true)
         for index in 1:shown
             failed, message = status.errors[index]
-            ig.PushID(failed)
+            ig.PushID(index)
             if ig.TextLink(failed) && select_failed!(state, failed)
                 state.tree_filter = ""
                 _reset_tree_filter!(state)
