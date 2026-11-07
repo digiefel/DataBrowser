@@ -4,8 +4,8 @@ using DataBrowserAPI: AbstractGroup, kind_label, label
 import DataBrowserCore.Workspace
 
 """
-Draw the mark for how far the work of one row is, in a square of one text line, and explain it in
-a tooltip. A row that is current or not processed has no mark and keeps the square empty.
+Draw the readiness mark of an item in a square one text line high, with a tooltip that explains
+it. Items that are current or unprocessed get no mark, and the square stays empty.
 """
 function _render_readiness_mark!(readiness::Workspace.Readiness)::Nothing
     size = ig.GetTextLineHeight()
@@ -62,27 +62,38 @@ function _kind(workspace::Workspace.Workspace, x::AbstractString)::Union{Nothing
 end
 
 """
-Make the lines of the tree, with the answers of `select` they come from. The top lines are the
-items that no group holds; when that is one group, such as the folder of a `DirectorySource`, the
-group has no line and its members are the top lines. Below the line of each group in
-`state.expanded` come the lines of its members, so that an item that several groups hold has a line
-below each of them. A group that holds itself, directly or through its members, has no lines below
-it where it repeats.
+    TreeCache(workspace, key, columns; expanded, tree_filter, tag_visibility, tags_ready)
 
-With text in the filter, an item shows when its label or its kind passes the filter, or when it is
-a group with a member that shows; such a group shows its members. Below a group that passes, its
-members show as without text. The tags hide items as `state.tag_visibility` says.
+Build the tree drawn by the browser for `workspace`, with its items in the order set by `sort!`,
+filtered by `tree_filter` and by their tags, and with the members of each group in `expanded`
+below that group.
+
+The items held by no group are at the top. When there is only one of them and it is a group, such
+as the folder of a `DirectorySource`, the tree starts from its members instead. An item held by several groups
+appears under each of them, and a group that holds itself, directly or through its members, shows
+no members where it repeats.
+
+When `tree_filter` has text, the tree keeps the items with a matching label or kind, together with
+the groups above them; below a group that matches, all its members show. When the tags are loaded
+(`tags_ready`), `tag_visibility` also hides items by their tags.
+
+The result keeps `key`, `columns` and the answers from `select` used to build it, so that the
+browser can tell when to build the tree again. The first time `select` gets a function, it waits
+until the function has run on every item, so the browser calls this in a background task, with
+copies of its state.
 """
-function TreeCache(state::BrowserState, key::UInt, columns::Vector{Symbol})::TreeCache
-    workspace, answers = state.workspace, Pair{Function,Any}[]
-    ## The answer of `select` for `f`, kept with the lines, which are made again when it changes.
+function TreeCache(workspace::Workspace.Workspace, key::UInt, columns::Vector{Symbol};
+        expanded::Set{String}, tree_filter::String, tag_visibility::Dict{String,Symbol},
+        tags_ready::Bool)::TreeCache
+    answers = Pair{Function,Any}[]
+    ## Ask `select` and keep the answer, so the browser can tell when to build the tree again.
     answer(f) = last(push!(answers, f => Workspace.select(workspace, f))[end])
-    ## The words of the filter as the text filter of ImGui reads them: the first word that the text
-    ## contains decides, and a word that starts with - excludes. A tuple, so that the function below
-    ## is the same function, with the same answer, while the text stays the same.
+    ## The words of the filter, read as the ImGui text filter reads them: the first word found in
+    ## the text decides, and a word starting with - excludes. A tuple, so the function below stays
+    ## the same function, with the same answer, while the text doesn't change.
     words = Tuple(startswith(word, '-') => lowercase(chop(word; head=startswith(word, '-'), tail=0))
-        for word in strip.(split(state.tree_filter, ',')) if !(word in ("", "-")))
-    ## The items that pass the text, and the groups that hold one, directly or through members.
+        for word in strip.(split(tree_filter, ',')) if !(word in ("", "-")))
+    ## The items matching the text, and the groups holding one of them, directly or through members.
     ## TODO(scale): goes through every item that passes, and the groups above each of them.
     passing, above = Set{String}(), Set{String}()
     if !isempty(words)
@@ -104,29 +115,30 @@ function TreeCache(state::BrowserState, key::UInt, columns::Vector{Symbol})::Tre
             append!(pending, Workspace.groups(workspace, group))
         end
     end
-    ## The lines of the items of `rows` at `depth`, below the line at `at` and the groups `path`,
-    ## and the lines below each open one. `passed` tells whether an item above passes the filter.
+    ## Add the items of `rows` at `depth`, each followed by its members if it is an open group. `at`
+    ## is the place of their parent, `path` the groups above them, and `passed` whether an item
+    ## above matches the filter.
     ## TODO(scale): goes through every item at the top and below each open group.
-    lines, path = TreeRow[], String[]
+    items, path = TreeRow[], String[]
     function add!(rows, depth::Int, at::UInt, passed::Bool)
         for row in rows
             x = row.id
             passes = passed || x in passing
             passes || x in above || continue
             type = Workspace.valuetype(workspace, x)
-            _is_visible(state, row.tags, type) || continue
+            _is_visible(tag_visibility, tags_ready, row.tags, type) || continue
             parent = type <: AbstractGroup && !(x in path)
-            open = parent && (!passes || x in state.expanded)
+            open = parent && (!passes || x in expanded)
             passes || open || continue
             place = hash(x, at)
-            push!(lines, TreeRow(x, row, depth, place, parent, open))
+            push!(items, TreeRow(x, row, depth, place, parent, open))
             open || continue
-            count = length(lines)
+            count = length(items)
             push!(path, x)
             add!(answer(row -> x in row.groups), depth + 1, place, passes)
             pop!(path)
-            ## A group that does not pass shows only when a line below it shows.
-            passes || length(lines) > count || pop!(lines)
+            ## Drop a group that doesn't match if none of its members showed.
+            passes || length(items) > count || pop!(items)
         end
     end
     top = answer(row -> isempty(row.groups))
@@ -135,12 +147,16 @@ function TreeCache(state::BrowserState, key::UInt, columns::Vector{Symbol})::Tre
         top = answer(row -> group in row.groups)
     end
     add!(top, 0, zero(UInt), isempty(words))
-    return TreeCache(key, answers, lines, columns)
+    return TreeCache(key, answers, items, columns)
 end
 
 """
 Draw the tree of groups and their members, and change the selection of the workspace on a click.
-A click on a group selects the group itself; the menu of its line selects its members.
+A click on a group selects the group itself; its context menu selects its members.
+
+The tree is built in a background task, so drawing never waits for it. When the open groups, the
+filter, the tags or an answer from `select` change, the browser starts a new build and keeps
+drawing the old tree until the build is done.
 """
 function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter})::Nothing
     ig.BeginChild("Tree", (0, 0), true)
@@ -148,13 +164,36 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     _render_tag_visibility!(state)
     workspace = state.workspace
     key = hash((state.tree_filter, state.expanded, state.tag_visibility, workspace.tags.revision, _tags_ready(state)))
-    cache = state.tree_cache
-    ## Each answer is asked for at each frame: the workspace keeps it current while it is asked for.
-    ## TODO(scale): one call for each group that shows its members.
-    if cache === nothing || cache.key != key || any(((f, answer),) -> Workspace.select(workspace, f) !== answer, cache.answers)
-        cache = state.tree_cache = @timed "tree_lines" TreeCache(state, key, cache === nothing ? Symbol[] : cache.columns)
+    cache, task = state.tree_cache, state.tree_build_task
+    ## When a build is done, show its tree, with the columns added by the frame meanwhile. If the
+    ## build failed, keep the old tree until the key changes.
+    if task !== nothing && istaskdone(task)
+        state.tree_build_task = nothing
+        if istaskfailed(task)
+            @error("Failed to build the tree", exception = TaskFailedException(task),
+                maxlog = 1)
+            cache = state.tree_cache = cache === nothing ? TreeCache(key, Pair{Function,Any}[], TreeRow[], Symbol[]) :
+                TreeCache(key, Pair{Function,Any}[], cache.items, cache.columns)
+        else
+            built = fetch(task)::TreeCache
+            cache === nothing || sort!(union!(built.columns, cache.columns))
+            cache = state.tree_cache = built
+        end
     end
-    lines, columns = cache.lines, cache.columns
+    ## While no build runs, ask for every answer at each frame: the workspace keeps an answer
+    ## current while it is asked for, and returns it right away.
+    ## TODO(scale): one call for each group that shows its members.
+    if state.tree_build_task === nothing && (cache === nothing || cache.key != key ||
+            any(((f, answer),) -> Workspace.select(workspace, f) !== answer, cache.answers))
+        ## The build reads copies of the state, since the frame keeps changing it, and never calls
+        ## ImGui.
+        expanded, tree_filter, tag_visibility, tags_ready =
+            copy(state.expanded), state.tree_filter, copy(state.tag_visibility), _tags_ready(state)
+        known = cache === nothing ? Symbol[] : copy(cache.columns)
+        state.tree_build_task = Threads.@spawn @timed_dbg "tree_build" TreeCache(workspace, key, known;
+            expanded, tree_filter, tag_visibility, tags_ready)
+    end
+    items, columns = cache === nothing ? (TreeRow[], Symbol[]) : (cache.items, cache.columns)
     selected = _visible_selection(state)
 
     selected_count = length(selected.ids)
@@ -174,20 +213,21 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     ig.SetNextItemWidth(stop - start - unsafe_load(ig.GetStyle()).ItemSpacing.x)
     ig.ImGuiTextFilter_Draw(filter_tree, "##tree_filter")
     if ig.IsKeyPressed(ig.ImGuiKey_A) && ig.IsWindowFocused() && unsafe_load(ig.GetIO().KeyCtrl)
-        Workspace.select!(workspace, unique!([line.id for line in lines]))
+        Workspace.select!(workspace, unique!([item.id for item in items]))
         # The browser made this selection itself: nothing to reveal.
         state.selection_revision = workspace.selection.revision
     end
 
-    ## The line to scroll to is drawn even when it is out of view.
-    ## TODO: a revealed item whose line is not made yet is not scrolled to once it is.
-    target = state.scroll_to_item_id === nothing ? nothing : findfirst(line -> line.id == state.scroll_to_item_id, lines)
+    ## Draw the item to scroll to, even when it is out of view.
+    ## TODO: if a revealed item only appears in a later build, the tree never scrolls to it.
+    target = state.scroll_to_item_id === nothing ? nothing : findfirst(item -> item.id == state.scroll_to_item_id, items)
     state.scroll_to_item_id = nothing
     drawn = 0
     table_flags = ig.ImGuiTableFlags_BordersV | ig.ImGuiTableFlags_BordersOuterH | ig.ImGuiTableFlags_Resizable |
         ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_Reorderable | ig.ImGuiTableFlags_Hideable
-    if isempty(lines)
-        ig.TextDisabled(ig.ImGuiTextFilter_IsActive(filter_tree) ? "No items match filter" : "No data loaded")
+    if isempty(items)
+        ig.TextDisabled(ig.ImGuiTextFilter_IsActive(filter_tree) ? "No items match filter" :
+            state.tree_build_task === nothing ? "No data loaded" : "Loading")
     elseif ig.BeginTable("tree_table", 2 + length(columns), table_flags)
         ig.TableSetupColumn("Item", ig.ImGuiTableColumnFlags_NoHide | ig.ImGuiTableColumnFlags_NoReorder |
             ig.ImGuiTableColumnFlags_WidthStretch, 5.0)
@@ -199,48 +239,48 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
         ig.TableHeadersRow()
         clipper = ig.lib.ImGuiListClipper()
         try
-            ig.Begin(clipper, length(lines), ig.GetTextLineHeightWithSpacing())
+            ig.Begin(clipper, length(items), ig.GetTextLineHeightWithSpacing())
             target === nothing || ig.IncludeItemByIndex(clipper, target - 1)
             while ig.Step(clipper)
                 for index in Int(unsafe_load(clipper.DisplayStart))+1:Int(unsafe_load(clipper.DisplayEnd))
-                    line = lines[index]
+                    item = items[index]
                     drawn += 1
                     ig.TableNextRow()
                     ig.TableSetColumnIndex(0)
-                    ## The place names the line for ImGui: an item can have several lines.
-                    ig.PushID(Int32(line.place % typemax(Int32)))
-                    indent = line.depth * unsafe_load(ig.GetStyle().IndentSpacing)
-                    line.depth > 0 && ig.Indent(indent)
+                    ## An item can appear several times; ImGui tells the copies apart by `place`.
+                    ig.PushID(Int32(item.place % typemax(Int32)))
+                    indent = item.depth * unsafe_load(ig.GetStyle().IndentSpacing)
+                    item.depth > 0 && ig.Indent(indent)
                     flags = ig.ImGuiTreeNodeFlags_OpenOnArrow | ig.ImGuiTreeNodeFlags_OpenOnDoubleClick |
                         ig.ImGuiTreeNodeFlags_NoTreePushOnOpen | ig.ImGuiTreeNodeFlags_SpanAllColumns
-                    line.parent || (flags |= ig.ImGuiTreeNodeFlags_Leaf | ig.ImGuiTreeNodeFlags_Bullet)
-                    line.id in selected.set && (flags |= ig.ImGuiTreeNodeFlags_Selected)
-                    line.parent && ig.SetNextItemOpen(line.open, ig.ImGuiCond_Always)
-                    readiness = Workspace.readiness(workspace, line.id)
+                    item.parent || (flags |= ig.ImGuiTreeNodeFlags_Leaf | ig.ImGuiTreeNodeFlags_Bullet)
+                    item.id in selected.set && (flags |= ig.ImGuiTreeNodeFlags_Selected)
+                    item.parent && ig.SetNextItemOpen(item.open, ig.ImGuiCond_Always)
+                    readiness = Workspace.readiness(workspace, item.id)
                     ## An item that is not processed is gray, unless a tag already colors its text.
-                    tagged = _tags_ready(state) && _push_tag_text_style!(workspace, line.id)
+                    tagged = _tags_ready(state) && _push_tag_text_style!(workspace, item.id)
                     grayed = !tagged && readiness == Workspace.UNPROCESSED
                     grayed && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
-                    name = line.row.label
+                    name = item.row.label
                     opened = ig.TreeNodeEx("", flags, name)
                     (tagged || grayed) && ig.PopStyleColor()
                     index == target && ig.SetScrollHereY(0.5)
-                    if line.parent && ig.IsItemToggledOpen()
-                        opened ? push!(state.expanded, line.id) : delete!(state.expanded, line.id)
+                    if item.parent && ig.IsItemToggledOpen()
+                        opened ? push!(state.expanded, item.id) : delete!(state.expanded, item.id)
                     elseif ig.IsItemClicked()
                         io = ig.GetIO()
                         ids = copy(selected.ids)
-                        _update_multi_selection!(ids, line.id, [other.id for other in lines],
+                        _update_multi_selection!(ids, item.id, [other.id for other in items],
                             unsafe_load(io.KeyShift), unsafe_load(io.KeyCtrl))
                         Workspace.select!(workspace, ids)
                         state.selection_revision = workspace.selection.revision
                     end
-                    isgroup = Workspace.valuetype(workspace, line.id) <: AbstractGroup
+                    isgroup = Workspace.valuetype(workspace, item.id) <: AbstractGroup
                     if ig.BeginPopupContextItem()
-                        targets = line.id in selected.set ? selected.ids : [line.id]
+                        targets = item.id in selected.set ? selected.ids : [item.id]
                         length(targets) > 1 && ig.TextDisabled("Apply to $(length(targets)) items")
                         # The browser reveals the members it selects.
-                        x = line.id
+                        x = item.id
                         isgroup && ig.MenuItem("Select members") &&
                             Workspace.select!(workspace, Workspace.select(workspace, row -> x in row.groups).id)
                         # A dynamic call: packages add `item_context_menu!` methods for their
@@ -248,23 +288,24 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                         # invalidate the compiled code here.
                         for ext in state.extensions
                             Base.invokelatest(item_context_menu!, ext, state; item_ids=() -> targets,
-                                label=name, kind=_kind(workspace, line.id))
+                                label=name, kind=_kind(workspace, item.id))
                         end
                         _render_tag_menu!(state, targets)
                         ig.EndPopup()
                     end
-                    ## Drawn after every question about the line: the mark is an item of its own.
+                    ## ImGui treats the mark as a separate widget, so draw it after the calls that
+                    ## ask about the tree node, such as `IsItemClicked`.
                     ig.SameLine()
                     _render_readiness_mark!(readiness)
-                    line.depth > 0 && ig.Unindent(indent)
-                    ## One column for each metadata key of the groups whose lines were drawn, from
-                    ## the next frame. The other fields of a row are not metadata.
-                    found = isgroup ? [field for field in propertynames(line.row) if !(field in columns) &&
-                        !(field in (:id, :label, :groups, :tags, :data)) && !ismissing(getproperty(line.row, field))] : Symbol[]
+                    item.depth > 0 && ig.Unindent(indent)
+                    ## From the next frame on, add a column for each metadata key of the groups
+                    ## drawn. The other fields of a row are not metadata.
+                    found = isgroup ? [field for field in propertynames(item.row) if !(field in columns) &&
+                        !(field in (:id, :label, :groups, :tags, :data)) && !ismissing(getproperty(item.row, field))] : Symbol[]
                     isempty(found) || (cache.columns = sort!(union(cache.columns, found)))
                     for (column, field) in enumerate(columns)
                         ig.TableSetColumnIndex(column)
-                        value = hasproperty(line.row, field) ? getproperty(line.row, field) : missing
+                        value = hasproperty(item.row, field) ? getproperty(item.row, field) : missing
                         ismissing(value) || ig.TextUnformatted(string(value))
                     end
                     ig.PopID()
@@ -275,7 +316,7 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
         end
         ig.EndTable()
     end
-    state.performance.rows, state.performance.rows_drawn = length(lines), drawn
+    state.performance.rows, state.performance.rows_drawn = length(items), drawn
     ig.EndChild()
     return nothing
 end

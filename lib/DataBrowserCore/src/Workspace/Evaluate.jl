@@ -645,6 +645,21 @@ function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Som
         [catalog[row].f in (view, pick) || vector && !haskey(workspace.outputs, row) for (row, vector) in zip(rows, vectors)], vectors,
             [store_keys(workspace, row) for row in rows]
     end
+    found = kept(workspace, parts)
+    ## Any other result has one part: none when a row of the pipeline failed, or its value conflicts
+    ## with the value of another row.
+    return Union{Nothing,Some}[again || any(isnothing, values) ? nothing : vector ? Some(identity.(something.(values))) : get(values, 1, nothing)
+        for (values, vector, again) in zip(found, vectors, unsaved)]
+end
+
+"""
+    kept(workspace, parts) -> Vector{Vector{Union{Nothing,Some}}}
+
+The values kept by the stores under each type and revision of `parts`, as `Some(value)`, and
+`nothing` for each value missing from its store. The values of one type are read together, outside
+any lock.
+"""
+function kept(workspace::Workspace, parts::Vector{Vector{Tuple{Type,UInt64}}})::Vector{Vector{Union{Nothing,Some}}}
     found = [Vector{Union{Nothing,Some}}(nothing, length(part)) for part in parts]
     by_type = Dict{Type,Vector{Tuple{Int,Int}}}()
     for (position, part) in enumerate(parts), (index, (type, _)) in enumerate(part)
@@ -663,10 +678,7 @@ function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Som
             value === nothing || (found[position][index] = Some(value))
         end
     end
-    ## Any other result has one part: none when a row of the pipeline failed, or its value conflicts
-    ## with the value of another row.
-    return Union{Nothing,Some}[again || any(isnothing, values) ? nothing : vector ? Some(identity.(something.(values))) : get(values, 1, nothing)
-        for (values, vector, again) in zip(found, vectors, unsaved)]
+    return found
 end
 
 """
@@ -1012,27 +1024,18 @@ The data and the metadata of each delivered value belong together: when a value 
 loaded, it is loaded again.
 """
 function materialize_items(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{AbstractDataItem}
-    catalog = workspace.catalog
+    rows = workspace.item_rows
     while true
         seen = wait_processed(workspace, ids)
-        rows = @lock catalog.lock revision(workspace, ids) == seen ? Row[workspace.versions[x][end] for x in ids] : nothing
-        rows === nothing && continue
-        delivered = AbstractDataItem[pick(result, x) for (result, x) in zip(results(workspace, rows), ids)]
+        current = @lock rows.lock revision(workspace, ids) == seen ? [rows.rows[x] for x in ids] : nothing
+        current === nothing && continue
+        ## Read each value from the store of its type, by its revision. A value missing from its
+        ## store is computed again, together with the other values of its catalog row.
+        found = kept(workspace, [Tuple{Type,UInt64}[(row.type, row.value_revision)] for row in current])
+        delivered = AbstractDataItem[only(value) === nothing ? pick(computed!(workspace, row.version), x) : something(only(value))
+            for (value, row, x) in zip(found, current, ids)]
         revision(workspace, ids) == seen && return delivered
     end
-end
-
-# Ask for the latest version of each value ahead of background work. A request ends when its row has
-# a result, so the callers ask again when the latest version moved to another row.
-function Catalogs.request!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Nothing
-    catalog = workspace.catalog
-    @lock catalog.lock for x in ids
-        rows = get(workspace.versions, x, nothing)
-        rows === nothing || request!(catalog, rows[end], VIEWED_ITEM)
-    end
-    ## The rows of the items show that they are wanted now.
-    notify(workspace.item_rows.event)
-    return nothing
 end
 
 """
@@ -1043,41 +1046,52 @@ latest version of each is computed now, or failed. The call does not wait, so a 
 showing what it showed until the values are ready.
 """
 function processed(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Bool
-    catalog = workspace.catalog
-    @lock catalog.lock begin
-        request!(workspace, ids)
-        return catalog.closed || all(ids) do x
-            rows = get(workspace.versions, x, nothing)
-            rows !== nothing && (Catalogs.state(catalog, rows[end]) in (Catalogs.CURRENT, Catalogs.FAILED) || Catalogs.stuck(catalog, rows[end]))
-        end
+    rows = workspace.item_rows
+    @lock rows.lock begin
+        waiting = filter(x -> !(haskey(rows.rows, x) && rows.rows[x].readiness in (CURRENT, FAILED)), ids)
+        (rows.closed || isempty(waiting)) && return true
+        ## A request ends when its row has a result, so a window asks again at each call.
+        union!(rows.requested, waiting)
     end
+    notify(rows.event)
+    return false
 end
 
 """
     wait_processed(workspace, ids) -> UInt
 
 Ask for the values `ids` ahead of background work, wait until the latest version of each is
-computed, and return their [`revision`](@ref). A failed value throws its error.
+computed, and return their [`revision`](@ref). A failed value throws its error. The revision and
+the errors hold for the workspace as it was when the call started, or later.
 """
 function wait_processed(workspace::Workspace, ids::AbstractVector{<:AbstractString})::UInt
-    catalog = workspace.catalog
-    @lock catalog.lock begin
+    rows = workspace.item_rows
+    ## The latest version of each id when the call last asked for it.
+    asked = Dict{String,Row}()
+    @lock rows.lock while true
+        rows.closed && error("The workspace was closed")
+        waiting, asking = false, false
         for x in ids
-            ## When a row runs, the latest version of its value can move to another row.
-            row = Catalogs.NOWHERE
-            while true
-                rows = get(workspace.versions, x, nothing)
-                rows === nothing && error(catalog.closed ? "The workspace was closed" : "The workspace has no value with the id \"$x\"")
-                rows[end] == row && break
-                row = rows[end]
-                state = wait(catalog, row, VIEWED_ITEM)
-                state == Catalogs.CURRENT && continue
-                catalog.closed && error("The workspace was closed")
-                state == Catalogs.REMOVED && continue
-                error(failure(workspace, row))
+            ## The row of an id is current once the task has read the catalog after the call asked
+            ## for it.
+            x in rows.requested && (waiting = true; continue)
+            found = get(rows.rows, x, nothing)
+            if haskey(asked, x)
+                found === nothing && error("The workspace has no value with the id \"$x\"")
+                found.readiness == FAILED && error(found.failure)
+                found.readiness == CURRENT && continue
+                waiting = true
+                ## A request ends when its row has a result: the call asks again when the latest
+                ## version moved to another row, or when nothing wants it.
+                found.readiness == WORKING && found.version == asked[x] && continue
             end
+            push!(rows.requested, x)
+            asked[x] = found === nothing ? Catalogs.NOWHERE : found.version
+            waiting = asking = true
         end
-        return revision(workspace, ids)
+        waiting || return revision(workspace, ids)
+        asking && notify(rows.event)
+        wait(rows.published)
     end
 end
 
@@ -1089,15 +1103,10 @@ later version, or its latest version was computed again. A window keeps the numb
 and draws again when it differs.
 """
 function revision(workspace::Workspace, ids::AbstractVector{<:AbstractString})::UInt
-    catalog = workspace.catalog
-    @lock catalog.lock begin
-        seed = UInt(0)
-        for x in ids
-            rows = get(workspace.versions, x, nothing)
-            seed = rows === nothing ? hash(0, seed) : hash(rows[end].index, hash(Catalogs.state(catalog, rows[end]) == Catalogs.CURRENT,
-                hash(Catalogs.changes(catalog, rows[end]), seed)))
-        end
-        return seed
+    rows = workspace.item_rows
+    @lock rows.lock foldl(ids; init=UInt(0)) do seed, x
+        found = get(rows.rows, x, nothing)
+        hash(found === nothing ? UInt64(0) : found.revision, seed)
     end
 end
 
@@ -1105,9 +1114,10 @@ end
     status_revision(workspace) -> Int
 
 A number that rises whenever a computation of this or any other workspace changes its state, is
-added or is removed. All workspaces of the Julia session share it, so it may also rise for a change
-in another workspace. Values are added and removed only together with such a change. While the
-number stays the same, so do the [`revision`](@ref) of any values and the latest version of each id.
+added or is removed, and whenever a workspace updates what [`select`](@ref) and [`revision`](@ref)
+give. All workspaces of the Julia session share it, so it may also rise for a change in another
+workspace. Values are added and removed only together with such a change. While the number stays
+the same, so do the [`revision`](@ref) of any values and the latest version of each id.
 Reading it costs the same for any number of items.
 """
 status_revision(::Workspace)::Int = Catalogs.CHANGES[]

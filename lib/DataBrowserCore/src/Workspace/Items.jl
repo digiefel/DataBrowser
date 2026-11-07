@@ -87,13 +87,16 @@ When `by` or `lt` throws, the items sort by their labels again, and the error is
 function Base.sort!(workspace::Workspace; by, lt=isless, rev::Bool=false)::Workspace
     rows = workspace.item_rows
     @lock rows.lock rows.order = (; by, order=Base.Order.ord(lt, identity, rev))
-    @lock workspace.catalog.lock (rows.all = true; notify(rows.event))
+    notify(rows.event)
     return workspace
 end
 
-"""The label of a value: the one its latest version gave it, or its id before it has one."""
+"""
+The label of a value, as [`select`](@ref) gives it: the one given by its latest version, or its id
+before it has one.
+"""
 function label(workspace::Workspace, x::AbstractString)::String
-    found = @lock workspace.catalog.lock output(workspace, String(x))
+    found = @lock workspace.item_rows.lock get(workspace.item_rows.rows, x, nothing)
     return found === nothing ? String(x) : found.label
 end
 
@@ -117,13 +120,12 @@ source_item_id(workspace::Workspace, x::AbstractString)::String =
 """
     metadata(workspace, id) -> Dict{Symbol,Any}
 
-The metadata of a value, as a new dictionary: the metadata of its latest version.
+The metadata of a value, as [`select`](@ref) gives it, in a new dictionary: the metadata of its
+latest version.
 """
 function metadata(workspace::Workspace, x::AbstractString)::Dict{Symbol,Any}
-    @lock workspace.catalog.lock begin
-        found = output(workspace, String(x))
-        return found === nothing ? Dict{Symbol,Any}() : workspace.produced[found.key]
-    end
+    found = @lock workspace.item_rows.lock get(workspace.item_rows.rows, x, nothing)
+    return found === nothing ? Dict{Symbol,Any}() : copy(found.metadata)
 end
 
 """

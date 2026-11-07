@@ -209,10 +209,9 @@ Base.@kwdef mutable struct PerformanceState
 end
 
 """
-One line of the tree: the id of its item, the row of the item in the `Selection` that the line
-comes from, the number of lines above it in the tree, and a number that stands for its place in
-the tree, the same from one making of the lines to the next. `parent` tells whether lines can show
-below it, and `open` whether they show.
+One entry of the tree: the id of an item, its row from `select`, its depth (the number of groups
+above it), and a number for its place in the tree, which stays the same from one build to the
+next. `parent` tells whether the item can show members below it, and `open` whether it does.
 """
 struct TreeRow
     id::String
@@ -224,15 +223,15 @@ struct TreeRow
 end
 
 """
-The lines of the tree, kept from frame to frame, with the answer of `select` for each function that
-they come from. The lines are made again when one of these answers changes, or when `key` changes:
-the key covers the groups that show their members, the filter and the tags.
+The tree drawn by the browser, kept from frame to frame together with the answers from `select`
+used to build it. The browser builds the tree again when one of these answers changes, or when
+`key` changes; the key covers the open groups, the filter and the tags.
 """
 mutable struct TreeCache
     key::UInt
     answers::Vector{Pair{Function,Any}}
-    lines::Vector{TreeRow}
-    # The metadata keys of the groups whose lines were drawn, one column each.
+    items::Vector{TreeRow}
+    # The metadata keys of the groups drawn so far, one column each.
     # TODO(query model): a column stays once a drawn group had its key; the query model can give the
     # keys of the groups in the tree.
     columns::Vector{Symbol}
@@ -259,6 +258,8 @@ only controls, windows, local persistence, annotations, and rendering state.
 Base.@kwdef mutable struct BrowserState
     workspace::Workspace.Workspace
     tree_cache::Union{Nothing,TreeCache} = nothing
+    # The background task that builds the tree, until the frame picks up its result.
+    tree_build_task::Union{Nothing,Task} = nothing
     visible_selection::Union{Nothing,VisibleSelection} = nothing
     # The windows that show a value with a visualizer, and the number of the last one opened.
     windows::Vector{Window} = Window[]
