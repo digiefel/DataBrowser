@@ -209,18 +209,16 @@ function open_cache_db(
     started(store) = (push!(stores, store); store)
     try
         try
-            DBInterface.execute(connection, _memory_limit_sql(CACHE_MEMORY_LIMIT_MIB[]))
+            # As in a `DuckDBStore`, queries run on DuckDB's own threads and on the calling thread.
+            _run(connection, "SET external_threads = 1")
+            _run(connection, "SET threads = $(Sys.CPU_THREADS)")
+            _run(connection, _memory_limit_sql(CACHE_MEMORY_LIMIT_MIB[]))
             # A database in memory moves what exceeds its memory limit to a directory of its own,
             # removed when Julia exits.
-            persistent || DBInterface.execute(connection, "SET temp_directory = '$(mktempdir())'")
-            has_meta = only(Int[
-                row.n
-                for row in DBInterface.execute(
-                    connection,
-                    "SELECT COUNT(*) AS n FROM information_schema.tables " *
-                    "WHERE table_schema = 'main' AND table_name = 'meta'",
-                )
-            ]) > 0
+            persistent || _run(connection, "SET temp_directory = '$(mktempdir())'")
+            has_meta = only(_execute_on_duckdb_threads(connection,
+                "SELECT COUNT(*) AS n FROM information_schema.tables " *
+                "WHERE table_schema = 'main' AND table_name = 'meta'")).n > 0
             meta = has_meta ? _load_meta(connection) : Dict{String,String}()
             isempty(meta) || _validate_meta(meta, identity)
             ensure_schema!(connection)
@@ -292,15 +290,14 @@ _buffer_rows(data)::Int = Tables.istable(data) ? _payload_rows(data) : 1
 
 """Create the cache tables if they do not already exist."""
 function ensure_schema!(connection)::Nothing
-    DBInterface.execute(connection, """
+    _run(connection, """
         CREATE TABLE IF NOT EXISTS meta(
             key TEXT PRIMARY KEY,
             value TEXT)
     """)
-    DBInterface.execute(connection, create_table_sql(OutputRow, "outputs", (:output_key,)))
-    DBInterface.execute(connection,
-        create_table_sql(ComputationRevisionRow, "computation_revisions", (:key,)))
-    DBInterface.execute(connection, """
+    _run(connection, create_table_sql(OutputRow, "outputs", (:output_key,)))
+    _run(connection, create_table_sql(ComputationRevisionRow, "computation_revisions", (:key,)))
+    _run(connection, """
         CREATE TABLE IF NOT EXISTS wide_columns(
             table_name TEXT,
             column_name TEXT,
@@ -308,7 +305,7 @@ function ensure_schema!(connection)::Nothing
             sql_type TEXT,
             PRIMARY KEY (table_name, column_name))
     """)
-    DBInterface.execute(connection, "CREATE TABLE IF NOT EXISTS output_metadata(output_key BIGINT PRIMARY KEY)")
+    _run(connection, "CREATE TABLE IF NOT EXISTS output_metadata(output_key BIGINT PRIMARY KEY)")
     return nothing
 end
 
@@ -429,7 +426,7 @@ function close_cache_db!(cachedb::CacheDB)::Nothing
     try
         connection = DBInterface.connect(cachedb.db)
         try
-            DBInterface.execute(connection, "CHECKPOINT")
+            _run(connection, "CHECKPOINT")
         finally
             DBInterface.close!(connection)
             DBInterface.close!(cachedb.db)
@@ -477,14 +474,13 @@ _null_to_nothing(value) = ismissing(value) ? nothing : value
 """Initialize all identity fields together before opening cache stores."""
 function _write_meta_header!(connection, identity::ProjectCacheIdentity)::Nothing
     _transaction(connection) do
-        statement = DBInterface.prepare(connection, "INSERT INTO meta VALUES (?, ?)")
         for (key, value) in (
             "schema_version" => string(PROJECT_CACHE_SCHEMA_VERSION),
             "project_name" => identity.project_name,
             "source_id" => identity.source_id,
             "source_label" => identity.source_label,
         )
-            DBInterface.execute(statement, (key, value))
+            _run(connection, "INSERT INTO meta VALUES (?, ?)", (key, value))
         end
     end
     return nothing
@@ -493,7 +489,7 @@ end
 """Read the identity header on the opening connection."""
 function _load_meta(connection)::Dict{String,String}
     return Dict{String,String}(String(row.key) => String(row.value)
-        for row in DBInterface.execute(connection, "SELECT key, value FROM meta"))
+        for row in _execute_on_duckdb_threads(connection, "SELECT key, value FROM meta"))
 end
 
 """Reject a schema or identity mismatch before any cache stores can write."""
@@ -548,7 +544,7 @@ function query_items(cache::CacheDB, predicate::AbstractString)::Vector{String}
     _ensure_items_view!(cache)
     connection = DBInterface.connect(cache.db)
     try
-        return String[String(row.id) for row in DBInterface.execute(
+        return String[String(row.id) for row in _execute_on_duckdb_threads(
             connection, "SELECT id FROM mb_item_query WHERE $(predicate)")]
     finally
         DBInterface.close!(connection)
@@ -560,7 +556,7 @@ function _ensure_items_view!(cache::CacheDB)::Nothing
     connection = DBInterface.connect(cache.db)
     try
         signature = Symbol[]
-        for row in DBInterface.execute(connection, """
+        for row in _execute_on_duckdb_threads(connection, """
             SELECT column_name FROM information_schema.columns
             WHERE table_schema = 'main' AND table_name = 'output_metadata'
             ORDER BY ordinal_position
@@ -570,7 +566,7 @@ function _ensure_items_view!(cache::CacheDB)::Nothing
         # The view is replaced in one statement, so a query on another task always finds it.
         lock(cache.key_lock) do
             signature == cache.query_view_signature && return nothing
-            DBInterface.execute(connection, """
+            _run(connection, """
                 CREATE OR REPLACE VIEW mb_item_query AS
                 SELECT * EXCLUDE (output_key, computation, stage, position, members_hex)
                 FROM outputs LEFT JOIN output_metadata USING (output_key)

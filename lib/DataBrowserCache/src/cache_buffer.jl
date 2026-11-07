@@ -73,22 +73,37 @@ function create_table_sql(
 end
 
 """
-Run a statement that returns no rows and takes no parameters.
+Run a statement with the values `parameters` for its `?` placeholders, and return its rows.
 
-The garbage collector may run while DuckDB works on the statement. In the calls that DuckDB.jl
-makes, it cannot: it waits for the statement to end, and every other thread waits with it.
+DuckDB runs the statement on the calling thread and on its own threads, since each database opens
+with `external_threads = 1`, and the garbage collector may run meanwhile. DuckDB.jl's `execute`
+runs a statement on one Julia task per Julia thread instead. These tasks wait for work by yielding
+in a loop, which takes the threads from other work, and the garbage collector waits for the
+statement to end.
 """
-function _run(connection::DuckDB.Connection, sql::String)::Nothing
-    result = Ref{DuckDB.duckdb_result}()
-    state = @ccall gc_safe=true DuckDB.libduckdb.duckdb_query(
-        connection.handle::DuckDB.duckdb_connection, sql::Cstring,
-        result::Ref{DuckDB.duckdb_result})::DuckDB.duckdb_state
-    message = state == DuckDB.DuckDBSuccess ? nothing :
-        unsafe_string(DuckDB.duckdb_result_error(result))
-    DuckDB.duckdb_destroy_result(result)
-    message === nothing || error("DuckDB could not run `$sql`: $message")
-    return nothing
+function _execute_on_duckdb_threads(connection::DuckDB.Connection, sql::AbstractString, parameters=())
+    ## TODO(maintenance): uses DuckDB.jl internals (`Stmt`, `bind_parameters`, `QueryResult`).
+    statement = DuckDB.Stmt(connection, sql, DuckDB.MaterializedResult)
+    try
+        DuckDB.bind_parameters(statement, parameters)
+        result = Ref{DuckDB.duckdb_result}()
+        state = @ccall gc_safe=true DuckDB.libduckdb.duckdb_execute_prepared(
+            statement.handle::DuckDB.duckdb_prepared_statement,
+            result::Ref{DuckDB.duckdb_result})::DuckDB.duckdb_state
+        if state != DuckDB.DuckDBSuccess
+            message = unsafe_string(DuckDB.duckdb_result_error(result))
+            DuckDB.duckdb_destroy_result(result)
+            error("DuckDB could not run `$sql`: $message")
+        end
+        return DuckDB.QueryResult(result)
+    finally
+        DuckDB._close_stmt(statement)
+    end
 end
+
+"""Run a statement that returns no rows, as [`_execute_on_duckdb_threads`](@ref) does."""
+_run(connection::DuckDB.Connection, sql::AbstractString, parameters=())::Nothing =
+    DBInterface.close!(_execute_on_duckdb_threads(connection, sql, parameters))
 
 function _transaction(work::Function, connection)::Nothing
     _run(connection, "BEGIN TRANSACTION")
@@ -373,24 +388,18 @@ function WideRowStore{K}(
     read_connection = DBInterface.connect(database)
     write_connection = DBInterface.connect(database)
     columns = Dict{Symbol,MetadataColumn}()
-    for row in DBInterface.execute(
-        DBInterface.prepare(
-            read_connection,
-            "SELECT column_name, julia_type, sql_type FROM wide_columns WHERE table_name = ?"),
-        (String(table),),
-    )
+    for row in _execute_on_duckdb_threads(read_connection,
+            "SELECT column_name, julia_type, sql_type FROM wide_columns WHERE table_name = ?",
+            (String(table),))
         name = String(row.julia_type)
         columns[Symbol(String(row.column_name))] = MetadataColumn(name, _named_type(name), String(row.sql_type))
     end
     column_order = Symbol[]
-    for row in DBInterface.execute(
-        DBInterface.prepare(read_connection, """
+    for row in _execute_on_duckdb_threads(read_connection, """
             SELECT column_name FROM information_schema.columns
             WHERE table_schema = 'main' AND table_name = ?
             ORDER BY ordinal_position
-        """),
-        (String(table),),
-    )
+        """, (String(table),))
         name = Symbol(String(row.column_name))
         name === key_symbol || push!(column_order, name)
     end
@@ -493,8 +502,8 @@ function Base.read(store::WideRowStore{K})::Dict{K,Dict{Symbol,Any}} where {K}
         filter!(name -> columns[name].type !== nothing, stored_columns)
         rows = Dict{K,Dict{Symbol,Any}}()
         lock(store.read_lock) do
-            for database_row in DBInterface.execute(
-                store.read_connection, "SELECT * FROM $(store.quoted_table)")
+            for database_row in _execute_on_duckdb_threads(
+                    store.read_connection, "SELECT * FROM $(store.quoted_table)")
                 raw_key = getproperty(database_row, store.key_column)
                 dict = Dict{Symbol,Any}()
                 for name in stored_columns
@@ -543,11 +552,8 @@ function _flush_to_db!(
         for name in new_columns
             _run(store.write_connection,
                 "ALTER TABLE $(store.quoted_table) ADD COLUMN $(quoted(name)) $(columns[name].sql)")
-            DBInterface.execute(
-                DBInterface.prepare(
-                    store.write_connection, "INSERT INTO wide_columns VALUES (?, ?, ?, ?)"),
-                (store.table_name, String(name), columns[name].name, columns[name].sql),
-            )
+            _run(store.write_connection, "INSERT INTO wide_columns VALUES (?, ?, ?, ?)",
+                (store.table_name, String(name), columns[name].name, columns[name].sql))
         end
         _delete_keys!(
             store.write_connection,
@@ -772,33 +778,29 @@ function TabularFamilyStore(
     locations = Dict{String,Tuple{UInt16,UInt32}}()
     containers = Dict{Tuple{UInt16,UInt32},String}()
     rows = Dict{Tuple{UInt16,UInt32},Int}()
-    for row in DBInterface.execute(
-        read_connection, "SELECT id, storage_id, seq, container, rows FROM item_data")
+    for row in _execute_on_duckdb_threads(
+            read_connection, "SELECT id, storage_id, seq, container, rows FROM item_data")
         location = (UInt16(row.storage_id), UInt32(row.seq))
         locations[String(row.id)] = location
         containers[location] = String(row.container)
         rows[location] = Int(row.rows)
     end
     schemas = Dict{PayloadShape,UInt16}()
-    for row in DBInterface.execute(
-        read_connection,
-        "SELECT storage_id, column_names, column_types FROM payload_schemas",
-    )
+    for row in _execute_on_duckdb_threads(
+            read_connection, "SELECT storage_id, column_names, column_types FROM payload_schemas")
         shape = (
             Tuple(String(name) for name in row.column_names),
             Tuple(String(type) for type in row.column_types),
         )
         schemas[shape] = UInt16(row.storage_id)
     end
-    max_seq = Int128(only(DBInterface.execute(
-        read_connection,
-        "SELECT coalesce(max(seq), 0) AS seq FROM item_data",
-    )).seq)
+    max_seq = Int128(only(_execute_on_duckdb_threads(
+        read_connection, "SELECT coalesce(max(seq), 0) AS seq FROM item_data")).seq)
     # A flush that stopped half way leaves payload rows that `item_data` does not name. Their
     # sequence numbers are not given out again.
     for storage_id in values(schemas)
         table = _quote_identifier(_payload_table_name(storage_id))
-        max_seq = max(max_seq, Int128(only(DBInterface.execute(
+        max_seq = max(max_seq, Int128(only(_execute_on_duckdb_threads(
             read_connection, "SELECT coalesce(max($MB_SEQ_COLUMN), 0) AS seq FROM $table")).seq))
     end
     max_seq < typemax(UInt32) ||
@@ -1135,10 +1137,8 @@ function Base.read(store::RowStore{K,R})::Dict{K,R} where {K,R}
         end
         rows = Dict{K,R}()
         lock(store.read_lock) do
-            for database_row in DBInterface.execute(
-                store.read_connection,
-                "SELECT * FROM $(store.quoted_table)",
-            )
+            for database_row in _execute_on_duckdb_threads(
+                    store.read_connection, "SELECT * FROM $(store.quoted_table)")
                 row = R(database_row)
                 values = Tuple(
                     getproperty(database_row, column) for column in store.key_columns)
@@ -1292,32 +1292,6 @@ function _read_converted(store::TabularFamilyStore, table::String, storage_id::U
         Missing <: eltype(column) && !any(ismissing, column) ?
             convert(Vector{nonmissingtype(eltype(column))}, column) : column
     end)) for seq in seqs)
-end
-
-# Run a query whose result is materialized. DuckDB.jl's `execute` runs the query's work on one
-# Julia task per Julia thread, which wait for work by yielding in a loop; when other work takes
-# those threads, the query slows down several times. Here the calling task runs DuckDB's tasks
-# one by one while DuckDB's own threads run the others (the store opens the file with
-# `external_threads = 1`).
-# TODO(maintenance): uses DuckDB.jl internals (`Stmt`, `PendingQueryResult`, `QueryResult`).
-function _execute_on_duckdb_threads(connection::DuckDB.Connection, sql::AbstractString, parameters)
-    statement = DuckDB.Stmt(connection, sql, DuckDB.MaterializedResult)
-    try
-        DuckDB.bind_parameters(statement, parameters)
-        pending = DuckDB.PendingQueryResult(statement)
-        if !pending.success || !DuckDB.pending_execute_tasks(pending)
-            throw(DuckDB.QueryException(DuckDB.get_error(statement, pending)))
-        end
-        handle = Ref{DuckDB.duckdb_result}()
-        if DuckDB.duckdb_execute_pending(pending.handle, handle) != DuckDB.DuckDBSuccess
-            message = DuckDB.fetch_error(sql, DuckDB.duckdb_result_error(handle))
-            DuckDB.duckdb_destroy_result(handle)
-            throw(DuckDB.QueryException(message))
-        end
-        return DuckDB.QueryResult(handle)
-    finally
-        DuckDB._close_stmt(statement)
-    end
 end
 
 # Consecutive query rows that go to consecutive rows of one payload: the payload's columns, the
@@ -1482,7 +1456,7 @@ function _delete_keys!(
         placeholders = join(fill("?", length(chunk)), ", ")
         sql = "DELETE FROM $quoted_table WHERE $(only(quoted_key_columns)) " *
             "IN ($placeholders)"
-        DBInterface.execute(DBInterface.prepare(connection, sql), chunk)
+        _run(connection, sql, chunk)
     end
     return nothing
 end
@@ -1538,13 +1512,7 @@ function _delete_payloads!(
         for first_index in 1:CACHE_DELETE_KEY_BATCH:length(seqs)
             chunk = @view seqs[first_index:min(first_index + CACHE_DELETE_KEY_BATCH - 1, end)]
             placeholders = join(fill("?", length(chunk)), ", ")
-            DBInterface.execute(
-                DBInterface.prepare(
-                    connection,
-                    "DELETE FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)",
-                ),
-                Tuple(chunk),
-            )
+            _run(connection, "DELETE FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)", chunk)
         end
     end
     _delete_keys!(
@@ -1587,21 +1555,11 @@ function _flush_to_db!(
             definitions = join(
                 ("$(_quote_identifier(name)) $type" for (name, type) in zip(columns, types)), ", ")
             table = _quote_identifier(_payload_table_name(storage_id))
-            DBInterface.execute(
-                store.write_connection,
-                "CREATE TABLE IF NOT EXISTS $table (" *
-                "$MB_SEQ_COLUMN UINTEGER, $MB_ROW_COLUMN UBIGINT, $definitions)",
-            )
-            DBInterface.execute(
-                DBInterface.prepare(
-                    store.write_connection,
-                    """
-                    INSERT INTO payload_schemas VALUES (?, ?, ?)
-                    ON CONFLICT (storage_id) DO NOTHING
-                    """,
-                ),
-                (storage_id, collect(columns), collect(types)),
-            )
+            _run(store.write_connection, "CREATE TABLE IF NOT EXISTS $table (" *
+                "$MB_SEQ_COLUMN UINTEGER, $MB_ROW_COLUMN UBIGINT, $definitions)")
+            _run(store.write_connection,
+                "INSERT INTO payload_schemas VALUES (?, ?, ?) ON CONFLICT (storage_id) DO NOTHING",
+                (storage_id, collect(columns), collect(types)))
         end
     end
     isempty(appends) && return nothing

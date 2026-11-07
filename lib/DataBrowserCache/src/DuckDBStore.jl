@@ -58,7 +58,8 @@ function open_duckdb_store(path::String, max_bytes::Integer)
     database = DuckDB.DB(path)
     serialized = DBInterface.connect(database)
     # DuckDB.jl lets DuckDB run queries only on Julia tasks, one per Julia thread. With one
-    # external thread, DuckDB runs its own threads on the other cores, which table reads use.
+    # external thread, DuckDB runs its own threads on the other cores, which every query uses
+    # (see `_execute_on_duckdb_threads`).
     _run(serialized, "SET external_threads = 1")
     _run(serialized, "SET threads = $(Sys.CPU_THREADS)")
     _run(serialized, "CREATE TABLE IF NOT EXISTS stored_values (id VARCHAR PRIMARY KEY, value BLOB NOT NULL)")
@@ -68,7 +69,8 @@ function open_duckdb_store(path::String, max_bytes::Integer)
         "julia_type TEXT, sql_type TEXT, PRIMARY KEY (table_name, column_name))")
     shell_rows = RowStore{String,StoredShell}(database, "stored_item_types", ("id",))
     metadata_rows = WideRowStore{String}(database, "stored_item_metadata", "id")
-    serialized_ids = Set{String}(String(row.id) for row in DBInterface.execute(serialized, "SELECT id FROM stored_values"))
+    serialized_ids = Set{String}(String(row.id)
+        for row in _execute_on_duckdb_threads(serialized, "SELECT id FROM stored_values"))
     return DuckDBStore(path, ReentrantLock(), database, serialized, serialized_ids,
         TabularFamilyStore(database; row_limit=CACHE_BUFFER_ROW_LIMIT),
         shell_rows, read(shell_rows), metadata_rows, read(metadata_rows),
@@ -107,7 +109,7 @@ function Base.write(store::DuckDBStore, key::Integer, item)
             buffer = IOBuffer()
             serialize(buffer, item)
             # TODO(scale): one statement per value; queue these as the tables are.
-            _run_with(store.serialized, "INSERT OR REPLACE INTO stored_values VALUES (?, ?)", (stored, take!(buffer)))
+            _run(store.serialized, "INSERT OR REPLACE INTO stored_values VALUES (?, ?)", (stored, take!(buffer)))
             push!(store.serialized_ids, stored)
         end
         append!(store.recent, stored, item)
@@ -173,7 +175,7 @@ function _read_serialized(store::DuckDBStore, keys::Vector{String})::Dict{String
     found = Dict{String,Any}()
     @lock store.lock begin
         sql = "SELECT id, value FROM stored_values WHERE id IN (" * join(fill("?", length(keys)), ", ") * ")"
-        for row in DBInterface.execute(store.serialized, sql, keys)
+        for row in _execute_on_duckdb_threads(store.serialized, sql, keys)
             key = String(row.id)
             try
                 found[key] = deserialize(IOBuffer(row.value))
@@ -219,11 +221,9 @@ end
 function _forget_serialized!(store::DuckDBStore, id::String)::Nothing
     id in store.serialized_ids || return nothing
     delete!(store.serialized_ids, id)
-    _run_with(store.serialized, "DELETE FROM stored_values WHERE id = ?", (id,))
+    _run(store.serialized, "DELETE FROM stored_values WHERE id = ?", (id,))
     return nothing
 end
-
-_run_with(connection, sql, parameters) = (DBInterface.execute(connection, sql, parameters); nothing)
 
 # Queued tables are written, then the write-ahead log is moved into the file, so the next opening
 # does not replay it.
