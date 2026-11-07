@@ -1,4 +1,4 @@
-"""The id and the item type, hex-serialized, of an item whose data is kept as a table."""
+"""The id and the item type, hex-serialized, of a stored item."""
 struct StoredShell
     id::String
     item_id::String
@@ -10,25 +10,30 @@ StoredShell(row)::StoredShell = StoredShell(String(row.id), String(row.item_id),
     DuckDBStore(path; max_bytes=64 * 1024^2)
 
 Store values in the DuckDB file at `path`, so they remain available when the workspace opens
-again. When the data of an item is a table (a Tables.jl table whose columns DuckDB can hold), the
-table is kept as DuckDB columns, its metadata as metadata columns (one for each name, of the type
-of its values), and the item is rebuilt with `reconstruct` from them. Other values are kept with
-Julia's `Serialization`. A background task writes the values to the file in batches.
+again. The store keeps the metadata of each item in columns that DuckDB queries can read, one for
+each metadata name, of the type of its values. It keeps the data of an item as DuckDB columns when
+the data is a table (a Tables.jl table whose columns DuckDB can hold), and any other data with
+Julia's `Serialization`. Reading an item rebuilds it with `reconstruct` from its id, data and
+metadata. The store serializes the whole value when it is not an item, such as a number, or when
+`reconstruct` gives `nothing` for it, as for a `SourceGroup`. A background task writes the values
+to the file in batches.
 
-Writing an item whose metadata value has another type than the values written before under its
-name is an error. Recently written or read values also stay in memory, as in
-[`MemoryStore`](@ref), up to `max_bytes` in all, where a table counts the bytes of its columns and
-another value the bytes of its serialized form.
+For each type of value whose data it serializes, the store warns once: another Julia version may
+fail to read that data back, and DuckDB queries cannot read it. A value that the running Julia
+version cannot read back counts as missing, so Core computes it again.
+
+Writing an item is an error when a metadata value cannot be saved in a column, or has another type
+than the values written before under its name. Recently written or read values also stay in
+memory, as in [`MemoryStore`](@ref), up to `max_bytes` in all, where a table counts the bytes of its
+columns and other data the bytes of its serialized form.
 
 While a store is open on `path`, `DuckDBStore(path)` returns that store, so several item types can
 share one file. `close` closes it for all of them; closing it again does nothing.
-
-A value that the running Julia version cannot read back counts as missing, so Core computes it
-again.
 """
 mutable struct DuckDBStore <: DataBrowserAPI.AbstractStore
     path::String
-    # Held for `serialized`, `serialized_ids` and `shells`; the table store has its own lock.
+    # Held for `serialized`, `serialized_ids`, `shells` and `metadata`; the table store has its own
+    # lock.
     lock::ReentrantLock
     database::DuckDB.DB
     serialized::DuckDB.Connection
@@ -37,10 +42,10 @@ mutable struct DuckDBStore <: DataBrowserAPI.AbstractStore
     serialized_rows::RowStore{String,@NamedTuple{id::String, value::Vector{UInt8}}}
     tables::TabularFamilyStore
     shell_rows::RowStore{String,StoredShell}
-    # The item type of each item whose data is in `tables`.
+    # The id and the type of each item.
     shells::Dict{String,StoredShell}
     metadata_rows::WideRowStore{String}
-    # The metadata of each item whose data is in `tables`.
+    # The metadata of each item.
     metadata::Dict{String,Dict{Symbol,Any}}
     # Recently written items, by their key in the file.
     recent::MemoryStore{String,Any}
@@ -97,55 +102,65 @@ function stored_key(::Type{T}, key::Integer) where {T}
     return string(text, '\x1f', key)
 end
 
-function Base.write(store::DuckDBStore, key::Integer, item)
-    stored = stored_key(typeof(item), key)
-    data = item isa DataBrowserAPI.AbstractDataItem ? DataBrowserAPI.data(item) : nothing
-    table = item isa DataBrowserAPI.AbstractDataItem && can_store_payload(data)
+function Base.write(store::DuckDBStore, key::Integer, value)
+    stored = stored_key(typeof(value), key)
+    item = value isa DataBrowserAPI.AbstractDataItem
+    data = item ? DataBrowserAPI.data(value) : value
+    given = item ? metadata_dict(metadata(value)) : nothing
+    ## An item that `reconstruct` cannot rebuild from its id, data and metadata, as a `SourceGroup`,
+    ## is kept whole, as a value that is not an item: all of it is data, with no metadata.
+    item = item && DataBrowserAPI.reconstruct(typeof(value), id(value), data, given) !== nothing
+    table = item && can_store_payload(data)
     @lock store.lock begin
-        if table
-            given = metadata_dict(metadata(item))
+        ## The value replaces what was written before under its key.
+        delete!(store, stored)
+        if item
             dropped = edit!(store.metadata_rows, stored, given)
-            # TODO: when a code change gives a metadata name values of another type, each write
-            # of the new values fails until the file is deleted. The column should take the new
-            # type; the workspace cache and the metadata of the workspace in memory keep the
-            # first type of a name too.
+            ## TODO: when a code change gives a metadata name values of another type, each write
+            ## of the new values fails until the file is deleted. The column should take the new
+            ## type; the workspace cache and the metadata of the workspace in memory keep the
+            ## first type of a name too.
             if !isempty(dropped)
                 delete!(store.metadata_rows, stored)
-                _forget_table!(store, stored)
-                error("$(typeof(item)) $(DataBrowserAPI.id(item)) cannot be stored: " * join(dropped, "; "))
+                error("$(typeof(value)) $(id(value)) cannot be stored: " * join(dropped, "; "))
             end
             store.metadata[stored] = given
-            shell = StoredShell(stored, DataBrowserAPI.id(item), _serialize_type(typeof(item)))
-            append!(store.tables, stored, data)
+            shell = StoredShell(stored, id(value), _serialize_type(typeof(value)))
             edit!(store.shell_rows, stored, shell)
             store.shells[stored] = shell
-            _forget_serialized!(store, stored)
+        end
+        if table
+            append!(store.tables, stored, data)
             columns = Tables.columns(data)
             weight = sum(Tables.columnnames(columns); init=0) do name
                 Base.summarysize(Tables.getcolumn(columns, name))
             end
         else
-            _forget_table!(store, stored)
             buffer = IOBuffer()
-            serialize(buffer, item)
+            serialize(buffer, item ? data : value)
             bytes = take!(buffer)
             edit!(store.serialized_rows, stored, (id=stored, value=bytes))
             push!(store.serialized_ids, stored)
             weight = length(bytes)
         end
-        ## `recent` weighs a table by its columns, and another value by its serialized form.
-        append!(store.recent, stored, item, weight)
+        ## `recent` weighs a table by its columns, and other data by its serialized form.
+        append!(store.recent, stored, value, weight)
     end
+    ## `maxlog` limits the messages of each `_id`, so each type gives one warning.
+    table || @warn("DuckDBStore keeps the data of $(typeof(value)) values with Julia's " *
+        "Serialization: another Julia version may fail to read it back, and DuckDB queries " *
+        "cannot read it", maxlog=1, _id=(DuckDBStore, typeof(value)))
     return nothing
 end
 
-# Tables are read with one query per column shape, and other values with one query per
+# Tables are read with one query per column shape, and other data with one query per
 # `READ_BATCH_IDS` keys.
 function Base.read(store::DuckDBStore, ::Type{T}, keys::AbstractVector)::Vector{Union{Nothing,T}} where {T}
     stored = [stored_key(T, key) for key in keys]
     items = Vector{Union{Nothing,T}}(nothing, length(stored))
     tables = Pair{Int,StoredShell}[]
-    serialized = Int[]
+    ## The shell of an item whose data was serialized, or `nothing` for a value serialized whole.
+    serialized = Pair{Int,Union{Nothing,StoredShell}}[]
     for (position, key) in pairs(stored)
         recent = read_hit(store.recent, key)
         if recent !== nothing
@@ -154,10 +169,10 @@ function Base.read(store::DuckDBStore, ::Type{T}, keys::AbstractVector)::Vector{
         end
         @lock store.lock begin
             shell = get(store.shells, key, nothing)
-            if shell !== nothing
+            if key in store.serialized_ids
+                push!(serialized, position => shell)
+            elseif shell !== nothing
                 push!(tables, position => shell)
-            elseif key in store.serialized_ids
-                push!(serialized, position)
             end
         end
     end
@@ -167,14 +182,17 @@ function Base.read(store::DuckDBStore, ::Type{T}, keys::AbstractVector)::Vector{
         for (position, shell) in tables
             data = get(found, stored[position], nothing)
             data === nothing && continue
-            item = _rebuilt(shell, data, store.metadata[stored[position]])
+            item = _rebuilt(store, shell, data)
             item isa T && (items[position] = item)
         end
     end
     for batch in Iterators.partition(serialized, READ_BATCH_IDS)
-        found = _read_serialized(store, [stored[position] for position in batch])
-        for position in batch
-            item = get(found, stored[position], nothing)
+        found = _read_serialized(store, [stored[position] for (position, _) in batch])
+        for (position, shell) in batch
+            ## The data of an item can be `nothing`.
+            haskey(found, stored[position]) || continue
+            data = found[stored[position]]
+            item = shell === nothing ? data : _rebuilt(store, shell, data)
             item isa T && (items[position] = item)
         end
     end
@@ -183,7 +201,11 @@ end
 
 const READ_BATCH_IDS = 1_000
 
-function _rebuilt(shell::StoredShell, data, given::Dict{Symbol,Any})
+# The item of `shell`, rebuilt from `data` and its metadata, or `nothing` when it was deleted
+# meanwhile.
+function _rebuilt(store::DuckDBStore, shell::StoredShell, data)
+    given = @lock store.lock get(store.metadata, shell.id, nothing)
+    given === nothing && return nothing
     try
         return DataBrowserAPI.reconstruct(_deserialize_type(shell.type_hex), shell.item_id, data, given)
     catch
@@ -192,8 +214,8 @@ function _rebuilt(shell::StoredShell, data, given::Dict{Symbol,Any})
     end
 end
 
-# The values in `stored_values` under `keys`, by key. A value that waits to be written comes from
-# the queue of `serialized_rows`.
+# The values in `stored_values` under `keys`, by key: the data of items, and values serialized
+# whole. A value that waits to be written comes from the queue of `serialized_rows`.
 function _read_serialized(store::DuckDBStore, keys::Vector{String})::Dict{String,Any}
     found = Dict{String,Any}()
     @lock store.lock begin
@@ -216,7 +238,7 @@ function _read_serialized(store::DuckDBStore, keys::Vector{String})::Dict{String
                 found[key] = deserialize(IOBuffer(value))
             catch
                 # Written by another Julia or package version: compute it again.
-                _forget_serialized!(store, key)
+                delete!(store, key)
             end
         end
     end
@@ -229,12 +251,20 @@ function Base.haskey(store::DuckDBStore, ::Type{T}, key::Integer)::Bool where {T
     return @lock store.lock haskey(store.shells, stored) || stored in store.serialized_ids
 end
 
-function Base.delete!(store::DuckDBStore, ::Type{T}, key::Integer) where {T}
-    stored = stored_key(T, key)
+Base.delete!(store::DuckDBStore, ::Type{T}, key::Integer) where {T} =
+    delete!(store, stored_key(T, key))
+
+# Delete the value under `stored`, its key in the file, from memory and from the file.
+function Base.delete!(store::DuckDBStore, stored::String)
     delete!(store.recent, stored)
     @lock store.lock begin
-        _forget_table!(store, stored)
-        _forget_serialized!(store, stored)
+        pop!(store.metadata, stored, nothing) === nothing || delete!(store.metadata_rows, stored)
+        if pop!(store.shells, stored, nothing) !== nothing
+            delete!(store.shell_rows, stored)
+            delete!(store.tables, stored)
+        end
+        pop!(store.serialized_ids, stored, nothing) === nothing ||
+            delete!(store.serialized_rows, stored)
     end
     return store
 end
@@ -242,23 +272,6 @@ end
 # TODO(perf): the size in the file, also once the value has left `recent`.
 DataBrowserAPI.stored_size(store::DuckDBStore, ::Type{T}, key::Integer) where {T} =
     something(stored_weight(store.recent, stored_key(T, key)), 0)
-
-# The caller holds the store lock.
-function _forget_table!(store::DuckDBStore, id::String)::Nothing
-    pop!(store.metadata, id, nothing) === nothing || delete!(store.metadata_rows, id)
-    pop!(store.shells, id, nothing) === nothing && return nothing
-    delete!(store.tables, id)
-    delete!(store.shell_rows, id)
-    return nothing
-end
-
-# The caller holds the store lock.
-function _forget_serialized!(store::DuckDBStore, id::String)::Nothing
-    id in store.serialized_ids || return nothing
-    delete!(store.serialized_ids, id)
-    delete!(store.serialized_rows, id)
-    return nothing
-end
 
 # Queued tables are written, then the write-ahead log is moved into the file, so the next opening
 # does not replay it.
