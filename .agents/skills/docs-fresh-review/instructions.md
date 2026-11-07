@@ -79,10 +79,13 @@ Work through these steps in order, and keep what each step produces.
    - **An actor buried outside the main clause**: a long opening phrase of noun phrases ("For a
      user who has a draft, and a reply that a bot sends, the server keeps two copies" instead of
      "When a bot replies to a user who has a draft, the server keeps two copies").
-   - **A word that can mean two things at first reading.** A noun used as a verb, above all a word
-     that the page uses as a thing ("the log records each request" where a record is a thing); a
-     short word that needs context the reader does not have yet ("a call" for "a function call");
-     a pronoun with two possible referents; two terms for one thing, or one term for two things.
+   - **A word that can mean two things at first reading.** Nouns in a row, where the reader guesses
+     how they relate and where the subject ends ("the order sync retry count rose" instead of "the
+     number of times the server tries again to send an order rose"); a noun used as a verb, above
+     all a word that the page uses as a thing ("the log records each request" where a record is a
+     thing); a short word that needs context the reader does not have yet ("a call" for "a
+     function call"); a pronoun with two possible referents; two terms for one thing, or one term
+     for two things.
 
 ## What to report
 

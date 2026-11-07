@@ -25,6 +25,34 @@ This is a pre-alpha with zero users: no compatibility or migration code is ever 
 Refactors are encouraged whenever tension arises, as few models are fixed in stone.
 When code and docs disagree, fix the doc in the same commit.
 
+## Writing
+
+These rules apply to every text: replies in chat, documentation, docstrings, comments, commit
+messages and the text of the GUI. Read every sentence once, as its reader would, before sending it.
+The skill `docs-fresh-review` holds the same four rules: change both together.
+
+1. **Say what the thing is, where it first appears**, in familiar terms and in a relative clause
+   attached to it: "Each workspace has one *catalog*, which holds the computations…"; "The catalog
+   is a table with one row for each computation"; "`Row(3)` is the third row, as in a spreadsheet".
+   Use concrete nouns, never "a place that keeps values". Italics mark jargon where it is defined,
+   and nothing else. Define each word inside the example where it first happens, not in a glossary
+   before it.
+2. **Write only about the thing, and only what it is and does.** No sentence about the words, the
+   text or its audience ("The words that follow…", "the rest of the page…"). No denial of what the
+   reader had no reason to expect ("There are no kinds of rows", "X is not a state", "X; not Y"),
+   and no claim about what other code does not do. No list that does not show its claim.
+3. **Make the actor the subject of a main clause**: "When a plot window draws a fit of the item
+   `a/1`, which comes from the source item `a.csv`, the catalog has three rows", not a long opening
+   phrase of noun phrases before the main clause.
+4. **Let each word mean one thing at first reading.** No nouns in a row: in "the server log
+   rotation job failed", the reader guesses how the nouns relate and where the subject ends. Say
+   the relation with *of*, a relative clause or a verb: "the job that rotates the logs of the server
+   failed". A pair that is one term of the docs, such as *function call* or *source item*, counts
+   as one noun. One term for one thing, as the code names it. No noun used as a verb, above all a
+   word that the text uses as a thing ("the cache records" where a record is a thing): saves,
+   refers to, shows, follows, calls. The full term where the context is not there yet: "a function
+   call", not "a call". No pronoun with two possible referents.
+
 ## Commands
 
 ```bash
