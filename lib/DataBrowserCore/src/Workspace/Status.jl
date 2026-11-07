@@ -62,6 +62,8 @@ function build_status(workspace::Workspace, previous::WorkspaceStatus, counts::W
         return WorkspaceStatus(
             calm_level, "Canceling", "Canceling…", true, nothing, counts, errors)
     end
+    # TODO(three-tables): `work_counts` waits for the catalog lock, so a call can wait despite the
+    # trylock above; read the counts from a published version instead.
     completed, total, active = work_counts(workspace)
     if active > 0
         progress = total > 0 ? Float32(clamp(completed / total, 0, 1)) : nothing
