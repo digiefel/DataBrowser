@@ -598,13 +598,6 @@ function _flush_to_db!(
     return nothing
 end
 
-_clear_db!(store::WideRowStore)::Nothing =
-    (_transaction(() -> DBInterface.execute(
-        store.write_connection, "DELETE FROM $(store.quoted_table)"), store.write_connection);
-     nothing)
-
-_reset_memory!(::WideRowStore)::Nothing = nothing
-
 # Memory-only least-recently-used store
 
 """
@@ -1655,58 +1648,6 @@ function _flush_to_db!(
 end
 
 # Lifecycle
-
-function _clear_db!(store::RowStore)::Nothing
-    _transaction(store.write_connection) do
-        DBInterface.execute(store.write_connection, "DELETE FROM $(store.quoted_table)")
-    end
-    return nothing
-end
-
-function _clear_db!(store::TabularFamilyStore)::Nothing
-    _transaction(store.write_connection) do
-        for row in DBInterface.execute(
-            store.write_connection,
-            "SELECT storage_id FROM payload_schemas",
-        )
-            table = _quote_identifier(_payload_table_name(UInt16(row.storage_id)))
-            DBInterface.execute(store.write_connection, "DROP TABLE $table")
-        end
-        DBInterface.execute(store.write_connection, "DELETE FROM item_data")
-        DBInterface.execute(store.write_connection, "DELETE FROM payload_schemas")
-    end
-    return nothing
-end
-
-_reset_memory!(store::RowStore)::Nothing = nothing
-
-function _reset_memory!(store::TabularFamilyStore)::Nothing
-    empty!(store.item_locations)
-    empty!(store.payload_schemas)
-    empty!(store.containers)
-    empty!(store.rows)
-    store.next_seq = UInt32(1)
-    return nothing
-end
-
-function clear!(store::AbstractDatabaseStore)::Nothing
-    lock(store.flush_condition)
-    try
-        _require_writable(store)
-        empty!(store.queued)
-        store.queued_rows = 0
-        while !isempty(store.writing)
-            wait(store.flush_condition)
-            _require_writable(store)
-        end
-        _clear_db!(store)
-        _reset_memory!(store)
-        notify(store.flush_condition)
-    finally
-        unlock(store.flush_condition)
-    end
-    return nothing
-end
 
 function close!(store::AbstractDatabaseStore)::Nothing
     lock(store.flush_condition) do

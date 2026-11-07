@@ -470,20 +470,6 @@ _deserialize_type(value)::Type = _deserialize_hex(value)
 """Map a SQL NULL (`missing`) to `nothing`, passing other values through."""
 _null_to_nothing(value) = ismissing(value) ? nothing : value
 
-"""
-Delete everything the cache saved, keeping its identity and schema. The rows of the open session
-keep their keys, and new keys stay new.
-"""
-function clear_cache!(cachedb::CacheDB)::Nothing
-    foreach(clear!, cache_stores(cachedb))
-    lock(cachedb.key_lock) do
-        empty!(cachedb.output_keys)
-        empty!(cachedb.kept_keys)
-        empty!(cachedb.computation_revisions)
-    end
-    return nothing
-end
-
 """Initialize all identity fields together before opening cache stores."""
 function _write_meta_header!(connection, identity::ProjectCacheIdentity)::Nothing
     _transaction(connection) do

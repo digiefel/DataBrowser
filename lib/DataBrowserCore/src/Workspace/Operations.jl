@@ -84,16 +84,14 @@ function modify_workspace!(
     return nothing
 end
 
-"""Empty the cache and scan the source again: every source item is read again. The selection stays."""
+"""
+Empty the cache and scan the source again: every source item is read again, and each metadata name
+takes the type of its first new value. The selection stays.
+"""
 function rebuild_cache!(workspace::Workspace)::Nothing
-    @lock workspace.catalog.lock begin
-        can_rebuild_cache(workspace) || error("The cache can be rebuilt only while the workspace is open and no scan runs")
-        foreach(source -> remove_source_item!(workspace, source), collect(keys(workspace.sources)))
-        clear_cache!(workspace.cache.db)
-        publish!(workspace)
-    end
-    scan_source!(workspace; rebuild=true)
-    return nothing
+    can_rebuild_cache(workspace) || error("The cache can be rebuilt only while the workspace is open and no scan runs")
+    ## The same source, so that a source without `copy` can rebuild too.
+    return modify_workspace!(workspace; source=workspace.source, rebuild=true)
 end
 
 """

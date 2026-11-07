@@ -151,6 +151,28 @@ end
     @test_throws ErrorException W.rebuild_cache!(ws)
 end
 
+# Its item has the metadata `:input`, of the type of `input`.
+mutable struct RetypedProject <: AbstractProject
+    input::Any
+end
+DataBrowserAPI.project_name(::RetypedProject) = "retyped"
+DataBrowserAPI.read(p::RetypedProject, ::EngineSource, ::EngineSourceItem) =
+    EngineItem("source", (x=[1],), Dict(:input => p.input))
+
+@testset "after a rebuild of the cache, metadata may take another type" begin
+    project = RetypedProject("one")
+    ws = W.open_workspace(project, EngineSource("source", 1, false); cache=false)
+    try
+        settled(ws)
+        project.input = 1
+        W.rebuild_cache!(ws)
+        settled(ws)
+        @test isempty(W.workspace_status(ws).errors)
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
 struct LateProject <: AbstractProject end
 DataBrowserAPI.project_name(::LateProject) = "late"
 DataBrowserAPI.read(::LateProject, source::EngineSource, item::EngineSourceItem) =

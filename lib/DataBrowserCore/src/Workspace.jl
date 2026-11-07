@@ -36,7 +36,6 @@ using DataBrowserCache:
     SavedOutput,
     cache_has_pending_writes,
     cache_pending_counts,
-    clear_cache!,
     close_cache_db!,
     delete_computation_revision!,
     delete_output!,

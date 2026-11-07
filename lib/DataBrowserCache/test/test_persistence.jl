@@ -57,19 +57,10 @@ end
         cache = open_cache_db(identity)
         try
             @test isempty(load_outputs(cache))
-            store_fixture_item!(cache)
-            clear_cache!(cache)
-            @test isempty(load_outputs(cache))
         finally
             close_cache_db!(cache)
         end
         @test_throws ProjectCacheError open_cache_db(other_source)
-        cache = open_cache_db(identity)
-        try
-            @test isempty(load_outputs(cache))
-        finally
-            close_cache_db!(cache)
-        end
         cache = open_cache_db(other_source; rebuild=true)
         try
             @test isempty(load_outputs(cache))
