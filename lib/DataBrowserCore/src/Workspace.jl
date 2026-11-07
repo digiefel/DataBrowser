@@ -366,9 +366,9 @@ mutable struct Items
     ## when the table closes.
     const event::Base.Event
     @atomic version::Version
-    ## The readers that wait in `wait_processed` or `wait_workspace_idle!`: while there is one, a
-    ## publish does not wait for `PUBLISH_INTERVAL`.
-    @atomic readers::Int
+    ## Under `lock`: for each reader that waits in `wait_processed`, the numbers of the items that it
+    ## waits for. A publish that changes one of them does not wait for `PUBLISH_INTERVAL`.
+    const readers::Vector{Set{Int32}}
     const lock::ReentrantLock
     ## Notified at each publish, at each new answer of `select(workspace, f)`, and when the table
     ## closes.
@@ -385,7 +385,7 @@ function Items()
     lock, index, columns = ReentrantLock(), Base.PersistentDict{String,Int32}(), map(((T, default),) -> Column{T}(default), COLUMNS)
     order = SortKeys([:label => false])
     return Items(1, 0, Int32[], index, columns, Dict{Symbol,Column}(), Set{Int32}(), Set{Int32}(), false, Base.Event(true),
-        Version(index, map(column -> Cells(column, 0), columns), Dict{Symbol,Cells}()), 0, lock, Threads.Condition(lock), Set{String}(),
+        Version(index, map(column -> Cells(column, 0), columns), Dict{Symbol,Cells}()), Set{Int32}[], lock, Threads.Condition(lock), Set{String}(),
         (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
 end
 

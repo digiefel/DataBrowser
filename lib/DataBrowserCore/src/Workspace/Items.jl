@@ -5,16 +5,16 @@
     keep!(items, workspace)
 
 The task that keeps the table `items` of `workspace` current, and the answers of
-`select(workspace, f)`, until `close(items)`. At each notification of `items.event`, and at most
-once each `PUBLISH_INTERVAL` unless a reader waits, it requests in the catalog the latest versions
-of the ids asked for by readers, ahead of background work. Then it computes the readiness, failure
-and revision of the items of the catalog rows whose state, priority or job changed, and of the
-items whose cells workers wrote, 1000 at a time, each part under the catalog lock. Once none is
-left and a cell changed, it stores the draft as a new version. Then, without a lock, it runs each
-function given to `select` in the last 10 seconds on the rows of the items whose cells shown by
-`select` changed in that version, and merges the items that pass into the order set by `sort!`. A
-new function runs on the row of every item, and a new order sorts every item again. An error stops
-the task, and readers that wait throw from then on.
+`select(workspace, f)`, until `close(items)`. At each notification of `items.event`, it requests
+in the catalog the latest versions of the ids asked for by readers, ahead of background work. Then,
+at most once each `PUBLISH_INTERVAL` unless an item that a reader waits for changed, it computes
+the readiness, failure and revision of the items of the catalog rows whose state, priority or job
+changed, and of the items whose cells workers wrote, 1000 at a time, each part under the catalog
+lock. Once none is left and a cell changed, it stores the draft as a new version. Then, without a
+lock, it runs each function given to `select` in the last 10 seconds on the rows of the items whose
+cells shown by `select` changed in that version, and merges the items that pass into the order set
+by `sort!`. A new function runs on the row of every item, and a new order sorts every item again.
+An error stops the task, and readers that wait throw from then on.
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
     catalog, columns, last = workspace.catalog, items.columns, 0.0
@@ -25,13 +25,16 @@ function keep!(items::Items, workspace::Workspace)::Nothing
         while true
             wait(items.event)
             items.closed && return nothing
-            ## Only a publish starts the interval, and a reader that waits ends it: a cycle that
-            ## changed no cell answers its requests at once.
-            (@atomic items.readers) > 0 || sleep(max(0.0, last + PUBLISH_INTERVAL - time()))
-            requested = @lock items.lock collect(items.requested)
-            @lock catalog.lock for x in requested
-                haskey(workspace.versions, x) && request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
+            ## The requests reach the catalog at once. Only a publish starts the interval, and a
+            ## change to an item that a reader waits for in `wait_processed` ends it.
+            requested, readers = @lock items.lock (collect(items.requested), copy(items.readers))
+            waited = @lock catalog.lock begin
+                for x in requested
+                    haskey(workspace.versions, x) && request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
+                end
+                any(numbers -> any(in(numbers), items.pending), readers)
             end
+            waited || sleep(max(0.0, last + PUBLISH_INTERVAL - time()))
             ## The items of the catalog rows whose state, priority or job changed join the pending
             ## items, whose readiness, failure and revision then follow the catalog. Both are taken
             ## 1000 at a time, each part under the catalog lock, so that a worker waits for one
