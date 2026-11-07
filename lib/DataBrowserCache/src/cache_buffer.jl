@@ -460,7 +460,10 @@ function edit!(store::WideRowStore{K}, key::K, row::AbstractDict)::Vector{String
                 push!(store.column_order, name)
                 push!(store.pending_columns, name)
             elseif typeof(value) !== column.type && _type_name(typeof(value)) != column.name
-                push!(dropped, "metadata :$name holds $(something(column.type, column.name)), got $(typeof(value))")
+                # The workspace of DataBrowserCore gives the same text for a value that it does
+                # not keep, so that the error of an item says it once.
+                push!(dropped, "metadata :$name has type $(typeof(value)) here but " *
+                    "$(something(column.type, column.name)) in earlier items: give it one type in the project, then rebuild the cache")
                 continue
             end
             accepted[name] = value

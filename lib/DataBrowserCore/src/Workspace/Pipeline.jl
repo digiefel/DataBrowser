@@ -536,8 +536,11 @@ function source(workspace::Workspace, row::Row)::String
     return source(workspace, value.args[2].of.row)
 end
 
+# The cache gives the same text for a value that it does not save, so that the error of the row
+# says it once.
 conflict_message(conflict::MetadataConflict)::String =
-    "$(conflict.name) holds values of type $(conflict.expected), not $(conflict.found)"
+    "metadata :$(conflict.name) has type $(conflict.found) here but $(conflict.expected) in earlier items: " *
+    "give it one type in the project, then rebuild the cache"
 
 """
     conflicts!(workspace, row, messages)
