@@ -211,13 +211,15 @@ end
 # The items `numbers` of `version`, with the metadata keys that one of them has, in alphabetical
 # order, or with `every` all the metadata keys of `version`, as in the rows that
 # `select(workspace, f)` gives to `f`. The columns are copies of the cells, and of each vector in
-# them, so that a change to the selection leaves the version as it is.
+# them, so that a change to the selection leaves the version as it is. The metadata of an item is
+# that of its value, at the key of the value; key 0, of an item without a value, has none.
 function Selection(workspace::Workspace, version::Version, numbers::Vector{Int32}; every::Bool=false)
-    copied(cells) = eltype(cells)[(cell = cells[n]; cell isa Vector ? copy(cell) : cell) for n in numbers]
-    names = sort!([name for (name, cells) in version.metadata if every || any(n -> cells[n] !== missing, numbers)])
+    copied(cells, at=numbers) = eltype(cells)[(cell = cells[n]; cell isa Vector ? copy(cell) : cell) for n in at]
     columns, ids = version.columns, copied(version.columns.id)
+    at = copied(columns.key)
+    names = sort!([name for (name, cells) in version.metadata if every || any(key -> cells[key] !== missing, at)])
     return Selection(ItemData(workspace, copy(ids)), ids, copied(columns.label), copied(columns.groups),
-        copied(columns.tags), [name => copied(version.metadata[name]) for name in names])
+        copied(columns.tags), [name => copied(version.metadata[name], at) for name in names])
 end
 
 """

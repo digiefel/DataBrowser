@@ -236,11 +236,14 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
             insert!(rows, something(findfirst(other -> workspace.stages[other] > stage, rows), length(rows) + 1), row)
         isempty(rows) && delete!(workspace.versions, x)
     end
-    ## The cache forgets the values of the ids that the row no longer gives. The stores forget the
-    ## values that it gave before, unless it gives them again with the same revision, and the values
-    ## that it gives and the workspace does not keep.
+    ## The cache and the table `items` forget the values of the ids that the row no longer gives, and
+    ## their metadata. The stores forget the values that it gave before, unless it gives them again
+    ## with the same revision, and the values that it gives and the workspace does not keep.
     for output in [something(before, Output[]); filter(!in(accepted), something(outputs, Output[]))]
-        any(found -> found.id == output.id, accepted) || delete_output!(workspace.cache.db, row.index, output.id)
+        if !any(found -> found.id == output.id, accepted)
+            store!(workspace.items, output, Dict{Symbol,Any}())
+            delete_output!(workspace.cache.db, row.index, output.id)
+        end
         any(found -> (found.type, found.revision) == (output.type, output.revision), accepted) ||
             forget!(workspace, output.type, output.revision)
     end
@@ -257,11 +260,11 @@ end
     write!(workspace, id)
 
 Make the cells of the item `id` in the draft of the table `items` follow the workspace: its latest
-version, label, type, value revision, tags, groups and source item. A new item takes a number that no item has,
-and an id that is not an item is left out. An item that leaves the workspace gives its number to
-the next new item: the versions published before keep their cells. The next publish computes the
-readiness, failure and revision of the item. When its value changes, the item has no metadata until
-[`store!`](@ref) writes the metadata of the new value. The caller holds the catalog lock.
+version, label, type, the revision and the key of its value, tags, groups and source item. A new
+item takes a number that no item has, and an id that is not an item is left out. An item that
+leaves the workspace gives its number to the next new item: the versions published before keep
+their cells. The next publish computes the readiness, failure and revision of the item. The caller
+holds the catalog lock.
 """
 function write!(workspace::Workspace, x::String)::Nothing
     items, columns = workspace.items, workspace.items.columns
@@ -285,24 +288,22 @@ function write!(workspace::Workspace, x::String)::Nothing
     shown |= write!(items, columns.groups, number, get(workspace.groups, x, String[]))
     write!(items, columns.type, number, value === nothing ? Any : value.type)
     write!(items, columns.source, number, rows === nothing ? "" : source(workspace, rows[1]))
-    ## TODO: an item whose latest value falls back to the value of an earlier row, as when its
-    ## `process` fails, has no metadata: the table keeps only the metadata of the latest value.
-    write!(items, columns.value_revision, number, value === nothing ? UInt64(0) : value.revision) &&
-        store!(items, number, Dict{Symbol,Any}())
+    write!(items, columns.value_revision, number, value === nothing ? UInt64(0) : value.revision)
+    shown |= write!(items, columns.key, number, value === nothing ? Int64(0) : value.key)
     shown && push!(items.shown, number)
     push!(items.pending, number)
     return nothing
 end
 
 """
-    store!(items, number, values) -> Vector{MetadataConflict}
+    store!(items, output, values) -> Vector{MetadataConflict}
 
-Replace the metadata of the item `number` in the draft of `items` with `values`, keeping a copy of
-each vector value. The first value stored under a key fixes the type of its column. Returns the
-values that were not stored because their key holds values of another type. The caller holds the
-catalog lock.
+Replace the metadata of the value `output` in the draft of `items` with `values`, keeping a copy of
+each vector value. The first value stored under a metadata key fixes the type of its column.
+Returns the values that were not stored because their metadata key holds values of another type.
+The caller holds the catalog lock.
 """
-function store!(items::Items, number::Integer, values::AbstractDict{Symbol})::Vector{MetadataConflict}
+function store!(items::Items, output::Output, values::AbstractDict{Symbol})::Vector{MetadataConflict}
     for (name, value) in values
         value === missing || haskey(items.metadata, name) ||
             (items.metadata[name] = Column{Union{Missing,typeof(value)}}(missing))
@@ -312,9 +313,11 @@ function store!(items::Items, number::Integer, values::AbstractDict{Symbol})::Ve
         value, expected = get(values, name, missing), nonmissingtype(eltype(column.empty.cells))
         value === missing || typeof(value) == expected ||
             (push!(dropped, MetadataConflict(name, expected, typeof(value))); value = missing)
-        shown |= write!(items, column, number, value)
+        shown |= write!(items, column, output.key, value)
     end
-    shown && push!(items.shown, number)
+    ## `select` shows the metadata of the value of an item.
+    number = get(items.index, output.id, Int32(0))
+    shown && number != 0 && items.columns.key[number] == output.key && push!(items.shown, number)
     return dropped
 end
 

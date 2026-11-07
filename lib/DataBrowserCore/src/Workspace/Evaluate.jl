@@ -249,13 +249,11 @@ function run!(workspace::Workspace, job::Job)::Nothing
         @timed_dbg "job.finish.record" store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); result_revision=result)
         if outputs !== nothing
             @timed_dbg "job.finish.finished!" finished!(workspace, row, Output[output for (output, _) in outputs])
-            ## The cache saves the values that the workspace kept, and the table `items` the
-            ## metadata of the latest value of each item.
+            ## The cache and the table `items` keep the metadata of each value that the workspace kept.
             messages = String[]
             for (position, (output, values)) in enumerate(outputs)
                 output in get(workspace.outputs, row, Output[]) || continue
-                latest(workspace, output.id, nothing; T=Any) == row && append!(messages,
-                    conflict_message.(store!(workspace.items, workspace.items.index[output.id], values)))
+                append!(messages, conflict_message.(store!(workspace.items, output, values)))
                 @timed_dbg "job.finish.store_output!" append!(messages, store_output!(workspace.cache.db, row.index, Int(workspace.stages[row]), position,
                     (; output.id, output.label, output.type, output.members, metadata=values)))
             end
@@ -526,8 +524,7 @@ function restored!(workspace::Workspace, row::Row, record)::Nothing
         output_key!(workspace.cache.db, row.index, value.id), value_revision(value.id, record.result_revision)) for value in saved]
     @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
     for (output, value) in zip(outputs, saved)
-        output in get(workspace.outputs, row, Output[]) && latest(workspace, output.id, nothing; T=Any) == row &&
-            store!(workspace.items, workspace.items.index[output.id], value.metadata)
+        output in get(workspace.outputs, row, Output[]) && store!(workspace.items, output, value.metadata)
     end
     return nothing
 end

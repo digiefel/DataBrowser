@@ -230,8 +230,8 @@ end
 
 """
 One value that a row of the pipeline gave: its id, its type and label, the ids of its members when
-it is a group, the key under which the cache keeps its metadata, and its revision, under which the
-store of its type keeps it (see `value_revision`).
+it is a group, the key under which the cache and the table `items` keep its metadata, and its
+revision, under which the store of its type keeps it (see `value_revision`).
 """
 struct Output
     id::String
@@ -313,11 +313,10 @@ function Base.getindex(column::Union{Column,Cells}, number::Integer)
     return get(column.blocks, block, column.empty).cells[cell]
 end
 
-# The type and the default cell of each column of the table `items`, besides one column for each
-# metadata key.
+# The type and the default cell of each column of the table `items`.
 const COLUMNS = (id = (String, ""), version = (Row, Catalogs.NOWHERE), label = (String, ""),
     type = (Type, Any), readiness = (Readiness, UNPROCESSED), failure = (String, ""),
-    revision = (UInt64, UInt64(0)), value_revision = (UInt64, UInt64(0)),
+    revision = (UInt64, UInt64(0)), value_revision = (UInt64, UInt64(0)), key = (Int64, Int64(0)),
     tags = (Vector{String}, String[]), groups = (Vector{String}, String[]), source = (String, ""))
 
 """
@@ -335,10 +334,14 @@ The table `items` of a workspace: one row for each item, groups included, number
 order in which the workspace first sees them. The columns hold, for each item, its id; its latest
 version, a row of the catalog; its label and type; its [`Readiness`](@ref), the message of its
 failure and its part of `revision(workspace, ids)`; `value_revision`, the key of its value in the
-store of its type; the names of its tags; the ids of its groups; `source`, the id of the source
-item that it comes from; and one column for each metadata key, with `missing` where the item has no
-value. When an item leaves the workspace, its version in
-the draft is `Catalogs.NOWHERE`, and the next new item takes its number.
+store of its type; `key`, the key of its value in the cache; the names of its tags; the ids of its
+groups; and `source`, the id of the source item that it comes from. When an item leaves the
+workspace, its version in the draft is `Catalogs.NOWHERE`, and the next new item takes its number.
+
+Each value that a row of the pipeline gives keeps its metadata in `metadata`, in the cells at its
+key: one column for each metadata key, with `missing` where a value has none. An item shows the
+metadata of its value, which is the value of an earlier row when its latest row has no result, as
+when its `process` fails.
 
 Workers write the cells of a draft with [`write!`](@ref) and [`store!`](@ref), under the catalog
 lock. The task [`keep!`](@ref) makes the draft a new `Version` and stores it in `version`. A
@@ -347,9 +350,9 @@ the answers of `select(workspace, f)`, so it never waits for a worker.
 """
 mutable struct Items
     ## Under the catalog lock: the number of the draft, which each publish increases; the highest
-    ## number; the numbers that no item has; the index and the columns of the draft; the items whose
-    ## readiness, failure and revision the next publish computes, and those whose cells shown by
-    ## `select` changed; and whether a cell changed since the last publish.
+    ## number; the numbers that no item has; the index, the columns and the metadata of the draft;
+    ## the items whose readiness, failure and revision the next publish computes, and those whose
+    ## cells shown by `select` changed; and whether a cell changed since the last publish.
     draft::Int
     count::Int32
     const free::Vector{Int32}

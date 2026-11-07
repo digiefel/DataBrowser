@@ -65,7 +65,7 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                         shown = Set{Int32}()
                         if items.changed
                             @atomic items.version = Version(items.index, map(column -> Cells(column, items.count), columns),
-                                Dict{Symbol,Cells}(name => Cells(column, items.count) for (name, column) in items.metadata))
+                                Dict{Symbol,Cells}(name => Cells(column, BLOCK * length(column.blocks)) for (name, column) in items.metadata))
                             items.draft, items.changed, shown, items.shown = items.draft + 1, false, items.shown, shown
                             last = time()
                             ## A window reads the `revision` of its items again when
@@ -308,14 +308,13 @@ source_item_id(workspace::Workspace, x::AbstractString)::String = cell(workspace
     metadata(workspace, id) -> Dict{Symbol,Any}
 
 The metadata of a value, as [`select`](@ref) gives it, in a new dictionary: the metadata of its
-latest version.
+latest version that a row gave, such as the value of its read when its `process` fails.
 """
 function metadata(workspace::Workspace, x::AbstractString)::Dict{Symbol,Any}
     version, found = (@atomic workspace.items.version), Dict{Symbol,Any}()
-    n = number(version, x)
-    n == 0 && return found
+    key = cell(version, x, :key, Int64(0))
     for (name, cells) in version.metadata
-        value = cells[n]
+        value = cells[key]
         value === missing || (found[name] = value isa Vector ? copy(value) : value)
     end
     return found
