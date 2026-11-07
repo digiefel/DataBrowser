@@ -42,16 +42,19 @@ function _check_cache_error!(
 end
 
 """
-Select what a failure names: the value with the id `id`, or else every value that the source item
-`id` gives. The browser reveals them, as for any `select!`.
+Select the values of the failures with the ids `failed`: for each id, the value with that id, or
+else every value that the source item with that id gives. The browser reveals them, as for any
+`select!`.
 """
-function select_failed!(state::BrowserState, id::AbstractString)::Bool
+function select_failed!(state::BrowserState, failed::AbstractVector{<:AbstractString})::Bool
     workspace = state.workspace
-    # TODO(scale): goes through every value of the workspace; ask Core for the values of the source item.
-    ids = haskey(workspace, id) ? [String(id)] :
-        filter(x -> Workspace.source_item_id(workspace, x) == id, Workspace.items(workspace))
+    ids = String[x for x in failed if haskey(workspace, x)]
+    sources = Set{String}(x for x in failed if !haskey(workspace, x))
+    # TODO(scale): goes through every value of the workspace; ask Core for the values of the source items.
+    isempty(sources) ||
+        append!(ids, filter(x -> Workspace.source_item_id(workspace, x) in sources, Workspace.items(workspace)))
     isempty(ids) && return false
-    Workspace.select!(workspace, ids)
+    Workspace.select!(workspace, unique!(ids))
     return true
 end
 

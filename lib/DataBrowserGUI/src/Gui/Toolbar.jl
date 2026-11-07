@@ -133,22 +133,33 @@ function _render_cache_controls!(state::BrowserState)::Nothing
         ig.Separator()
         ig.TextColored((1.0, 0.35, 0.35, 1.0), "Cache Issues")
         ig.TextDisabled("Select an issue to show related items")
-        shown = min(length(status.errors), 20)
+        ## The failures with the same first line of their message share one entry, and a click on
+        ## it selects the items of all of them.
+        ## TODO(scale): goes through every failure in each frame while the popup is open.
+        entries = Pair{SubString{String},Vector{String}}[]
+        positions = Dict{SubString{String},Int}()
+        for (failed, message) in status.errors
+            line = first(split(message, '\n'; limit=2))
+            position = get!(() -> (push!(entries, line => String[]); length(entries)), positions, line)
+            push!(last(entries[position]), failed)
+        end
+        shown = min(length(entries), 20)
         ig.BeginChild("##cache_errors", (0.0f0, 120.0f0), true)
         for index in 1:shown
-            failed, message = status.errors[index]
+            line, failed = entries[index]
             ig.PushID(index)
-            if ig.TextLink(failed) && select_failed!(state, failed)
+            link = length(failed) == 1 ? only(failed) : "$(first(failed)) and $(length(failed) - 1) more"
+            if ig.TextLink(link) && select_failed!(state, failed)
                 state.tree_filter = ""
                 _reset_tree_filter!(state)
             end
-            ig.TextWrapped(first(split(message, '\n'; limit=2)))
+            ig.TextWrapped(line)
             ig.PopID()
             index < shown && ig.Separator()
         end
         ig.EndChild()
-        length(status.errors) > shown &&
-            ig.TextDisabled("$(length(status.errors) - shown) more failures")
+        hidden = sum(entry -> length(last(entry)), entries[shown+1:end]; init=0)
+        hidden > 0 && ig.TextDisabled("$hidden more failures")
     end
 
     ig.Separator()
