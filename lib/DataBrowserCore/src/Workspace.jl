@@ -229,51 +229,9 @@ struct MetadataConflict
 end
 
 """
-The metadata of many items or rows, one column per name, holding `missing` for those without a
-value. The first value stored under a name fixes the type of its column.
-"""
-struct MetadataColumns
-    columns::Dict{Symbol,Vector}
-end
-
-MetadataColumns() = MetadataColumns(Dict{Symbol,Vector}())
-
-"""The metadata at `index`, without the names it has no value for. A vector value is a copy."""
-Base.getindex(layer::MetadataColumns, index::Integer)::Dict{Symbol,Any} = Dict{Symbol,Any}(
-    name => (column[index] isa Vector ? copy(column[index]) : column[index])
-    for (name, column) in layer.columns if index <= length(column) && column[index] !== missing)
-
-"""Clear the metadata at `index`."""
-function Base.delete!(layer::MetadataColumns, index::Integer)::MetadataColumns
-    for column in values(layer.columns)
-        index <= length(column) && (column[index] = missing)
-    end
-    return layer
-end
-
-"""
-Replace the metadata at `index` with `values`, keeping a copy of each vector value. Returns the
-values that were not stored because their name holds values of another type.
-"""
-function store!(layer::MetadataColumns, index::Integer, values::AbstractDict{Symbol})::Vector{MetadataConflict}
-    delete!(layer, index)
-    dropped = MetadataConflict[]
-    for (name, value) in values
-        value === missing && continue
-        column = get!(() -> Vector{Union{Missing,typeof(value)}}(), layer.columns, name)
-        expected = nonmissingtype(eltype(column))
-        typeof(value) == expected || (push!(dropped, MetadataConflict(name, expected, typeof(value))); continue)
-        length(column) < index && append!(column, Iterators.repeated(missing, index - length(column)))
-        column[index] = value isa Vector ? copy(value) : value
-    end
-    return dropped
-end
-
-"""
 One value that a row of the pipeline gave: its id, its type and label, the ids of its members when
-it is a group, the key under which the cache keeps its metadata, which is also the index of its
-metadata in `workspace.produced`, and its revision, under which the store of its type keeps it (see
-`value_revision`).
+it is a group, the key under which the cache keeps its metadata, and its revision, under which the
+store of its type keeps it (see `value_revision`).
 """
 struct Output
     id::String
@@ -309,44 +267,144 @@ How far the work for one item is. See [`readiness`](@ref).
 """
 @enum Readiness CURRENT WORKING UNPROCESSED FAILED
 
+# ## The table `items`
+
+# The cells in each block of a column of the table `items`. A writer copies a block at its first
+# change after a publish, and with it the list of the blocks of its column: larger blocks make that
+# list shorter, and the copy of each changed block larger.
+const BLOCK = 1024
+
+# The shortest time between two versions of the table `items`, in seconds.
+const PUBLISH_INTERVAL = 0.05
+
+"""`BLOCK` cells of a column of the table `items`, with the number of the draft that copied them."""
+struct Block{T}
+    draft::Int
+    cells::Vector{T}
+end
+
 """
-The row of each item, as [`select`](@ref) gives it, and the answers of `select(workspace, f)`, kept
-current by a task of the workspace. When a worker changes an item, it only marks the item, with
-`changed!(workspace, id)`. The task then reads the marked items 1000 at a time, each part under the
-catalog lock. A reader takes `lock` only to look up rows or answers, or to ask for items, so it
-never waits for a worker.
+A column of the draft of the table `items`. Published versions share its blocks: a writer copies the
+list of blocks, and each block, before it first changes them in a draft, so a published version
+never changes.
 """
-mutable struct ItemRows
-    const lock::ReentrantLock
-    ## Notified each time the task publishes rows or answers, and when it stops.
-    const published::Threads.Condition
-    ## Notified at each mark, at each new function or order, at each request, and when the task
-    ## stops.
+mutable struct Column{T}
+    blocks::Vector{Block{T}}
+    ## The draft that copied `blocks`.
+    draft::Int
+    ## The cells of a block that no writer changed, and of each cell past the blocks.
+    const empty::Block{T}
+end
+Column{T}(default) where {T} = Column{T}(Block{T}[], 0, Block{T}(0, fill!(Vector{T}(undef, BLOCK), default)))
+
+"""A column of a published version of the table `items`, with one cell for each item number."""
+struct Cells{T} <: AbstractVector{T}
+    blocks::Vector{Block{T}}
+    empty::Block{T}
+    count::Int
+end
+Cells(column::Column, count::Integer) = Cells(column.blocks, column.empty, Int(count))
+Base.size(cells::Cells) = (cells.count,)
+
+# The cell of the item `number`, in the draft or in a version. A `view` of the cells checks the
+# bounds.
+function Base.getindex(column::Union{Column,Cells}, number::Integer)
+    block, cell = fldmod1(number, BLOCK)
+    return get(column.blocks, block, column.empty).cells[cell]
+end
+
+# The type and the default cell of each column of the table `items`, besides one column for each
+# metadata key.
+const COLUMNS = (id = (String, ""), version = (Row, Catalogs.NOWHERE), label = (String, ""),
+    type = (Type, Any), readiness = (Readiness, UNPROCESSED), failure = (String, ""),
+    revision = (UInt64, UInt64(0)), value_revision = (UInt64, UInt64(0)),
+    tags = (Vector{String}, String[]), groups = (Vector{String}, String[]))
+
+"""
+A published version of the table `items`, which never changes: the number of each item by its id,
+and the cells of each column.
+"""
+struct Version
+    index::Base.PersistentDict{String,Int32}
+    columns::NamedTuple{keys(COLUMNS),Tuple{(Cells{T} for (T, _) in COLUMNS)...}}
+    metadata::Dict{Symbol,Cells}
+end
+
+"""
+The table `items` of a workspace: one row for each item, groups included, numbered 1, 2, 3… in the
+order in which the workspace first sees them. The columns hold, for each item, its id; its latest
+version, a row of the catalog; its label and type; its [`Readiness`](@ref), the message of its
+failure and its part of `revision(workspace, ids)`; `value_revision`, the key of its value in the
+store of its type; the names of its tags; the ids of its groups; and one column for each metadata
+key, with `missing` where the item has no value. A removed item keeps its number, and its version is
+`Catalogs.NOWHERE`.
+
+Workers write the cells of a draft with [`write!`](@ref) and [`store!`](@ref), under the catalog
+lock. The task [`publish!`](@ref) makes the draft a new `Version` and stores it in `version`. A
+reader loads `version` and reads it without a lock; it takes `lock` only to ask for items or for
+the answers of `select(workspace, f)`, so it never waits for a worker.
+"""
+# TODO(scale): an id that the workspace no longer has keeps its number and its cells until the
+# workspace closes.
+mutable struct Items
+    ## Under the catalog lock: the number of the draft, which each publish increases; the number of
+    ## items; the index and the columns of the draft; the items whose readiness, failure and
+    ## revision the next publish computes, and those whose cells shown by `select` changed; and
+    ## whether a cell changed since the last publish.
+    draft::Int
+    count::Int32
+    index::Base.PersistentDict{String,Int32}
+    const columns::NamedTuple{keys(COLUMNS),Tuple{(Column{T} for (T, _) in COLUMNS)...}}
+    const metadata::Dict{Symbol,Column}
+    const pending::Set{Int32}
+    shown::Set{Int32}
+    changed::Bool
+    ## Notified at each change of the catalog and at each request, and when the table closes.
     const event::Base.Event
-    ## Under the catalog lock: the items that changed since the task last read them, and whether
-    ## the task reads and publishes them now.
-    marked::Set{String}
-    reading::Bool
-    ## Under `lock`: the row of each item; the order set by `sort!`; the answer for each function
-    ## given to `select`, with the time when it was last asked for; and the items asked for by
-    ## readers, until the task has requested them in the catalog and published their rows.
-    ## Besides what `select` gives, the row of an item holds `version`, its latest version, a row
-    ## of the catalog; `revision`, its part of `revision(workspace, ids)`; `failure`, the message
-    ## of its error; and `value_revision`, the key of its value in the store of its type.
-    rows::Dict{String,@NamedTuple{label::String, type::Type, metadata::Dict{Symbol,Any},
-        groups::Vector{String}, tags::Vector{String}, readiness::Readiness,
-        version::Row, revision::UInt64, failure::String, value_revision::UInt64}}
+    @atomic version::Version
+    const lock::ReentrantLock
+    ## Notified at each publish, at each answer of `keep!`, and when the table closes.
+    const published::Threads.Condition
+    ## Under `lock`: the ids asked for by readers, until a version follows their request; the items
+    ## whose cells shown by `select` changed, until `keep!` takes them; the order set by `sort!`; and
+    ## the answer for each function given to `select`, with the time when it was last asked for.
+    const requested::Set{String}
+    changes::Set{Int32}
     order::@NamedTuple{by::Any, order::Base.Order.Ordering}
-    answers::Dict{Any,@NamedTuple{selection::Any, asked::Float64}}
-    requested::Set{String}
+    const answers::Dict{Any,@NamedTuple{selection::Any, asked::Float64}}
+    ## Notified at each publish that changes cells shown by `select`, at each new function or
+    ## order, and when the table closes.
+    const asked::Base.Event
     closed::Bool
 end
-ItemRows() = (lock = ReentrantLock(); ItemRows(lock, Threads.Condition(lock), Base.Event(true), Set{String}(), false,
-    Dict{String,@NamedTuple{label::String, type::Type, metadata::Dict{Symbol,Any}, groups::Vector{String},
-        tags::Vector{String}, readiness::Readiness, version::Row, revision::UInt64, failure::String,
-        value_revision::UInt64}}(),
-    let order = SortKeys([:label => false]); (by = order, order = Base.Order.ord(order, identity, false)) end,
-    Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), Set{String}(), false))
+function Items()
+    lock, index, columns = ReentrantLock(), Base.PersistentDict{String,Int32}(), map(((T, default),) -> Column{T}(default), COLUMNS)
+    order = SortKeys([:label => false])
+    return Items(1, 0, index, columns, Dict{Symbol,Column}(), Set{Int32}(), Set{Int32}(), false, Base.Event(true),
+        Version(index, map(column -> Cells(column, 0), columns), Dict{Symbol,Cells}()),
+        lock, Threads.Condition(lock), Set{String}(), Set{Int32}(),
+        (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(),
+        Base.Event(true), false)
+end
+
+"""
+    write!(items, column, number, value) -> Bool
+
+Write `value` in the cell of the item `number` in a `column` of the draft of `items`, and return
+whether the cell changed. The caller holds the catalog lock.
+"""
+function write!(items::Items, column::Column{T}, number::Integer, value)::Bool where {T}
+    block, cell = fldmod1(number, BLOCK)
+    found = get(column.blocks, block, column.empty)
+    isequal(found.cells[cell], value) && return false
+    ## The first change in a draft copies the list of blocks, and the block of the cell.
+    column.draft == items.draft || (column.blocks = copy(column.blocks); column.draft = items.draft)
+    append!(column.blocks, Iterators.repeated(column.empty, max(0, block - length(column.blocks))))
+    found.draft == items.draft || (found = column.blocks[block] = Block{T}(items.draft, copy(found.cells)))
+    found.cells[cell] = value
+    items.changed = true
+    return true
+end
 
 """
 One open project/source pair and all package-managed state belonging to it.
@@ -384,8 +442,6 @@ mutable struct Workspace{P<:AbstractProject}
     # What the methods of the project answered about the types of the values, until the next code
     # change (see `asked`).
     methods::Dict{Tuple,Any}
-    # The metadata of each value that a row of the pipeline gave, by the key of its `Output`.
-    produced::MetadataColumns
     # The code each row ran with, as the signature of its call, and the code of each signature.
     # When the revision of a signature's code changes, the rows of that signature are stale.
     signatures::Dict{Row,Type}
@@ -409,7 +465,7 @@ mutable struct Workspace{P<:AbstractProject}
     stores::Dict{Type,Union{Nothing,AbstractStore}}
     stores_lock::ReentrantLock
     selection::WorkspaceSelection
-    item_rows::ItemRows
+    items::Items
     tags::WorkspaceTags
     cache::WorkspaceCache
     scan::WorkspaceScan
@@ -497,7 +553,7 @@ function Workspace(
         Dict{Row,PipelineStage}(), Dict{Row,Vector{Output}}(), Dict{String,Vector{Row}}(),
         Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(),
         Dict{Row,Taken}(), Dict{String,Vector{Row}}(),
-        Dict{Tuple,Any}(), MetadataColumns(),
+        Dict{Tuple,Any}(),
         Dict{Row,Type}(), Dict{Type,Code}(),
         Dict{Row,String}(),
         Dict{Row,ReentrantLock}(), Dict{Row,ComputationExecution}(), Set{Row}(),
@@ -505,7 +561,7 @@ function Workspace(
         Task[], 0, 0,
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),
-        ItemRows(),
+        Items(),
         WorkspaceTags(project, folder),
         WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),

@@ -240,20 +240,77 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
     ## values that it gave before, unless it gives them again with the same revision, and the values
     ## that it gives and the workspace does not keep.
     for output in [something(before, Output[]); filter(!in(accepted), something(outputs, Output[]))]
-        if !any(found -> found.id == output.id, accepted)
-            delete!(workspace.produced, output.key)
-            delete_output!(workspace.cache.db, row.index, output.id)
-        end
+        any(found -> found.id == output.id, accepted) || delete_output!(workspace.cache.db, row.index, output.id)
         any(found -> (found.type, found.revision) == (output.type, output.revision), accepted) ||
             forget!(workspace, output.type, output.revision)
     end
     outputs === nothing ? delete!(workspace.outputs, row) : (workspace.outputs[row] = accepted)
-    foreach(x -> changed!(workspace, x), ids)
+    foreach(x -> write!(workspace, x), ids)
     ## The group rows that take one of these values take its latest version now.
     foreach(x -> foreach(group -> input!(workspace, group, x), get(workspace.takers, x, Row[])), ids)
     conflicts!(workspace, row, conflicts)
     shape(found) = found === nothing ? nothing : [(output.id, output.type, output.members) for output in found]
     return before !== nothing && isequal(shape(before), shape(get(workspace.outputs, row, nothing))) ? String[] : ids
+end
+
+"""
+    write!(workspace, id)
+
+Make the cells of the item `id` in the draft of the table `items` follow the workspace: its latest
+version, label, type, value revision, tags and groups. A new item gets the next number, and an id
+that is not an item is left out. The next publish computes the readiness, failure and revision of
+the item. When its value changes, the item has no metadata until [`store!`](@ref) writes the
+metadata of the new value. The caller holds the catalog lock.
+"""
+function write!(workspace::Workspace, x::String)::Nothing
+    items, columns = workspace.items, workspace.items.columns
+    number = get(items.index, x, Int32(0))
+    if number == 0
+        haskey(workspace.versions, x) || return nothing
+        number = items.count += Int32(1)
+        items.index = Base.PersistentDict(items.index, x => number)
+        write!(items, columns.id, number, x)
+    end
+    rows, value = get(workspace.versions, x, nothing), output(workspace, x)
+    version = rows === nothing ? Catalogs.NOWHERE : rows[end]
+    ## The cells that `select` shows: whether the workspace has the item, its label, tags and groups.
+    shown = (columns.version[number] == Catalogs.NOWHERE) != (version == Catalogs.NOWHERE)
+    write!(items, columns.version, number, version)
+    shown |= write!(items, columns.label, number, value === nothing ? x : value.label)
+    shown |= write!(items, columns.tags, number, [tag.name for tag in tags(workspace, x)])
+    shown |= write!(items, columns.groups, number, copy(get(workspace.groups, x, String[])))
+    write!(items, columns.type, number, value === nothing ? Any : value.type)
+    ## TODO: an item whose latest value falls back to the value of an earlier row, as when its
+    ## `process` fails, has no metadata: the table keeps only the metadata of the latest value.
+    write!(items, columns.value_revision, number, value === nothing ? UInt64(0) : value.revision) &&
+        store!(items, number, Dict{Symbol,Any}())
+    shown && push!(items.shown, number)
+    push!(items.pending, number)
+    return nothing
+end
+
+"""
+    store!(items, number, values) -> Vector{MetadataConflict}
+
+Replace the metadata of the item `number` in the draft of `items` with `values`, keeping a copy of
+each vector value. The first value stored under a key fixes the type of its column. Returns the
+values that were not stored because their key holds values of another type. The caller holds the
+catalog lock.
+"""
+function store!(items::Items, number::Integer, values::AbstractDict{Symbol})::Vector{MetadataConflict}
+    for (name, value) in values
+        value === missing || haskey(items.metadata, name) ||
+            (items.metadata[name] = Column{Union{Missing,typeof(value)}}(missing))
+    end
+    dropped, shown = MetadataConflict[], false
+    for (name, column) in items.metadata
+        value, expected = get(values, name, missing), nonmissingtype(eltype(column.empty.cells))
+        value === missing || typeof(value) == expected ||
+            (push!(dropped, MetadataConflict(name, expected, typeof(value))); value = missing)
+        shown |= write!(items, column, number, value isa Vector ? copy(value) : value)
+    end
+    shown && push!(items.shown, number)
+    return dropped
 end
 
 """
@@ -282,7 +339,7 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
             groups = get(workspace.groups, member, String[])
             filter!(!=(x), groups)
             isempty(groups) && delete!(workspace.groups, member)
-            changed!(workspace, member)
+            write!(workspace, member)
             row!(workspace, "member process:$member in $x", MEMBER_PROCESS, nothing)
         end
         isempty(held) ? delete!(workspace.members, x) : (workspace.members[x] = held)
@@ -294,7 +351,7 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
         end
         for member in held
             groups = get!(Vector{String}, workspace.groups, member)
-            x in groups || (push!(groups, x); changed!(workspace, member))
+            x in groups || (push!(groups, x); write!(workspace, member))
             member!(workspace, member, x)
         end
         foreach(group -> member!(workspace, x, group), copy(get(workspace.groups, x, String[])))
