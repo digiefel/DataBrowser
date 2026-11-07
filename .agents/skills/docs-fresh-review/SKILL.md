@@ -40,31 +40,41 @@ round raises new questions, so stop when the findings become small, and report t
 ## Writing rules
 
 Read every sentence as that user would: once, without the code. `AGENTS.md`, which `CLAUDE.md`
-links to, holds the same rules for every text: change both together.
+links to, holds a copy of these rules, so change both together.
 
-Write as a person explains the code to a colleague. Call things by the words people use for them,
-and make the thing the subject: "build the tree", not "list the items of the tree". The rules below
-catch faults; they never justify a sentence that a person would not say.
+Write the way a person explains something to a colleague. Call things by their everyday names, and
+make each one the subject of the sentences about it: when the code builds a tree, say that it builds
+the tree. Before you send a text, read each sentence once, as its reader would. The rules below
+describe the faults most likely to trip a reader; still, they never justify a sentence that sounds
+unnatural.
 
-1. **Say what the thing is, where it first appears**, in familiar terms and in a relative clause
-   attached to it: "Each workspace has one *catalog*, which holds the computations…"; "The catalog
-   is a table with one row for each computation"; "`Row(3)` is the third row, as in a spreadsheet".
-   Use concrete nouns, never "a place that keeps values". Italics mark jargon where it is defined,
-   and nothing else. Define each word inside the example where it first happens, not in a glossary
-   before it.
-2. **Write only about the thing, and only what it is and does.** No sentence about the words, the
-   text or its audience ("The words that follow…", "the rest of the page…"). No denial of what the
-   reader had no reason to expect ("There are no kinds of rows", "X is not a state", "X; not Y"),
-   and no claim about what other code does not do. No list that does not show its claim.
-3. **Make the actor the subject of a main clause**: "When a plot window draws a fit of the item
-   `a/1`, which comes from the source item `a.csv`, the catalog has three rows", not a long opening
-   phrase of noun phrases before the main clause. Never two nouns before their verb, as in "the
-   items that the tree shows": write "the items shown by the tree", or "the tree shows".
-4. **Let each word mean one thing at first reading.** One term for one thing, as the code names it.
-   No noun used as a verb, above all a word that the text uses as a thing ("the cache records"
-   where a record is a thing): saves, refers to, shows, follows, calls. The full term where the
-   context is not there yet: "a function call", not "a call". No pronoun with two possible
-   referents.
+1. **Explain each term where it first appears.** Say what it is in the same sentence and in familiar
+   words, for example with a relative clause: "Each user has an *inbox*, which holds the messages
+   sent to them." The italics mark the term at its definition and nowhere else. A comparison helps
+   when one fits ("a table, as in a spreadsheet"), and a concrete noun is clearer than a vague
+   description such as "a place that keeps values". When a text needs several new terms, define
+   each one in the example that first uses it: a glossary at the start asks the reader to learn
+   words before seeing them at work.
+2. **Stay on the topic: what it is and what it does.** Sentences about the text itself, its words or
+   its readers ("The terms below mean the following") give the reader nothing. Likewise, denying
+   something the reader had no reason to expect ("There are no special users") makes them wonder
+   whether there are, and the pattern "X, not Y" has the same effect. Finally, a list offered as
+   evidence has to support the claim.
+3. **Make the actor the subject of a main clause.** A long opening phrase keeps the reader waiting
+   for the actor: "For an order that has shipped and a cancellation from the customer, the store
+   refunds it" is clearer as "When a customer cancels an order that has already shipped, the store
+   refunds it." For the same reason, avoid two nouns before their verb, as in "the files that the
+   user opens", and write "the files opened by the user" or "the user opens the files" instead.
+4. **Let each word mean one thing at first reading.** Use one term for each thing, the same one the
+   code uses. A noun used as a verb makes the reader stumble, above all when the text also uses it
+   as a thing: in "the log records each request", *records* first reads as a noun, while a verb such
+   as *saves* reads only one way. Similarly, a short word needs context, so write "a function call"
+   until the context makes plain what "a call" is. Finally, make sure each pronoun can refer to
+   only one noun.
+5. **Connect each sentence to the one before.** Readers expect a sentence to follow from the
+   previous one. When a sentence starts a new point instead, say so with a word such as *also*,
+   *besides* or *however*, or begin a new paragraph. Several short sentences in a row, with nothing
+   to link them, leave the reader to guess how they relate.
 
 When Davide corrects a sentence, find the general mistake and fix it on every page. Then remove the
 rule that caused it, if there is one; else sharpen the rule that should have caught it, in its

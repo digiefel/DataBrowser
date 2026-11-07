@@ -64,7 +64,7 @@ Work through these steps in order, and keep what each step produces.
    - length: each sentence earns its place, and fewer, better words beat more words;
    - human prose: each sentence is one that a person would say to a colleague, with the words people
      use for the thing.
-5. **Sentences.** Read the prose and the docstrings once more, sentence by sentence, for these four
+5. **Sentences.** Read the prose and the docstrings once more, sentence by sentence, for these five
    faults. They are what this reader trips over most. Report every instance, not a sample. The
    examples are invented and come from no page:
    - **A thing that is not said to be what it is, where it first appears.** An abstract definition
@@ -87,6 +87,10 @@ Work through these steps in order, and keep what each step produces.
      that the page uses as a thing ("the log records each request" where a record is a thing); a
      short word that needs context the reader does not have yet ("a call" for "a function call");
      a pronoun with two possible referents; two terms for one thing, or one term for two things.
+   - **A sentence with no link to the one before.** A sentence that starts a new point without a
+     word such as *also* or *however*, or without a new paragraph; several short sentences in a row
+     that leave the reader to guess how they relate ("Drafts are saved every minute. Attachments
+     have a size limit. The outbox is sent at night.").
 
 ## What to report
 
