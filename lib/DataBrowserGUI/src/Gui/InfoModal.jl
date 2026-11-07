@@ -68,7 +68,8 @@ function render_cache_rebuild_modal(state::BrowserState)::Nothing
             state.cache_rebuild_modal = false
             state.cache_rebuild_error = ""
             ig.CloseCurrentPopup()
-            Workspace.modify_workspace!(state.workspace; rebuild=true)
+            ## In another task, as for the Rebuild Cache button.
+            errormonitor(Threads.@spawn Workspace.modify_workspace!(state.workspace; rebuild=true))
         end
         ig.EndPopup()
     end

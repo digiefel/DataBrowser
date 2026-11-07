@@ -166,7 +166,9 @@ function _render_cache_controls!(state::BrowserState)::Nothing
     disabled = !can_rebuild_cache(workspace)
     disabled && ig.BeginDisabled()
     if ig.Button(status.level === :missing ? "Build Cache" : "Rebuild Cache", (-1, 0))
-        rebuild_cache!(workspace)
+        ## In another task, which waits for the end of this frame: until the rebuild ends, each
+        ## frame shows that the workspace is updating.
+        errormonitor(Threads.@spawn rebuild_cache!(workspace))
     end
     disabled && ig.EndDisabled()
     return nothing
