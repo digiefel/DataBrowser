@@ -108,7 +108,6 @@ end
 
 # Start the workers, the scan, and the watchers of the source and of the code.
 function start!(workspace::Workspace; rebuild::Bool)::Nothing
-    track_task!(workspace, Threads.@spawn publish!(workspace.items, workspace))
     track_task!(workspace, Threads.@spawn keep!(workspace.items, workspace))
     start_workers!(workspace)
     scan_source!(workspace; rebuild)
@@ -391,7 +390,7 @@ generation(workspace::Workspace)::Int = workspace.generation[]
     changed!(workspace)
 
 Record that the workspace changed, for `generation` and `workspace_status`, and wake the task that
-publishes the table `items`, [`publish!`](@ref).
+keeps the table `items`, [`keep!`](@ref).
 """
 function changed!(workspace::Workspace)::Nothing
     Base.Threads.atomic_add!(workspace.generation, 1)

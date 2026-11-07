@@ -340,7 +340,7 @@ key, with `missing` where the item has no value. When an item leaves the workspa
 the draft is `Catalogs.NOWHERE`, and the next new item takes its number.
 
 Workers write the cells of a draft with [`write!`](@ref) and [`store!`](@ref), under the catalog
-lock. The task [`publish!`](@ref) makes the draft a new `Version` and stores it in `version`. A
+lock. The task [`keep!`](@ref) makes the draft a new `Version` and stores it in `version`. A
 reader loads `version` and reads it without a lock; it takes `lock` only to ask for items or for
 the answers of `select(workspace, f)`, so it never waits for a worker.
 """
@@ -358,22 +358,20 @@ mutable struct Items
     const pending::Set{Int32}
     shown::Set{Int32}
     changed::Bool
-    ## Notified at each change of the catalog and at each request, and when the table closes.
+    ## Notified at each change of the catalog, at each request, at each new function or order, and
+    ## when the table closes.
     const event::Base.Event
     @atomic version::Version
     const lock::ReentrantLock
-    ## Notified at each publish, at each answer of `keep!`, and when the table closes.
+    ## Notified at each publish, at each new answer of `select(workspace, f)`, and when the table
+    ## closes.
     const published::Threads.Condition
-    ## Under `lock`: the ids asked for by readers, until a version follows their request; the items
-    ## whose cells shown by `select` changed, until `keep!` takes them; the order set by `sort!`; and
-    ## the answer for each function given to `select`, with the time when it was last asked for.
+    ## Under `lock`: the ids asked for by readers, until a version follows their request; the order
+    ## set by `sort!`; and the answer for each function given to `select`, with the time when it was
+    ## last asked for.
     const requested::Set{String}
-    changes::Set{Int32}
     order::@NamedTuple{by::Any, order::Base.Order.Ordering}
     const answers::Dict{Any,@NamedTuple{selection::Any, asked::Float64}}
-    ## Notified at each publish that changes cells shown by `select`, at each new function or
-    ## order, and when the table closes.
-    const asked::Base.Event
     closed::Bool
 end
 function Items()
@@ -381,9 +379,8 @@ function Items()
     order = SortKeys([:label => false])
     return Items(1, 0, Int32[], index, columns, Dict{Symbol,Column}(), Set{Int32}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), Dict{Symbol,Cells}()),
-        lock, Threads.Condition(lock), Set{String}(), Set{Int32}(),
-        (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(),
-        Base.Event(true), false)
+        lock, Threads.Condition(lock), Set{String}(),
+        (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
 end
 
 """
