@@ -106,7 +106,7 @@ What a failed row computes, for a reader: the source item it reads, the value it
 or else its name. The caller holds the catalog lock.
 """
 function subject(workspace::Workspace, row::Row)::String
-    stage = get(workspace.stages, row, nothing)
+    stage = workspace.items.rows.stage[row]
     stage === nothing && return id(workspace.catalog[row])
     return stage == SOURCE_READ ? id(workspace.catalog[row].args[3]) : workspace.catalog[row].args[2].id
 end

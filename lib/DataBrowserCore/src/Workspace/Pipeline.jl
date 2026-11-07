@@ -117,7 +117,8 @@ function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Not
     end
     row = @timed_dbg "source.add!" add!(catalog, value)
     hold!(catalog, row)
-    workspace.sources[read_id], workspace.stages[row] = row, SOURCE_READ
+    workspace.sources[read_id] = row
+    write!(workspace.items, workspace.items.rows.stage, row.index, SOURCE_READ)
     want!(catalog, row, SOURCES_FIRST)
     isempty(held) || members!(workspace, row, held, given)
     @timed_dbg "source.restore" restore!(workspace, row) || finished!(workspace, row, nothing)
@@ -163,12 +164,12 @@ The ids of the values of a source item: the value that reading it gives, and the
 with its id.
 """
 function Base.values(workspace::Workspace, read_id::AbstractString)::Vector{String}
-    row = get(workspace.sources, read_id, nothing)
-    found = String[output.id for output in get(workspace.outputs, row, Output[])]
-    haskey(workspace.outputs, row) || row in get(workspace.versions, read_id, Row[]) && push!(found, read_id)
+    outputs, row = workspace.items.rows.outputs, get(workspace.sources, read_id, Catalogs.NOWHERE)
+    found = String[output.id for output in something(outputs[row], Output[])]
+    outputs[row] === nothing && row in get(workspace.versions, read_id, Row[]) && push!(found, read_id)
     for value in copy(found)
-        processed = get(workspace.rows, "process:" * value, nothing)
-        append!(found, output.id for output in get(workspace.outputs, processed, Output[]))
+        processed = get(workspace.rows, "process:" * value, Catalogs.NOWHERE)
+        append!(found, output.id for output in something(outputs[processed], Output[]))
     end
     return unique!(found)
 end
@@ -213,27 +214,27 @@ values whose versions changed, or none when `row` gives values of the same ids, 
 as before.
 """
 function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Vector{String}
-    catalog, stage = workspace.catalog, workspace.stages[row]
-    accepted, conflicts = Output[], String[]
+    catalog, items = workspace.catalog, workspace.items
+    stage, accepted, conflicts = items.rows.stage[row], Output[], String[]
     for output in something(outputs, Output[])
         others = filter(!=(row), get(workspace.versions, output.id, Row[]))
-        earlier = filter(other -> workspace.stages[other] < stage, others)
+        earlier = filter(other -> items.rows.stage[other] < stage, others)
         reads = any(x -> x isa Part && x.id == output.id && x.of.row in earlier, catalog[row].args)
         if any(found -> found.id == output.id, accepted)
             push!(conflicts, "it gives the id \"$(output.id)\" twice")
-        elseif any(other -> workspace.stages[other] == stage, others) || !(isempty(earlier) || reads)
+        elseif any(other -> items.rows.stage[other] == stage, others) || !(isempty(earlier) || reads)
             push!(conflicts, "the value \"$(output.id)\" comes from $(id(catalog[others[end]]))")
         else
             push!(accepted, output)
         end
     end
     expected = [stage == SOURCE_READ ? id(catalog[row].args[3]) : catalog[row].args[2].id]
-    before = get(workspace.outputs, row, nothing)
+    before = items.rows.outputs[row]
     ids = unique!(String[[output.id for output in something(before, Output[])]; [output.id for output in accepted]; expected])
     for x in ids
         rows = filter!(!=(row), get!(Vector{Row}, workspace.versions, x))
         (outputs === nothing ? x in expected : any(output -> output.id == x, accepted)) &&
-            insert!(rows, something(findfirst(other -> workspace.stages[other] > stage, rows), length(rows) + 1), row)
+            insert!(rows, something(findfirst(other -> items.rows.stage[other] > stage, rows), length(rows) + 1), row)
         isempty(rows) && delete!(workspace.versions, x)
     end
     ## The cache and the table `items` forget the values of the ids that the row no longer gives, and
@@ -241,19 +242,19 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
     ## with the same revision, and the values that it gives and the workspace does not keep.
     for output in [something(before, Output[]); filter(!in(accepted), something(outputs, Output[]))]
         if !any(found -> found.id == output.id, accepted)
-            store!(workspace.items, output, Dict{Symbol,Any}())
+            store!(items, output, Dict{Symbol,Any}())
             delete_output!(workspace.cache.db, row.index, output.id)
         end
         any(found -> (found.type, found.revision) == (output.type, output.revision), accepted) ||
             forget!(workspace, output.type, output.revision)
     end
-    outputs === nothing ? delete!(workspace.outputs, row) : (workspace.outputs[row] = accepted)
+    write!(items, items.rows.outputs, row.index, outputs === nothing ? nothing : accepted)
     foreach(x -> write!(workspace, x), ids)
     ## The group rows that take one of these values take its latest version now.
     foreach(x -> foreach(group -> input!(workspace, group, x), get(workspace.takers, x, Row[])), ids)
     conflicts!(workspace, row, conflicts)
     shape(found) = found === nothing ? nothing : [(output.id, output.type, output.members) for output in found]
-    return before !== nothing && isequal(shape(before), shape(get(workspace.outputs, row, nothing))) ? String[] : ids
+    return before !== nothing && isequal(shape(before), shape(items.rows.outputs[row])) ? String[] : ids
 end
 
 """
@@ -263,8 +264,7 @@ Make the cells of the item `id` in the draft of the table `items` follow the wor
 version, label, type, the revision and the key of its value, tags, groups and source item. A new
 item takes a number that no item has, and an id that is not an item is left out. An item that
 leaves the workspace gives its number to the next new item: the versions published before keep
-their cells. The next publish computes the readiness, failure and revision of the item. The caller
-holds the catalog lock.
+their cells. The caller holds the catalog lock.
 """
 function write!(workspace::Workspace, x::String)::Nothing
     items, columns = workspace.items, workspace.items.columns
@@ -291,7 +291,6 @@ function write!(workspace::Workspace, x::String)::Nothing
     write!(items, columns.value_revision, number, value === nothing ? UInt64(0) : value.revision)
     shown |= write!(items, columns.key, number, value === nothing ? Int64(0) : value.key)
     shown && push!(items.shown, number)
-    push!(items.pending, number)
     return nothing
 end
 
@@ -334,7 +333,7 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
     for x in ids
         versions = get(workspace.versions, x, Row[])
         ## The `process` of a value starts when a read gives the value, not while the read runs.
-        read_row = findfirst(row -> workspace.stages[row] == SOURCE_READ && output(workspace, row, x) !== nothing, versions)
+        read_row = findfirst(row -> workspace.items.rows.stage[row] == SOURCE_READ && output(workspace, row, x) !== nothing, versions)
         # TODO: `process` runs once, on what `read` gave; call it again on its results until they are
         # `isequal` to its inputs.
         row!(workspace, "process:" * x, ITEM_PROCESS, read_row === nothing ? nothing :
@@ -420,7 +419,8 @@ function row!(workspace::Workspace, key::String, stage::PipelineStage, value::Un
     elseif row === nothing
         row = add!(catalog, value)
         hold!(catalog, row)
-        workspace.rows[key], workspace.stages[row] = row, stage
+        workspace.rows[key] = row
+        write!(workspace.items, workspace.items.rows.stage, row.index, stage)
         workspace.background_processing && want!(catalog, row, BACKGROUND_ITEM)
         given!(workspace, row, nothing)
         stage == GROUP_PROCESS && members!(workspace, row, held)
@@ -440,7 +440,7 @@ Release a row of the pipeline: its values leave the workspace, and the cache for
 function Catalogs.release!(workspace::Workspace, row::Row)::Nothing
     finished!(workspace, row, Output[])
     haskey(workspace.taken, row) && members!(workspace, row, nothing)
-    delete!(workspace.stages, row)
+    write!(workspace.items, workspace.items.rows.stage, row.index, nothing)
     release!(workspace.catalog, row)
     return nothing
 end
@@ -454,7 +454,7 @@ without, also a row that did not run yet. `nothing` when there is none.
 """
 function latest(workspace::Workspace, x::String, before::Union{Nothing,PipelineStage}; T=nothing, skip::Row=Catalogs.NOWHERE)::Union{Nothing,Row}
     for row in Iterators.reverse(get(workspace.versions, x, Row[]))
-        (row == skip || before !== nothing && workspace.stages[row] >= before) && continue
+        (row == skip || before !== nothing && workspace.items.rows.stage[row] >= before) && continue
         T === nothing && return row
         found = output(workspace, row, x)
         found !== nothing && found.type <: T && return row
@@ -464,7 +464,7 @@ end
 
 # The value with id `x` that `row` gave, or `nothing`.
 function output(workspace::Workspace, row::Row, x::String)::Union{Nothing,Output}
-    found = get(workspace.outputs, row, Output[])
+    found = something(workspace.items.rows.outputs[row], Output[])
     index = findfirst(output -> output.id == x, found)
     return index === nothing ? nothing : found[index]
 end
@@ -543,7 +543,7 @@ function input!(workspace::Workspace, row::Row, x::String, change::Int=0)::Nothi
         Catalogs.wanted(catalog, other) && !Catalogs.stuck(catalog, other)
     if paths > 0
         for version in Iterators.reverse(get(workspace.versions, x, Row[]))
-            (version == row || workspace.stages[version] >= MEMBER_PROCESS) && continue
+            (version == row || workspace.items.rows.stage[version] >= MEMBER_PROCESS) && continue
             found = output(workspace, version, x)
             (found === nothing ? runs(version) : found.type <: taken.T) && (after = version; break)
         end

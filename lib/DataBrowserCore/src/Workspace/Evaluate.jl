@@ -190,11 +190,11 @@ function run!(workspace::Workspace, job::Job)::Nothing
                 foreach(x -> delete_output!(workspace.cache.db, row.index, x.id), saved)
                 earlier = previous.revision == 0 ? recorded_revision(workspace.cache.db, row.index) : nothing
                 if earlier !== nothing && isempty(earlier.failure)
-                    haskey(workspace.stages, row) || forget!(workspace, earlier.type, earlier.result_revision)
+                    workspace.items.rows.stage[row] === nothing && forget!(workspace, earlier.type, earlier.result_revision)
                     foreach(x -> forget!(workspace, x.type, value_revision(x.id, earlier.result_revision)), saved)
                 end
             end
-            catalog[row], haskey(workspace.stages, row), at, record, previous
+            catalog[row], workspace.items.rows.stage[row] !== nothing, at, record, previous
         end
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
@@ -252,9 +252,9 @@ function run!(workspace::Workspace, job::Job)::Nothing
             ## The cache and the table `items` keep the metadata of each value that the workspace kept.
             messages = String[]
             for (position, (output, values)) in enumerate(outputs)
-                output in get(workspace.outputs, row, Output[]) || continue
+                output in something(workspace.items.rows.outputs[row], Output[]) || continue
                 append!(messages, conflict_message.(store!(workspace.items, output, values)))
-                @timed_dbg "job.finish.store_output!" append!(messages, store_output!(workspace.cache.db, row.index, Int(workspace.stages[row]), position,
+                @timed_dbg "job.finish.store_output!" append!(messages, store_output!(workspace.cache.db, row.index, Int(workspace.items.rows.stage[row]), position,
                     (; output.id, output.label, output.type, output.members, metadata=values)))
             end
             conflicts!(workspace, row, unique!(messages))
@@ -275,7 +275,7 @@ row of the pipeline that fails gives no values.
 function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, error, backtrace)::Nothing
     catalog, row = workspace.catalog, job.row
     context = @lock catalog.lock begin
-        stage, f = get(workspace.stages, row, nothing), catalog[row].f
+        stage, f = workspace.items.rows.stage[row], catalog[row].f
         about = stage == SOURCE_READ ? "Source item: $(subject(workspace, row))" :
             stage !== nothing ? "Function: $(function_name(f))\n  Item: $(subject(workspace, row))" :
             "Computation: $(subject(workspace, row))"
@@ -286,7 +286,7 @@ function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, erro
         finish!(catalog, job; failed=true) || return nothing
         workspace.errors[row] = "$(function_name(catalog[row].f)) failed: " * message
         at === nothing || store_computation_revision!(workspace.cache.db, row.index, id(catalog[row]), at, Nothing; failure=message)
-        haskey(workspace.stages, row) && finished!(workspace, row, nothing)
+        workspace.items.rows.stage[row] === nothing || finished!(workspace, row, nothing)
         publish!(workspace)
     end
     DataBrowserAPI.report_error(context, error, backtrace)
@@ -486,8 +486,8 @@ function recorded(workspace::Workspace, row::Row, at::UInt64)
     (record === nothing || record.revision != at) && return nothing
     # TODO: a row of the pipeline that gave no values has nothing saved, so it runs again in each
     # session.
-    isempty(record.failure) && haskey(workspace.stages, row) && !haskey(workspace.saved, row.index) &&
-        !haskey(workspace.outputs, row) && return nothing
+    isempty(record.failure) && workspace.items.rows.stage[row] !== nothing && !haskey(workspace.saved, row.index) &&
+        workspace.items.rows.outputs[row] === nothing && return nothing
     return record
 end
 
@@ -518,13 +518,13 @@ function restored!(workspace::Workspace, row::Row, record)::Nothing
     saved = pop!(workspace.saved, row.index, nothing)
     failed = !isempty(record.failure)
     failed && (workspace.errors[row] = "$(function_name(workspace.catalog[row].f)) failed: " * record.failure)
-    haskey(workspace.stages, row) || return nothing
-    saved === nothing && return finished!(workspace, row, failed ? nothing : workspace.outputs[row])
+    workspace.items.rows.stage[row] === nothing && return nothing
+    saved === nothing && return finished!(workspace, row, failed ? nothing : workspace.items.rows.outputs[row])
     outputs = @timed_dbg "restored.outputs" [Output(value.id, value.type, value.label, value.members,
         output_key!(workspace.cache.db, row.index, value.id), value_revision(value.id, record.result_revision)) for value in saved]
     @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
     for (output, value) in zip(outputs, saved)
-        output in get(workspace.outputs, row, Output[]) && store!(workspace.items, output, value.metadata)
+        output in something(workspace.items.rows.outputs[row], Output[]) && store!(workspace.items, output, value.metadata)
     end
     return nothing
 end
@@ -611,8 +611,8 @@ end
 
 # The type and the revision under which the stores keep the result of `row`, or for a row of the
 # pipeline, each value that it gives. The caller holds the catalog lock.
-store_keys(workspace::Workspace, row::Row)::Vector{Tuple{Type,UInt64}} = haskey(workspace.stages, row) ?
-    Tuple{Type,UInt64}[(output.type, output.revision) for output in get(workspace.outputs, row, Output[])] :
+store_keys(workspace::Workspace, row::Row)::Vector{Tuple{Type,UInt64}} = workspace.items.rows.stage[row] !== nothing ?
+    Tuple{Type,UInt64}[(output.type, output.revision) for output in something(workspace.items.rows.outputs[row], Output[])] :
     Tuple{Type,UInt64}[(Catalogs.result_type(workspace.catalog, row), Catalogs.revision(workspace.catalog, row))]
 
 """
@@ -637,8 +637,8 @@ failed. The results of `view` and `pick`, which `keep!` does not save, are alway
 function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Some}}
     catalog = workspace.catalog
     unsaved, vectors, parts = @lock catalog.lock begin
-        vectors = [haskey(workspace.stages, row) && Catalogs.result_type(catalog, row) <: AbstractVector for row in rows]
-        [catalog[row].f in (view, pick) || vector && !haskey(workspace.outputs, row) for (row, vector) in zip(rows, vectors)], vectors,
+        vectors = [workspace.items.rows.stage[row] !== nothing && Catalogs.result_type(catalog, row) <: AbstractVector for row in rows]
+        [catalog[row].f in (view, pick) || vector && workspace.items.rows.outputs[row] === nothing for (row, vector) in zip(rows, vectors)], vectors,
             [store_keys(workspace, row) for row in rows]
     end
     found = kept(workspace, parts)
@@ -690,7 +690,7 @@ function computed!(workspace::Workspace, row::Row)
     @lock one begin
         found = only(kept(workspace, [row]))
         found === nothing || return something(found)
-        value, pipeline, before, at = @lock catalog.lock (catalog[row], haskey(workspace.stages, row),
+        value, pipeline, before, at = @lock catalog.lock (catalog[row], workspace.items.rows.stage[row] !== nothing,
             Catalogs.changes(catalog, row), Catalogs.revision(catalog, row))
         output = call(workspace, row, value)
         @lock catalog.lock Catalogs.changes(catalog, row) == before || return output
@@ -714,7 +714,9 @@ function publish!(workspace::Workspace)::Nothing
         Catalogs.state(catalog, row) == Catalogs.REMOVED || continue
         forget!(workspace, Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row))
         delete_computation_revision!(workspace.cache.db, row.index)
-        foreach(found -> delete!(found, row), (workspace.outputs, workspace.signatures, workspace.row_locks, workspace.evaluated))
+        foreach(found -> delete!(found, row), (workspace.signatures, workspace.row_locks, workspace.evaluated))
+        ## The cells of a removed row go back to the defaults, those of `NOWHERE`.
+        foreach(column -> write!(workspace.items, column, row.index, column[Catalogs.NOWHERE]), workspace.items.rows)
     end
     ## Wakes the tasks that wait for the scan or for the workspace to be idle.
     notify(catalog.changed)
@@ -1042,7 +1044,7 @@ showing what it showed until the values are ready.
 function processed(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Bool
     items = workspace.items
     version = @atomic items.version
-    waiting = filter(x -> !(cell(version, x, :readiness, UNPROCESSED) in (CURRENT, FAILED)), ids)
+    waiting = filter(x -> !(readiness(version, x) in (CURRENT, FAILED)), ids)
     (items.closed || isempty(waiting)) && return true
     ## A request ends with the next publish, so a window asks again at each call.
     @lock items.lock union!(items.requested, waiting)
@@ -1075,13 +1077,13 @@ function wait_processed(workspace::Workspace, ids::AbstractVector{<:AbstractStri
                 n = number(version, x)
                 if haskey(asked, x)
                     n == 0 && error("The workspace has no value with the id \"$x\"")
-                    readiness = version.columns.readiness[n]
-                    readiness == FAILED && error(version.columns.failure[n])
-                    readiness == CURRENT && continue
+                    row = version.columns.version[n]
+                    version.rows.readiness[row] == FAILED && error(version.rows.failure[row])
+                    version.rows.readiness[row] == CURRENT && continue
                     waiting = true
                     ## A request ends with the next publish: the call asks again when the latest
                     ## version moved to another row, or when nothing wants it.
-                    readiness == WORKING && version.columns.version[n] == asked[x] && continue
+                    version.rows.readiness[row] == WORKING && row == asked[x] && continue
                 end
                 push!(items.requested, x)
                 asked[x] = n == 0 ? Catalogs.NOWHERE : version.columns.version[n]
@@ -1105,9 +1107,12 @@ and draws again when it differs.
 """
 revision(workspace::Workspace, ids::AbstractVector{<:AbstractString})::UInt = revision((@atomic workspace.items.version), ids)
 
-function revision(version::Version, ids::AbstractVector{<:AbstractString})::UInt
-    return foldl((seed, x) -> hash(cell(version, x, :revision, UInt64(0)), seed), ids; init=UInt(0))
-end
+revision(version::Version, ids::AbstractVector{<:AbstractString})::UInt =
+    foldl((seed, x) -> hash(revision(version, cell(version, x, :version, Catalogs.NOWHERE)), seed), ids; init=UInt(0))
+
+# The part of a row in `revision`: it changes when the row becomes current, or stops being so.
+revision(version::Version, row::Row)::UInt = row == Catalogs.NOWHERE ? UInt(0) :
+    hash(row.index, hash(version.rows.readiness[row] == CURRENT, hash(version.rows.changes[row])))
 
 """
     status_revision(workspace) -> Int

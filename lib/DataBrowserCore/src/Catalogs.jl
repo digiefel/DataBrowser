@@ -230,9 +230,9 @@ mutable struct Catalog
     const queued_at::Dict{Row,Int}
     ## The rows that lost their result or were removed since the last `lost!`.
     const lost::Vector{Row}
-    ## The rows whose state, priority or job changed, until the workspace reads them for the rows
-    ## of its items (see `select`).
-    const touched::Vector{Row}
+    ## The rows whose state, priority or job changed, until the workspace reads them for the cells
+    ## of its rows (see `keep!`).
+    const touched::Set{Row}
     ## The number of rows in each state, by the type of their function.
     const counts::Dict{Type,Vector{Int}}
     ## Set by `close`: tasks in `wait` return, and workers stop waiting for jobs.
@@ -241,7 +241,7 @@ end
 
 Catalog(key::Function) = (lock = ReentrantLock(); Catalog(lock, Threads.Condition(lock), key, Node[], Dict{Computation,Row}(),
     Dict{Tuple{Row,Row},@NamedTuple{input::Int32, reader::Int32, uses::Int32}}(),
-    Dict{Int,Vector{Row}}(), Dict{Row,Int}(), Row[], Row[], Dict{Type,Vector{Int}}(), false))
+    Dict{Int,Vector{Row}}(), Dict{Row,Int}(), Row[], Set{Row}(), Dict{Type,Vector{Int}}(), false))
 
 # The node of every position that no row has: removed, and never counted.
 const EMPTY = Node(Computation(nothing), Row[], Row[], REMOVED, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing)

@@ -7,17 +7,17 @@
 The task that keeps the table `items` of `workspace` current, and the answers of
 `select(workspace, f)`, until `close(items)`. At each notification of `items.event`, it requests
 in the catalog the latest versions of the ids asked for by readers, ahead of background work. Then,
-at most once each `PUBLISH_INTERVAL` unless an item that a reader waits for changed, it computes
-the readiness, failure and revision of the items of the catalog rows whose state, priority or job
-changed, and of the items whose cells workers wrote, 1000 at a time, each part under the catalog
-lock. Once none is left and a cell changed, it stores the draft as a new version. Then, without a
-lock, it runs each function given to `select` in the last 10 seconds on the rows of the items whose
-cells shown by `select` changed in that version, and merges the items that pass into the order set
-by `sort!`. A new function runs on the row of every item, and a new order sorts every item again.
-An error stops the task, and readers that wait throw from then on.
+at most once each `PUBLISH_INTERVAL` unless an item that a reader waits for changed, it writes the
+readiness, failure and changes of the catalog rows whose state, priority or job changed, 1000 at a
+time, each part under the catalog lock. Once none is left and a cell changed, it stores the draft
+as a new version. Then, without a lock, it runs each function given to `select` in the last 10
+seconds on the rows of the items whose cells shown by `select` changed in that version, and merges
+the items that pass into the order set by `sort!`. A new function runs on the row of every item,
+and a new order sorts every item again. An error stops the task, and readers that wait throw from
+then on.
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
-    catalog, columns, last = workspace.catalog, items.columns, 0.0
+    catalog, columns, rows, last = workspace.catalog, items.columns, items.rows, 0.0
     ## Owned by this task: the sort key of each item, by its number, the order of those keys, and
     ## for each function the sorted numbers of the items that pass it.
     keys_of, sorted_by, passed = Dict{Int32,Any}(), nothing, Dict{Any,Vector{Int32}}()
@@ -32,42 +32,34 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                 for x in requested
                     haskey(workspace.versions, x) && request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
                 end
-                any(numbers -> any(in(items.pending), numbers), readers)
+                ## An item that a reader waits for changed when the row of its latest version did,
+                ## or when its latest version is another row.
+                published = (@atomic items.version).columns.version
+                any(numbers -> any(n -> columns.version[n] in catalog.touched || columns.version[n] != published[n], numbers), readers)
             end
             waited || sleep(max(0.0, last + PUBLISH_INTERVAL - time()))
-            ## The items of the catalog rows whose state, priority or job changed join the pending
-            ## items, whose readiness, failure and revision then follow the catalog. Both are taken
-            ## 1000 at a time, each part under the catalog lock, so that a worker waits for one
+            ## The cells of the catalog rows whose state, priority or job changed follow the catalog,
+            ## 1000 rows at a time, each part under the catalog lock, so that a worker waits for one
             ## part at most. The last part takes all that is left, and in the same take of the
             ## lock, the draft becomes the new version when a cell changed.
             changed = nothing
             while changed === nothing
                 changed = @lock catalog.lock begin
-                    part = length(catalog.touched) + length(items.pending) > 1000 ? 1000 : typemax(Int)
+                    part = length(catalog.touched) > 1000 ? 1000 : typemax(Int)
                     for row in [pop!(catalog.touched) for _ in 1:min(part, length(catalog.touched))]
-                        stage = get(workspace.stages, row, nothing)
-                        stage === nothing && continue
-                        expected = stage == SOURCE_READ ? id(catalog[row].args[3]) : catalog[row].args[2].id
-                        for x in [expected; [output.id for output in get(workspace.outputs, row, Output[])]]
-                            number = get(items.index, x, Int32(0))
-                            number == 0 || push!(items.pending, number)
-                        end
-                    end
-                    for number in [pop!(items.pending) for _ in 1:min(part, length(items.pending))]
-                        row = columns.version[number]
-                        current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
-                        readiness = row == Catalogs.NOWHERE ? UNPROCESSED : current ? CURRENT :
-                            Catalogs.stuck(catalog, row) ? FAILED :
+                        ## `publish!` clears the cells of a removed row.
+                        row in catalog || continue
+                        readiness = Catalogs.state(catalog, row) == Catalogs.CURRENT ? CURRENT : Catalogs.stuck(catalog, row) ? FAILED :
                             Catalogs.running(catalog, row) || Catalogs.wanted(catalog, row) ? WORKING : UNPROCESSED
-                        write!(items, columns.readiness, number, readiness)
-                        write!(items, columns.failure, number, readiness == FAILED ? failure(workspace, row) : "")
-                        write!(items, columns.revision, number, row == Catalogs.NOWHERE ? UInt64(0) :
-                            hash(row.index, hash(current, hash(Catalogs.changes(catalog, row)))))
+                        write!(items, rows.readiness, row.index, readiness)
+                        write!(items, rows.failure, row.index, readiness == FAILED ? failure(workspace, row) : "")
+                        write!(items, rows.changes, row.index, Catalogs.changes(catalog, row))
                     end
-                    if isempty(catalog.touched) && isempty(items.pending)
+                    if isempty(catalog.touched)
                         shown = Set{Int32}()
                         if items.changed
                             @atomic items.version = Version(items.index, map(column -> Cells(column, items.count), columns),
+                                map(column -> Cells(column, BLOCK * length(column.blocks)), rows),
                                 Dict{Symbol,Cells}(name => Cells(column, BLOCK * length(column.blocks)) for (name, column) in items.metadata))
                             items.draft, items.changed, shown, items.shown = items.draft + 1, false, items.shown, shown
                             last = time()
@@ -335,4 +327,5 @@ metadata_keys(workspace::Workspace)::Vector{Symbol} = sort!(collect(keys((@atomi
 
 How far the work is for an item, from the row of its latest version.
 """
-readiness(workspace::Workspace, x::AbstractString)::Readiness = cell(workspace, x, :readiness, UNPROCESSED)
+readiness(workspace::Workspace, x::AbstractString)::Readiness = readiness((@atomic workspace.items.version), x)
+readiness(version::Version, x::AbstractString)::Readiness = version.rows.readiness[cell(version, x, :version, Catalogs.NOWHERE)]

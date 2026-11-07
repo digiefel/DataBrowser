@@ -258,14 +258,15 @@ mutable struct Taken
 end
 
 """
-How far the work for one item is. See [`readiness`](@ref).
+How far the work for a row of the catalog is, and so for each item whose latest version is that
+row. See [`readiness`](@ref).
 
 - `CURRENT`: its latest version is current.
 - `WORKING`: a result that is not current is wanted or requested, or its job runs.
 - `UNPROCESSED`: its latest version is not current and nothing wants or requests it.
 - `FAILED`: a computation failed, or waits for one that failed.
 """
-@enum Readiness CURRENT WORKING UNPROCESSED FAILED
+@enum Readiness::UInt8 CURRENT WORKING UNPROCESSED FAILED
 
 # ## The table `items`
 
@@ -306,37 +307,46 @@ end
 Cells(column::Column, count::Integer) = Cells(column.blocks, column.empty, Int(count))
 Base.size(cells::Cells) = (cells.count,)
 
-# The cell of the item `number`, in the draft or in a version. A `view` of the cells checks the
-# bounds.
+# The cell of the item `number`, or of a row, in the draft or in a version. A `view` of the cells
+# checks the bounds. The cell of `NOWHERE` is the default.
 function Base.getindex(column::Union{Column,Cells}, number::Integer)
     block, cell = fldmod1(number, BLOCK)
     return get(column.blocks, block, column.empty).cells[cell]
 end
+Base.getindex(column::Union{Column,Cells}, row::Row) = column[row.index]
 
 # The type and the default cell of each column of the table `items`.
 const COLUMNS = (id = (String, ""), version = (Row, Catalogs.NOWHERE), label = (String, ""),
-    type = (Type, Any), readiness = (Readiness, UNPROCESSED), failure = (String, ""),
-    revision = (UInt64, UInt64(0)), value_revision = (UInt64, UInt64(0)), key = (Int64, Int64(0)),
+    type = (Type, Any), value_revision = (UInt64, UInt64(0)), key = (Int64, Int64(0)),
     tags = (Vector{String}, String[]), groups = (Vector{String}, String[]), source = (String, ""))
+
+# The type and the default cell of each column of the rows of the catalog.
+const ROWS = (readiness = (Readiness, UNPROCESSED), failure = (String, ""), changes = (UInt32, UInt32(0)),
+    stage = (Union{Nothing,PipelineStage}, nothing), outputs = (Union{Nothing,Vector{Output}}, nothing))
 
 """
 A published version of the table `items`, which never changes: the number of each item by its id,
-and the cells of each column.
+the cells of each column, the cells of each row of the catalog, and the metadata.
 """
 struct Version
     index::Base.PersistentDict{String,Int32}
     columns::NamedTuple{keys(COLUMNS),Tuple{(Cells{T} for (T, _) in COLUMNS)...}}
+    rows::NamedTuple{keys(ROWS),Tuple{(Cells{T} for (T, _) in ROWS)...}}
     metadata::Dict{Symbol,Cells}
 end
 
 """
 The table `items` of a workspace: one row for each item, groups included, numbered 1, 2, 3… in the
 order in which the workspace first sees them. The columns hold, for each item, its id; its latest
-version, a row of the catalog; its label and type; its [`Readiness`](@ref), the message of its
-failure and its part of `revision(workspace, ids)`; `value_revision`, the key of its value in the
+version, a row of the catalog; its label and type; `value_revision`, the key of its value in the
 store of its type; `key`, the key of its value in the cache; the names of its tags; the ids of its
 groups; and `source`, the id of the source item that it comes from. When an item leaves the
 workspace, its version in the draft is `Catalogs.NOWHERE`, and the next new item takes its number.
+
+Each row of the catalog keeps cells in `rows`, at its position: its [`Readiness`](@ref), the message
+of its failure, its number of changes (see `Catalogs.changes`), and for a row of the pipeline, its
+stage and the values that it gave when it last ran. An item reads its readiness, its failure and
+its revision from the row of its latest version.
 
 Each value that a row of the pipeline gives keeps its metadata in `metadata`, in the cells at its
 key: one column for each metadata key, with `missing` where a value has none. An item shows the
@@ -350,16 +360,16 @@ the answers of `select(workspace, f)`, so it never waits for a worker.
 """
 mutable struct Items
     ## Under the catalog lock: the number of the draft, which each publish increases; the highest
-    ## number; the numbers that no item has; the index, the columns and the metadata of the draft;
-    ## the items whose readiness, failure and revision the next publish computes, and those whose
-    ## cells shown by `select` changed; and whether a cell changed since the last publish.
+    ## number; the numbers that no item has; the index, the columns, the rows and the metadata of
+    ## the draft; the items whose cells shown by `select` changed; and whether a cell changed since
+    ## the last publish.
     draft::Int
     count::Int32
     const free::Vector{Int32}
     index::Base.PersistentDict{String,Int32}
     const columns::NamedTuple{keys(COLUMNS),Tuple{(Column{T} for (T, _) in COLUMNS)...}}
+    const rows::NamedTuple{keys(ROWS),Tuple{(Column{T} for (T, _) in ROWS)...}}
     const metadata::Dict{Symbol,Column}
-    const pending::Set{Int32}
     shown::Set{Int32}
     changed::Bool
     ## Notified at each change of the catalog, at each request, at each new function or order, and
@@ -383,9 +393,10 @@ mutable struct Items
 end
 function Items()
     lock, index, columns = ReentrantLock(), Base.PersistentDict{String,Int32}(), map(((T, default),) -> Column{T}(default), COLUMNS)
-    order = SortKeys([:label => false])
-    return Items(1, 0, Int32[], index, columns, Dict{Symbol,Column}(), Set{Int32}(), Set{Int32}(), false, Base.Event(true),
-        Version(index, map(column -> Cells(column, 0), columns), Dict{Symbol,Cells}()), Set{Int32}[], lock, Threads.Condition(lock), Set{String}(),
+    rows, order = map(((T, default),) -> Column{T}(default), ROWS), SortKeys([:label => false])
+    return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
+        Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}()),
+        Set{Int32}[], lock, Threads.Condition(lock), Set{String}(),
         (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
 end
 
@@ -425,9 +436,6 @@ mutable struct Workspace{P<:AbstractProject}
     # "process:x", "group process:g" or "member process:m in g" for a value x, a group g, a member m.
     sources::Dict{String,Row}
     rows::Dict{String,Row}
-    # The stage of each row of the pipeline, and the values that it gave when it last ran.
-    stages::Dict{Row,PipelineStage}
-    outputs::Dict{Row,Vector{Output}}
     # The rows that give a version of each value, by its id, in the order of their stages: the last
     # one gives its latest version. A row that did not run yet counts for the value it is expected
     # to give.
@@ -552,7 +560,7 @@ function Workspace(
         # The cache keeps the key of each computation, by its id, for the next session.
         project, source, folder, Catalog(value -> key!(cache_db, id(value))),
         Dict{String,Row}(), Dict{String,Row}(),
-        Dict{Row,PipelineStage}(), Dict{Row,Vector{Output}}(), Dict{String,Vector{Row}}(),
+        Dict{String,Vector{Row}}(),
         Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(),
         Dict{Row,Taken}(), Dict{String,Vector{Row}}(),
         Dict{Tuple,Any}(),
