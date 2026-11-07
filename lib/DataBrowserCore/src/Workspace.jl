@@ -318,7 +318,7 @@ end
 const COLUMNS = (id = (String, ""), version = (Row, Catalogs.NOWHERE), label = (String, ""),
     type = (Type, Any), readiness = (Readiness, UNPROCESSED), failure = (String, ""),
     revision = (UInt64, UInt64(0)), value_revision = (UInt64, UInt64(0)),
-    tags = (Vector{String}, String[]), groups = (Vector{String}, String[]))
+    tags = (Vector{String}, String[]), groups = (Vector{String}, String[]), source = (String, ""))
 
 """
 A published version of the table `items`, which never changes: the number of each item by its id,
@@ -335,8 +335,9 @@ The table `items` of a workspace: one row for each item, groups included, number
 order in which the workspace first sees them. The columns hold, for each item, its id; its latest
 version, a row of the catalog; its label and type; its [`Readiness`](@ref), the message of its
 failure and its part of `revision(workspace, ids)`; `value_revision`, the key of its value in the
-store of its type; the names of its tags; the ids of its groups; and one column for each metadata
-key, with `missing` where the item has no value. When an item leaves the workspace, its version in
+store of its type; the names of its tags; the ids of its groups; `source`, the id of the source
+item that it comes from; and one column for each metadata key, with `missing` where the item has no
+value. When an item leaves the workspace, its version in
 the draft is `Catalogs.NOWHERE`, and the next new item takes its number.
 
 Workers write the cells of a draft with [`write!`](@ref) and [`store!`](@ref), under the catalog

@@ -302,10 +302,14 @@ end
 """
     source_item_id(workspace, id) -> String
 
-The public id of the source item that the value `id` comes from.
+The public id of the source item that the value `id` comes from, or `""` when the workspace has no
+value `id`.
 """
-source_item_id(workspace::Workspace, x::AbstractString)::String =
-    @lock workspace.catalog.lock source(workspace, first(workspace.versions[x]))
+function source_item_id(workspace::Workspace, x::AbstractString)::String
+    version = @atomic workspace.items.version
+    n = number(version, x)
+    return n == 0 ? "" : version.columns.source[n]
+end
 
 """
     metadata(workspace, id) -> Dict{Symbol,Any}

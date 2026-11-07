@@ -257,7 +257,7 @@ end
     write!(workspace, id)
 
 Make the cells of the item `id` in the draft of the table `items` follow the workspace: its latest
-version, label, type, value revision, tags and groups. A new item takes a number that no item has,
+version, label, type, value revision, tags, groups and source item. A new item takes a number that no item has,
 and an id that is not an item is left out. An item that leaves the workspace gives its number to
 the next new item: the versions published before keep their cells. The next publish computes the
 readiness, failure and revision of the item. When its value changes, the item has no metadata until
@@ -284,6 +284,7 @@ function write!(workspace::Workspace, x::String)::Nothing
     shown |= write!(items, columns.tags, number, [tag.name for tag in tags(workspace, x)])
     shown |= write!(items, columns.groups, number, copy(get(workspace.groups, x, String[])))
     write!(items, columns.type, number, value === nothing ? Any : value.type)
+    write!(items, columns.source, number, rows === nothing ? "" : source(workspace, rows[1]))
     ## TODO: an item whose latest value falls back to the value of an earlier row, as when its
     ## `process` fails, has no metadata: the table keeps only the metadata of the latest value.
     write!(items, columns.value_revision, number, value === nothing ? UInt64(0) : value.revision) &&
