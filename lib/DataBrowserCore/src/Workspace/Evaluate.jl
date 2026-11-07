@@ -110,7 +110,7 @@
 Start the worker tasks of the workspace: one for each Julia thread, and at least two.
 """
 function start_workers!(workspace::Workspace)::Nothing
-    Threads.nthreads() == 1 && @warn("Julia runs with one thread: the browser waits while a computation runs. Start Julia with `--threads=auto`.", maxlog=1)
+    Threads.nthreads() == 1 && @warn("Julia runs with one thread: the browser waits while a computation runs. Start Julia with `--threads=auto,1`.", maxlog=1)
     for _ in 1:max(2, Threads.nthreads())
         push!(workspace.workers, Threads.@spawn work!(workspace))
     end
