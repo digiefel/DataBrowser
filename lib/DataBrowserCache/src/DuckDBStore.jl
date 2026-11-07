@@ -12,8 +12,8 @@ StoredShell(row)::StoredShell = StoredShell(String(row.id), String(row.item_id),
 Store values in the DuckDB file at `path`, so they remain available when the workspace opens
 again. When the data of an item is a table (a Tables.jl table whose columns DuckDB can hold), the
 table is kept as DuckDB columns, its metadata as metadata columns (one for each name, of the type
-of its values), and the item is rebuilt with `reconstruct` from them. Tables are written in batches
-by a background task. Other values are kept with Julia's `Serialization`.
+of its values), and the item is rebuilt with `reconstruct` from them. Other values are kept with
+Julia's `Serialization`. A background task writes the values to the file in batches.
 
 Writing an item whose metadata value has another type than the values written before under its
 name is an error. Recently written or read values also stay in memory, up to `max_bytes`, as in
@@ -33,6 +33,7 @@ mutable struct DuckDBStore <: DataBrowserAPI.AbstractStore
     serialized::DuckDB.Connection
     # The ids in `stored_values`, so that writes and lookups need no query.
     serialized_ids::Set{String}
+    serialized_rows::RowStore{String,@NamedTuple{id::String, value::Vector{UInt8}}}
     tables::TabularFamilyStore
     shell_rows::RowStore{String,StoredShell}
     # The item type of each item whose data is in `tables`.
@@ -72,6 +73,7 @@ function open_duckdb_store(path::String, max_bytes::Integer)
     serialized_ids = Set{String}(String(row.id)
         for row in _execute_on_duckdb_threads(serialized, "SELECT id FROM stored_values"))
     return DuckDBStore(path, ReentrantLock(), database, serialized, serialized_ids,
+        RowStore{String,@NamedTuple{id::String, value::Vector{UInt8}}}(database, "stored_values", ("id",)),
         TabularFamilyStore(database; row_limit=CACHE_BUFFER_ROW_LIMIT),
         shell_rows, read(shell_rows), metadata_rows, read(metadata_rows),
         MemoryStore{String,Any}(; capacity=Int(max_bytes), weight=Base.summarysize))
@@ -108,8 +110,7 @@ function Base.write(store::DuckDBStore, key::Integer, item)
             _forget_table!(store, stored)
             buffer = IOBuffer()
             serialize(buffer, item)
-            # TODO(scale): one statement per value; queue these as the tables are.
-            _run(store.serialized, "INSERT OR REPLACE INTO stored_values VALUES (?, ?)", (stored, take!(buffer)))
+            edit!(store.serialized_rows, stored, (id=stored, value=take!(buffer)))
             push!(store.serialized_ids, stored)
         end
         append!(store.recent, stored, item)
@@ -170,15 +171,28 @@ function _rebuilt(shell::StoredShell, data, given::Dict{Symbol,Any})
     end
 end
 
-# The values in `stored_values` under `keys`, by key.
+# The values in `stored_values` under `keys`, by key. A value that waits to be written comes from
+# the queue of `serialized_rows`.
 function _read_serialized(store::DuckDBStore, keys::Vector{String})::Dict{String,Any}
     found = Dict{String,Any}()
     @lock store.lock begin
-        sql = "SELECT id, value FROM stored_values WHERE id IN (" * join(fill("?", length(keys)), ", ") * ")"
-        for row in _execute_on_duckdb_threads(store.serialized, sql, keys)
-            key = String(row.id)
+        rows, bytes, written = store.serialized_rows, Dict{String,Vector{UInt8}}(), String[]
+        lock(rows.flush_condition) do
+            for key in keys
+                waiting, row = _read_mutation(rows.queued, key)
+                waiting || ((waiting, row) = _read_mutation(rows.writing, key))
+                waiting ? (row === nothing || (bytes[key] = row.value)) : push!(written, key)
+            end
+        end
+        if !isempty(written)
+            sql = "SELECT id, value FROM stored_values WHERE id IN (" * join(fill("?", length(written)), ", ") * ")"
+            for row in _execute_on_duckdb_threads(store.serialized, sql, written)
+                bytes[String(row.id)] = row.value
+            end
+        end
+        for (key, value) in bytes
             try
-                found[key] = deserialize(IOBuffer(row.value))
+                found[key] = deserialize(IOBuffer(value))
             catch
                 # Written by another Julia or package version: compute it again.
                 _forget_serialized!(store, key)
@@ -221,7 +235,7 @@ end
 function _forget_serialized!(store::DuckDBStore, id::String)::Nothing
     id in store.serialized_ids || return nothing
     delete!(store.serialized_ids, id)
-    _run(store.serialized, "DELETE FROM stored_values WHERE id = ?", (id,))
+    delete!(store.serialized_rows, id)
     return nothing
 end
 
@@ -237,6 +251,7 @@ function Base.close(store::DuckDBStore)
         close!(store.tables)
         close!(store.shell_rows)
         close!(store.metadata_rows)
+        close!(store.serialized_rows)
         _run(store.serialized, "CHECKPOINT")
         DBInterface.close!(store.serialized)
         DBInterface.close!(store.database)
