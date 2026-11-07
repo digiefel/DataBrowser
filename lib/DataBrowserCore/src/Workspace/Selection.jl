@@ -195,42 +195,29 @@ function select(workspace::Workspace, f::Function)::Selection
     end
 end
 
-# The columns `id`, `label`, `groups` and `tags`, then each metadata key. A value that an item does
-# not have is `missing`. A browser makes the selection of the values that it computed this way.
-function Selection(data::ItemData, ids, labels, groups, tags, metadatas)
-    names = [:id, :label, :groups, :tags]
+# The columns `id`, `label`, `groups` and `tags`, then the `metadata` columns, as `key => values`
+# pairs with `missing` where an item has no value, and `data`, the data of the items. A browser
+# makes the selection of the values that it computed this way. A metadata key never replaces a
+# column named above.
+# TODO: show such a key under another name, once the user has a case for it.
+function Selection(data::ItemData, ids, labels, groups, tags, metadata)
+    metadata = filter(column -> !(column.first in (:id, :label, :groups, :tags, :data)), metadata)
     # Typed, so that `select(workspace, selection.id)` takes the ids of an empty selection too.
-    properties = Dict{Symbol,Vector}(:id => String[ids...], :label => String[labels...],
-        :groups => Vector{String}[groups...], :tags => Vector{String}[tags...])
-    # Each property is added the first time an item has it, so the order follows the items.
-    function put!(name::Symbol, index::Int, value)
-        haskey(properties, name) || (push!(names, name); properties[name] = Vector{Any}(missing, length(ids)))
-        properties[name][index] = value
-    end
-    # A metadata key never replaces a property named above.
-    # TODO: show such a key under another name, once the user has a case for it.
-    taken = Set([names; :data])
-    for (index, values) in enumerate(metadatas)
-        for key in sort!(collect(keys(values)))
-            key in taken || put!(key, index, values[key])
-        end
-    end
-    columns = Tuple(identity.(properties[name]) for name in names)
-    return Selection(StructArray(NamedTuple{(names..., :data)}((columns..., data))))
+    columns = (convert(Vector{String}, ids), convert(Vector{String}, labels), convert(Vector{Vector{String}}, groups),
+        convert(Vector{Vector{String}}, tags), last.(metadata)...)
+    return Selection(StructArray(NamedTuple{(:id, :label, :groups, :tags, first.(metadata)..., :data)}((columns..., data))))
 end
 
-# The items `numbers` of `version`, whose columns are views of the columns of `version`: `id`,
-# `label`, `groups` and `tags`, then the metadata keys that one of the items has, in alphabetical
-# order. With `every`, the columns are all the metadata keys of `version`, as in the rows that
-# `select(workspace, f)` gives to `f`. A metadata key never replaces a column named above.
+# The items `numbers` of `version`, with the metadata keys that one of them has, in alphabetical
+# order, or with `every` all the metadata keys of `version`, as in the rows that
+# `select(workspace, f)` gives to `f`. The columns are copies of the cells, and of each vector in
+# them, so that a change to the selection leaves the version as it is.
 function Selection(workspace::Workspace, version::Version, numbers::Vector{Int32}; every::Bool=false)
-    names = sort!([name for (name, cells) in version.metadata if !(name in (:id, :label, :groups, :tags, :data)) &&
-        (every || any(n -> cells[n] !== missing, numbers))])
-    columns = version.columns
-    cells = (view(columns.id, numbers), view(columns.label, numbers), view(columns.groups, numbers),
-        view(columns.tags, numbers), (view(version.metadata[name], numbers) for name in names)...)
-    data = ItemData(workspace, String[columns.id[n] for n in numbers])
-    return Selection(StructArray(NamedTuple{(:id, :label, :groups, :tags, names..., :data)}((cells..., data))))
+    copied(cells) = eltype(cells)[(cell = cells[n]; cell isa Vector ? copy(cell) : cell) for n in numbers]
+    names = sort!([name for (name, cells) in version.metadata if every || any(n -> cells[n] !== missing, numbers)])
+    columns, ids = version.columns, copied(version.columns.id)
+    return Selection(ItemData(workspace, copy(ids)), ids, copied(columns.label), copied(columns.groups),
+        copied(columns.tags), [name => copied(version.metadata[name]) for name in names])
 end
 
 """
@@ -317,10 +304,9 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                 sort!(workspace; by=labels, lt=labels)
                 continue
             end
-            ## The answers that are new, or whose items or cells changed, read the columns of this
-            ## version. The others keep the version they were made from.
-            ## TODO(scale): an answer that did not change holds the blocks of an earlier version.
-            answers = [f => Selection(workspace, version, passed[f]) for f in remade]
+            ## The answers that are new, or whose items or cells changed, copy the cells of this
+            ## version. Typed, so that a new function compiles nothing here.
+            answers = Pair{Any,Any}[f => Selection(workspace, version, passed[f]) for f in remade]
             @lock items.lock begin
                 for (f, selection) in answers
                     items.answers[f] = (; selection, items.answers[f].asked)
