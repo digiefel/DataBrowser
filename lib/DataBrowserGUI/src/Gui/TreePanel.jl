@@ -329,7 +329,7 @@ where the button starts, from the left of the window.
 """
 function _render_tree_sort!(state::BrowserState)::Float32
     workspace = state.workspace
-    by = @lock workspace.item_rows.lock workspace.item_rows.order.by
+    by = Workspace.order(workspace)
     lines = by isa Workspace.SortKeys ? copy(by.keys) : Pair{Symbol,Bool}[]
     name(key) = key === :label ? "Label" : key === :id ? "Id" : String(key)
     shown = by isa Workspace.SortKeys ? join(("$(name(key)) $(reverse ? "▼" : "▲")" for (key, reverse) in lines), ", ") :
@@ -348,7 +348,7 @@ function _render_tree_sort!(state::BrowserState)::Float32
     ## The list of the keys, which the typed letters narrow, for the line `index` or for a new line.
     function pick!(index)
         ig.IsWindowAppearing() && (state.sort_picker = ListPicker())
-        choices = [:label; :id; sort!(collect(keys(workspace.produced.columns)))]
+        choices = [:label; :id; Workspace.metadata_keys(workspace)]
         picked = render_list_picker!(state.sort_picker, [ListItem(name(key)) for key in choices])
         picked === nothing && return
         index > length(lines) ? push!(lines, choices[picked] => false) :

@@ -347,9 +347,11 @@ function _resolve_window_input(workspace, given, transform)
                 push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
             end
         end
-        ## A computed value belongs to no group and has no tags.
-        return Workspace.Selection(Workspace.ItemData(workspace, computed), id.(named), label.(named),
-            [String[] for _ in named], [String[] for _ in named], metadatas)
+        ## A computed value belongs to no group and has no tags. Its metadata keys come in
+        ## alphabetical order.
+        names = sort!(unique(name for values in metadatas for name in keys(values)))
+        return Workspace.Selection(Workspace.ItemData(workspace, computed), id.(named), label.(named), [String[] for _ in named],
+            [String[] for _ in named], [name => [get(values, name, missing) for values in metadatas] for name in names])
     end
     given isa AbstractVector{<:Workspace.Computation} && (given = resolve(given))
     if transform !== nothing

@@ -54,7 +54,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         value.f === pick && (value = value.args[1])
         row, ran_for, failure, result, members = @lock catalog.lock begin
             row = get(catalog, value, Catalogs.NOWHERE)
-            stage = get(workspace.stages, row, nothing)
+            stage = workspace.items.rows.stage[row]
             ## The source item that a read reads, or the value that a `process` takes, or the computation.
             ran_for = stage == SOURCE_READ ? (id(value.args[3]), label(value.args[3])) :
                 stage !== nothing ? (value.args[2].id, label(workspace, value.args[2].id)) : (id(value), id(value))
@@ -62,7 +62,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
             current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
             ## A group also reads the values of its members that it takes.
             taken = haskey(workspace.taken, row) ? member_values(workspace, row) : Pair{String,Row}[]
-            row, ran_for, get(workspace.errors, row, nothing), current ? Catalogs.result_type(catalog, row) : nothing,
+            row, ran_for, last(get(workspace.errors, row, nothing => nothing)), current ? Catalogs.result_type(catalog, row) : nothing,
                 Computation[catalog[at] for (_, at) in taken]
         end
         preceding = unique!(reduce(vcat, map(calls_of, [inputs(value); members]); init=Call[]))

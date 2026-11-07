@@ -76,14 +76,15 @@ function change_tags!(change::Function, workspace::Workspace)::Nothing
         state = deepcopy(workspace.tags.state)
         change(state)
         Tags.save(workspace.folder, project_name(workspace.project), state)
-        ## The task that keeps the rows of the items reads the tags under the catalog lock, so the
-        ## new tags replace the old ones there, and the rows of the items whose tags changed follow.
+        ## Workers read the tags under the catalog lock, so the new tags replace the old ones
+        ## there, together with the cells of the items whose tags changed.
         before, after = workspace.tags.state.assignments, state.assignments
         @lock workspace.catalog.lock begin
             workspace.tags.state = state
             for x in union(keys(before), keys(after))
-                get(before, x, Set{String}()) == get(after, x, Set{String}()) || changed!(workspace, x)
+                get(before, x, Set{String}()) == get(after, x, Set{String}()) || write!(workspace, x)
             end
+            changed!(workspace)
         end
         workspace.tags.revision += 1
     end
