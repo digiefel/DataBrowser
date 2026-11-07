@@ -118,7 +118,12 @@ function content(method::Method)::MethodContent
     names = Any[]
     untracked = String[]
     print(io, normal(method.sig), '\n')
-    append!(names, Base.unwrap_unionall(method.sig).parameters)
+    ## The function of the method is left out when it is a singleton: following it would follow
+    ## its other methods too, such as the `process` of every other type. A closure that captures
+    ## values, or a callable object, keeps its type, whose fields hold what it captured.
+    parameters = Base.unwrap_unionall(method.sig).parameters
+    own = parameters[1] isa Type && parameters[1] <: Function && Base.issingletontype(parameters[1])
+    append!(names, parameters[(own ? 2 : 1):end])
     isdefined(method, :generator) && push!(untracked, "$(method.name) is a generated function")
     code = try
         Base.uncompressed_ast(method).code

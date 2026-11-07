@@ -228,6 +228,23 @@ DataBrowserAPI.read(::LateProject, source::EngineSource, item::EngineSourceItem)
     end
 end
 
+@testset "a process method changed for another project leaves the results current" begin
+    calls = Threads.Atomic{Int}(0)
+    project = ObservedProject(() -> Threads.atomic_add!(calls, 1))
+    ws = W.open_workspace(project, EngineSource("source", 1, false); cache=false, background_processing=true)
+    try
+        settled(ws)
+        @test calls[] == 1
+        @eval DataBrowserAPI.process(::LateProject, i::EngineItem) = i
+        # The workspace checks the code twice a second.
+        sleep(1.5)
+        settled(ws)
+        @test calls[] == 1
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
 # Keeps its reading code in a value, as a project of registered callbacks does.
 mutable struct CallbackProject <: AbstractProject
     count::Function
