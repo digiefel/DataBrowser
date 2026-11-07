@@ -253,7 +253,8 @@ row. See [`readiness`](@ref).
 # list shorter, and the copy of each changed block larger.
 const BLOCK = 1024
 
-# The shortest time between two versions of the table `items`, in seconds, while no reader waits.
+# The shortest time between two versions of the table `items`, in seconds, while a scan or a job
+# runs or waits and no reader waits.
 const PUBLISH_INTERVAL = 0.05
 
 # A counter that rises whenever a workspace publishes a version of its table `items`. A window

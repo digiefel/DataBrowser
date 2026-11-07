@@ -7,14 +7,14 @@
 The task that keeps the table `items` of `workspace` current, and the answers of
 `select(workspace, f)`, until `close(items)`. At each notification of `items.event`, it requests
 in the catalog the latest versions of the ids asked for by readers, ahead of background work. Then,
-at once while a reader waits in `wait_processed` or `evaluate`, and otherwise at most once each
-`PUBLISH_INTERVAL`, it writes the readiness, failure, changes and store key of the catalog rows
-whose state, priority or job changed, 1000 at a time, each part under the catalog lock. Once none
-is left and a cell changed, it stores the draft as a new version. Then, without a lock, it runs each
-function given to `select` in the last 10 seconds on the rows of the items whose cells shown by
-`select` changed in that version, and merges the items that pass into the order set by `sort!`. A
-new function runs on the row of every item, and a new order sorts every item again. An error stops
-the task, and readers that wait throw from then on.
+at once while a reader waits in `wait_processed` or `evaluate` or when no scan or job is left, and
+otherwise at most once each `PUBLISH_INTERVAL`, it writes the readiness, failure, changes and store
+key of the catalog rows whose state, priority or job changed, 1000 at a time, each part under the
+catalog lock. Once none is left and a cell changed, it stores the draft as a new version. Then,
+without a lock, it runs each function given to `select` in the last 10 seconds on the rows of the
+items whose cells shown by `select` changed in that version, and merges the items that pass into the
+order set by `sort!`. A new function runs on the row of every item, and a new order sorts every item
+again. An error stops the task, and readers that wait throw from then on.
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
     catalog, columns, rows = workspace.catalog, items.columns, items.rows
@@ -26,14 +26,18 @@ function keep!(items::Items, workspace::Workspace)::Nothing
         while true
             wait(items.event)
             items.closed && return nothing
-            ## The requests reach the catalog at once. Without a reader that waits, the task waits
-            ## for the end of the interval that the last publish started: a timer wakes it then,
-            ## and a reader that comes earlier wakes it at once.
+            ## The requests reach the catalog at once. While a scan or a job runs or waits, and no
+            ## reader waits, the task waits for the end of the interval that the last publish
+            ## started: a timer wakes it then, and a reader that comes earlier wakes it at once.
+            ## Once the work ends, its last changes follow at once.
             requested, readers = @lock items.lock (collect(items.requested), copy(items.readers))
-            @lock catalog.lock for x in filter(in(keys(workspace.versions)), requested)
-                request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
+            idle = @lock catalog.lock begin
+                for x in filter(in(keys(workspace.versions)), requested)
+                    request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
+                end
+                !source_scan_running(workspace) && workspace.running == 0 && queued(catalog) == 0
             end
-            if isempty(readers) && time() < last + PUBLISH_INTERVAL
+            if isempty(readers) && !idle && time() < last + PUBLISH_INTERVAL
                 isopen(timer) ||
                     (timer = Timer(_ -> notify(items.event), last + PUBLISH_INTERVAL - time()))
                 continue
