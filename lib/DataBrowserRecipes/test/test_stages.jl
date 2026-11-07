@@ -20,9 +20,10 @@ DataBrowserAPI.label(f::RecipeFile) = basename(f.filepath)
         register_item!(project; read=_ -> (data=[1], metadata=result),
             expand=(data, _) -> [(; data, metadata=result)],
             analyze=(_, _) -> result)
-        value = read(project, RecipeSource(), RecipeFile("trace.dat"))
+        # A registration defines methods, which a running function calls with `@invokelatest`.
+        value = @invokelatest read(project, RecipeSource(), RecipeFile("trace.dat"))
         @test metadata(value)[:length] == 5
-        @test metadata(only(process(project, value)))[:length] == 5
+        @test metadata(only(@invokelatest process(project, value)))[:length] == 5
     end
 end
 
@@ -49,19 +50,20 @@ end
         write(joinpath(dir, "sample.csv"), "x,y\n1,2\n3,4\n")
         source = open_source(DirectorySource(dir))
         file = only(filter(item -> endswith(id(item), ".csv"), items(source; cancel_token=get_token(CancellationTokenSource()))))
+        # A registration defines methods, which a running function calls with `@invokelatest`.
         project = register_csv!(define_project("csv"))
-        item = read(project, source, file)
+        item = @invokelatest read(project, source, file)
         @test data(item).x == [1, 3]
         @test data(item).y == [2, 4]
-        @test label(project, item) == file.filename
+        @test @invokelatest(label(project, item)) == file.filename
 
         register_csv!(project; label=(_, meta) -> splitext(meta[:filename])[1])
-        renamed = read(project, source, file)
-        @test label(project, renamed) == splitext(file.filename)[1]
+        renamed = @invokelatest read(project, source, file)
+        @test @invokelatest(label(project, renamed)) == splitext(file.filename)[1]
         @test id(renamed) == id(item)
 
         register_csv!(project; label=nothing)
-        @test label(project, item) == id(item)
+        @test @invokelatest(label(project, item)) == id(item)
         close_source!(source)
     end
 end
@@ -104,6 +106,22 @@ end
             @test all(metadata(entry)[:wafer_count] == 3 for entry in entries)
         finally
             close_workspace!(workspace)
+        end
+    end
+end
+
+@testset "projects with different names keep their own registrations" begin
+    mktempdir() do root
+        write(joinpath(root, "a.dat"), "1")
+        projects = map(name -> register_item!(define_project(name), :trace;
+            read=_ -> 1, label=(_, _) -> name), ("first", "second"))
+        workspaces = [open_workspace(project, DirectorySource(root); cache=false)
+            for project in projects]
+        try
+            foreach(workspace -> wait_workspace_idle!(workspace; timeout=20), workspaces)
+            @test [label(workspace, "a.dat") for workspace in workspaces] == ["first", "second"]
+        finally
+            foreach(close_workspace!, workspaces)
         end
     end
 end

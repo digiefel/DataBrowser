@@ -742,8 +742,9 @@ end
 #
 # Each signature of a row, its function and the types of its arguments, has a code revision: a
 # content hash of the code it can reach from its roots ([`CodeRevisions.jl`](../CodeRevisions.md)).
-# The roots of a row of the pipeline are `stage_roots(project, stage, type)`, which for a Recipes
-# project are its registered callbacks. The roots of any other row are its function. A callable
+# The roots of a row of the pipeline are `stage_roots(project, stage, type)`: the type and the
+# methods of the stage that can apply to it. A Recipes project defines these methods from its
+# registrations, with the callbacks in them. The roots of any other row are its function. A callable
 # object that is not a function, such as a fit, has as roots its type and the methods that make the
 # type callable: the parameters of the type include the types of the functions it holds, such as the
 # curve of the fit. The workspace follows the code only into `Main` and into packages developed from

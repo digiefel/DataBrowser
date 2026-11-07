@@ -1,26 +1,20 @@
 """
-One registered item pipeline.
-
-Immutable, and parameterized on the concrete type of every callback. `Function`-typed fields would
-make each stage call a dynamic dispatch through an abstract field, once per item; with concrete
-parameters, the recipe fully determines the call. The heterogeneity moves to the project's recipe
-vector, where it belongs: selecting a recipe is one dynamic step, and a function barrier then
-specializes the whole stage.
-
-Re-registering a name replaces the recipe *value* in its project. It never defines methods, so
-registrations cannot accumulate and there is no world-age problem.
+One registered item pipeline: the callbacks given to `register_item!`, and the module and the line
+of the code that registered them. `define!` makes the methods of the registration from it, and
+registering the same kind again replaces the recipe and its methods.
 """
-struct ItemRecipe{Detect,Read,Expand,Process,Analyze,Label,Collection,Id}
+struct ItemRecipe
     kind::Symbol
-    detect::Detect
-    read::Read
-    expand::Expand
-    process::Process
-    analyze::Analyze
-    label::Label
-    collection::Collection
-    id::Id
-    # The line of the project's code that registered the recipe.
+    detect
+    read
+    expand
+    process
+    analyze
+    label
+    collection
+    id
+    # The module and the line of the project's code that registered the recipe.
+    mod::Module
     registered::LineNumberNode
 end
 
@@ -28,12 +22,11 @@ end
 The callbacks that run in every collection of one level, over the items below it of one kind, or of
 every kind when `members` is `nothing`.
 """
-struct CollectionRecipe{Process,Analyze}
+struct CollectionRecipe
     level::Symbol
     members::Union{Nothing,Symbol}
-    process::Process
-    analyze::Analyze
-    registered::LineNumberNode
+    process
+    analyze
 end
 
 """
@@ -43,14 +36,17 @@ The dialect's implementation of `AbstractProject`, and nothing more: reading and
 are defined by the registered callbacks, plot registration lives in `DataBrowserPlots`, and
 package-owned cache, job, and browser state does not belong here.
 
-`recipes` is deliberately a `Vector` of differently parameterized recipes. Detection order is
-registration order — the first match wins — so the vector has to preserve order, and different
-registrations genuinely have different callback types.
+`recipes` keeps the order of registration, in which `read` asks the `detect` callbacks: the first
+that accepts a source item wins.
 
 `values` is the file of the `DuckDBStore` that keeps the results of every item type, so they stay
 available when the workspace opens again.
+
+`Name` is the name of the project as a `Symbol`. The registrations define methods for
+`Project{Name}`, so projects with different names have methods of their own, while projects with
+the same name share them: the latest registration into any of them decides what they run.
 """
-mutable struct Project <: AbstractProject
+mutable struct Project{Name} <: AbstractProject
     name::String
     description::String
     recipes::Vector{ItemRecipe}

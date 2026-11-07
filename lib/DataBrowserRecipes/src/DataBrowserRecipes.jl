@@ -24,7 +24,6 @@ using DataBrowserAPI:
     SourceGroup,
     @timed_dbg
 import DataBrowserAPI:
-    stage_roots,
     id,
     data,
     label,
@@ -43,6 +42,7 @@ include("carriers.jl")
 include("recipes.jl")
 include("registration.jl")
 include("stages.jl")
+include("methods.jl")
 include("premade.jl")
 
 export define_project,

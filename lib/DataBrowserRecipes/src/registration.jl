@@ -35,9 +35,14 @@ Create an empty project. Register item and collection recipes into it afterwards
 
 Results are kept in the file `values.duckdb`, in the folder of the Julia environment that is active
 when the project is defined, so they stay available when the workspace opens again.
+
+Each registration defines methods of `read`, `process` and `label` for the type of the project,
+which holds the name of the project. So projects with the same name share these methods. Also, a
+function that registers and then calls these methods itself needs `@invokelatest`, as for any
+method defined while the function runs.
 """
 function define_project(name::AbstractString; description::AbstractString="")::Project
-    return Project(
+    return Project{Symbol(name)}(
         String(name),
         String(description),
         ItemRecipe[],
@@ -98,9 +103,13 @@ function register_item!(
     id=nothing,
     collection=nothing,
 )::Project
-    recipe = ItemRecipe(kind, detect, read, expand, process, analyze, label, collection, id, caller())
+    mod, line = caller()
+    recipe = ItemRecipe(
+        kind, detect, read, expand, process, analyze, label, collection, id, mod, line)
     index = findfirst(r -> r.kind === kind, project.recipes)
     index === nothing ? push!(project.recipes, recipe) : (project.recipes[index] = recipe)
+    define!(project, recipe)
+    define!(project, mod, line)
     return project
 end
 
@@ -136,19 +145,27 @@ function register_collection!(
     process=nothing,
     analyze=nothing,
 )::Project
-    recipe = CollectionRecipe(level, members, process, analyze, caller())
+    mod, line = caller()
+    recipe = CollectionRecipe(level, members, process, analyze)
     index = findfirst(r -> r.level === level && r.members === members, project.collections)
     index === nothing ? push!(project.collections, recipe) : (project.collections[index] = recipe)
+    define!(project, mod, line)
     return project
 end
 
-# The line of the project's code that called a `register_*!` function: the first one outside this
-# package and Julia's own code.
-function caller()::LineNumberNode
+# The module and the line of the project's code that called a `register_*!` function: the first
+# frame outside this package and Julia's own code. The code at the top level of a script is in
+# `Main`.
+# TODO: the code at the top level of another module, such as a package, also gives `Main`.
+function caller()::Tuple{Module,LineNumberNode}
     for frame in stacktrace(backtrace())
         file = String(frame.file)
         (startswith(file, @__DIR__) || !isabspath(file)) && continue
-        return LineNumberNode(frame.line, frame.file)
+        x = frame.linfo
+        while x isa Union{Core.CodeInstance,Core.MethodInstance}
+            x = x.def
+        end
+        return (x isa Method ? x.module : Main, LineNumberNode(frame.line, frame.file))
     end
-    return LineNumberNode(0, :unknown)
+    return (Main, LineNumberNode(0, :unknown))
 end

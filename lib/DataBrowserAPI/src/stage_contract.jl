@@ -163,14 +163,18 @@ redefined after the workspace opened takes effect without reopening it.
 An answer lists methods, functions and types. The workspace follows what they call and use, so a
 changed helper function counts too, and an answer with the same code as before changes nothing.
 
-The default lists `type` and the methods of the stage that can apply; `ITEM_PROCESS` also lists
-the `label` methods, since labels are made again after processing. A project that keeps its stage
-code in values, such as callbacks stored in the project, adds a method that returns those values.
+The default lists `type` and the methods of the stage that can apply; `SOURCE_READ` and
+`ITEM_PROCESS` also list the `label` methods of the project, since these stages make the labels of
+the items they give. A project that keeps its stage code in values, such as callbacks stored in the
+project, adds a method that returns those values.
 """
 function stage_roots(project::AbstractProject, stage::PipelineStage, type::Type)::Vector
     P = typeof(project)
     signatures = stage_signatures(P, stage, type)
     stage == ITEM_PROCESS && append!(signatures, Any[(label, Tuple{P,type}), (label, Tuple{type})])
+    # TODO(item revision): reading and processing give items of other types, whose labels any
+    # `label` method of the project can make. This goes when labels get their own revision.
+    stage in (SOURCE_READ, ITEM_PROCESS) && push!(signatures, (label, Tuple{P,Any}))
     return Any[type; [method for (callback, signature) in signatures for method in methods(callback, signature)]]
 end
 
