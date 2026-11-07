@@ -18,8 +18,9 @@ function publish!(items::Items, workspace::Workspace)::Nothing
         while true
             wait(items.event)
             items.closed && return nothing
+            ## Only a publish starts the interval: a cycle that changed no cell answers its
+            ## requests at once.
             sleep(max(0.0, last + PUBLISH_INTERVAL - time()))
-            last = time()
             requested = @lock items.lock collect(items.requested)
             ## TODO(scale): the items of every touched row are read in one take of the catalog lock.
             shown = @lock catalog.lock begin
@@ -53,6 +54,7 @@ function publish!(items::Items, workspace::Workspace)::Nothing
                     @atomic items.version = Version(items.index, map(column -> Cells(column, items.count), columns),
                         Dict{Symbol,Cells}(name => Cells(column, items.count) for (name, column) in items.metadata))
                     items.draft, items.changed, shown, items.shown = items.draft + 1, false, items.shown, shown
+                    last = time()
                     ## A window reads the `revision` of its items again when `status_revision`
                     ## rises, and a view that keeps what it read, by `generation`, reads again.
                     Threads.atomic_add!(Catalogs.CHANGES, 1)
