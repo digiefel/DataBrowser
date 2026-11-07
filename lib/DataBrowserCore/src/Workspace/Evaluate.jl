@@ -246,11 +246,11 @@ function run!(workspace::Workspace, job::Job)::Nothing
         ## same with each value.
         pipeline || previous.revision in (0, result) || forget!(workspace, previous.type, previous.revision)
         delete!(workspace.errors, row)
-        @timed_dbg "job.finish.record" store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output); result_revision=result)
+        ## The cache saves the values that the workspace kept, and the message of the metadata values
+        ## that were not kept, so that the next session shows it too.
+        messages = String[]
         if outputs !== nothing
             @timed_dbg "job.finish.finished!" finished!(workspace, row, Output[output for (output, _) in outputs])
-            ## The cache saves the values that the workspace kept.
-            messages = String[]
             for (position, (output, values)) in enumerate(outputs)
                 output in get(workspace.outputs, row, Output[]) || continue
                 append!(messages, conflict_message.(store!(workspace.produced, output.key, values)))
@@ -259,6 +259,8 @@ function run!(workspace::Workspace, job::Job)::Nothing
             end
             conflicts!(workspace, row, unique!(messages))
         end
+        @timed_dbg "job.finish.record" store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output);
+            result_revision=result, dropped=join(messages, "; "))
         @timed_dbg "job.finish.publish!" publish!(workspace)
     end
     return nothing
@@ -518,6 +520,7 @@ function restored!(workspace::Workspace, row::Row, record)::Nothing
     saved = pop!(workspace.saved, row.index, nothing)
     failed = !isempty(record.failure)
     failed && (workspace.errors[row] = "$(function_name(workspace.catalog[row].f)) failed: " * record.failure)
+    isempty(record.dropped) || (workspace.errors[row] = record.dropped)
     haskey(workspace.stages, row) || return nothing
     saved === nothing && return finished!(workspace, row, failed ? nothing : workspace.outputs[row])
     outputs = @timed_dbg "restored.outputs" [Output(value.id, value.type, value.label, value.members,

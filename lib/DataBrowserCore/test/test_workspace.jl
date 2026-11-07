@@ -151,25 +151,38 @@ end
     @test_throws ErrorException W.rebuild_cache!(ws)
 end
 
-# Its item has the metadata `:input`, of the type of `input`.
+# Its item has the metadata `:input`, of the type of `input`. Its `process` also gives an item whose
+# `:input` is an `Int`.
 mutable struct RetypedProject <: AbstractProject
     input::Any
 end
 DataBrowserAPI.project_name(::RetypedProject) = "retyped"
 DataBrowserAPI.read(p::RetypedProject, ::EngineSource, ::EngineSourceItem) =
     EngineItem("source", (x=[1],), Dict(:input => p.input))
+DataBrowserAPI.process(::RetypedProject, i::EngineItem) = [i, EngineItem("other", i.data, Dict(:input => 1))]
 
-@testset "after a rebuild of the cache, metadata may take another type" begin
-    project = RetypedProject("one")
-    ws = W.open_workspace(project, EngineSource("source", 1, false); cache=false)
-    try
-        settled(ws)
-        project.input = 1
-        W.rebuild_cache!(ws)
-        settled(ws)
-        @test isempty(W.workspace_status(ws).errors)
-    finally
-        W.close_workspace!(ws)
+@testset "metadata of another type is reported, also after reopening, until a rebuild of the cache" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            project = RetypedProject("one")
+            ws = W.open_workspace(project, EngineSource("source", 1, false); background_processing=true)
+            settled(ws)
+            W.close_workspace!(ws)
+            ws = W.open_workspace(project, EngineSource("source", 1, false))
+            try
+                settled(ws)
+                @test !isempty(W.workspace_status(ws).errors)
+                project.input = 1
+                W.rebuild_cache!(ws)
+                settled(ws)
+                @test isempty(W.workspace_status(ws).errors)
+            finally
+                W.close_workspace!(ws)
+            end
+        finally
+            popfirst!(DEPOT_PATH)
+        end
     end
 end
 

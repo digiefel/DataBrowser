@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 44
+const PROJECT_CACHE_SCHEMA_VERSION = 45
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -83,6 +83,7 @@ The revision that one row computed before it ran, by the key of the row, with `c
 computation, and the item type under which its store keeps its result; or, when it failed, its
 message. `result_revision` is the revision of the result, which the rows that read it see:
 `revision`, or the revision of an earlier result of the row that is `isequal` to this one.
+`dropped` is the message of the metadata values of the row that were not kept.
 """
 struct ComputationRevisionRow
     key::Int64
@@ -91,10 +92,11 @@ struct ComputationRevisionRow
     result_revision::UInt64
     type_hex::String
     failure::String
+    dropped::String
 end
 
 ComputationRevisionRow(row)::ComputationRevisionRow = ComputationRevisionRow(Int64(row.key), String(row.call),
-    UInt64(row.revision), UInt64(row.result_revision), String(row.type_hex), String(row.failure))
+    UInt64(row.revision), UInt64(row.result_revision), String(row.type_hex), String(row.failure), String(row.dropped))
 
 # Identity
 
@@ -345,16 +347,18 @@ function delete_output!(cache::CacheDB, key::Integer, id::AbstractString)::Nothi
 end
 
 """
-    store_computation_revision!(cache, key, call, revision, type; failure="", result_revision=revision)
+    store_computation_revision!(cache, key, call, revision, type; failure="", dropped="", result_revision=revision)
 
 Record the `revision` that the row with key `key` computed before it ran, the revision of its
 result, `result_revision`, and the item type under which its store keeps the result. `call` is the
 id of the computation of the row, under which the next session finds the key again (see
-[`key!`](@ref)). A row that failed has the message `failure` instead of a result.
+[`key!`](@ref)). A row that failed has the message `failure` instead of a result. `dropped` is the
+message of the metadata values of the row that were not kept.
 """
 function store_computation_revision!(cache::CacheDB, key::Integer, call::AbstractString, revision::UInt64,
-        type::Type; failure::AbstractString="", result_revision::UInt64=revision)::Nothing
-    row = ComputationRevisionRow(Int64(key), String(call), revision, result_revision, _serialize_type(type), String(failure))
+        type::Type; failure::AbstractString="", dropped::AbstractString="", result_revision::UInt64=revision)::Nothing
+    row = ComputationRevisionRow(Int64(key), String(call), revision, result_revision, _serialize_type(type),
+        String(failure), String(dropped))
     @lock cache.key_lock cache.computation_revisions[row.key] = row
     edit!(cache.computation_revision_rows, row.key, row)
     return nothing
@@ -371,7 +375,7 @@ end
     recorded_revision(cache, key) -> Union{Nothing,NamedTuple}
 
 What [`store_computation_revision!`](@ref) recorded for the row with key `key`, as
-`(; revision, result_revision, type, failure)`, or `nothing`. A type that no longer exists counts as
+`(; revision, result_revision, type, failure, dropped)`, or `nothing`. A type that no longer exists counts as
 no record.
 """
 function recorded_revision(cache::CacheDB, key::Integer)::Union{Nothing,NamedTuple}
@@ -382,7 +386,7 @@ function recorded_revision(cache::CacheDB, key::Integer)::Union{Nothing,NamedTup
     catch
         return nothing
     end
-    return (; row.revision, row.result_revision, type, row.failure)
+    return (; row.revision, row.result_revision, type, row.failure, row.dropped)
 end
 
 """Every store of `cache`."""
