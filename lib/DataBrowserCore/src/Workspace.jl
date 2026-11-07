@@ -336,23 +336,22 @@ order in which the workspace first sees them. The columns hold, for each item, i
 version, a row of the catalog; its label and type; its [`Readiness`](@ref), the message of its
 failure and its part of `revision(workspace, ids)`; `value_revision`, the key of its value in the
 store of its type; the names of its tags; the ids of its groups; and one column for each metadata
-key, with `missing` where the item has no value. A removed item keeps its number, and its version is
-`Catalogs.NOWHERE`.
+key, with `missing` where the item has no value. When an item leaves the workspace, its version in
+the draft is `Catalogs.NOWHERE`, and the next new item takes its number.
 
 Workers write the cells of a draft with [`write!`](@ref) and [`store!`](@ref), under the catalog
 lock. The task [`publish!`](@ref) makes the draft a new `Version` and stores it in `version`. A
 reader loads `version` and reads it without a lock; it takes `lock` only to ask for items or for
 the answers of `select(workspace, f)`, so it never waits for a worker.
 """
-# TODO(scale): an id that the workspace no longer has keeps its number and its cells until the
-# workspace closes.
 mutable struct Items
-    ## Under the catalog lock: the number of the draft, which each publish increases; the number of
-    ## items; the index and the columns of the draft; the items whose readiness, failure and
-    ## revision the next publish computes, and those whose cells shown by `select` changed; and
-    ## whether a cell changed since the last publish.
+    ## Under the catalog lock: the number of the draft, which each publish increases; the highest
+    ## number; the numbers that no item has; the index and the columns of the draft; the items whose
+    ## readiness, failure and revision the next publish computes, and those whose cells shown by
+    ## `select` changed; and whether a cell changed since the last publish.
     draft::Int
     count::Int32
+    const free::Vector{Int32}
     index::Base.PersistentDict{String,Int32}
     const columns::NamedTuple{keys(COLUMNS),Tuple{(Column{T} for (T, _) in COLUMNS)...}}
     const metadata::Dict{Symbol,Column}
@@ -380,7 +379,7 @@ end
 function Items()
     lock, index, columns = ReentrantLock(), Base.PersistentDict{String,Int32}(), map(((T, default),) -> Column{T}(default), COLUMNS)
     order = SortKeys([:label => false])
-    return Items(1, 0, index, columns, Dict{Symbol,Column}(), Set{Int32}(), Set{Int32}(), false, Base.Event(true),
+    return Items(1, 0, Int32[], index, columns, Dict{Symbol,Column}(), Set{Int32}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), Dict{Symbol,Cells}()),
         lock, Threads.Condition(lock), Set{String}(), Set{Int32}(),
         (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(),

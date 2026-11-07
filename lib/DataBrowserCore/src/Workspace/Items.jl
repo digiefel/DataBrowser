@@ -90,10 +90,7 @@ function Base.close(items::Items)::Nothing
 end
 
 # The number of the item `x` in `version`, or 0 when `version` has no item `x`.
-function number(version::Version, x::AbstractString)::Int32
-    n = get(version.index, x, Int32(0))
-    return n != 0 && version.columns.version[n] != Catalogs.NOWHERE ? n : Int32(0)
-end
+number(version::Version, x::AbstractString)::Int32 = get(version.index, x, Int32(0))
 
 """
     items(workspace) -> Vector{String}

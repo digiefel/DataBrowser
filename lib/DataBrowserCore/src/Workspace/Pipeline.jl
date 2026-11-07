@@ -257,21 +257,25 @@ end
     write!(workspace, id)
 
 Make the cells of the item `id` in the draft of the table `items` follow the workspace: its latest
-version, label, type, value revision, tags and groups. A new item gets the next number, and an id
-that is not an item is left out. The next publish computes the readiness, failure and revision of
-the item. When its value changes, the item has no metadata until [`store!`](@ref) writes the
-metadata of the new value. The caller holds the catalog lock.
+version, label, type, value revision, tags and groups. A new item takes a number that no item has,
+and an id that is not an item is left out. An item that leaves the workspace gives its number to
+the next new item: the versions published before keep their cells. The next publish computes the
+readiness, failure and revision of the item. When its value changes, the item has no metadata until
+[`store!`](@ref) writes the metadata of the new value. The caller holds the catalog lock.
 """
 function write!(workspace::Workspace, x::String)::Nothing
     items, columns = workspace.items, workspace.items.columns
-    number = get(items.index, x, Int32(0))
-    if number == 0
-        haskey(workspace.versions, x) || return nothing
-        number = items.count += Int32(1)
+    rows, number = get(workspace.versions, x, nothing), get(items.index, x, Int32(0))
+    if rows === nothing
+        number == 0 && return nothing
+        items.index = Base.delete(items.index, x)
+        push!(items.free, number)
+    elseif number == 0
+        number = isempty(items.free) ? (items.count += Int32(1)) : pop!(items.free)
         items.index = Base.PersistentDict(items.index, x => number)
         write!(items, columns.id, number, x)
     end
-    rows, value = get(workspace.versions, x, nothing), output(workspace, x)
+    value = output(workspace, x)
     version = rows === nothing ? Catalogs.NOWHERE : rows[end]
     ## The cells that `select` shows: whether the workspace has the item, its label, tags and groups.
     shown = (columns.version[number] == Catalogs.NOWHERE) != (version == Catalogs.NOWHERE)
