@@ -182,6 +182,15 @@ end
 # The number of the item `x` in `version`, or 0 when `version` has no item `x`.
 number(version::Version, x::AbstractString)::Int32 = get(version.index, x, Int32(0))
 
+# The cell of the item `x` in the column `name` of a version, by default the latest one, or
+# `default` when that version has no item `x`. The type of the cell follows from a constant `name`.
+Base.@constprop :aggressive function cell(version::Version, x::AbstractString, name::Symbol, default)
+    n = number(version, x)
+    return n == 0 ? default : getfield(version.columns, name)[n]
+end
+Base.@constprop :aggressive cell(workspace::Workspace, x::AbstractString, name::Symbol, default) =
+    cell((@atomic workspace.items.version), x, name, default)
+
 """
     items(workspace) -> Vector{String}
 
@@ -208,11 +217,7 @@ Base.haskey(workspace::Workspace, x::AbstractString)::Bool = number((@atomic wor
 Internal. The ids of the groups that hold the value `id` among their members, as [`select`](@ref)
 gives them.
 """
-function groups(workspace::Workspace, x::AbstractString)::Vector{String}
-    version = @atomic workspace.items.version
-    n = number(version, x)
-    return n == 0 ? String[] : copy(version.columns.groups[n])
-end
+groups(workspace::Workspace, x::AbstractString)::Vector{String} = copy(cell(workspace, x, :groups, String[]))
 
 """A sort key that orders text with embedded integers by the value of those integers."""
 natural_key(text::AbstractString)::Tuple = Tuple(
@@ -284,20 +289,12 @@ order(workspace::Workspace) = @lock workspace.items.lock workspace.items.order.b
 The label of a value, as [`select`](@ref) gives it: the one given by its latest version, or its id
 before it has one.
 """
-function label(workspace::Workspace, x::AbstractString)::String
-    version = @atomic workspace.items.version
-    n = number(version, x)
-    return n == 0 ? String(x) : version.columns.label[n]
-end
+label(workspace::Workspace, x::AbstractString)::String = cell(workspace, x, :label, String(x))
 
 """
 The type of the latest version of an item, or `Any` before it has one.
 """
-function valuetype(workspace::Workspace, x::AbstractString)::Type
-    version = @atomic workspace.items.version
-    n = number(version, x)
-    return n == 0 ? Any : version.columns.type[n]
-end
+valuetype(workspace::Workspace, x::AbstractString)::Type = cell(workspace, x, :type, Any)
 
 """
     source_item_id(workspace, id) -> String
@@ -305,11 +302,7 @@ end
 The public id of the source item that the value `id` comes from, or `""` when the workspace has no
 value `id`.
 """
-function source_item_id(workspace::Workspace, x::AbstractString)::String
-    version = @atomic workspace.items.version
-    n = number(version, x)
-    return n == 0 ? "" : version.columns.source[n]
-end
+source_item_id(workspace::Workspace, x::AbstractString)::String = cell(workspace, x, :source, "")
 
 """
     metadata(workspace, id) -> Dict{Symbol,Any}
@@ -340,8 +333,4 @@ metadata_keys(workspace::Workspace)::Vector{Symbol} = sort!(collect(keys((@atomi
 
 How far the work is for an item, from the row of its latest version.
 """
-function readiness(workspace::Workspace, x::AbstractString)::Readiness
-    version = @atomic workspace.items.version
-    n = number(version, x)
-    return n == 0 ? UNPROCESSED : version.columns.readiness[n]
-end
+readiness(workspace::Workspace, x::AbstractString)::Readiness = cell(workspace, x, :readiness, UNPROCESSED)

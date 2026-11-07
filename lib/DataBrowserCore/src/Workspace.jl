@@ -389,8 +389,8 @@ end
 """
     write!(items, column, number, value) -> Bool
 
-Write `value` in the cell of the item `number` in a `column` of the draft of `items`, and return
-whether the cell changed. The caller holds the catalog lock.
+Write `value` in the cell of the item `number` in a `column` of the draft of `items`, or a copy of
+it when it is a vector, and return whether the cell changed. The caller holds the catalog lock.
 """
 function write!(items::Items, column::Column{T}, number::Integer, value)::Bool where {T}
     block, cell = fldmod1(number, BLOCK)
@@ -400,7 +400,7 @@ function write!(items::Items, column::Column{T}, number::Integer, value)::Bool w
     column.draft == items.draft || (column.blocks = copy(column.blocks); column.draft = items.draft)
     append!(column.blocks, Iterators.repeated(column.empty, max(0, block - length(column.blocks))))
     found.draft == items.draft || (found = column.blocks[block] = Block{T}(items.draft, copy(found.cells)))
-    found.cells[cell] = value
+    found.cells[cell] = value isa Vector ? copy(value) : value
     items.changed = true
     return true
 end

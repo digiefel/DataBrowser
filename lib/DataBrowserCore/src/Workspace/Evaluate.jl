@@ -1045,10 +1045,7 @@ showing what it showed until the values are ready.
 function processed(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Bool
     items = workspace.items
     version = @atomic items.version
-    waiting = filter(ids) do x
-        n = number(version, x)
-        n == 0 || !(version.columns.readiness[n] in (CURRENT, FAILED))
-    end
+    waiting = filter(x -> !(cell(version, x, :readiness, UNPROCESSED) in (CURRENT, FAILED)), ids)
     (items.closed || isempty(waiting)) && return true
     ## A request ends with the next publish, so a window asks again at each call.
     @lock items.lock union!(items.requested, waiting)
@@ -1110,10 +1107,7 @@ and draws again when it differs.
 revision(workspace::Workspace, ids::AbstractVector{<:AbstractString})::UInt = revision((@atomic workspace.items.version), ids)
 
 function revision(version::Version, ids::AbstractVector{<:AbstractString})::UInt
-    return foldl(ids; init=UInt(0)) do seed, x
-        n = number(version, x)
-        hash(n == 0 ? UInt64(0) : version.columns.revision[n], seed)
-    end
+    return foldl((seed, x) -> hash(cell(version, x, :revision, UInt64(0)), seed), ids; init=UInt(0))
 end
 
 """

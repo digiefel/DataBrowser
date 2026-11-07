@@ -282,7 +282,7 @@ function write!(workspace::Workspace, x::String)::Nothing
     write!(items, columns.version, number, version)
     shown |= write!(items, columns.label, number, value === nothing ? x : value.label)
     shown |= write!(items, columns.tags, number, [tag.name for tag in tags(workspace, x)])
-    shown |= write!(items, columns.groups, number, copy(get(workspace.groups, x, String[])))
+    shown |= write!(items, columns.groups, number, get(workspace.groups, x, String[]))
     write!(items, columns.type, number, value === nothing ? Any : value.type)
     write!(items, columns.source, number, rows === nothing ? "" : source(workspace, rows[1]))
     ## TODO: an item whose latest value falls back to the value of an earlier row, as when its
@@ -312,7 +312,7 @@ function store!(items::Items, number::Integer, values::AbstractDict{Symbol})::Ve
         value, expected = get(values, name, missing), nonmissingtype(eltype(column.empty.cells))
         value === missing || typeof(value) == expected ||
             (push!(dropped, MetadataConflict(name, expected, typeof(value))); value = missing)
-        shown |= write!(items, column, number, value isa Vector ? copy(value) : value)
+        shown |= write!(items, column, number, value)
     end
     shown && push!(items.shown, number)
     return dropped
