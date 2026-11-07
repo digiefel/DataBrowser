@@ -1099,10 +1099,8 @@ function wait_processed(workspace::Workspace, ids::AbstractVector{<:AbstractStri
     items = workspace.items
     ## The latest version of each id when the call last asked for it.
     asked = Dict{String,Row}()
-    ## The numbers of the ids, so that a change to one of them is published at once.
-    numbers = Set{Int32}(number((@atomic items.version), x) for x in ids)
     @lock items.lock try
-        push!(items.readers, numbers)
+        push!(items.readers, ids)
         while true
             items.closed && error("The workspace was closed")
             version, waiting, asking = (@atomic items.version), false, false
@@ -1130,7 +1128,7 @@ function wait_processed(workspace::Workspace, ids::AbstractVector{<:AbstractStri
             wait(items.published)
         end
     finally
-        deleteat!(items.readers, findfirst(isequal(numbers), items.readers))
+        deleteat!(items.readers, findfirst(isequal(ids), items.readers))
     end
 end
 

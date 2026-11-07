@@ -253,7 +253,7 @@ row. See [`readiness`](@ref).
 # list shorter, and the copy of each changed block larger.
 const BLOCK = 1024
 
-# The shortest time between two versions of the table `items`, in seconds.
+# The shortest time between two versions of the table `items`, in seconds, while no reader waits.
 const PUBLISH_INTERVAL = 0.05
 
 # A counter that rises whenever a workspace publishes a version of its table `items`. A window
@@ -364,11 +364,11 @@ mutable struct Items
     ## when the table closes.
     const event::Base.Event
     @atomic version::Version
-    ## Under `lock`: for each reader that waits in `wait_processed`, the numbers of the items that it
-    ## waits for, and for each call of `evaluate` that waits for `keep!` to publish its row, that
-    ## row, which `keep!` removes. A publish that changes one of those items, or that a call of
-    ## `evaluate` waits for, does not wait for `PUBLISH_INTERVAL`.
-    const readers::Vector{Union{Set{Int32},Row}}
+    ## Under `lock`: for each reader that waits in `wait_processed`, the ids that it waits for, and
+    ## for each call of `evaluate` that waits for `keep!` to publish its row, that row, which
+    ## `keep!` removes. While a reader waits, `keep!` publishes without waiting for
+    ## `PUBLISH_INTERVAL`.
+    const readers::Vector{Union{AbstractVector{<:AbstractString},Row}}
     const lock::ReentrantLock
     ## Notified at each publish, at each new answer of `select(workspace, f)`, and when the table
     ## closes.
@@ -387,7 +387,7 @@ function Items()
     return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
             Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts()),
-        Union{Set{Int32},Row}[], lock, Threads.Condition(lock), Set{String}(),
+        Union{AbstractVector{<:AbstractString},Row}[], lock, Threads.Condition(lock), Set{String}(),
         (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
 end
 

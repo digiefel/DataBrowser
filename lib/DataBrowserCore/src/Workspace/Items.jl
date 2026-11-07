@@ -7,17 +7,18 @@
 The task that keeps the table `items` of `workspace` current, and the answers of
 `select(workspace, f)`, until `close(items)`. At each notification of `items.event`, it requests
 in the catalog the latest versions of the ids asked for by readers, ahead of background work. Then,
-at most once each `PUBLISH_INTERVAL` unless an item that a reader waits for changed or `evaluate`
-waits, it writes the readiness, failure, changes and store key of the catalog rows whose state,
-priority or job changed, 1000 at a time, each part under the catalog lock. Once none is left and a
-cell changed, it stores the draft as a new version. Then, without a lock, it runs each function
-given to `select` in the last 10 seconds on the rows of the items whose cells shown by `select`
-changed in that version, and merges the items that pass into the order set by `sort!`. A new
-function runs on the row of every item, and a new order sorts every item again. An error stops the
-task, and readers that wait throw from then on.
+at once while a reader waits in `wait_processed` or `evaluate`, and otherwise at most once each
+`PUBLISH_INTERVAL`, it writes the readiness, failure, changes and store key of the catalog rows
+whose state, priority or job changed, 1000 at a time, each part under the catalog lock. Once none
+is left and a cell changed, it stores the draft as a new version. Then, without a lock, it runs each
+function given to `select` in the last 10 seconds on the rows of the items whose cells shown by
+`select` changed in that version, and merges the items that pass into the order set by `sort!`. A
+new function runs on the row of every item, and a new order sorts every item again. An error stops
+the task, and readers that wait throw from then on.
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
-    catalog, columns, rows, last = workspace.catalog, items.columns, items.rows, 0.0
+    catalog, columns, rows = workspace.catalog, items.columns, items.rows
+    last, timer = 0.0, Timer(0)
     ## Owned by this task: the sort key of each item, by its number, the order of those keys, and
     ## for each function the sorted numbers of the items that pass it.
     keys_of, sorted_by, passed = Dict{Int32,Any}(), nothing, Dict{Any,Vector{Int32}}()
@@ -25,21 +26,18 @@ function keep!(items::Items, workspace::Workspace)::Nothing
         while true
             wait(items.event)
             items.closed && return nothing
-            ## The requests reach the catalog at once. Only a publish starts the interval, and a
-            ## change to an item that a reader waits for in `wait_processed` ends it.
+            ## The requests reach the catalog at once. Without a reader that waits, the task waits
+            ## for the end of the interval that the last publish started: a timer wakes it then,
+            ## and a reader that comes earlier wakes it at once.
             requested, readers = @lock items.lock (collect(items.requested), copy(items.readers))
-            waited = @lock catalog.lock begin
-                for x in requested
-                    haskey(workspace.versions, x) && request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
-                end
-                ## An item that a reader waits for changed when the row of its latest version did,
-                ## or when its latest version is another row. A row that `evaluate` waits for is
-                ## published at once.
-                published = (@atomic items.version).columns.version
-                any(reader -> reader isa Row ||
-                    any(n -> columns.version[n] in catalog.touched || columns.version[n] != published[n], reader), readers)
+            @lock catalog.lock for x in filter(in(keys(workspace.versions)), requested)
+                request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
             end
-            waited || sleep(max(0.0, last + PUBLISH_INTERVAL - time()))
+            if isempty(readers) && time() < last + PUBLISH_INTERVAL
+                isopen(timer) ||
+                    (timer = Timer(_ -> notify(items.event), last + PUBLISH_INTERVAL - time()))
+                continue
+            end
             ## The cells of the catalog rows whose state, priority or job changed follow the catalog,
             ## 1000 rows at a time, each part under the catalog lock, so that a worker waits for one
             ## part at most. The last part takes all that is left, and in the same take of the
