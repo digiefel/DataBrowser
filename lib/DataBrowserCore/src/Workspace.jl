@@ -310,35 +310,43 @@ How far the work for one item is. See [`readiness`](@ref).
 @enum Readiness CURRENT WORKING UNPROCESSED FAILED
 
 """
-The rows of the items, which [`select`](@ref) gives, and the answers of `select(workspace, f)` that
-the workspace keeps current. A task of the workspace keeps them: a worker only marks the items that
-it changed, with `changed!(workspace, id)`, and the task reads those items in parts of the catalog
-lock. A reader takes `lock` only to look up one row or one answer, so it never waits for a worker.
+The row of each item, as [`select`](@ref) gives it, and the answers of `select(workspace, f)`, kept
+current by a task of the workspace. When a worker changes an item, it only marks the item, with
+`changed!(workspace, id)`. The task then reads the marked items 1000 at a time, each part under the
+catalog lock. A reader takes `lock` only to look up rows or answers, or to ask for items, so it
+never waits for a worker.
 """
 mutable struct ItemRows
     const lock::ReentrantLock
-    ## Notified when an answer is ready, or when the task stops.
-    const answered::Threads.Condition
-    ## Notified at each mark, at each new function, and when the task stops.
+    ## Notified each time the task publishes rows or answers, and when it stops.
+    const published::Threads.Condition
+    ## Notified at each mark, at each new function or order, at each request, and when the task
+    ## stops.
     const event::Base.Event
-    ## Under the catalog lock: the items that changed since the task last read them, whether all
-    ## of them did, as after `sort!`, and whether the task reads and publishes them now.
+    ## Under the catalog lock: the items that changed since the task last read them, and whether
+    ## the task reads and publishes them now.
     marked::Set{String}
-    all::Bool
     reading::Bool
-    ## Under `lock`: the row of each item, the order that `sort!` sets, and for each function that
-    ## `select` was called with, its answer and when it was last asked for.
+    ## Under `lock`: the row of each item; the order set by `sort!`; the answer for each function
+    ## given to `select`, with the time when it was last asked for; and the items asked for by
+    ## readers, until the task has requested them in the catalog and published their rows.
+    ## Besides what `select` gives, the row of an item holds `version`, its latest version, a row
+    ## of the catalog; `revision`, its part of `revision(workspace, ids)`; `failure`, the message
+    ## of its error; and `value_revision`, the key of its value in the store of its type.
     rows::Dict{String,@NamedTuple{label::String, type::Type, metadata::Dict{Symbol,Any},
-        groups::Vector{String}, tags::Vector{String}, readiness::Readiness}}
+        groups::Vector{String}, tags::Vector{String}, readiness::Readiness,
+        version::Row, revision::UInt64, failure::String, value_revision::UInt64}}
     order::@NamedTuple{by::Any, order::Base.Order.Ordering}
     answers::Dict{Any,@NamedTuple{selection::Any, asked::Float64}}
+    requested::Set{String}
     closed::Bool
 end
-ItemRows() = (lock = ReentrantLock(); ItemRows(lock, Threads.Condition(lock), Base.Event(true), Set{String}(), false, false,
+ItemRows() = (lock = ReentrantLock(); ItemRows(lock, Threads.Condition(lock), Base.Event(true), Set{String}(), false,
     Dict{String,@NamedTuple{label::String, type::Type, metadata::Dict{Symbol,Any}, groups::Vector{String},
-        tags::Vector{String}, readiness::Readiness}}(),
+        tags::Vector{String}, readiness::Readiness, version::Row, revision::UInt64, failure::String,
+        value_revision::UInt64}}(),
     let order = SortKeys([:label => false]); (by = order, order = Base.Order.ord(order, identity, false)) end,
-    Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false))
+    Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), Set{String}(), false))
 
 """
 One open project/source pair and all package-managed state belonging to it.

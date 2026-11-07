@@ -266,9 +266,10 @@ Base.show(io::IO, input::Input) = print(io, "Input(", input.row.index, ")")
 """
     CHANGES
 
-A counter that rises whenever a row is added, gets another state, or is removed. A progress display
-draws again when the counter differs from the value that it drew with. The catalogs of all open
-workspaces share the counter, so it may also rise for a change in another workspace.
+A counter that rises whenever a row is added, gets another state, or is removed. It also rises
+whenever a workspace publishes new rows of its items. A progress display draws again when the
+counter differs from the value that it drew with. The catalogs of all open workspaces share the
+counter, so it may also rise for a change in another workspace.
 """
 const CHANGES = Threads.Atomic{Int}(0)
 

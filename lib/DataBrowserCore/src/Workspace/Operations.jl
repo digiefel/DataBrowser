@@ -176,8 +176,8 @@ function engine_work_running(workspace::Workspace)::Bool
     catalog = workspace.catalog
     return source_scan_running(workspace) || cache_work_running(workspace) ||
         @lock catalog.lock (workspace.running > 0 || queued(catalog) > 0 ||
-            !workspace.item_rows.closed && (workspace.item_rows.reading || workspace.item_rows.all ||
-                !isempty(workspace.item_rows.marked) || !isempty(catalog.touched)))
+            !workspace.item_rows.closed && (workspace.item_rows.reading || !isempty(workspace.item_rows.marked) ||
+                !isempty(catalog.touched)))
 end
 
 """
