@@ -416,8 +416,8 @@ One open project/source pair and all package-managed state belonging to it.
 The computations are the rows of `catalog`. Every field from `catalog` to `completed` is read and
 written under `catalog.lock`.
 """
-mutable struct Workspace{P<:AbstractProject}
-    project::P
+mutable struct Workspace
+    project::AbstractProject
     source::AbstractDataSource
     # The folder of the Julia environment that was active when the workspace opened; it holds
     # `tags.txt` and the browser's `databrowser.toml`.
@@ -539,12 +539,12 @@ end
 Create the empty state for one project-owned source. Nothing runs until [`start!`](@ref).
 """
 function Workspace(
-    project::P,
+    project::AbstractProject,
     source::AbstractDataSource;
     rebuild::Bool=false,
     cache::Bool=true,
     background_processing::Bool=false,
-)::Workspace{P} where {P<:AbstractProject}
+)::Workspace
     metrics = BuildMetrics()
     cache_db, disk_error, identity =
         _open_workspace_cache(project, source, metrics; rebuild, cache)

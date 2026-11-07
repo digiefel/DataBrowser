@@ -56,11 +56,8 @@ end
 # The parts of a browser frame, compiled without drawing: the browser needs an interactive thread, and
 # the precompile process has only one thread. Code that the parts reach only through dynamic calls
 # still compiles on the first frames.
-# TODO(project types): each project name is a type of its own, `Project{Name}`, so no workspace has
-# the type `Workspace{Project}`, and the methods below that take a workspace compile again for the
-# workspace of each project.
 let Browser = DataBrowserGUI.Browser, State = DataBrowserGUI.Browser.BrowserState,
-        ProjectWorkspace = DataBrowserCore.Workspace.Workspace{DataBrowserRecipes.Project}
+        Workspace = DataBrowserCore.Workspace.Workspace
     for part in (
         Browser._reveal_selected_items!, Browser._add_new_extensions!, Browser._extensions_ready,
         Browser.render_toolbar!, Browser.render_selection_window, Browser.render_info_window,
@@ -69,9 +66,9 @@ let Browser = DataBrowserGUI.Browser, State = DataBrowserGUI.Browser.BrowserStat
     )
         precompile(part, (State,))
     end
-    precompile(Browser._check_source_identity!, (State, ProjectWorkspace))
-    precompile(Browser._check_cache_error!, (State, ProjectWorkspace))
-    precompile(Browser._load_project_view, (ProjectWorkspace,))
+    precompile(Browser._check_source_identity!, (State, Workspace))
+    precompile(Browser._check_cache_error!, (State, Workspace))
+    precompile(Browser._load_project_view, (Workspace,))
     precompile(Browser._render_workspace_updating!, ())
     precompile(Browser._render_startup_preparation!, ())
 end
