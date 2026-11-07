@@ -263,6 +263,9 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
         canceled()
         @lock catalog.lock begin
             gone = 0
+            # TODO: this also forgets the rows that the workspace adds after the walk, when a job
+            # restores one of their inputs, such as the rows below a group that a source lists before
+            # its members: they run again.
             for (key, outputs) in collect(workspace.saved)
                 Row(key) in catalog && continue
                 gone += first(outputs).stage == Int(SOURCE_READ)

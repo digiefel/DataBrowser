@@ -24,6 +24,8 @@ API.storage(project::GroupProject, ::Type{Reading}) = DuckDBStore(project.values
 const READS = Threads.Atomic{Int}(0)
 function API.read(::GroupProject, ::DirectorySource, file::SourceFile)
     Threads.atomic_add!(READS, 1)
+    ## A file of another kind, such as a note, gives no readings.
+    endswith(file.filename, ".dat") || return Reading[]
     name, value = split(read(file.filepath, String))
     return Reading(name, (value=[parse(Float64, value)],), Dict{Symbol,Any}())
 end
@@ -47,15 +49,20 @@ function API.process(::GroupProject, folder::API.SourceGroup, readings::Abstract
 end
 
 # Each reading's share of the total of its folder.
-API.process(::GroupProject, reading::Reading, folder::Folder) = Reading(reading.name, reading.data,
-    merge(reading.metadata, Dict{Symbol,Any}(:share => only(reading.data.value) / folder.total)))
+const MEMBER_PROCESSES = Threads.Atomic{Int}(0)
+function API.process(::GroupProject, reading::Reading, folder::Folder)
+    Threads.atomic_add!(MEMBER_PROCESSES, 1)
+    return Reading(reading.name, reading.data,
+        merge(reading.metadata, Dict{Symbol,Any}(:share => only(reading.data.value) / folder.total)))
+end
 
-# Two files in the folder "run", and one beside it.
+# Two files in the folder "run", and beside it one more and a note.
 function write_files(root)
     mkpath(joinpath(root, "run"))
     write(joinpath(root, "run", "a.dat"), "a 1")
     write(joinpath(root, "run", "b.dat"), "b 3")
     write(joinpath(root, "c.dat"), "c 4")
+    write(joinpath(root, "notes.txt"), "measured at 300 K")
 end
 
 # `f(workspace)` for a workspace of the files in `root`, with its cache and readings in `depot`.
@@ -116,15 +123,15 @@ end
     end; end
 end
 
-@testset "reopening restores groups without running them, and a code change makes their results stale" begin
+@testset "reopening restores groups and their members without running them, and a code change makes their results stale" begin
     mktempdir() do dir
         root, depot = mkpath(joinpath(dir, "files")), mkpath(joinpath(dir, "depot"))
         write_files(root)
         in_workspace(_ -> nothing, root, depot)
-        reads, processes = READS[], GROUP_PROCESSES[]
+        reads, processes = READS[], (GROUP_PROCESSES[], MEMBER_PROCESSES[])
         in_workspace(root, depot) do ws
             @test total(ws, ".") == 8 && share(ws, "a") == 0.25
-            @test (READS[], GROUP_PROCESSES[]) == (reads, processes)
+            @test (READS[], (GROUP_PROCESSES[], MEMBER_PROCESSES[])) == (reads, processes)
 
             @eval total_scale() = 2
             @test timedwait(() -> total(ws, ".") == 16 && share(ws, "a") == 0.125, 20) === :ok

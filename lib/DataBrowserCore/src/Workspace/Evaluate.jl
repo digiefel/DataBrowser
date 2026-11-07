@@ -480,16 +480,17 @@ stage(_) = nothing
 
 What the cache saved for the result of `row` when the row computed `revision` before it ran, when it
 can be used now: a failure, or a result with the revision of that result; else `nothing`. A row of
-the pipeline also needs the values it gave: those that the cache saved in an earlier session, or
-those it gave when it last ran in this session. The caller holds the catalog lock.
+the pipeline whose result is one item also needs that item: the one that the cache saved in an
+earlier session, or the one it gave when it last ran in this session. A result that is a vector of
+items may hold none. The caller holds the catalog lock.
 """
 function recorded(workspace::Workspace, row::Row, at::UInt64)
     record = recorded_revision(workspace.cache.db, row.index)
     (record === nothing || record.revision != at) && return nothing
-    # TODO: a row of the pipeline that gave no values has nothing saved, so it runs again in each
-    # session.
-    isempty(record.failure) && haskey(workspace.stages, row) && !haskey(workspace.saved, row.index) &&
-        !haskey(workspace.outputs, row) && return nothing
+    # TODO: the cache writes the values of a row and its revision apart, so after a crash, a row whose
+    # result is a vector can come back with fewer values than it gave.
+    isempty(record.failure) && haskey(workspace.stages, row) && !(record.type <: AbstractVector) &&
+        !haskey(workspace.saved, row.index) && !haskey(workspace.outputs, row) && return nothing
     return record
 end
 
@@ -522,7 +523,7 @@ function restored!(workspace::Workspace, row::Row, record)::Nothing
     failed && (workspace.errors[row] = "$(function_name(workspace.catalog[row].f)) failed: " * record.failure)
     isempty(record.dropped) || (workspace.errors[row] = record.dropped)
     haskey(workspace.stages, row) || return nothing
-    saved === nothing && return finished!(workspace, row, failed ? nothing : workspace.outputs[row])
+    saved === nothing && return finished!(workspace, row, failed ? nothing : get(workspace.outputs, row, Output[]))
     outputs = @timed_dbg "restored.outputs" [Output(value.id, value.type, value.label, value.members,
         output_key!(workspace.cache.db, row.index, value.id), value_revision(value.id, record.result_revision)) for value in saved]
     @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
