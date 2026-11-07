@@ -53,13 +53,14 @@ unnatural.
    sent to them." The italics mark the term at its definition and nowhere else. A comparison helps
    when one fits ("a table, as in a spreadsheet"), and a concrete noun is clearer than a vague
    description such as "a place that keeps values". When a text needs several new terms, define
-   each one in the example that first uses it: a glossary at the start asks the reader to learn
-   words before seeing them at work.
+   each one in the example that first uses it, so that the reader learns each word while seeing it
+   used.
 2. **Stay on the topic: what it is and what it does.** Sentences about the text itself, its words or
    its readers ("The terms below mean the following") give the reader nothing. Likewise, denying
    something the reader had no reason to expect ("There are no special users") makes them wonder
-   whether there are, and the pattern "X, not Y" has the same effect. Finally, a list offered as
-   evidence has to support the claim.
+   whether there are, and the pattern "X, not Y" has the same effect. Finally, a list given to
+   support a claim has to show it: "Users are all the same: an admin, a bot and a guest" names
+   three different kinds of user, and so argues against itself.
 3. **Make the actor the subject of a main clause.** A long opening phrase keeps the reader waiting
    for the actor: "For an order that has shipped and a cancellation from the customer, the store
    refunds it" is clearer as "When a customer cancels an order that has already shipped, the store
