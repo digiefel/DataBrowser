@@ -3,34 +3,20 @@
 
 The current [`WorkspaceStatus`](@ref) of a workspace. The status is recomputed only when the
 workspace has changed since the last call, so watchers can call this every frame. It never waits:
-while another task is changing the workspace, it gives the counts of the last status, and a later
-call gives the current ones.
+it reads the errors and counts of the latest version of the table `items`, and the work counts.
 """
 function workspace_status(workspace::Workspace)::WorkspaceStatus
     # Read the generation first: a change during the computation then triggers the next one.
     current = generation(workspace)
     seen, previous = @atomic workspace.status
     current == seen && return previous
-    # Never wait for the catalog lock here: a publication can hold it for a while, and this runs
-    # every GUI frame. If one is in flight, show the counts of the last status and keep its
-    # generation, so that the next call reads the counts again.
-    catalog = workspace.catalog
-    locked = trylock(catalog.lock)
-    errors, counts = sort!(collect(values((@atomic workspace.items.version).errors)); by=first), previous.counts
-    if locked
-        try
-            counts = WorkspaceStageCounts(length(workspace.sources),
-                count(catalog, typeof(read), Catalogs.CURRENT) + count(catalog, typeof(read), Catalogs.FAILED),
-                length(workspace.versions), count(catalog, typeof(process), Catalogs.CURRENT))
-        finally
-            unlock(catalog.lock)
-        end
-    end
+    version = @atomic workspace.items.version
+    counts = version.counts
     workspace.scan.state === :discovering &&
         (counts = WorkspaceStageCounts(workspace.scan.discovered[], counts.read, counts.items, counts.processed))
-    status = build_status(workspace, previous, counts, errors)
+    status = build_status(workspace, previous, counts, sort!(collect(values(version.errors)); by=first))
     # If another caller stored an older pair meanwhile, the next call sees the mismatch and recomputes.
-    @atomic workspace.status = (locked ? current : seen) => status
+    @atomic workspace.status = current => status
     return status
 end
 

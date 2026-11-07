@@ -108,7 +108,7 @@
 # | the workspace               | `add!`, `replace!`, `connect!`, `disconnect!`, `hold!`, `release!`, `want!`, `request!`, `invalidate!`, `restore!`, `lost!` |
 # | a worker                    | `take!`, then `finish!`                                            |
 # | a task that waits for a row | `wait`, which requests the row and gives its state                 |
-# | the progress display        | `count`, `queued`, `CHANGES`                                       |
+# | the progress display        | `count`, `queued`                                                  |
 #
 # The workspace decides what a row computes, where its result and its error are kept, and which rows
 # to add when a row finishes: see [`Evaluate.jl`](Workspace/Evaluate.md) and
@@ -264,16 +264,6 @@ end
 Base.show(io::IO, input::Input) = print(io, "Input(", input.row.index, ")")
 
 """
-    CHANGES
-
-A counter that rises whenever a row is added, gets another state, or is removed. It also rises
-whenever a workspace publishes new rows of its items. A progress display draws again when the
-counter differs from the value that it drew with. The catalogs of all open workspaces share the
-counter, so it may also rise for a change in another workspace.
-"""
-const CHANGES = Threads.Atomic{Int}(0)
-
-"""
     count(catalog, F, state) -> Int
 
 The number of rows in `state` whose function has type `F`, such as `typeof(process)`: the progress
@@ -286,7 +276,6 @@ Base.count(catalog::Catalog, F::Type, state::State)::Int =
 # changes (`change` -1).
 function tally!(catalog::Catalog, current::Node, change::Int)::Nothing
     get!(() -> zeros(Int, 5), catalog.counts, typeof(current.computation.f))[Int(current.state) + 1] += change
-    Threads.atomic_add!(CHANGES, 1)
     return nothing
 end
 

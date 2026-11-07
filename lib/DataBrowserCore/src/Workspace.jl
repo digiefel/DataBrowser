@@ -278,6 +278,11 @@ const BLOCK = 1024
 # The shortest time between two versions of the table `items`, in seconds.
 const PUBLISH_INTERVAL = 0.05
 
+# A counter that rises whenever a workspace publishes a version of its table `items`. A window
+# draws again when the counter differs from the value that it drew with. All open workspaces share
+# the counter, so it may also rise for a change in another workspace.
+const CHANGES = Threads.Atomic{Int}(0)
+
 """`BLOCK` cells of a column of the table `items`, with the number of the draft that copied them."""
 struct Block{T}
     draft::Int
@@ -326,8 +331,8 @@ const ROWS = (readiness = (Readiness, UNPROCESSED), failure = (String, ""), chan
 
 """
 A published version of the table `items`, which never changes: the number of each item by its id,
-the cells of each column, the cells of each row of the catalog, the metadata, and the `errors` of
-the workspace.
+the cells of each column, the cells of each row of the catalog, the metadata, and the `errors` and
+the counts of the workspace.
 """
 struct Version
     index::Base.PersistentDict{String,Int32}
@@ -335,6 +340,7 @@ struct Version
     rows::NamedTuple{keys(ROWS),Tuple{(Cells{T} for (T, _) in ROWS)...}}
     metadata::Dict{Symbol,Cells}
     errors::Base.PersistentDict{Row,Pair{String,String}}
+    counts::WorkspaceStageCounts
 end
 
 """
@@ -398,7 +404,7 @@ function Items()
     rows, order = map(((T, default),) -> Column{T}(default), ROWS), SortKeys([:label => false])
     return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
-            Base.PersistentDict{Row,Pair{String,String}}()),
+            Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts()),
         Set{Int32}[], lock, Threads.Condition(lock), Set{String}(),
         (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
 end
@@ -471,9 +477,11 @@ mutable struct Workspace{P<:AbstractProject}
     # of the row, until the rows restore or run.
     saved::Dict{Int64,Vector{SavedOutput}}
     workers::Vector{Task}
-    # Jobs that run now, and jobs that ended since the workspace opened.
+    # Jobs that run now, and jobs that ended since the workspace opened; and as `work_counts` gives
+    # them, written at the start and the end of each job.
     running::Int
     completed::Int
+    @atomic work::NTuple{3,Int}
     # The store that the project chooses for each result type, or a `MemoryStore` when `storage`
     # throws.
     stores::Dict{Type,Union{Nothing,AbstractStore}}
@@ -572,7 +580,7 @@ function Workspace(
         Base.PersistentDict{Row,Pair{String,String}}(),
         Dict{Row,ReentrantLock}(), Dict{Row,ComputationExecution}(), Set{Row}(),
         Dict{Int64,Vector{SavedOutput}}(),
-        Task[], 0, 0,
+        Task[], 0, 0, (0, 0, 0),
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),
         Items(),

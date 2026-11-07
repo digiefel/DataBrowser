@@ -134,20 +134,25 @@ end
 
 The loop of one worker task: take the job of highest priority, run it, and wait when there is
 none, until the catalog closes. The worker counts the end of a job, even one that threw, in the
-same take of the catalog lock as the next job, before it waits or returns.
+same take of the catalog lock as the next job, before it waits or returns. `work_counts` gives each
+count at once.
 """
 function work!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
     job = nothing
     while true
         job = @lock catalog.lock begin
-            job === nothing || (workspace.running -= 1; workspace.completed += 1; notify(catalog.changed); changed!(workspace))
+            job === nothing || (workspace.running -= 1; workspace.completed += 1; notify(catalog.changed))
+            @atomic workspace.work = (workspace.completed, workspace.completed + workspace.running + queued(catalog), workspace.running)
+            job === nothing || changed!(workspace)
             job = take!(catalog)
             while job === nothing && !catalog.closed
                 wait(catalog.changed)
                 job = take!(catalog)
             end
-            catalog.closed || (workspace.running += 1; changed!(workspace))
+            catalog.closed || (workspace.running += 1)
+            @atomic workspace.work = (workspace.completed, workspace.completed + workspace.running + queued(catalog), workspace.running)
+            catalog.closed || changed!(workspace)
             catalog.closed ? nothing : job
         end
         job === nothing && return nothing
@@ -1118,20 +1123,19 @@ revision(version::Version, row::Row)::UInt = row == Catalogs.NOWHERE ? UInt(0) :
 """
     status_revision(workspace) -> Int
 
-A number that rises whenever a computation of this or any other workspace changes its state, is
-added or is removed, and whenever a workspace updates what [`select`](@ref) and [`revision`](@ref)
-give. All workspaces of the Julia session share it, so it may also rise for a change in another
-workspace. Values are added and removed only together with such a change. While the number stays
-the same, so do the [`revision`](@ref) of any values and the latest version of each id.
-Reading it costs the same for any number of items.
+A number that rises whenever this or any other workspace updates what [`select`](@ref),
+[`revision`](@ref) and [`workspace_status`](@ref) give. All workspaces of the Julia session share
+it, so it may also rise for a change in another workspace. While the number stays the same, so do
+the [`revision`](@ref) of any values and the latest version of each id. Reading it costs the same
+for any number of items.
 """
-status_revision(::Workspace)::Int = Catalogs.CHANGES[]
+status_revision(::Workspace)::Int = CHANGES[]
 
 """
     work_counts(workspace) -> (completed, total, running)
 
-The jobs that ended, all jobs (ended, running and waiting), and the jobs that run now. The
-performance window of the browser shows them.
+The jobs that ended, all jobs (ended, running and waiting), and the jobs that run now, as the
+workers counted them at the start or the end of the last job. The performance window of the browser
+shows them.
 """
-work_counts(workspace::Workspace)::Tuple{Int,Int,Int} = @lock workspace.catalog.lock (
-    workspace.completed, workspace.completed + workspace.running + queued(workspace.catalog), workspace.running)
+work_counts(workspace::Workspace)::Tuple{Int,Int,Int} = @atomic workspace.work

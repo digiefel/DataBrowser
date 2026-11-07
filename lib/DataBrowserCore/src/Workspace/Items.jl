@@ -58,16 +58,20 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                     if isempty(catalog.touched)
                         shown = Set{Int32}()
                         if items.changed || workspace.errors !== (@atomic items.version).errors
+                            ## The counts change only together with cells.
+                            counts = WorkspaceStageCounts(length(workspace.sources),
+                                count(catalog, typeof(read), Catalogs.CURRENT) + count(catalog, typeof(read), Catalogs.FAILED),
+                                length(workspace.versions), count(catalog, typeof(process), Catalogs.CURRENT))
                             @atomic items.version = Version(items.index, map(column -> Cells(column, items.count), columns),
                                 map(column -> Cells(column, BLOCK * length(column.blocks)), rows),
                                 Dict{Symbol,Cells}(name => Cells(column, BLOCK * length(column.blocks)) for (name, column) in items.metadata),
-                                workspace.errors)
+                                workspace.errors, counts)
                             items.draft, items.changed, shown, items.shown = items.draft + 1, false, items.shown, shown
                             last = time()
                             ## A window reads the `revision` of its items again when
                             ## `status_revision` rises, and a view that keeps what it read, by
                             ## `generation`, reads again.
-                            Threads.atomic_add!(Catalogs.CHANGES, 1)
+                            Threads.atomic_add!(CHANGES, 1)
                             Threads.atomic_add!(workspace.generation, 1)
                         end
                         ## `wait_workspace_idle!` waits until the cells follow the catalog.
