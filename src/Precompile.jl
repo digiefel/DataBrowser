@@ -50,7 +50,8 @@ function _precompile_engine()::Nothing
     return nothing
 end
 
-@compile_workload _precompile_engine()
+# The workload logs nothing, so that its lines do not show among the output of precompilation.
+@compile_workload Base.CoreLogging.with_logger(_precompile_engine, Base.CoreLogging.NullLogger())
 
 # The parts of a browser frame, compiled without drawing: the browser needs an interactive thread, and
 # the precompile process has only one thread. Code that the parts reach only through dynamic calls
