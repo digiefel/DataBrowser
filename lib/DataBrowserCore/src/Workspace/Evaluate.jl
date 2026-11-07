@@ -1067,31 +1067,36 @@ function wait_processed(workspace::Workspace, ids::AbstractVector{<:AbstractStri
     items = workspace.items
     ## The latest version of each id when the call last asked for it.
     asked = Dict{String,Row}()
-    @lock items.lock while true
-        items.closed && error("The workspace was closed")
-        version, waiting, asking = (@atomic items.version), false, false
-        for x in ids
-            ## The cells of an id follow the catalog once a version is published after the call
-            ## asked for it.
-            x in items.requested && (waiting = true; continue)
-            n = number(version, x)
-            if haskey(asked, x)
-                n == 0 && error("The workspace has no value with the id \"$x\"")
-                readiness = version.columns.readiness[n]
-                readiness == FAILED && error(version.columns.failure[n])
-                readiness == CURRENT && continue
-                waiting = true
-                ## A request ends with the next publish: the call asks again when the latest
-                ## version moved to another row, or when nothing wants it.
-                readiness == WORKING && version.columns.version[n] == asked[x] && continue
+    @atomic items.readers += 1
+    try
+        @lock items.lock while true
+            items.closed && error("The workspace was closed")
+            version, waiting, asking = (@atomic items.version), false, false
+            for x in ids
+                ## The cells of an id follow the catalog once a version is published after the call
+                ## asked for it.
+                x in items.requested && (waiting = true; continue)
+                n = number(version, x)
+                if haskey(asked, x)
+                    n == 0 && error("The workspace has no value with the id \"$x\"")
+                    readiness = version.columns.readiness[n]
+                    readiness == FAILED && error(version.columns.failure[n])
+                    readiness == CURRENT && continue
+                    waiting = true
+                    ## A request ends with the next publish: the call asks again when the latest
+                    ## version moved to another row, or when nothing wants it.
+                    readiness == WORKING && version.columns.version[n] == asked[x] && continue
+                end
+                push!(items.requested, x)
+                asked[x] = n == 0 ? Catalogs.NOWHERE : version.columns.version[n]
+                waiting = asking = true
             end
-            push!(items.requested, x)
-            asked[x] = n == 0 ? Catalogs.NOWHERE : version.columns.version[n]
-            waiting = asking = true
+            waiting || return version
+            asking && notify(items.event)
+            wait(items.published)
         end
-        waiting || return version
-        asking && notify(items.event)
-        wait(items.published)
+    finally
+        @atomic items.readers -= 1
     end
 end
 

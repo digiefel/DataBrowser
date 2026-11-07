@@ -319,11 +319,13 @@ function wait_workspace_idle!(workspace::Workspace; timeout::Real=60)::Workspace
     catalog = workspace.catalog
     @lock catalog.lock begin
         timer = Timer(_ -> @lock(catalog.lock, notify(catalog.changed)), max(deadline - time(), 0))
+        @atomic workspace.items.readers += 1
         try
             while engine_work_running(workspace) && time() < deadline
                 wait(catalog.changed)
             end
         finally
+            @atomic workspace.items.readers -= 1
             close(timer)
         end
     end
