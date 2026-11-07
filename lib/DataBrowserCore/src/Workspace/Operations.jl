@@ -19,6 +19,8 @@ function open_workspace(
     cache::Bool=true,
     background_processing::Bool=false,
 )::Workspace
+    # The first opening logs a line, so that a script run from a shell shows that it goes on.
+    @info "Opening workspace" maxlog=1
     opened_source = open_source(source)
     workspace = try
         Workspace(project, opened_source; rebuild, cache, background_processing)

@@ -394,6 +394,9 @@ function open_browser(
     workspace.closed && error("The workspace is closed. Open it again with `open_workspace`.")
     Threads.threadpool(1) === :interactive && Threads.threadpoolsize(:default) > 0 ||
         error("The browser needs a UI thread and background workers. Start Julia with --threads=auto,1.")
+    # The first opening logs a line, so that a script run from a shell shows that it goes on until
+    # the window appears.
+    @info "Opening browser" maxlog=1
     state = BrowserState(; workspace)
     state.extensions = _instantiate_extensions()
     for ext in state.extensions
