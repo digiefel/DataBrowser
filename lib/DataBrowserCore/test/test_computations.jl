@@ -296,9 +296,11 @@ end
     try
         CW.wait_workspace_idle!(workspace)
         count = Ref(0)
-        value = Computation(x -> (count[] += 1; x + 1), 4)
+        increment = x -> (count[] += 1; only(x) + 1)
+        value = Computation(increment, [4])
         @test evaluate(workspace, value) == 5
-        @test evaluate(workspace, value) == 5
+        # An equal computation, built with another vector, finds the same result.
+        @test evaluate(workspace, Computation(increment, [4])) == 5
         @test count[] == 1
         @test cache_info(workspace, value).cached
         @test last_execution(workspace, value).succeeded
