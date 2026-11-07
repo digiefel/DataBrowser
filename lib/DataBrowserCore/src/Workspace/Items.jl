@@ -7,14 +7,14 @@
 The task that keeps the table `items` of `workspace` current, and the answers of
 `select(workspace, f)`, until `close(items)`. At each notification of `items.event`, it requests
 in the catalog the latest versions of the ids asked for by readers, ahead of background work. Then,
-at most once each `PUBLISH_INTERVAL` unless an item that a reader waits for changed, it writes the
-readiness, failure and changes of the catalog rows whose state, priority or job changed, 1000 at a
-time, each part under the catalog lock. Once none is left and a cell changed, it stores the draft
-as a new version. Then, without a lock, it runs each function given to `select` in the last 10
-seconds on the rows of the items whose cells shown by `select` changed in that version, and merges
-the items that pass into the order set by `sort!`. A new function runs on the row of every item,
-and a new order sorts every item again. An error stops the task, and readers that wait throw from
-then on.
+at most once each `PUBLISH_INTERVAL` unless an item that a reader waits for changed or `evaluate`
+waits, it writes the readiness, failure, changes and store key of the catalog rows whose state,
+priority or job changed, 1000 at a time, each part under the catalog lock. Once none is left and a
+cell changed, it stores the draft as a new version. Then, without a lock, it runs each function
+given to `select` in the last 10 seconds on the rows of the items whose cells shown by `select`
+changed in that version, and merges the items that pass into the order set by `sort!`. A new
+function runs on the row of every item, and a new order sorts every item again. An error stops the
+task, and readers that wait throw from then on.
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
     catalog, columns, rows, last = workspace.catalog, items.columns, items.rows, 0.0
@@ -33,9 +33,11 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                     haskey(workspace.versions, x) && request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
                 end
                 ## An item that a reader waits for changed when the row of its latest version did,
-                ## or when its latest version is another row.
+                ## or when its latest version is another row. A row that `evaluate` waits for is
+                ## published at once.
                 published = (@atomic items.version).columns.version
-                any(numbers -> any(n -> columns.version[n] in catalog.touched || columns.version[n] != published[n], numbers), readers)
+                any(reader -> reader isa Row ||
+                    any(n -> columns.version[n] in catalog.touched || columns.version[n] != published[n], reader), readers)
             end
             waited || sleep(max(0.0, last + PUBLISH_INTERVAL - time()))
             ## The cells of the catalog rows whose state, priority or job changed follow the catalog,
@@ -54,6 +56,8 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                         write!(items, rows.readiness, row.index, readiness)
                         write!(items, rows.failure, row.index, readiness == FAILED ? failure(workspace, row) : "")
                         write!(items, rows.changes, row.index, Catalogs.changes(catalog, row))
+                        write!(items, rows.stored, row.index, readiness == CURRENT && rows.stage[row] === nothing ?
+                            (Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row)) : nothing)
                     end
                     if isempty(catalog.touched)
                         shown = Set{Int32}()
@@ -85,6 +89,8 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             version = @atomic items.version
             order, functions = @lock items.lock begin
                 setdiff!(items.requested, requested)
+                ## The calls of `evaluate` that waited since the start of this pass return.
+                foreach(row -> deleteat!(items.readers, findfirst(isequal(row), items.readers)), filter(reader -> reader isa Row, readers))
                 notify(items.published)
                 filter!(answer -> time() - answer.second.asked < 10, items.answers)
                 items.order, collect(keys(items.answers))

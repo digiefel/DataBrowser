@@ -126,17 +126,20 @@ end
     end
 end
 
-@testset "the status does not wait for a task that holds the catalog lock" begin
-    ws = W.open_workspace(EngineProject("held", 0), EngineSource("source", 1, false); cache=false)
+@testset "reading the workspace does not wait for a task that holds the catalog lock" begin
+    ws = W.open_workspace(EngineProject("held", 0), EngineSource("source", 1, false); cache=false, background_processing=true)
     try
         settled(ws)
+        value = W.computation(ws, "1")
         held, release = Base.Event(), Base.Event()
         holder = Threads.@spawn @lock ws.catalog.lock (notify(held); wait(release))
         wait(held)
         # A change since the last status makes the next call compute the status again.
         Threads.atomic_add!(ws.generation, 1)
-        reader = Threads.@spawn (W.workspace_status(ws), W.work_counts(ws))
+        reader = Threads.@spawn (W.workspace_status(ws), W.work_counts(ws), W.revision(ws, value),
+            W.cache_info(ws, value), W.last_execution(ws, value), W.readiness(ws, "1"))
         @test timedwait(() -> istaskdone(reader), 1.0) === :ok
+        @test fetch(reader)[4].cached
         notify(release)
         wait(holder)
     finally

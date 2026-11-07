@@ -328,7 +328,7 @@ function call(workspace::Workspace, row::Row, value::Computation)
         return output
     finally
         execution = ComputationExecution((time_ns() - started) / 1.0e9, now(), succeeded)
-        @lock workspace.catalog.lock row in workspace.catalog && (workspace.executions[row] = execution)
+        @lock workspace.catalog.lock row in workspace.catalog && write!(workspace.items, workspace.items.rows.execution, row.index, execution)
     end
 end
 
@@ -616,10 +616,10 @@ function forget!(workspace::Workspace, type::Type, at::UInt64)::Nothing
 end
 
 # The type and the revision under which the stores keep the result of `row`, or for a row of the
-# pipeline, each value that it gives. The caller holds the catalog lock.
-store_keys(workspace::Workspace, row::Row)::Vector{Tuple{Type,UInt64}} = workspace.items.rows.stage[row] !== nothing ?
-    Tuple{Type,UInt64}[(output.type, output.revision) for output in something(workspace.items.rows.outputs[row], Output[])] :
-    Tuple{Type,UInt64}[(Catalogs.result_type(workspace.catalog, row), Catalogs.revision(workspace.catalog, row))]
+# pipeline, each value that it gives, from the cells `rows` of the draft or of a version of the
+# table `items`. `stored` is the type and the revision of the result of a row outside the pipeline.
+store_keys(rows::NamedTuple, row::Row, stored::Tuple{Type,UInt64})::Vector{Tuple{Type,UInt64}} = rows.stage[row] !== nothing ?
+    Tuple{Type,UInt64}[(output.type, output.revision) for output in something(rows.outputs[row], Output[])] : [stored]
 
 """
     results(workspace, rows) -> Vector{Any}
@@ -645,7 +645,7 @@ function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Som
     unsaved, vectors, parts = @lock catalog.lock begin
         vectors = [workspace.items.rows.stage[row] !== nothing && Catalogs.result_type(catalog, row) <: AbstractVector for row in rows]
         [catalog[row].f in (view, pick) || vector && workspace.items.rows.outputs[row] === nothing for (row, vector) in zip(rows, vectors)], vectors,
-            [store_keys(workspace, row) for row in rows]
+            [store_keys(workspace.items.rows, row, (Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row))) for row in rows]
     end
     found = kept(workspace, parts)
     ## Any other result has one part: none when a row of the pipeline failed, or its value conflicts
@@ -715,7 +715,7 @@ for the workspace, and the browser. The caller holds the catalog lock.
 function publish!(workspace::Workspace)::Nothing
     catalog = workspace.catalog
     for row in lost!(catalog)
-        delete!(workspace.executions, row)
+        write!(workspace.items, workspace.items.rows.execution, row.index, nothing)
         haskey(workspace.errors, row) && (workspace.errors = Base.delete(workspace.errors, row))
         Catalogs.state(catalog, row) == Catalogs.REMOVED || continue
         forget!(workspace, Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row))
@@ -857,21 +857,22 @@ end
     bound(workspace, computation) -> Computation
 
 `computation` with each data item among its arguments that is a value of the workspace replaced by
-its latest version, so that it follows the changes of that value. The caller holds the catalog
-lock.
+its latest version, so that it follows the changes of that value. `latest(id)` gives the row of the
+latest version of a value, or `Catalogs.NOWHERE`; by default, it reads the versions in the catalog,
+and the caller holds the catalog lock.
 """
-bound(workspace::Workspace, value::Computation) =
-    Computation(value.f, map(x -> bound_argument(workspace, x), value.args), value.settings)
-bound_argument(workspace::Workspace, x::Computation) = bound(workspace, x)
-function bound_argument(workspace::Workspace, x::AbstractDataItem)
-    rows = get(workspace.versions, id(x), nothing)
-    return rows === nothing ? x : Part(Input(workspace.catalog, rows[end]), id(x))
+bound(workspace::Workspace, value::Computation, latest=x -> last(get(workspace.versions, x, [Catalogs.NOWHERE]))) =
+    Computation(value.f, map(x -> bound_argument(workspace, x, latest), value.args), value.settings)
+bound_argument(workspace::Workspace, x::Computation, latest) = bound(workspace, x, latest)
+function bound_argument(workspace::Workspace, x::AbstractDataItem, latest)
+    row = latest(id(x))
+    return row == Catalogs.NOWHERE ? x : Part(Input(workspace.catalog, row), id(x))
 end
-bound_argument(workspace::Workspace, x::Tuple) = map(v -> bound_argument(workspace, v), x)
-bound_argument(workspace::Workspace, x::AbstractVector) =
-    any(v -> v isa AbstractDataItem, x) ? map(v -> bound_argument(workspace, v), x) : x
-bound_argument(::Workspace, x::Selection) = x
-bound_argument(::Workspace, x) = x
+bound_argument(workspace::Workspace, x::Tuple, latest) = map(v -> bound_argument(workspace, v, latest), x)
+bound_argument(workspace::Workspace, x::AbstractVector, latest) =
+    any(v -> v isa AbstractDataItem, x) ? map(v -> bound_argument(workspace, v, latest), x) : x
+bound_argument(::Workspace, x::Selection, _) = x
+bound_argument(::Workspace, x, _) = x
 
 # A selection reads the latest version of each of its values, and the result of each of its
 # computations.
@@ -895,7 +896,8 @@ DataBrowserCore.evaluated(selection::Selection) = selection
 
 The result of `computation`, computed ahead of background work with the results that the workspace
 keeps, and kept for later calls of `evaluate`. The workspace keeps the computation until it closes.
-A failed computation, or one whose input failed, throws its error.
+A failed computation, or one whose input failed, throws its error. Once `evaluate` returns or
+throws, `last_execution`, `cache_info` and `revision` show the computation as it ended.
 """
 function evaluate(workspace::Workspace, value::Computation)
     catalog = workspace.catalog
@@ -908,8 +910,20 @@ function evaluate(workspace::Workspace, value::Computation)
         restore!(workspace, row)
         row
     end
-    wait(catalog, row, VIEWED_ITEM) == Catalogs.CURRENT || error(failure(workspace, row))
-    return only(results(workspace, [row]))
+    current = wait(catalog, row, VIEWED_ITEM) == Catalogs.CURRENT
+    result = current ? only(results(workspace, [row])) : failure(workspace, row)
+    ## `last_execution`, `cache_info` and `revision` read the latest version of the table `items`:
+    ## the call waits for the next pass of `keep!`, which starts at once and publishes the cells of
+    ## the row.
+    items = workspace.items
+    @lock items.lock begin
+        push!(items.readers, row)
+        notify(items.event)
+        while !items.closed && row in items.readers
+            wait(items.published)
+        end
+    end
+    return current ? result : error(result)
 end
 
 """
@@ -942,32 +956,30 @@ function computation(selection::Selection, index::Integer)::Computation
     return Computation(pick, computation(getfield(data, :workspace), item), item)
 end
 
-# The row of a computation, or `nothing` when the workspace does not have it. The catalog stays as
-# it is.
-function row(workspace::Workspace, value::Computation)::Union{Nothing,Row}
-    found = @lock workspace.catalog.lock get(workspace.catalog, bound(workspace, value), Catalogs.NOWHERE)
-    return found == Catalogs.NOWHERE ? nothing : found
-end
+# The row of a computation, with the latest versions of the values in `version`, or
+# `Catalogs.NOWHERE` when the workspace does not have it. The catalog stays as it is, and no lock is
+# taken.
+row(workspace::Workspace, version::Version, value::Computation)::Row =
+    get(workspace.catalog, bound(workspace, value, x -> cell(version, x, :version, Catalogs.NOWHERE)), Catalogs.NOWHERE)
 
 # The time of an execution covers the call of the function, with compilation and waits, and not the
 # evaluation of its inputs or the storage of its result.
 # The method of `DataBrowserAPI.last_execution` for a workspace.
 function last_execution(workspace::Workspace, value::Computation)::Union{Nothing,ComputationExecution}
-    found = row(workspace, value)
-    found === nothing && return nothing
-    @lock workspace.catalog.lock Catalogs.state(workspace.catalog, found) in (Catalogs.CURRENT, Catalogs.FAILED) ?
-        get(workspace.executions, found, nothing) : nothing
+    version = @atomic workspace.items.version
+    found = row(workspace, version, value)
+    return version.rows.readiness[found] in (CURRENT, FAILED) ? version.rows.execution[found] : nothing
 end
 
 # The method of `DataBrowserAPI.cache_info` for a workspace: whether the stores have the result of a
 # current computation, or each value of a row of the pipeline, and its size.
 function cache_info(workspace::Workspace, value::Computation)
-    found, catalog = row(workspace, value), workspace.catalog
-    found === nothing && return (cached=false, bytes=nothing)
-    parts, current = @lock catalog.lock (store_keys(workspace, found), Catalogs.state(catalog, found) == Catalogs.CURRENT)
-    current || return (cached=false, bytes=nothing)
+    version = @atomic workspace.items.version
+    found = row(workspace, version, value)
+    version.rows.readiness[found] == CURRENT || return (cached=false, bytes=nothing)
     bytes = 0
-    for (type, key) in parts
+    ## A row that left the pipeline keeps its result nowhere.
+    for (type, key) in store_keys(version.rows, found, something(version.rows.stored[found], (Nothing, UInt64(0))))
         place = store(workspace, type)
         (place !== nothing && haskey(place, type, key)) || return (cached=false, bytes=nothing)
         bytes += DataBrowserAPI.stored_size(place, type, key)
@@ -983,9 +995,8 @@ being so. A window keeps the number it drew with, and draws again when it differ
 computes nothing.
 """
 function revision(workspace::Workspace, value::Computation)::UInt
-    found, catalog = row(workspace, value), workspace.catalog
-    found === nothing && return UInt(0)
-    return @lock catalog.lock hash(found.index, hash(Catalogs.state(catalog, found) == Catalogs.CURRENT, hash(Catalogs.changes(catalog, found))))
+    version = @atomic workspace.items.version
+    return revision(version, row(workspace, version, value))
 end
 
 # The name of the function of a computation: the start of its id, under which the cache keeps the

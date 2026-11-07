@@ -208,7 +208,7 @@ The table of the computations of one workspace, with one row for each. `key(comp
 position of each new row, a position that no row of the catalog had: [`add!`](@ref) calls it with
 the computation after it replaced the computations among its arguments with their
 [`Input`](@ref)s. The workers and the tasks of the workspace share the catalog: every function reads
-and changes the fields inside `@lock catalog.lock`.
+and changes the fields inside `@lock catalog.lock`, except `get`, which takes no lock.
 """
 # TODO: a row costs about 300 bytes, and each of its inputs an entry of `edges`. Keep the inputs and
 # readers of all rows in flat vectors when a workspace with millions of items needs it.
@@ -219,8 +219,8 @@ mutable struct Catalog
     const key::Function
     ## The positions that no row has hold `EMPTY`.
     const nodes::Vector{Node}
-    ## The row of each computation, after `add!` instanced it.
-    const row_of::Dict{Computation,Row}
+    ## The row of each computation, after `add!` instanced it. `get` reads it without the lock.
+    @atomic row_of::Base.PersistentDict{Computation,Row}
     ## For each row and each of its inputs: the place of the input among the inputs of the row, the
     ## place of the row among the readers of the input, and how many times the row reads the input.
     const edges::Dict{Tuple{Row,Row},@NamedTuple{input::Int32, reader::Int32, uses::Int32}}
@@ -239,14 +239,14 @@ mutable struct Catalog
     closed::Bool
 end
 
-Catalog(key::Function) = (lock = ReentrantLock(); Catalog(lock, Threads.Condition(lock), key, Node[], Dict{Computation,Row}(),
+Catalog(key::Function) = (lock = ReentrantLock(); Catalog(lock, Threads.Condition(lock), key, Node[], Base.PersistentDict{Computation,Row}(),
     Dict{Tuple{Row,Row},@NamedTuple{input::Int32, reader::Int32, uses::Int32}}(),
     Dict{Int,Vector{Row}}(), Dict{Row,Int}(), Row[], Set{Row}(), Dict{Type,Vector{Int}}(), false))
 
 # The node of every position that no row has: removed, and never counted.
 const EMPTY = Node(Computation(nothing), Row[], Row[], REMOVED, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing)
 
-Base.show(io::IO, catalog::Catalog) = print(io, "Catalog(", length(catalog.row_of), " rows)")
+Base.show(io::IO, catalog::Catalog) = print(io, "Catalog(", length(@atomic catalog.row_of), " rows)")
 
 """
     Input(catalog, row)
@@ -417,7 +417,7 @@ input_rows(_) = Row[]
 instanced(catalog::Catalog, value::Computation; add::Bool) =
     Computation(value.f, argument(catalog, value.args, add), value.settings)
 argument(catalog::Catalog, value::Computation, add::Bool) = Input(catalog,
-    add ? add!(catalog, value) : get(catalog.row_of, instanced(catalog, value; add), NOWHERE))
+    add ? add!(catalog, value) : get(@atomic(catalog.row_of), instanced(catalog, value; add), NOWHERE))
 argument(catalog::Catalog, value::Row, _) = Input(catalog, value)
 function argument(catalog::Catalog, value::Input, _)
     value.catalog === catalog || error("The computation reads a result of another workspace")
@@ -442,10 +442,10 @@ const NOWHERE = Row(0)
     get(catalog, computation, default)
 
 The row of `computation`, or `default` when the catalog does not have it. `get` leaves the catalog
-as it is.
+as it is, and takes no lock.
 """
 Base.get(catalog::Catalog, value::Computation, default) =
-    @lock catalog.lock get(catalog.row_of, instanced(catalog, value; add=false), default)
+    get(@atomic(catalog.row_of), instanced(catalog, value; add=false), default)
 
 """
     add!(catalog, computation) -> Row
@@ -459,7 +459,7 @@ held and never read stays. `add!` throws an error when an input of the computati
 function add!(catalog::Catalog, value::Computation)::Row
     @lock catalog.lock begin
         value = instanced(catalog, value; add=true)
-        row = get(catalog.row_of, value, nothing)
+        row = get(@atomic(catalog.row_of), value, nothing)
         row === nothing || return row
         any(input -> node(catalog, input).state == REMOVED, input_rows(value.args)) &&
             error("An input of the computation was removed from the workspace")
@@ -467,7 +467,7 @@ function add!(catalog::Catalog, value::Computation)::Row
         length(catalog.nodes) < row.index && append!(catalog.nodes, fill(EMPTY, row.index - length(catalog.nodes)))
         catalog.nodes[row.index] = Node(value, Row[], Row[], MISSING, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing)
         tally!(catalog, catalog.nodes[row.index], 1)
-        catalog.row_of[value] = row
+        @atomic catalog.row_of = Base.PersistentDict(@atomic(catalog.row_of), value => row)
         foreach(input -> connect!(catalog, row, input), input_rows(value.args))
         return row
     end
@@ -486,11 +486,11 @@ function Base.replace!(catalog::Catalog, row::Row, value::Computation)::Row
         value = instanced(catalog, value; add=true)
         current = node(catalog, row)
         before = input_rows(current.computation.args)
-        delete!(catalog.row_of, current.computation)
+        @atomic catalog.row_of = Base.delete(@atomic(catalog.row_of), current.computation)
         tally!(catalog, current, -1)
         current.computation = value
         tally!(catalog, current, 1)
-        catalog.row_of[value] = row
+        @atomic catalog.row_of = Base.PersistentDict(@atomic(catalog.row_of), value => row)
         ## The rows among the new arguments are connected first, so that a row among both stays.
         foreach(input -> connect!(catalog, row, input), input_rows(value.args))
         foreach(input -> disconnect!(catalog, row, input), before)
@@ -583,7 +583,7 @@ function remove_unheld!(catalog::Catalog, row::Row)::Nothing
     push!(catalog.lost, row)
     before = copy(current.inputs)
     foreach(input -> unlink!(catalog, row, input), before)
-    delete!(catalog.row_of, current.computation)
+    @atomic catalog.row_of = Base.delete(@atomic(catalog.row_of), current.computation)
     delete!(catalog.queued_at, row)
     tally!(catalog, current, -1)
     current.state = REMOVED

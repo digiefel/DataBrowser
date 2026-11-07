@@ -327,7 +327,8 @@ const COLUMNS = (id = (String, ""), version = (Row, Catalogs.NOWHERE), label = (
 
 # The type and the default cell of each column of the rows of the catalog.
 const ROWS = (readiness = (Readiness, UNPROCESSED), failure = (String, ""), changes = (UInt32, UInt32(0)),
-    stage = (Union{Nothing,PipelineStage}, nothing), outputs = (Union{Nothing,Vector{Output}}, nothing))
+    stage = (Union{Nothing,PipelineStage}, nothing), outputs = (Union{Nothing,Vector{Output}}, nothing),
+    stored = (Union{Nothing,Tuple{Type,UInt64}}, nothing), execution = (Union{Nothing,ComputationExecution}, nothing))
 
 """
 A published version of the table `items`, which never changes: the number of each item by its id,
@@ -352,9 +353,10 @@ groups; and `source`, the id of the source item that it comes from. When an item
 workspace, its version in the draft is `Catalogs.NOWHERE`, and the next new item takes its number.
 
 Each row of the catalog keeps cells in `rows`, at its position: its [`Readiness`](@ref), the message
-of its failure, its number of changes (see `Catalogs.changes`), and for a row of the pipeline, its
-stage and the values that it gave when it last ran. An item reads its readiness, its failure and
-its revision from the row of its latest version.
+of its failure, its number of changes (see `Catalogs.changes`), for a row of the pipeline its stage
+and the values that it gave when it last ran, for any other current row the type and the revision
+under which the store of that type keeps its result, and the last execution of its function. An
+item reads its readiness, its failure and its revision from the row of its latest version.
 
 Each value that a row of the pipeline gives keeps its metadata in `metadata`, in the cells at its
 key: one column for each metadata key, with `missing` where a value has none. An item shows the
@@ -385,8 +387,10 @@ mutable struct Items
     const event::Base.Event
     @atomic version::Version
     ## Under `lock`: for each reader that waits in `wait_processed`, the numbers of the items that it
-    ## waits for. A publish that changes one of them does not wait for `PUBLISH_INTERVAL`.
-    const readers::Vector{Set{Int32}}
+    ## waits for, and for each call of `evaluate` that waits for `keep!` to publish its row, that
+    ## row, which `keep!` removes. A publish that changes one of those items, or that a call of
+    ## `evaluate` waits for, does not wait for `PUBLISH_INTERVAL`.
+    const readers::Vector{Union{Set{Int32},Row}}
     const lock::ReentrantLock
     ## Notified at each publish, at each new answer of `select(workspace, f)`, and when the table
     ## closes.
@@ -405,7 +409,7 @@ function Items()
     return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
             Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts()),
-        Set{Int32}[], lock, Threads.Condition(lock), Set{String}(),
+        Union{Set{Int32},Row}[], lock, Threads.Condition(lock), Set{String}(),
         (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
 end
 
@@ -470,7 +474,6 @@ mutable struct Workspace{P<:AbstractProject}
     errors::Base.PersistentDict{Row,Pair{String,String}}
     # One lock per row whose result is computed again outside its job.
     row_locks::Dict{Row,ReentrantLock}
-    executions::Dict{Row,ComputationExecution}
     # TODO: rows that `evaluate` added stay until the workspace closes; release those nothing uses.
     evaluated::Set{Row}
     # The values that the cache saved for the rows of the pipeline of an earlier session, by the key
@@ -578,7 +581,7 @@ function Workspace(
         Dict{Tuple,Any}(),
         Dict{Row,Type}(), Dict{Type,Code}(),
         Base.PersistentDict{Row,Pair{String,String}}(),
-        Dict{Row,ReentrantLock}(), Dict{Row,ComputationExecution}(), Set{Row}(),
+        Dict{Row,ReentrantLock}(), Set{Row}(),
         Dict{Int64,Vector{SavedOutput}}(),
         Task[], 0, 0, (0, 0, 0),
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
