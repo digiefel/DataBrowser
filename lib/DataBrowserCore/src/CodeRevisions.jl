@@ -1,6 +1,7 @@
 """
 The revision of the code that a stage runs: a content hash of every method, type and constant the
-stage can reach by name from its [`stage_roots`](@ref), in modules that can change during a session.
+stage can reach by name from its roots, in modules that can change during a session. The roots of a
+stage are the methods, functions and types that it starts from, which the workspace gives.
 
 Two definitions with the same source give the same revision, also in a new session, so running a
 script again changes nothing, and the cache can keep a revision from one session to the next. The

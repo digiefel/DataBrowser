@@ -146,39 +146,13 @@ There is no default: the workspace runs this stage only for a group that a metho
 process(::AbstractProject, ::AbstractDataItem, ::AbstractGroup)
 
 # ---------------------------------------------------------------------------
-# stage_roots
+# which
 # ---------------------------------------------------------------------------
 
-"""
-    stage_roots(project, stage, type) -> Vector
-
-The code that runs `stage` for values of `type`: a source item type for `SOURCE_READ`, with or
-without members; an item type for `ITEM_PROCESS`; a group type for `GROUP_PROCESS`, and for
-`MEMBER_PROCESS`, the member `process` methods of groups of that type.
-
-A workspace asks again while it is open. When the answer changes, the results of `stage` for values
-of `type` are out of date and are computed again when they are needed. So a method defined or
-redefined after the workspace opened takes effect without reopening it.
-
-An answer lists methods, functions and types. The workspace follows what they call and use, so a
-changed helper function counts too, and an answer with the same code as before changes nothing.
-
-The default lists `type` and the methods of the stage that can apply; `SOURCE_READ` and
-`ITEM_PROCESS` also list the `label` methods of the project, since these stages make the labels of
-the items they give. A project that keeps its stage code in values, such as callbacks stored in the
-project, adds a method that returns those values.
-"""
-function stage_roots(project::AbstractProject, stage::PipelineStage, type::Type)::Vector
-    P = typeof(project)
-    signatures = stage_signatures(P, stage, type)
-    stage == ITEM_PROCESS && append!(signatures, Any[(label, Tuple{P,type}), (label, Tuple{type})])
-    # TODO(item revision): reading and processing give items of other types, whose labels any
-    # `label` method of the project can make. This goes when labels get their own revision.
-    stage in (SOURCE_READ, ITEM_PROCESS) && push!(signatures, (label, Tuple{P,Any}))
-    return Any[type; [method for (callback, signature) in signatures for method in methods(callback, signature)]]
-end
-
-# The calls that run `stage` for values of type `T`: each a function and its argument types.
+# The calls that run `stage` for values of type `T`: each a function and its argument types. `T` is
+# a source item type for `SOURCE_READ`, with or without members; an item type for `ITEM_PROCESS`; a
+# group type for `GROUP_PROCESS`, and for `MEMBER_PROCESS`, the type of the groups whose member
+# `process` methods run.
 stage_signatures(P::Type, stage::PipelineStage, T::Type)::Vector{Any} =
     stage == SOURCE_READ ? Any[(read, Tuple{P,Any,T}), (read, Tuple{Any,T}),
         (read, Tuple{P,Any,T,AbstractVector}), (read, Tuple{Any,T,AbstractVector})] :
@@ -191,9 +165,10 @@ stage_signatures(P::Type, stage::PipelineStage, T::Type)::Vector{Any} =
     which(project, stage, type) -> Union{Method,LineNumberNode,Nothing}
 
 The code of the project that `stage` runs: for `SOURCE_READ`, the code that reads `source_item`, with
-or without members; for the other stages, the code that runs for values of `type`, as for
-[`stage_roots`](@ref). The browser shows it where it shows how an item was made, and opens it in an
-editor.
+or without members; for the other stages, the code that runs for values of `type`, which is an item
+type for `ITEM_PROCESS`, a group type for `GROUP_PROCESS`, and for `MEMBER_PROCESS`, the type of the
+groups whose member `process` methods run. The browser shows it where it shows how an item was made,
+and opens it in an editor.
 
 The answer is a method, whose docstring the browser shows too, or a place in a file. `nothing`
 means that the stage does nothing of the project's for these values.

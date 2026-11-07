@@ -71,7 +71,6 @@ Base.read(::DataBrowserAPI.AbstractProject, ::DataBrowserAPI.AbstractDataSource,
 DataBrowserAPI.SourceGroup
 DataBrowserAPI.process
 DataBrowserAPI.reconstruct
-DataBrowserAPI.stage_roots
 ```
 
 #### Storage

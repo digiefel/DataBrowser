@@ -453,7 +453,7 @@ caller holds the catalog lock.
 """
 function code!(workspace::Workspace, signature::Type, f)::Code
     return get!(workspace.code, signature) do
-        roots = Base.invokelatest(code_roots, workspace.project, signature, f)
+        roots = code_roots(workspace.project, signature, f)
         code = Code(f, roots, Base.get_world_counter(), code_revision(roots))
         warn_untracked(signature, code)
         code
@@ -464,14 +464,23 @@ end
     code_roots(project, signature, f) -> Vector
 
 The functions, methods and types whose code runs when a function is called with the argument
-types of `signature`: for the stages of the pipeline, what [`stage_roots`](@ref) gives for the type
-they run for; else the function. A callable object that is not a function, such as a fit, runs the
-methods that make its type callable, whose parameters include the types of the functions it holds.
+types of `signature`. For a stage of the pipeline, these are the type it runs for and the methods
+of the stage that can apply to it; reading and processing also make the labels of the items they
+give, so they add the `label` methods of the project. Else the root is the function. A callable
+object that is not a function, such as a fit, runs the methods that make its type callable, whose
+parameters include the types of the functions it holds.
 """
 function code_roots(project::AbstractProject, signature::Type, f)::Vector
     found = stage(signature)
-    found === nothing || return stage_roots(project, found...)
-    return f isa Function ? Any[f] : Any[typeof(f); collect(methods(f))]
+    found === nothing && return f isa Function ? Any[f] : Any[typeof(f); collect(methods(f))]
+    at, T = found
+    P = typeof(project)
+    signatures = DataBrowserAPI.stage_signatures(P, at, T)
+    at == ITEM_PROCESS && append!(signatures, Any[(label, Tuple{P,T}), (label, Tuple{T})])
+    # TODO(item revision): reading and processing give items of other types, whose labels any
+    # `label` method of the project can make. This goes when labels get their own revision.
+    at in (SOURCE_READ, ITEM_PROCESS) && push!(signatures, (label, Tuple{P,Any}))
+    return Any[T; [method for (g, types) in signatures for method in methods(g, types)]]
 end
 
 stage(::Type{<:Tuple{typeof(read),Any,Any,S}}) where {S} = (SOURCE_READ, S)
@@ -742,9 +751,10 @@ end
 #
 # Each signature of a row, its function and the types of its arguments, has a code revision: a
 # content hash of the code it can reach from its roots ([`CodeRevisions.jl`](../CodeRevisions.md)).
-# The roots of a row of the pipeline are `stage_roots(project, stage, type)`: the type and the
-# methods of the stage that can apply to it. A Recipes project defines these methods from its
-# registrations, with the callbacks in them. The roots of any other row are its function. A callable
+# The roots of a row of the pipeline are the type it runs for and the methods of the stage that can
+# apply to it, with the `label` methods of the project when the row reads or processes an item. A
+# Recipes project defines these methods from its registrations, with the callbacks in them, so a
+# changed callback is changed code too. The roots of any other row are its function. A callable
 # object that is not a function, such as a fit, has as roots its type and the methods that make the
 # type callable: the parameters of the type include the types of the functions it holds, such as the
 # curve of the fit. The workspace follows the code only into `Main` and into packages developed from

@@ -245,39 +245,6 @@ end
     end
 end
 
-# Keeps its reading code in a value, as a project of registered callbacks does.
-mutable struct CallbackProject <: AbstractProject
-    count::Function
-end
-DataBrowserAPI.project_name(::CallbackProject) = "callback"
-const CALLBACK_READS = Threads.Atomic{Int}(0)
-function DataBrowserAPI.read(p::CallbackProject, ::EngineSource, s::EngineSourceItem)
-    Threads.atomic_add!(CALLBACK_READS, 1)
-    return EngineItem("source", (x=[p.count(s)],), Dict())
-end
-DataBrowserAPI.stage_roots(p::CallbackProject, stage::DataBrowserAPI.PipelineStage, type::Type) =
-    stage == DataBrowserAPI.SOURCE_READ ? Any[p.count] : Any[]
-
-@testset "a callback replaced after the workspace opens reads the source again" begin
-    project = CallbackProject(_ -> 0)
-    ws = W.open_workspace(project, EngineSource("source", 1, false); cache=false)
-    read_count() = data(only(W.materialize_items(ws, ["source"]))).x
-    try
-        settled(ws)
-        @test read_count() == [0]
-        project.count = _ -> 2
-        @test timedwait(() -> read_count() == [2], 10) === :ok
-        settled(ws)
-        reads = CALLBACK_READS[]
-        # The same code again, as when a script runs again.
-        project.count = _ -> 2
-        sleep(2)
-        @test CALLBACK_READS[] == reads
-    finally
-        W.close_workspace!(ws)
-    end
-end
-
 struct HelperProject <: AbstractProject end
 DataBrowserAPI.project_name(::HelperProject) = "helper"
 DataBrowserAPI.read(::HelperProject, source::EngineSource, item::EngineSourceItem) =

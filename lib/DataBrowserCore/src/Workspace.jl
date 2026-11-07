@@ -76,7 +76,6 @@ import DataBrowserAPI:
     members,
     metadata,
     process,
-    stage_roots,
     read,
     reconstruct,
     open_source,
