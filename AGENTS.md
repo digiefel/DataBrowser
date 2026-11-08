@@ -37,7 +37,7 @@ make each one the subject of the sentences about it:
 - "List the items that the tree shows" → "Build the tree"
 - "The lines of the tree could not be made" → "Failed to build the tree"
 
-Before you send a text, read each sentence once, as its reader would. The rules below describe the
+When you write documentation, reread each sentence once, as its reader would. The rules below describe the
 faults most likely to trip a reader, each with sentences that show the fault and its fix. Still, no
 rule justifies a sentence that sounds unnatural.
 
@@ -45,8 +45,6 @@ rule justifies a sentence that sounds unnatural.
    words, and with a comparison when one fits; a concrete noun is always clearer than a vague
    description. When a text needs several new terms, define each one in the example that first
    uses it. Also, mark a term in italics where you define it, and nowhere else.
-   - "Each user has an inbox. The inbox stores messages." → "Each user has an *inbox*, which holds
-     the messages sent to them."
    - "A place that keeps values" → "A table with one row for each value, as in a spreadsheet"
    - "`Row(3)`" with no explanation → "`Row(3)` is the third row of the table"
    - a list of definitions at the top of the page → "When you save a file, the server adds a
@@ -64,8 +62,7 @@ rule justifies a sentence that sounds unnatural.
    for the actor, and so do two nouns before their verb.
    - "For an order that has shipped and a cancellation from the customer, the store refunds it" →
      "When a customer cancels an order that has already shipped, the store refunds it."
-   - "the items that the tree shows" → "the items shown by the tree", or "the tree shows the
-     items"
+   - "the items that the tree shows" → "the items shown by the tree", or "the tree shows the items"
    - "the files that the user opens" → "the files opened by the user"
 4. **Let each word mean one thing at first reading.** Use one term for each thing, the same one the
    code uses. Beyond that, three things make a word ambiguous: a noun used as a verb, above all
