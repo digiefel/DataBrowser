@@ -109,7 +109,7 @@ function _project_view_from_browser(
     return PersistedProjectView(
         window_size=Int[GLFW.GetWindowSize(ig.current_window())...],
         window_position=Int[GLFW.GetWindowPos(ig.current_window())...],
-        selected=copy(workspace.selection.item_ids),
+        selected=copy((@atomic workspace.shared).selection),
         expanded=sort!(collect(state.expanded)),
         filter=state.tree_filter,
         sort=by isa Workspace.SortKeys ? [[String(key), reverse ? "descending" : "ascending"] for (key, reverse) in by.keys] :
@@ -229,11 +229,11 @@ function _apply_project_view!(
 )::Nothing
     workspace = state.workspace
     state.expanded = Set(view.expanded)
-    # Not `select!`: the saved ids may name items the workspace does not have yet.
-    # TODO: restore the selection through a workspace operation (see the TODO above).
-    workspace.selection.item_ids = collect(String, view.selected)
-    workspace.selection.revision += 1
-    state.selection_revision = workspace.selection.revision
+    # Not `select!`: the saved ids may name items the workspace does not have yet. The browser
+    # restores the selection without revealing it.
+    # TODO: `select!`, once it keeps the ids of items that come later (docs/plans/client-api.md).
+    state.selection = collect(String, view.selected)
+    Workspace.share!(_ -> (; selection=state.selection), workspace)
     state.tree_filter = view.filter
     ## The order of the Sort menu, unless code set an order with `sort!`.
     if !isempty(view.sort) && Workspace.order(workspace) isa Workspace.SortKeys

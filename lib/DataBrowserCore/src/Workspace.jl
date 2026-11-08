@@ -93,32 +93,16 @@ end
 WorkspaceScan()::WorkspaceScan = WorkspaceScan(:idle, "", nothing, Base.Threads.Atomic{Int}(0))
 
 """
-What is selected in a workspace: items by public id. The selection changes only when items are
-selected, with [`select!`](@ref) or by a browser that restores its saved view. The ids stay the same
-when the workspace is closed and opened again, and when a source item stops giving an item. So a
-selection may name an item before the workspace has it, or after the workspace loses it.
+The *shared state* of a workspace: the ids of its selection, in the order given, with ids of items
+that the workspace does not have yet or no longer has; its tags, as `tags.txt` keeps them, and why
+that file could not be read, if it could not; and the order of its items, set by `sort!`. Clients
+set it, and every client sees it: a script that selects items selects them in the browser too.
 
-`revision` rises with each change of `item_ids`. A browser compares it to tell whether the selection
-changed, without reading the ids, and reveals a selection it did not make itself.
+A write replaces the shared state whole with [`share!`](@ref), so a reader loads
+`@atomic workspace.shared` and reads it without a lock. A published value never changes.
 """
-Base.@kwdef mutable struct WorkspaceSelection
-    item_ids::Vector{String} = String[]
-    revision::Int = 0
-end
-
-"""
-The tags of a workspace: the sections of its project in `tags.txt`, in the folder of the
-workspace.
-
-`error` says why the file could not be read; tags cannot change while it is set. `revision`
-increases with every change, for views that keep what they computed from the tags.
-"""
-mutable struct WorkspaceTags
-    state::TagState
-    error::String
-    revision::Int
-end
-WorkspaceTags(state::TagState, error::String) = WorkspaceTags(state, error, 0)
+const Shared = @NamedTuple{selection::Vector{String}, tags::TagState, tags_error::String,
+    order::@NamedTuple{by::Any, order::Base.Order.Ordering}}
 
 """
 Loaded cache state for one workspace.
@@ -286,7 +270,7 @@ Base.getindex(column::Union{Column,Cells}, row::Row) = column[row.index]
 # The type and the default cell of each column of the table `items`.
 const COLUMNS = (id = (String, ""), version = (Row, Catalogs.NOWHERE), label = (String, ""),
     type = (Type, Any), value_revision = (UInt64, UInt64(0)), key = (Int64, Int64(0)),
-    tags = (Vector{String}, String[]), groups = (Vector{String}, String[]), source = (String, ""))
+    groups = (Vector{String}, String[]), source = (String, ""))
 
 # The type and the default cell of each column of the rows of the catalog.
 const ROWS = (readiness = (Readiness, UNPROCESSED), failure = (String, ""), changes = (UInt32, UInt32(0)),
@@ -311,8 +295,8 @@ end
 The table `items` of a workspace: one row for each item, groups included, numbered 1, 2, 3… in the
 order in which the workspace first sees them. The columns hold, for each item, its id; its latest
 version, a row of the catalog; its label and type; `value_revision`, the key of its value in the
-store of its type; `key`, the key of its value in the cache; the names of its tags; the ids of its
-groups; and `source`, the id of the source item that it comes from. When an item leaves the
+store of its type; `key`, the key of its value in the cache; the ids of its groups; and `source`,
+the id of the source item that it comes from. When an item leaves the
 workspace, its version in the draft is `Catalogs.NOWHERE`, and the next new item takes its number.
 
 Each row of the catalog keeps cells in `rows`, at its position: its [`Readiness`](@ref), the message
@@ -358,22 +342,20 @@ mutable struct Items
     ## Notified at each publish, at each new answer of `select(workspace, f)`, and when the table
     ## closes.
     const published::Threads.Condition
-    ## Under `lock`: the ids asked for by readers, until a version follows their request; the order
-    ## set by `sort!`; and the answer for each function given to `select`, with the time when it was
-    ## last asked for.
+    ## Under `lock`: the ids asked for by readers, until a version follows their request, and the
+    ## answer for each function given to `select`, with the time when it was last asked for.
     const requested::Set{String}
-    order::@NamedTuple{by::Any, order::Base.Order.Ordering}
     const answers::Dict{Any,@NamedTuple{selection::Any, asked::Float64}}
     closed::Bool
 end
 function Items()
     lock, index, columns = ReentrantLock(), Base.PersistentDict{String,Int32}(), map(((T, default),) -> Column{T}(default), COLUMNS)
-    rows, order = map(((T, default),) -> Column{T}(default), ROWS), SortKeys([:label => false])
+    rows = map(((T, default),) -> Column{T}(default), ROWS)
     return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
             Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts()),
         Union{AbstractVector{<:AbstractString},Row}[], lock, Threads.Condition(lock), Set{String}(),
-        (by = order, order = Base.Order.ord(order, identity, false)), Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
+        Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
 end
 
 """
@@ -450,9 +432,10 @@ mutable struct Workspace
     # throws.
     stores::Dict{Type,Union{Nothing,AbstractStore}}
     stores_lock::ReentrantLock
-    selection::WorkspaceSelection
     items::Items
-    tags::WorkspaceTags
+    # The shared state, and the lock that its writers take; see `share!`.
+    @atomic shared::Shared
+    shared_lock::ReentrantLock
     cache::WorkspaceCache
     scan::WorkspaceScan
     # The cache is the persistence side of the scan, not a separately cancellable job, so it needs
@@ -545,9 +528,12 @@ function Workspace(
         Dict{Row,ReentrantLock}(), Set{Row}(),
         Task[], 0, 0, (0, 0, 0),
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
-        WorkspaceSelection(),
         Items(),
-        WorkspaceTags(project, folder),
+        # The items sort by their labels until a call to `sort!`.
+        (; selection=String[], tags(project, folder)..., order=let labels = SortKeys([:label => false])
+            (by=labels, order=Base.Order.ord(labels, Base.identity, false))
+        end),
+        ReentrantLock(),
         WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),
         :idle, "", "",

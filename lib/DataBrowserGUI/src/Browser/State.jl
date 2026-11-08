@@ -274,9 +274,9 @@ Base.@kwdef mutable struct BrowserState
     expanded::Set{String} = Set{String}()
     tree_filter::String = ""
     tree_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
-    # The revision of the workspace selection the browser last revealed, and the id of the row to
-    # scroll the tree to.
-    selection_revision::Int = 0
+    # The selection of the workspace that the browser last revealed or made itself, and the id of
+    # the row to scroll the tree to.
+    selection::Vector{String} = String[]
     scroll_to_item_id::Union{Nothing,String} = nothing
     # How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,
     # `:only` hides the items without it.

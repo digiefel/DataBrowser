@@ -158,7 +158,7 @@ Values whose latest version is not computed yet are computed now, and the call w
 """
 function select(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Selection
     version = wait_processed(workspace, ids)
-    return Selection(workspace, version, Int32[version.index[x] for x in ids])
+    return Selection(workspace, version, (@atomic workspace.shared), Int32[version.index[x] for x in ids])
 end
 
 """
@@ -208,18 +208,19 @@ function Selection(data::ItemData, ids, labels, groups, tags, metadata)
     return Selection(StructArray(NamedTuple{(:id, :label, :groups, :tags, first.(metadata)..., :data)}((columns..., data))))
 end
 
-# The items `numbers` of `version`, with the metadata keys that one of them has, in alphabetical
-# order, or with `every` all the metadata keys of `version`, as in the rows that
-# `select(workspace, f)` gives to `f`. The columns are copies of the cells, and of each vector in
-# them, so that a change to the selection leaves the version as it is. The metadata of an item is
-# that of its value, at the key of the value; key 0, of an item without a value, has none.
-function Selection(workspace::Workspace, version::Version, numbers::Vector{Int32}; every::Bool=false)
+# The items `numbers` of `version`, with their tags in the shared state `shared`, and with the
+# metadata keys that one of them has, in alphabetical order, or with `every` all the metadata keys
+# of `version`, as in the rows that `select(workspace, f)` gives to `f`. The columns are copies of
+# the cells, and of each vector in them, so that a change to the selection leaves the version as it
+# is. The metadata of an item is that of its value, at the key of the value; key 0, of an item
+# without a value, has none.
+function Selection(workspace::Workspace, version::Version, shared::Shared, numbers::Vector{Int32}; every::Bool=false)
     copied(cells, at=numbers) = eltype(cells)[(cell = cells[n]; cell isa Vector ? copy(cell) : cell) for n in at]
     columns, ids = version.columns, copied(version.columns.id)
     at = copied(columns.key)
     names = sort!([name for (name, cells) in version.metadata if every || any(key -> cells[key] !== missing, at)])
     return Selection(ItemData(workspace, copy(ids)), ids, copied(columns.label), copied(columns.groups),
-        copied(columns.tags), [name => copied(version.metadata[name], at) for name in names])
+        [[tag.name for tag in tags(shared.tags, x)] for x in ids], [name => copied(version.metadata[name], at) for name in names])
 end
 
 """
@@ -228,10 +229,8 @@ end
 The workspace's selection, which [`select!`](@ref) and the browser change, as a [`Selection`](@ref).
 Selected ids that the workspace has no value for are left out.
 """
-function selection(workspace::Workspace)::Selection
-    ids = @lock workspace.lifecycle_lock copy(workspace.selection.item_ids)
-    return select(workspace, filter(x -> haskey(workspace, x), ids))
-end
+selection(workspace::Workspace)::Selection =
+    select(workspace, filter(x -> haskey(workspace, x), (@atomic workspace.shared).selection))
 
 """
     items(selection) -> Vector

@@ -64,7 +64,7 @@ the groups above them, and scroll to the first selected value.
 """
 function _reveal_selected_items!(state::BrowserState)::Nothing
     workspace = state.workspace
-    selected = filter(x -> haskey(workspace, x), workspace.selection.item_ids)
+    selected = filter(x -> haskey(workspace, x), (@atomic workspace.shared).selection)
     isempty(selected) && return nothing
     pending, above = String[group for x in selected for group in Workspace.groups(workspace, x)], Set{String}()
     while !isempty(pending)

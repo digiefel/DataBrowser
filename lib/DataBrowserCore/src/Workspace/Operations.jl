@@ -44,7 +44,7 @@ end
 Rebuild `workspace` in place. The project cannot change. Omitted `source`, `cache` and
 `background_processing` stay as they are. Omitted `source` is a `copy` of the current source so the
 closed source's watchers are not reused. `rebuild=true` empties the cache
-first; it is not a stored setting. The selection stays.
+first; it is not a stored setting. The selection, the tags and the order set by `sort!` stay.
 
 A failed rebuild leaves the workspace closed. Changes to project code do not need a rebuild: an open
 workspace notices them (see [`check_code!`](@ref)).
@@ -64,9 +64,10 @@ function modify_workspace!(
             fresh = Workspace(workspace.project, opened_source; rebuild,
                 cache=something(cache, workspace.disk_cache),
                 background_processing=something(background_processing, workspace.background_processing))
-            # What a browser keeps of the workspace stays: its lock, its selection, its generation.
+            # What a browser keeps of the workspace stays: its lock, its shared state, its
+            # generation.
             for field in fieldnames(typeof(workspace))
-                field in (:lifecycle_lock, :selection, :generation, :code_updates_active, :status, :work) ||
+                field in (:lifecycle_lock, :shared, :shared_lock, :generation, :code_updates_active, :status, :work) ||
                     setfield!(workspace, field, getfield(fresh, field))
             end
             @atomic workspace.status = -1 => WorkspaceStatus()
@@ -87,7 +88,7 @@ end
 
 """
 Empty the cache and scan the source again: every source item is read again, and each metadata name
-takes the type of its first new value. The selection stays.
+takes the type of its first new value. The selection, the tags and the order set by `sort!` stay.
 """
 function rebuild_cache!(workspace::Workspace)::Nothing
     can_rebuild_cache(workspace) || error("The cache can be rebuilt only while the workspace is open and no scan runs")
@@ -146,12 +147,26 @@ follows it, and reveals the values. An empty list clears the selection. [`select
 it.
 """
 function select!(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Nothing
-    unknown = @lock workspace.catalog.lock filter(x -> !haskey(workspace.versions, x), ids)
+    unknown = filter(x -> !haskey(workspace, x), ids)
     isempty(unknown) || error("The workspace has no item with the id(s) ", join(unknown, ", "))
-    @lock workspace.lifecycle_lock begin
-        workspace.selection.item_ids = collect(String, ids)
-        workspace.selection.revision += 1
+    share!(_ -> (; selection=collect(String, ids)), workspace)
+    return nothing
+end
+
+"""
+    share!(change, workspace)
+
+Internal. Replace the [`Shared`](@ref) state of `workspace` with the current one merged with
+`change(shared)`, a named tuple of the parts that change, and wake the tasks that follow it. Writers
+take `workspace.shared_lock`, one at a time, and `change` runs under it, so that `tag!` writes
+`tags.txt` in the order of the changes. A browser restores its saved selection this way.
+"""
+function share!(change::Function, workspace::Workspace)::Nothing
+    @lock workspace.shared_lock begin
+        shared = @atomic workspace.shared
+        @atomic workspace.shared = merge(shared, change(shared))
     end
+    changed!(workspace)
     return nothing
 end
 

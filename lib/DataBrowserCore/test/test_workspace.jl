@@ -126,7 +126,7 @@ end
     end
 end
 
-@testset "reading the workspace does not wait for a task that holds the catalog lock" begin
+@testset "reading and writing the workspace do not wait for a task that holds the catalog lock" begin
     ws = W.open_workspace(EngineProject("held", 0), EngineSource("source", 1, false); cache=false, background_processing=true)
     try
         settled(ws)
@@ -140,8 +140,17 @@ end
             W.cache_info(ws, value), W.last_execution(ws, value), W.readiness(ws, "1"))
         @test timedwait(() -> istaskdone(reader), 1.0) === :ok
         @test fetch(reader)[4].cached
+        writer = Threads.@spawn begin
+            W.select!(ws, ["1"])
+            tag!(ws, Tag("held"))
+            tag!(ws, "1", "held")
+            sort!(ws; by=row -> row.id)
+        end
+        @test timedwait(() -> istaskdone(writer), 1.0) === :ok
         notify(release)
         wait(holder)
+        wait(writer)
+        @test W.selection(ws).tags == [["held"]]
     finally
         W.close_workspace!(ws)
     end

@@ -163,7 +163,7 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     _render_tag_state_error!(state)
     _render_tag_visibility!(state)
     workspace = state.workspace
-    key = hash((state.tree_filter, state.expanded, state.tag_visibility, workspace.tags.revision, _tags_ready(state)))
+    key = hash((state.tree_filter, state.expanded, state.tag_visibility, _tags_ready(state)))
     cache, task = state.tree_cache, state.tree_build_task
     ## When a build is done, show its tree, with the columns added by the frame meanwhile. If the
     ## build failed, keep the old tree until the key changes.
@@ -216,9 +216,9 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     ## on an item gives the keyboard to the list, a child window of the tree.
     if ig.IsKeyPressed(ig.ImGuiKey_A) && ig.IsWindowFocused(ig.ImGuiFocusedFlags_ChildWindows) &&
             unsafe_load(ig.GetIO().KeyCtrl) && !unsafe_load(ig.GetIO().WantTextInput)
-        Workspace.select!(workspace, unique!([item.id for item in items]))
         # The browser made this selection itself: nothing to reveal.
-        state.selection_revision = workspace.selection.revision
+        state.selection = unique!([item.id for item in items])
+        Workspace.select!(workspace, state.selection)
     end
 
     ## Draw the item to scroll to, even when it is out of view.
@@ -279,7 +279,7 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                         _update_multi_selection!(ids, item.id, [other.id for other in items],
                             unsafe_load(io.KeyShift), unsafe_load(io.KeyCtrl))
                         Workspace.select!(workspace, ids)
-                        state.selection_revision = workspace.selection.revision
+                        state.selection = ids
                     end
                     isgroup = Workspace.valuetype(workspace, item.id) <: AbstractGroup
                     if ig.BeginPopupContextItem()

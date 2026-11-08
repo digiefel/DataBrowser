@@ -12,16 +12,17 @@ otherwise at most once each `PUBLISH_INTERVAL`, it writes the readiness, failure
 key of the catalog rows whose state, priority or job changed, 1000 at a time, each part under the
 catalog lock. Once none is left and a cell changed, it stores the draft as a new version. Then,
 without a lock, it runs each function given to `select` in the last 10 seconds on the rows of the
-items whose cells shown by `select` changed in that version, and merges the items that pass into the
-order set by `sort!`. A new function runs on the row of every item, and a new order sorts every item
-again. An error stops the task, and readers that wait throw from then on.
+items whose cells shown by `select` changed in that version, or whose tags changed in the shared
+state, and merges the items that pass into the order set by `sort!`. A new function runs on the row
+of every item, and a new order sorts every item again. An error stops the task, and readers that
+wait throw from then on.
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
     catalog, columns, rows = workspace.catalog, items.columns, items.rows
     last, timer = 0.0, Timer(0)
-    ## Owned by this task: the sort key of each item, by its number, the order of those keys, and
-    ## for each function the sorted numbers of the items that pass it.
-    keys_of, sorted_by, passed = Dict{Int32,Any}(), nothing, Dict{Any,Vector{Int32}}()
+    ## Owned by this task: the sort key of each item, by its number, the order of those keys, for
+    ## each function the sorted numbers of the items that pass it, and the tags of the last pass.
+    keys_of, sorted_by, passed, tagged = Dict{Int32,Any}(), nothing, Dict{Any,Vector{Int32}}(), nothing
     try
         while true
             wait(items.event)
@@ -88,15 +89,27 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             end
             ## The requests end with this version, or with the last one when no cell changed. The
             ## answers that nobody asked for in the last 10 seconds are dropped.
-            version = @atomic items.version
-            order, functions = @lock items.lock begin
+            version, shared = (@atomic items.version), (@atomic workspace.shared)
+            order = shared.order
+            functions = @lock items.lock begin
                 setdiff!(items.requested, requested)
                 ## The calls of `evaluate` that waited since the start of this pass return.
                 foreach(row -> deleteat!(items.readers, findfirst(isequal(row), items.readers)), filter(reader -> reader isa Row, readers))
                 notify(items.published)
                 filter!(answer -> time() - answer.second.asked < 10, items.answers)
-                items.order, collect(keys(items.answers))
+                collect(keys(items.answers))
             end
+            ## The items whose tags changed count as changed, and when the tags were defined again,
+            ## every item with a tag, whose tags may sort in another order.
+            if tagged !== nothing && shared.tags !== tagged
+                before, after, defined = tagged.assignments, shared.tags.assignments, isequal(tagged.catalog, shared.tags.catalog)
+                for x in union(keys(before), keys(after))
+                    defined && isequal(get(before, x, nothing), get(after, x, nothing)) && continue
+                    n = number(version, x)
+                    n == 0 || push!(changed, n)
+                end
+            end
+            tagged = shared.tags
             filter!(found -> found.first in functions, passed)
             ## Without functions, the task keeps nothing, and the next function runs on every item.
             isempty(functions) && (empty!(keys_of); sorted_by = nothing; continue)
@@ -111,7 +124,7 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             ## TODO(scale): a new function runs on the row of every item.
             asked = any(f -> !haskey(passed, f), functions) ? filter(present, Int32(1):Int32(length(version.columns.id))) :
                 filter(present, collect(changed))
-            table = Selection(workspace, version, asked; every=true)
+            table = Selection(workspace, version, shared, asked; every=true)
             ## The functions of a script run in the latest world, so that they can call the code
             ## that the script defined after the workspace opened.
             remade = Any[]
@@ -159,7 +172,7 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             end
             ## The answers that are new, or whose items or cells changed, copy the cells of this
             ## version. Typed, so that a new function compiles nothing here.
-            answers = Pair{Any,Any}[f => Selection(workspace, version, passed[f]) for f in remade]
+            answers = Pair{Any,Any}[f => Selection(workspace, version, shared, passed[f]) for f in remade]
             @lock items.lock begin
                 for (f, selection) in answers
                     items.answers[f] = (; selection, items.answers[f].asked)
@@ -281,9 +294,7 @@ sort!(workspace; by=row -> row.timestamp, rev=true)  # the latest first
 When `by` or `lt` throws, the items sort by their labels again, and the error is logged once.
 """
 function Base.sort!(workspace::Workspace; by, lt=isless, rev::Bool=false)::Workspace
-    items = workspace.items
-    @lock items.lock items.order = (; by, order=Base.Order.ord(lt, identity, rev))
-    notify(items.event)
+    share!(_ -> (; order=(; by, order=Base.Order.ord(lt, identity, rev))), workspace)
     return workspace
 end
 
@@ -292,7 +303,7 @@ end
 
 Internal. The `by` of the last call to [`sort!`](@ref), or the `SortKeys` of the labels before one.
 """
-order(workspace::Workspace) = @lock workspace.items.lock workspace.items.order.by
+order(workspace::Workspace) = (@atomic workspace.shared).order.by
 
 """
 The label of a value, as [`select`](@ref) gives it: the one given by its latest version, or its id

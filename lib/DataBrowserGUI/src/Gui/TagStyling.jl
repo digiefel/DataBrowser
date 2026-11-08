@@ -6,7 +6,7 @@ function _render_tag_state_error!(state::BrowserState)::Nothing
     ig.TextColored((1.0, 0.5, 0.5, 1.0), "tags error")
     if ig.BeginItemTooltip()
         ig.PushTextWrapPos(ig.GetFontSize() * 35.0)
-        ig.TextUnformatted(state.workspace.tags.error)
+        ig.TextUnformatted((@atomic state.workspace.shared).tags_error)
         ig.PopTextWrapPos()
         ig.EndTooltip()
     end

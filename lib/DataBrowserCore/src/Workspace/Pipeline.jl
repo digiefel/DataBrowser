@@ -264,7 +264,7 @@ end
     write!(workspace, id)
 
 Make the cells of the item `id` in the draft of the table `items` follow the workspace: its latest
-version, label, type, the revision and the key of its value, tags, groups and source item. A new
+version, label, type, the revision and the key of its value, groups and source item. A new
 item takes a number that no item has, and an id that is not an item is left out. An item that
 leaves the workspace gives its number to the next new item: the versions published before keep
 their cells. The caller holds the catalog lock.
@@ -283,11 +283,10 @@ function write!(workspace::Workspace, x::String)::Nothing
     end
     value = output(workspace, x)
     version = rows === nothing ? Catalogs.NOWHERE : rows[end]
-    ## The cells that `select` shows: whether the workspace has the item, its label, tags and groups.
+    ## The cells that `select` shows: whether the workspace has the item, its label and groups.
     shown = (columns.version[number] == Catalogs.NOWHERE) != (version == Catalogs.NOWHERE)
     write!(items, columns.version, number, version)
     shown |= write!(items, columns.label, number, value === nothing ? x : value.label)
-    shown |= write!(items, columns.tags, number, [tag.name for tag in tags(workspace, x)])
     shown |= write!(items, columns.groups, number, get(workspace.groups, x, String[]))
     write!(items, columns.type, number, value === nothing ? Any : value.type)
     write!(items, columns.source, number, rows === nothing ? "" : source(workspace, rows[1]))

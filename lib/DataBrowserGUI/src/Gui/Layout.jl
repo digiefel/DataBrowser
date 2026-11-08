@@ -279,10 +279,12 @@ function _run_browser(
             end
             @invokelatest _check_source_identity!(state, workspace)
             @invokelatest _check_cache_error!(state, workspace)
-            # Reveal a selection made through the workspace, from the REPL or by an action.
-            if workspace.selection.revision != state.selection_revision
-                state.selection_revision = workspace.selection.revision
-                @invokelatest _reveal_selected_items!(state)
+            # Reveal a selection made through the workspace, from the REPL or by an action: one
+            # that differs from the selection that the browser revealed or made itself.
+            selected = (@atomic workspace.shared).selection
+            if selected !== state.selection
+                selected == state.selection || @invokelatest _reveal_selected_items!(state)
+                state.selection = selected
             end
             exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
                 return :imgui_exit_loop

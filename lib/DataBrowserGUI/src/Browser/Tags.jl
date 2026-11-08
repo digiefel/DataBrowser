@@ -3,7 +3,7 @@ import DataBrowserCore.Workspace: Tag, tags, tag!, untag!
 using DataBrowserAPI: AbstractGroup
 
 """Whether the workspace read its tags; they cannot be shown or changed otherwise."""
-_tags_ready(state::BrowserState)::Bool = isempty(state.workspace.tags.error)
+_tags_ready(state::BrowserState)::Bool = isempty((@atomic state.workspace.shared).tags_error)
 
 """
 Return whether an item of type `type` with the tags `names` stays visible, given the `visibility`
@@ -27,15 +27,15 @@ workspace is left untouched. The result is kept for the next calls: do not chang
 function _visible_selection(state::BrowserState)::VisibleSelection
     workspace = state.workspace
     # The tree and every window ask at each frame; looking up each selected id costs time in
-    # proportion to the selection. The selection revision stands for the selected ids.
-    key = hash((objectid(workspace), Workspace.generation(workspace), workspace.selection.revision,
-        hash(state.tag_visibility), workspace.tags.revision, _tags_ready(state)))
+    # proportion to the selection. The generation, read before the selection and the tags, stands
+    # for them.
+    key = hash((objectid(workspace), Workspace.generation(workspace), hash(state.tag_visibility), _tags_ready(state)))
     kept = state.visible_selection
     kept !== nothing && kept.key == key && return kept
     ids = filter(x -> haskey(workspace, x) &&
         _is_visible(state.tag_visibility, _tags_ready(state),
             (tag.name for tag in tags(workspace, x)), Workspace.valuetype(workspace, x)),
-        workspace.selection.item_ids)
+        (@atomic workspace.shared).selection)
     visible = VisibleSelection(key, ids, Set(ids))
     state.visible_selection = visible
     return visible

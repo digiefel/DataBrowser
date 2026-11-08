@@ -1,21 +1,23 @@
 # Tags on the items of a workspace.
 #
 # The tags live in `tags.txt` in the folder of the workspace, in the sections of its project, and
-# every change is written to that file at once. The file names an item by its public id.
+# every change is written to that file at once, under the lock of the shared state. The file names
+# an item by its public id.
 
-function WorkspaceTags(project::AbstractProject, folder::String)::WorkspaceTags
+# The tags of `project` in the `tags.txt` of `folder`, and why the file could not be read, if so.
+function tags(project::AbstractProject, folder::String)::@NamedTuple{tags::TagState, tags_error::String}
     state = try
         Tags.load(folder, project_name(project))
     catch error
         error isa Union{Tags.TagsParseError,Base.IOError} || rethrow()
-        return WorkspaceTags(TagState(), sprint(showerror, error))
+        return (tags=TagState(), tags_error=sprint(showerror, error))
     end
     # A name that the file assigns without defining it becomes a tag with the default properties.
     assigned = Set{String}()
     foreach(names -> union!(assigned, names), values(state.assignments))
     defined = Set(tag.name for tag in state.catalog)
     append!(state.catalog, Tag.(sort!(collect(setdiff(assigned, defined)))))
-    return WorkspaceTags(state, "")
+    return (tags=state, tags_error="")
 end
 
 """
@@ -25,14 +27,14 @@ end
 The tags defined in a workspace, or the tags of one item, with the highest priority first. Give an
 item as its public id, or as a data item.
 """
-tags(workspace::Workspace)::Vector{Tag} = copy(workspace.tags.state.catalog)
+tags(workspace::Workspace)::Vector{Tag} = copy((@atomic workspace.shared).tags.catalog)
+tags(workspace::Workspace, item::Union{AbstractString,AbstractDataItem})::Vector{Tag} =
+    tags((@atomic workspace.shared).tags, item)
 
-function tags(workspace::Workspace, item::Union{AbstractString,AbstractDataItem})::Vector{Tag}
-    assignments = workspace.tags.state.assignments
-    isempty(assignments) && return Tag[]
-    names = get(assignments, tag_key(item), ())
-    return isempty(names) ? Tag[] :
-        sort!(filter(tag -> tag.name in names, workspace.tags.state.catalog); by=tag -> -tag.priority)
+# The tags of one item in `state`, with the highest priority first.
+function tags(state::TagState, item::Union{AbstractString,AbstractDataItem})::Vector{Tag}
+    names = get(state.assignments, tag_key(item), ())
+    return isempty(names) ? Tag[] : sort!(filter(tag -> tag.name in names, state.catalog); by=tag -> -tag.priority)
 end
 
 """
@@ -61,34 +63,23 @@ tag_key(item::AbstractDataItem)::String = id(item)
 """The name of a defined tag, given the tag or its name."""
 function tag_name(workspace::Workspace, tag::Union{Tag,AbstractString})::String
     name = tag isa Tag ? tag.name : String(tag)
-    defined = [tag.name for tag in workspace.tags.state.catalog]
+    defined = [tag.name for tag in (@atomic workspace.shared).tags.catalog]
     name in defined || error(
         "This workspace has no tag named \"$name\". Define it with `tag!(workspace, Tag(\"$name\"))`." *
         (isempty(defined) ? "" : " Its tags are: " * join(defined, ", ") * "."))
     return name
 end
 
-"""Apply `change` to the tags of a workspace and write them to `tags.txt`."""
+"""Apply `change` to a copy of the tags of a workspace, write it to `tags.txt` and share it."""
 function change_tags!(change::Function, workspace::Workspace)::Nothing
-    isempty(workspace.tags.error) ||
-        error("Tags cannot change until tags.txt is fixed: $(workspace.tags.error)")
-    lock(workspace.lifecycle_lock) do
-        state = deepcopy(workspace.tags.state)
+    share!(workspace) do shared
+        isempty(shared.tags_error) ||
+            error("Tags cannot change until tags.txt is fixed: $(shared.tags_error)")
+        state = deepcopy(shared.tags)
         change(state)
         Tags.save(workspace.folder, project_name(workspace.project), state)
-        ## Workers read the tags under the catalog lock, so the new tags replace the old ones
-        ## there, together with the cells of the items whose tags changed.
-        before, after = workspace.tags.state.assignments, state.assignments
-        @lock workspace.catalog.lock begin
-            workspace.tags.state = state
-            for x in union(keys(before), keys(after))
-                get(before, x, Set{String}()) == get(after, x, Set{String}()) || write!(workspace, x)
-            end
-            changed!(workspace)
-        end
-        workspace.tags.revision += 1
+        (; tags=state)
     end
-    return nothing
 end
 
 """
