@@ -24,7 +24,7 @@ function render_toolbar!(state::BrowserState)::Nothing
         choices = visualizers(Workspace.Selection)
         picked = render_list_picker!(state.window_picker, [ListItem(label(choice)) for choice in choices])
         ## A window says so when its visualizer cannot show the value it is given.
-        picked === nothing || (open_window!(state, choices[picked]); ig.CloseCurrentPopup())
+        picked === nothing || (visualize!(state, choices[picked]); ig.CloseCurrentPopup())
         ig.EndMenu()
     end
     if ig.BeginMenu("Debug")

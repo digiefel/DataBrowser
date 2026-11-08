@@ -150,5 +150,5 @@ function _window_caption(state::BrowserState, window::Window)::String
     # The stable ### id also keeps a docked tab's identity while its indicator rotates.
     spinner = ("◐", "◓", "◑", "◒")
     prefix = preparing(window) ? spinner[mod(floor(Int, ig.GetTime() * 8), length(spinner)) + 1] * " " : ""
-    return "$(prefix)$(title(state, window))###$(window.id)"
+    return "$(prefix)$(title(state, window.visualizer))###$(window.id)"
 end

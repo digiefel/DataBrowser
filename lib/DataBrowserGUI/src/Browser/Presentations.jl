@@ -1,16 +1,16 @@
-# How a window shows a selection: one visualizer for all items (Overlay), or one cell for each item
-# (Stack and Grid). The visualizer of the window holds the settings; the visualizer of each cell
-# holds what it prepared for its item and its drawing state.
+# How a window shows a selection: one instance for all items (Overlay), or one cell for each item
+# (Stack and Grid). Each instance has the settings of the visualizer of the window, and holds what it
+# prepared for its item and its drawing state.
 
-# Close the visualizers of the cells and of the window. `close` is a dynamic call: packages add `close`
+# Close the instances of the cells and of the window. `close` is a dynamic call: packages add `close`
 # methods for their visualizers when they load, and a static call would make each of them invalidate
 # the compiled code of the browser.
 function _close_visualizers!(window::Window)::Nothing
     for cell in window.cells
-        cell.visualizer === window.visualizer || Base.invokelatest(close, cell.visualizer)
+        cell.visualizer === window.instance || Base.invokelatest(close, cell.visualizer)
     end
     empty!(window.cells)
-    Base.invokelatest(close, window.visualizer)
+    Base.invokelatest(close, window.instance)
     return nothing
 end
 
@@ -20,68 +20,31 @@ _cell_context(parent::WindowContext, cell::VisualizerCell) =
     WindowContext("$(parent.id)/$(cell.id)", parent.workspace, parent.open_window, parent.prepare)
 
 function _sync_cell_settings!(window::Window)::Nothing
-    for cell in window.cells, name in keys(settings(window.visualizer))
-        setproperty!(cell.visualizer, name, getproperty(window.visualizer, name))
+    for cell in window.cells, name in keys(settings(window.instance))
+        setproperty!(cell.visualizer, name, getproperty(window.instance, name))
     end
     return nothing
 end
 
 # A visualizer with a `prepare!` method for a whole selection shows all items together.
 _can_overlay(window::Window, ctx) = window.value isa Workspace.Selection &&
-    applicable(prepare!, window.visualizer, window.value, ctx)
-
-"""
-    arrangement!(window, mode)
-
-Show the items of `window` in one of the arrangements "stack", "grid" or "overlay".
-"""
-function arrangement!(window::Window, mode::String)::Nothing
-    _require_available(window)
-    mode in ("stack", "grid", "overlay") || throw(ArgumentError("Unknown arrangement: $mode"))
-    window.arrangement == mode && return nothing
-    window.arrangement = mode
-    # The main instance changes from one item to another or to the full selection.
-    window.presentation_revision += UInt(1)
-    window.presentation_dirty = true
-    return nothing
-end
-
-"""
-    active_item!(window, id)
-
-Show the item with the public `id` in a window arranged as a stack.
-"""
-function active_item!(window::Window, id::String)::Nothing
-    _require_available(window)
-    window.active_item == id && return nothing
-    window.active_item = id
-    window.presentation_dirty = true
-    return nothing
-end
+    applicable(prepare!, window.instance, window.value, ctx)
 
 # A single preparation lane also serializes use of process-wide plotting defaults. Each window
 # still has its own task, and the UI never waits for this lock.
 const PREPARATION_LOCK = ReentrantLock()
 
-# Prepare the visualizer of `window` in a task. Given `input`, the value of the input of the window
-# as `Some`, the task first makes the value of the window from it, as `_resolve_window_input` does.
-function _prepare_presentations!(state::BrowserState, window::Window, input::Union{Nothing,Some}=nothing)::Nothing
-    preparing(window) && return nothing
-    window.has_value || return nothing
-    saved = _persisted_window(window)
-    name, size = label(window.visualizer), initial_size(window.visualizer)
+# Prepare the instance of `window` in a task, with the value of the window.
+function _prepare_presentations!(state::BrowserState, window::Window)::Nothing
+    chosen = Dict{String,Any}(String(name) => value for (name, value) in pairs(selection(window.instance)))
+    name, size = window.definition.label, initial_size(window.instance)
     unavailable() = error("Browser actions are available from draw! and draw_header!, not prepare!")
     ctx = WindowContext(window.id, state.workspace, _ -> unavailable(), unavailable)
     window.presentation_dirty = false
-    transform = window.transform
     task = Threads.@spawn :default begin
         retired = AbstractVisualizer[]
-        error, failed = "", window.failed
+        error = ""
         try
-            if input !== nothing
-                window.value, failed = @timed_dbg "window.evaluate" Base.invokelatest(
-                    _resolve_window_input, ctx.workspace, something(input), transform)
-            end
             lock(PREPARATION_LOCK) do
                 @timed_dbg "visualizer.prepare" Base.invokelatest(_prepare_presentations_value!, window, ctx, retired)
             end
@@ -89,9 +52,9 @@ function _prepare_presentations!(state::BrowserState, window::Window, input::Uni
             error, _ = DataBrowserAPI.report_error(
                 "Window: $name could not show its value", err, catch_backtrace())
         end
-        (; retired, error, failed)
+        (; retired, error)
     end
-    window.preparation = WindowPreparation(task, saved, name, size)
+    window.preparation = WindowPreparation(task, chosen, size)
     return nothing
 end
 
@@ -107,7 +70,6 @@ function _finish_preparation!(window::Window)::Bool
         Base.invokelatest(close, visualizer)
     end
     window.error = result.error
-    window.failed = result.failed
     return true
 end
 
@@ -121,13 +83,13 @@ function _finish_closed_windows!(state::BrowserState)::Nothing
 end
 
 function _retire_cells!(window::Window, retired)::Nothing
-    append!(retired, (cell.visualizer for cell in window.cells if cell.visualizer !== window.visualizer))
+    append!(retired, (cell.visualizer for cell in window.cells if cell.visualizer !== window.instance))
     empty!(window.cells)
     return nothing
 end
 
 function _prepare_presentations_value!(window::Window, ctx::WindowContext, retired)::Nothing
-    given, visualizer = window.value, window.visualizer
+    given, visualizer = window.value, window.instance
     if !(given isa Workspace.Selection)
         _retire_cells!(window, retired)
         prepare!(visualizer, given, ctx)

@@ -1,12 +1,14 @@
 """
     AbstractVisualizer
 
-A way to show a value in a browser window, for example as a table or as a plot.
+A way to show a value, for example as a table or as a plot. A visualizer of the workspace,
+which `visualize!` adds, holds the settings, and each window of the browser that shows it draws
+the value with instances of its own, which take the settings.
 
-A window owns its settings. In Stack the browser passes one selected item's value to one
-visualizer. In Grid it manages one visualizer instance per item, with the same declared settings
-and separate prepared data and drawing state. The visualizer does not need to know either mode.
-Each instance receives its own stable `ctx.id`, including when several draw in the same window.
+In Stack the browser passes one selected item's value to one instance. In Grid it manages one
+instance per item, with the same declared settings and separate prepared data and drawing state.
+The visualizer does not need to know either mode. Each instance receives its own stable `ctx.id`,
+including when several draw in the same window.
 
 A visualizer that accepts a whole selection through `prepare!` also supports Overlay: it receives
 the selection together and decides how to present its items. Selection-only visualizers receive
@@ -26,7 +28,7 @@ It may also have:
 - a method `show(io, mime, visualizer::V)` for each MIME type that the Export button in the
   header of the window saves, such as `MIME"application/pdf"`, and `showable(mime, visualizer::V)`
   when those types depend on the state of the visualizer. See [`export!`](@ref);
-- a method `output(visualizer::V)`, the value the window passes on to other windows;
+- a method `output(visualizer::V)`, the value passed on to other visualizers;
 - methods `select!(visualizer::V; keywords...)` and `selection(visualizer::V)`, to select from code
   what the user selects in the window, such as some rows. The browser saves the selection with the
   window. See [`select!`](@ref);
@@ -43,9 +45,9 @@ through its `prepare!` methods.
 
 - `ctx.id` names the window. It is unique in the browser and stays the same from frame to frame.
 - `ctx.workspace` is the open workspace.
-- `ctx.open_window(visualizer)` opens a new window that shows the value of this window with
-  `visualizer`: it takes its value from the same input and passes it through the same function.
-  The window opens after this frame.
+- `ctx.open_window(visualizer)` adds a visualizer to the workspace that shows the input of this
+  window with `visualizer`, through the same function, and opens a window that shows it. The
+  window opens after this frame.
 - `ctx.prepare()` requests preparation again with the current input, for example after an action
   in `draw!` changes what must be prepared. The request takes effect after drawing returns.
 
@@ -127,16 +129,17 @@ and each value is a [`Setting`](@ref). A visualizer without a method has no sett
     settings(::LinePlotView) = (markers=Setting("Markers"; prepare=false),)
 
 The window draws the settings in its header, so `draw!` does not draw them. When the user changes
-one, the browser writes the field. It then calls [`prepare!`](@ref) again, unless the setting says
-`prepare=false`.
+one, the browser changes the setting of the visualizer of the workspace, and each window that shows
+it writes the field of its instances. It then calls [`prepare!`](@ref) again, unless the setting
+says `prepare=false`.
 
 Grid copies these declared settings to its instances. Keep per-item prepared data and transient
 interaction state out of `settings`. A choice made by `draw_header!` must also be a declared setting
 if it should be shared across Grid cells.
 
-The browser calls `settings` in every frame, also before the first `prepare!`. Return quickly, and
-hide controls that do not apply to the current mode with `visible=false`.
-Calls pause while preparation owns the instance.
+The browser calls `settings` in every frame, also before the first `prepare!`. Return quickly.
+Return the same names in every state of the visualizer, and hide controls that do not apply to the
+current mode with `visible=false`. Calls pause while preparation owns the instance.
 
 Give each such field a default value. The constructor `V()` then makes a visualizer with the
 default settings, and `V(name=value)` makes one with a setting already changed.
@@ -211,18 +214,18 @@ function draw! end
 """
     output(visualizer)
 
-The value the window of `visualizer` passes on to a window that takes its input from it. For
-example, a table passes on the rows the user selected, and another window plots them.
+The value that a window passes on from its instance `visualizer`, for the visualizers that take
+their input from the visualizer of the window. For example, a table passes on the rows the user
+selected, and another visualizer plots them.
 
 A visualizer without a method passes on the value it was given, and so does one that returns
-`nothing`. Stack keeps the whole input in this case; navigating it does not narrow the input of
-linked windows. Grid currently passes on the whole input; combining per-cell interaction outputs
+`nothing`. Stack keeps the whole input in this case; navigating it does not narrow what the other
+visualizers take. Grid currently passes on the whole input; combining per-cell interaction outputs
 is not yet part of the contract.
 
-The browser reads the output in every frame, and hands it to the other window when it is another
-object than before. Keep the output in a field and return that field; replace the object when the
-output changes.
-While preparation owns the instance, output reads and updates to linked windows pause.
+The browser reads the output in every frame, and passes it on when it is another object than
+before. Keep the output in a field and return that field; replace the object when the output
+changes. While preparation owns the instance, the visualizers that take its output wait.
 
 An output that is part of what the visualizer shows, such as the rows the user selected, is a view:
 `Computation(view, computation(selection, i), s)` for each item `i`, with a selection type `S` of the

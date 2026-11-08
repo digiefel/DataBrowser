@@ -188,6 +188,7 @@ visualizers, and the browser shows each in a window.
 DataBrowserCore.visualize!(::DataBrowserCore.Workspace.Workspace, ::DataBrowserAPI.AbstractVisualizer)
 DataBrowserCore.LiveSelection
 DataBrowserCore.FixedItems
+DataBrowserAPI.id(::DataBrowserCore.Workspace.Visualizer)
 Base.close(::DataBrowserCore.Workspace.Visualizer)
 ```
 
@@ -207,6 +208,8 @@ DataBrowserGUI.open_browser
 DataBrowserGUI.close_browser!
 DataBrowserGUI.BrowserSession
 DataBrowserGUI.wait_browser_ready
+DataBrowserCore.visualize!(::DataBrowserGUI.BrowserSession, ::Any)
+Base.close(::DataBrowserGUI.Browser.Window)
 ```
 
 ## Built on the surfaces

@@ -2,8 +2,8 @@ using Test, DataBrowserGUI
 import DataBrowserAPI
 using DataBrowserCore: Workspace
 using DataBrowserGUI: TableSelection
-using DataBrowserGUI.Browser: BrowserState, CodeView, FixedItems, TableView, WindowOutput, open_window!, refresh!, transform!, preparing,
-    setting!, input!, close_window!, output
+using DataBrowserCore: visualize!, FixedItems
+using DataBrowserGUI.Browser: BrowserState, CodeView, TableView, refresh!, preparing
 @isdefined(ItemsProject) || include("fixtures/items_project.jl")
 
 # Three numbers, each an item.
@@ -79,55 +79,62 @@ function Base.close(view::HandoffView)
     return nothing
 end
 
-@testset "preparation has exclusive access to the same persistent visualizer" begin
+# Draw frames until the last window shows the latest value of its visualizer. The browser brings
+# every window up to date at each frame.
+function ready(state, windows...)
+    return timedwait(60) do
+        results = [refresh!(state, window) for window in windows]
+        window, result = last(windows), last(results)
+        !any(preparing, windows) && !result.loading && window.revision == result.revision &&
+            isempty(result.error) && isempty(window.error)
+    end === :ok
+end
+
+@testset "preparation has exclusive access to the instance of a window" begin
     workspace = Workspace.open_workspace(WindowTestProject(), WindowTestSource(); cache=false, background_processing=true)
     view = HandoffView()
     try
         Workspace.wait_workspace_idle!(workspace; timeout=20)
         state = BrowserState(; workspace)
-        window = open_window!(state, view; input=FixedItems(["n1"]))
-        linked = open_window!(state, Kept(); input=WindowOutput(window.id))
-        refresh!(state, window)
-        @test timedwait(() -> isready(view.entered), 20) === :ok
+        window = visualize!(state, view; input=FixedItems(["n1"]))
+        v = window.visualizer
+        linked = visualize!(state, Kept(); input=v)
+        # Let the preparation that the window starts finish, and wait until the window has its
+        # instance again.
+        function prepared()
+            timedwait(() -> (refresh!(state, window); isready(view.entered)), 20) === :ok || return false
+            take!(view.entered)
+            put!(view.resume, nothing)
+            return timedwait(() -> (refresh!(state, window); !preparing(window)), 20) === :ok
+        end
+        @test timedwait(() -> (refresh!(state, window); isready(view.entered)), 20) === :ok
         @test take!(view.entered) != 1
-        @test preparing(window)
-        # Repeated frames neither start another preparation nor read the owned instance.
+        # Repeated frames neither start another preparation nor read the owned instance, and the
+        # linked window waits for its output.
         for _ in 1:5
             refresh!(state, window)
             refresh!(state, linked)
         end
         @test !isready(view.entered)
-        @test !linked.has_value
-        @test_throws ArgumentError output(window)
-        @test_throws ArgumentError setting!(window, :chosen, "lost choice")
+        @test linked.revision == 0
+        # A setting changed meanwhile reaches the instance once the window has it again.
+        v.chosen = "later choice"
         put!(view.resume, nothing)
-        @test timedwait(() -> (refresh!(state, window); !preparing(window)), 20) === :ok
-        @test window.visualizer === view
-        @test view.chosen == "keep this choice"
+        @test prepared()
+        @test window.instance === view
+        @test view.chosen == "later choice"
         @test collect(view.value.id) == ["n1"]
-        @test timedwait(() -> (refresh!(state, linked); !preparing(linked) && linked.has_value), 20) === :ok
-        @test collect(linked.visualizer.value.id) == ["n1"]
+        @test ready(state, window, linked)
+        @test collect(linked.instance.value.id) == ["n1"]
 
-        setting!(window, :fail, true)
-        refresh!(state, window)
-        @test timedwait(() -> isready(view.entered), 20) === :ok
-        take!(view.entered)
-        put!(view.resume, nothing)
-        @test timedwait(() -> (refresh!(state, window); !preparing(window)), 20) === :ok
+        v.fail = true
+        @test prepared()
         @test occursin("deliberate preparation failure", window.error)
-        setting!(window, :fail, false)
-        input!(state, window, FixedItems(["n2"]))
-        refresh!(state, window)
-        @test timedwait(() -> isready(view.entered), 20) === :ok
-        take!(view.entered)
-        put!(view.resume, nothing)
-        @test timedwait(() -> (refresh!(state, window); !preparing(window)), 20) === :ok
+        v.fail = false
+        @test prepared()
         @test isempty(window.error)
-        @test collect(view.value.id) == ["n2"]
-        @test view.chosen == "keep this choice"
-        close_window!(state, window)
+        DataBrowserGUI.Browser._close_window!(state, window)
         @test take!(view.closed) == Threads.threadid()
-        close_window!(state, linked)
     finally
         isready(view.resume) || put!(view.resume, nothing)
         Workspace.close_workspace!(workspace)
@@ -139,27 +146,22 @@ end
     try
         Workspace.wait_workspace_idle!(workspace; timeout=20)
         state = BrowserState(; workspace)
-        window = open_window!(state, Kept(); input=FixedItems(["n1", "n2", "n3"]))
-        transform!(window, GlobalRef(@__MODULE__, :doubled))
-        # The window waits for its items over several frames.
-        function shown()
-            ready = timedwait(() -> (refresh!(state, window); isempty(window.waiting) && !preparing(window)), 60)
-            ready === :ok || error("Window did not finish preparing: $(window.error)")
-            return collect(window.visualizer.value.data)
-        end
+        window = visualize!(state, Kept(); input=FixedItems(["n1", "n2", "n3"]))
+        Workspace.transform!(window.visualizer, GlobalRef(@__MODULE__, :doubled))
+        shown() = ready(state, window) ? collect(window.instance.value.data) : error("The window did not show its value")
         @test shown() == [2, 4, 6]
         @eval doubled(number::WindowTestNumber) = 10number.value
         @test timedwait(() -> shown() == [10, 20, 30], 20) === :ok
         # Without the function, the window shows the items.
-        transform!(window, nothing)
+        Workspace.transform!(window.visualizer, nothing)
         @test [only(data.value) for data in shown()] == [1, 2, 3]
         # A function of a whole selection gives one value for all items.
-        transform!(window, GlobalRef(@__MODULE__, :total))
+        Workspace.transform!(window.visualizer, GlobalRef(@__MODULE__, :total))
         @test shown() == [6]
         # An item whose function fails is left out, and the window says why.
-        transform!(window, GlobalRef(@__MODULE__, :not_two))
+        Workspace.transform!(window.visualizer, GlobalRef(@__MODULE__, :not_two))
         @test shown() == [1, 3]
-        @test occursin("two is not allowed", window.failed)
+        @test occursin("two is not allowed", refresh!(state, window).failed)
     finally
         Workspace.close_workspace!(workspace)
     end
@@ -170,13 +172,13 @@ end
     try
         Workspace.wait_workspace_idle!(workspace; timeout=20)
         state = BrowserState(; workspace)
-        table = open_window!(state, TableView(); input=FixedItems(["n1", "n2", "n3"]))
-        window = open_window!(state, Kept(); input=WindowOutput(table.id))
-        transform!(window, GlobalRef(@__MODULE__, :plus_one))
-        timedwait(() -> (refresh!(state, window); isempty(window.waiting) && !preparing(window) && window.has_value), 20)
-        @test collect(window.visualizer.value.data) == [2, 3, 4]
+        table = visualize!(state, TableView(); input=FixedItems(["n1", "n2", "n3"]))
+        window = visualize!(state, Kept(); input=table.visualizer)
+        Workspace.transform!(window.visualizer, GlobalRef(@__MODULE__, :plus_one))
+        @test ready(state, table, window)
+        @test collect(window.instance.value.data) == [2, 3, 4]
         # Each result has the metadata of its item.
-        @test window.visualizer.value.number == [1, 2, 3]
+        @test window.instance.value.number == [1, 2, 3]
     finally
         Workspace.close_workspace!(workspace)
     end
@@ -187,19 +189,19 @@ end
     try
         Workspace.wait_workspace_idle!(workspace; timeout=20)
         state = BrowserState(; workspace)
-        window = open_window!(state, CodeView(); input=FixedItems(["n1", "n2", "n3"]))
-        timedwait(() -> (refresh!(state, window); !preparing(window) && !isempty(window.visualizer.rows)), 20)
-        rows = window.visualizer.rows
+        window = visualize!(state, CodeView(); input=FixedItems(["n1", "n2", "n3"]))
+        @test ready(state, window)
+        rows = window.instance.rows
         @test [row.call.title for row in rows] == ["read(::WindowTestFile)", "process(::WindowTestNumber)"]
         # `read` ran for the file, and nothing failed.
         @test rows[1].call.items == Dict("file" => "file")
         @test all(row -> isempty(row.call.failed), rows)
         # After a function, the computed values come after the items they were computed from.
-        transform!(window, GlobalRef(@__MODULE__, :doubled))
-        timedwait(() -> (refresh!(state, window); !preparing(window) && length(window.visualizer.rows) == 3), 20)
-        @test last(window.visualizer.rows).call.title == "doubled"
-        @test length(last(window.visualizer.rows).call.items) == 3
-        @test last(window.visualizer.rows).call.result == Int
+        Workspace.transform!(window.visualizer, GlobalRef(@__MODULE__, :doubled))
+        @test ready(state, window)
+        @test last(window.instance.rows).call.title == "doubled"
+        @test length(last(window.instance.rows).call.items) == 3
+        @test last(window.instance.rows).call.result == Int
     finally
         Workspace.close_workspace!(workspace)
     end

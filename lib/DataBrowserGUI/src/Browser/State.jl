@@ -71,33 +71,6 @@ Base.@kwdef mutable struct DataGridState
 end
 
 """
-Where the value of a window comes from. The header of the window has a menu to choose it, after
-"from".
-"""
-abstract type WindowInput end
-
-"""The items selected in the browser. The window follows the selection as it changes."""
-struct LiveSelection <: WindowInput end
-
-"""A fixed list of items, kept by their ids. The window keeps them when the selection changes."""
-mutable struct FixedItems <: WindowInput
-    const ids::Vector{String}
-    # The ids that the workspace has, as `item_ids` gives them, and the ids of the workspace
-    # they were looked up in.
-    present::Tuple{Any,Vector{String}}
-    FixedItems(ids) = new(ids, (nothing, String[]))
-end
-
-"""
-The output of another window, named by the id of that window. The window follows the output as it
-changes. The output is what the visualizer of the other window returns from `output`, or the value
-of the other window.
-"""
-struct WindowOutput <: WindowInput
-    window::String
-end
-
-"""
 An instance for one displayed item. The browser owns its identity and preparation revision;
 the visualizer owns the prepared value and drawing state.
 """
@@ -110,59 +83,60 @@ mutable struct VisualizerCell
     draw_error::String
 end
 
-"""A pending handover, with UI properties captured before the worker takes ownership."""
+"""
+A pending handover, with what the window saves and draws while the worker owns the instance: the
+selection of the instance, as `selection` returns it, and its initial size.
+"""
 struct WindowPreparation
     task::Task
-    saved::PersistedWindow
-    label::String
+    selection::Dict{String,Any}
     initial_size::Tuple{Int,Int}
 end
 
 """
-A window of the browser that shows a value. Its `input` says where the value comes from, and its
-`visualizer` shows the value. The window hands exclusive access to its visualizer and cells to
-background preparation, then regains them when the task completes.
+    Window
+
+A window `w` of the browser, which shows the visualizer `w.visualizer` of the workspace.
+`visualize!(browser, v)` opens one, and `close(w)` closes it.
 """
+# The window draws the value of its visualizer with `instance`, an instance of the visualizer type
+# that the window owns. It hands exclusive access to the instance and its cells to background
+# preparation, then regains them when the task completes.
+# TODO: a visualizer type should hold only its settings, and be defined without the GUI; what an
+# instance prepares and draws then belongs to the window.
 mutable struct Window
     # Names the window for ImGui. Unique in the browser.
     id::String
-    visualizer::AbstractVisualizer
-    input::WindowInput
-    # The function the value of the input passes through before the visualizer, by name, so that a
-    # redefinition is used at once; `nothing` passes the value on unchanged.
-    transform::Union{Nothing,GlobalRef}
-    # The world and the code revision of the transform when they were last read.
-    code::Tuple{UInt,String}
-    # The ids of the items the window waits for before it makes its value again; empty when it
-    # waits for none.
-    waiting::Vector{String}
-    # The value the window shows, and what tells whether the input gives another value now.
-    # `stamp` is `nothing` until the visualizer is given the value.
+    const visualizer::Workspace.Visualizer
+    # The instance that prepares and draws the value, and the definition of the visualizer whose
+    # type and settings it has.
+    instance::AbstractVisualizer
+    definition::Workspace.Definition
+    # The value given to the instance, and the revision of the result of the visualizer that it
+    # comes from; 0 before the first.
     value::Any
-    stamp::Any
-    # What the stamp of the input was last read from, and that stamp. While all of it stays the
-    # same, so does the stamp, which costs time in proportion to the items to read again.
-    checked::Any
-    # Why the window does not show the value; empty when it shows it.
+    revision::Int
+    # The output that the window published last, as `Workspace.output!` takes it.
+    published::Union{Nothing,Tuple{Int,Any}}
+    # Why the instance could not prepare the value; empty when it did.
     error::String
-    # The computed values the window leaves out of its value because they failed, one on each line.
-    failed::String
     # Why the last "Export" failed; empty when it succeeded.
     export_error::String
     # Why the visualizer failed to draw in the last frame; empty when it drew.
     draw_error::String
     # Apply the default once for a newly created window, even if ImGui has a stale size for its id.
     initial_size_pending::Bool
-    # Presentation belongs to the browser. The visualizer has no Stack/Grid contract.
+    # How the window arranges the items, which it chooses itself for "auto", and the item that a
+    # stack shows. The visualizer has no Stack/Grid contract.
     arrangement::String
     active_item::String
     cells::Vector{VisualizerCell}
     presentation_revision::UInt
     presentation_dirty::Bool
-    has_value::Bool
-    # While present, the task exclusively owns the visualizer and its cells. The other fields
-    # here are browser-owned; saved presentation properties come from WindowPreparation.
+    # While present, the task exclusively owns the instance and its cells.
     preparation::Union{Nothing,WindowPreparation}
+    # Set by `close(w)`, from any thread: the browser closes the window in its next frame.
+    @atomic closing::Bool
 end
 
 """
@@ -313,11 +287,13 @@ Base.@kwdef mutable struct BrowserState
     # The background task that builds the tree, until the frame picks up its result.
     tree_build_task::Union{Nothing,Task} = nothing
     visible_selection::Union{Nothing,VisibleSelection} = nothing
-    # The windows that show a value with a visualizer, and the number of the last one opened.
+    # The windows that show a visualizer, those that `visualize!` opened since the last frame, and
+    # the number of the last one opened.
     windows::Vector{Window} = Window[]
+    opening::Channel{Window} = Channel{Window}(Inf)
+    next_window::Threads.Atomic{Int} = Threads.Atomic{Int}(0)
     # Closed windows retain their resources until preparation returns ownership to the UI.
     closing_windows::Vector{Window} = Window[]
-    next_window::Int = 0
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()
     # When the browser last compared its view with `saved_project_view`, as `time()`, and the task

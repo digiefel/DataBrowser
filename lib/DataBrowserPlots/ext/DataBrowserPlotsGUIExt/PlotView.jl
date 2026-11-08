@@ -35,13 +35,10 @@ end
 
 DataBrowserAPI.label(::PlotView) = "Plot"
 
-function settings(view::PlotView)
-    isempty(view.plots) && return (;)
-    return (
-        plot=Setting("Plot"; options=view.plots),
-        inspect=Setting("Inspect"; prepare=false),
-    )
-end
+settings(view::PlotView) = (
+    plot=Setting("Plot"; options=view.plots, visible=!isempty(view.plots)),
+    inspect=Setting("Inspect"; prepare=false, visible=!isempty(view.plots)),
+)
 
 function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
     view.selection = selection

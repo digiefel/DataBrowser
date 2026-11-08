@@ -228,8 +228,9 @@ function _run_browser(
         on_exit=() -> begin
             # The workspace keeps running after the browser closes.
             @atomic state.workspace.code_updates_active = true
-            # A visualizer may hold a figure that must be released before the window goes. The
-            # windows stay in the list, so that they are saved and open again next time.
+            # An instance may hold a figure that must be released before the window goes. The
+            # windows stay in the list, so that they are saved and open again next time, and their
+            # visualizers stay in the workspace.
             # Finish handovers while the graphics context and workspace are still available.
             for window in Iterators.flatten((state.windows, state.closing_windows))
                 # `wait` is this function's keyword here.

@@ -1,110 +1,94 @@
-# The windows that show a value with a visualizer: which visualizers the browser offers, where a
-# window takes its value from, and how the value reaches the visualizer. Nothing here draws.
-#
-# TODO: these are the actions a script will call (roadmap 0.6). They take the browser state for now.
+# The windows of the browser, each of which shows a visualizer of the workspace: which visualizers
+# the browser offers, how a window opens and closes, and how the value of its visualizer reaches the
+# instance that draws it. Nothing here draws.
 
 import DataBrowserAPI
-import Tables
 using DataBrowserAPI: AbstractVisualizer, id, label, prepare!, settings
 using DataBrowserAPI: @timed_dbg
 import DataBrowserAPI: output
-using DataBrowserCore.CodeRevisions: code_revision
+import DataBrowserCore: visualize!
 import DataBrowserCore.Workspace
 
 """
-The ids of the items `input` names now, without those the workspace does not have. The result is
-kept for the next calls: do not change it.
+    visualize!(browser, v) -> w
+    visualize!(browser, visualizer; input=LiveSelection()) -> w
+
+Show the visualizer `v` of the workspace in a new window `w` of `browser`, a
+[`BrowserSession`](@ref). Given `visualizer`, a new instance of a visualizer type, first add a
+visualizer to the workspace that shows the value of `input` with it, as `visualize!(workspace,
+visualizer; input)` does. The window appears in the next frame of the browser.
+
+`w.visualizer` is the visualizer that the window shows. `close(w)` closes the window and leaves the
+visualizer in the workspace; `close(w.visualizer)` removes the visualizer and closes every window
+that shows it.
+
+```julia
+browser = open_browser(workspace; wait=false)
+v = visualize!(workspace, PlotView(plot="IV"))
+w = visualize!(browser, v)
+close(w)
+```
 """
-item_ids(::LiveSelection, state::BrowserState)::Vector{String} = _visible_selection(state).ids
-function item_ids(input::FixedItems, state::BrowserState)::Vector{String}
-    ## The title asks at each frame; looking up each id costs time in proportion to the ids. The
-    ## result depends on the ids of the workspace, replaced whole when they change, and read before
-    ## the ids are looked up.
-    index = (@atomic state.workspace.items.version).index
-    first(input.present) === index && return last(input.present)
-    ids = filter(x -> haskey(state.workspace, x), input.ids)
-    input.present = (index, ids)
-    return ids
+function visualize!(browser::BrowserSession, visualizer; kwargs...)::Window
+    istaskdone(browser.task) && error("The browser is closed. Open it again with `open_browser`.")
+    return visualize!(browser.state, visualizer; kwargs...)
 end
-item_ids(input::WindowOutput, state::BrowserState)::Vector{String} = item_ids(source(input, state).input, state)
 
-"""The window `input` takes its value from."""
-source(input::WindowOutput, state::BrowserState)::Window =
-    only(window for window in state.windows if window.id == input.window)
+visualize!(state::BrowserState, visualizer::AbstractVisualizer; input=Workspace.LiveSelection())::Window =
+    visualize!(state, visualize!(state.workspace, visualizer; input), visualizer)
 
-"""Whether `window` takes its value from `other`, directly or through other windows."""
-function follows(state::BrowserState, window::Window, other::Window)::Bool
-    input = window.input
-    while input isa WindowOutput
-        window = source(input, state)
-        window === other && return true
-        input = window.input
+# A window that shows `v` with `instance`, or else with a new instance of the visualizer type of `v`.
+# Any thread may call it: the window enters the list of windows in the next frame, as the browser
+# draws a copy of the list. Until the window first publishes the output of its instance, visualizers
+# that take their input from `v` wait for it.
+function visualize!(state::BrowserState, v::Workspace.Visualizer, instance=nothing)::Window
+    definition = @atomic v.definition
+    window = Window("window_$(Threads.atomic_add!(state.next_window, 1) + 1)", v,
+        instance === nothing ? _instance(definition) : instance, definition, nothing, 0, (0, nothing),
+        "", "", "", true, definition.arrangement, definition.active_item, VisualizerCell[], UInt(0),
+        false, nothing, false)
+    Workspace.output!(v, window.published)
+    put!(state.opening, window)
+    return window
+end
+
+# A new instance of the visualizer type of `definition`, with its settings. A dynamic call: a
+# package defines its visualizer types after the browser compiled.
+function _instance(definition::Workspace.Definition)::AbstractVisualizer
+    instance = Base.invokelatest(definition.type)
+    for (name, value) in pairs(definition.settings)
+        setproperty!(instance, name, value)
     end
-    return false
+    return instance
 end
 
 """
-    output(window)
+    close(w::Window)
 
-The value `window` passes on to a window that takes its input from it: the output of its
-visualizer, or the value of the window when the visualizer has none.
+Close the window `w` of the browser in its next frame. The visualizer that it shows stays in the
+workspace.
 """
-function output(window::Window)
-    _require_available(window)
-    # A grid's per-cell interaction has no single combined output contract yet. Its downstream
-    # input remains the full value, rather than silently taking the first cell's output.
-    window.arrangement == "grid" && return window.value
-    return something(output(window.visualizer), Some(window.value))
-end
+Base.close(window::Window)::Nothing = (@atomic window.closing = true; nothing)
 
-# What tells whether the input of `window` gives another value than before: another stamp means
-# another value. Reading the stamp costs time in proportion to the items, so it is read again only
-# when what it is read from changed: the input and the object it names (kept items, ids or an
-# output, compared by identity), the generation of the latest version of the table `items`, or a
-# method definition.
-function stamp(window::Window, state::BrowserState)
-    workspace = state.workspace
-    input = window.input
-    named = input isa LiveSelection ? item_ids(input, state) :
-        input isa FixedItems ? input.ids : output(source(input, state))
-    basis = (input, named, (@atomic workspace.items.version).generation, Base.get_world_counter())
-    window.checked !== nothing && first(window.checked) === basis && return last(window.checked)
-    current = stamp(input, state)
-    window.checked = (basis, current)
-    return current
+# Remove `window` from the browser, on the UI thread. Visualizers that took the output of its
+# instance take the value of its visualizer again.
+function _close_window!(state::BrowserState, window::Window)::Nothing
+    _discard_window_preview!(window.id)
+    filter!(other -> other !== window, state.windows)
+    @atomicreplace window.visualizer.output window.published => nothing
+    preparing(window) ? push!(state.closing_windows, window) : _close_visualizers!(window)
+    return nothing
 end
-function stamp(input::Union{LiveSelection,FixedItems}, state::BrowserState)
-    version = @atomic state.workspace.items.version
-    ids = item_ids(input, state)
-    return (version.catalog, hash(ids), Workspace.revision(version, ids))
-end
-# A visualizer returns the same object until its output changes.
-function stamp(input::WindowOutput, state::BrowserState)
-    given = output(source(input, state))
-    seen = objectid(given)
-    if given isa AbstractVector{<:Workspace.Computation}
-        for value in given
-            seen = hash(Workspace.revision(state.workspace, value), seen)
-        end
-    end
-    return seen
-end
-
-# The value `input` gives now. The items of the workspace are kept by their ids: reading many takes
-# long, so the preparation task reads them, as `_resolve_window_input` does.
-value(input::Union{LiveSelection,FixedItems}, state::BrowserState) = FixedItems(item_ids(input, state))
-value(input::WindowOutput, state::BrowserState) = output(source(input, state))
 
 """
-The title of `window`: what it shows, not how. Up to three items are named by their labels, more
-are counted. The header of the window names the visualizer.
+The title of a window that shows `v`: what it shows, not how. Up to three items are named by their
+labels, more are counted. The header of the window names the visualizer.
 """
-function title(state::BrowserState, window::Window)::String
-    workspace = state.workspace
-    ids = item_ids(window.input, state)
+function title(state::BrowserState, v::Workspace.Visualizer)::String
+    ids = Workspace.item_ids(v)
     isempty(ids) && return "No items"
     length(ids) > 3 && return "$(length(ids)) items"
-    return join((label(workspace, x) for x in ids), ", ")
+    return join((label(state.workspace, x) for x in ids), ", ")
 end
 
 """
@@ -126,72 +110,18 @@ function visualizers(T::Type)::Vector{AbstractVisualizer}
     return sort!(AbstractVisualizer[V() for V in types]; by=label)
 end
 
-# What `window` tells its visualizer. A window opened from it is drawn from the next frame on, as
-# the browser draws a copy of its list of windows.
+# What `window` tells its instance. A window opened from it shows the same input passed through the
+# same function.
 WindowContext(state::BrowserState, window::Window) = WindowContext(window.id, state.workspace,
-    visualizer -> (transform!(open_window!(state, visualizer; input=window.input), window.transform); nothing),
+    function (visualizer)
+        (; input, transform) = @atomic window.visualizer.definition
+        Workspace.transform!(visualize!(state, visualizer; input).visualizer, transform)
+        return nothing
+    end,
     () -> (window.presentation_dirty = true; window.presentation_revision += UInt(1); nothing))
 
-"""Whether preparation has exclusive access to the visualizer of `window`."""
+"""Whether preparation has exclusive access to the instance of `window`."""
 preparing(window::Window)::Bool = window.preparation !== nothing
-
-function _require_available(window::Window)::Nothing
-    preparing(window) && throw(ArgumentError("Window $(window.id) is preparing"))
-    return nothing
-end
-
-_window_label(window::Window) = preparing(window) ? window.preparation.label : label(window.visualizer)
-
-"""
-    open_window!(state, visualizer; input=LiveSelection()) -> Window
-
-Add a window to the browser that shows the value of `input` with `visualizer`.
-"""
-function open_window!(
-    state::BrowserState,
-    visualizer::AbstractVisualizer;
-    input::WindowInput=LiveSelection(),
-)::Window
-    state.next_window += 1
-    window = Window("window_$(state.next_window)", visualizer, input, nothing, (UInt(0), ""), String[], nothing, nothing, nothing, "", "", "", "", true, "auto", "", VisualizerCell[], UInt(0), true, false, nothing)
-    push!(state.windows, window)
-    return window
-end
-
-"""
-Remove `window` from the browser. A window that took its value from `window` follows the selection
-again.
-"""
-function close_window!(state::BrowserState, window::Window)::Nothing
-    _discard_window_preview!(window.id)
-    filter!(other -> other !== window, state.windows)
-    if preparing(window)
-        push!(state.closing_windows, window)
-    else
-        _close_visualizers!(window)
-    end
-    for other in state.windows
-        input = other.input
-        input isa WindowOutput && input.window == window.id && (other.input = LiveSelection())
-    end
-    return nothing
-end
-
-"""
-    input!(state, window, input)
-
-Take the value of `window` from another input.
-"""
-function input!(state::BrowserState, window::Window, input::WindowInput)::Nothing
-    _require_available(window)
-    if input isa WindowOutput
-        other = source(input, state)
-        (other === window || follows(state, other, window)) &&
-            error("A window cannot take its value from itself, directly or through other windows.")
-    end
-    window.input = input
-    return nothing
-end
 
 """
     transforms() -> Vector{GlobalRef}
@@ -212,177 +142,69 @@ function transforms()::Vector{GlobalRef}
 end
 
 """
-    transform!(window, transform)
-
-Pass the value of `window` through the function named by `transform`, a `GlobalRef`, before the
-visualizer shows it; `nothing` shows the value unchanged.
-
-The function receives each item of the input, as `process` receives it, and returns the value to
-show for it. A function with a method for a `Selection` and none for the items receives the whole
-selection instead, and returns one value, such as a mean over the items. The computation is
-evaluated in the background and evaluated again when an input or the code of the function
-changes. The visualizer receives a selection of the results, each with its computation. The tree
-of the workspace stays as it is, and the workspace keeps each computation and its result until it
-closes.
-
-A value of the input that is not a selection of items is passed to the function as it is.
+Bring `window` up to date, and return the latest result of its visualizer, as `Workspace.refresh!`
+gives it. The window copies to its instance the settings that changed in the visualizer, and gives
+the instance the value of each new result, which a task prepares. Then it publishes the output of
+the instance for the visualizers that take their input from its visualizer. A failure of the
+preparation is kept in `window.error` for the window to show.
 """
-function transform!(window::Window, transform::Union{Nothing,GlobalRef})::Nothing
-    _require_available(window)
-    window.transform = transform
-    window.stamp = nothing
-    return nothing
-end
-
-# The code revision of the transform of `window`. It is computed again only after a definition.
-function code(window::Window)::String
-    window.transform === nothing && return ""
-    world = Base.get_world_counter()
-    if first(window.code) != world
-        f = Base.invokelatest(getglobal, window.transform.mod, window.transform.name)
-        window.code = (world, code_revision(Any[f]).hash)
-    end
-    return last(window.code)
-end
-
-"""
-    visualizer!(window, visualizer)
-
-Show the value of `window` with another visualizer.
-"""
-function visualizer!(window::Window, visualizer::AbstractVisualizer)::Nothing
-    _require_available(window)
-    _close_visualizers!(window)
-    window.visualizer = visualizer
-    window.arrangement = "auto"
-    window.presentation_dirty = true
-    # The new visualizer is given the value in the next frame.
-    window.stamp = nothing
-    return nothing
-end
-
-"""
-    setting!(window, name, value)
-
-Change the setting `name` of the visualizer of `window`. The visualizer is given the value of the
-window again in the next frame, unless the setting needs no `prepare!`.
-"""
-function setting!(window::Window, name::Symbol, value)::Nothing
-    _require_available(window)
-    visualizer = window.visualizer
-    setproperty!(visualizer, name, value)
-    if settings(visualizer)[name].prepare
-        window.presentation_revision += UInt(1)
-        window.presentation_dirty = true
-    end
-    _sync_cell_settings!(window)
-    return nothing
-end
-
-"""
-Bring `window` up to date: read its input and, when the input gives another value than before or
-the code of its transform changed, pass the value through the transform and hand the result to the
-visualizer. The items the value needs are processed and computed in the background: until they are
-ready, the window keeps what it shows, and `window.waiting` holds them. A failure is kept in
-`window.error` for the window to show.
-"""
-function refresh!(state::BrowserState, window::Window)::Nothing
-    return @timed_dbg "window.refresh" _refresh_window!(state, window)
-end
-
-function _refresh_window!(state::BrowserState, window::Window)::Nothing
-    _finish_preparation!(window) || return nothing
-    input = window.input
-    if input isa WindowOutput
-        upstream = source(input, state)
-        refresh!(state, upstream)
-        if preparing(upstream) || !upstream.has_value || !isempty(upstream.error)
-            window.error = isempty(upstream.error) ? "" :
-                "Input window ($(_window_label(upstream))) failed:\n" * upstream.error
-            window.stamp = nothing
-            return nothing
+function refresh!(state::BrowserState, window::Window)::Workspace.Result
+    v = window.visualizer
+    _finish_preparation!(window) || return @atomic v.result
+    ## A visualizer that takes the output of another one waits for the windows that show it, also
+    ## when they are hidden.
+    input = (@atomic v.definition).input
+    if input isa Workspace.Visualizer
+        for other in state.windows
+            other.visualizer === input && refresh!(state, other)
         end
     end
-    workspace = state.workspace
-    current = @timed_dbg "window.stamp" (stamp(window, state), window.transform, code(window))
-    if current == window.stamp
-        window.presentation_dirty && _prepare_presentations!(state, window)
-        return nothing
-    end
-    if !(input isa WindowOutput)
-        ids = item_ids(input, state)
-        if !Workspace.processed(workspace, ids)
-            window.waiting = ids
-            return nothing
-        end
-    end
-    ## The ids it waited for can be those of the selection that the browser keeps for every
-    ## window: they are replaced, never emptied.
-    window.waiting = String[]
-    try
-        given = @timed_dbg "window.input" value(input, state)
-        window.has_value = true
-        window.stamp = current
-        window.presentation_revision += UInt(1)
-        window.presentation_dirty = true
-        _prepare_presentations!(state, window, Some(given))
-    catch err
-        window.error, _ = DataBrowserAPI.report_error(
-            "Window: $(label(window.visualizer)) could not show its value", err, catch_backtrace())
-    end
-    return nothing
-end
-
-# The value a window shows: its input passed through its function, evaluated on the preparation
-# task. Kept items are read as a `Selection`, which waits for items that are not processed yet.
-# Also return why computations failed, one line each; the value leaves out their items.
-function _resolve_window_input(workspace, given, transform)
-    failures = String[]
-    # The computations as a `Selection`, whose data is their results; the workspace stays as it
-    # is. Each has the metadata in `inherited`, of the item it was computed from. A
-    # computation that gives an item has the id and label of that item, and its metadata on top.
-    # TODO: any other computation is named by `label(value)`, only its function as "doubled"; it
-    # should read "doubled(n1)", from the computation itself.
-    function resolve(values, inherited=[Dict{Symbol,Any}() for _ in values])
-        computed, named, metadatas = Workspace.Computation[], Any[], Dict{Symbol,Any}[]
-        for (value, from) in zip(values, inherited)
-            try
-                result = Workspace.evaluate(workspace, value)
-                gives_item = result isa DataBrowserAPI.AbstractDataItem
-                push!(computed, value)
-                push!(named, gives_item ? result : value)
-                push!(metadatas, gives_item ? merge(from, DataBrowserAPI.metadata_dict(DataBrowserAPI.metadata(result))) : from)
-            catch err
-                # The workspace reports a failed computation as an `ErrorException` with its message.
-                err isa ErrorException || rethrow()
-                push!(failures, "$(label(value)): $(first(split(err.msg, '\n')))")
+    result = @timed_dbg "window.refresh" Workspace.refresh!(v)
+    definition, before = (@atomic v.definition), window.definition
+    if definition !== before
+        window.definition = definition
+        if definition.type !== typeof(window.instance)
+            _close_visualizers!(window)
+            window.instance = _instance(definition)
+            window.arrangement = definition.arrangement
+            window.presentation_revision += UInt(1)
+            window.presentation_dirty = true
+        else
+            for (name, value) in pairs(definition.settings)
+                isequal(value, before.settings[name]) && continue
+                setproperty!(window.instance, name, value)
+                if settings(window.instance)[name].prepare
+                    window.presentation_revision += UInt(1)
+                    window.presentation_dirty = true
+                end
+            end
+            if definition.arrangement != before.arrangement && definition.arrangement != window.arrangement
+                ## The main instance changes from one item to another or to the full selection.
+                window.arrangement = definition.arrangement
+                window.presentation_revision += UInt(1)
+                window.presentation_dirty = true
+            end
+            if definition.active_item != before.active_item
+                window.active_item = definition.active_item
+                window.presentation_dirty = true
             end
         end
-        ## A computed value belongs to no group and has no tags. Its metadata keys come in
-        ## alphabetical order.
-        names = sort!(unique(name for values in metadatas for name in keys(values)))
-        return Workspace.Selection(Workspace.ItemData(workspace, computed), id.(named), label.(named), [String[] for _ in named],
-            [String[] for _ in named], [name => [get(values, name, missing) for values in metadatas] for name in names])
+        _sync_cell_settings!(window)
     end
-    given isa FixedItems && (given = Workspace.select(workspace, given.ids))
-    given isa AbstractVector{<:Workspace.Computation} && (given = resolve(given))
-    if transform !== nothing
-        f = Base.invokelatest(getglobal, transform.mod, transform.name)
-        if given isa Workspace.Selection
-            whole = Base.invokelatest(hasmethod, f, Tuple{Workspace.Selection}) &&
-                !all(item -> Base.invokelatest(applicable, f,
-                    item isa Workspace.Computation ? Workspace.evaluate(workspace, item) : item), Workspace.items(given))
-            calls = whole ? [Workspace.Computation(f, given)] :
-                [Workspace.Computation(f, Workspace.computation(given, i)) for i in eachindex(given)]
-            # A value computed from one item keeps the columns of its row, other than `id`, `label`,
-            # `groups` and `tags`: the metadata of the item.
-            columns = pairs(Base.structdiff(Tables.columns(given), NamedTuple{(:id, :label, :groups, :tags)}))
-            inherited = whole ? [Dict{Symbol,Any}()] : [Dict{Symbol,Any}(name => column[i]
-                for (name, column) in columns if !ismissing(column[i])) for i in eachindex(given)]
-            given = resolve(calls, inherited)
-        else
-            given = Workspace.evaluate(workspace, Workspace.Computation(f, given))
-        end
+    ## After a failure, the window keeps the value it has.
+    if result.revision != window.revision && isempty(result.error)
+        window.value, window.revision = result.value, result.revision
+        window.presentation_revision += UInt(1)
+        window.presentation_dirty = true
     end
-    return given, join(failures, '\n')
+    window.presentation_dirty && window.revision > 0 && _prepare_presentations!(state, window)
+    ## A grid has no single output, and an instance that failed to prepare passes on the value.
+    # TODO: when several windows show one visualizer, the one that published last gives its output.
+    if !preparing(window)
+        passed = window.revision == 0 || window.arrangement == "grid" || !isempty(window.error) ? nothing :
+            output(window.instance)
+        published = (window.revision, passed)
+        published === window.published || (Workspace.output!(v, published); window.published = published)
+    end
+    return result
 end
