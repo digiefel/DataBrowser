@@ -76,8 +76,12 @@ abstract type WindowInput end
 struct LiveSelection <: WindowInput end
 
 """A fixed list of items, kept by their ids. The window keeps them when the selection changes."""
-struct FixedItems <: WindowInput
-    ids::Vector{String}
+mutable struct FixedItems <: WindowInput
+    const ids::Vector{String}
+    # The ids that the workspace has, as `item_ids` gives them, and the ids of the workspace
+    # they were looked up in.
+    present::Tuple{Any,Vector{String}}
+    FixedItems(ids) = new(ids, (nothing, String[]))
 end
 
 """

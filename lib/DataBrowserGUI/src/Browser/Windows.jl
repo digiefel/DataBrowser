@@ -11,9 +11,21 @@ import DataBrowserAPI: output
 using DataBrowserCore.CodeRevisions: code_revision
 import DataBrowserCore.Workspace
 
-"""The ids of the items `input` names now, without those the workspace does not have."""
+"""
+The ids of the items `input` names now, without those the workspace does not have. The result is
+kept for the next calls: do not change it.
+"""
 item_ids(::LiveSelection, state::BrowserState)::Vector{String} = _visible_selection(state).ids
-item_ids(input::FixedItems, state::BrowserState)::Vector{String} = filter(x -> haskey(state.workspace, x), input.ids)
+function item_ids(input::FixedItems, state::BrowserState)::Vector{String}
+    ## The title asks at each frame; looking up each id costs time in proportion to the ids. The
+    ## result depends on the ids of the workspace, replaced whole when they change, and read before
+    ## the ids are looked up.
+    index = (@atomic state.workspace.items.version).index
+    first(input.present) === index && return last(input.present)
+    ids = filter(x -> haskey(state.workspace, x), input.ids)
+    input.present = (index, ids)
+    return ids
+end
 item_ids(input::WindowOutput, state::BrowserState)::Vector{String} = item_ids(source(input, state).input, state)
 
 """The window `input` takes its value from."""
@@ -89,8 +101,6 @@ are counted. The header of the window names the visualizer.
 """
 function title(state::BrowserState, window::Window)::String
     workspace = state.workspace
-    # TODO(scale): the browser asks for the title at each frame, and the items of fixed ids are
-    # looked up again each time; keep the title until the input or the workspace changes.
     ids = item_ids(window.input, state)
     isempty(ids) && return "No items"
     length(ids) > 3 && return "$(length(ids)) items"
