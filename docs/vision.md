@@ -187,7 +187,8 @@ hierarchy APIs remain under design in [groups](plans/groupings.md).
 
 **Selection.** A concrete list of items, or a *rule* that resolves to items as the project changes.
 Concrete selections reproduce exactly; live rules keep views attached as items are added, removed, or
-changed.
+changed. Both are lazy: a selection holds which items it refers to, and reads their labels, metadata
+and data only when code uses them.
 
 **Command.** A stable operation on a workspace — the foundation for GUI actions, REPL, CLI, Python,
 testing, and agent/MCP support. A command has a name, inputs, outputs, errors, help text, and
@@ -247,7 +248,9 @@ Workspace actions, such as `select!(workspace, ids)`, operate on shared state an
 GUI. Views connected to the shared workspace selection follow changes from the REPL or GUI.
 Tab trees can keep independent selections; changing the shared selection does not reset them.
 Public operations must identify the selection being changed without relying on GUI focus.
-Pure functions, such as `select(workspace, ids)`, read the workspace without changing it.
+`select(workspace, ids)` changes nothing and waits for nothing: it returns a selection of these items
+at once. Reading the data of the selection asks for the items: the workspace moves those that are not
+processed yet ahead of other work, and the read waits for them.
 Core has no GUI dependency. REPL code and GUI controls share the workspace rather than copying its state.
 
 A script that calls `define_project(project_file; config)` creates or reopens the project file, then

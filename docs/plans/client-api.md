@@ -117,14 +117,14 @@ select(workspace, row -> "check" in row.tags)            # today also `items(wor
 tags(workspace)                        # the tags defined in the workspace, with their colors
 ```
 
-**Items with their data, once processed**
+**Items with their data**
 
 ```julia
-selection = select(workspace, ids)     # waits until these items are processed
-selection.data                         # the data of each item
-items(selection)                       # the items as the project gives them;
+chosen = select(workspace, ids)        # at once: reads nothing yet; today it waits for the items
+chosen.data                            # the data of each item, read when used: waits for the items
+items(chosen)                          # the items as the project gives them;
                                        # today also `materialize_items(workspace, ids)`
-selection(workspace)                   # the items of the workspace's selection, processed
+selection(workspace)                   # the items of the workspace's selection
 evaluate(workspace, computation)       # the result of a computation, computed now
 ```
 
