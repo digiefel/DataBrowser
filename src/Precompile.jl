@@ -71,4 +71,8 @@ let Browser = DataBrowserGUI.Browser, State = DataBrowserGUI.Browser.BrowserStat
     precompile(Browser._load_project_view, (Workspace,))
     precompile(Browser._render_workspace_updating!, ())
     precompile(Browser._render_startup_preparation!, ())
+    # A Table window draws through dynamic calls; compiling its drawing took 2.5 s of the first
+    # frame that showed it.
+    precompile(DataBrowserAPI.draw!, (Browser.TableView, Browser.WindowContext))
+    precompile(DataBrowserAPI.draw_header!, (Browser.TableView, Browser.WindowContext))
 end
