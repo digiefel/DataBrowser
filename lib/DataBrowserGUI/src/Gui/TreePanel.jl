@@ -386,6 +386,13 @@ function render_selection_window(state::BrowserState)::Nothing
         state.tree_filter_widget = ig.ImGuiTextFilter_ImGuiTextFilter(state.tree_filter)
     end
     filter_tree = state.tree_filter_widget
+    ## When imgui.ini has no place for the window, as on a first run, the window takes the left
+    ## third of the browser, below the toolbar. ImGui leaves room for the toolbar in the work area
+    ## of the viewport from the next frame on, and in the work area that it builds at once.
+    area = ig.GetBuildWorkRect(Ptr{ig.lib.ImGuiViewportP}(ig.GetMainViewport()))
+    width, height = area.Max.x - area.Min.x, area.Max.y - area.Min.y
+    ig.SetNextWindowPos(area.Min, ig.ImGuiCond_FirstUseEver)
+    ig.SetNextWindowSize((width / 3, height), ig.ImGuiCond_FirstUseEver)
     if ig.Begin("Hierarchy")
         @timed "tree" _render_tree_panel(state, filter_tree)
     end
