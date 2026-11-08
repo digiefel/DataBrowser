@@ -148,17 +148,23 @@ function work!(workspace::Workspace)::Nothing
     job = nothing
     while true
         job = @lock catalog.lock begin
-            job === nothing || (workspace.running -= 1; workspace.completed += 1; notify(catalog.changed))
-            @atomic workspace.work = (workspace.completed, workspace.completed + workspace.running + queued(catalog), workspace.running)
-            job === nothing || changed!(workspace)
-            job = take!(catalog)
-            while job === nothing && !catalog.closed
-                wait(catalog.changed)
+            ended = job !== nothing
+            ended && (workspace.running -= 1; workspace.completed += 1; notify(catalog.changed))
+            while true
+                waiting = queued(catalog)
                 job = take!(catalog)
+                job === nothing || catalog.closed || (workspace.running += 1)
+                ## The counts and `keep!` follow the end of a job, the start of one, and the queued
+                ## rows that `take!` drops because they can no longer start, which may be the last
+                ## work of the workspace.
+                if ended || job !== nothing || queued(catalog) < waiting
+                    @atomic workspace.work = (workspace.completed, workspace.completed + workspace.running + queued(catalog), workspace.running)
+                    changed!(workspace)
+                end
+                (job !== nothing || catalog.closed) && break
+                ended = false
+                wait(catalog.changed)
             end
-            catalog.closed || (workspace.running += 1)
-            @atomic workspace.work = (workspace.completed, workspace.completed + workspace.running + queued(catalog), workspace.running)
-            catalog.closed || changed!(workspace)
             catalog.closed ? nothing : job
         end
         job === nothing && return nothing

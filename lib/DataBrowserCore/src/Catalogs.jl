@@ -807,8 +807,7 @@ function Base.take!(catalog::Catalog)::Union{Job,Nothing}
         get(catalog.queued_at, row, 0) == rank || continue
         delete!(catalog.queued_at, row)
         current = node(catalog, row)
-        ## Fewer rows are queued: wake the tasks that wait for the catalog to have no work.
-        startable(current) || (notify(catalog.changed); continue)
+        startable(current) || continue
         current.running = true
         push!(catalog.touched, row)
         notify(catalog.changed)

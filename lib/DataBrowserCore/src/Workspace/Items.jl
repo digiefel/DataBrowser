@@ -95,7 +95,8 @@ on, `select`, `evaluate` and `materialize_items` throw the error "The workspace 
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
     catalog, columns, rows = workspace.catalog, items.columns, items.rows
-    last, timer = 0.0, Timer(0)
+    ## Each timer of the task wakes it when it ends; the first one ends at once.
+    last, timer = 0.0, Timer(_ -> notify(items.event), 0)
     try
         while true
             wait(items.event)
@@ -132,8 +133,8 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                 !source_scan_running(workspace) && workspace.running == 0 && queued(catalog) == 0
             end
             if isempty(readers) && !idle && time() < last + PUBLISH_INTERVAL
-                isopen(timer) ||
-                    (timer = Timer(_ -> notify(items.event), last + PUBLISH_INTERVAL - time()))
+                isopen(timer) || (timer = Timer(_ -> notify(items.event),
+                    max(last + PUBLISH_INTERVAL - time(), 0)))
                 continue
             end
             ## The cells of the catalog rows that changed follow the catalog, 1000 rows at a time,
