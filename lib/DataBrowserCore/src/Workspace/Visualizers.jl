@@ -5,18 +5,11 @@
 # that the value passes through. Every client shows the same visualizers: the browser shows one in
 # a window, and the window can close while the visualizer stays.
 #
-# ```julia
-# v = visualize!(workspace, PlotView(plot="IV"))    # its input: the selection of the workspace
-# t = visualize!(workspace, TableView(); input=v)   # its input: the output of v
-# v.inspect = true                                  # a setting; every client that shows v follows
-# close(v)                                          # v leaves the workspace
-# ```
-#
 # The workspace computes the value of a visualizer in a task, once for all the clients that show
 # it, and only while a client asks for it with `refresh!`, as a window of the browser does at each
 # frame. A client prepares and draws the value with an instance of the visualizer type, which it
-# owns; it can publish the output of that instance with `output!`, for a visualizer that takes its
-# input from `v`.
+# owns; it can publish the output of that instance with `output!`, for the visualizers that take
+# their input from this one.
 #
 # Clients on several threads read and change a visualizer at the same time. As with the shared
 # state, a writer takes the lock of the shared state and replaces the definition of the visualizer

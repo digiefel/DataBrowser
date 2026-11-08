@@ -6,14 +6,17 @@ using DataBrowserAPI: Setting, draw_header!, export!, initial_size, label, setti
 import DataBrowserCore.Workspace
 
 """
-Draw the header that every window has: a menu to change the visualizer, a menu to change the
-input, and "Live", which makes the window follow the selection.
+Draw the header that every window has: a menu to change the visualizer type, a menu to change the
+input, a menu to change the function that the value passes through, and "Live", which makes the
+visualizer follow the selection. Each changes the visualizer of the window, for every client.
 """
 function _render_window_header!(state::BrowserState, window::Window)::Nothing
-    if ig.BeginCombo("##visualizer", label(window.visualizer), ig.ImGuiComboFlags_WidthFitPreview)
+    v = window.visualizer
+    (; type, label, input, transform) = @atomic v.definition
+    if ig.BeginCombo("##visualizer", label, ig.ImGuiComboFlags_WidthFitPreview)
         for candidate in visualizers(typeof(window.value))
-            current = typeof(candidate) === typeof(window.visualizer)
-            ig.Selectable(label(candidate), current) && !current && visualizer!(window, candidate)
+            current = typeof(candidate) === type
+            ig.Selectable(DataBrowserAPI.label(candidate), current) && !current && Workspace.visualizer!(v, candidate)
         end
         ig.EndCombo()
     end
@@ -22,51 +25,45 @@ function _render_window_header!(state::BrowserState, window::Window)::Nothing
     ig.AlignTextToFramePadding()
     ig.TextDisabled("from")
     ig.SameLine()
-    input = window.input
-    # TODO: two windows that show the same items with the same visualizer have the same name here.
-    # Let the user name a window.
-    name(other) = "$(_window_label(other)): $(title(state, other))"
-    preview = input isa WindowOutput ? name(source(input, state)) : "Selection"
+    # TODO: two visualizers that show the same items with the same visualizer type have the same
+    # name here. Let the user name a visualizer.
+    name(other) = "$((@atomic other.definition).label): $(title(state, other))"
+    selection = input isa Union{Workspace.LiveSelection,Workspace.FixedItems}
+    preview = input isa Workspace.Visualizer ? name(input) : selection ? "Selection" : "Function"
     # As wide as the name, up to a limit: the names of several items must not take the whole row.
     ig.SetNextItemWidth(min(ig.CalcTextSize(preview).x + 2 * ig.GetFrameHeight(), 220.0f0))
     if ig.BeginCombo("##input", preview)
-        ig.Selectable("Selection", !(input isa WindowOutput)) && input isa WindowOutput &&
-            input!(state, window, LiveSelection())
-        for other in state.windows
-            (other === window || follows(state, other, window)) && continue
-            current = input isa WindowOutput && input.window == other.id
-            ig.Selectable("$(name(other))###$(other.id)", current) && !current &&
-                input!(state, window, WindowOutput(other.id))
+        ig.Selectable("Selection", selection) && !selection && Workspace.input!(v, Workspace.LiveSelection())
+        for other in (@atomic state.workspace.shared).visualizers
+            (other === v || Workspace.follows(other, v)) && continue
+            current = input === other
+            ig.Selectable("$(name(other))###$(id(other))", current) && !current && Workspace.input!(v, other)
         end
         ig.EndCombo()
     end
-    ig.SetItemTooltip("Where the window takes its value from: the selection, or another window.")
+    ig.SetItemTooltip("Where the value comes from: the selection, or another visualizer.")
 
     ig.SameLine()
     ig.AlignTextToFramePadding()
     ig.TextDisabled("through")
     ig.SameLine()
-    through = window.transform === nothing ? "nothing" : String(window.transform.name)
+    through = transform === nothing ? "nothing" : String(transform.name)
     if ig.BeginCombo("##transform", through, ig.ImGuiComboFlags_WidthFitPreview)
-        ig.Selectable("nothing", window.transform === nothing) && transform!(window, nothing)
+        ig.Selectable("nothing", transform === nothing) && Workspace.transform!(v, nothing)
         for ref in transforms()
-            ig.Selectable(String(ref.name), ref == window.transform) && transform!(window, ref)
+            ig.Selectable(String(ref.name), ref == transform) && Workspace.transform!(v, ref)
         end
         ig.EndCombo()
     end
     ig.SetItemTooltip("A function of the project that the value passes through before it is shown.")
 
-    # TODO: "Live" for the output of another window: when off, keep the value the window has now.
-    window.input isa WindowOutput && return nothing
+    # TODO: "Live" for the output of another visualizer: when off, keep the value it has now.
+    selection || return nothing
     ig.SameLine()
-    live = window.input isa LiveSelection
+    live = input isa Workspace.LiveSelection
     if @c ig.Checkbox("Live", &live)
-        if live
-            input!(state, window, LiveSelection())
-        else
-            # Keep the items the window shows now.
-            input!(state, window, FixedItems(item_ids(window.input, state)))
-        end
+        ## Off keeps the items the window shows now.
+        Workspace.input!(v, live ? Workspace.LiveSelection() : Workspace.FixedItems(copy(Workspace.item_ids(v))))
     end
     ig.SetItemTooltip("Follow the selection. When off, the window keeps the items it shows now.")
     return nothing
@@ -124,17 +121,17 @@ function _render_setting!(setting::Setting, current::String)::String
 end
 
 """
-Draw the settings the visualizer declared, in the row of the header, and apply what the user
-changes.
+Draw the settings the visualizer type declared, in the row of the header. What the user changes
+changes the visualizer of the window, for every client.
 """
 function _render_window_settings!(window::Window)::Nothing
     # TODO: start a new row when the window is too narrow for the next setting.
-    for (name, setting) in pairs(settings(window.visualizer))
+    for (name, setting) in pairs(settings(window.instance))
         setting.visible || continue
         ig.SameLine()
-        current = getproperty(window.visualizer, name)
+        current = getproperty(window.instance, name)
         chosen = _render_setting!(setting, current)
-        chosen == current || setting!(window, name, chosen)
+        chosen == current || setproperty!(window.visualizer, name, chosen)
     end
     return nothing
 end
@@ -147,7 +144,7 @@ function _render_export_button!(state::BrowserState, window::Window)::Nothing
     ig.SetItemTooltip("Save what the window shows")
     try
         if clicked
-            visualizer = window.visualizer
+            visualizer = window.instance
             # The file types the visualizer saves. Without one, and for a grid of several cells,
             # the browser saves a picture of the window. `showable` is a dynamic call: packages add
             # methods for their visualizers when they load, and a static call would make each of them
@@ -156,7 +153,7 @@ function _render_export_button!(state::BrowserState, window::Window)::Nothing
                           if window.arrangement != "grid" && Base.invokelatest(showable, mime, visualizer)]
             picture = isempty(extensions)
             picture && push!(extensions, "png")
-            path = save_file("$(title(state, window)).$(first(extensions))"; filterlist=join(extensions, ","))
+            path = save_file("$(title(state, window.visualizer)).$(first(extensions))"; filterlist=join(extensions, ","))
             if !isempty(path)
                 isempty(splitext(path)[2]) && (path *= ".$(first(extensions))")
                 if picture
@@ -176,13 +173,21 @@ function _render_export_button!(state::BrowserState, window::Window)::Nothing
 end
 
 """
-Draw every window that shows a value with a visualizer, and remove those the user closed. A window
-that is not visible, for example behind another tab, is not brought up to date.
+Draw every window that shows a visualizer: first open those that `visualize!` opened, and remove
+those that `close` closed or whose visualizer left the workspace. A window that is not visible, for
+example behind another tab, is not brought up to date.
 """
 function render_windows!(state::BrowserState)::Nothing
     # The plots drawn with ImPlot need its context.
     _init_implot_context!(state)
     _release_retired_window_previews!()
+    while isready(state.opening)
+        push!(state.windows, take!(state.opening))
+    end
+    present = (@atomic state.workspace.shared).visualizers
+    for window in copy(state.windows)
+        ((@atomic window.closing) || !any(v -> v === window.visualizer, present)) && _close_window!(state, window)
+    end
     _finish_closed_windows!(state)
     for window in copy(state.windows)
         _finish_preparation!(window)
@@ -192,7 +197,7 @@ function render_windows!(state::BrowserState)::Nothing
         open = Ref(true)
         window.initial_size_pending && ig.SetNextWindowDockID(0, ig.ImGuiCond_Always)
         condition = window.initial_size_pending ? ig.ImGuiCond_Always : ig.ImGuiCond_FirstUseEver
-        size = preparing(window) ? window.preparation.initial_size : initial_size(window.visualizer)
+        size = preparing(window) ? window.preparation.initial_size : initial_size(window.instance)
         ig.SetNextWindowSize(size, condition)
         window.initial_size_pending = false
         # ImGui knows the window by the part after "###", so the title can change.
@@ -201,7 +206,7 @@ function render_windows!(state::BrowserState)::Nothing
             ctx = WindowContext(state, window)
             # An error of the visualizer, or of the code it runs, leaves the rest of the window and
             # the browser working; the window shows the error where the drawing stopped.
-            window.draw_error = guarded_draw("Window: $(_window_label(window)) failed to draw", window.draw_error) do
+            window.draw_error = guarded_draw("Window: $(window.definition.label) failed to draw", window.draw_error) do
                 if preparing(window)
                     _draw_window_preview!(window.id, content_position, content_size)
                     return nothing
@@ -215,17 +220,17 @@ function render_windows!(state::BrowserState)::Nothing
                 ig.SameLine()
                 ig.BeginGroup()
                 before = Dict{Symbol,Any}(
-                    name => getproperty(window.visualizer, name) for name in keys(settings(window.visualizer)))
+                    name => getproperty(window.instance, name) for name in keys(settings(window.instance)))
                 # A dynamic call: packages add `draw_header!` methods for their visualizers when they
                 # load, and a static call would make each of them invalidate the compiled code here.
-                Base.invokelatest(draw_header!, window.visualizer, ctx)
+                Base.invokelatest(draw_header!, window.instance, ctx)
                 for (name, value) in before
-                    chosen = getproperty(window.visualizer, name)
-                    isequal(value, chosen) || setting!(window, name, chosen)
+                    chosen = getproperty(window.instance, name)
+                    isequal(value, chosen) || setproperty!(window.visualizer, name, chosen)
                 end
                 ig.EndGroup()
                 # Every visualizer control runs before handing ownership to preparation.
-                refresh!(state, window)
+                result = refresh!(state, window)
                 ig.Separator()
                 if preparing(window)
                     _draw_window_preview!(window.id, content_position, content_size)
@@ -233,14 +238,11 @@ function render_windows!(state::BrowserState)::Nothing
                 end
                 _sync_cell_settings!(window)
                 isempty(window.export_error) || ig.TextWrapped(window.export_error)
-                isempty(window.waiting) || ig.TextDisabled("Loading")
-                isempty(window.failed) || ig.TextWrapped("Failed:\n" * window.failed)
+                result.loading && ig.TextDisabled("Loading")
+                isempty(result.failed) || ig.TextWrapped("Failed:\n" * result.failed)
                 measure_window_picture!(window.id)
-                if isempty(window.error)
-                    _draw_presentations!(state, window)
-                else
-                    ig.TextWrapped(window.error)
-                end
+                failure = isempty(result.error) ? window.error : result.error
+                isempty(failure) ? _draw_presentations!(state, window) : ig.TextWrapped(failure)
             end
             isempty(window.draw_error) || ig.TextWrapped(window.draw_error)
             if open[] && !preparing(window)
@@ -248,7 +250,7 @@ function render_windows!(state::BrowserState)::Nothing
             end
         end
         ig.End()
-        open[] || close_window!(state, window)
+        open[] || close(window)
     end
     return nothing
 end

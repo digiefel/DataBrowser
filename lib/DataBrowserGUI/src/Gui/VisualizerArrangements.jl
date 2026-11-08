@@ -10,7 +10,8 @@ function _render_arrangement!(state::BrowserState, window::Window)::Nothing
         ctx = WindowContext(state, window)
         for candidate in ("stack", "grid", "overlay")
             candidate == "overlay" && !_can_overlay(window, ctx) && continue
-            ig.Selectable(uppercasefirst(candidate), mode == candidate) && arrangement!(window, candidate)
+            ig.Selectable(uppercasefirst(candidate), mode == candidate) &&
+                Workspace.arrangement!(window.visualizer, candidate)
         end
         ig.EndCombo()
     end
@@ -26,13 +27,13 @@ function _render_stack_arrows!(window::Window, value::Workspace.Selection)::Noth
     i = something(findfirst(==(window.active_item), value.id), 1)
     ig.SameLine()
     ig.BeginDisabled(i == 1)
-    ig.ArrowButton("##previous-item", ig.ImGuiDir_Left) && active_item!(window, String(value.id[i-1]))
+    ig.ArrowButton("##previous-item", ig.ImGuiDir_Left) && Workspace.active_item!(window.visualizer, String(value.id[i-1]))
     ig.EndDisabled()
     ig.SameLine()
     ig.TextUnformatted("$i / $(length(value)): $(value.label[i])")
     ig.SameLine()
     ig.BeginDisabled(i == length(value))
-    ig.ArrowButton("##next-item", ig.ImGuiDir_Right) && active_item!(window, String(value.id[i+1]))
+    ig.ArrowButton("##next-item", ig.ImGuiDir_Right) && Workspace.active_item!(window.visualizer, String(value.id[i+1]))
     ig.EndDisabled()
     return nothing
 end
@@ -52,10 +53,10 @@ function _draw_cell!(state::BrowserState, window::Window, cell::VisualizerCell):
 end
 
 function _draw_presentations!(state::BrowserState, window::Window)::Nothing
-    if !window.has_value
+    if window.revision == 0
         ig.TextDisabled("Waiting for input")
     elseif !(window.value isa Workspace.Selection) || window.arrangement == "overlay"
-        draw!(window.visualizer, WindowContext(state, window))
+        draw!(window.instance, WindowContext(state, window))
     elseif isempty(window.cells)
         ig.TextDisabled("No items selected")
     elseif window.arrangement == "stack"

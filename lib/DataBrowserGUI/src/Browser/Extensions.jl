@@ -99,7 +99,7 @@ function _add_new_extensions!(state)::Nothing
         end
         # A new list, not a longer one: other threads may be reading the list.
         state.extensions = [state.extensions; added]
-        _open_waiting_windows!(state)
+        _open_saved_windows!(state, state.saved_project_view.windows)
         # FIXME: CImGui calls exit handlers in the world the render loop started in. That world lacks
         # the handlers that packages loaded since then registered, such as those of these extensions.
         handlers = ig._exit_handlers

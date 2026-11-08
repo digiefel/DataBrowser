@@ -115,7 +115,7 @@ function _project_view_from_browser(
         sort=by isa Workspace.SortKeys ? [[String(key), reverse ? "descending" : "ascending"] for (key, reverse) in by.keys] :
             state.saved_project_view.sort,
         extensions=_persisted_extensions(state),
-        windows=[[_persisted_window(window) for window in state.windows]; _waiting_windows(state)],
+        windows=[[_persisted_window(state, window) for window in state.windows]; _waiting_windows(state)],
     )
 end
 
@@ -123,27 +123,29 @@ end
 _waiting_windows(state::BrowserState)::Vector{PersistedWindow} =
     filter(window -> _visualizer_type(window.visualizer) === nothing, state.saved_project_view.windows)
 
-function _persisted_window(window::Window)::PersistedWindow
-    preparing(window) && return window.preparation.saved
-    input = window.input
-    visualizer = window.visualizer
+function _persisted_window(state::BrowserState, window::Window)::PersistedWindow
+    (; type, settings, input, transform, arrangement, active_item) = @atomic window.visualizer.definition
     # A setting is saved as TOML text, number or boolean; a symbol as its text.
     values = Dict{String,Any}()
-    for name in keys(settings(visualizer))
-        value = getproperty(visualizer, name)
+    for (name, value) in pairs(settings)
         value isa Symbol && (value = String(value))
         value isa Union{AbstractString,Real} && (values[String(name)] = value)
     end
-    return PersistedWindow(
+    ## An input visualizer is saved as the first window that shows it.
+    # TODO: an input visualizer that no window shows, and a function, are saved as the selection.
+    # Save visualizers with the tab file (@layout, 7 Nov).
+    shown = input isa Workspace.Visualizer ? findfirst(other -> other.visualizer === input, state.windows) : nothing
+    return PersistedWindow(;
         id=window.id,
-        arrangement=window.arrangement,
-        active_item=window.active_item,
-        visualizer=String(nameof(typeof(visualizer))),
-        input=input isa FixedItems ? "items" : input isa WindowOutput ? "window" : "selection",
-        ids=input isa FixedItems ? copy(input.ids) : input isa WindowOutput ? [input.window] : String[],
-        transform=window.transform === nothing ? "" : String(window.transform.name),
+        arrangement,
+        active_item,
+        visualizer=String(nameof(type)),
+        input=input isa Workspace.FixedItems ? "items" : shown !== nothing ? "window" : "selection",
+        ids=input isa Workspace.FixedItems ? copy(input.ids) : shown !== nothing ? [state.windows[shown].id] : String[],
+        transform=transform === nothing ? "" : String(transform.name),
         settings=values,
-        selection=Dict{String,Any}(String(name) => value for (name, value) in pairs(selection(visualizer))),
+        selection=preparing(window) ? window.preparation.selection :
+            Dict{String,Any}(String(name) => value for (name, value) in pairs(selection(window.instance))),
     )
 end
 
@@ -158,54 +160,66 @@ function _visualizer_type(name::AbstractString)::Union{Nothing,Type}
 end
 
 """
-Open the saved windows again. A window whose visualizer is not loaded now is not opened, and stays
-in the file until its visualizer loads; then `_open_waiting_windows!` opens it.
+Open the saved windows again, in place of those the browser shows. A window whose visualizer is not
+loaded now is not opened, and stays in the file until its visualizer loads; then
+`_open_saved_windows!` opens it.
 """
 function _restore_windows!(state::BrowserState, saved::Vector{PersistedWindow})::Nothing
-    foreach(window -> close_window!(state, window), copy(state.windows))
-    for window in saved
-        V = _visualizer_type(window.visualizer)
-        V === nothing || _open_saved_window!(state, window, V)
-    end
+    # TODO: when the browser opens again on a workspace, the visualizers of the windows it showed
+    # before stay beside those it opens. Save visualizers with the tab file (@layout, 7 Nov).
+    foreach(window -> (close(window.visualizer); _close_window!(state, window)), copy(state.windows))
+    _open_saved_windows!(state, saved)
     # New windows take ids after the saved ones, also those not opened, so ImGui does not give
     # them a saved place.
     numbers = [parse(Int, m.captures[1]) for m in
         (match(r"^window_(\d+)$", window.id) for window in saved) if m !== nothing]
-    state.next_window = maximum(numbers; init=0)
+    state.next_window[] = maximum(numbers; init=0)
     return nothing
 end
 
-"""Open the saved windows whose visualizer has loaded since the browser opened."""
-function _open_waiting_windows!(state::BrowserState)::Nothing
-    for window in state.saved_project_view.windows
+"""
+Open the saved windows that the browser does not show, when their visualizer is loaded, each with a
+new visualizer of the workspace.
+"""
+function _open_saved_windows!(state::BrowserState, saved::Vector{PersistedWindow})::Nothing
+    ## The windows that `visualize!` opened since the last frame are open too.
+    while isready(state.opening)
+        push!(state.windows, take!(state.opening))
+    end
+    opened = Pair{PersistedWindow,Window}[]
+    for window in saved
         any(open -> open.id == window.id, state.windows) && continue
         V = _visualizer_type(window.visualizer)
-        V === nothing || _open_saved_window!(state, window, V)
+        V === nothing && continue
+        values = Pair{Symbol,Any}[]
+        for (key, value) in window.settings
+            name = Symbol(key)
+            hasfield(V, name) || continue
+            push!(values, name => fieldtype(V, name) === Symbol ? Symbol(value) : value)
+        end
+        instance = V(; values...)
+        # A dynamic call: packages add `select!` methods for their visualizers when they load, and a
+        # static call would make each of them invalidate the compiled code here.
+        isempty(window.selection) ||
+            Base.invokelatest(select!, instance; (Symbol(name) => value for (name, value) in window.selection)...)
+        v = visualize!(state.workspace, instance;
+            input=window.input == "items" ? Workspace.FixedItems(collect(String, window.ids)) : Workspace.LiveSelection())
+        Workspace.arrangement!(v, window.arrangement)
+        Workspace.active_item!(v, window.active_item)
+        isempty(window.transform) || Workspace.transform!(v, GlobalRef(Main, Symbol(window.transform)))
+        w = visualize!(state, v, instance)
+        w.id = window.id
+        w.initial_size_pending = false
+        push!(opened, window => w)
     end
-    return nothing
-end
-
-"""Open the saved `window` with a new visualizer of type `V`."""
-function _open_saved_window!(state::BrowserState, window::PersistedWindow, V::Type)::Nothing
-    values = Pair{Symbol,Any}[]
-    for (key, value) in window.settings
-        name = Symbol(key)
-        hasfield(V, name) || continue
-        push!(values, name => fieldtype(V, name) === Symbol ? Symbol(value) : value)
+    ## A window that took its value from another one takes it again, when that window is open.
+    # TODO: a window that follows one whose visualizer loads later follows the selection.
+    windows = [state.windows; last.(opened)]
+    for (window, w) in opened
+        window.input == "window" || continue
+        i = findfirst(other -> other.id == only(window.ids), windows)
+        i === nothing || Workspace.input!(w.visualizer, windows[i].visualizer)
     end
-    input = window.input == "items" ? FixedItems(collect(String, window.ids)) :
-        window.input == "window" ? WindowOutput(only(window.ids)) : LiveSelection()
-    visualizer = V(; values...)
-    # A dynamic call: packages add `select!` methods for their visualizers when they load, and a static
-    # call would make each of them invalidate the compiled code here.
-    isempty(window.selection) ||
-        Base.invokelatest(select!, visualizer; (Symbol(name) => value for (name, value) in window.selection)...)
-    opened = open_window!(state, visualizer; input)
-    opened.id = window.id
-    opened.arrangement = window.arrangement
-    opened.active_item = window.active_item
-    opened.initial_size_pending = false
-    isempty(window.transform) || transform!(opened, GlobalRef(Main, Symbol(window.transform)))
     return nothing
 end
 
