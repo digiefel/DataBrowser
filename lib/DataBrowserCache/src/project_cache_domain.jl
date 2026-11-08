@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 46
+const PROJECT_CACHE_SCHEMA_VERSION = 47
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.

@@ -100,3 +100,22 @@ end
         end
     end
 end
+
+@testset "a dictionary in the metadata keeps the keys of each item after reopening" begin
+    mktempdir() do dir
+        identity = ProjectCacheIdentity("test", "source", "source", joinpath(dir, "cache.duckdb"))
+        fits = [Dict(:slope => 1.0, :offset => 2.0), Dict(:slope => 3.0, :curvature => 4.0)]
+        cache = open_cache_db(identity)
+        try
+            store_fixture_item!(cache, (Dict{Symbol,Any}(:fit => fit) for fit in fits)...)
+        finally
+            close_cache_db!(cache)
+        end
+        cache = open_cache_db(identity)
+        try
+            @test [item.metadata[:fit] for item in get(cache, 1, nothing).items] == fits
+        finally
+            close_cache_db!(cache)
+        end
+    end
+end

@@ -249,7 +249,8 @@ end
 # Database-backed dynamically-widened metadata table
 
 # A metadata value is saved as `StructUtils.lower` gives it: numbers, strings, symbols and dates as
-# they are, vectors element by element, and any other value as the named tuple of its fields. It is
+# they are, vectors element by element, a dictionary whose values have one type as a DuckDB map, so
+# that each item has keys of its own, and any other value as the named tuple of its fields. It is
 # read back with `StructUtils.make` and the type the value had.
 
 """The saved form of one metadata value, which a DuckDB column of [`_saved_sql`](@ref) holds."""
@@ -258,13 +259,15 @@ function _saved(value)
     lowered isa Symbol && return String(lowered)
     lowered isa Union{Missing,Nothing,Bool,Integer,AbstractFloat,AbstractString,Date,DateTime} && return lowered
     lowered isa Union{AbstractVector,Tuple} && return [_saved(element) for element in lowered]
+    lowered isa AbstractDict && isconcretetype(valtype(lowered)) &&
+        return Dict(_saved(key) => _saved(element) for (key, element) in lowered)
     fields = StructUtils.make(OrderedDict{Symbol,Any}, lowered)
     return NamedTuple{Tuple(keys(fields))}(Tuple(_saved(field) for field in values(fields)))
 end
 
 """
 The DuckDB column type that holds the saved form `saved`. An error when a part of it has no type,
-as an empty vector of no element type, or a field that is `nothing`.
+as an empty vector or dictionary, or a field that is `nothing`.
 """
 function _saved_sql(saved)::String
     saved isa Bool && return "BOOLEAN"
@@ -279,6 +282,12 @@ function _saved_sql(saved)::String
         length(types) == 1 || error("a vector holds values of different column types: $(join(types, ", "))")
         return only(types) * "[]"
     end
+    if saved isa AbstractDict
+        isempty(saved) && error("an empty dictionary has no column type")
+        types = [unique(_saved_sql.(collect(part))) for part in (keys(saved), values(saved))]
+        all(==(1) ∘ length, types) || error("a dictionary holds keys or values of different column types")
+        return "MAP($(only(types[1])), $(only(types[2])))"
+    end
     saved isa NamedTuple && return "STRUCT(" *
         join(["$(_quote_identifier(String(name))) $(_saved_sql(field))" for (name, field) in pairs(saved)], ", ") * ")"
     error("a part of type $(typeof(saved)) has no column type")
@@ -286,7 +295,7 @@ end
 
 """
 The saved form as DuckDB text that a cast to its column type reads, for a column that holds a
-`STRUCT`, which the appender cannot write.
+`STRUCT` or a `MAP`, which the appender cannot write.
 """
 function _saved_text(saved)::String
     (saved === missing || saved === nothing) && return "NULL"
@@ -296,6 +305,8 @@ function _saved_text(saved)::String
     saved isa Union{AbstractString,Date,DateTime} &&
         return "'" * replace(string(saved), "\\" => "\\\\", "'" => "\\'") * "'"
     saved isa AbstractVector && return "[" * join(_saved_text.(saved), ", ") * "]"
+    saved isa AbstractDict &&
+        return "{" * join(["$(_saved_text(key))=$(_saved_text(element))" for (key, element) in saved], ", ") * "}"
     return "{" * join(["$(_quote_identifier(String(name))): $(_saved_text(field))" for (name, field) in pairs(saved)], ", ") * "}"
 end
 
@@ -536,7 +547,7 @@ function _flush_to_db!(
     new_columns, column_order, columns = lock(store.flush_condition) do
         (copy(store.pending_columns), copy(store.column_order), copy(store.columns))
     end
-    nested(name) = occursin(r"\[|STRUCT", columns[name].sql)
+    nested(name) = occursin(r"\[|STRUCT|MAP", columns[name].sql)
     quoted(name) = _quote_identifier(String(name))
     staging = store.table_name * "_staging"
     _transaction(store.write_connection) do
