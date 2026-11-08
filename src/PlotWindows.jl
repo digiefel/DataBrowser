@@ -58,8 +58,8 @@ function _load_plot_windows(policy::Union{Nothing,Clong})::Nothing
     Base.require(GLMAKIE)
     # FIXME: AppKit expects this call on the main thread. GLMakie makes the same call on this thread.
     policy === nothing || _set_activation_policy(policy)
-    ## The methods that GLMakie adds discard the compiled drawing of a Table window. Compile it again
-    ## here, so that the first Table window does not stop the browser for a second.
+    ## The methods that GLMakie adds discard the compiled drawing of a Table window. Compile it
+    ## again here, so that the first Table window does not stop the browser for a second.
     precompile(DataBrowserAPI.draw!, (Browser.TableView, Browser.WindowContext))
     precompile(DataBrowserAPI.draw_header!, (Browser.TableView, Browser.WindowContext))
     return nothing
