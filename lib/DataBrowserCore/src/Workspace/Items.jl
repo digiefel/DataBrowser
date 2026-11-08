@@ -1,19 +1,97 @@
-# What the browser, extensions and scripts read about the values of a workspace, by their ids, from
-# the latest version of the table `items`, the task that publishes those versions, and the task that
-# answers `select(workspace, f)`.
+# Windows and scripts read the items of a workspace from its *table `items`*, a value of type
+# `Items` that the workspace holds, with one row for each item, groups included, as in a
+# spreadsheet. The cells of the table come from the catalog, the table of the computations of the
+# workspace, with one row for each function call, such as a `read` or a `process` of the project.
+# Several rows of the catalog can give an item with the same id, such as the `read` and the
+# `process` of a measurement, and the last of them, here the `process`, gives the *latest version*
+# of the item. For a measurement `a2`:
+#
+# ```text
+#     the catalog                     the table items
+#     row 17: read of a2      ──┐     the row of a2: label, type and metadata from row 42 once it
+#     row 42: process of a2   ──┴──▶  has its result, and from row 17 before;
+#                                     readiness: that of row 42, the latest version of a2
+# ```
+#
+# So the row of an item holds its id, the groups that hold it, the row of the catalog that gives its
+# latest version, and the label, type and metadata of its latest version that has a result. Besides,
+# the table holds cells for each row of the catalog, such as its *readiness*, whether its result is
+# ready (`CURRENT`), waits to run or runs (`WORKING`), is not asked for yet (`UNPROCESSED`) or
+# failed (`FAILED`), and the message of its failure. The readiness of an item is that of the row of
+# its latest version.
+#
+# The workers, the tasks that run the rows of the catalog, change the catalog under its lock. To
+# read without waiting for them, windows and scripts read *versions of the table*, copies of type
+# `Version` that the workspace *publishes* and never changes afterwards. Besides the table, windows
+# and scripts read the *shared state*, which holds the items selected in the browser, the tags and
+# the order of the items. Each time the workspace publishes a version of the table or of the shared
+# state, it gives the published copy the next *generation*, a number that increases by one each
+# time, so that `select(workspace, f)` can wait for an answer that shows a given change. The section
+# [How windows and scripts read the
+# workspace](../../../../../ARCHITECTURE.md#How-windows-and-scripts-read-the-workspace) of the
+# architecture shows how these parts fit together.
+#
+# Windows and scripts *ask for* an item when they need its result: a window for the items that it
+# shows, through `select(workspace, ids)`, and a script with `select(workspace, ids)` or with
+# `evaluate`, which gives the value of a `Computation`, a function call with its inputs. The
+# publishing task `keep!` then moves the rows of these items to the front of the background work, so
+# that the workers run them first. The workers and `keep!` write the next version of the table, the
+# *draft*, and `keep!` publishes it. A second task, `answer!`, updates the answers of
+# `select(workspace, f)`:
+#
+# ```text
+#     workers ── run rows ──▶ the catalog
+#        │                     ▲   │
+#        │    adds rows, and   │   │ the rows
+#        │    runs them first  │   │ that changed
+#        │                     │   ▼
+#        │                     keep! ◀── ask for items and results ── windows, evaluate,
+#        │                       │                                    select(workspace, ids)
+#        │ labels, metadata      │ readiness, failures
+#        ▼                       │
+#     the draft ◀────────────────┘
+#        │
+#        │ keep! publishes it, with the next generation
+#        ▼
+#     a version of the table items ── read by ──▶ items, haskey, label, metadata, readiness
+#        │
+#        │ read by answer!, together with the items that changed, which keep! gives it
+#        ▼
+#     answer! ◀── the shared state: selection, tags, order ◀── published by tag!, untag!, sort!,
+#        │                                                     select!, with the next generation
+#        ▼
+#     the answers of select(workspace, f)
+# ```
+#
+# ## The publishing task
 
 """
     keep!(items, workspace)
 
-The task that keeps the table `items` of `workspace` current, until `close(items)`. At each
-notification of `items.event`, it adds to the catalog the computations given to `evaluate`, and
-requests their rows and the latest versions of the ids asked for by readers, ahead of background
-work. Then, at once while a reader waits in `wait_processed` or `evaluate` or when no scan or job is
-left, and otherwise at most once each `PUBLISH_INTERVAL`, it writes the cells of the catalog rows
-that are new or whose computation, state, priority, job or input changed, 1000 at a time, each part
-under the catalog lock. Once none is left and a cell changed, it stores the draft as a new version
-with the next generation, and passes the items whose cells shown by `select` changed to
-[`answer!`](@ref). An error stops the task, and readers that wait throw from then on.
+Internal. The publishing task of `workspace`: publish new versions of its table `items` until
+`close(items)`. The workspace starts this task when it opens. The task writes the draft, the copy
+of the table that becomes the next version, together with the workers: when a row of the catalog
+finishes, its worker writes the cells of the items that the row gives, such as their labels and
+metadata. The task wakes each time the catalog changes, or a function call asks for an item or a
+result (through `items.event`), and then
+
+1. adds a row to the catalog for each computation that a call of `evaluate` waits for, and moves
+   these rows, and the rows of the latest versions of the items that windows and scripts ask for,
+   to the front of the background work;
+2. copies into the draft the cells of each changed row of the catalog, such as its readiness and
+   the message of its failure. It copies 1000 rows each time it takes the lock of the catalog, so
+   that a worker waits for 1000 rows at most;
+3. when a cell of the draft changed, publishes the draft as the new version of the table, with the
+   next generation, and gives [`answer!`](@ref) the items that were added or removed, and those
+   whose label, groups or metadata changed, or that got a new result.
+
+The task takes steps 2 and 3 immediately while a call such as `select(workspace, ids)` or
+`evaluate` waits, or when the workspace scans no source and no computation waits or runs. Otherwise
+it takes them at most once every `PUBLISH_INTERVAL`, which is 0.05 s, so that the results of many
+computations come out in one version of the table.
+
+When the task throws, it logs the error and closes the table, as `close(items)` does. From then
+on, `select`, `evaluate` and `materialize_items` throw the error "The workspace was closed".
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
     catalog, columns, rows = workspace.catalog, items.columns, items.rows
@@ -23,7 +101,7 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             wait(items.event)
             items.closed && return nothing
             ## The requests reach the catalog at once. While a scan or a job runs or waits, and no
-            ## reader waits, the task waits for the end of the interval that the last publish
+            ## reader waits, the task waits for the end of the interval that the last version
             ## started: a timer wakes it then, and a reader that comes earlier wakes it at once.
             ## Once the work ends, its last changes follow at once.
             requested, readers = @lock items.lock (collect(items.requested), copy(items.readers))
@@ -71,8 +149,8 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                         row in catalog || continue
                         readiness = Catalogs.state(catalog, row) == Catalogs.CURRENT ? CURRENT : Catalogs.stuck(catalog, row) ? FAILED :
                             Catalogs.running(catalog, row) || Catalogs.wanted(catalog, row) ? WORKING : UNPROCESSED
-                        ## The row of a group keeps the member values that it took when its run
-                        ## ends.
+                        ## When its run ends, the row of a group keeps the rows of the versions of
+                        ## its members that it took.
                         ## TODO(scale): this takes the time of the number of members at each run.
                         write!(items, rows.readiness, row.index, readiness) && readiness in (CURRENT, FAILED) &&
                             haskey(workspace.taken, row) &&
@@ -129,20 +207,58 @@ function keep!(items::Items, workspace::Workspace)::Nothing
     return nothing
 end
 
+# ## The answers of `select(workspace, f)`
+#
+# `select(workspace, f)` gives the items for which `f(row)` returns `true`, such as the items with a
+# tag, in the order set by `sort!` ([`Selection.jl`](Selection.md)). Its *answer* is a `Selection`,
+# a table with one row for each of these items, as in a spreadsheet. The answer comes from a task of
+# the workspace, which runs `f` again only on the items that change. For example, with
+#
+# ```julia
+# checked(row) = "check" in row.tags
+# ```
+#
+# a first call of `select(workspace, checked)` runs `checked` on every item. When a script then adds
+# the tag `check` to the item `a2`, `tag!` publishes the shared state at the next generation, say
+# 413, before it returns. The next call of `select(workspace, checked)` waits for an answer of
+# generation 413 or later, which the task makes by running `checked` on the row of `a2` alone, and
+# so the answer holds `a2`. Each call of `select(workspace, f)` waits in this way for an answer that
+# shows every change published before the call. A new result counts once `keep!` publishes it.
+#
+# The task recognizes a function of an earlier call when the two are `===`, and runs a new function
+# on every item. After that, an item changes when it is added or removed, when it gets a new result,
+# or when its label, groups, metadata or tags change. So a function that reads anything other than
+# the row, such as the readiness of the item or a global variable, can give an answer that is out of
+# date.
+
 """
     answer!(items, workspace)
 
-The task that keeps the answers of `select(workspace, f)` current, until `close(items)`. At each
-notification of `items.asking`, it runs each function given to `select` in the last 10 seconds on
-the rows of the items whose cells shown by `select` changed in the versions published since its
-last pass, or whose tags changed in the shared state, and merges the items that pass into the order
-set by `sort!`. A new function runs on the row of every item, and a new order sorts every item
-again. Each answer then carries the generation of the version and of the shared state that it shows.
-The task takes no catalog lock, so a slow function delays neither a version nor a write.
+Internal. The task that updates the answers of `select(workspace, f)`, until `close(items)`. The
+workspace starts this task when it opens. The task wakes each time `keep!` publishes a version of
+the table, the shared state changes, or a call of `select` finds its answer out of date (through
+`items.asking`), and then
+
+1. finds the items that changed since it last woke: the items that `keep!` gave it, and the items
+   whose tags changed;
+2. runs each function on the rows of these items, and merges the items for which the function
+   returns `true` into its answer, in the order set by `sort!`. A function that is new to the task,
+   with no earlier function `===` to it, runs on every item, and a new order sorts every item again;
+3. gives each answer the generation that it shows: the higher of two generations, that of the
+   version of the table that it read, and that of the shared state.
+
+When `f` throws on an item, the task leaves the item out, and logs the first error of `f`. When the
+order set by `sort!` throws, the task logs the error and sets the order by labels again.
+
+The task runs the functions one after another, so a slow function delays the answers of the others.
+However, it takes no lock of the catalog, so a slow function delays neither the publishing task nor
+the workers. The task holds the answer of each function until 10 seconds after the last call of
+`select` with it, and then drops it, so that it stops running the functions that no window or script
+uses any more. A later call with the function runs it on every item again.
 """
 function answer!(items::Items, workspace::Workspace)::Nothing
     ## Owned by this task: the sort key of each item, by its number, the order of those keys, for
-    ## each function the sorted numbers of the items that pass it, and the tags of the last pass.
+    ## each function the sorted numbers of the items that pass it, and the tags that it last read.
     keys_of, sorted_by, passed, tagged = Dict{Int32,Any}(), nothing, Dict{Any,Vector{Int32}}(), nothing
     try
         while true
@@ -250,9 +366,15 @@ end
 """
     close(items::Items)
 
-Stop the tasks that keep the table `items` and the answers of `select`, [`keep!`](@ref) and
-[`answer!`](@ref), and wake the calls that wait for them, such as `select(workspace, f)`: they
-throw.
+Internal. Stop the two tasks of the table `items`, [`keep!`](@ref) and [`answer!`](@ref), and wake
+the calls that wait for them:
+
+- `select`, `evaluate` and `materialize_items`, which reads items from their stores, throw the error
+  "The workspace was closed";
+- `wait_workspace_idle!`, which waits until the workspace has no work left, returns.
+
+The functions that read an item by its id keep reading the version of the table published last. The
+workspace calls `close` when it closes, and when `modify_workspace!` rebuilds it with a new table.
 """
 function Base.close(items::Items)::Nothing
     @lock items.lock (items.closed = true; notify(items.published))
@@ -261,11 +383,21 @@ function Base.close(items::Items)::Nothing
     return nothing
 end
 
-# The number of the item `x` in `version`, or 0 when `version` has no item `x`.
+# ## Reading an item by its id
+#
+# The functions below read one item from the version of the table published last, without a lock and
+# without waiting. A change of the item shows in them once the publishing task publishes it:
+# immediately while a call waits or when no work is left, and otherwise within about
+# `PUBLISH_INTERVAL`, 0.05 s. To wait until an item is computed, call `select(workspace, ids)`
+# instead, which also asks for the item.
+#
+# The *number* of the item `x` in `version` is the position of its row in that version of the
+# table, or 0 when `version` does not have the item.
 number(version::Version, x::AbstractString)::Int32 = get(version.index, x, Int32(0))
 
-# The cell of the item `x` in the column `name` of a version, by default the latest one, or
-# `default` when that version has no item `x`. The type of the cell follows from a constant `name`.
+# The cell of the item `x` in the column `name` of `version`, or `default` when `version` does not
+# have the item. The second method reads the version of the table published last. When `name` is a
+# literal symbol, such as `:label`, the compiler knows the type of the cell.
 Base.@constprop :aggressive function cell(version::Version, x::AbstractString, name::Symbol, default)
     n = number(version, x)
     return n == 0 ? default : getfield(version.columns, name)[n]
@@ -276,7 +408,9 @@ Base.@constprop :aggressive cell(workspace::Workspace, x::AbstractString, name::
 """
     items(workspace) -> Vector{String}
 
-The ids of the values of a workspace.
+The ids of the items of the workspace, groups included, in the order of their rows in the table: the
+ids for which `haskey` is true. To read the label, tags and metadata of many items, call
+[`select`](@ref).
 """
 function items(workspace::Workspace)::Vector{String}
     columns = (@atomic workspace.items.version).columns
@@ -286,22 +420,35 @@ end
 """
     haskey(workspace, id) -> Bool
 
-Whether the workspace has an item with the id `id`, as [`select`](@ref) gives it. A selection or a
-saved view can name items that the workspace does not have yet, or no longer has.
+Whether the workspace has an item with the id `id`, so that [`select`](@ref) can give it. The ids
+that come from the browser, such as the items selected in it or a view that it saved, can include
+items that the workspace does not have yet, or no longer has. `select(workspace, ids)` throws for
+such an id, so check these ids with `haskey` first.
 """
 Base.haskey(workspace::Workspace, x::AbstractString)::Bool = number((@atomic workspace.items.version), x) != 0
 
-# TODO(query model): an internal stand-in for the browser, until the query model of roadmap 0.5.0 has
-# "it holds the value `id`" as a condition.
+# TODO(query model): the browser reads the groups that hold an item with the internal `groups`,
+# until `select` can find them with the query model planned in the roadmap (0.5.0).
 """
     groups(workspace, id) -> Vector{String}
 
-Internal. The ids of the groups that hold the value `id` among their members, as [`select`](@ref)
-gives them.
+Internal. The ids of the groups that hold the item `id` among their members, as in the column
+`groups` of a [`Selection`](@ref).
 """
 groups(workspace::Workspace, x::AbstractString)::Vector{String} = copy(cell(workspace, x, :groups, String[]))
 
-"""A sort key that orders text with embedded integers by the value of those integers."""
+# ## The order of the items
+#
+# `sort!` sets the order of the items in the answers of `select(workspace, f)`, and so in the tree
+# of the browser. The order is part of the shared state, and `answer!` sorts by it.
+
+"""
+    natural_key(text) -> Tuple
+
+Internal. A sort key for text that compares each run of digits in it as a whole number, so that
+`"a2"` comes before `"a10"`, and the rest of the text without regard to case. A decimal point or a
+minus sign counts as text, so `"1.5"` comes before `"1.25"`.
+"""
 natural_key(text::AbstractString)::Tuple = Tuple(
     all(isdigit, part.match) ? (1, parse(Int, part.match)) : (0, lowercase(part.match))
     for part in eachmatch(r"\d+|\D+", String(text)))
@@ -309,25 +456,31 @@ natural_key(text::AbstractString)::Tuple = Tuple(
 """
     SortKeys(keys)
 
-Internal. An order of the items by keys of their rows, to give as both `by` and `lt` to
-[`sort!`](@ref): `keys` holds `key => reverse` pairs, where `key` is `:label`, `:id` or a metadata
-key. The items sort by the first key, then by the second where the first is equal, and so on, and
-last by their ids. Text sorts with the numbers in it by their value, and an item without a key
-sorts after the items with it, in both directions. The workspace sorts by
-`SortKeys([:label => false])` until a call to `sort!`, and the Sort menu of the browser makes one.
+Internal. The order that the Sort menu of the browser sets, with
+`sort!(workspace; by=order, lt=order)` for `order = SortKeys(keys)`. `keys` holds `key => reverse`
+pairs, where `key` is `:label`, `:id` or a metadata key, and `reverse` is `true` for a descending
+order. The items sort by the first key, then by the second where the first is equal, and so on, and
+last by their ids. Text sorts with the numbers in it by their value (see `natural_key`), and an item
+that lacks a key sorts after the items that have it, whether the order of the key is ascending or
+descending. With `SortKeys([:gap => true])`, the items with a metadata key `gap` come first, the
+largest gap first, and the items without one follow. Before the first call to `sort!`, the workspace
+sorts by `SortKeys([:label => false])`. A `SortKeys` serves as both `by`, which turns the row of an
+item into a tuple, and `lt`, which compares two such tuples.
 """
 struct SortKeys
     keys::Vector{Pair{Symbol,Bool}}
 end
 
-# As `by`: the value of each key of the row, and for text its `natural_key`, then the id. A key that
-# the workspace does not have, such as one saved with the browser's view, is `missing`.
+# Called with a row, as `by`, a `SortKeys` gives a tuple: the field of each of its keys in the row,
+# with text as its `natural_key`, then the `natural_key` of the id together with the id. A key that
+# the workspace does not have, such as one in a view that the browser saved, gives `missing`.
 (order::SortKeys)(row) = (Tuple(
     (value = hasproperty(row, key) ? getproperty(row, key) : missing; value isa AbstractString ? natural_key(value) : value)
     for (key, _) in order.keys)..., (natural_key(row.id), row.id))
 
-# As `lt`: the first key where the rows differ decides, in its direction, and else the id, so that
-# the items have one order.
+# Called with two such tuples, as `lt`, a `SortKeys` compares them key by key: the first key where
+# they differ decides, in the direction of that key, with `missing` last. When every key is equal,
+# the ids decide, so that no two items tie.
 function (order::SortKeys)(a::Tuple, b::Tuple)::Bool
     for (x, y, (_, reverse)) in zip(a, b, order.keys)
         isequal(x, y) && continue
@@ -340,19 +493,24 @@ end
 """
     sort!(workspace; by, lt=isless, rev=false) -> workspace
 
-Set the order of the items that [`select`](@ref) gives for a function, with the keywords of `sort`.
-The browser shows the members of each group in this order. `by` takes a row as `select` gives it:
-`row.id`, `row.label`, `row.groups`, `row.tags`, and one field for each metadata key of the
-workspace, `missing` where the item has none. Before a call to `sort!`, the items sort by their
-labels, with the numbers in them by their value: `a2` comes before `a10`.
+Set the order of the items in every answer of `select(workspace, f)`, with the keywords `by`, `lt`
+and `rev`, as in `sort`. The tree of the browser shows its items in this order too. `by` takes the
+row of an item, as [`select`](@ref) gives it to `f`: `row.id`, `row.label`, `row.groups`,
+`row.tags`, and one field for each metadata key of the workspace, `missing` where the item does
+not have the key.
+
+Before the first call to `sort!`, the items sort by their labels, with the numbers in them by
+their value: `a2` comes before `a10`. A `by` of your own compares with `isless`, which puts `a10`
+before `a2`, and puts `missing` last, or first with `rev=true`:
 
 ```julia
 using NaturalSort
-sort!(workspace; by=row -> row.label, lt=natural)
-sort!(workspace; by=row -> row.timestamp, rev=true)  # the latest first
+sort!(workspace; by=row -> row.label, lt=natural)    # a2 before a10
+sort!(workspace; by=row -> row.timestamp, rev=true)  # no timestamp first, then the latest
 ```
 
-When `by` or `lt` throws, the items sort by their labels again, and the error is logged once.
+`sort!` returns immediately, and the workspace sorts the answers afterwards. When `by` or `lt`
+throws later, the workspace logs the error and sets the order by labels again.
 """
 function Base.sort!(workspace::Workspace; by, lt=isless, rev::Bool=false)::Workspace
     share!(_ -> (; order=(; by, order=Base.Order.ord(lt, identity, rev))), workspace)
@@ -362,34 +520,55 @@ end
 """
     order(workspace)
 
-Internal. The `by` of the last call to [`sort!`](@ref), or the `SortKeys` of the labels before one.
+Internal. The `by` of the order set by [`sort!`](@ref): the `by` of its last call, or
+`SortKeys([:label => false])` before the first call and after an order that threw.
 """
 order(workspace::Workspace) = (@atomic workspace.shared).order.by
 
+# ## The label, type, metadata and readiness of an item
+#
+# The label, the type and the metadata of an item come from its latest version that has a result,
+# and its readiness from its latest version. So for a measurement that `read` gave and that
+# `process` changes:
+#
+# | The `process` of the measurement | `label`, `valuetype`, `metadata` | `readiness`   |
+# |:---------------------------------|:---------------------------------|:--------------|
+# | is not asked for yet             | from its `read`                  | `UNPROCESSED` |
+# | waits to run, or runs            | from its `read`                  | `WORKING`     |
+# | failed                           | from its `read`                  | `FAILED`      |
+# | finished                         | from its `process`               | `CURRENT`     |
+
 """
-The label of a value, as [`select`](@ref) gives it: the one given by its latest version, or its id
-before it has one.
+    label(workspace, id) -> String
+
+The label of the item `id`, as in the column `label` of a [`Selection`](@ref), or the id itself
+while no version of the item has a result, and for an id that the workspace does not have.
 """
 label(workspace::Workspace, x::AbstractString)::String = cell(workspace, x, :label, String(x))
 
 """
-The type of the latest version of an item, or `Any` before it has one.
+    valuetype(workspace, id) -> Type
+
+The type of the item `id`, a subtype of `AbstractDataItem` such as one that the project defines, or
+`Any` while no version of the item has a result, and for an id that the workspace does not have.
 """
 valuetype(workspace::Workspace, x::AbstractString)::Type = cell(workspace, x, :type, Any)
 
 """
     source_item_id(workspace, id) -> String
 
-The public id of the source item that the value `id` comes from, or `""` when the workspace has no
-value `id`.
+The id of the source item, such as a file, that the item `id` comes from, or `""` when the
+workspace does not have the item.
 """
 source_item_id(workspace::Workspace, x::AbstractString)::String = cell(workspace, x, :source, "")
 
 """
     metadata(workspace, id) -> Dict{Symbol,Any}
 
-The metadata of a value, as [`select`](@ref) gives it, in a new dictionary: the metadata of its
-latest version that a row gave, such as the value of its read when its `process` fails.
+The metadata of the item `id`, as in the metadata columns of a [`Selection`](@ref), in a new
+dictionary that the caller may change. The dictionary leaves out the keys that the item does not
+have, where a `Selection` has `missing`. An id that the workspace does not have gives an empty
+dictionary.
 """
 function metadata(workspace::Workspace, x::AbstractString)::Dict{Symbol,Any}
     version, found = (@atomic workspace.items.version), Dict{Symbol,Any}()
@@ -404,14 +583,24 @@ end
 """
     metadata_keys(workspace) -> Vector{Symbol}
 
-Internal. The metadata keys of the items of the workspace, in alphabetical order.
+Internal. The metadata keys that have a column in the latest version of the table, in alphabetical
+order.
 """
 metadata_keys(workspace::Workspace)::Vector{Symbol} = sort!(collect(keys((@atomic workspace.items.version).metadata)))
 
 """
     readiness(workspace, id) -> Readiness
 
-How far the work is for an item, from the row of its latest version.
+How far the work on the latest version of the item `id` is, as a value of the type
+[`Readiness`](@ref):
+
+- `CURRENT`: the latest version has its result;
+- `WORKING`: the latest version waits to run, or runs;
+- `UNPROCESSED`: the latest version has no current result, and nothing asks for it yet, as when the
+  workspace runs `process` only for the items that windows and scripts ask for;
+- `FAILED`: its computation failed, or one that it needs failed.
+
+An id that the workspace does not have is `UNPROCESSED` too, and `haskey` tells the two apart.
 """
 readiness(workspace::Workspace, x::AbstractString)::Readiness = readiness((@atomic workspace.items.version), x)
 readiness(version::Version, x::AbstractString)::Readiness = version.rows.readiness[cell(version, x, :version, Catalogs.NOWHERE)]
