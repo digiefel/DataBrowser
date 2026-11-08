@@ -110,7 +110,9 @@ Loaded cache state for one workspace.
 mutable struct WorkspaceCache
     identity::ProjectCacheIdentity
     db::CacheDB
-    disk_error::Union{Nothing,Exception}
+    # The error that keeps the cache file, or a store file, from use, such as an old layout: the
+    # browser then offers a rebuild. A store sets it when it first opens, from any thread.
+    @atomic disk_error::Union{Nothing,Exception}
     operation::Symbol
 end
 

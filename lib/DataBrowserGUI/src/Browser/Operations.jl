@@ -26,7 +26,7 @@ function _check_cache_error!(
     state::BrowserState,
     workspace::Workspace.Workspace,
 )::Nothing
-    err = workspace.cache.disk_error
+    err = @atomic workspace.cache.disk_error
     if err isa ProjectCacheSchemaError
         if !state.cache_schema_prompted
             state.cache_rebuild_modal = true

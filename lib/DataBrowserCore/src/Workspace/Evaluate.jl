@@ -636,15 +636,31 @@ The store that the project chooses for results of `type`, asked once for each ty
 for the types of results that never go to a store, `Nothing` and `Selection`, and when `storage`
 gives `nothing`. When `storage` throws, it is a `MemoryStore`, with a warning. [`keep!`](@ref) also
 skips the result of `view`.
+
+A store file written by an older version of DataBrowser is handled as an old cache file: while the
+cache rebuilds, its file is deleted and the store starts over; otherwise, the results stay in
+memory, and the workspace keeps the error, so that the browser offers a rebuild.
 """
 function store(workspace::Workspace, type::Type)::Union{Nothing,AbstractStore}
     type <: Union{Nothing,Selection} && return nothing
     return @lock workspace.stores_lock get!(workspace.stores, type) do
         try
-            Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
+            try
+                Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
+            catch error
+                error isa ProjectCacheSchemaError && workspace.cache.operation === :rebuild || rethrow()
+                DataBrowserCache._remove_cache_files!(error.path)
+                Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
+            end
         catch error
-            @warn("The store of a result type cannot be used: its results are kept in memory", type,
-                exception=(error, catch_backtrace()), maxlog=1)
+            if error isa ProjectCacheSchemaError
+                @atomicreplace workspace.cache.disk_error nothing => error
+                @warn("A store file is out of date: its results are kept in memory until the cache rebuilds",
+                    store=error.path, maxlog=1)
+            else
+                @warn("The store of a result type cannot be used: its results are kept in memory", type,
+                    exception=(error, catch_backtrace()), maxlog=1)
+            end
             DataBrowserCache.MemoryStore()
         end
     end
