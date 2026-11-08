@@ -75,9 +75,16 @@ implemented.
   so a script sees its own change right after the call. A call that returns at once may come
   later. [The client API](client-api.md) that does this is designed whole first, as a target of
   its own.
-- Code can drive the browser as a person does: move the mouse, click, type and press keys, then
-  read what the browser shows. Automatic checks of the browser's behavior and of its performance
-  during use run with it, unattended, only while nobody uses the machine.
+- A visualizer is an object of the workspace, with an id, its settings, its input and its value,
+  and every client shows the same visualizers. Each client shows a visualizer in its own way: the
+  browser in a window, which can close while the visualizer stays; the REPL as a picture or text
+  of it as it is now; an MCP server by its id, with a picture for the agent.
+  `visualize!(workspace, visualizer)` adds one to the workspace, and
+  `visualize!(browser, visualizer)` also shows it in a window.
+- Code drives the browser while it shows through the functions that the browser's controls call:
+  `select!(workspace, ids)`, `visualize!(browser, v)`, `close(w)`, or a setting such as
+  `v.inspect = true`. Automatic checks of the browser's behavior and of its performance call these
+  functions, unattended, for example overnight.
 
 ## Proposals
 
@@ -106,7 +113,6 @@ These are not yet agreed.
 
 ## Open questions
 
-- Can one visualizer instance appear in several clients at once, sharing settings and output?
 - What does a client show for a visualizer it has no drawing part for: a picture drawn by the
   runtime, the value as a table or text, or nothing?
 - How does a Python client provide sources, `process` methods and visualizers to the runtime: in

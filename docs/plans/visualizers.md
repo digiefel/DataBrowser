@@ -1,7 +1,8 @@
 # Visualizers
 
-Target design, curated on 21 October 2026. This plan owns values presented by views, input binding
-and linked interaction. [Tabs](tabs.md) owns analysis files and window ownership. The old canvas,
+Target design, curated on 21 October 2026; the visualizer as an object of the workspace was agreed
+on 8 November 2026. This plan owns values presented by visualizers, input binding and linked
+interaction. [Tabs](tabs.md) owns analysis files and window ownership. The old canvas,
 planes and single-workspace-file layout have been retired, not retained as parallel requirements.
 
 The implemented extension contract is documented in
@@ -10,8 +11,21 @@ the archived plan are not a replacement public API.
 
 ## Values and views
 
-A view is a browser window with an input, an optional ordinary Julia transform and a visualizer.
-The value remains useful outside that window. A table may be shown as a grid, plot, histogram or
+A visualizer is an object of the workspace that shows a value. It has an id, its settings, an
+input, and an optional ordinary Julia function, its *transform*, that the value passes through.
+Every client shows the same visualizers: the browser shows one in a window, and the window can
+close while the visualizer stays.
+
+```julia
+v = visualize!(workspace, PlotView(plot="IV"))    # its input: the selection of the workspace
+t = visualize!(workspace, TableView(); input=v)   # its input: the output of v
+v.inspect = true                                  # a setting; every client that shows v follows
+w = visualize!(browser, v)                        # a window of the browser shows v
+close(w)                                          # the window closes; v stays
+close(v)                                          # v leaves the workspace
+```
+
+The value remains useful without any window. A table may be shown as a grid, plot, histogram or
 summary; a matrix as a heatmap, image or row profiles. Nested structures and unfamiliar domain
 values remain inspectable, at least as text.
 
@@ -20,9 +34,10 @@ the available visualizers through the public contract. Project helpers can trans
 another native value. The plot builder is one consumer of that shared work, not the owner of
 processing and analysis.
 
-Candidate view inputs include an explicitly followed selection, fixed items/groups or another
-computed result. These must be accessible through the public API without a GUI. Fine details of
-binding, discovery and switching inputs remain open.
+A visualizer takes its value from the selection of the workspace (`LiveSelection()`, the
+default), from fixed items (`FixedItems(ids)`), from the items that a function of the row keeps, as
+`select(workspace, f)` gives them, or from the output of another visualizer (`input=v`). Each input
+works without a GUI.
 
 ## Window controls
 
@@ -126,7 +141,8 @@ Ordinary data visualizers depend on requested values and revisions, not source t
 controls, recording status and source setup expose source capabilities separately. Displaying a
 value, refreshing analysis or attaching a GUI must not repeat acquisition or exports.
 
-A visualizer belongs to its window; broader browser extensions may manage session-level UI.
+A visualizer belongs to the workspace, and a window of the browser shows it; broader browser
+extensions may manage session-level UI.
 Both use public workspace access rather than copies of internal catalogs or private caches.
 Advanced domain packages can add specialized views without requiring simpler Recipes users to
 implement presentation or storage machinery.
@@ -148,8 +164,8 @@ must not silently rewrite a group definition or imply a universal exclusion poli
 
 ## Open work
 
-1. Public input binding and selection targeting, including fixed inputs, followed tab/shared
-   selections and results referenced by another view.
+1. Selection targeting: an input that follows the own selection of a tab. What a client shows
+   for a visualizer that it cannot draw.
 2. Dispatch/discovery and settings for generic and domain visualizers, including properties,
    multiple values and arrangement capabilities.
 3. Element provenance and aggregate input access, including what custom transforms must supply.
