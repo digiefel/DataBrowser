@@ -268,8 +268,10 @@ Base.@kwdef mutable struct BrowserState
     next_window::Int = 0
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()
-    # When the browser last compared its view with `saved_project_view`, as `time()`.
+    # When the browser last compared its view with `saved_project_view`, as `time()`, and the task
+    # that writes the view to its file.
     project_view_checked::Float64 = 0.0
+    project_view_write::Union{Nothing,Task} = nothing
     # The ids of the groups that show their members in the tree.
     expanded::Set{String} = Set{String}()
     tree_filter::String = ""

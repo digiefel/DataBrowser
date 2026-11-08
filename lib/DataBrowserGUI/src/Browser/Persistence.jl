@@ -253,22 +253,35 @@ end
 
 """
 Write the view to `databrowser.toml` only when its serialized value changed. The frames compare it
-twice a second at most; `every=0` compares it now, as when the browser closes.
+twice a second at most, and a task writes the file; `every=0` compares it now and waits for the
+file, as when the browser closes.
 """
 function _save_project_view_if_changed!(state::BrowserState; every::Real=0.5)::Nothing
     # A failed initial restore must not overwrite the saved view with startup defaults.
     isempty(state.loaded_source_id) && return nothing
     # Building and serializing the view at every frame allocates in proportion to the selection.
     time() - state.project_view_checked < every && return nothing
+    ## One write at a time: the frames compare the view again after the running write.
+    writing = state.project_view_write
+    if writing !== nothing && !istaskdone(writing)
+        every == 0 || return nothing
+        wait(writing; throw=false)
+    end
     state.project_view_checked = time()
     view = _project_view_from_browser(state)
-    _project_view_to_toml(state.saved_project_view) ==
-        _project_view_to_toml(view) && return nothing
-    ## The file holds one table for each project: the tables of other projects stay.
-    path = joinpath(state.workspace.folder, PROJECT_VIEW_FILENAME)
-    views = isfile(path) ? TOML.parsefile(path) : Dict{String,Any}()
-    views[project_name(state.workspace.project)] = _project_view_to_toml(view)
-    open(io -> TOML.print(io, views), path, "w")
+    toml = _project_view_to_toml(view)
+    _project_view_to_toml(state.saved_project_view) == toml && return nothing
     state.saved_project_view = view
+    ## The file holds one table for each project: the tables of other projects stay. Writing many
+    ## selected ids takes tens of milliseconds.
+    path = joinpath(state.workspace.folder, PROJECT_VIEW_FILENAME)
+    project = project_name(state.workspace.project)
+    writing = errormonitor(Threads.@spawn begin
+        views = isfile(path) ? TOML.parsefile(path) : Dict{String,Any}()
+        views[project] = toml
+        open(io -> TOML.print(io, views), path, "w")
+    end)
+    state.project_view_write = writing
+    every == 0 && wait(writing; throw=false)
     return nothing
 end
