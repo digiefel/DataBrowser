@@ -68,7 +68,7 @@ Build the tree drawn by the browser for `workspace`, with its items in the order
 filtered by `tree_filter` and by the [`TreeFilters`](@ref) `filters`, and with the members of each
 group in `expanded` below that group.
 
-The items held by no group are at the top. When only one of them is a source item and it is a group,
+The items held by no group are at the top. When only one of them is a source item that is a group,
 such as the folder of a `DirectorySource`, its members take its place. An item held by several
 groups appears under each of them, and a group that holds itself, directly or through its members,
 shows no members where it repeats.
@@ -101,8 +101,11 @@ function TreeCache(workspace::Workspace.Workspace, key::UInt, columns::Vector{Sy
         isempty(groups[n]) && push!(top, n)
         foreach(group -> push!(get!(Vector{Int}, members, group), n), groups[n])
     end
-    folders = filter(n -> Workspace.source_item_id(workspace, ids[n]) == ids[n], top)
-    if length(folders) == 1 && Workspace.valuetype(workspace, ids[only(folders)]) <: AbstractGroup
+    ## New files sit at the top beside their folder until the folder lists them, so only the
+    ## folders count. A folder still being read has no type yet, but its members already name it.
+    folders = filter(n -> Workspace.source_item_id(workspace, ids[n]) == ids[n] &&
+        (haskey(members, ids[n]) || Workspace.valuetype(workspace, ids[n]) <: AbstractGroup), top)
+    if length(folders) == 1
         ## The places follow the order of the tree, so sorting them keeps that order.
         top = sort!(union(filter(!=(only(folders)), top), get(members, ids[only(folders)], Int[])))
     end
