@@ -78,10 +78,9 @@ function stamp(input::WindowOutput, state::BrowserState)
     return seen
 end
 
-# The value `input` gives now: the items as a `Selection`. This runs in the calling task and waits
-# for items that are not processed yet.
-value(input::Union{LiveSelection,FixedItems}, state::BrowserState) =
-    Workspace.select(state.workspace, item_ids(input, state))
+# The value `input` gives now. The items of the workspace are kept by their ids: reading many takes
+# long, so the preparation task reads them, as `_resolve_window_input` does.
+value(input::Union{LiveSelection,FixedItems}, state::BrowserState) = FixedItems(item_ids(input, state))
 value(input::WindowOutput, state::BrowserState) = output(source(input, state))
 
 """
@@ -311,12 +310,12 @@ function _refresh_window!(state::BrowserState, window::Window)::Nothing
     ## window: they are replaced, never emptied.
     window.waiting = String[]
     try
-        window.value = @timed_dbg "window.input" value(input, state)
+        given = @timed_dbg "window.input" value(input, state)
         window.has_value = true
         window.stamp = current
         window.presentation_revision += UInt(1)
         window.presentation_dirty = true
-        _prepare_presentations!(state, window; resolve_input=true)
+        _prepare_presentations!(state, window, Some(given))
     catch err
         window.error, _ = DataBrowserAPI.report_error(
             "Window: $(label(window.visualizer)) could not show its value", err, catch_backtrace())
@@ -325,7 +324,8 @@ function _refresh_window!(state::BrowserState, window::Window)::Nothing
 end
 
 # The value a window shows: its input passed through its function, evaluated on the preparation
-# task. Also return why computations failed, one line each; the value leaves out their items.
+# task. Kept items are read as a `Selection`, which waits for items that are not processed yet.
+# Also return why computations failed, one line each; the value leaves out their items.
 function _resolve_window_input(workspace, given, transform)
     failures = String[]
     # The computations as a `Selection`, whose data is their results; the workspace stays as it
@@ -354,6 +354,7 @@ function _resolve_window_input(workspace, given, transform)
         return Workspace.Selection(Workspace.ItemData(workspace, computed), id.(named), label.(named), [String[] for _ in named],
             [String[] for _ in named], [name => [get(values, name, missing) for values in metadatas] for name in names])
     end
+    given isa FixedItems && (given = Workspace.select(workspace, given.ids))
     given isa AbstractVector{<:Workspace.Computation} && (given = resolve(given))
     if transform !== nothing
         f = Base.invokelatest(getglobal, transform.mod, transform.name)

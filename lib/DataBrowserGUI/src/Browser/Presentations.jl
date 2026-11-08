@@ -63,7 +63,9 @@ end
 # still has its own task, and the UI never waits for this lock.
 const PREPARATION_LOCK = ReentrantLock()
 
-function _prepare_presentations!(state::BrowserState, window::Window; resolve_input::Bool=false)::Nothing
+# Prepare the visualizer of `window` in a task. Given `input`, the value of the input of the window
+# as `Some`, the task first makes the value of the window from it, as `_resolve_window_input` does.
+function _prepare_presentations!(state::BrowserState, window::Window, input::Union{Nothing,Some}=nothing)::Nothing
     preparing(window) && return nothing
     window.has_value || return nothing
     saved = _persisted_window(window)
@@ -71,14 +73,14 @@ function _prepare_presentations!(state::BrowserState, window::Window; resolve_in
     unavailable() = error("Browser actions are available from draw! and draw_header!, not prepare!")
     ctx = WindowContext(window.id, state.workspace, _ -> unavailable(), unavailable)
     window.presentation_dirty = false
-    given, transform = window.value, window.transform
+    transform = window.transform
     task = Threads.@spawn :default begin
         retired = AbstractVisualizer[]
         error, failed = "", window.failed
         try
-            if resolve_input
+            if input !== nothing
                 window.value, failed = @timed_dbg "window.evaluate" Base.invokelatest(
-                    _resolve_window_input, ctx.workspace, given, transform)
+                    _resolve_window_input, ctx.workspace, something(input), transform)
             end
             lock(PREPARATION_LOCK) do
                 @timed_dbg "visualizer.prepare" Base.invokelatest(_prepare_presentations_value!, window, ctx, retired)
