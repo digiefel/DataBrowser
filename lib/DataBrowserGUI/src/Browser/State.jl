@@ -213,9 +213,52 @@ Base.@kwdef mutable struct PerformanceState
 end
 
 """
+Supertype for the filters of the values of one metadata key, which the filter bar above the tree
+applies. `value in filter` tells whether a value passes. A filter is an immutable value, so that
+two filters with the same settings are `===`; its controls return a new filter when they change.
+
+The filter bar starts a key with `MetadataFilter(T)`, for the type `T` of its values, and the most
+specific method gives the filter: values that Julia can read from text and compare, such as numbers
+and dates, get a range, and any other values a text that they contain.
+"""
+abstract type MetadataFilter end
+# TODO(public API): a package adds a filter for its own types with methods of `MetadataFilter`,
+# `in`, `_render_filter` and `_condition_text`; these need public names once agreed.
+
+"""
+    MetadataCondition(key, filter)
+
+A condition of the filter bar above the tree: an item matches when it has the metadata key `key` and
+its value passes `filter`, a [`MetadataFilter`](@ref). While `filter` is `nothing`, every item with
+the key matches.
+
+A condition is also a function of a row of `Workspace.select`, which tells whether the row matches.
+Two conditions with the same key and filter are `===`, so `select` finds its answer for either.
+"""
+struct MetadataCondition <: Function
+    key::Symbol
+    filter::Union{Nothing,MetadataFilter}
+end
+
+"""
+How the filter bar above the tree filters the items: the tags and the metadata conditions that hide
+the items they match, and those that an item must have or match to show. The tuples make a function
+that captures the filters the same function from one build of the tree to the next, so that
+`select` finds its answer.
+"""
+struct TreeFilters
+    hidden_tags::Tuple{Vararg{String}}
+    only_tags::Tuple{Vararg{String}}
+    hidden::Tuple{Vararg{MetadataCondition}}
+    only::Tuple{Vararg{MetadataCondition}}
+end
+
+"""
 One entry of the tree: the id of an item, its row from `select`, its depth (the number of groups
 above it), and a number for its place in the tree, which stays the same from one build to the
 next. `parent` tells whether the item can show members below it, and `open` whether it does.
+`passes` tells whether the item matches the filters; the tree also shows the groups above such an
+item.
 """
 struct TreeRow
     id::String
@@ -224,6 +267,7 @@ struct TreeRow
     place::UInt
     parent::Bool
     open::Bool
+    passes::Bool
 end
 
 """
@@ -287,6 +331,13 @@ Base.@kwdef mutable struct BrowserState
     # How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,
     # `:only` hides the items without it.
     tag_visibility::Dict{String,Symbol} = Dict{String,Symbol}()
+    # The conditions on metadata in the filter bar, each with its visibility, as for the tags, and
+    # the index of the condition whose editor opens in the next frame, or 0.
+    # TODO: save the conditions and `tag_visibility` with the view of the project.
+    conditions::Vector{Pair{MetadataCondition,Symbol}} = Pair{MetadataCondition,Symbol}[]
+    open_condition::Int = 0
+    # The typed text and the highlight of the list of keys in the "+ Filter" menu.
+    filter_picker::ListPicker = ListPicker()
     # The text typed in the "New tag" field of the tag menu.
     new_tag::Vector{UInt8} = zeros(UInt8, 64)
     # The typed text and the highlight of the list of visualizers in the "+ Window" menu.

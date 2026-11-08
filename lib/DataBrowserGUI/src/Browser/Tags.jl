@@ -6,40 +6,108 @@ using DataBrowserAPI: AbstractGroup
 _tags_ready(state::BrowserState)::Bool = isempty((@atomic state.workspace.shared).tags_error)
 
 """
-Return whether an item of type `type` with the tags `names` stays visible, given the `visibility`
-chosen for each tag. If the tags are not `ready`, everything stays visible, so a broken `tags.txt`
-never hides data.
+    Contains(text)
+
+The filter that passes the values whose text contains `text`, ignoring case: the filter of values of
+any type.
 """
-function _is_visible(visibility::AbstractDict{String,Symbol}, ready::Bool, names, type::Type)::Bool
-    (isempty(visibility) || !ready) && return true
-    any(name -> get(visibility, name, :shown) == :hidden, names) && return false
-    # TODO: `:only` hides the items that are not groups; a group without any item with the tag
-    # stays in the tree.
-    :only in values(visibility) && !(type <: AbstractGroup) &&
-        return any(name -> get(visibility, name, :shown) == :only, names)
-    return true
+struct Contains <: MetadataFilter
+    text::String
+end
+
+Base.in(value, filter::Contains)::Bool = occursin(lowercase(filter.text), lowercase(string(value)))
+
+"""
+    Between{T}(from, to)
+
+The filter that passes the values of type `T` from `from` to `to`, both included, as read by
+`tryparse(T, text)`; an empty bound sets no limit. With `T = DateTime`, `from = "2026-11-05"` and an
+empty `to`, every time from the start of 5 November 2026 passes. When a bound is not a value of type
+`T`, no value passes.
+"""
+struct Between{T} <: MetadataFilter
+    from::String
+    to::String
+    # The bounds as values of type `T`, `nothing` when empty, and whether each bound that is not
+    # empty is a value of type `T`.
+    low::Union{Nothing,T}
+    high::Union{Nothing,T}
+    readable::Bool
+end
+
+function Between{T}(from::AbstractString, to::AbstractString) where {T}
+    bound(text) = isempty(strip(text)) ? nothing : tryparse(T, strip(text))
+    low, high = bound(from), bound(to)
+    readable = (low !== nothing || isempty(strip(from))) && (high !== nothing || isempty(strip(to)))
+    return Between{T}(String(from), String(to), low, high, readable)
+end
+
+Base.in(value, filter::Between{T}) where {T} = filter.readable && value isa T &&
+    (filter.low === nothing || filter.low <= value) && (filter.high === nothing || value <= filter.high)
+
+MetadataFilter(T::Type) = hasmethod(tryparse, Tuple{Type{T},String}) ? Between{T}("", "") : Contains("")
+
+"""
+Return whether the metadata `value` of an item matches `condition`. `missing` stands for an item
+without the key.
+"""
+_matches(condition::MetadataCondition, value)::Bool =
+    !ismissing(value) && (condition.filter === nothing || value in condition.filter)
+
+(condition::MetadataCondition)(row)::Bool = _matches(condition,
+    hasproperty(row, condition.key) ? getproperty(row, condition.key) : missing)
+
+"""
+The filters set in the filter bar of `state`. While the workspace cannot read its tags, the tags
+filter nothing, so that a broken `tags.txt` never hides data.
+"""
+function TreeFilters(state::BrowserState)::TreeFilters
+    chosen = _tags_ready(state) ? sort!(collect(state.tag_visibility)) : Pair{String,Symbol}[]
+    having(list, visibility) = Tuple(first(entry) for entry in list if last(entry) == visibility)
+    return TreeFilters(having(chosen, :hidden), having(chosen, :only),
+        having(state.conditions, :hidden), having(state.conditions, :only))
 end
 
 """
-The selected ids that the workspace has and that the tags leave visible. The selection in the
+Return whether `filters` hide an item with the tags `names`: when the item has a hidden tag or
+matches a hidden condition. `matches(condition)` tells whether the item matches `condition`.
+"""
+_hides(filters::TreeFilters, names, matches)::Bool =
+    any(in(names), filters.hidden_tags) || any(matches, filters.hidden)
+
+"""
+Return whether an item with the tags `names` has every tag and matches every condition that
+`filters` show alone. `matches(condition)` tells whether the item matches `condition`.
+"""
+_keeps(filters::TreeFilters, names, matches)::Bool =
+    all(in(names), filters.only_tags) && all(matches, filters.only)
+
+"""
+The selected ids that the workspace has and that the filter bar leaves visible: those that no
+filter hides, and that pass the filters shown alone, unless they are groups. The selection in the
 workspace is left untouched. The result is kept for the next calls: do not change it.
 """
 function _visible_selection(state::BrowserState)::VisibleSelection
-    workspace = state.workspace
+    workspace, filters = state.workspace, TreeFilters(state)
     ## The tree and every window ask at each frame; looking up each selected id costs time in
     ## proportion to the selection. The ids depend on the selection, the ids of the workspace and
-    ## the tags, each replaced whole when it changes, and read before the ids are looked up. A tag
-    ## that shows only its items keeps the groups, so the types of the items count too: they can
-    ## change with each version of the workspace.
+    ## the filters, each replaced whole when it changes, and read before the ids are looked up.
+    ## While a filter reads the metadata or the types of the items, these count too: they can change
+    ## with each version of the workspace.
     version, shared = (@atomic workspace.items.version), (@atomic workspace.shared)
-    key = (shared.selection, version.index, shared.tags, hash(state.tag_visibility),
-        _tags_ready(state), :only in values(state.tag_visibility) ? version.generation : 0)
+    reads = !isempty(filters.only_tags) || !isempty(filters.hidden) || !isempty(filters.only)
+    key = (shared.selection, version.index, shared.tags, filters, reads ? version.generation : 0)
     kept = state.visible_selection
     kept !== nothing && kept.key === key && return kept
-    ids = filter(x -> haskey(workspace, x) &&
-        _is_visible(state.tag_visibility, _tags_ready(state),
-            (tag.name for tag in tags(workspace, x)), Workspace.valuetype(workspace, x)),
-        shared.selection)
+    ids = filter(shared.selection) do x
+        haskey(workspace, x) || return false
+        names = [tag.name for tag in tags(workspace, x)]
+        matches(condition) =
+            _matches(condition, get(Workspace.metadata(workspace, x), condition.key, missing))
+        _hides(filters, names, matches) && return false
+        ## A group stays: the tree shows it above the items that pass.
+        return Workspace.valuetype(workspace, x) <: AbstractGroup || _keeps(filters, names, matches)
+    end
     visible = VisibleSelection(key, ids, Set(ids))
     state.visible_selection = visible
     return visible
