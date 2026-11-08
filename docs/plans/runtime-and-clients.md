@@ -73,7 +73,8 @@ implemented.
 - No client call takes the catalog lock. A client call that changes the workspace, such as `tag!`
   or `evaluate` of a new computation, returns for now once the published version shows the change,
   so a script sees its own change right after the call. A call that returns at once may come
-  later. The client API that does this is designed whole first, as a target of its own.
+  later. [The client API](client-api.md) that does this is designed whole first, as a target of
+  its own.
 - Code can drive the browser as a person does: move the mouse, click, type and press keys, then
   read what the browser shows. Automatic checks of the browser's behavior and of its performance
   during use run with it, unattended, only while nobody uses the machine.

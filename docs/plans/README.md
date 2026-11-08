@@ -48,6 +48,7 @@ The [discussion archive](archive/2026-10-21-discussion/README.md) preserves the 
 | [Fitting](fitting.md) | Fitting behavior and numerical contracts | Noise models, uncertainty, failure states and solver validation |
 | [Plot editor](../plot-editor.md) | Panels, Inspector and source editing | Supported source edits, external edits, defaults and code selection |
 | [Tabs](tabs.md) | Analysis files, live work and independent selections | File/window ownership, debug capture and repeat scope |
+| [Client API](client-api.md) | The functions that scripts, the browser and other clients call on a workspace | The form of a `select` condition across the protocol |
 | [Visualizers](visualizers.md) | Native values, view inputs and linked interaction | Input targeting, provenance and linked interaction behavior |
 | [Scientific workspace](scientific-workspace.md) | Shared source, analysis and acquisition requirements | Source/acquisition integration with the newer processing model |
 
