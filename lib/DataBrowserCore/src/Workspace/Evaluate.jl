@@ -919,7 +919,7 @@ end
 #
 # A `Selection` can hold computations, as the values that a visualizer passes through a function:
 # the data of each is its result. `computation(workspace, id)` gives the computation of the latest
-# version of a value. In the browser, a visualizer draws again when the `revision` of what it shows
+# version of a value. A visualizer computes its value again when the `revision` of its input
 # changes.
 #
 # Give computations named functions. An anonymous function has a generated name, such as `#3`,
@@ -1065,8 +1065,8 @@ end
     revision(workspace, computation) -> UInt
 
 A number that changes when the result of `computation` changes: when it becomes current, or stops
-being so. A window keeps the number it drew with, and draws again when it differs. Reading it
-computes nothing.
+being so. A visualizer keeps the number it computed its value with, and computes the value again
+when it differs. Reading it computes nothing.
 """
 function revision(workspace::Workspace, value::Computation)::UInt
     version = @atomic workspace.items.version
@@ -1191,8 +1191,8 @@ end
     revision(workspace, ids) -> UInt
 
 A number that changes when `materialize_items` would deliver other values for `ids`: a value has a
-later version, or its latest version was computed again. A window keeps the number it drew with,
-and draws again when it differs.
+later version, or its latest version was computed again. A visualizer keeps the number it computed
+its value with, and computes the value again when it differs.
 """
 revision(workspace::Workspace, ids::AbstractVector{<:AbstractString})::UInt = revision((@atomic workspace.items.version), ids)
 

@@ -50,7 +50,7 @@ using ..Catalogs: Input
 using ..DataBrowserCore: Computation, MemberValues, pick
 using DataBrowserAPI: ComputationExecution
 import DataBrowserAPI: last_execution, cache_info
-using DataBrowserAPI: AbstractStore
+using DataBrowserAPI: AbstractStore, AbstractVisualizer
 import DataBrowserAPI: computation, inputs, evaluate
 import DataBrowserAPI
 import DataBrowserAPI:
@@ -94,15 +94,15 @@ WorkspaceScan()::WorkspaceScan = WorkspaceScan(:idle, "", nothing, Base.Threads.
 """
 The *shared state* of a workspace: the ids of its selection, in the order given, with ids of items
 that the workspace does not have yet or no longer has; its tags, as `tags.txt` keeps them, and why
-that file could not be read, if it could not; the order of its items, set by `sort!`; and the
-generation of the write that made it. Clients set it, and every client sees it: a script that
-selects items selects them in the browser too.
+that file could not be read, if it could not; the order of its items, set by `sort!`; its
+visualizers, in the order they were added; and the generation of the write that made it. Clients
+set it, and every client sees it: a script that selects items selects them in the browser too.
 
 A write replaces the shared state whole with [`share!`](@ref), so a reader loads
 `@atomic workspace.shared` and reads it without a lock. A published value never changes.
 """
 const Shared = @NamedTuple{selection::Vector{String}, tags::TagState, tags_error::String,
-    order::@NamedTuple{by::Any, order::Base.Order.Ordering}, generation::Int}
+    order::@NamedTuple{by::Any, order::Base.Order.Ordering}, visualizers::Vector{Any}, generation::Int}
 
 """
 Loaded cache state for one workspace.
@@ -446,7 +446,8 @@ mutable struct Workspace
     stores::Dict{Type,Union{Nothing,AbstractStore}}
     stores_lock::ReentrantLock
     items::Items
-    # The shared state, and the lock that its writers take; see `share!`.
+    # The shared state, and the lock that its writers take, and the writers of the definitions of
+    # its visualizers; see `share!` and `define!`.
     @atomic shared::Shared
     shared_lock::ReentrantLock
     cache::WorkspaceCache
@@ -461,7 +462,8 @@ mutable struct Workspace
     # Requested disk cache. Kept even when a schema error falls back to a memory cache, so a
     # rebuild can open a real disk cache again.
     disk_cache::Bool
-    background_tasks::Vector{Task}
+    # The tasks that `stop!` waits for; see `track_task!`.
+    background_tasks::Base.Lockable{Vector{Task},ReentrantLock}
     metrics::BuildMetrics
     # Held for the whole of `modify_workspace!` and `close_workspace!`, so that one waits for the
     # other.
@@ -547,13 +549,13 @@ function Workspace(
         # The items sort by their labels until a call to `sort!`.
         (; selection=String[], tags(project, folder)..., order=let labels = SortKeys([:label => false])
             (by=labels, order=Base.Order.ord(labels, Base.identity, false))
-        end, generation=0),
+        end, visualizers=Any[], generation=0),
         ReentrantLock(),
         WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),
         :idle, "", "",
         background_processing, cache,
-        Task[], metrics, ReentrantLock(), true,
+        Base.Lockable(Task[]), metrics, ReentrantLock(), true,
         Base.Threads.Atomic{Int}(0), -1 => WorkspaceStatus(),
         CancellationTokenSource(), false,
     )
@@ -589,6 +591,7 @@ include("Workspace/Operations.jl")
 include("Workspace/Status.jl")
 include("Workspace/Calls.jl")
 include("Workspace/MemoryDiagnostics.jl")
+include("Workspace/Visualizers.jl")
 
 function open_workspace(
     project::AbstractProject,

@@ -130,8 +130,8 @@ function stop!(workspace::Workspace)::Nothing
     cancel(workspace.cancel_source)
     cancel_scan!(workspace)
     close(workspace.items)
-    foreach(task -> istaskdone(task) || wait(task), workspace.background_tasks)
-    empty!(workspace.background_tasks)
+    foreach(task -> istaskdone(task) || wait(task), lock(copy, workspace.background_tasks))
+    lock(empty!, workspace.background_tasks)
     stop_workers!(workspace)
     try
         stores = @lock workspace.stores_lock unique(values(workspace.stores))
@@ -190,10 +190,12 @@ can_rebuild_cache(workspace::Workspace)::Bool =
 cache_work_running(workspace::Workspace)::Bool =
     workspace.cache_state in (:loading, :canceling)
 
-"""Keep a background task alive until workspace shutdown."""
+"""Keep a background task alive until workspace shutdown. Any thread may call it."""
 function track_task!(workspace::Workspace, task::Task)::Task
-    filter!(!istaskdone, workspace.background_tasks)
-    push!(workspace.background_tasks, task)
+    lock(workspace.background_tasks) do tasks
+        filter!(!istaskdone, tasks)
+        push!(tasks, task)
+    end
     return task
 end
 

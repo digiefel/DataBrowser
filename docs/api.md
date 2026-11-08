@@ -179,6 +179,19 @@ DataBrowserAPI.ComputationExecution
 DataBrowserAPI.cache_info
 ```
 
+#### Visualizers
+
+`visualize!` adds a visualizer to the workspace: an object with an id, settings and an input, which
+shows a value with a visualizer type, such as a table or a plot. Every client shows the same
+visualizers, and the browser shows each in a window.
+
+```@docs
+DataBrowserCore.visualize!(::DataBrowserCore.Workspace.Workspace, ::DataBrowserAPI.AbstractVisualizer)
+DataBrowserCore.LiveSelection
+DataBrowserCore.FixedItems
+Base.close(::DataBrowserCore.Workspace.Visualizer)
+```
+
 #### Tags
 
 ```@docs
