@@ -11,14 +11,12 @@ if workload == "engine"
     result = run_benchmark(repeats)
 else
     include("browser.jl")
-    root, depot, opening, started_ns = ARGS[3:6]
-    # Change only application-cache storage after packages have loaded.
-    pushfirst!(DEPOT_PATH, depot)
-    result = try
-        browser_workload(root, opening, parse(UInt64, started_ns))
-    finally
-        popfirst!(DEPOT_PATH)
-    end
+    root, opening, started_ns = ARGS[3:5]
+    # The first opening starts without the cache and the stored results of an earlier run. Only this
+    # project's folder goes: the rest of the depot, such as the font cache of Makie, stays.
+    opening == "open" &&
+        rm(joinpath(DEPOT_PATH[1], "databrowser", "BrowserSmoke"); recursive=true, force=true)
+    result = browser_workload(root, opening, parse(UInt64, started_ns))
     result["import_s"] = import_s
 end
 

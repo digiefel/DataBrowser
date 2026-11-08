@@ -36,7 +36,6 @@ function measure_benchmark(workload, julia::Cmd)
         elseif workload == "browser"
             root = joinpath(dir, "project")
             cp(joinpath(@__DIR__, "..", "test", "fixtures", "public_api"), root)
-            depot = mkpath(joinpath(dir, "data-cache"))
             rss = 0.0
             result = Dict{String,Any}()
             # The browser saves its view in the folder of the active environment, bench: the first
@@ -48,7 +47,7 @@ function measure_benchmark(workload, julia::Cmd)
                 open(io -> TOML.print(io, saved), views, "w")
             end
             for opening in ("open", "reopen")
-                peak = run_worker(`$julia $worker browser $output $root $depot $opening $(time_ns())`)
+                peak = run_worker(`$julia $worker browser $output $root $opening $(time_ns())`)
                 rss = max(rss, peak)
                 measurements = TOML.parsefile(output)
                 # Import and frame time refer to the initial opening; reopen has its own latency.
