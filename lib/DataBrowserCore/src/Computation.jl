@@ -30,7 +30,7 @@ tuple or vector are included; their own inputs are reached by calling `inputs` a
 inputs(value::Computation)::Vector{Computation} = computation_inputs(value.args)
 computation_inputs(value::Computation) = Computation[value]
 # The result of a row of a workspace, in the computations that the workspace gives.
-computation_inputs(value::Input) = Computation[value.catalog[value.row]]
+computation_inputs(value::Input) = Computation[value.computation]
 computation_inputs(value::Part) = computation_inputs(value.of)
 computation_inputs(values::Tuple) = reduce(vcat, map(computation_inputs, values); init=Computation[])
 function computation_inputs(values::AbstractVector{T}) where {T}
@@ -51,7 +51,7 @@ results that the workspace keeps.
 evaluate(value::Computation) = Base.invokelatest(value.f, map(evaluated, value.args)...; value.settings...)
 evaluated(value::Computation) = evaluate(value)
 # A result of a row of a workspace is computed again, as any other input.
-evaluated(value::Input) = evaluate(value.catalog[value.row])
+evaluated(value::Input) = evaluate(value.computation)
 evaluated(value::Part) = pick(evaluated(value.of), value.id)
 evaluated(values::Tuple) = map(evaluated, values)
 evaluated(values::AbstractVector) = isempty(computation_inputs(values)) ? values : map(evaluated, values)

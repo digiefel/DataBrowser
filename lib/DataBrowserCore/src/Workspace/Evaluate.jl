@@ -960,30 +960,28 @@ A failed computation, or one whose input failed, throws its error. Once `evaluat
 throws, `last_execution`, `cache_info` and `revision` show the computation as it ended.
 """
 function evaluate(workspace::Workspace, value::Computation)
-    catalog = workspace.catalog
-    ## Code defined since the last check makes its results stale before this one is read.
-    world = Base.get_world_counter()
-    @lock(catalog.lock, any(code -> code.world != world, values(workspace.code))) && Base.invokelatest(check_code!, workspace)
-    row = @lock catalog.lock begin
-        row = add!(catalog, bound(workspace, value))
-        row in workspace.evaluated || (hold!(catalog, row); push!(workspace.evaluated, row))
-        restore!(workspace, row)
-        row
-    end
-    current = wait(catalog, row, VIEWED_ITEM) == Catalogs.CURRENT
-    result = current ? only(results(workspace, [row])) : failure(workspace, row)
-    ## `last_execution`, `cache_info` and `revision` read the latest version of the table `items`:
-    ## the call waits for the next pass of `keep!`, which starts at once and publishes the cells of
-    ## the row.
     items = workspace.items
-    @lock items.lock begin
-        push!(items.readers, row)
+    ## The task `keep!` adds the computation to the catalog and requests its row, and puts the row
+    ## in `added` once a version shows it. The call then waits, without the catalog lock, for a
+    ## version where the row is current or failed, so that many calls wait at the same time.
+    added = Ref{Any}(value)
+    version = @lock items.lock try
+        push!(items.readers, added)
         notify(items.event)
-        while !items.closed && row in items.readers
+        while true
+            items.closed && error("The workspace was closed")
+            added[] isa Exception && throw(added[])
+            version = @atomic items.version
+            added[] isa Row && version.rows.readiness[added[]] in (CURRENT, FAILED) && break
             wait(items.published)
         end
+        version
+    finally
+        deleteat!(items.readers, findfirst(reader -> reader === added, items.readers))
     end
-    return current ? result : error(result)
+    row = added[]
+    version.rows.readiness[row] == FAILED && error(version.rows.failure[row])
+    return only(results(workspace, [row]))
 end
 
 """
@@ -996,11 +994,10 @@ computation without running it.
 """
 function computation(workspace::Workspace, value::Union{AbstractString,AbstractDataItem})::Computation
     x = value isa AbstractDataItem ? id(value) : String(value)
-    @lock workspace.catalog.lock begin
-        rows = get(workspace.versions, x, nothing)
-        rows === nothing && error("The workspace has no value with the id \"$x\"")
-        return workspace.catalog[rows[end]]
-    end
+    version = @atomic workspace.items.version
+    row = cell(version, x, :version, Catalogs.NOWHERE)
+    row == Catalogs.NOWHERE && error("The workspace has no value with the id \"$x\"")
+    return version.rows.computation[row]
 end
 
 """
@@ -1072,7 +1069,7 @@ id(value::Computation) = string(function_name(value.f), "(",
     isempty(value.settings) ? "" : "; " * join(("$name = $(repr(setting))" for (name, setting) in pairs(value.settings)), ", "),
     ")")
 # TODO: the id of a computation repeats the ids of its inputs.
-argument_id(x::Input) = id(x.catalog[x.row])
+argument_id(x::Input) = id(x.computation)
 argument_id(x::Part) = x.id
 argument_id(x::AbstractDataItem) = id(x)
 argument_id(x::AbstractProject) = project_name(x)

@@ -32,10 +32,8 @@ How the values `ids` were made: for each way of making them, its last call, whic
 before it through `inputs`. Values whose calls run the same code, on results made in the same way,
 share them. Ids that the workspace has no value for are left out.
 """
-function calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{Call}
-    known = @lock workspace.catalog.lock filter(x -> haskey(workspace.versions, x), ids)
-    return calls(workspace, Computation[computation(workspace, x) for x in known])
-end
+calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{Call} =
+    calls(workspace, Computation[computation(workspace, x) for x in ids if haskey(workspace, x)])
 
 """The calls producing a selection, including unindexed computation results."""
 calls(workspace::Workspace, selection::Selection) =
@@ -43,7 +41,9 @@ calls(workspace::Workspace, selection::Selection) =
 
 """How computations were made, without computing them or adding them to the workspace."""
 function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})::Vector{Call}
-    catalog = workspace.catalog
+    ## The rows of the computations, their stages, errors and members, as the latest version of the
+    ## table `items` shows them.
+    catalog, version = workspace.catalog, @atomic workspace.items.version
     # The calls made so far, by their code and inputs; the same code on the same inputs is one call.
     known = Dict{Tuple{String,Any,Vector{UInt}},Call}()
     visited = IdDict{Computation,Vector{Call}}()
@@ -52,21 +52,21 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         ## A value picked from the result of a call that gives several: that call, for that value.
         given = value
         value.f === pick && (value = value.args[1])
-        row, ran_for, failure, result, members = @lock catalog.lock begin
-            row = something(findfirst(isequal(value), catalog), Catalogs.NOWHERE)
-            stage = workspace.items.rows.stage[row]
-            ## The source item that a read reads, or the value that a `process` takes, or the computation.
-            ran_for = stage == SOURCE_READ ? (id(value.args[3]), label(value.args[3])) :
-                stage !== nothing ? (value.args[2].id, label(workspace, value.args[2].id)) : (id(value), id(value))
-            given === value || (ran_for = (given.args[2], label(workspace, given.args[2])))
-            current = row != Catalogs.NOWHERE && Catalogs.state(catalog, row) == Catalogs.CURRENT
-            ## A group also reads the values of its members that it takes.
-            taken = haskey(workspace.taken, row) ? member_values(workspace, row) : Pair{String,Row}[]
-            row, ran_for, last(get(workspace.errors, row, nothing => nothing)), current ? Catalogs.result_type(catalog, row) : nothing,
-                Computation[catalog[at] for (_, at) in taken]
-        end
+        row = something(findfirst(isequal(value), catalog), Catalogs.NOWHERE)
+        at = version.rows.stage[row]
+        ## The source item that a read reads, or the value that a `process` takes, or the
+        ## computation.
+        ran_for = at == SOURCE_READ ? (id(value.args[3]), label(value.args[3])) :
+            at !== nothing ? (value.args[2].id, label(workspace, value.args[2].id)) : (id(value), id(value))
+        given === value || (ran_for = (given.args[2], label(workspace, given.args[2])))
+        failure = last(get(version.errors, row, nothing => nothing))
+        stored = version.rows.readiness[row] == CURRENT ? version.rows.stored[row] : nothing
+        ## A group also reads the values of its members that it took, those that the workspace
+        ## still has.
+        members = Computation[version.rows.computation[member] for member in version.rows.members[row]
+            if version.rows.computation[member] !== nothing]
         preceding = unique!(reduce(vcat, map(calls_of, [inputs(value); members]); init=Call[]))
-        found = row == Catalogs.NOWHERE ? nothing : stage(@lock catalog.lock first(get(() -> Type[call_signature(workspace, row)], workspace.signatures, row)))
+        found = stage(version.rows.signature[row])
         # The call of `value`, with the calls it reads, kept with each call of the same code on the same inputs.
         function call!(title, code, result)::Call
             entry = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding), known, (title, code, map(objectid, preceding)))
@@ -76,7 +76,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
             return entry
         end
         entry = if found === nothing
-            call!(function_name(value.f), which(value), something(result, Base.infer_return_type(value.f, argument_types(value))))
+            call!(function_name(value.f), which(value), stored === nothing ? Base.infer_return_type(value.f, argument_types(value)) : first(stored))
         elseif found[1] == SOURCE_READ
             call!("read(::$(nameof(found[2])))", which(workspace.project, SOURCE_READ, found[2]), nothing)
         else
@@ -98,7 +98,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
     return filter(call -> !(call in preceding), found)
 end
 
-# The signature of a row that did not run yet.
+# The signature of a row that did not run yet. The caller holds the catalog lock.
 function call_signature(workspace::Workspace, row::Row)::Type
     value = workspace.catalog[row]
     type(x::Input) = Catalogs.result_type(workspace.catalog, x.row) !== Nothing ? Catalogs.result_type(workspace.catalog, x.row) : Any

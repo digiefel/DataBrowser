@@ -271,7 +271,9 @@ const COLUMNS = (id = (String, ""), version = (Row, Catalogs.NOWHERE), label = (
 # The type and the default cell of each column of the rows of the catalog.
 const ROWS = (readiness = (Readiness, UNPROCESSED), failure = (String, ""), changes = (UInt32, UInt32(0)),
     stage = (Union{Nothing,PipelineStage}, nothing), outputs = (Union{Nothing,Vector{Output}}, nothing),
-    stored = (Union{Nothing,Tuple{Type,UInt64}}, nothing), execution = (Union{Nothing,ComputationExecution}, nothing))
+    stored = (Union{Nothing,Tuple{Type,UInt64}}, nothing), execution = (Union{Nothing,ComputationExecution}, nothing),
+    computation = (Union{Nothing,Computation}, nothing), signature = (Union{Nothing,Type}, nothing),
+    members = (Vector{Row}, Row[]))
 
 """
 A published version of the table `items`, which never changes: the number of each item by its id,
@@ -299,8 +301,11 @@ workspace, its version in the draft is `Catalogs.NOWHERE`, and the next new item
 Each row of the catalog keeps cells in `rows`, at its position: its [`Readiness`](@ref), the message
 of its failure, its number of changes (see `Catalogs.changes`), for a row of the pipeline its stage
 and the values that it gave when it last ran, for any other current row the type and the revision
-under which the store of that type keeps its result, and the last execution of its function. An
-item reads its readiness, its failure and its revision from the row of its latest version.
+under which the store of that type keeps its result, the last execution of its function, its
+computation as the catalog keeps it, the signature of its call, and for the row of a group the rows
+of the member values that it took when it last ran. An item reads its readiness, its failure and its
+revision from the row of its latest version, and `computation` and `calls` read the computation,
+the signature and the members.
 
 Each value that a row of the pipeline gives keeps its metadata in `metadata`, in the cells at its
 key: one column for each metadata key, with `missing` where a value has none. An item shows the
@@ -331,10 +336,10 @@ mutable struct Items
     const event::Base.Event
     @atomic version::Version
     ## Under `lock`: for each reader that waits in `wait_processed`, the ids that it waits for, and
-    ## for each call of `evaluate` that waits for `keep!` to publish its row, that row, which
-    ## `keep!` removes. While a reader waits, `keep!` publishes without waiting for
-    ## `PUBLISH_INTERVAL`.
-    const readers::Vector{Union{AbstractVector{<:AbstractString},Row}}
+    ## for each call of `evaluate`, a box that holds its computation until `keep!` adds it to the
+    ## catalog, then its row, or the error of adding it. While a reader waits, `keep!` publishes
+    ## without waiting for `PUBLISH_INTERVAL`.
+    const readers::Vector{Union{AbstractVector{<:AbstractString},Base.RefValue{Any}}}
     const lock::ReentrantLock
     ## Notified at each publish, at each pass of `answer!`, and when the table closes.
     const published::Threads.Condition
@@ -356,7 +361,7 @@ function Items()
     return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
             Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts(), 0),
-        Union{AbstractVector{<:AbstractString},Row}[], lock, Threads.Condition(lock), Set{String}(),
+        Union{AbstractVector{<:AbstractString},Base.RefValue{Any}}[], lock, Threads.Condition(lock), Set{String}(),
         Dict{Any,@NamedTuple{selection::Any, generation::Int, asked::Float64}}(), Set{Int32}(), Base.Event(true), false)
 end
 

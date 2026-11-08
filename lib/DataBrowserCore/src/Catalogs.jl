@@ -107,7 +107,6 @@
 # | --------------------------- | ------------------------------------------------------------------ |
 # | the workspace               | `add!`, `replace!`, `connect!`, `disconnect!`, `hold!`, `release!`, `want!`, `request!`, `invalidate!`, `restore!`, `lost!` |
 # | a worker                    | `take!`, then `finish!`                                            |
-# | a task that waits for a row | `wait`, which requests the row and gives its state                 |
 # | the progress display        | `count`, `queued`                                                  |
 #
 # The workspace decides what a row computes, where its result and its error are kept, and which rows
@@ -214,7 +213,8 @@ and changes the fields inside `@lock catalog.lock`, except `findfirst`, which ta
 # readers of all rows in flat vectors when a workspace with millions of items needs it.
 mutable struct Catalog
     const lock::ReentrantLock
-    ## Notified at every change: for the tasks that wait for a row, and the workers that wait for a job.
+    ## Notified at every change: for the workers that wait for a job, and the tasks that wait for
+    ## the workspace to be idle.
     const changed::Threads.Condition
     const key::Function
     ## The positions that no row has hold `EMPTY`.
@@ -233,12 +233,12 @@ mutable struct Catalog
     const queued_at::Dict{Row,Int}
     ## The rows that lost their result or were removed since the last `lost!`.
     const lost::Vector{Row}
-    ## The rows whose state, priority or job changed, until the workspace reads them for the cells
-    ## of its rows (see `keep!`).
+    ## The rows that are new, or whose computation, state, priority, job or the state of an input
+    ## changed, until the workspace reads them for the cells of its rows (see `keep!`).
     const touched::Set{Row}
     ## The number of rows in each state, by the type of their function.
     const counts::Dict{Type,Vector{Int}}
-    ## Set by `close`: tasks in `wait` return, and workers stop waiting for jobs.
+    ## Set by `close`: workers stop waiting for jobs.
     closed::Bool
 end
 
@@ -259,12 +259,20 @@ Base.show(io::IO, catalog::Catalog) =
 Stands for the result of `row` among the arguments of a computation. When `add!` adds a
 computation, it replaces each computation among the arguments with the `Input` of its row. When the
 row runs, the workspace passes the result of each `Input` to the function in its place. An `Input`
-belongs to one catalog.
+belongs to one catalog. It also keeps the computation of its row as it was when the `Input` was
+made, so that `inputs` reads it without the lock. Two inputs are equal when they stand for the same
+row.
 """
 struct Input
     catalog::Catalog
     row::Row
+    computation::Computation
 end
+
+# The caller holds the catalog lock.
+Input(catalog::Catalog, row::Row) = Input(catalog, row, row == NOWHERE ? EMPTY.computation : node(catalog, row).computation)
+Base.:(==)(a::Input, b::Input) = a.catalog === b.catalog && a.row == b.row
+Base.hash(input::Input, h::UInt) = hash(input.row, hash(objectid(input.catalog), h))
 
 Base.show(io::IO, input::Input) = print(io, "Input(", input.row.index, ")")
 
@@ -477,6 +485,7 @@ function add!(catalog::Catalog, value::Computation)::Row
         length(catalog.nodes) < row.index && append!(catalog.nodes, fill(EMPTY, row.index - length(catalog.nodes)))
         catalog.nodes[row.index] = Node(value, Row[], Row[], MISSING, false, 0, 0, 0, 0, 0, 0, 0, 0, Nothing)
         tally!(catalog, catalog.nodes[row.index], 1)
+        push!(catalog.touched, row)
         row_of, key = @atomic(catalog.row_of), hash(value)
         @atomic catalog.row_of = Base.PersistentDict(row_of, key => [get(row_of, key, Pair{Computation,Row}[]); value => row])
         foreach(input -> connect!(catalog, row, input), input_rows(value.args))
@@ -504,12 +513,11 @@ function Base.replace!(catalog::Catalog, row::Row, value::Computation)::Row
         tally!(catalog, current, -1)
         current.computation = value
         tally!(catalog, current, 1)
+        push!(catalog.touched, row)
         ## The rows among the new arguments are connected first, so that a row among both stays.
         foreach(input -> connect!(catalog, row, input), input_rows(value.args))
         foreach(input -> disconnect!(catalog, row, input), before)
         invalidate!(catalog, row, true)
-        ## Wakes the tasks that wait for a row that is stuck now.
-        notify(catalog.changed)
         return row
     end
 end
@@ -709,6 +717,7 @@ function set!(catalog::Catalog, row::Row, state::State)::Nothing
     tally!(catalog, current, 1)
     for reader in current.readers
         other = node(catalog, reader)
+        push!(catalog.touched, reader)
         other.waiting += was_current - (state == CURRENT)
         other.waiting == 0 && queue!(catalog, reader)
     end
@@ -865,30 +874,10 @@ function restore!(catalog::Catalog, row::Row; failed::Bool=false, revision::UInt
 end
 
 """
-    wait(catalog, row, priority) -> State
-
-[`request!`](@ref) `row` with `priority`, wait until it has a result, is stuck, or is removed, or
-until the catalog closes, and give its state. When the row becomes stale again while the task
-waits, `wait` requests it again. `wait` gives `MISSING` or `STALE` for a row that reads a failed
-row, and for any row of a closed catalog; tell them apart with [`stuck`](@ref) and
-`catalog.closed`. A failed row gives `FAILED`.
-"""
-function Base.wait(catalog::Catalog, row::Row, priority::Int)::State
-    @lock catalog.lock while true
-        ## A request ends with a result, and the row can be stale again by the time the task wakes.
-        request!(catalog, row, priority)
-        current = node(catalog, row)
-        (current.state in (CURRENT, FAILED, REMOVED) || current.blocked > 0 || catalog.closed) &&
-            return current.state
-        wait(catalog.changed)
-    end
-end
-
-"""
     close(catalog)
 
-Close the catalog: the tasks in [`wait`](@ref) return, and the workers that wait for
-`catalog.changed` wake up and see `catalog.closed`.
+Close the catalog: the tasks that wait for `catalog.changed`, such as the workers, wake up and see
+`catalog.closed`.
 """
 Base.close(catalog::Catalog)::Nothing = @lock catalog.lock (catalog.closed = true; notify(catalog.changed); nothing)
 

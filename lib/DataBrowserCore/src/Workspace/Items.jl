@@ -6,14 +6,14 @@
     keep!(items, workspace)
 
 The task that keeps the table `items` of `workspace` current, until `close(items)`. At each
-notification of `items.event`, it requests in the catalog the latest versions of the ids asked for
-by readers, ahead of background work. Then, at once while a reader waits in `wait_processed` or
-`evaluate` or when no scan or job is left, and otherwise at most once each `PUBLISH_INTERVAL`, it
-writes the readiness, failure, changes and store key of the catalog rows whose state, priority or
-job changed, 1000 at a time, each part under the catalog lock. Once none is left and a cell
-changed, it stores the draft as a new version with the next generation, and passes the items whose
-cells shown by `select` changed to [`answer!`](@ref). An error stops the task, and readers that
-wait throw from then on.
+notification of `items.event`, it adds to the catalog the computations given to `evaluate`, and
+requests their rows and the latest versions of the ids asked for by readers, ahead of background
+work. Then, at once while a reader waits in `wait_processed` or `evaluate` or when no scan or job is
+left, and otherwise at most once each `PUBLISH_INTERVAL`, it writes the cells of the catalog rows
+that are new or whose computation, state, priority, job or input changed, 1000 at a time, each part
+under the catalog lock. Once none is left and a cell changed, it stores the draft as a new version
+with the next generation, and passes the items whose cells shown by `select` changed to
+[`answer!`](@ref). An error stops the task, and readers that wait throw from then on.
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
     catalog, columns, rows = workspace.catalog, items.columns, items.rows
@@ -27,9 +27,29 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             ## started: a timer wakes it then, and a reader that comes earlier wakes it at once.
             ## Once the work ends, its last changes follow at once.
             requested, readers = @lock items.lock (collect(items.requested), copy(items.readers))
+            ## Code defined since the last check makes its results stale before a computation given
+            ## to `evaluate` is read.
+            any(reader -> reader isa Base.RefValue && reader[] isa Computation, readers) &&
+                @lock(catalog.lock, any(code -> code.world != Base.get_world_counter(), values(workspace.code))) &&
+                Base.invokelatest(check_code!, workspace)
+            ## Each computation given to `evaluate` gets its row, which the workspace keeps until it
+            ## closes. Its call gets the row, or the error of adding it, at the end of this pass.
+            added = Pair{Base.RefValue{Any},Any}[]
             idle = @lock catalog.lock begin
                 for x in filter(in(keys(workspace.versions)), requested)
                     request!(catalog, workspace.versions[x][end], VIEWED_ITEM)
+                end
+                for reader in filter(reader -> reader isa Base.RefValue, readers)
+                    found = reader[] isa Computation ? try
+                        row = add!(catalog, bound(workspace, reader[]))
+                        row in workspace.evaluated || (hold!(catalog, row); push!(workspace.evaluated, row))
+                        restore!(workspace, row)
+                        row
+                    catch error
+                        error
+                    end : reader[]
+                    reader[] isa Computation && push!(added, reader => found)
+                    found isa Row && request!(catalog, found, VIEWED_ITEM)
                 end
                 !source_scan_running(workspace) && workspace.running == 0 && queued(catalog) == 0
             end
@@ -38,10 +58,10 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                     (timer = Timer(_ -> notify(items.event), last + PUBLISH_INTERVAL - time()))
                 continue
             end
-            ## The cells of the catalog rows whose state, priority or job changed follow the catalog,
-            ## 1000 rows at a time, each part under the catalog lock, so that a worker waits for one
-            ## part at most. The last part takes all that is left, and in the same take of the
-            ## lock, the draft becomes the new version when a cell changed.
+            ## The cells of the catalog rows that changed follow the catalog, 1000 rows at a time,
+            ## each part under the catalog lock, so that a worker waits for one part at most. The
+            ## last part takes all that is left, and in the same take of the lock, the draft
+            ## becomes the new version when a cell changed.
             done = false
             while !done
                 done = @lock catalog.lock begin
@@ -51,11 +71,20 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                         row in catalog || continue
                         readiness = Catalogs.state(catalog, row) == Catalogs.CURRENT ? CURRENT : Catalogs.stuck(catalog, row) ? FAILED :
                             Catalogs.running(catalog, row) || Catalogs.wanted(catalog, row) ? WORKING : UNPROCESSED
-                        write!(items, rows.readiness, row.index, readiness)
+                        ## The row of a group keeps the member values that it took when its run
+                        ## ends.
+                        ## TODO(scale): this takes the time of the number of members at each run.
+                        write!(items, rows.readiness, row.index, readiness) && readiness in (CURRENT, FAILED) &&
+                            haskey(workspace.taken, row) &&
+                            write!(items, rows.members, row.index, [at for (_, at) in member_values(workspace, row)])
                         write!(items, rows.failure, row.index, readiness == FAILED ? failure(workspace, row) : "")
                         write!(items, rows.changes, row.index, Catalogs.changes(catalog, row))
                         write!(items, rows.stored, row.index, readiness == CURRENT && rows.stage[row] === nothing ?
                             (Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row)) : nothing)
+                        value = catalog[row]
+                        rows.computation[row] === value || write!(items, rows.computation, row.index, value)
+                        write!(items, rows.signature, row.index,
+                            haskey(workspace.signatures, row) ? first(workspace.signatures[row]) : call_signature(workspace, row))
                     end
                     if isempty(catalog.touched) && (items.changed || workspace.errors !== (@atomic items.version).errors)
                         ## The counts change only together with cells.
@@ -83,8 +112,7 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             ## The requests end with this version, or with the last one when no cell changed.
             @lock items.lock begin
                 setdiff!(items.requested, requested)
-                ## The calls of `evaluate` that waited since the start of this pass return.
-                foreach(row -> deleteat!(items.readers, findfirst(isequal(row), items.readers)), filter(reader -> reader isa Row, readers))
+                foreach(((reader, found),) -> reader[] = found, added)
                 notify(items.published)
             end
         end
