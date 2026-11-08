@@ -1,0 +1,198 @@
+<style>
+#db-inspection-demo { color-scheme: light dark; }
+#db-inspection-demo .db-stage {
+  --db-bg: light-dark(#ececee, #242424);
+  --db-panel: light-dark(#fafafa, #2d2d2d);
+  --db-title: light-dark(#d9e4f0, #284c72);
+  --db-control: light-dark(#e1e4e8, #3d4249);
+  --db-hover: light-dark(#d7e6f6, #355b81);
+  --db-text: light-dark(#202327, #eeeeef);
+  --db-muted: light-dark(#555e69, #b2b6bd);
+  --db-line: light-dark(#b9bec5, #60646b);
+  --db-selected: light-dark(#d6e7f8, #345575);
+  --db-trace: light-dark(#275f9b, #8dbce9);
+  background: var(--db-bg); color: var(--db-text);
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  padding: 8px; min-height: 690px; box-sizing: border-box;
+}
+#db-inspection-demo * { box-sizing: border-box; }
+#db-inspection-demo [hidden] { display: none !important; }
+#db-inspection-demo .db-grid { display: grid; grid-template-columns: 1fr 1.1fr; gap: 8px; align-items: start; }
+#db-inspection-demo .db-window { background: var(--db-panel); border: 1px solid var(--db-line); min-width: 0; }
+#db-inspection-demo .db-title { background: var(--db-title); padding: 4px 8px; display: flex; gap: 8px; align-items: center; }
+#db-inspection-demo .db-title-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+#db-inspection-demo .db-header { padding: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--db-line); }
+#db-inspection-demo button, #db-inspection-demo select, #db-inspection-demo summary {
+  font: inherit; color: var(--db-text); background: var(--db-control); border: 0; border-radius: 0; padding: 3px 7px;
+}
+#db-inspection-demo button:hover, #db-inspection-demo summary:hover { background: var(--db-hover); }
+#db-inspection-demo button:focus-visible, #db-inspection-demo summary:focus-visible, #db-inspection-demo select:focus-visible { outline: 2px solid var(--db-trace); outline-offset: 2px; }
+#db-inspection-demo .db-close { background: transparent; padding: 0 3px; }
+#db-inspection-demo .db-input { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#db-inspection-demo .db-spacer { flex: 1; }
+#db-inspection-demo .db-menu { position: relative; }
+#db-inspection-demo .db-menu summary { list-style: none; }
+#db-inspection-demo .db-menu summary::-webkit-details-marker { display: none; }
+#db-inspection-demo .db-popover { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; width: 250px; max-width: 75vw; background: var(--db-panel); border: 1px solid var(--db-line); padding: 9px; box-shadow: 0 4px 12px #0003; }
+#db-inspection-demo .db-menu-end .db-popover { left: auto; right: 0; }
+#db-inspection-demo .db-popover button { display: block; width: 100%; text-align: left; margin: 3px 0; background: transparent; }
+#db-inspection-demo .db-popover button:hover { background: var(--db-hover); }
+#db-inspection-demo .db-popover label { display: flex; align-items: center; gap: 7px; margin: 7px 0; }
+#db-inspection-demo .db-popover select { max-width: 100%; }
+#db-inspection-demo .db-popover hr { border: 0; border-top: 1px solid var(--db-line); margin: 9px 0; }
+#db-inspection-demo .db-muted { color: var(--db-muted); }
+#db-inspection-demo .db-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#db-inspection-demo .db-body { padding: 10px; min-height: 168px; }
+#db-inspection-demo .db-body p { margin: 6px 0; }
+#db-inspection-demo .db-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+#db-inspection-demo .db-table th { text-align: right; font-weight: 500; padding: 4px; border-bottom: 1px solid var(--db-line); }
+#db-inspection-demo .db-table td { text-align: right; padding: 5px 4px; }
+#db-inspection-demo .db-table tr:nth-child(even) { background: color-mix(in srgb, var(--db-text) 5%, transparent); }
+#db-inspection-demo .db-table button { background: transparent; padding: 1px 3px; font: inherit; }
+#db-inspection-demo .db-table button[aria-pressed=true] { background: var(--db-selected); }
+#db-inspection-demo .db-code { margin-top: 8px; }
+#db-inspection-demo .db-call { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 5px; align-items: center; padding: 9px 7px; position: relative; }
+#db-inspection-demo .db-call + .db-call::before { content: ''; position: absolute; left: 15px; top: -9px; height: 20px; width: 1px; background: var(--db-muted); }
+#db-inspection-demo .db-call-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+#db-inspection-demo .db-call-source { color: var(--db-muted); margin-left: 9px; white-space: nowrap; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+#db-inspection-demo .db-call-dot { text-align: center; }
+#db-inspection-demo .db-call[aria-pressed=true] { background: var(--db-selected); }
+#db-inspection-demo .db-call-click { width: 100%; text-align: left; background: transparent; }
+#db-inspection-demo .db-preview { margin: 7px; border-top: 1px solid var(--db-line); padding-top: 8px; }
+#db-inspection-demo .db-preview-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+#db-inspection-demo .db-opened { margin-top: 8px; }
+#db-inspection-demo .db-detail { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: 7px 18px; }
+#db-inspection-demo .db-detail code { overflow-wrap: anywhere; }
+#db-inspection-demo .db-empty { min-height: 120px; display: grid; place-content: center; color: var(--db-muted); }
+#db-inspection-demo .db-chart { display: block; width: 100%; height: 145px; }
+#db-inspection-demo .db-chart text { fill: var(--db-text); font: 12px -apple-system, BlinkMacSystemFont, sans-serif; }
+#db-inspection-demo .db-chart .db-axis { stroke: var(--db-line); fill: none; }
+#db-inspection-demo .db-chart .db-curve { stroke: var(--db-trace); stroke-width: 1.8; fill: none; }
+#db-inspection-demo .db-caption { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+#db-inspection-demo .db-function { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (max-width: 650px) {
+  #db-inspection-demo .db-grid { grid-template-columns: 1fr; }
+  #db-inspection-demo .db-stage { min-height: 1050px; }
+  #db-inspection-demo .db-call-source { display: block; margin-left: 0; }
+  #db-inspection-demo .db-call { grid-template-columns: 14px minmax(0,1fr) auto; }
+  #db-inspection-demo .db-input { max-width: 175px; }
+}
+@media (pointer: coarse) {
+  #db-inspection-demo button, #db-inspection-demo summary, #db-inspection-demo select { min-height: 44px; }
+}
+</style>
+<div id="db-inspection-demo">
+  <div class="viz-carousel" aria-label="Requesting values from the Code view">
+    <section data-variant="Browse outputs" aria-label="Inspect outputs in one reusable preview before opening windows"><div class="db-stage" data-mode="browse"></div></section>
+    <section data-variant="Open output" aria-label="Open each requested output as an ordinary window" hidden><div class="db-stage" data-mode="open"></div></section>
+  </div>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('db-inspection-demo');
+  const calls = ['read(::SourceFile)', 'process(::pund)', 'analyze(::pund)'];
+  const stages = ['read', 'process', 'analyze'];
+  const rows = [
+    ['1','32.563e-3','-1.469e-6','2.479e-12'],
+    ['1','34.115e-3','161.614e-9','2.495e-12'],
+    ['1','35.666e-3','-76.905e-9','2.419e-12'],
+    ['1','38.310e-3','-231.207e-9','2.395e-12']
+  ];
+  let states = {open: {selected: 0, opened: [], column: null, function: 'None'}, browse: {selected: 0, opened: [], column: null, function: 'None'}};
+  const saved = window.openai?.widgetState;
+  function restore(snapshot) {
+    const data = snapshot?.privateContent?.inspection;
+    if (!data) return;
+    for (const mode of ['open','browse']) {
+      const s = data[mode];
+      if (!s) continue;
+      states[mode].selected = [0,1,2].includes(s.selected) ? s.selected : 0;
+      states[mode].opened = Array.isArray(s.opened) ? [...new Set(s.opened.filter(x=>[0,1,2].includes(x)))] : [];
+      states[mode].column = ['loop','V','I_FE','Q'].includes(s.column) ? s.column : null;
+      states[mode].function = ['None','Project function…'].includes(s.function) ? s.function : 'None';
+    }
+  }
+  function save() {
+    window.openai?.setWidgetState?.({modelContent: {proposal:'DataBrowser output inspection', choices:states}, privateContent:{inspection:states}})?.catch(() => {});
+  }
+  restore(saved);
+  function menu(label, content, end = false) {
+    return `<details class="db-menu${end ? ' db-menu-end' : ''}"><summary class="cursor-interaction">${label}</summary><div class="db-popover">${content}</div></details>`;
+  }
+  function inputMenu(label, detail = 'Selection') {
+    return menu(label + ' ▾', `<div class="db-muted">Input</div><p>${detail}</p><label><input type="checkbox" checked> Follow item selection</label><hr><label>Function <select data-function><option>None</option><option>Project function…</option></select></label>`);
+  }
+  function options(kind) {
+    const settings = kind === 'Table' ? `<label><input type="checkbox" checked> Group by item</label><button data-toggle-columns>Columns…</button><button data-toggle-metadata>Metadata…</button>` :
+      kind === 'Vector' ? `<label><input type="checkbox"> Frequency analysis</label><label>Bins <input type="number" value="64" min="1" style="width:75px"></label><label><input type="checkbox" checked> Smooth distribution</label><label><input type="checkbox"> Markers</label>` : '';
+    return menu('•••', `${settings}<label>Arrangement <select><option>Stack</option><option>Overlay</option><option>Grid</option></select></label><hr><button data-export>Export…</button>`, true);
+  }
+  function header(kind, source, detail) {
+    return `<div class="db-header"><select aria-label="Visualizer" data-visualizer><option>${kind}</option>${['Table','Value','Vector','Code'].filter(x=>x!==kind).map(x=>`<option>${x}</option>`).join('')}</select>${inputMenu(source, detail)}<span class="db-function" hidden></span><span class="db-spacer"></span>${options(kind)}</div>`;
+  }
+  function title(name, close = null) {
+    return `<div class="db-title"><span class="db-title-name">${name}</span>${close !== null ? `<button class="db-close" data-close-output="${close}" aria-label="Close output window">×</button>` : ''}</div>`;
+  }
+  function table(state) {
+    return `<table class="db-table" aria-label="Values transcribed from the supplied screenshot"><thead><tr>${['loop','V','I_FE','Q'].map(c=>`<th><button data-column="${c}" aria-pressed="${state.column===c}">${c}</button></th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  }
+  function vector(state) {
+    if (!state.column) return `<div class="db-empty">No numeric column selected</div>`;
+    return `<div class="db-caption db-mono">${state.column}</div><svg class="db-chart" viewBox="0 0 400 120" role="img" aria-label="Schematic vector preview of the selected column"><path class="db-axis" d="M15 8V110H385"/><path class="db-curve" d="M15 80L138 32L261 69L385 92"/></svg><div style="text-align:center">Index</div>`;
+  }
+  function outputContent(index, visualizer = 'Value') {
+    if (index === 2) return `<div class="db-detail db-mono"><span>peak_current</span><code>1.47e-6</code><span>loop_count</span><code>1</code></div>`;
+    const fields = index === 0 ? ['time', 'voltage', 'current'] : ['loop', 'V', 'I_FE', 'Q'];
+    const values = index === 0 ? ['[0.0, 0.1, 0.2, …]', '[0.0, 0.5, 1.0, …]', '[1.0e-6, 1.4e-6, 0.8e-6, …]'] : ['[1, 1, 1, …]', '[0.033, 0.034, 0.036, …]', '[-1.47e-6, 1.62e-7, -7.69e-8, …]', '[2.48e-12, 2.50e-12, 2.42e-12, …]'];
+    const metadata = '';
+    if (visualizer === 'Table') return `<table class="db-table" aria-label="Schematic output fields"><thead><tr><th>Field</th><th>Values</th></tr></thead><tbody>${fields.map((field,i)=>`<tr><td>${field}</td><td>${values[i]}</td></tr>`).join('')}</tbody></table>${metadata}`;
+    return `<div class="db-detail db-mono">${fields.map((field,i)=>`<span>${field}</span><code>${values[i]}</code>`).join('')}</div>${metadata}`;
+  }
+  function render(stage) {
+    const mode = stage.dataset.mode, s = states[mode];
+    stage.innerHTML = `<div class="db-grid">
+      <section class="db-window" aria-label="Existing Table window">${title('RobinOld35c1_…_PUND.csv')}${header('Table','Selection','Selected items')}<div class="db-body" data-table-body>${table(s)}</div><div class="db-body" data-table-options hidden></div></section>
+      <section class="db-window" aria-label="Existing Vector window">${title('RobinOld35c1_…_PUND.csv')}${header('Vector','Table 1','Selected rows and columns from Table 1')}<div class="db-body" data-vector-body>${vector(s)}</div></section>
+    </div>
+    <section class="db-window db-code" aria-label="Code window">${title('RobinOld35c1_…_PUND.csv')}${header('Code','Selection','Selected items')}
+      ${calls.map((name,i)=> mode==='open' ? `<div class="db-call"><span class="db-call-dot">●</span><div><span class="db-call-name">${name}</span><span class="db-call-source">browse_data.jl:13 ↗</span></div><button class="cursor-interaction" data-open="${i}">Open output</button></div>` : `<button class="db-call db-call-click cursor-interaction" data-select="${i}" aria-pressed="${s.selected===i}"><span class="db-call-dot">●</span><span><span class="db-call-name">${name}</span><span class="db-call-source">browse_data.jl:13 ↗</span></span><span>Output →</span></button>`).join('')}
+      ${mode==='browse' ? `<div class="db-preview"><div class="db-preview-head"><span class="db-mono">After ${stages[s.selected]}</span><span class="db-spacer"></span><select data-preview-visualizer aria-label="Preview visualizer"><option>Value</option><option>Table</option></select><button data-open="${s.selected}" class="cursor-interaction">Open in window</button></div><div data-preview-body>${outputContent(s.selected)}</div></div>` : ''}
+    </section>
+    <div aria-live="polite">${s.opened.map(index=>`<section class="db-window db-opened" data-output-window="${index}">${title('After '+stages[index]+' · RobinOld35c1_…_PUND.csv',index)}${header('Value','Selection · after '+stages[index],'Selected items, after '+calls[index])}<div class="db-body" data-output-body>${outputContent(index)}</div></section>`).join('')}</div>`;
+    stage.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{const index=Number(b.dataset.open);if(!s.opened.includes(index))s.opened.push(index);render(stage);save();});
+    stage.querySelectorAll('[data-select]').forEach(b=>b.onclick=()=>{s.selected=Number(b.dataset.select);render(stage);save();});
+    stage.querySelectorAll('[data-close-output]').forEach(b=>b.onclick=()=>{s.opened=s.opened.filter(x=>x!==Number(b.dataset.closeOutput));render(stage);save();});
+    stage.querySelector('[data-preview-visualizer]')?.addEventListener('change',event=>{stage.querySelector('[data-preview-body]').innerHTML=outputContent(s.selected,event.target.value);});
+    stage.querySelectorAll('[data-output-window] [data-visualizer]').forEach(select=>{
+      for (const option of [...select.options]) if(!['Table','Value'].includes(option.value))option.remove();
+      select.onchange=()=>{const win=select.closest('[data-output-window]');win.querySelector('[data-output-body]').innerHTML=outputContent(Number(win.dataset.outputWindow),select.value);};
+    });
+    stage.querySelectorAll('[data-column]').forEach(b=>b.onclick=()=>{
+      s.column=s.column===b.dataset.column?null:b.dataset.column;
+      stage.querySelector('[data-vector-body]').innerHTML=vector(s);
+      stage.querySelectorAll('[data-column]').forEach(col=>col.setAttribute('aria-pressed',String(col.dataset.column===s.column)));
+      save();
+    });
+    stage.querySelectorAll('[data-function]').forEach(select=>{
+      select.value=s.function;
+      select.onchange=()=>{
+        s.function=select.value;
+        const chip=select.closest('.db-header').querySelector('.db-function');
+        chip.hidden=s.function==='None';chip.textContent=s.function==='None'?'':'ƒ project_function';save();
+      };
+    });
+    stage.querySelector('[data-toggle-columns]')?.addEventListener('click',()=>{
+      const box=stage.querySelector('[data-table-options]');box.hidden=!box.hidden;
+      box.innerHTML='<span class="db-muted">Visible columns</span>'+['loop','V','I_FE','Q'].map(c=>`<label style="margin-left:10px"><input type="checkbox" checked>${c}</label>`).join('');
+    });
+    stage.querySelector('[data-toggle-metadata]')?.addEventListener('click',()=>{
+      const box=stage.querySelector('[data-table-options]');box.hidden=!box.hidden;box.textContent='Metadata columns';
+    });
+    stage.querySelectorAll('[data-export]').forEach(b=>b.onclick=()=>{b.textContent='Export current view…';});
+  }
+  root.querySelectorAll('.db-stage').forEach(render);
+  window.addEventListener('openai:set_globals',event=>{
+    if(event.detail?.globals?.widgetState){restore(event.detail.globals.widgetState);root.querySelectorAll('.db-stage').forEach(render);}
+  });
+})();
+</script>

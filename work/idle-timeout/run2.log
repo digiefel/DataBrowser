@@ -1,0 +1,1313 @@
+  passes=8 idle=8 scan=done cache=ready running=0 queued=0 touched=0 readers=0
+  event set=false
+==== Thread 1 created 41 live tasks
+     ---- Root task (0x10fb9c010)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_record_backtrace at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/stackwalk.c:1548
+jl_fprint_backtracet at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/stackwalk.c:1655
+jl_fprint_task_backtraces at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/stackwalk.c:1698
+settled_time at /Users/davide/code/Julia/DataBrowser-dev/work/idle-timeout/repro.jl:63
+#6 at /Users/davide/code/Julia/DataBrowser-dev/work/idle-timeout/repro.jl:78
+#mktempdir#21 at ./file.jl:975
+unknown function (ip: 0x1359ccec3) at (unknown file)
+mktempdir at ./file.jl:971
+mktempdir at ./file.jl:971
+jfptr_mktempdir_49363.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+do_call at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/interpreter.c:123
+eval_stmt_value at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/interpreter.c:194 [inlined]
+eval_body at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/interpreter.c:675
+jl_interpret_toplevel_thunk at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/interpreter.c:884
+top-level scope at /Users/davide/code/Julia/DataBrowser-dev/work/idle-timeout/repro.jl:73
+jl_toplevel_eval_flex at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/toplevel.c:742
+jl_eval_toplevel_stmts at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/toplevel.c:585
+jl_toplevel_eval_flex at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/toplevel.c:683
+ijl_toplevel_eval at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/toplevel.c:754 [inlined]
+ijl_toplevel_eval_in at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/toplevel.c:799
+eval at ./boot.jl:489
+include_string at ./loading.jl:3064
+_include at ./loading.jl:3124
+include at ./Base.jl:309
+exec_options at ./client.jl:344
+_start at ./client.jl:577
+jfptr__start_51249.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+true_main at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/jlapi.c:985
+jl_repl_entrypoint at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/jlapi.c:1152
+     ---- End root task
+     ---- Task 1 (0x11301b580)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_start_fiber_swap at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1473
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:655
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+wait at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:755
+watch_file at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:874
+watch_file at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:865 [inlined]
+wait_changed at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:206
+watch_manifest at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:894
+jfptr_watch_manifest_3817 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x112624100)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 2
+     ---- Task 3 (0x112625690)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 3
+     ---- Task 4 (0x1126273a0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 4
+     ---- Task 5 (0x112627df0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 5
+     ---- Task 6 (0x1125a8c40)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 6
+     ---- Task 7 (0x1125a8e20)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 7
+     ---- Task 8 (0x1125a9000)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 8
+     ---- Task 9 (0x1125a91e0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 9
+     ---- Task 10 (0x1125a93c0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 10
+     ---- Task 11 (0x1125a95a0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 11
+     ---- Task 12 (0x1125a9780)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 12
+     ---- Task 13 (0x1125a9960)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 13
+     ---- Task 14 (0x1125ab2b0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 14
+     ---- Task 15 (0x1125abd00)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 15
+     ---- Task 16 (0x11256f490)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 16
+     ---- Task 17 (0x11256fee0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 17
+     ---- Task 18 (0x1124f5ff0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 18
+     ---- Task 19 (0x1124f61d0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 19
+     ---- Task 20 (0x1124f63b0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 20
+     ---- Task 21 (0x11249e4a0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 21
+     ---- Task 22 (0x112464790)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 22
+     ---- Task 23 (0x1124651e0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 23
+     ---- Task 24 (0x112465c30)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 24
+     ---- Task 25 (0x112466680)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 25
+     ---- Task 26 (0x1124670d0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 26
+     ---- Task 27 (0x112467b20)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 27
+     ---- Task 28 (0x1123e1ff0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 28
+     ---- Task 29 (0x1123e2a40)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 29
+     ---- Task 30 (0x111f9d000)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 30
+     ---- Task 31 (0x1124f7760)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 31
+     ---- Task 32 (0x1124c0e20)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 32
+     ---- Task 33 (0x1124c22c0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 33
+     ---- Task 34 (0x111f9ed10)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 34
+     ---- Task 35 (0x11301b2b0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 35
+     ---- Task 36 (0x1138fc4c0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 36
+     ---- Task 37 (0x10fb9c790)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 37
+     ---- Task 38 (0x10fb9c970)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:935
+watch_folder at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:908 [inlined]
+wait_changed_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:673
+watch_files_via_dir at /Users/davide/.julia/packages/Revise/d1pnY/src/pkgs.jl:781
+revise_dir_queued at /Users/davide/.julia/packages/Revise/d1pnY/src/packagedef.jl:1433
+jfptr_revise_dir_queued_4461 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+TaskThunk at /Users/davide/.julia/packages/Revise/d1pnY/src/types.jl:562
+jfptr_TaskThunk_3315 at /Users/davide/.julia/compiled/v1.13/Revise/M1Qoh_k2PNn.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 38
+     ---- Task 39 (0x15c6ac6a0)
+          (sticky: 1, started: 1, state: 0, tid: 1)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 39
+==== End thread 1
+==== Thread 2 created 4 live tasks
+     ---- Task 1 (0x113b94100)
+          (sticky: 1, started: 1, state: 0, tid: 2)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x10fb9c4c0)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_start_fiber_swap at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1473
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:655
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+_trywait at ./asyncevent.jl:186
+profile_printing_listener at ./Base.jl:335
+#start_profile_listener##0 at ./Base.jl:355
+jfptr_YY.start_profile_listenerYY.YY.0_17483.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 2
+     ---- Task 3 (0x15c3e7850)
+          (sticky: 0, started: 1, state: 0, tid: 7)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 3
+==== End thread 2
+==== Thread 3 created 5 live tasks
+     ---- Task 1 (0x113b8c100)
+          (sticky: 1, started: 1, state: 0, tid: 3)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x111692590)
+          (sticky: 0, started: 1, state: 0, tid: 3)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 2
+     ---- Task 3 (0x15c6ac2e0)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+macro expansion at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:156 [inlined]
+macro expansion at ./lock.jl:376 [inlined]
+work! at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:150
+#start_workers!##0 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:121
+unknown function (ip: 0x1643fc05b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 3
+     ---- Task 4 (0x15c3e7ee0)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+macro expansion at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:156 [inlined]
+macro expansion at ./lock.jl:376 [inlined]
+work! at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:150
+#start_workers!##0 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:121
+unknown function (ip: 0x1643fc05b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 4
+==== End thread 3
+==== Thread 4 created 3 live tasks
+     ---- Task 1 (0x113b90100)
+          (sticky: 1, started: 1, state: 0, tid: 4)
+jl_start_fiber_swap at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1473
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:655
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x15ed77760)
+          (sticky: 0, started: 1, state: 0, tid: 5)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 2
+     ---- Task 3 (0x15c3e7d00)
+          (sticky: 0, started: 1, state: 0, tid: 11)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 3
+==== End thread 4
+==== Thread 5 created 5 live tasks
+     ---- Task 1 (0x113b98100)
+          (sticky: 1, started: 1, state: 0, tid: 5)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x15ed77850)
+          (sticky: 0, started: 1, state: 0, tid: 6)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 2
+     ---- Task 3 (0x15c6ac1f0)
+          (sticky: 0, started: 1, state: 0, tid: 8)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 3
+     ---- Task 4 (0x70157f1e10)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+_wait_condition_deadline at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1041
+#_flush_loop!##0 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1066
+lock at ./lock.jl:335
+lock at ./condition.jl:80 [inlined]
+_flush_loop! at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1059
+#14 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:245
+unknown function (ip: 0x701f9e405b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 4
+==== End thread 5
+==== Thread 6 created 6 live tasks
+     ---- Task 1 (0x113b84100)
+          (sticky: 1, started: 1, state: 0, tid: 6)
+jl_start_fiber_swap at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1473
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:655
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x15c3e7c10)
+          (sticky: 0, started: 1, state: 0, tid: 2)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 2
+     ---- Task 3 (0x15c6ac4c0)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+wait at ./lock.jl:653
+wait at /Users/davide/.julia/packages/CancellationTokens/0XLvj/src/CancellationTokens.jl:0 [inlined]
+sleep at /Users/davide/.julia/packages/CancellationTokens/0XLvj/src/augment_base.jl:44
+#watch_code##0 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Operations.jl:379
+unknown function (ip: 0x164b68937) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 3
+     ---- Task 4 (0x70157f1f00)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+_wait_condition_deadline at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1041
+#_flush_loop!##0 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1066
+lock at ./lock.jl:335
+lock at ./condition.jl:80 [inlined]
+_flush_loop! at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1059
+#24 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:427
+unknown function (ip: 0x701f98c05b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 4
+     ---- Task 5 (0x70157f3670)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+#_flush_loop!##0 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1064
+lock at ./lock.jl:335
+lock at ./condition.jl:80 [inlined]
+_flush_loop! at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1059
+#14 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:245
+unknown function (ip: 0x701fa6c05b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 5
+==== End thread 6
+==== Thread 7 created 4 live tasks
+     ---- Task 1 (0x113b80100)
+          (sticky: 1, started: 1, state: 0, tid: 7)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x15c3e7a30)
+          (sticky: 0, started: 1, state: 0, tid: 9)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 2
+     ---- Task 3 (0x17913b2b0)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+_wait_condition_deadline at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1041
+#_flush_loop!##0 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1066
+lock at ./lock.jl:335
+lock at ./condition.jl:80 [inlined]
+_flush_loop! at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:1059
+#76 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCache/src/cache_buffer.jl:820
+unknown function (ip: 0x701fbf405b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 3
+==== End thread 7
+==== Thread 8 created 3 live tasks
+     ---- Task 1 (0x113b88100)
+          (sticky: 1, started: 1, state: 0, tid: 8)
+jl_start_fiber_swap at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1473
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:655
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x15c6ac010)
+          (sticky: 0, started: 1, state: 0, tid: 4)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 2
+==== End thread 8
+==== Thread 9 created 3 live tasks
+     ---- Task 1 (0x113b7c100)
+          (sticky: 1, started: 1, state: 0, tid: 9)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x15c3e7940)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+wait at ./lock.jl:653
+answer! at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Items.jl:265
+#234 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Operations.jl:117
+unknown function (ip: 0x1644bc093) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 2
+==== End thread 9
+==== Thread 10 created 5 live tasks
+     ---- Task 1 (0x113b78100)
+          (sticky: 1, started: 1, state: 0, tid: 10)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x15c6ac100)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+macro expansion at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:156 [inlined]
+macro expansion at ./lock.jl:376 [inlined]
+work! at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:150
+#start_workers!##0 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:121
+unknown function (ip: 0x1643fc05b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 2
+     ---- Task 3 (0x15c3e7df0)
+          (sticky: 0, started: 1, state: 0, tid: 0)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+macro expansion at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:156 [inlined]
+macro expansion at ./lock.jl:376 [inlined]
+work! at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:150
+#start_workers!##0 at /Users/davide/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:121
+unknown function (ip: 0x1643fc05b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 3
+==== End thread 10
+==== Thread 11 created 3 live tasks
+     ---- Task 1 (0x113b74100)
+          (sticky: 1, started: 1, state: 0, tid: 11)
+jl_swap_fiber at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1383
+ctx_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:592
+ijl_switch at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:695
+try_yieldto at ./task.jl:1158
+wait at ./task.jl:1300
+wait_forever at ./task.jl:1196
+jfptr_wait_forever_67736.1 at /Users/davide/.julia/juliaup/julia-1.13.3+0.aarch64.apple.darwin14/Julia-1.13.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+     ---- End task 1
+     ---- Task 2 (0x15c3e7b20)
+          (sticky: 0, started: 1, state: 0, tid: 10)
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+     ---- End task 2
+==== End thread 11
+==== Skipping backtrace for parallel/concurrent GC thread 12
+==== Skipping backtrace for parallel/concurrent GC thread 13
+==== Skipping backtrace for parallel/concurrent GC thread 14
+==== Skipping backtrace for parallel/concurrent GC thread 15
+==== Skipping backtrace for parallel/concurrent GC thread 16
+==== Skipping backtrace for parallel/concurrent GC thread 17
+==== Skipping backtrace for parallel/concurrent GC thread 18
+==== Skipping backtrace for parallel/concurrent GC thread 19
+==== Skipping backtrace for parallel/concurrent GC thread 20
+==== Done
+  task done=false failed=false
+  task done=false failed=false
+  task done=true failed=false
+  task done=false failed=false
+run 1: first (11.708, false), reopen (0.041, false)
+run 2: first (0.016, false), reopen (0.001, false)
+run 3: first (0.015, false), reopen (0.001, false)
+run 4: first (0.016, false), reopen (0.001, false)
+run 5: first (0.017, false), reopen (0.001, false)
+run 6: first (0.017, false), reopen (0.001, false)
+run 7: first (0.016, false), reopen (0.004, false)
+run 8: first (0.015, false), reopen (0.001, false)
+run 9: first (0.017, false), reopen (0.003, false)
+run 10: first (0.016, false), reopen (0.001, false)
+run 11: first (0.024, false), reopen (0.001, false)
+run 12: first (0.015, false), reopen (0.001, false)
+run 13: first (0.016, false), reopen (0.003, false)
+run 14: first (0.015, false), reopen (0.001, false)
+run 15: first (0.024, false), reopen (0.002, false)
+run 16: first (0.016, false), reopen (0.001, false)
+run 17: first (0.015, false), reopen (0.001, false)
+run 18: first (0.015, false), reopen (0.001, false)
+run 19: first (0.017, false), reopen (0.002, false)
+run 20: first (0.016, false), reopen (0.004, false)
+run 21: first (0.013, false), reopen (0.001, false)
+run 22: first (0.014, false), reopen (0.001, false)
+run 23: first (0.013, false), reopen (0.001, false)
+run 24: first (0.019, false), reopen (0.002, false)
+run 25: first (0.017, false), reopen (0.001, false)
+run 26: first (0.014, false), reopen (0.002, false)
+run 27: first (0.013, false), reopen (0.002, false)
+run 28: first (0.014, false), reopen (0.001, false)
+run 29: first (0.014, false), reopen (0.001, false)
+run 30: first (0.014, false), reopen (0.003, false)
+run 31: first (0.017, false), reopen (0.004, false)
+run 32: first (0.016, false), reopen (0.008, false)
+run 33: first (0.016, false), reopen (0.001, false)
+run 34: first (0.015, false), reopen (0.005, false)
+run 35: first (0.015, false), reopen (0.001, false)
+run 36: first (0.017, false), reopen (0.003, false)
+run 37: first (0.016, false), reopen (0.002, false)
+run 38: first (0.017, false), reopen (0.018, false)
+run 39: first (0.019, false), reopen (0.003, false)
+run 40: first (0.031, false), reopen (0.006, false)
+[ Info: Opening workspace

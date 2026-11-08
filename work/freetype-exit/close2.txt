@@ -1,0 +1,2 @@
+warmup running at close: true
+warmup running after close: false

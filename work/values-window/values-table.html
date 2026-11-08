@@ -1,0 +1,111 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Values table</title>
+<style>
+:root{--bg:#0e1014;--win:#161a20;--head:#1b2028;--line:#2a303a;--text:#d9dee6;--muted:#8a929e;--faint:#5d6571;--accent:#7aa7e0;--sel:#24344a;--mono:"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px -apple-system,"Segoe UI",sans-serif;width:1600px;height:1000px;overflow:hidden}
+::-webkit-scrollbar{width:12px;height:12px}::-webkit-scrollbar-track{background:#12151a}::-webkit-scrollbar-thumb{background:#3a414c;border-radius:6px;border:3px solid #12151a}::-webkit-scrollbar-corner{background:#12151a}
+.app{display:grid;grid-template-columns:250px 1fr;grid-template-rows:34px 1fr;height:100%}
+.top{grid-column:1/3;display:flex;align-items:center;gap:14px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--head)}
+.top b{font-weight:600}.top .m{color:var(--muted)}
+.btn{border:1px solid var(--line);border-radius:4px;padding:3px 8px;background:#20262f;color:var(--text);font-size:12px;white-space:nowrap}
+.tree{border-right:1px solid var(--line);padding:8px 0}
+.tree div{padding:2px 10px;white-space:nowrap}.tree .s{background:var(--sel)}.tree .f{color:var(--muted)}
+.area{display:grid;grid-template-columns:900px 1fr;gap:8px;padding:8px;min-height:0}
+.win{background:var(--win);border:1px solid var(--line);border-radius:6px;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+.title{padding:5px 10px;background:var(--head);border-bottom:1px solid var(--line);font-size:12px}
+.title b{font-weight:600}
+.hdr{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px}
+.combo{border:1px solid var(--line);border-radius:4px;padding:2px 6px;background:#20262f}
+.combo:after{content:" ▾";color:var(--muted)}
+.dim{color:var(--muted)}
+.chk{display:inline-block;width:13px;height:13px;border-radius:3px;background:var(--accent);vertical-align:-2px;margin-right:3px;color:#0e1014;font-size:10px;text-align:center;line-height:13px}
+.search{margin-left:auto;border:1px solid var(--line);border-radius:4px;padding:2px 8px;width:170px;color:var(--faint);background:#12151a}
+.scroll{flex:1;overflow:scroll;min-height:0}
+table{border-collapse:separate;border-spacing:0;font-family:var(--mono);font-size:12px}
+th,td{text-align:left;padding:3px 10px;white-space:nowrap;border-bottom:1px solid #1f242c;height:23px}
+thead th{position:sticky;background:var(--win);color:var(--muted);font-weight:500;z-index:2}
+thead tr:first-child th{top:0;height:22px;border-bottom:none;color:var(--faint)}
+thead tr:last-child th{top:22px;border-bottom:1px solid var(--line)}
+th.grp{border-bottom:1px solid var(--line)!important;color:var(--muted)!important}
+td.span{vertical-align:top;border-right:1px solid #1f242c;background:var(--win)}
+td.span div{position:sticky;top:50px}
+td.const{color:#c6b98a;border-left:1px solid #1f242c}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px}
+.u{color:var(--accent)}
+.c1 td.d{box-shadow:inset 3px 0 0 #7aa7e0}
+.code{border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px;padding:8px 0}
+.code div{padding:1px 12px;white-space:pre}.code .n{color:var(--faint);display:inline-block;width:22px}
+.kw{color:#c79be0}.sym{color:#8cc38a}.fn{color:var(--accent)}
+</style></head><body>
+<div class="app">
+<div class="top"><b>DataBrowser</b><span class="m">SuperGaN · exp_raw</span><span class="btn">+ Window</span></div>
+<div class="tree">
+<div>▾ 719a</div><div class="f" style="padding-left:24px">▸ L</div>
+<div>▾ 719c</div><div class="f" style="padding-left:24px">▸ L</div>
+<div>▾ 72b</div>
+<div style="padding-left:24px">▾ L</div>
+<div class="f" style="padding-left:38px">▸ LeakageTest_bottom</div>
+<div class="f" style="padding-left:38px">▸ SuperconductivityTest</div>
+<div class="f" style="padding-left:38px">▸ Transistor</div>
+<div style="padding-left:38px">▾ bigTLM</div>
+<div class="s" style="padding-left:52px"><span class="sw" style="background:#7aa7e0"></span>C2_10um</div>
+<div class="s" style="padding-left:52px"><span class="sw" style="background:#e3a95c"></span>C2_20um</div>
+<div class="s" style="padding-left:52px"><span class="sw" style="background:#8cc38a"></span>C2_50um</div>
+<div class="s" style="padding-left:52px"><span class="sw" style="background:#d98bb5"></span>C2_5um</div>
+<div class="f" style="padding-left:24px">▸ R</div>
+</div>
+<div class="area">
+<div class="win">
+<div class="title"><b>Values</b></div>
+<div class="hdr"><span class="combo">Values</span><span class="dim">from</span><span class="combo">Selection</span><span class="dim">through</span><span class="combo">nothing</span><span><span class="chk">✓</span>Live</span><span class="search">Filter names</span><span class="btn">Export</span></div>
+<div class="scroll" id="scroll"><table id="t"></table></div>
+</div>
+<div class="win">
+<div class="title"><b>Plot builder</b></div>
+<div class="hdr"><span class="combo">Plot builder</span><span class="dim">from</span><span class="combo">Selection</span><span class="dim">through</span><span class="combo">nothing</span><span><span class="chk">✓</span>Live</span><span class="dim" style="margin-left:auto">name</span><span class="combo" style="padding-right:30px">iv</span><span class="btn">Export</span></div>
+<svg id="plot" width="100%" height="600" viewBox="0 0 800 560"></svg>
+<div class="code">
+<div><span class="n">1</span><span class="kw">@plot</span> <span class="fn">mapping</span>(<span class="sym">:data.VoltageHigh_V</span>, <span class="sym">:data.CurrentHigh_A</span>;</div>
+<div><span class="n">2</span>    color=<span class="sym">:Device</span>) * <span class="fn">visual</span>(Lines)</div>
+</div>
+</div>
+</div>
+</div>
+<script src="iv.js"></script>
+<script src="rows.js"></script>
+<script>
+const col={C2_10um:'#7aa7e0',C2_20um:'#e3a95c',C2_50um:'#8cc38a',C2_5um:'#d98bb5'};
+const ts={C2_10um:'20261020_204812',C2_20um:'20261020_204723',C2_50um:'20261020_204625',C2_5um:'20261020_204847'};
+const dataCols=['VoltageHigh_V','VoltageLow_V','CurrentHigh_A','CurrentLow_A','Time_s','Status'];
+const used=new Set(['Device','VoltageHigh_V','CurrentHigh_A']);
+const consts=[['Procedure','"Vsweep"'],['Chip','"72b"'],['Site','"L"'],['Subsite','"bigTLM"'],['IVSchema','2'],['Acquisition','"instrument-controlled hardware staircase sweep; one quantity per SMU"']];
+const name=n=>used.has(n)?`<span class="u">${n}</span>`:n;
+const total=Object.values(ROWS).reduce((a,v)=>a+v.rows.length,0);
+let h='<thead><tr><th></th><th></th><th class="grp" colspan="6">data</th><th></th><th></th><th></th><th></th><th></th><th></th><th class="grp">▸ Parameters</th></tr>';
+h+='<tr><th>'+name('Device')+'</th><th>Timestamp</th>'+dataCols.map(c=>'<th>'+name(c)+'</th>').join('')+consts.map(c=>'<th>'+c[0]+'</th>').join('')+'<th></th></tr></thead><tbody>';
+let first=true;
+Object.entries(ROWS).forEach(([d,v])=>{
+  v.rows.forEach((r,i)=>{
+    h+='<tr>';
+    if(i===0){h+=`<td class="span" rowspan="${v.rows.length}"><div><span class="sw" style="background:${col[d]}"></span>${d}</div></td><td class="span" rowspan="${v.rows.length}"><div>${ts[d]}</div></td>`}
+    h+=r.map(x=>'<td>'+x+'</td>').join('');
+    if(first){h+=consts.map(c=>`<td class="span const" rowspan="${total}"><div>${c[1]}</div></td>`).join('')+`<td class="span const" rowspan="${total}"><div>⋯</div></td>`;first=false}
+    h+='</tr>';
+  });
+});
+document.getElementById('t').innerHTML=h+'</tbody>';
+const sc=document.getElementById('scroll');
+const rowsEl=document.querySelectorAll('#t tbody tr');sc.scrollTop=rowsEl[198-9].offsetTop-50;
+const svg=document.getElementById('plot'),L=90,R=640,T=30,B=500;
+const xs=v=>L+(v+0.0105)/0.021*(R-L), ys=i=>B-(i+2.9e-6)/5.8e-6*(B-T);
+let s='';
+for(let k=-10;k<=10;k+=5){const x=xs(k/1000);s+=`<line x1="${x}" y1="${T}" x2="${x}" y2="${B}" stroke="#232933"/><text x="${x}" y="${B+20}" fill="#8a929e" font-size="12" text-anchor="middle">${k/1000}</text>`}
+for(let k=-2;k<=2;k+=1){const y=ys(k*1e-6);s+=`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="#232933"/><text x="${L-8}" y="${y+4}" fill="#8a929e" font-size="12" text-anchor="end">${k===0?'0':k+'e-6'}</text>`}
+s+=`<text x="${(L+R)/2}" y="${B+44}" fill="#d9dee6" font-size="13" text-anchor="middle">data.VoltageHigh_V</text><text transform="translate(24 ${(T+B)/2}) rotate(-90)" fill="#d9dee6" font-size="13" text-anchor="middle">data.CurrentHigh_A</text>`;
+Object.entries(IV).forEach(([d,v])=>{s+=`<polyline fill="none" stroke="${col[d]}" stroke-width="1.6" points="${v.V.map((x,i)=>xs(x).toFixed(1)+','+ys(v.I[i]).toFixed(1)).join(' ')}"/>`});
+s+=`<text x="${R+24}" y="${T+14}" fill="#8a929e" font-size="12">Device</text>`;
+Object.keys(col).forEach((d,i)=>{const y=T+38+i*22;s+=`<line x1="${R+24}" y1="${y-4}" x2="${R+46}" y2="${y-4}" stroke="${col[d]}" stroke-width="2"/><text x="${R+54}" y="${y}" fill="#d9dee6" font-size="12">${d}</text>`});
+svg.innerHTML=s;
+</script>
+</body></html>

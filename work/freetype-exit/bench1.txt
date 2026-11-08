@@ -1,0 +1,41 @@
+┌ Warning: Julia runs with one thread: the browser waits while a computation runs. Start Julia with `--threads=auto`.
+└ @ DataBrowserCore.Workspace ~/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:113
+
+  1 dependency had output during precompilation:
+┌ DataBrowser
+│  [Output was shown above]
+└  
+┌ Warning: The call to compilecache failed to create a usable precompiled cache file for DataBrowser [a11ddd67-7e33-4db9-a4a8-4453f6eb9e68]
+│   exception = Required dependency Base.PkgId(Base.UUID("f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"), "DataBrowserGUI") failed to load from a cache file.
+└ @ Base loading.jl:2865
+┌ Warning: Julia runs with one thread: the browser waits while a computation runs. Start Julia with `--threads=auto`.
+└ @ DataBrowserCore.Workspace ~/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:113
+
+  1 dependency had output during precompilation:
+┌ DataBrowser
+│  [Output was shown above]
+└  
+ERROR: LoadError: Benchmark inputs changed during the run
+Stacktrace:
+  [1] error(s::String)
+    @ Base ./error.jl:44
+  [2] (::var"#check##4#check##5"{String, String, Vector{String}})()
+    @ Main ~/code/Julia/DataBrowser-dev/scripts/check.jl:194
+  [3] checked(f::var"#check##4#check##5"{String, String, Vector{String}}, records::Dict{String, Any}, name::String, key::String; force::Bool)
+    @ Main ~/code/Julia/DataBrowser-dev/scripts/check.jl:89
+  [4] checked
+    @ ~/code/Julia/DataBrowser-dev/scripts/check.jl:82 [inlined]
+  [5] check(args::Vector{String})
+    @ Main ~/code/Julia/DataBrowser-dev/scripts/check.jl:192
+  [6] check()
+    @ Main ~/code/Julia/DataBrowser-dev/scripts/check.jl:125
+  [7] top-level scope
+    @ ~/code/Julia/DataBrowser-dev/test/runtests.jl:2
+  [8] include(mod::Module, _path::String)
+    @ Base ./Base.jl:309
+  [9] exec_options(opts::Base.JLOptions)
+    @ Base ./client.jl:344
+ [10] _start()
+    @ Base ./client.jl:577
+in expression starting at /Users/davide/code/Julia/DataBrowser-dev/test/runtests.jl:2
+browser: running

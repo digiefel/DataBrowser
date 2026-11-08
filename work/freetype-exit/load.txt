@@ -1,0 +1,7 @@
+┌ Warning: Julia runs with one thread: the browser waits while a computation runs. Start Julia with `--threads=auto`.
+└ @ DataBrowserCore.Workspace ~/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:113
+
+  1 dependency had output during precompilation:
+┌ DataBrowser
+│  [Output was shown above]
+└  

@@ -1,0 +1,144 @@
+
+[82778] signal 11 (2): Segmentation fault: 11
+in expression starting at /Users/davide/code/Julia/DataBrowser-dev/work/freetype-exit/repro.jl:12
+FT_Get_Char_Index at /Users/davide/.julia/artifacts/010b15c5ddca09d93c77870474543b09a9203194/lib/libfreetype.6.dylib (unknown line)
+FT_Get_Char_Index at /Users/davide/.julia/packages/FreeType/ATaWH/src/FreeType.jl:875 [inlined]
+macro expansion at ./lock.jl:376 [inlined]
+glyph_index at /Users/davide/.julia/packages/FreeTypeAbstraction/GGCCW/src/types.jl:233
+find_font_for_char at /Users/davide/.julia/packages/Makie/dVJIx/src/utilities/texture_atlas.jl:240
+#glyph_collection##0 at /Users/davide/.julia/packages/Makie/dVJIx/src/layouting/text_layouting.jl:121
+_broadcast_getindex_evalf at ./broadcast.jl:704 [inlined]
+_broadcast_getindex at ./broadcast.jl:677 [inlined]
+_getindex at ./broadcast.jl:621 [inlined]
+getindex at ./broadcast.jl:617 [inlined]
+macro expansion at ./broadcast.jl:1000 [inlined]
+macro expansion at ./simdloop.jl:77 [inlined]
+copyto! at ./broadcast.jl:999 [inlined]
+copyto! at ./broadcast.jl:952 [inlined]
+copy at ./broadcast.jl:924 [inlined]
+materialize at ./broadcast.jl:899 [inlined]
+broadcast at ./broadcast.jl:837 [inlined]
+glyph_collection at /Users/davide/.julia/packages/Makie/dVJIx/src/layouting/text_layouting.jl:120
+glyph_collection at /Users/davide/.julia/packages/Makie/dVJIx/src/layouting/text_layouting.jl:103 [inlined]
+convert_text_string! at /Users/davide/.julia/packages/Makie/dVJIx/src/basic_recipes/text.jl:197
+jfptr_convert_text_stringNOT._105435 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+#compute_glyph_collections!##0 at /Users/davide/.julia/packages/Makie/dVJIx/src/basic_recipes/text.jl:364
+jfptr_YY.compute_glyph_collectionsNOT.YY.YY.0_102922 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:633
+jfptr_resolveNOT._113795 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+#resolve!##4 at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:672
+lock at ./lock.jl:335
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:665
+jfptr_resolveNOT._109757 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+_resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:658
+foreach at ./abstractarray.jl:3212 [inlined]
+#resolve!##4 at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:667
+lock at ./lock.jl:335
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:665
+jfptr_resolveNOT._109757 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+_resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:658
+foreach at ./abstractarray.jl:3212 [inlined]
+#resolve!##4 at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:667
+lock at ./lock.jl:335
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:665
+jfptr_resolveNOT._109757 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+_resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:658
+foreach at ./abstractarray.jl:3212 [inlined]
+#resolve!##4 at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:667
+lock at ./lock.jl:335
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:665
+jfptr_resolveNOT._109757 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+_resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:658
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:650
+getindex at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:563 [inlined]
+full_boundingbox at /Users/davide/.julia/packages/Makie/dVJIx/src/basic_recipes/text.jl:761
+boundingbox at /Users/davide/.julia/packages/Makie/dVJIx/src/layouting/text_boundingbox.jl:10
+jfptr_boundingbox_81939 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+#LineAxis##6 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/lineaxis.jl:309
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f_invokelatest at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:889
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+MapCallback at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:436
+jfptr_MapCallback_2405 at /Users/davide/.julia/compiled/v1.13/GridLayoutBase/I3oSr_9NLVr.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+update_ticklabel_node at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/lineaxis.jl:166
+jfptr_update_ticklabel_node_97465 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f_invokelatest at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:889
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+OnAny at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:420
+jfptr_OnAny_2374 at /Users/davide/.julia/compiled/v1.13/GridLayoutBase/I3oSr_9NLVr.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+setindex! at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:123 [inlined]
+update_tickpos_string at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/lineaxis.jl:229
+jfptr_update_tickpos_string_101528 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f_invokelatest at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:889
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+OnAny at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:420
+jfptr_OnAny_2374 at /Users/davide/.julia/compiled/v1.13/GridLayoutBase/I3oSr_9NLVr.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+setindex! at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:123
+MapCallback at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:436
+jfptr_MapCallback_2405 at /Users/davide/.julia/compiled/v1.13/GridLayoutBase/I3oSr_9NLVr.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+setindex! at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:123
+MapCallback at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:436
+jfptr_MapCallback_2405 at /Users/davide/.julia/compiled/v1.13/GridLayoutBase/I3oSr_9NLVr.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+setindex! at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:123
+SetindexCallback at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:148
+jfptr_SetindexCallback_114264 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+setindex! at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:123
+MapCallback at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:436
+jfptr_MapCallback_2405 at /Users/davide/.julia/compiled/v1.13/GridLayoutBase/I3oSr_9NLVr.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+setindex! at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:123
+#sceneareanode!##0 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/helpers.jl:50
+jfptr_YY.sceneareanodeNOT.YY.YY.0_84265 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f_invokelatest at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:889
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+OnAny at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:420
+jfptr_OnAny_2374 at /Users/davide/.julia/compiled/v1.13/GridLayoutBase/I3oSr_9NLVr.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+setindex! at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:123
+update_computedbbox! at /Users/davide/.julia/packages/GridLayoutBase/K7sJt/src/layoutobservables.jl:356
+unknown function (ip: 0x13781854f) at (unknown file)
+#make_computedbbox!##0 at /Users/davide/.julia/packages/GridLayoutBase/K7sJt/src/layoutobservables.jl:218
+jfptr_YY.make_computedbboxNOT.YY.YY.0_114007 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f_invokelatest at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:889
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+OnAny at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:420
+jfptr_OnAny_2374 at /Users/davide/.julia/compiled/v1.13/GridLayoutBase/I3oSr_9NLVr.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+setindex! at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:123
+align_to_bbox! at /Users/davide/.julia/packages/GridLayoutBase/K7sJt/src/gridlayout.jl:1102
+#15 at /Users/davide/.julia/packages/GridLayoutBase/K7sJt/src/gridlayout.jl:158
+jfptr_YY.15_1788 at /Users/davide/.julia/compiled/v1.13/GridLayoutBase/I3oSr_9NLVr.dylib (unknown line)
+notify at /Users/davide/.julia/packages/Observables/YdEbO/src/Observables.jl:206 [inlined]
+update! at /Users/davide/.julia/packages/GridLayoutBase/K7sJt/src/gridlayout.jl:193
+add_to_gridlayout! at /Users/davide/.julia/packages/GridLayoutBase/K7sJt/src/gridlayout.jl:293
+add_content! at /Users/davide/.julia/packages/GridLayoutBase/K7sJt/src/gridlayout.jl:1557
+setindex! at /Users/davide/.julia/packages/GridLayoutBase/K7sJt/src/gridlayout.jl:1451
+jfptr_setindexNOT._114302 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+setindex! at /Users/davide/.julia/packages/GridLayoutBase/K7sJt/src/gridlayout.jl:1590
+jfptr_setindexNOT._114297 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+#_block#1661 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:260
+_block at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:251 [inlined]
+#_#1660 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:242 [inlined]
+Block at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:241 [inlined]
+#2 at /Users/davide/code/Julia/DataBrowser-dev/work/freetype-exit/repro.jl:6
+unknown function (ip: 0x13774012b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+Allocations: 5773562 (Pool: 5772939; Big: 623); GC: 8

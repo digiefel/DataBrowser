@@ -1,0 +1,179 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Values mixed</title>
+<style>
+:root{--bg:#0e1014;--win:#161a20;--head:#1b2028;--line:#2a303a;--text:#d9dee6;--muted:#8a929e;--faint:#5d6571;--accent:#7aa7e0;--sel:#24344a;--mono:"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px -apple-system,"Segoe UI",sans-serif;width:1600px;height:1000px;overflow:hidden}
+::-webkit-scrollbar{width:12px;height:12px}::-webkit-scrollbar-track{background:#12151a}::-webkit-scrollbar-thumb{background:#3a414c;border-radius:6px;border:3px solid #12151a}::-webkit-scrollbar-corner{background:#12151a}
+.app{display:grid;grid-template-columns:250px 1fr;grid-template-rows:34px 1fr;height:100%}
+.top{grid-column:1/3;display:flex;align-items:center;gap:14px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--head)}
+.top b{font-weight:600}.top .m{color:var(--muted)}
+.btn{border:1px solid var(--line);border-radius:4px;padding:3px 8px;background:#20262f;color:var(--text);font-size:12px;white-space:nowrap}
+.tree{border-right:1px solid var(--line);padding:8px 0}
+.tree div{padding:2px 10px;white-space:nowrap}.tree .s{background:var(--sel)}.tree .f{color:var(--muted)}
+.area{display:grid;grid-template-columns:1fr;padding:8px;min-height:0}
+.win{background:var(--win);border:1px solid var(--line);border-radius:6px;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+.title{padding:5px 10px;background:var(--head);border-bottom:1px solid var(--line);font-size:12px}
+.title b{font-weight:600}
+.hdr{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap}
+.combo{border:1px solid var(--line);border-radius:4px;padding:2px 6px;background:#20262f}
+.combo:after{content:" ▾";color:var(--muted)}
+.dim{color:var(--muted)}
+.chk{display:inline-block;width:13px;height:13px;border-radius:3px;background:var(--accent);vertical-align:-2px;margin-right:3px;color:#0e1014;font-size:10px;text-align:center;line-height:13px}
+.search{margin-left:auto;border:1px solid var(--line);border-radius:4px;padding:2px 8px;width:170px;color:var(--faint);background:#12151a}
+.scroll{flex:1;overflow:scroll;min-height:0}
+table{border-collapse:separate;border-spacing:0;font-family:var(--mono);font-size:12px}
+th,td{text-align:left;padding:3px 10px;white-space:nowrap;border-bottom:1px solid #222831;border-right:1px solid #222831;height:24px}
+td.num,th.num{text-align:right}
+thead th{position:sticky;background:var(--win);color:var(--muted);font-weight:500;z-index:2}
+thead tr:first-child th{top:0;height:22px;border-bottom:none;border-right:none;color:var(--muted)}
+thead tr.names th{top:22px;border-bottom:1px solid var(--line)}
+th.grp{border-bottom:1px solid var(--line)!important}
+th .x{color:var(--faint);font-weight:400;margin-left:6px}
+td.span{vertical-align:top}
+td.span div{position:sticky;top:52px}
+.fun{color:var(--faint);margin-left:6px;vertical-align:-1px}.fun.on{color:var(--accent)}th.hover{background:#1d232c!important;color:var(--text)}
+.pop{position:absolute;z-index:10;background:#0f0f0ff0;border:1px solid #6e6e8080;padding:8px;font-size:12.5px;display:flex;flex-direction:column;gap:4px}
+.pop .in{background:#294a7a8a;padding:3px 4px;font-family:var(--mono);width:250px;height:20px}
+.pop .ck{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px}
+.pop .cb{width:17px;height:17px;background:#294a7a8a;display:flex;align-items:center;justify-content:center}
+.pop .cb.on:after{content:"";width:9px;height:5px;border-left:2px solid #4296fa;border-bottom:2px solid #4296fa;transform:rotate(-45deg) translate(1px,-1px)}
+.pop .cb.mix:after{content:"";width:9px;height:9px;background:#4296fa}
+.kw{color:#c79be0}.str{color:#8cc38a}.num2{color:#e3a95c}
+.sort{position:absolute;right:4px;top:5px;color:var(--muted);font-size:10px}th.sorted{padding-right:20px}
+td.gut,th.gut{padding:3px 6px;color:var(--muted);border-right:1px solid var(--line)}
+td.meta{color:#c6b98a}
+td.absent{background:var(--bg);border-color:var(--bg)}
+tr.folded td:not(.span):not(.absent){color:var(--muted);background:#13171d}
+.fold{color:var(--muted);margin-right:6px}
+.combo.open{background:#4296fa66}
+.drop{position:absolute;z-index:10;background:#0f0f0ff0;border:1px solid #6e6e8080;padding:4px 0;font-size:12.5px;min-width:160px}
+.drop div{padding:3px 10px}.drop .on{background:#4296fa4f}
+td.gut{color:var(--text)}
+th.item{border-bottom:1px solid var(--line)!important;color:var(--text)!important;border-left:1px solid var(--line)}
+th.mrow{color:#c6b98a!important;font-weight:400;border-left:1px solid var(--line);border-bottom:1px solid #222831!important}
+td.first,th.first{border-left:1px solid var(--line)}
+</style></head><body>
+<div class="app">
+<div class="top"><b>DataBrowser</b><span class="m">SuperGaN · exp_raw</span><span class="btn">+ Window</span></div>
+<div class="tree">
+<div>▾ 719a</div>
+<div style="padding-left:24px">▾ L</div>
+<div style="padding-left:38px">▾ bigTLM</div>
+<div class="s" style="padding-left:52px">C2_10um</div>
+<div class="s" style="padding-left:52px">C2_20um</div>
+<div class="s" style="padding-left:52px">C2_2um</div>
+<div class="s" style="padding-left:52px">C2_3um</div>
+<div style="padding-left:52px">▾ C2_50um</div>
+<div class="f" style="padding-left:66px">20261009_181212</div>
+<div class="s" style="padding-left:66px">20261009_185657</div>
+<div class="s" style="padding-left:66px">20261009_185950</div>
+<div class="s" style="padding-left:66px">20261009_190312</div>
+<div class="s" style="padding-left:52px">C2_5um</div>
+<div class="f" style="padding-left:38px">▸ Transistor</div>
+<div class="f" style="padding-left:38px">▸ LeakageTest_bottom</div>
+<div class="f">▸ 719c</div>
+<div>▾ 72b</div>
+<div style="padding-left:24px">▾ L</div>
+<div style="padding-left:38px">▾ bigTLM</div>
+<div class="s" style="padding-left:52px">C2_10um</div>
+<div class="s" style="padding-left:52px">C2_20um</div>
+<div class="s" style="padding-left:52px">C2_50um</div>
+<div class="s" style="padding-left:52px">C2_5um</div>
+<div class="f" style="padding-left:38px">▸ Transistor</div>
+<div class="f" style="padding-left:24px">▸ R</div>
+</div>
+<div class="area">
+<div class="win">
+<div class="title"><b>Values</b></div>
+<div class="hdr" id="hdr"></div>
+<div class="scroll" id="scroll"><table id="t"></table></div>
+</div>
+</div>
+</div>
+<script src="mixed.js"></script>
+<script>
+// Window states: "#side" arranges the items side by side; "#arrange" and "#meta" open the two header menus.
+const HASH = location.hash;
+const ARRANGE = HASH === '#side' ? 'Side by side' : 'Stacked';
+// The metadata this window shows next to the data. Empty means data only.
+const META = [['Procedure', it => it.procedure], ['Timestamp', it => it.timestamp]];
+const label = (it, i) => ITEMS.filter(o => o.device === it.device && o.chip === it.chip).length > 1 ? it.timestamp : it.device;
+
+document.getElementById('hdr').innerHTML = `<span class="combo">Values</span><span class="dim">from</span><span class="combo">Selection</span><span class="dim">through</span><span class="combo">nothing</span>`
+  + `<span class="combo${HASH === '#arrange' ? ' open' : ''}" id="arr">${ARRANGE}</span><span class="dim">with</span><span class="combo${HASH === '#meta' ? ' open' : ''}" id="meta">${META.map(m => m[0]).join(', ') || 'no metadata'}</span>`
+  + `<span><span class="chk">✓</span>Live</span><span class="search">Filter names</span><span class="btn">Export</span>`;
+
+const dataCols = [];
+ITEMS.forEach(it => it.columns.forEach(c => dataCols.includes(c) || dataCols.push(c)));
+dataCols.push(dataCols.splice(dataCols.indexOf('Status'), 1)[0]);
+// One power of ten per column, a multiple of 3, and decimals for about five digits.
+const scale = {};
+dataCols.forEach(c => {
+  const xs = ITEMS.flatMap(it => it.columns.includes(c) ? it.rows.map(r => Math.abs(parseFloat(r[it.columns.indexOf(c)]))) : []);
+  const max = Math.max(...xs);
+  if (xs.every(x => Number.isInteger(x))) { scale[c] = [0, 0]; return; }
+  const e = 3 * Math.floor(Math.log10(max) / 3);
+  scale[c] = [e, Math.max(0, Math.min(5, 4 - Math.floor(Math.log10(max / Math.pow(10, e)))))];
+});
+const fmt = (x, c) => { const [e, d] = scale[c]; const s = (parseFloat(x) / Math.pow(10, e)).toFixed(d); return /^-0\.?0*$/.test(s) ? s.slice(1) : s; };
+const head = c => `${c}${scale[c][0] ? `<span class="x">×1e${scale[c][0]}</span>` : ''}`;
+const n = ITEMS.length;
+let h = '';
+
+if (ARRANGE === 'Stacked') {
+  // Each item's rows one after the other; a metadata value spans its item's rows.
+  const OPEN = 2;
+  const height = ITEMS.map((it, i) => i === OPEN ? it.rows.length : 1);
+  const start = height.map((_, i) => height.slice(0, i).reduce((a, b) => a + b, 0));
+  const cells = Array.from({length: height.reduce((a, b) => a + b, 0)}, () => []);
+  const put = (row, html) => cells[row].push(html);
+  const span = (a, b) => start[b] + height[b] - start[a];
+  const runs = get => { const out = []; let a = 0; for (let i = 1; i <= n; i++) if (i === n || get(ITEMS[i]) !== get(ITEMS[a])) { out.push([a, i - 1, get(ITEMS[a])]); a = i; } return out; };
+  ITEMS.forEach((it, i) => put(start[i], `<td class="span gut" rowspan="${height[i]}"><div><span class="fold">${i === OPEN ? '▾' : '▸'}</span>${label(it, i)}</div></td>`));
+  META.forEach(([name, get]) => runs(get).forEach(([a, b, v]) => put(start[a], `<td class="span meta" rowspan="${span(a, b)}"><div>${v}</div></td>`)));
+  dataCols.forEach((c, ci) => runs(it => it.columns.includes(c)).forEach(([a, b, has]) => {
+    const first = ci === 0 ? ' first' : '';
+    if (!has) { put(start[a], `<td class="absent" rowspan="${span(a, b)}"></td>`); return; }
+    for (let i = a; i <= b; i++) {
+      const it = ITEMS[i], j = it.columns.indexOf(c);
+      if (i === OPEN) { it.rows.forEach((r, k) => put(start[i] + k, `<td class="num${first}">${fmt(r[j], c)}</td>`)); continue; }
+      const xs = it.rows.map(r => parseFloat(r[j])), lo = fmt(Math.min(...xs), c), hi = fmt(Math.max(...xs), c);
+      put(start[i], `<td class="num${first}">${lo === hi ? lo : lo + ' … ' + hi}</td>`);
+    }
+  }));
+  h = `<thead><tr><th class="gut"></th><th colspan="${META.length}"></th><th class="grp first" colspan="${dataCols.length}">data</th></tr>`
+    + `<tr class="names"><th class="gut"></th>${META.map(m => `<th>${m[0]}</th>`).join('')}${dataCols.map((c, ci) => `<th class="num${ci === 0 ? ' first' : ''}">${head(c)}</th>`).join('')}</tr></thead><tbody>`
+    + cells.map((cs, r) => `<tr class="${r >= start[OPEN] && r < start[OPEN] + height[OPEN] ? '' : 'folded'}">${cs.join('')}</tr>`).join('') + '</tbody>';
+} else {
+  // Each item is a group of columns; rows line up by position. A metadata value spans its item's columns.
+  const rows = Math.max(...ITEMS.map(it => it.rows.length));
+  h = `<thead><tr><th class="gut"></th>${ITEMS.map((it, i) => `<th class="item" colspan="${it.columns.length}">${label(it, i)}</th>`).join('')}</tr>`;
+  h += META.map(([name, get]) => `<tr><th class="gut">${name}</th>${ITEMS.map(it => `<th class="mrow" colspan="${it.columns.length}">${get(it)}</th>`).join('')}</tr>`).join('');
+  h += `<tr class="names"><th class="gut"></th>${ITEMS.map(it => it.columns.map((c, k) => `<th class="num${k === 0 ? ' first' : ''}">${head(c)}</th>`).join('')).join('')}</tr></thead><tbody>`;
+  for (let r = 0; r < rows; r++) h += `<tr><td class="gut num">${r + 1}</td>${ITEMS.map(it => it.columns.map((c, k) => `<td class="num${k === 0 ? ' first' : ''}">${r < it.rows.length ? fmt(it.rows[r][k], c) : ''}</td>`).join('')).join('')}</tr>`;
+  h += '</tbody>';
+}
+document.getElementById('t').innerHTML = h;
+
+// Header rows stack at the top while the rows scroll.
+let y = 0;
+document.querySelectorAll('thead tr').forEach(tr => { tr.querySelectorAll('th').forEach(th => { th.style.top = y + "px"; th.style.position = 'sticky'; }); y += tr.offsetHeight; });
+document.querySelectorAll('td.span div').forEach(d => d.style.top = y + 4 + "px");
+// The gutter stays at the left edge.
+document.querySelectorAll('.gut').forEach(el => { el.style.position = 'sticky'; el.style.left = 0; el.style.zIndex = el.tagName === 'TH' ? 4 : 1; el.style.background = 'var(--win)'; });
+
+const win = document.querySelector('.win'); win.style.position = 'relative';
+const drop = (id, html) => {
+  const r = document.getElementById(id).getBoundingClientRect(), w = win.getBoundingClientRect();
+  win.insertAdjacentHTML('beforeend', `<div class="drop" style="left:${r.left - w.left}px;top:${r.bottom - w.top + 1}px">${html}</div>`);
+};
+if (HASH === '#arrange') drop('arr', ['Stacked', 'Side by side', 'One at a time'].map(a => `<div class="${a === ARRANGE ? 'on' : ''}">${a}</div>`).join(''));
+if (HASH === '#meta') {
+  const names = ['Procedure', 'Timestamp', 'Device', 'Chip', 'Site', 'Subsite', 'IVSchema', 'Acquisition', '▸ Parameters'];
+  const on = new Set(META.map(m => m[0]));
+  win.insertAdjacentHTML('beforeend', '');
+  drop('meta', `<div class="pop" style="position:static;border:none;padding:4px 8px"><div class="in" style="width:200px;color:#8a929e">filter</div>${names.map(m => `<div class="ck"><span class="cb ${on.has(m) ? 'on' : ''}"></span>${m}</div>`).join('')}</div>`);
+}
+</script>
+</body></html>

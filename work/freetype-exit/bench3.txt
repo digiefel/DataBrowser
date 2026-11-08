@@ -1,0 +1,17 @@
+    DataBrowserGUI Being precompiled by another process (pid: 62764, pidfile: /Users/davide/code/Julia/DataBrowser-dev/bench/results/depot/compiled/v1.13/DataBrowserGUI/UtXy2_IMydq.ji.pidfile)
+┌ Warning: Julia runs with one thread: the browser waits while a computation runs. Start Julia with `--threads=auto`.
+└ @ DataBrowserCore.Workspace ~/code/Julia/DataBrowser-dev/lib/DataBrowserCore/src/Workspace/Evaluate.jl:113
+
+  1 dependency had output during precompilation:
+┌ DataBrowser
+│  [Output was shown above]
+└  
+browser: running
+browser_open_s = 45.165799375
+browser_reopen_s = 8.653873042
+frame_gap_ms = 2581.321954727173
+frame_ui_ms = 0.10254088333333333
+import_s = 40.529988167
+peak_rss_mib = 1418.359375
+plot_windows_open_s = 52.350936667
+plot_windows_reopen_s = 16.574805917

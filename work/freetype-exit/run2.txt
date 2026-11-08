@@ -1,0 +1,101 @@
+
+[82725] signal 11 (2): Segmentation fault: 11
+in expression starting at /Users/davide/code/Julia/DataBrowser-dev/work/freetype-exit/repro.jl:12
+FT_Get_Char_Index at /Users/davide/.julia/artifacts/010b15c5ddca09d93c77870474543b09a9203194/lib/libfreetype.6.dylib (unknown line)
+FT_Get_Char_Index at /Users/davide/.julia/packages/FreeType/ATaWH/src/FreeType.jl:875 [inlined]
+macro expansion at ./lock.jl:376 [inlined]
+glyph_index at /Users/davide/.julia/packages/FreeTypeAbstraction/GGCCW/src/types.jl:233
+find_font_for_char at /Users/davide/.julia/packages/Makie/dVJIx/src/utilities/texture_atlas.jl:240
+#glyph_collection##0 at /Users/davide/.julia/packages/Makie/dVJIx/src/layouting/text_layouting.jl:121
+_broadcast_getindex_evalf at ./broadcast.jl:704 [inlined]
+_broadcast_getindex at ./broadcast.jl:677 [inlined]
+_getindex at ./broadcast.jl:621 [inlined]
+getindex at ./broadcast.jl:617 [inlined]
+macro expansion at ./broadcast.jl:1000 [inlined]
+macro expansion at ./simdloop.jl:77 [inlined]
+copyto! at ./broadcast.jl:999 [inlined]
+copyto! at ./broadcast.jl:952 [inlined]
+copy at ./broadcast.jl:924 [inlined]
+materialize at ./broadcast.jl:899 [inlined]
+broadcast at ./broadcast.jl:837 [inlined]
+glyph_collection at /Users/davide/.julia/packages/Makie/dVJIx/src/layouting/text_layouting.jl:120
+glyph_collection at /Users/davide/.julia/packages/Makie/dVJIx/src/layouting/text_layouting.jl:103 [inlined]
+convert_text_string! at /Users/davide/.julia/packages/Makie/dVJIx/src/basic_recipes/text.jl:197
+jfptr_convert_text_stringNOT._105453 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+#compute_glyph_collections!##0 at /Users/davide/.julia/packages/Makie/dVJIx/src/basic_recipes/text.jl:364
+jfptr_YY.compute_glyph_collectionsNOT.YY.YY.0_102931 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+TypedEdge at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:126
+jfptr_TypedEdge_112292 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+TypedEdge at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:120
+#resolve!##4 at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:670
+lock at ./lock.jl:335
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:665
+jfptr_resolveNOT._109757 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+_resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:658
+foreach at ./abstractarray.jl:3212 [inlined]
+#resolve!##4 at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:667
+lock at ./lock.jl:335
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:665
+jfptr_resolveNOT._109757 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+_resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:658
+foreach at ./abstractarray.jl:3212 [inlined]
+#resolve!##4 at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:667
+lock at ./lock.jl:335
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:665
+jfptr_resolveNOT._109757 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+_resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:658
+resolve! at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:650
+getindex at /Users/davide/.julia/packages/ComputePipeline/E2l50/src/ComputePipeline.jl:563 [inlined]
+#_register_expand_arguments!##0 at /Users/davide/.julia/packages/Makie/dVJIx/src/compute-plots.jl:413 [inlined]
+iterate at ./generator.jl:48 [inlined]
+_collect at ./array.jl:848
+collect_similar at ./array.jl:763 [inlined]
+map at ./abstractarray.jl:3396 [inlined]
+_register_expand_arguments! at /Users/davide/.julia/packages/Makie/dVJIx/src/compute-plots.jl:413
+_register_expand_arguments! at /Users/davide/.julia/packages/Makie/dVJIx/src/compute-plots.jl:409 [inlined]
+register_arguments! at /Users/davide/.julia/packages/Makie/dVJIx/src/compute-plots.jl:387 [inlined]
+Plot at /Users/davide/.julia/packages/Makie/dVJIx/src/compute-plots.jl:797
+jfptr_Plot_86890 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+_create_plot! at /Users/davide/.julia/packages/Makie/dVJIx/src/figureplotting.jl:555
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+#linesegments!#60 at /Users/davide/.julia/packages/Makie/dVJIx/src/recipes.jl:550
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+linesegments! at /Users/davide/.julia/packages/Makie/dVJIx/src/recipes.jl:548
+tex_linesegments! at /Users/davide/.julia/packages/Makie/dVJIx/src/basic_recipes/text.jl:463
+calculated_attributes! at /Users/davide/.julia/packages/Makie/dVJIx/src/basic_recipes/text.jl:442 [inlined]
+connect_plot! at /Users/davide/.julia/packages/Makie/dVJIx/src/compute-plots.jl:875
+plot! at /Users/davide/.julia/packages/Makie/dVJIx/src/interfaces.jl:211
+jfptr_plotNOT._94712 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+_create_plot! at /Users/davide/.julia/packages/Makie/dVJIx/src/figureplotting.jl:556
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+#text!#68 at /Users/davide/.julia/packages/Makie/dVJIx/src/recipes.jl:550
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+text! at /Users/davide/.julia/packages/Makie/dVJIx/src/recipes.jl:548
+LineAxis at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/lineaxis.jl:410
+#LineAxis#1837 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/lineaxis.jl:3
+LineAxis at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/lineaxis.jl:1 [inlined]
+#initialize_block!#1868 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks/axis.jl:346
+initialize_block! at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks/axis.jl:154
+jfptr_initialize_blockNOT._98449 at /Users/davide/.julia/compiled/v1.13/Makie/iZ1Bl_iw5ON.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/builtins.c:876
+#_block#1663 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:405
+_block at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:321 [inlined]
+#_block#1662 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:266 [inlined]
+_block at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:265
+unknown function (ip: 0x132a0c127) at (unknown file)
+#_block#1661 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:260
+_block at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:251 [inlined]
+#_#1660 at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:242 [inlined]
+Block at /Users/davide/.julia/packages/Makie/dVJIx/src/makielayout/blocks.jl:241 [inlined]
+#2 at /Users/davide/code/Julia/DataBrowser-dev/work/freetype-exit/repro.jl:6
+unknown function (ip: 0x1329ec12b) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/builder-honeycrisp-XG3Q6T6R70.1/019ebd63-635e-4155-b60a-9d2815900786/trusted/build/builder-honeycrisp-XG3Q6T6R70-1/julialang/julia-ci/src/task.c:1287
+Allocations: 5580411 (Pool: 5579792; Big: 619); GC: 8

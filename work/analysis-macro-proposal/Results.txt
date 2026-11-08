@@ -1,0 +1,20 @@
+GRAPH: [(name = :grid, inputs = [:spacing, :points], expression = "interpolate_points(points; spacing = spacing)"), (name = :gradient, inputs = [:grid], expression = "grid_gradient(grid)"), (name = :c
+omparison, inputs = [:points, :grid], expression = "compare_points(points, grid)")]
+COARSE GRID: [1.0 3.333333333333333 5.0; 2.6666666666666665 4.0 5.333333333333334; 3.0 4.666666666666667 7.0]
+FINE GRID SIZE: (5, 5)
+CANVAS: [(:coarse_map, :heatmap, "Main.AnalysisMacroReviewRun/coarse/field/grid"), (:fine_map, :heatmap, "Main.AnalysisMacroReviewRun/fine/field/grid"), (:derivatives, :value, "Main.AnalysisMacroRevie
+wRun/fine/field/gradient"), (:residuals, :table, "Main.AnalysisMacroReviewRun/fine/field/comparison")]
+GENERATED CANVAS SOURCE:
+@canvas field_tab begin
+    coarse_map = heatmap(coarse.grid; colormap=:viridis)
+    fine_map = heatmap(fine.grid; colormap=:viridis)
+    derivatives = value(fine.gradient)
+    residuals = table(fine.comparison)
+end
+
+Test Summary:                       | Pass  Total  Time
+Saved analysis and canvas contracts |   55     55  1.8s
+Test Summary:              | Pass  Total  Time
+Existing @plot composition |    4      4  0.0s
+EXISTING PLOT TYPE: AlgebraOfGraphics.Layers
+Main.AnalysisMacroReviewRun

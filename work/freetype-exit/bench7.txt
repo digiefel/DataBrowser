@@ -1,0 +1,9 @@
+browser: running
+browser_open_s = 5.30868575
+browser_reopen_s = 5.609143125
+frame_gap_ms = 2297.0829010009766
+frame_ui_ms = 0.03510826829268293
+import_s = 1.720157875
+peak_rss_mib = 1572.125
+plot_windows_open_s = 11.171684334
+plot_windows_reopen_s = 11.02713075

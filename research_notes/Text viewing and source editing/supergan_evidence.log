@@ -1,0 +1,88 @@
+Real SuperGaN baseline and no-restart verification, 2026-10-12
+Julia 1.13.1; executable /opt/homebrew/bin/julia; PID 81814
+Environment: /Users/davide/code/Julia/DataBrowser-dev/bench
+Persistent session: jmux-bench-8b078eb5
+Browser: the original visible BrowserSession, with the original workspace throughout.
+Measurement files were read. Normal databrowser.toml view-state persistence is enabled.
+
+Research-only selection and checks after the seven-statement startup:
+wait_workspace_idle!(supergan_workspace)
+wait_browser_ready(supergan_browser)
+supergan_ids = query_items(supergan_workspace)
+supergan_chosen = first(filter(id -> occursin("72b/L/Transistor/C1_2um/", id), supergan_ids))
+select_items!(supergan_browser, [supergan_chosen])
+supergan_table = only(read_item_data(supergan_workspace))
+
+Observed baseline output:
+BASELINE real SuperGaN folder; 59 CSV items
+SELECTED: exp_raw/72b/L/Transistor/C1_2um/72b_L_Transistor_C1_2um_20261009_194743_IVSweep.csv#csv:1
+ROWS: 199
+FIRST CURRENTS A: [5.258e-8, 6.8185e-8, 1.15015e-7]
+Metadata field values: :timestamp => Dates.DateTime("2026-10-09T19:47:43"), :filename => "72b_L_Transistor_C1_2um_20261009_194743_IVSweep.csv"
+Measured columns: Voltage_V, Current_High_A, Current_Low_A, Time_sec, Status
+
+Named analyzer loaded from iv_analysis.jl through Revise.includet:
+analyze_iv(table, _) = Dict(:points => length(table.Voltage_V))
+Registration:
+register_csv!(supergan_project; read_options=(comment="#",), analyze=analyze_iv)
+
+Evaluation-boundary observation:
+The first research command combined includet, registration and rebuild in one begin block.
+The analyzer method was then too new for that evaluation: world age 39369, current 39371.
+The load and registration had completed. A separate next REPL evaluation rebuilt successfully.
+For the user workflow, evaluate includet separately, then registration/rebuild in later evaluations.
+
+Successful real-analyzer research checks in the next REPL evaluation:
+modify_workspace!(supergan_workspace; rebuild=true)
+wait_workspace_idle!(supergan_workspace)
+select_items!(supergan_browser, [supergan_chosen])
+materialize_items(supergan_workspace)
+wait_workspace_idle!(supergan_workspace)
+supergan_metadata_step1 = metadata(only(materialize_items(supergan_workspace)))
+
+Observed output:
+REAL NAMED ANALYZER PASSED: points = 199
+Metadata retained the source timestamp/filename and added :points => 199.
+UNCHANGED: same BrowserSession, same workspace, all five measured columns; Julia PID 81814
+
+Saved method edit in the same tracked file:
+analyze_iv(table, _) = Dict(:points => length(table.Voltage_V), :maximum_current_uA => maximum(table.Current_High_A) * 1e6)
+
+One REPL evaluation:
+Revise.revise(throw=true)
+Observed output:
+REAL FILE SAVE: Revise.revise(throw=true) completed; rebuild is a separate REPL evaluation
+
+Later REPL evaluation, with no registration repeated:
+modify_workspace!(supergan_workspace; rebuild=true)
+wait_workspace_idle!(supergan_workspace)
+select_items!(supergan_browser, [supergan_chosen])
+materialize_items(supergan_workspace)
+wait_workspace_idle!(supergan_workspace)
+supergan_metadata_step2 = metadata(only(materialize_items(supergan_workspace)))
+
+Observed output:
+REAL REVISE FILE-SAVE PASSED: points = 199, maximum_current_uA = 6.1025
+Metadata retained the source timestamp/filename and contained :points => 199, :maximum_current_uA => 6.1025.
+UNCHANGED: same BrowserSession, same workspace, measured columns, and registered function; Julia PID 81814
+This maximum is the measured Current_High_A column maximum converted from A to uA; no fit or physical interpretation.
+
+Baseline restoration in the same browser/workspace:
+register_csv!(supergan_project; read_options=(comment="#",))
+modify_workspace!(supergan_workspace; rebuild=true)
+wait_workspace_idle!(supergan_workspace)
+select_items!(supergan_browser, [supergan_chosen])
+materialize_items(supergan_workspace)
+wait_workspace_idle!(supergan_workspace)
+supergan_restored_metadata = metadata(only(materialize_items(supergan_workspace)))
+supergan_restored_table = only(read_item_data(supergan_workspace))
+
+Observed output:
+BASELINE RESTORED: original recipe, source metadata, all five measured columns and all values
+Restored metadata field values: :timestamp => Dates.DateTime("2026-10-09T19:47:43"), :filename => "72b_L_Transistor_C1_2um_20261009_194743_IVSweep.csv"
+UNCHANGED: same BrowserSession and workspace; no open/close/restart; Julia PID 81814
+
+Assertions passed for :points == 199, the maximum against the original measured column,
+BrowserSession/workspace identity, unchanged measured columns, and every restored table value.
+The helper file remains saved and tracked. Its recipe callback is removed from the restored baseline.
+The original visible browser remains open with the same real measurement selected.
