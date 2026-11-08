@@ -61,6 +61,7 @@ import DataBrowserAPI:
     AbstractProject,
     SourceChanges,
     SourceError,
+    SourceGroup,
     close_source!,
     fingerprint,
     id,
@@ -191,7 +192,7 @@ struct Output
 end
 
 """
-The member values that the row of a group read or a group process takes: the values of type `T`
+The member values that the row of a group process takes: the values of type `T`
 of the ids `root`, and for a group without one, those of its members, and so on below them. For
 each id that it reaches, `rows` holds the row of the version that it takes, or `NOWHERE` when it
 takes none or takes the members of the group in its place; the revision of the value that it takes
@@ -413,12 +414,12 @@ mutable struct Workspace
     # one gives its latest version. A row that did not run yet counts for the value it is expected
     # to give.
     versions::Dict{String,Vector{Row}}
-    # The ids of the members of each group, of the groups of each value, and of the source items
-    # with members that each source item is a member of.
+    # The ids of the members of each group, of the groups of each value, and of the groups whose
+    # members name each id, which can be a source item.
     members::Dict{String,Vector{String}}
     groups::Dict{String,Vector{String}}
     parents::Dict{String,Vector{String}}
-    # The member values that each row of a group read or a group process takes, and the rows that
+    # The member values that each row of a group process takes, and the rows that
     # take each value, by its id (see `input!`).
     taken::Dict{Row,Taken}
     takers::Dict{String,Vector{Row}}

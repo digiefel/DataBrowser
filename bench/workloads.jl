@@ -134,7 +134,7 @@ function measure_scaling(sources)
                     ws = Workspace.open_workspace(project, source)
                     settle!(ws)
                 end
-                sort(Workspace.query_items(ws)) == ids || error("Incorrect indexed items")
+                sort(setdiff(Workspace.query_items(ws), [id(ws.source)])) == ids || error("Incorrect indexed items")
                 push!(scan_s, scan + @elapsed(Workspace.close_workspace!(ws)))
                 callback_counts(project) == (length(ids), 0) || error("Unexpected scan callbacks")
                 project = BenchProject()
@@ -143,7 +143,7 @@ function measure_scaling(sources)
                     settle!(ws)
                 end
                 push!(reopen_s, reopen)
-                sort(Workspace.query_items(ws)) == ids || error("Reopen lost items")
+                sort(setdiff(Workspace.query_items(ws), [id(ws.source)])) == ids || error("Reopen lost items")
                 callback_counts(project) == (0, 0) || error("Reopen reran user callbacks")
             finally
                 ws === nothing || Workspace.close_workspace!(ws)
@@ -196,7 +196,7 @@ function measure_cache(source)
                 ws = Workspace.open_workspace(project, source)
                 settle!(ws)
             end
-            sort(Workspace.query_items(ws)) == sort(ids) || error("Restore lost items")
+            sort(setdiff(Workspace.query_items(ws), [id(ws.source)])) == sort(ids) || error("Restore lost items")
             read_s = timed_materialize(ws, ids, PAYLOAD_ROWS)
             cached_samples = [timed_materialize(ws, selected, PAYLOAD_ROWS) for _ in 1:SELECTION_REPEATS]
             settle!(ws)

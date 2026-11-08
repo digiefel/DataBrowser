@@ -135,16 +135,17 @@ An *item* is one value of the project, such as one measurement: a value of a typ
 defines as a subtype of `AbstractDataItem`, with an *id*, a label, data and metadata. The id is a
 string that the project chooses and that stays the same from one session to the next. A *group* is
 an item with *members*, of a subtype of `AbstractGroup`: `members(g)` gives the ids of the members
-of the group `g`. The `read` of a source item that holds other source items, such as a sample that
-holds its measurements, gives a group, by default a `SourceGroup`, whose members are the items of
-those source items.
+of the group `g`. When a member id names a source item, the member stands for the items that the
+source item gives. The `read` of a source item that holds other source items, such as a sample that
+holds its measurements, can give a group of a type of the project, whose members are those source
+items. Besides, the workspace makes one `SourceGroup` for the whole source, whose members are all
+its source items.
 
 The project defines these methods, which the [API](api.md) page describes:
 
 | Function call | Gives |
 | --- | --- |
-| `read(project, source, s)` | the item of the source item `s` |
-| `read(project, source, s, members)` | the group of the source item `s`, from `members`, the vector of the items that the source items in `s` give; by default a `SourceGroup` |
+| `read(project, source, s)` | the item of the source item `s`, or a group of the source items in `s` |
 | `process(project, x)` | an item or a vector of items made from the item `x`; by default `x` itself |
 | `process(project, g, members)` | items made from the group `g` and the vector `members` of the items of its members, such as a fit through all of them; no default |
 | `process(project, x, g)` | items made from the member `x` with its group `g`; no default |
@@ -154,8 +155,8 @@ a method `process(project, x, g)`, no member process rows.
 
 The workspace keeps each function call in a row of its *catalog*, a table with one row for each
 *computation*, a function call before it runs. The rows whose results a row takes are its *inputs*.
-When the source has a source item `g` with the members `a` and `b`, the project defines the three
-methods of `process`, and the workspace was opened with `background_processing=true`, which runs
+When the source has a source item `g` with the members `a` and `b`, the `read` of `g` gives a group
+of `a` and `b`, the project defines the three methods of `process` for that group, and the workspace was opened with `background_processing=true`, which runs
 every row, the catalog has these rows:
 
 ```text
@@ -164,25 +165,24 @@ every row, the catalog has these rows:
     2    process(project, a)                process          1        a later version of a
     3    read(project, source, b)           read                      b
     4    process(project, b)                process          3        a later version of b
-    5    read(project, source, g, [a, b])   group read       2, 4     g, a group with members a and b
+    5    read(project, source, g)           read                      g, a group with members a and b
     6    process(project, g)                process          5        a later version of g
     7    process(project, g, [a, b])        group process    6, 2, 4  fit, a new item
     8    process(project, a, g)             member process   2, 6     a later version of a
     9    process(project, b, g)             member process   4, 6     a later version of b
+    10   SourceGroup(source, [a, b, g])     read                      the source group
 
     Each item has the id of its source item. [a, b] is the items of the members a and b.
 ```
 
 The workspace adds a read row when the source lists a source item, and a `process` row when the item
 that it takes exists. A row runs after its inputs: row 2 calls `process` with the item that row 1
-gives. Several rows can give an item with the same id, in this order of their kinds: read or group
-read, process, group process, member process. Each of them gives a later *version* of the item, and
+gives. Several rows can give an item with the same id, in this order of their kinds: read, process, group process, member process. Each of them gives a later *version* of the item, and
 windows show the *latest version* of each item: here `a` from row 8, `b` from row 9, `g` from row 6,
-and `fit` from row 7, a new item that the group `process` of the project gives. A group read and a
-group process take, for each member, its latest version from before the member `process` methods,
+and `fit` from row 7, a new item that the group `process` of the project gives. A group process takes, for each member, its latest version from before the member `process` methods,
 among the versions that have a result or will run. `background_processing` is off by default: the
 workspace adds every row, runs the reads, and runs a `process` row only when a window shows its item
-or a script asks for it. Row 5 then takes rows 1 and 3, because rows 2 and 4 will not run.
+or a script asks for it. Row 7 then takes rows 1 and 3, because rows 2 and 4 will not run.
 
 ### Keys and revisions
 

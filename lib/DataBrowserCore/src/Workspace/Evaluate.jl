@@ -528,11 +528,11 @@ of the stage that can apply to it. For the signature `Tuple{typeof(label),P,T}`,
 the values of type `T` (see [`revision`](@ref)), these are `T` and its `label`, `id`, `members` and
 `metadata` methods. Else the root is the function. A callable object that is not a function, such
 as a fit, runs the methods that make its type callable, whose parameters include the types of the
-functions it holds.
+functions it holds. A type, such as `SourceGroup`, runs its constructors.
 """
 function code_roots(project::AbstractProject, signature::Type, f)::Vector
     found = stage(signature)
-    found === nothing && return f isa Function ? Any[f] : Any[typeof(f); collect(methods(f))]
+    found === nothing && return f isa Function ? Any[f] : Any[f isa Type ? f : typeof(f); collect(methods(f))]
     at, T = found
     signatures = DataBrowserAPI.stage_signatures(typeof(project), at, T)
     return Any[T; [method for (g, types) in signatures for method in methods(g, types)]]
@@ -543,7 +543,6 @@ function code_roots(project::AbstractProject, ::Type{<:Tuple{typeof(label),Any,T
 end
 
 stage(::Type{<:Tuple{typeof(read),Any,Any,S}}) where {S} = (SOURCE_READ, S)
-stage(::Type{<:Tuple{typeof(read),Any,Any,S,Any}}) where {S} = (SOURCE_READ, S)
 stage(::Type{<:Tuple{typeof(process),Any,I}}) where {I} = (ITEM_PROCESS, I)
 stage(::Type{<:Tuple{typeof(process),Any,G,AbstractVector}}) where {G} = (GROUP_PROCESS, G)
 stage(::Type{<:Tuple{typeof(process),Any,M,G}}) where {M,G} = (MEMBER_PROCESS, G)
@@ -876,15 +875,11 @@ function check_code!(workspace::Workspace)::Nothing
     answers = Dict{Tuple,Any}(question => first(question)(Base.tail(question)...) for question in keys(asked))
     @lock catalog.lock begin
         workspace.closed && return nothing
-        ## Every value, group and source item with members is checked again when a method applies
-        ## now that did not, or the other way around.
+        ## Every value and group is checked again when a method applies now that did not, or the
+        ## other way around.
         if !isequal(answers, asked)
             workspace.methods = answers
             refresh!(workspace, collect(keys(workspace.versions)))
-            for row in collect(values(workspace.sources))
-                value = catalog[row]
-                length(value.args) == 4 && source!(workspace, value.args[3])
-            end
         end
         changed = Set{Type}(signature for (signature, code) in current
             if code.revision.hash != workspace.code[signature].revision.hash)

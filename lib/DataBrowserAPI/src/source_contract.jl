@@ -77,9 +77,10 @@ function items end
     members(source, item) -> Vector{<:AbstractDataSourceItem}
 
 The members of the source item `item`: the source items that it holds, such as the files and folders
-directly in a folder. A source item with members is a group: the workspace makes its value with the
-group form of `read`, from the values of the members. The default is empty: the source item is not
-a group.
+directly in a folder. The `read` of `item` can make a group of them. The default is empty.
+
+When the members of a source item change, its [`fingerprint`](@ref) changes too, so that the
+workspace reads it again.
 """
 members(::AbstractDataSource, ::AbstractDataSourceItem)::Vector{AbstractDataSourceItem} = AbstractDataSourceItem[]
 

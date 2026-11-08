@@ -1,7 +1,7 @@
 """
 The functions that the methods of a registration call, with the callbacks of the registration as
 arguments. A registered `analyze` callback runs inside `process`, and `expand` in the `process` of
-what `read` gave. The `process` of the group of the source folder makes the collections and runs
+what `read` gave. The `process` of the group of the source makes the collections and runs
 their callbacks, and the member `process` of each collection gives the items below it their new
 data and metadata.
 """
@@ -91,19 +91,15 @@ function _read(carrier::Type, read, source_item::AbstractDataSourceItem)
 end
 
 """
-Make the collections that the `collection` callbacks name for the items below the source folder,
-and run the callbacks registered for the level of each collection over the items below it.
+Make the collections that the `collection` callbacks name for the items of the source, and run the
+callbacks registered for the level of each collection over the items below it.
 `paths` pairs the kind of each item registration with its `collection` callback, and `levels`
 holds the level, the members, and the `process` and `analyze` callbacks of each collection
 registration. The id of a collection names its levels from the top down, as `wafer:W1/device:A`.
-Other groups make nothing.
 """
-# TODO: only the group of the folder of a `DirectorySource` has the id "."; the items of other
-# sources are in no collection.
 function _collections(
-    folder::SourceGroup, items::AbstractVector{RegisteredDataItem}, paths::Tuple, levels::Tuple,
+    items::AbstractVector{RegisteredDataItem}, paths::Tuple, levels::Tuple,
 )::Vector{NamedCollection}
-    id(folder) == "." || return NamedCollection[]
     ## Each collection, by id in the order they are named, with the items below it.
     found, below, order = Dict{String,NamedCollection}(), Dict{String,Vector{RegisteredDataItem}}(), String[]
     for item in items

@@ -26,7 +26,7 @@ API.fingerprint(::SourceItem) = 1
         workspace = open_workspace(project, Source(); cache=false, background_processing=true)
         try
             wait_workspace_idle!(workspace; timeout=20)
-            ids = query_items(workspace)
+            ids = setdiff(query_items(workspace), [API.id(workspace.source)])
             @test length(ids) == 1
             @test API.data(only(materialize_items(workspace, ids))).x == [4]
             @test select(workspace, ids).total == [4]

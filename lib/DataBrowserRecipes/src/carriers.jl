@@ -58,6 +58,22 @@ reconstruct(::Type{<:ReadData{K}}, id::AbstractString, data, metadata::Dict) whe
     ReadData{K}(String(id), data, metadata_dict(metadata))
 
 """
+The group of a source item with members, such as a folder: its members are the ids of the source
+items in it, as the source gives them. It has the id and the label of the source item.
+"""
+struct SourceItemGroup <: AbstractGroup
+    ## The label comes from the source item when it is needed, so that the `read` that makes the
+    ## group calls no `label` method, and an edit of one does not read the source item again.
+    item::AbstractDataSourceItem
+    members::Vector{String}
+end
+
+id(group::SourceItemGroup)::String = id(group.item)
+label(group::SourceItemGroup)::String = label(group.item)
+members(group::SourceItemGroup)::Vector{String} = group.members
+data(::SourceItemGroup) = nothing
+
+"""
 One collection that a `collection` callback names, as a group. `Level` is the name the callback
 gives the level, such as `:wafer`, and `name` is the value at that level, such as `"W1"`. Its
 members are the collections and the items directly below it. `data` holds the new data of items

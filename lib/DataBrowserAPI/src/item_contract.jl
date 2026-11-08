@@ -46,9 +46,10 @@ abstract type AbstractGroup <: AbstractDataItem end
 """
     members(group::AbstractGroup) -> Vector{String}
 
-The ids of the members of `group`, as the code that made the group gave them: the source, through
-the group form of `read`, the user, or a `process` method. The workspace never decides the members
-of a group. Every group type defines `members`: there is no default.
+The ids of the members of `group`, as the code that made the group gave them: a `read` of a source
+item, the user, a `process` method, or the workspace, for a [`SourceGroup`](@ref). An id names a
+value, or a source item, which stands for the values that it gives. Every group type defines
+`members`: there is no default.
 """
 members(::AbstractGroup)
 

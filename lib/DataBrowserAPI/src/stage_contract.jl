@@ -15,16 +15,15 @@ while a project reusing a shared source (`DirectorySource`) dispatches on its ow
 instead. The `process` of a group and the member `process` methods have only the project-aware
 form.
 
-`read` obtains the content of one source item as a data item, or makes the group of a source item
-with members from the values of its members.
+`read` obtains the content of one source item as a data item, which can be a group.
 """
 
 """
     PipelineStage
 
 The stage identified by a scheduled job, cached payload, or cached completion record.
-Values follow pipeline order. `SOURCE_READ` records the result of `read`, with or without members,
-`ITEM_PROCESS` is the `process` of an item, `GROUP_PROCESS` the `process` of a group with the
+Values follow pipeline order. `SOURCE_READ` records the result of `read`, and the
+[`SourceGroup`](@ref) of the source, `ITEM_PROCESS` is the `process` of an item, `GROUP_PROCESS` the `process` of a group with the
 values of its members, and `MEMBER_PROCESS` a member `process` method.
 """
 @enum PipelineStage::Int8 begin
@@ -42,10 +41,15 @@ end
     read(project, source, item) -> AbstractDataItem
     read(source, item) -> AbstractDataItem
 
-Perform the one expensive source operation for a source item without members, and return its data
-item. A source item that holds several items, such as a table with one item per cycle, gives one
-item here, and a `process` method that returns a vector makes the several items from it. A source
-item that gives no value, such as a file the project does not use, gives an empty vector.
+Perform the one expensive source operation for a source item, and return its data item. A source
+item that holds several items, such as a table with one item per cycle, gives one item here, and a
+`process` method that returns a vector makes the several items from it. A source item that gives no
+value, such as a file the project does not use, gives an empty vector.
+
+A source item with [`members`](@ref), such as a folder, can give a group of the project's own type,
+whose `members` are the ids that `members(source, item)` gives, or some of them. Each of these ids
+names a source item, which stands for the values that it gives. The source item can also give any
+other value, or none: nothing obliges it to be a group.
 
 This is the only stage that sees the source. Implement the context-free form when the project owns
 its source item type, or the project-aware form when it reuses a shared source.
@@ -60,35 +64,12 @@ read(source::AbstractDataSource, item::AbstractDataSourceItem) = error(
 )
 
 """
-    read(project, source, group, members::AbstractVector{T}) -> AbstractGroup
-    read(source, group, members::AbstractVector{T}) -> AbstractGroup
-
-Make a group from `group`, a source item with [`members`](@ref), and the values of its members. `T`
-is a subtype of `AbstractDataItem`. For each member, in order, `members` holds its latest value of
-type `T`.
-
-The values of a member are the value that `read` gives for it, and every value that `process` makes
-from those, also the values with other ids. A member that is a group and has no value of type `T`
-gives the values of type `T` of its own members instead, and so on below them. A member with no such
-value is left out. Write `T` in the signature of the method: the workspace finds it there before it
-calls the method, and calls the method again when a member gets a later value of type `T`.
-
-The default makes a [`SourceGroup`](@ref) from the latest value of each member, so every source item
-with members is a group without code. Define a method with another `T`, such as the processed
-values of the members, or one that returns a group type of your own.
-"""
-read(project::AbstractProject, source::AbstractDataSource, group::AbstractDataSourceItem, members::AbstractVector{<:AbstractDataItem}) =
-    read(source, group, members)
-
-read(::AbstractDataSource, group::AbstractDataSourceItem, members::AbstractVector{AbstractDataItem}) =
-    SourceGroup(id(group), label(group), map(id, members))
-
-"""
     SourceGroup(id, label, members)
 
-The group that the default group `read` makes for a source item with members. It has the `id` and
-the `label` of the source item, and the ids of the member values it was made from. Its `data` is
-`nothing`.
+The group of a source: the workspace makes one for its source, with the `id` and the `label` of the
+source, and its members are the ids of every source item of the source, which stand for the values
+that they give. Its `data` is `nothing`. A group `process` method on `SourceGroup` works on every
+item of a source, whatever the structure of the source.
 """
 struct SourceGroup <: AbstractGroup
     id::String
@@ -123,9 +104,11 @@ process(project::AbstractProject, item::AbstractDataItem) = process(item)
     process(project, group, members::AbstractVector{T}) -> AbstractDataItem or AbstractVector{<:AbstractDataItem}
 
 Process `group` with the values of its members, such as a fit through the points of every member.
-For each member in `members(group)`, `members` holds its latest value of type `T`, as for the group
-form of `read`: a member that is a group gives the values of its own members when it has no value of
-type `T`, so a method on the group at the top reaches every item below it. The workspace calls the
+For each member in `members(group)`, `members` holds its latest value of type `T`. A member that is
+a source item gives the values of type `T` that it gives, and a member that is a group gives the
+values of its own members when it has no value of type `T`, so a method on the group at the top
+reaches every item below it. A member with no such value is left out. Write `T` in the signature of
+the method: the workspace finds it there before it calls the method. The workspace calls the
 method again when a member gets a later value of type `T`. Results are as for `process(project,
 item)`.
 
@@ -150,12 +133,11 @@ process(::AbstractProject, ::AbstractDataItem, ::AbstractGroup)
 # ---------------------------------------------------------------------------
 
 # The calls that run `stage` for values of type `T`: each a function and its argument types. `T` is
-# a source item type for `SOURCE_READ`, with or without members; an item type for `ITEM_PROCESS`; a
+# a source item type for `SOURCE_READ`; an item type for `ITEM_PROCESS`; a
 # group type for `GROUP_PROCESS`, and for `MEMBER_PROCESS`, the type of the groups whose member
 # `process` methods run.
 stage_signatures(P::Type, stage::PipelineStage, T::Type)::Vector{Any} =
-    stage == SOURCE_READ ? Any[(read, Tuple{P,Any,T}), (read, Tuple{Any,T}),
-        (read, Tuple{P,Any,T,AbstractVector}), (read, Tuple{Any,T,AbstractVector})] :
+    stage == SOURCE_READ ? Any[(read, Tuple{P,Any,T}), (read, Tuple{Any,T})] :
     stage == ITEM_PROCESS ? Any[(process, Tuple{P,T}), (process, Tuple{T})] :
     stage == GROUP_PROCESS ? Any[(process, Tuple{P,T,AbstractVector})] :
     Any[(process, Tuple{P,AbstractDataItem,T})]
@@ -164,8 +146,7 @@ stage_signatures(P::Type, stage::PipelineStage, T::Type)::Vector{Any} =
     which(project, stage, source_item) -> Union{Method,LineNumberNode,Nothing}
     which(project, stage, type) -> Union{Method,LineNumberNode,Nothing}
 
-The code of the project that `stage` runs: for `SOURCE_READ`, the code that reads `source_item`, with
-or without members; for the other stages, the code that runs for values of `type`, which is an item
+The code of the project that `stage` runs: for `SOURCE_READ`, the code that reads `source_item`; for the other stages, the code that runs for values of `type`, which is an item
 type for `ITEM_PROCESS`, a group type for `GROUP_PROCESS`, and for `MEMBER_PROCESS`, the type of the
 groups whose member `process` methods run. The browser shows it where it shows how an item was made,
 and opens it in an editor.

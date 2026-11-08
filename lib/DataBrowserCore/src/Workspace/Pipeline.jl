@@ -10,8 +10,8 @@
 #
 # | Row            | Calls                                  | Added when                                              |
 # | -------------- | -------------------------------------- | ------------------------------------------------------- |
-# | read           | `read(project, source, item)`          | the source reports a source item without members        |
-# | group read     | `read(project, source, item, members)` | the source reports a source item with members           |
+# | read           | `read(project, source, item)`          | the source reports a source item                        |
+# | source group   | `SourceGroup(id, label, ids)`          | the workspace scans its source                          |
 # | process        | `process(project, value)`              | a read gives the value                                  |
 # | group process  | `process(project, group, members)`     | a value is a group, and a method of the project takes it |
 # | member process | `process(project, member, group)`      | a value is a member of a group, and a method of the project takes both |
@@ -20,33 +20,35 @@
 # string that the project chooses and that stays the same from one session to the next. A value
 # with the id of a value that an earlier row gives is a later *version* of that value: the rows of
 # one id run in the order of the table, and the last one gives its *latest version*, which windows
-# show. A value with another id is a new value.
+# show. A value with another id is a new value. The source group gives the [`SourceGroup`](@ref) of
+# the source, whose members are all its source items.
 #
 # A row fails when it gives one id twice. It also fails when another row of the same *stage* gives
-# one of its ids already. A stage is a line of the table, except that reads and group reads are one
-# stage: when two files hold an item with the same id, the read that finishes second fails.
+# one of its ids already. A stage is a line of the table, except that reads and the source group are
+# one stage: when two files hold an item with the same id, the read that finishes second fails.
 # Finally, a row fails when it gives the id of a value of an earlier row that it does not read. Like
 # any failure, a failed row gives no values, and the status panel of the browser shows the error
 # next to it. The cache saves the failure of a row that gives one id twice, which depends on that
 # row alone. When another row gives the id, the next session runs the row again, and the row
 # succeeds once the other row is gone.
 #
-# A group is a value with members: [`members`](@ref) gives their ids. A group read and a group
-# process take the values of its members of the type `T` that their method takes: for each member,
-# its latest version of type `T`, in the order of the members. A member that is a group with no value
-# of type `T` gives the values of type `T` of its own members instead, and so on below them. The
-# workspace reads `T` from the signature of the method, and asks again when the code changes.
-#
-# The row of a group reads the rows of the versions that it takes, so it runs after all of them, and
-# again when one of them gives a later version. It also takes a later version that did not run yet
-# but will: one that is wanted or requested, and does not read a failed row. So when a folder is read
-# for the first time, its group read runs once, after the reads of its files. A `process` that
+# A group is a value with members: [`members`](@ref) gives their ids. An id names a value, or a
+# source item, which stands for the values that it gives: a group that a folder gives can name the
+# files of the folder, and holds the items read from them. A group process takes the values of its
+# members of the type `T` that its method takes: for each member, its latest version of type `T`, in
+# the order of the members. A member that is a group with no value of type `T` gives the values of
+# type `T` of its own members instead, and so on below them. The workspace reads `T` from the
+# signature of the method, and asks again when the code changes.
+
+# The row of a group process reads the rows of the versions that it takes, so it runs after all of
+# them, and again when one of them gives a later version. It also takes a later version that did not
+# run yet but will: one that is wanted or requested, and does not read a failed row. A `process` that
 # nothing wants does not run for its group: the group takes the version before it, and runs again
 # when a window or a script asks for that `process`. A member whose row fails is left out until it
 # runs again. When a member gets a later version, the workspace changes what the group takes for
 # that member alone, and the revision of the group follows from a sum over its members, so that the
 # change takes the same time whatever the number of members.
-#
+
 # Windows come first: the rows of the values that a window shows run before all others (see
 # "Workers" in [`Evaluate.jl`](Evaluate.md)). Reads always run in the background. The rows of
 # `process` run in the background only with the option `background_processing` of `open_workspace`,
@@ -91,67 +93,58 @@
 Add the row that reads a source item that the source reports for the first time. A source item that
 has a row already gets its new computation in that row when it changed, or when it has no
 *fingerprint*, the value that a source gives to tell whether a source item changed, such as the
-modification time of a file; a source item with members also when its `read` takes member values
-of another type. When the cache saved the result of a new row, the row is current at once.
+modification time of a file.
 """
 function source!(workspace::Workspace, source_item::AbstractDataSourceItem)::Nothing
-    catalog, project, source, read_id = workspace.catalog, workspace.project, workspace.source, id(source_item)
-    row = get(workspace.sources, read_id, nothing)
-    held = String[id(member) for member in members(source, source_item)]
-    value = if isempty(held)
-        Computation(read, project, source, source_item)
-    else
-        ## The default group `read` takes values of any type.
-        P, S, I = typeof(project), typeof(source), typeof(source_item)
-        T = something(asked(workspace, member_type, read, P, S, I), asked(workspace, member_type, read, S, I), AbstractDataItem)
-        Computation(read, project, source, source_item, MemberValues{T}(read_id))
-    end
-    ## A group read takes its members and the values that they give, and a member stands for its read
-    ## until it gives them.
-    # TODO: when the members of a source item change, this takes the time of the number of members.
-    given = String[x for member in held for x in values(workspace, member)]
-    for member in held
-        above = get!(Vector{String}, workspace.parents, member)
-        read_id in above || push!(above, read_id)
-    end
-    if row !== nothing
-        before = catalog[row]
-        for gone in setdiff(map(id, members(source, before.args[3])), held)
-            filter!(!=(read_id), get(workspace.parents, gone, String[]))
-        end
-        ## A source item without a fingerprint may have changed whenever it is reported.
-        fingerprint(source_item) !== nothing && isequal(fingerprint(before.args[3]), fingerprint(source_item)) &&
-            isequal(before.args[4:end], value.args[4:end]) && return nothing
-        replace!(catalog, row, value)
-        members!(workspace, row, isempty(held) ? nothing : held, given)
-        return nothing
-    end
-    row = @timed_dbg "source.add!" add!(catalog, value)
+    row = get(workspace.sources, id(source_item), nothing)
+    ## A source item without a fingerprint may have changed whenever it is reported.
+    row !== nothing && fingerprint(source_item) !== nothing &&
+        isequal(fingerprint(workspace.catalog[row].args[3]), fingerprint(source_item)) && return nothing
+    return source!(workspace, workspace.sources, id(source_item), Computation(read, workspace.project, workspace.source, source_item))
+end
+
+"""
+    source!(workspace, rows, key, value)
+
+Add the row that reads from the source with the computation `value`, kept in `rows` under `key`, or
+give the row `value`. When the cache saved the result of a new row, the row is current at once.
+"""
+function source!(workspace::Workspace, rows::Dict{String,Row}, key::String, value::Computation)::Nothing
+    catalog, row = workspace.catalog, get(rows, key, nothing)
+    row === nothing || (replace!(catalog, row, value); return nothing)
+    row = rows[key] = @timed_dbg "source.add!" add!(catalog, value)
     hold!(catalog, row)
-    workspace.sources[read_id] = row
     write!(workspace.items, workspace.items.rows.stage, row.index, SOURCE_READ)
     want!(catalog, row, SOURCES_FIRST)
-    isempty(held) || members!(workspace, row, held, given)
     @timed_dbg "source.restore" restore!(workspace, row) || finished!(workspace, row, nothing)
     return nothing
 end
 
 """
+    source_group!(workspace, ids)
+
+Make the [`SourceGroup`](@ref) of the source hold the source items `ids`, in their order.
+"""
+function source_group!(workspace::Workspace, ids::Vector{String})::Nothing
+    value = Computation(SourceGroup, id(workspace.source), label(workspace.source), ids)
+    row = get(workspace.rows, "source group", nothing)
+    row !== nothing && isequal(workspace.catalog[row], value) && return nothing
+    return source!(workspace, workspace.rows, "source group", value)
+end
+
+"""
     remove_source_item!(workspace, source_item_id)
 
-Remove a source item that the source no longer has, with its row: its values leave the workspace
-and the selection.
+Remove a source item that the source no longer has, with its row: its values leave the workspace,
+the groups and the selection.
 """
 function remove_source_item!(workspace::Workspace, read_id::String)::Nothing
     row = get(workspace.sources, read_id, nothing)
     row === nothing && return nothing
-    source_item = workspace.catalog[row].args[3]
     release!(workspace, row)
     delete!(workspace.sources, read_id)
-    ## The source items with members above no longer wait for its read.
-    foreach(above -> input!(workspace, workspace.sources[above], read_id), get(workspace.parents, read_id, String[]))
-    delete!(workspace.parents, read_id)
-    foreach(member -> filter!(!=(read_id), get(workspace.parents, id(member), String[])), members(workspace.source, source_item))
+    ## The group rows that take it no longer take its read.
+    foreach(group -> input!(workspace, group, read_id), copy(get(workspace.takers, read_id, Row[])))
     return nothing
 end
 
@@ -159,11 +152,15 @@ end
     apply!(workspace, changes::SourceChanges)
 
 Apply one batch of changes that the source watcher reported: the source items that were removed,
-and the source items that are new or changed (the field `upserts`).
+and the source items that are new or changed (the field `upserts`). The source group follows them.
 """
 function apply!(workspace::Workspace, changes::SourceChanges)::Nothing
     foreach(source -> remove_source_item!(workspace, source), changes.removals)
     foreach(source_item -> source!(workspace, source_item), changes.upserts)
+    # TODO: this takes the time of the number of source items, for each batch of changes.
+    row = get(workspace.rows, "source group", nothing)
+    row === nothing ||
+        source_group!(workspace, union(setdiff(workspace.catalog[row].args[3], changes.removals), String[id(x) for x in changes.upserts]))
     return nothing
 end
 
@@ -202,12 +199,16 @@ function finished!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector
     ids = @timed_dbg "finished.given!" given!(workspace, row, outputs)
     @timed_dbg "finished.refresh!" refresh!(workspace, ids)
     after = values(workspace, read_id)
-    ## The group reads above take the values that the source item gives now, in place of its read.
-    for above in get(workspace.parents, read_id, String[])
-        group = workspace.sources[above]
-        input!(workspace, group, read_id)
-        foreach(x -> input!(workspace, group, x, 1), setdiff(after, before))
-        foreach(x -> input!(workspace, group, x, -1), setdiff(before, after))
+    added, gone = setdiff(after, before), setdiff(before, after)
+    ## The groups that name the source item hold the values that it gives now, and so do the rows of
+    ## the groups that take it.
+    for group in copy(get(workspace.parents, read_id, String[]))
+        foreach(x -> membership!(workspace, x, group, true), added)
+        foreach(x -> membership!(workspace, x, group, false), gone)
+    end
+    for group in copy(get(workspace.takers, read_id, Row[]))
+        foreach(x -> x == read_id || input!(workspace, group, x, 1), added)
+        foreach(x -> x == read_id || input!(workspace, group, x, -1), gone)
     end
     return nothing
 end
@@ -236,7 +237,7 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
         (any(other -> items.rows.stage[other] == stage, others) || !(isempty(earlier) || reads)) &&
             error("the item \"$(output.id)\" comes from $(id(catalog[others[end]]))")
     end
-    expected = [stage == SOURCE_READ ? id(catalog[row].args[3]) : catalog[row].args[2].id]
+    expected = [stage == SOURCE_READ ? first(read_of(catalog[row])) : catalog[row].args[2].id]
     before = items.rows.outputs[row]
     ids = unique!(String[[output.id for output in something(before, Output[])]; [output.id for output in given]; expected])
     for x in ids
@@ -324,7 +325,8 @@ end
 Add, change or release the rows that read the values `ids`, after their versions changed: the
 `process` of a value that a read gives, the group `process` of a group, the member `process`
 methods of its members, and those of a value in each group it is a member of. The members of a
-group are those of its latest version.
+group are those of its latest version, and a member that names a source item stands for the values
+that it gives.
 """
 function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
     catalog, project = workspace.catalog, workspace.project
@@ -340,12 +342,18 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
         value = output(workspace, x)
         held = value === nothing || value.members === nothing ? String[] : value.members
         before = get(workspace.members, x, String[])
-        for member in setdiff(before, held)
-            groups = get(workspace.groups, member, String[])
-            filter!(!=(x), groups)
-            isempty(groups) && delete!(workspace.groups, member)
-            write!(workspace, member)
-            row!(workspace, "member process:$member in $x", MEMBER_PROCESS, nothing)
+        ## A member that names a source item stands for the values that it gives.
+        values_of(ids) = String[v for m in ids for v in (haskey(workspace.sources, m) ? values(workspace, m) : (m,))]
+        foreach(v -> membership!(workspace, v, x, false), setdiff(values_of(before), values_of(held)))
+        for m in setdiff(before, held)
+            above = get(workspace.parents, m, String[])
+            filter!(!=(x), above)
+            isempty(above) && delete!(workspace.parents, m)
+        end
+        ## An id that names no source item yet may name one later, when the source reports it.
+        for m in held
+            above = get!(Vector{String}, workspace.parents, m)
+            x in above || push!(above, x)
         end
         isempty(held) ? delete!(workspace.members, x) : (workspace.members[x] = held)
         ## A group row that takes the members of `x` in its place takes its members now.
@@ -354,12 +362,29 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
             foreach(member -> input!(workspace, group, member, 1), setdiff(held, before))
             foreach(member -> input!(workspace, group, member, -1), setdiff(before, held))
         end
-        for member in held
-            groups = get!(Vector{String}, workspace.groups, member)
-            x in groups || (push!(groups, x); write!(workspace, member))
-            member!(workspace, member, x)
-        end
+        foreach(v -> membership!(workspace, v, x, true), values_of(held))
         foreach(group -> member!(workspace, x, group), copy(get(workspace.groups, x, String[])))
+    end
+    return nothing
+end
+
+"""
+    membership!(workspace, x, group, holds)
+
+Make the value `x` a member of `group`, with its member `process`, or with `holds = false` no longer
+one.
+"""
+function membership!(workspace::Workspace, x::String, group::String, holds::Bool)::Nothing
+    groups = get!(Vector{String}, workspace.groups, x)
+    if holds
+        group in groups || (push!(groups, group); write!(workspace, x))
+        member!(workspace, x, group)
+    else
+        changed = group in groups
+        filter!(!=(group), groups)
+        isempty(groups) && delete!(workspace.groups, x)
+        changed && write!(workspace, x)
+        row!(workspace, "member process:$x in $group", MEMBER_PROCESS, nothing)
     end
     return nothing
 end
@@ -474,15 +499,14 @@ function output(workspace::Workspace, x::String)::Union{Nothing,Output}
 end
 
 """
-    members!(workspace, row, ids, given=String[])
+    members!(workspace, row, ids)
 
-Make the row of a group read or a group process take the values of the members `ids`, in their
-order, and the values `given` that the members give, of the type `T` of its argument
-`MemberValues{T}`, in place of those it took. `nothing` takes none, for a row that leaves or has no
-members any more. It changes nothing when the row takes these members already, and else takes the
-time of the number of members.
+Make the row of a group process take the values of the members `ids`, in their order, of the type
+`T` of its argument `MemberValues{T}`, in place of those it took. `nothing` takes none, for a row
+that leaves or has no members any more. It changes nothing when the row takes these members
+already, and else takes the time of the number of members.
 """
-function members!(workspace::Workspace, row::Row, ids::Union{Nothing,Vector{String}}, given::Vector{String}=String[])::Nothing
+function members!(workspace::Workspace, row::Row, ids::Union{Nothing,Vector{String}})::Nothing
     catalog, before = workspace.catalog, get(workspace.taken, row, nothing)
     T = ids === nothing ? nothing : eltype(catalog[row].args[end])
     before !== nothing && before.T == T && isequal(before.root, ids) && return nothing
@@ -496,14 +520,14 @@ function members!(workspace::Workspace, row::Row, ids::Union{Nothing,Vector{Stri
     ids === nothing && return nothing
     ## The order of the members counts in the revision, as the values do.
     workspace.taken[row] = Taken(T, ids, Dict(), hash(ids))
-    foreach(x -> input!(workspace, row, x, 1), [ids; given])
+    foreach(x -> input!(workspace, row, x, 1), ids)
     return nothing
 end
 
 """
     member_values(workspace, row) -> Vector{Pair{String,Row}}
 
-The ids of the values that the row of a group read or a group process takes, each with the row of
+The ids of the values that the row of a group process takes, each with the row of
 the version that it takes, in the order of the members: each member, then the values that it gives
 when it is a source item, and the members of a group that stands for its members. It takes the time
 of the number of members, as the call that reads these values does.
@@ -527,12 +551,12 @@ Follow the value `id` among the values that the row of a group takes, after its 
 or after one more (`change` 1) or one fewer (`change` -1) of the ids above it lead to it. The row
 takes the latest version of the type `T` of its argument `MemberValues{T}`, from before the member
 `process` methods, or a later version that did not run yet but will: it is wanted or requested, and
-does not read a failed row. A source item stands for its values while its read will run, and a
-group without such a version stands for its members. The row reads the row of each version that it
+does not read a failed row. A source item stands for the values that it gives, and for its read
+while that will run, and a group without such a version stands for its members. The row reads the row of each version that it
 takes, and its revision follows theirs.
 """
-# TODO: a group read and a group process see the values of members from before the member `process`
-# methods, of their own group too. Choose how they converge (docs/plans/processing.md).
+# TODO: a group process sees the values of members from before the member `process` methods, of its
+# own group too. Choose how they converge (docs/plans/processing.md).
 function input!(workspace::Workspace, row::Row, x::String, change::Int=0)::Nothing
     catalog, taken = workspace.catalog, workspace.taken[row]
     before = get(taken.rows, x, (row=Catalogs.NOWHERE, term=UInt64(0), paths=Int32(0)))
@@ -565,6 +589,8 @@ function input!(workspace::Workspace, row::Row, x::String, change::Int=0)::Nothi
     stands(found, count) = count > 0 && found == Catalogs.NOWHERE
     stands(before.row, before.paths) == stands(after, paths) ||
         foreach(member -> input!(workspace, row, member, stands(after, paths) ? 1 : -1), get(workspace.members, x, String[]))
+    haskey(workspace.sources, x) && (before.paths > 0) != (paths > 0) &&
+        foreach(v -> v == x || input!(workspace, row, v, paths > 0 ? 1 : -1), values(workspace, x))
     return nothing
 end
 
@@ -593,9 +619,15 @@ end
 asked(workspace::Workspace, query, arguments...) =
     get!(() -> query(arguments...), workspace.methods, (query, arguments...))
 
-# The id of the source item that the values of a row of the pipeline come from.
+# The id and the label of what the row of a read reads: a source item, or for the source group, the
+# source.
+read_of(value::Computation) = value.f === SourceGroup ? (value.args[1], value.args[2]) : (id(value.args[3]), label(value.args[3]))
+
+# The id of the source item that the values of a row of the pipeline come from, or of the source for
+# the source group.
 function source(workspace::Workspace, row::Row)::String
     value = workspace.catalog[row]
+    value.f === SourceGroup && return value.args[1]
     length(value.args) >= 3 && value.args[3] isa AbstractDataSourceItem && return id(value.args[3])
     return source(workspace, value.args[2].of.row)
 end
