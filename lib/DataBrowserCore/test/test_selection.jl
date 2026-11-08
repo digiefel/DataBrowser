@@ -81,6 +81,11 @@ end
         @test follows(["IV_A", "IV_B"])
         sort!(workspace; by=row -> row.gap, rev=true)
         @test follows(["IV_B", "IV_A"])
+        # Without `by`, the labels are in order again.
+        sort!(workspace)
+        @test follows(["IV_A", "IV_B"])
+        sort!(workspace; by=row -> row.gap, rev=true)
+        @test follows(["IV_B", "IV_A"])
         # An order that fails leaves the labels in order.
         sort!(workspace; by=row -> error("no order"))
         @test follows(["IV_A", "IV_B"])
