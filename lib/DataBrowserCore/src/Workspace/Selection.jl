@@ -187,6 +187,7 @@ function select(workspace::Workspace, f::Function)::Selection
     items = workspace.items
     latest = max((@atomic items.version).generation, (@atomic workspace.shared).generation)
     @lock items.lock while true
+        items.closed && error("The workspace was closed")
         found = answer(workspace, f)
         found.generation >= latest && return found.selection
         ## `answer!` notifies `published` after each pass.
@@ -197,11 +198,11 @@ end
 # The answer kept for the function `f` given to `select`, as `(; selection, generation, asked)`,
 # without waiting: `selection` is `nothing`, at generation -1, until `answer!` has run `f`. The call
 # keeps the answer current for 10 more seconds, and wakes `answer!` when the answer is older than
-# the latest version of the table `items` or of the shared state.
+# the latest version of the table `items` or of the shared state. Once the table closes, the answer
+# stays as it was.
 function answer(workspace::Workspace, f::Function)
     items = workspace.items
     @lock items.lock begin
-        items.closed && error("The workspace was closed")
         found = get(items.answers, f, (selection=nothing, generation=-1, asked=0.0))
         items.answers[f] = (; found.selection, found.generation, asked=time())
         found.generation < max((@atomic items.version).generation, (@atomic workspace.shared).generation) &&

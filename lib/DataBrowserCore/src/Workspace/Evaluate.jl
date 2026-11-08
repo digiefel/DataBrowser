@@ -1014,11 +1014,11 @@ function computation(selection::Selection, index::Integer)::Computation
 end
 
 # The row of a computation, with the latest versions of the values in `version`, or
-# `Catalogs.NOWHERE` when the workspace does not have it. The catalog stays as it is, and no lock is
-# taken.
+# `Catalogs.NOWHERE` when the workspace does not have it, in the catalog of `version`. The catalog
+# stays as it is, and no lock is taken.
 row(workspace::Workspace, version::Version, value::Computation)::Row =
     something(findfirst(isequal(bound(workspace, value, x -> cell(version, x, :version, Catalogs.NOWHERE))),
-        workspace.catalog), Catalogs.NOWHERE)
+        version.catalog), Catalogs.NOWHERE)
 
 # The time of an execution covers the call of the function, with compilation and waits, and not the
 # evaluation of its inputs or the storage of its result.

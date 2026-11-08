@@ -278,7 +278,9 @@ const ROWS = (readiness = (Readiness, UNPROCESSED), failure = (String, ""), chan
 """
 A published version of the table `items`, which never changes: the number of each item by its id,
 the cells of each column, the cells of each row of the catalog, the metadata, the `errors` and the
-counts of the workspace, and the generation of its publish.
+counts of the workspace, and the generation of its publish. It also holds the catalog whose rows its
+cells follow: a reader finds the row of a computation in the catalog of the version that it reads,
+also while a rebuild replaces both.
 """
 struct Version
     index::Base.PersistentDict{String,Int32}
@@ -288,6 +290,7 @@ struct Version
     errors::Base.PersistentDict{Row,Pair{String,String}}
     counts::WorkspaceStageCounts
     generation::Int
+    catalog::Catalog
 end
 
 """
@@ -355,12 +358,12 @@ mutable struct Items
     const asking::Base.Event
     closed::Bool
 end
-function Items()
+function Items(catalog::Catalog)
     lock, index, columns = ReentrantLock(), Base.PersistentDict{String,Int32}(), map(((T, default),) -> Column{T}(default), COLUMNS)
     rows = map(((T, default),) -> Column{T}(default), ROWS)
     return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
-            Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts(), 0),
+            Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts(), 0, catalog),
         Union{AbstractVector{<:AbstractString},Base.RefValue{Any}}[], lock, Threads.Condition(lock), Set{String}(),
         Dict{Any,@NamedTuple{selection::Any, generation::Int, asked::Float64}}(), Set{Int32}(), Base.Event(true), false)
 end
@@ -457,8 +460,8 @@ mutable struct Workspace
     disk_cache::Bool
     background_tasks::Vector{Task}
     metrics::BuildMetrics
-    # Held for the whole of `modify_workspace!` / `close_workspace!` so a frame cannot read a
-    # half-rebuilt runtime. The GUI trylocks this at the start of a frame.
+    # Held for the whole of `modify_workspace!` and `close_workspace!`, so that one waits for the
+    # other.
     lifecycle_lock::ReentrantLock
     # A browser pauses automatic code updates while its main window is inactive.
     # Without a browser, the workspace checks code independently of window focus.
@@ -523,9 +526,10 @@ function Workspace(
     cache_db, disk_error, identity =
         _open_workspace_cache(project, source, metrics; rebuild, cache)
     folder = dirname(Base.active_project())
+    # The cache keeps the key of each computation, by its id, for the next session.
+    catalog = Catalog(value -> key!(cache_db, id(value)))
     return Workspace(
-        # The cache keeps the key of each computation, by its id, for the next session.
-        project, source, folder, Catalog(value -> key!(cache_db, id(value))),
+        project, source, folder, catalog,
         Dict{String,Row}(), Dict{String,Row}(),
         Dict{String,Vector{Row}}(),
         Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(),
@@ -536,7 +540,7 @@ function Workspace(
         Dict{Row,ReentrantLock}(), Set{Row}(),
         Task[], 0, 0, (0, 0, 0),
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
-        Items(),
+        Items(catalog),
         # The items sort by their labels until a call to `sort!`.
         (; selection=String[], tags(project, folder)..., order=let labels = SortKeys([:label => false])
             (by=labels, order=Base.Order.ord(labels, Base.identity, false))

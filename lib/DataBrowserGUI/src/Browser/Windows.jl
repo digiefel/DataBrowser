@@ -48,24 +48,23 @@ end
 # What tells whether the input of `window` gives another value than before: another stamp means
 # another value. Reading the stamp costs time in proportion to the items, so it is read again only
 # when what it is read from changed: the input and the object it names (kept items, ids or an
-# output, compared by identity), the catalog of the workspace, which a new source replaces, the
-# generation of the latest version of the table `items`, or a method definition.
+# output, compared by identity), the generation of the latest version of the table `items`, or a
+# method definition.
 function stamp(window::Window, state::BrowserState)
     workspace = state.workspace
     input = window.input
     named = input isa LiveSelection ? item_ids(input, state) :
         input isa FixedItems ? input.ids : output(source(input, state))
-    basis = (input, named, workspace.catalog, (@atomic workspace.items.version).generation,
-        Base.get_world_counter())
+    basis = (input, named, (@atomic workspace.items.version).generation, Base.get_world_counter())
     window.checked !== nothing && first(window.checked) === basis && return last(window.checked)
     current = stamp(input, state)
     window.checked = (basis, current)
     return current
 end
 function stamp(input::Union{LiveSelection,FixedItems}, state::BrowserState)
-    workspace = state.workspace
+    version = @atomic state.workspace.items.version
     ids = item_ids(input, state)
-    return (workspace.catalog, hash(ids), Workspace.revision(workspace, ids))
+    return (version.catalog, hash(ids), Workspace.revision(version, ids))
 end
 # A visualizer returns the same object until its output changes.
 function stamp(input::WindowOutput, state::BrowserState)

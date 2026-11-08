@@ -65,11 +65,13 @@ function modify_workspace!(
                 cache=something(cache, workspace.disk_cache),
                 background_processing=something(background_processing, workspace.background_processing))
             # What a browser keeps of the workspace stays: its lock, its shared state, its
-            # generation.
+            # generation. The table `items` comes last, with its catalog: a frame that finds it open
+            # reads the other fields of the rebuilt workspace.
             for field in fieldnames(typeof(workspace))
-                field in (:lifecycle_lock, :shared, :shared_lock, :generation, :code_updates_active, :status, :work) ||
+                field in (:lifecycle_lock, :shared, :shared_lock, :generation, :code_updates_active, :status, :work, :items) ||
                     setfield!(workspace, field, getfield(fresh, field))
             end
+            workspace.items = fresh.items
             @atomic workspace.status = -1 => WorkspaceStatus()
             @atomic workspace.work = (0, 0, 0)
             changed!(workspace)

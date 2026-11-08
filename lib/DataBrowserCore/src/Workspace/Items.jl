@@ -97,7 +97,7 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                             @atomic items.version = Version(items.index, map(column -> Cells(column, items.count), columns),
                                 map(column -> Cells(column, BLOCK * length(column.blocks)), rows),
                                 Dict{Symbol,Cells}(name => Cells(column, BLOCK * length(column.blocks)) for (name, column) in items.metadata),
-                                workspace.errors, counts, Threads.atomic_add!(workspace.generation, 1) + 1)
+                                workspace.errors, counts, Threads.atomic_add!(workspace.generation, 1) + 1, catalog)
                             isempty(items.answers) || (union!(items.pending, items.shown); notify(items.asking))
                         end
                         empty!(items.shown)

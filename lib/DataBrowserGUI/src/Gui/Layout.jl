@@ -161,7 +161,7 @@ function _render_startup_preparation!()::Nothing
     return nothing
 end
 
-"""Shown while `modify_workspace!` holds the lifecycle lock, so the frame does not read torn state."""
+"""Shown while the table `items` of the workspace is closed: during a rebuild, and after closing."""
 function _render_workspace_updating!()::Nothing
     center = ig.ImGuiViewport_GetCenter(ig.GetMainViewport())
     flags = ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoMove |
@@ -268,92 +268,88 @@ function _run_browser(
         end
         state.performance.ready |= full_frame_submitted[]
         workspace = state.workspace
-        held = trylock(workspace.lifecycle_lock)
+        # A rebuild closes the table `items`, and replaces it last.
+        if workspace.items.closed
+            _render_workspace_updating!()
+            return nothing
+        end
         # The parts of the frame are dynamic calls (`@invokelatest`). A package that loads while
         # the browser is open can invalidate the compiled code of some parts: the next frame then
         # compiles those parts again, not the whole frame.
-        try
-            if !held
-                _render_workspace_updating!()
-                return nothing
-            end
-            @invokelatest _check_source_identity!(state, workspace)
-            @invokelatest _check_cache_error!(state, workspace)
-            # Reveal a selection made through the workspace, from the REPL or by an action: one
-            # that differs from the selection that the browser revealed or made itself.
-            selected = (@atomic workspace.shared).selection
-            if selected !== state.selection
-                selected == state.selection || @invokelatest _reveal_selected_items!(state)
-                state.selection = selected
-            end
-            exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
-                return :imgui_exit_loop
-            if first_frame[]
-                # The main window has been created. Do not give its placement hints to other
-                # windows created by visualizers or by ImGui's multi-viewport backend.
-                _set_browser_position_hints()
-                state.performance.gl_info = _gl_info()
-                window_start == :normal && _promote_to_foreground_app()
-                # The backend always creates the window visible.
-                window_start == :hidden && GLFW.HideWindow(ig.current_window())
-                first_frame[] = false
-            end
-            # Extensions of packages loaded while the browser is open, such as its plot windows.
-            @invokelatest _add_new_extensions!(state)
-            if !full_frame_submitted[] && !(@invokelatest _extensions_ready(state))
-                # Present the preparation surface for one frame before running any blocking
-                # extension warmup, so the window is never blank during the expensive part.
-                _render_startup_preparation!()
-                if startup_presented[]
-                    @timed "extension_warmup" begin
-                        for ext in state.extensions
-                            @invokelatest(is_ready(ext, state)) || @invokelatest(warmup!(ext, state))
-                        end
-                    end
-                else
-                    startup_presented[] = true
-                end
-                return nothing
-            end
-            @timed "frame_ui" begin
-                # The toolbar comes first, so that the windows dock in the room below it.
-                @timed "toolbar" begin
-                    @invokelatest render_toolbar!(state)
-                end
-                ig.DockSpaceOverViewport(0, ig.GetMainViewport())
-                @timed "selection_window" begin
-                    @invokelatest render_selection_window(state)
-                end
-                @timed "info" begin
-                    @invokelatest render_info_window(state)
-                end
-                @timed "windows" begin
-                    @invokelatest render_windows!(state)
-                end
-                @timed "extensions" begin
-                    for ext in state.extensions
-                        # An extension added after the startup screen prepares during the frames.
-                        @invokelatest(is_ready(ext, state)) || @invokelatest(warmup!(ext, state))
-                        @invokelatest draw!(ext, state)
-                    end
-                end
-                @timed "perf_window" begin
-                    @invokelatest render_perf_window(state)
-                end
-                @timed "debug_tools" begin
-                    @invokelatest render_debug_tools!(state)
-                end
-                @timed "persist_view" begin
-                    @invokelatest _save_project_view_if_changed!(state)
-                end
-                @timed "modals" begin
-                    @invokelatest render_cache_rebuild_modal(state)
-                end
-            end
-            full_frame_submitted[] = true
-        finally
-            held && unlock(workspace.lifecycle_lock)
+        @invokelatest _check_source_identity!(state, workspace)
+        @invokelatest _check_cache_error!(state, workspace)
+        # Reveal a selection made through the workspace, from the REPL or by an action: one
+        # that differs from the selection that the browser revealed or made itself.
+        selected = (@atomic workspace.shared).selection
+        if selected !== state.selection
+            selected == state.selection || @invokelatest _reveal_selected_items!(state)
+            state.selection = selected
         end
+        exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
+            return :imgui_exit_loop
+        if first_frame[]
+            # The main window has been created. Do not give its placement hints to other
+            # windows created by visualizers or by ImGui's multi-viewport backend.
+            _set_browser_position_hints()
+            state.performance.gl_info = _gl_info()
+            window_start == :normal && _promote_to_foreground_app()
+            # The backend always creates the window visible.
+            window_start == :hidden && GLFW.HideWindow(ig.current_window())
+            first_frame[] = false
+        end
+        # Extensions of packages loaded while the browser is open, such as its plot windows.
+        @invokelatest _add_new_extensions!(state)
+        if !full_frame_submitted[] && !(@invokelatest _extensions_ready(state))
+            # Present the preparation surface for one frame before running any blocking
+            # extension warmup, so the window is never blank during the expensive part.
+            _render_startup_preparation!()
+            if startup_presented[]
+                @timed "extension_warmup" begin
+                    for ext in state.extensions
+                        @invokelatest(is_ready(ext, state)) || @invokelatest(warmup!(ext, state))
+                    end
+                end
+            else
+                startup_presented[] = true
+            end
+            return nothing
+        end
+        @timed "frame_ui" begin
+            # The toolbar comes first, so that the windows dock in the room below it.
+            @timed "toolbar" begin
+                @invokelatest render_toolbar!(state)
+            end
+            ig.DockSpaceOverViewport(0, ig.GetMainViewport())
+            @timed "selection_window" begin
+                @invokelatest render_selection_window(state)
+            end
+            @timed "info" begin
+                @invokelatest render_info_window(state)
+            end
+            @timed "windows" begin
+                @invokelatest render_windows!(state)
+            end
+            @timed "extensions" begin
+                for ext in state.extensions
+                    # An extension added after the startup screen prepares during the frames.
+                    @invokelatest(is_ready(ext, state)) || @invokelatest(warmup!(ext, state))
+                    @invokelatest draw!(ext, state)
+                end
+            end
+            @timed "perf_window" begin
+                @invokelatest render_perf_window(state)
+            end
+            @timed "debug_tools" begin
+                @invokelatest render_debug_tools!(state)
+            end
+            @timed "persist_view" begin
+                @invokelatest _save_project_view_if_changed!(state)
+            end
+            @timed "modals" begin
+                @invokelatest render_cache_rebuild_modal(state)
+            end
+        end
+        full_frame_submitted[] = true
     end
 end
 

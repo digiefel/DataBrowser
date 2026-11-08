@@ -43,7 +43,7 @@ calls(workspace::Workspace, selection::Selection) =
 function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})::Vector{Call}
     ## The rows of the computations, their stages, errors and members, as the latest version of the
     ## table `items` shows them.
-    catalog, version = workspace.catalog, @atomic workspace.items.version
+    version = @atomic workspace.items.version
     # The calls made so far, by their code and inputs; the same code on the same inputs is one call.
     known = Dict{Tuple{String,Any,Vector{UInt}},Call}()
     visited = IdDict{Computation,Vector{Call}}()
@@ -52,7 +52,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         ## A value picked from the result of a call that gives several: that call, for that value.
         given = value
         value.f === pick && (value = value.args[1])
-        row = something(findfirst(isequal(value), catalog), Catalogs.NOWHERE)
+        row = something(findfirst(isequal(value), version.catalog), Catalogs.NOWHERE)
         at = version.rows.stage[row]
         ## The source item that a read reads, or the value that a `process` takes, or the
         ## computation.
