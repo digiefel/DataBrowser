@@ -307,7 +307,9 @@ function _refresh_window!(state::BrowserState, window::Window)::Nothing
             return nothing
         end
     end
-    empty!(window.waiting)
+    ## The ids it waited for can be those of the selection that the browser keeps for every
+    ## window: they are replaced, never emptied.
+    window.waiting = String[]
     try
         window.value = @timed_dbg "window.input" value(input, state)
         window.has_value = true

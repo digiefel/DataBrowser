@@ -26,16 +26,20 @@ workspace is left untouched. The result is kept for the next calls: do not chang
 """
 function _visible_selection(state::BrowserState)::VisibleSelection
     workspace = state.workspace
-    # The tree and every window ask at each frame; looking up each selected id costs time in
-    # proportion to the selection. The generation, read before the selection and the tags, stands
-    # for them.
-    key = hash((objectid(workspace), Workspace.generation(workspace), hash(state.tag_visibility), _tags_ready(state)))
+    ## The tree and every window ask at each frame; looking up each selected id costs time in
+    ## proportion to the selection. The ids depend on the selection, the ids of the workspace and
+    ## the tags, each replaced whole when it changes, and read before the ids are looked up. A tag
+    ## that shows only its items keeps the groups, so the types of the items count too: they can
+    ## change with each version of the workspace.
+    version, shared = (@atomic workspace.items.version), (@atomic workspace.shared)
+    key = (shared.selection, version.index, shared.tags, hash(state.tag_visibility),
+        _tags_ready(state), :only in values(state.tag_visibility) ? version.generation : 0)
     kept = state.visible_selection
-    kept !== nothing && kept.key == key && return kept
+    kept !== nothing && kept.key === key && return kept
     ids = filter(x -> haskey(workspace, x) &&
         _is_visible(state.tag_visibility, _tags_ready(state),
             (tag.name for tag in tags(workspace, x)), Workspace.valuetype(workspace, x)),
-        (@atomic workspace.shared).selection)
+        shared.selection)
     visible = VisibleSelection(key, ids, Set(ids))
     state.visible_selection = visible
     return visible

@@ -240,11 +240,11 @@ end
 """
 The ids of the selection that the workspace has and that the tags leave visible, as
 `_visible_selection` returns them, and the same ids as a set, for rows that ask whether they are
-selected. Kept while `key` stays the same: the key covers the workspace and its generation, the
-selection and the tags.
+selected. Kept while what `key` holds stays the same, by identity: the selection, the ids of the
+workspace, the tags and how they filter the items.
 """
 struct VisibleSelection
-    key::UInt
+    key::Tuple
     ids::Vector{String}
     set::Set{String}
 end
