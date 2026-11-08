@@ -312,6 +312,54 @@ end
     end
 end
 
+# Its store keeps the item that it reads when `stored`, else nothing.
+mutable struct LabeledProject <: AbstractProject
+    stored::Bool
+    reads::Int
+end
+DataBrowserAPI.project_name(::LabeledProject) = "labeled"
+DataBrowserAPI.storage(p::LabeledProject, ::Type{EngineItem}) = p.stored ? MemoryStore() : nothing
+function DataBrowserAPI.read(p::LabeledProject, ::EngineSource, ::EngineSourceItem)
+    p.reads += 1
+    return EngineItem("source", (x=[1],), Dict())
+end
+DataBrowserAPI.label(::LabeledProject, ::EngineItem) = "first"
+
+@testset "an edited label method labels the items again, and reads them only when their store lost them (stored=$stored)" for stored in (true, false)
+    project = LabeledProject(stored, 0)
+    ws = W.open_workspace(project, EngineSource("source", 1, false); cache=false)
+    try
+        settled(ws)
+        @eval DataBrowserAPI.label(::LabeledProject, ::EngineItem) = $("label $stored")
+        @test timedwait(() -> W.label(ws, "source") == "label $stored", 10) === :ok
+        @test project.reads == (stored ? 1 : 2)
+    finally
+        W.close_workspace!(ws)
+    end
+end
+
+@testset "a label method that throws fails the read, also after reopening, without reading again" begin
+    mktempdir() do depot
+        pushfirst!(DEPOT_PATH, depot)
+        try
+            project = LabeledProject(true, 0)
+            @eval DataBrowserAPI.label(::LabeledProject, ::EngineItem) = error("no label")
+            for _ in 1:2
+                ws = W.open_workspace(project, EngineSource("source", 1, false))
+                try
+                    settled(ws)
+                    @test !isempty(W.workspace_status(ws).errors)
+                finally
+                    W.close_workspace!(ws)
+                end
+            end
+            @test project.reads == 1
+        finally
+            popfirst!(DEPOT_PATH)
+        end
+    end
+end
+
 module ExportsScale; export shared_scale; shared_scale(x) = x .* 3; end
 module ReexportsScale; using ..ExportsScale: ExportsScale; const shared_scale = ExportsScale.shared_scale; export shared_scale; end
 using .ExportsScale, .ReexportsScale

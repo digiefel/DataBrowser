@@ -348,9 +348,9 @@ end
 A metadata table: one row per entity, one column per metadata name.
 
 A column takes the type of the first value written under its name, and holds the saved form of its
-values in a DuckDB type, so that queries can read it. `edit!` returns a message for each value it
-leaves out: a value of another type than its column, or one that cannot be saved and built again.
-New columns are added with `ALTER TABLE ADD COLUMN` when the buffered rows are written.
+values in a DuckDB type, so that queries can read it. `edit!` throws, and changes nothing, when a
+value has another type than its column, or cannot be saved and built again. New columns are added
+with `ALTER TABLE ADD COLUMN` when the buffered rows are written.
 """
 mutable struct WideRowStore{K} <: AbstractDatabaseStore{K,Dict{Symbol,Any}}
     read_connection::DuckDB.Connection
@@ -429,61 +429,52 @@ function WideRowStore{K}(
 end
 
 """
-The column that `value` under `name` starts, or the message why it cannot be saved: it has no
+The column that `value` under `name` starts. An error when the value cannot be saved: it has no
 DuckDB type, or `StructUtils.make` does not build it again from its saved form.
 """
-function _new_column(name::Symbol, value)::Union{MetadataColumn,String}
+function _new_column(name::Symbol, value)::MetadataColumn
     T = typeof(value)
     problem = try
         saved = _saved(value)
         sql = _saved_sql(saved)
-        isequal(_saved(StructUtils.make(T, saved)), saved) ?
-            MetadataColumn(_type_name(T), T, sql) : "its saved form builds a different value"
+        isequal(_saved(StructUtils.make(T, saved)), saved) &&
+            return MetadataColumn(_type_name(T), T, sql)
+        "its saved form builds a different value"
     catch error
         first(split(sprint(showerror, error), '\n'))
     end
-    problem isa MetadataColumn && return problem
-    return "metadata :$name cannot be saved: a $T, and $problem"
+    error("metadata :$name cannot be saved: a $T, and $problem")
 end
 
 """
-Buffer one whole-row metadata replacement. Returns a message for each value left out of the row:
-one whose type differs from its column's, or one that cannot be saved. The first value under a new
-name gives its column, at once, in memory.
+Buffer whole-row metadata replacements, one for each pair `key => row` of `rows`. An error, which
+changes nothing, when a value cannot be saved or has another type than its column. The first value
+under a new name gives its column, at once, in memory.
 """
-function edit!(store::WideRowStore{K}, key::K, row::AbstractDict)::Vector{String} where {K}
-    dropped = String[]
-    accepted = Dict{Symbol,Any}()
+function edit!(store::WideRowStore{K}, rows::AbstractVector{<:Pair{K}})::Nothing where {K}
     lock(store.flush_condition) do
         _require_writable(store)
-        for (name, value) in row
+        ## Every value is checked before anything changes, in one hold of the lock, so that another
+        ## writer cannot give a new name another type in between.
+        new = Dict{Symbol,MetadataColumn}()
+        for (_, row) in rows, (name, value) in row
             value === missing && continue
-            column = get(store.columns, name, nothing)
-            if column === nothing
-                column = _new_column(name, value)
-                if column isa String
-                    push!(dropped, column)
-                    continue
-                end
-                store.columns[name] = column
-                push!(store.column_order, name)
-                push!(store.pending_columns, name)
-            elseif typeof(value) !== column.type && _type_name(typeof(value)) != column.name
-                # The workspace of DataBrowserCore gives the same text for a value that it does
-                # not keep, so that the error of an item says it once.
-                push!(dropped, "metadata :$name has type $(typeof(value)) here but " *
-                    "$(something(column.type, column.name)) in earlier items: give it one type in the project, then rebuild the cache")
-                continue
-            end
-            accepted[name] = value
+            column = get(() -> get!(() -> _new_column(name, value), new, name), store.columns, name)
+            typeof(value) === column.type || error("metadata :$name has type $(typeof(value)) here " *
+                "but $(something(column.type, column.name)) in earlier items: give it one type in " *
+                "the project, then rebuild the cache")
         end
-        _accept_rows!(store, key, accepted)
-        previous = get(store.queued, key, nothing)
-        kind = previous !== nothing && previous.kind === BUFFER_APPEND ?
-            BUFFER_APPEND : BUFFER_EDIT
-        _set_queued!(store, key, BufferMutation{Dict{Symbol,Any}}(kind, accepted))
+        merge!(store.columns, new)
+        append!(store.column_order, keys(new))
+        append!(store.pending_columns, keys(new))
+        for (key, row) in rows
+            previous = get(store.queued, key, nothing)
+            kind = previous !== nothing && previous.kind === BUFFER_APPEND ? BUFFER_APPEND : BUFFER_EDIT
+            values = Dict{Symbol,Any}(name => value for (name, value) in row if value !== missing)
+            _set_queued!(store, key, BufferMutation{Dict{Symbol,Any}}(kind, values))
+        end
     end
-    return dropped
+    return nothing
 end
 
 # A column whose type is not loaded is left out of the rows read.

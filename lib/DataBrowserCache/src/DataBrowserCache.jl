@@ -30,19 +30,13 @@ export BuildMetrics,
     cache_has_pending_writes,
     cache_pending_counts,
     close_cache_db!,
-    delete_output!,
     key!,
-    load_outputs,
     open_cache_db,
     output_key!,
     project_cache_identity,
     query_items,
     record_cache_phase!,
     reset_build_metrics!,
-    set_cache_memory_limit!,
-    store_computation_revision!,
-    store_output!,
-    delete_computation_revision!,
-    recorded_revision
+    set_cache_memory_limit!
 
 end

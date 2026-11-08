@@ -37,17 +37,11 @@ using DataBrowserCache:
     cache_has_pending_writes,
     cache_pending_counts,
     close_cache_db!,
-    delete_computation_revision!,
-    delete_output!,
     key!,
-    load_outputs,
     open_cache_db,
     output_key!,
     project_cache_identity,
-    reset_build_metrics!,
-    store_computation_revision!,
-    store_output!,
-    recorded_revision
+    reset_build_metrics!
 import DataBrowserCache
 import DataBrowserCache: query_items
 import DataBrowserAnnotations: Tags
@@ -195,16 +189,6 @@ struct Code
 end
 
 # Metadata
-
-"""
-A metadata value that was not stored: its name already holds values of type `expected`, and the
-value has type `found`.
-"""
-struct MetadataConflict
-    name::Symbol
-    expected::Type
-    found::Type
-end
 
 """
 One value that a row of the pipeline gave: its id, its type and label, the ids of its members when
@@ -444,20 +428,18 @@ mutable struct Workspace
     # What the methods of the project answered about the types of the values, until the next code
     # change (see `asked`).
     methods::Dict{Tuple,Any}
-    # The code each row ran with, as the signature of its call, and the code of each signature.
-    # When the revision of a signature's code changes, the rows of that signature are stale.
-    signatures::Dict{Row,Type}
+    # The code each row ran with, as signatures: the signature of its call first, then those of the
+    # code that describes its items (see `revision`). Also, the code of each signature. When the
+    # revision of a signature's code changes, the rows of that signature are stale.
+    signatures::Dict{Row,Vector{Type}}
     code::Dict{Type,Code}
-    # The subject and the message of each failed row, and of each row whose metadata was stored only
-    # in part; see `subject`. Each version of the table `items` keeps the errors of its time.
+    # The subject and the message of each failed row; see `subject`. Each version of the table
+    # `items` keeps the errors of its time.
     errors::Base.PersistentDict{Row,Pair{String,String}}
     # One lock per row whose result is computed again outside its job.
     row_locks::Dict{Row,ReentrantLock}
     # TODO: rows that `evaluate` added stay until the workspace closes; release those nothing uses.
     evaluated::Set{Row}
-    # The values that the cache saved for the rows of the pipeline of an earlier session, by the key
-    # of the row, until the rows restore or run.
-    saved::Dict{Int64,Vector{SavedOutput}}
     workers::Vector{Task}
     # Jobs that run now, and jobs that ended since the workspace opened; and as `work_counts` gives
     # them, written at the start and the end of each job.
@@ -558,10 +540,9 @@ function Workspace(
         Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(),
         Dict{Row,Taken}(), Dict{String,Vector{Row}}(),
         Dict{Tuple,Any}(),
-        Dict{Row,Type}(), Dict{Type,Code}(),
+        Dict{Row,Vector{Type}}(), Dict{Type,Code}(),
         Base.PersistentDict{Row,Pair{String,String}}(),
         Dict{Row,ReentrantLock}(), Set{Row}(),
-        Dict{Int64,Vector{SavedOutput}}(),
         Task[], 0, 0, (0, 0, 0),
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         WorkspaceSelection(),

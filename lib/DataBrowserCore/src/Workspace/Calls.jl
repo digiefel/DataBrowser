@@ -66,7 +66,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
                 Computation[catalog[at] for (_, at) in taken]
         end
         preceding = unique!(reduce(vcat, map(calls_of, [inputs(value); members]); init=Call[]))
-        found = row == Catalogs.NOWHERE ? nothing : stage(@lock catalog.lock get(() -> call_signature(workspace, row), workspace.signatures, row))
+        found = row == Catalogs.NOWHERE ? nothing : stage(@lock catalog.lock first(get(() -> Type[call_signature(workspace, row)], workspace.signatures, row)))
         # The call of `value`, with the calls it reads, kept with each call of the same code on the same inputs.
         function call!(title, code, result)::Call
             entry = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding), known, (title, code, map(objectid, preceding)))

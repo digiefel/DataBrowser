@@ -60,8 +60,9 @@
 # All the values under one metadata name have one type in the whole workspace, because the cache
 # keeps each name in a column of one type: the type of the first value saved under the name. When
 # `a/1` gives `temperature = 300`, an `Int`, and `a/2` then gives `temperature = 300.5`, a
-# `Float64`, the cache does not save the value of `a/2`, and the status panel of the browser shows
-# the error next to `a/2`.
+# `Float64`, the row that gives `a/2` fails, the status panel of the browser shows the error next to
+# `a/2`, and the cache saves the failure. To change the type of a name, change the project so that
+# every value has the new type, and open the workspace with `rebuild=true`.
 #
 # Changes reach the pipeline from three places:
 #
@@ -73,6 +74,9 @@
 #
 # When you edit a `process` method, the rows that call it become stale. They run again when a window
 # shows their value or a script reads it, or in the background with `background_processing=true`.
+# When you edit a `label`, `id`, `members` or `metadata` method, the rows that give values of its
+# type take these values from their stores, without running, and compute their labels, ids, members
+# and metadata again; a row whose store no longer has one of them runs again.
 #
 # Each function on this page runs inside `@lock catalog.lock` while it changes the catalog, so that a
 # window never sees half a change. When the change is complete, the workspace calls `publish!`,
@@ -212,21 +216,19 @@ end
     given!(workspace, row, outputs) -> Vector{String}
 
 Make `outputs` the values of `row`, each a version of its id. `given!` throws an error, and changes
-nothing, when `row` gives one id twice, when another row of its stage gives one of these ids, or
-when an earlier row gives one of them and `row` does not read it. With `outputs = nothing`, for a
-row without a result, `row` is a version of the value it is expected to give: the value that a
-`process` method takes, or for a read, the source item itself, with its id. The cache forgets the
-values of the ids that `row` no longer gives. The stores forget the values that `row` no longer
-gives with the same revision. Returns the ids of the values whose versions changed, or none when
-`row` gives values of the same ids, types and members as before.
+nothing, when another row of its stage gives one of these ids, or when an earlier row gives one of
+them and `row` does not read it. With `outputs = nothing`, for a row without a result, `row` is a
+version of the value it is expected to give: the value that a `process` method takes, or for a
+read, the source item itself, with its id. The table `items` forgets the metadata of the ids that
+`row` no longer gives. The stores forget the values that `row` no longer gives with the same
+revision. Returns the ids of the values whose versions changed, or none when `row` gives values of
+the same ids, types and members as before.
 """
 function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Vector{String}
     catalog, items = workspace.catalog, workspace.items
     stage, given = items.rows.stage[row], something(outputs, Output[])
     ## When the row gives an id that it may not give, `given!` throws before it changes anything.
     ## Only the rows of this stage and of earlier ones count.
-    allunique(output.id for output in given) ||
-        error("it gives the id \"$(first(x.id for x in given if count(y -> y.id == x.id, given) > 1))\" twice")
     for output in given
         others = filter(other -> other != row && items.rows.stage[other] <= stage, get(workspace.versions, output.id, Row[]))
         earlier = filter(other -> items.rows.stage[other] < stage, others)
@@ -243,14 +245,10 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
             insert!(rows, something(findfirst(other -> items.rows.stage[other] > stage, rows), length(rows) + 1), row)
         isempty(rows) && delete!(workspace.versions, x)
     end
-    ## The cache and the table `items` forget the values of the ids that the row no longer gives, and
-    ## their metadata. The stores forget the values that it gave before, unless it gives them again
-    ## with the same revision.
+    ## The table `items` forgets the metadata of the ids that the row no longer gives. The stores
+    ## forget the values that it gave before, unless it gives them again with the same revision.
     for output in something(before, Output[])
-        if !any(found -> found.id == output.id, given)
-            store!(items, output, Dict{Symbol,Any}())
-            delete_output!(workspace.cache.db, row.index, output.id)
-        end
+        any(found -> found.id == output.id, given) || store!(items, output, Dict{Symbol,Any}())
         any(found -> (found.type, found.revision) == (output.type, output.revision), given) ||
             forget!(workspace, output.type, output.revision)
     end
@@ -300,29 +298,25 @@ function write!(workspace::Workspace, x::String)::Nothing
 end
 
 """
-    store!(items, output, values) -> Vector{MetadataConflict}
+    store!(items, output, values)
 
 Replace the metadata of the value `output` in the draft of `items` with `values`, keeping a copy of
-each vector value. The first value stored under a metadata key fixes the type of its column.
-Returns the values that were not stored because their metadata key holds values of another type.
-The caller holds the catalog lock.
+each vector value. The first value stored under a metadata key fixes the type of its column; the
+cache admits only values of that type, and saves them first. The caller holds the catalog lock.
 """
-function store!(items::Items, output::Output, values::AbstractDict{Symbol})::Vector{MetadataConflict}
+function store!(items::Items, output::Output, values::AbstractDict{Symbol})::Nothing
     for (name, value) in values
         value === missing || haskey(items.metadata, name) ||
             (items.metadata[name] = Column{Union{Missing,typeof(value)}}(missing))
     end
-    dropped, shown = MetadataConflict[], false
+    shown = false
     for (name, column) in items.metadata
-        value, expected = get(values, name, missing), nonmissingtype(eltype(column.empty.cells))
-        value === missing || typeof(value) == expected ||
-            (push!(dropped, MetadataConflict(name, expected, typeof(value))); value = missing)
-        shown |= write!(items, column, output.key, value)
+        shown |= write!(items, column, output.key, get(values, name, missing))
     end
     ## `select` shows the metadata of the value of an item.
     number = get(items.index, output.id, Int32(0))
     shown && number != 0 && items.columns.key[number] == output.key && push!(items.shown, number)
-    return dropped
+    return nothing
 end
 
 """
@@ -606,9 +600,3 @@ function source(workspace::Workspace, row::Row)::String
     length(value.args) >= 3 && value.args[3] isa AbstractDataSourceItem && return id(value.args[3])
     return source(workspace, value.args[2].of.row)
 end
-
-# The cache gives the same text for a value that it does not save, so that the error of the row
-# says it once.
-conflict_message(conflict::MetadataConflict)::String =
-    "metadata :$(conflict.name) has type $(conflict.found) here but $(conflict.expected) in earlier items: " *
-    "give it one type in the project, then rebuild the cache"

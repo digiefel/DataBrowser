@@ -28,10 +28,10 @@
 #
 # ```text
 #     catalog, in memory          the state of each row, its inputs and its priority
-#     cache, a DuckDB file        for each row, by its key: the revision of its last result, or its
-#                                 error; and for a row of the pipeline, the values it gives, with
-#                                 their metadata and labels. The next session knows from it which
-#                                 rows are current, and has their values without running them
+#     cache, a DuckDB file        a record of each row, by its key: the revision of its last result,
+#                                 or its error; and for a row of the pipeline, the values it gives,
+#                                 with their metadata and labels. The next session knows from it
+#                                 which rows are current, and has their values without running them
 #     stores, one for each        each result, by its revision; for a row of the pipeline, each
 #       type of result            value it gives, by the revision of the value. A MemoryStore, the
 #                                 default, loses the results when Julia exits; a DuckDBStore, as a
@@ -92,7 +92,9 @@
 # A `read` or a `process` must return a data item, or a vector of data items, each with an id that
 # the row may give ([`Pipeline.jl`](Pipeline.md)); any other result fails the row. When a function
 # throws, the row fails: the error is logged, the status panel of the browser shows the error next
-# to its value, and the cache saves it. When reading a source item fails, its values leave the
+# to its value, and the cache saves it. The `id`, `label`, `members` and `metadata` methods of the
+# values count too, and so does a metadata value that the cache cannot hold, as one of another type
+# than the earlier values of its name. When reading a source item fails, its values leave the
 # workspace until a later read succeeds. A `process` that fails gives no values, and the value it
 # was given keeps the failed row as its latest version, until the row runs again. A failed row does
 # not run again, even in a later session, until its revision changes: its code, an input or an
@@ -174,41 +176,43 @@ end
 
 Compute the row of `job`, keep its result, and add the rows that its values need. A row whose
 current revision is the one the cache saved becomes current, or failed, without running, with the
-revision of its saved result. A result `isequal` to the last result of the row keeps the revision of
-the last result, so that the rows that read it find the revisions they last ran with. A result of
-the wrong type fails the row: a `read` or a `process` must return an `AbstractDataItem`, or a vector
-of them. So does a result with an id that the row may not give (see [`given!`](@ref)).
+revision of its saved result. When only the code that describes its values changed (see
+[`revision`](@ref)), the row takes its values from their stores, and computes their ids, labels,
+members and metadata again; it runs when a store no longer has one of them. A result `isequal` to
+the last result of the row keeps the revision of the last result, so that the rows that read it
+find the revisions they last ran with. A result of the wrong type fails the row: a `read` or a
+`process` must return an `AbstractDataItem`, or a vector of them. So does a result with an id that
+the row may not give (see [`given!`](@ref)), or with a metadata value that the cache cannot hold.
 """
 function run!(workspace::Workspace, job::Job)::Nothing
     catalog, row = workspace.catalog, job.row
     ## Until `finish!` ends the job, every error fails the row, so that no row stays running without
-    ## a job. The cache saves only the error of the function, under the revision of the row: after
-    ## any other error, the next session runs the row again.
-    value, pipeline, at, record, previous = try
+    ## a job. The cache saves only the errors of the project's code, under the revision of the row:
+    ## after any other error, the next session runs the row again.
+    value, stage, at, record, current, previous = try
         @timed_dbg "job.revision" @lock catalog.lock @timed_dbg "job.revision.held" begin
             at = revision(workspace, row)
-            record = recorded(workspace, row, at)
+            record = get(workspace.cache.db, row.index, nothing)
             previous = (revision=Catalogs.revision(catalog, row), type=Catalogs.result_type(catalog, row))
-            if record === nothing
+            if record !== nothing && record.revision != at
                 ## A row that runs no longer gives the result that the cache saved in an earlier
-                ## session: its values leave the cache, and the result or its values leave the stores.
+                ## session: the result or its values leave the stores.
                 # TODO: a row outside the pipeline that failed keeps its last result in its store, and
                 # the cache saves the failure without the revision of that result: when the session
                 # ends before the row has a result again, the store keeps that result for good.
-                saved = pop!(workspace.saved, row.index, SavedOutput[])
-                foreach(x -> delete_output!(workspace.cache.db, row.index, x.id), saved)
-                earlier = previous.revision == 0 ? recorded_revision(workspace.cache.db, row.index) : nothing
-                if earlier !== nothing && isempty(earlier.failure)
-                    workspace.items.rows.stage[row] === nothing && forget!(workspace, earlier.type, earlier.result_revision)
-                    foreach(x -> forget!(workspace, x.type, value_revision(x.id, earlier.result_revision)), saved)
+                if previous.revision == 0 && isempty(record.failure)
+                    workspace.items.rows.stage[row] === nothing && forget!(workspace, record.type, record.result_revision)
+                    foreach(x -> forget!(workspace, x.type, value_revision(x.id, record.result_revision)), record.items)
                 end
+                record = nothing
             end
-            catalog[row], workspace.items.rows.stage[row] !== nothing, at, record, previous
+            catalog[row], workspace.items.rows.stage[row], at, record, record !== nothing && described(workspace, row, record), previous
         end
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
     end
-    if record !== nothing
+    pipeline = stage !== nothing
+    if current
         @timed_dbg "job.restore" @lock catalog.lock begin
             finish!(catalog, job; failed=!isempty(record.failure), revision=record.result_revision, type=record.type) &&
                 restored!(workspace, row, record)
@@ -216,37 +220,57 @@ function run!(workspace::Workspace, job::Job)::Nothing
         end
         return nothing
     end
+    ## When only the code that describes the values changed, the row takes them from their stores.
+    found = record === nothing || !isempty(record.failure) ? [nothing] :
+        only(kept(workspace, [Tuple{Type,UInt64}[(x.type, value_revision(x.id, record.result_revision)) for x in record.items]]))
+    reuse = !isempty(found) && all(!isnothing, found)
     output = try
-        @timed_dbg "job.call" call(workspace, row, value)
+        reuse ? (record.type <: AbstractVector ? convert(record.type, something.(found)) : something(only(found))) :
+            @timed_dbg "job.call" call(workspace, row, value)
     catch error
         return failed!(workspace, job, at, error, catch_backtrace())
     end
     given = output isa AbstractVector ? output : [output]
     pipeline && !all(x -> x isa AbstractDataItem, given) && return failed!(workspace, job, at,
         ErrorException("$(function_name(value.f)) returned a $(typeof(output)), not an item or a vector of items"), backtrace())
+    ## The ids, labels, members and metadata of the values are the project's code too: when it
+    ## throws, the cache saves the failure with the types of the values, whose code describes them.
+    items = SavedOutput[]
+    try
+        pipeline && append!(items, (; id=id(x), stage=Int8(stage), label=label(workspace.project, x), type=typeof(x),
+            members=x isa AbstractGroup ? members(x) : nothing, metadata=metadata_dict(metadata(x))) for x in given)
+        allunique(x.id for x in items) ||
+            error("it gives the id \"$(first(x.id for x in items if count(y -> y.id == x.id, items) > 1))\" twice")
+    catch error
+        return failed!(workspace, job, at, error, catch_backtrace(), unique(typeof.(given)))
+    end
     ## A result `isequal` to the last result of the row, which its store still has, is the same
     ## result: the row keeps the revision of the last result. The readers of a row of the pipeline
     ## find its values by id, so the ids count too. `isequal` is the project's code: when it throws,
     ## the results differ.
     # TODO: compare each value of a row of the pipeline on its own. A `Part` follows the revision of
     # the whole row, so one changed value of a read runs the `process` of every value again.
-    same = previous.revision != 0 && typeof(output) === previous.type && @timed_dbg "job.compare" try
-        found = only(kept(workspace, [row]))
-        before = found === nothing ? nothing : output isa AbstractVector ? something(found) : [something(found)]
-        before !== nothing && Base.invokelatest(isequal, before, given) && (!pipeline || isequal(id.(before), id.(given)))
-    catch
-        false
-    end
-    ## The same result keeps its revision, under which its store has it already. The ids, labels,
-    ## members and metadata of the values are the project's code, which runs outside the lock.
-    result, written = same ? previous.revision : at, !same && keepable(catalog, job)
-    outputs = @timed_dbg "job.keep" try
-        @timed_dbg "job.keep.store" written && keep!(workspace, value, output, result; pipeline)
-        pipeline ? [(Output(id(x), typeof(x), label(workspace.project, x), x isa AbstractGroup ? members(x) : nothing,
-            output_key!(workspace.cache.db, row.index, id(x)), value_revision(id(x), result)), metadata_dict(metadata(x))) for x in given] : nothing
+    # TODO: when the values from the stores get other ids, those under the old ids stay in the stores.
+    ids = [x.id for x in items]
+    same = reuse ? isequal(ids, [x.id for x in record.items]) :
+        previous.revision != 0 && typeof(output) === previous.type && @timed_dbg "job.compare" try
+            found = only(kept(workspace, [row]))
+            before = found === nothing ? nothing : output isa AbstractVector ? something(found) : [something(found)]
+            before !== nothing && Base.invokelatest(isequal, before, given) && (!pipeline || isequal(id.(before), ids))
+        catch
+            false
+        end
+    ## The same result keeps its revision, under which its store has it already.
+    result = !same ? at : reuse ? record.result_revision : previous.revision
+    written = !same && keepable(catalog, job)
+    try
+        @timed_dbg "job.keep" written && keep!(workspace, value, output, result; pipeline)
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
     end
+    outputs = Output[Output(x.id, x.type, x.label, x.members, output_key!(workspace.cache.db, row.index, x.id),
+        value_revision(x.id, result)) for x in items]
+    saved = false
     @timed_dbg "job.finish" @lock catalog.lock @timed_dbg "job.finish.held" try
         ## A result that the row does not keep leaves the store.
         finish!(catalog, job; revision=result, type=typeof(output)) ||
@@ -255,47 +279,38 @@ function run!(workspace::Workspace, job::Job)::Nothing
         ## same with each value.
         pipeline || previous.revision in (0, result) || forget!(workspace, previous.type, previous.revision)
         haskey(workspace.errors, row) && (workspace.errors = Base.delete(workspace.errors, row))
-        ## The cache and the table `items` keep the metadata of each value. The metadata values that
-        ## were not kept are an error of the row, which the cache also saves, so that the next
-        ## session shows it too; a warning with the id of the computation goes to the log.
-        messages = String[]
-        if outputs !== nothing
-            @timed_dbg "job.finish.finished!" finished!(workspace, row, Output[output for (output, _) in outputs])
-            for (position, (output, values)) in enumerate(outputs)
-                append!(messages, conflict_message.(store!(workspace.items, output, values)))
-                @timed_dbg "job.finish.store_output!" append!(messages, store_output!(workspace.cache.db, row.index, Int(workspace.items.rows.stage[row]), position,
-                    (; output.id, output.label, output.type, output.members, metadata=values)))
-            end
+        ## The cache saves the record of the row whole, or throws and changes nothing when it cannot
+        ## hold one of the metadata values. The table `items` then takes the same metadata.
+        @timed_dbg "job.finish.record" workspace.cache.db[row.index] = (; call=id(value), revision=at, result_revision=result,
+            item_revision=revision(workspace, row, [x.type for x in items]), type=typeof(output), failure="", items)
+        saved = true
+        if pipeline
+            @timed_dbg "job.finish.finished!" finished!(workspace, row, outputs)
+            foreach((output, x) -> store!(workspace.items, output, x.metadata), outputs, items)
         end
-        if !isempty(unique!(messages))
-            workspace.errors = Base.PersistentDict(workspace.errors, row => subject(workspace, row) => join(messages, "; "))
-            @warn("Metadata values were not kept", computation=id(value), messages)
-        end
-        @timed_dbg "job.finish.record" store_computation_revision!(workspace.cache.db, row.index, id(value), at, typeof(output);
-            result_revision=result, dropped=join(messages, "; "))
         @timed_dbg "job.finish.publish!" publish!(workspace)
     catch error
-        ## `finished!` throws when the row gives an id that it may not give, and the row fails. A
-        ## row that gives one id twice fails whatever the other rows give, so the cache saves its
-        ## failure. When another row gives one of its ids, the cache forgets the last result of the
-        ## row instead, and the next session runs the row again.
+        ## When the cache cannot hold a metadata value, the row fails, and the cache saves the
+        ## failure. When another row gives one of its ids, `finished!` throws, the row fails, and the
+        ## next session runs the row again.
         written && keep!(workspace, value, output, result; pipeline, forget=true)
-        allunique(output.id for (output, _) in something(outputs, ())) || return failed!(workspace, job, at, error, catch_backtrace())
-        delete_computation_revision!(workspace.cache.db, row.index)
-        failed!(workspace, job, nothing, error, catch_backtrace())
+        failed!(workspace, job, saved ? nothing : at, error, catch_backtrace(), unique(typeof.(given)))
     end
     return nothing
 end
 
 """
-    failed!(workspace, job, revision, error, backtrace)
+    failed!(workspace, job, revision, error, backtrace, types=())
 
 Fail the row of `job` and save its message in the cache under `revision`, so that the next session
-shows the same failure without running the row; a `revision` of `nothing` saves nothing. The message
-goes to `report_error`, and the status panel of the browser shows the message next to the value. A
-row of the pipeline that fails gives no values.
+shows the same failure without running the row. `types` are the types of the values that the row
+gave when describing them failed: the cache saves the failure until their `label`, `id`, `members`
+or `metadata` methods change too. A `revision` of `nothing` removes the record of the row from the
+cache instead, so that the next session runs the row. The message goes to `report_error`, and the
+status panel of the browser shows the message next to the value. A row of the pipeline that fails
+gives no values.
 """
-function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, error, backtrace)::Nothing
+function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, error, backtrace, types=())::Nothing
     catalog, row = workspace.catalog, job.row
     context = @lock catalog.lock begin
         stage, f = workspace.items.rows.stage[row], catalog[row].f
@@ -308,7 +323,10 @@ function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, erro
     @lock catalog.lock begin
         finish!(catalog, job; failed=true) || return nothing
         workspace.errors = Base.PersistentDict(workspace.errors, row => subject(workspace, row) => "$(function_name(catalog[row].f)) failed: " * message)
-        at === nothing || store_computation_revision!(workspace.cache.db, row.index, id(catalog[row]), at, Nothing; failure=message)
+        # TODO: a record removed here may leave its values in the stores.
+        at === nothing ? delete!(workspace.cache.db, row.index) : (workspace.cache.db[row.index] = (; call=id(catalog[row]),
+            revision=at, result_revision=UInt64(0), item_revision=revision(workspace, row, types), type=Tuple{types...},
+            failure=message, items=SavedOutput[]))
         workspace.items.rows.stage[row] === nothing || finished!(workspace, row, nothing)
         publish!(workspace)
     end
@@ -386,9 +404,13 @@ resolved(::Workspace, x::Selection) = x
 # method changes nothing in what it returns, the rows that read its values do not call their
 # functions again. Each value that a row of the pipeline gives has a revision of its own, a hash of
 # its id and the revision of the result of the row, which the `process` of the value uses as the
-# revision of its input. The cache saves, under the key of each row, the id of its computation, the
-# revision that it computed before it ran, the revision of its result, and its error when it failed.
-# The next session gives the key to the first row whose computation has that id.
+# revision of its input.
+#
+# The cache saves a *record* of each row under its key: the id of its computation, the revision
+# that it computed before it ran, the revision of its result, its error when it failed, and the
+# values it gives, with their labels and metadata. The record also holds the *item revision* of the
+# row, the code revision of the `label`, `id`, `members` and `metadata` methods of the types of its
+# values. The next session gives the key to the first row whose computation has that id.
 #
 # The *code revision* of a function, which the revision of a row uses, is a hash of the code that
 # the function can reach; the workspace keeps it in memory (see "Code changes"). The catalog also
@@ -397,14 +419,16 @@ resolved(::Workspace, x::Selection) = x
 # [`Catalogs.jl`](../Catalogs.md)).
 #
 # `revision(workspace, computation)` and `revision(workspace, items)` are numbers that a window
-# compares to know when to draw again; they follow the changes of the rows. The cache functions
-# `store_computation_revision!` and `recorded_revision` keep and read the revisions of rows.
+# compares to know when to draw again; they follow the changes of the rows. `cache[key] = record`
+# saves the record of a row whole, and `get(cache, key, nothing)` reads it.
 #
-# When a workspace opens again, a row whose saved revision is the revision it computes now is
-# current, with the revision of its saved result, or failed with its saved error, without running.
-# Its metadata is the metadata that the cache saved, and its value comes from its store; when the
-# store no longer has it, as a `MemoryStore` after a restart, the row runs again when something
-# needs its value.
+# When a workspace opens again, a row whose saved revision and item revision are those it computes
+# now is current, with the revision of its saved result, or failed with its saved error, without
+# running. Its metadata is the metadata that the cache saved, and its value comes from its store;
+# when the store no longer has it, as a `MemoryStore` after a restart, the row runs again when
+# something needs its value. When only the item revision differs, as after an edit of a `label`
+# method, the row takes its values from their stores and computes their labels, ids, members and
+# metadata again, without calling its function (see [`run!`](@ref)).
 
 """
     revision(workspace, row) -> UInt64
@@ -418,13 +442,27 @@ lock.
 function revision(workspace::Workspace, row::Row)::UInt64
     value = workspace.catalog[row]
     signature = Tuple{typeof(value.f),map(x -> argument_type(workspace, x), value.args)...}
-    workspace.signatures[row] = signature
+    get!(() -> Type[signature], workspace.signatures, row)[1] = signature
     ## Types and symbols hash differently in another session; their names do not.
     seed = hash(function_name(value.f), hash(code!(workspace, signature, value.f).revision.hash))
     for x in value.args
         seed = hash(argument_revision(workspace, row, x), seed)
     end
     return hash(repr(value.settings), seed)
+end
+
+"""
+    revision(workspace, row, types) -> UInt64
+
+The item revision of `row`: the code revision of the `label`, `id`, `members` and `metadata`
+methods of `types`, the types of the values that the row gives. When it changes, the row computes
+the labels, ids, members and metadata of its values again (see [`run!`](@ref)). The caller holds
+the catalog lock, and computed `revision(workspace, row)` before.
+"""
+function revision(workspace::Workspace, row::Row, types)::UInt64
+    signatures = Type[Tuple{typeof(label),typeof(workspace.project),T} for T in unique(types)]
+    workspace.signatures[row] = Type[first(workspace.signatures[row]); signatures]
+    return foldl((seed, signature) -> hash(code!(workspace, signature, label).revision.hash, seed), signatures; init=UInt64(0))
 end
 
 """
@@ -480,21 +518,21 @@ end
 
 The functions, methods and types whose code runs when a function is called with the argument
 types of `signature`. For a stage of the pipeline, these are the type it runs for and the methods
-of the stage that can apply to it; reading and processing also make the labels of the items they
-give, so they add the `label` methods of the project. Else the root is the function. A callable
-object that is not a function, such as a fit, runs the methods that make its type callable, whose
-parameters include the types of the functions it holds.
+of the stage that can apply to it. For the signature `Tuple{typeof(label),P,T}`, which describes
+the values of type `T` (see [`revision`](@ref)), these are `T` and its `label`, `id`, `members` and
+`metadata` methods. Else the root is the function. A callable object that is not a function, such
+as a fit, runs the methods that make its type callable, whose parameters include the types of the
+functions it holds.
 """
 function code_roots(project::AbstractProject, signature::Type, f)::Vector
     found = stage(signature)
     found === nothing && return f isa Function ? Any[f] : Any[typeof(f); collect(methods(f))]
     at, T = found
-    P = typeof(project)
-    signatures = DataBrowserAPI.stage_signatures(P, at, T)
-    at == ITEM_PROCESS && append!(signatures, Any[(label, Tuple{P,T}), (label, Tuple{T})])
-    # TODO(item revision): reading and processing give items of other types, whose labels any
-    # `label` method of the project can make. This goes when labels get their own revision.
-    at in (SOURCE_READ, ITEM_PROCESS) && push!(signatures, (label, Tuple{P,Any}))
+    signatures = DataBrowserAPI.stage_signatures(typeof(project), at, T)
+    return Any[T; [method for (g, types) in signatures for method in methods(g, types)]]
+end
+function code_roots(project::AbstractProject, ::Type{<:Tuple{typeof(label),Any,T}}, f)::Vector where {T}
+    signatures = [(label, Tuple{typeof(project),T}), (label, Tuple{T}), (id, Tuple{T}), (members, Tuple{T}), (metadata, Tuple{T})]
     return Any[T; [method for (g, types) in signatures for method in methods(g, types)]]
 end
 
@@ -506,71 +544,51 @@ stage(::Type{<:Tuple{typeof(process),Any,M,G}}) where {M,G} = (MEMBER_PROCESS, G
 stage(_) = nothing
 
 """
-    recorded(workspace, row, revision)
-
-What the cache saved for the result of `row` when the row computed `revision` before it ran, when it
-can be used now: a failure, or a result with the revision of that result; else `nothing`. A row of
-the pipeline whose result is one item also needs that item: the one that the cache saved in an
-earlier session, or the one it gave when it last ran in this session. A result that is a vector of
-items may hold none. The caller holds the catalog lock.
-"""
-function recorded(workspace::Workspace, row::Row, at::UInt64)
-    record = recorded_revision(workspace.cache.db, row.index)
-    (record === nothing || record.revision != at) && return nothing
-    # TODO: the cache writes the values of a row and its revision apart, so after a crash, a row whose
-    # result is a vector can come back with fewer values than it gave.
-    isempty(record.failure) && workspace.items.rows.stage[row] !== nothing &&
-        !(record.type <: AbstractVector) && !haskey(workspace.saved, row.index) &&
-        workspace.items.rows.outputs[row] === nothing && return nothing
-    return record
-end
-
-"""
     restore!(workspace, row) -> Bool
 
 Give `row` the result that the cache saved for it, with the revision of that result, when the
-revision of the row is the saved one and its inputs are current, without a job. Return whether it
-did. When another row gives one of the saved values, the cache forgets the result, and the row is
-stale and runs again. The caller holds the catalog lock.
+revision and the item revision of the row are those of its record, and its inputs are current,
+without a job. Return whether it did. When another row gives one of the saved values, the cache
+forgets the record, and the row is stale and runs again. The caller holds the catalog lock.
 """
 function restore!(workspace::Workspace, row::Row)::Bool
     catalog = workspace.catalog
     Catalogs.state(catalog, row) in (Catalogs.MISSING, Catalogs.STALE) || return false
     all(input -> Catalogs.state(catalog, input) == Catalogs.CURRENT, Catalogs.inputs(catalog, row)) || return false
-    ## The revision of the row is computed only when the cache saved something for the row.
-    recorded_revision(workspace.cache.db, row.index) === nothing && return false
-    at = @timed_dbg "restore.revision" revision(workspace, row)
-    record = @timed_dbg "restore.recorded" recorded(workspace, row, at)
+    ## The revision of the row is computed only when the cache saved a record for the row.
+    record = get(workspace.cache.db, row.index, nothing)
     record === nothing && return false
+    @timed_dbg("restore.revision", record.revision == revision(workspace, row) && described(workspace, row, record)) || return false
     Catalogs.restore!(catalog, row; failed=!isempty(record.failure), revision=record.result_revision, type=record.type) || return false
     return @timed_dbg "restore.restored!" restored!(workspace, row, record)
 end
 
-# The values and the metadata of a row, or its error, as the cache saved them, or as the row gave
-# them when it last ran in this session. Gives `false` when another row gives one of these values:
-# the row is stale then, and runs again.
+# Whether the code that describes the values of `record`, the record of `row`, is the code that
+# describes them now. A row that failed while describing its values saved their types as the type
+# of its result, a `Tuple`.
+described(workspace::Workspace, row::Row, record)::Bool = record.item_revision ==
+    revision(workspace, row, isempty(record.failure) ? [x.type for x in record.items] : fieldtypes(record.type))
+
+# The values and the metadata of a row, or its error, as its record holds them. Gives `false` when
+# another row gives one of these values: the row is stale then, and runs again.
 function restored!(workspace::Workspace, row::Row, record)::Bool
-    saved = pop!(workspace.saved, row.index, nothing)
     failed = !isempty(record.failure)
     failed && (workspace.errors = Base.PersistentDict(workspace.errors,
         row => subject(workspace, row) => "$(function_name(workspace.catalog[row].f)) failed: " * record.failure))
-    isempty(record.dropped) || (workspace.errors =
-        Base.PersistentDict(workspace.errors, row => subject(workspace, row) => record.dropped))
     workspace.items.rows.stage[row] === nothing && return true
-    outputs = saved === nothing ? something(workspace.items.rows.outputs[row], Output[]) :
-        @timed_dbg "restored.outputs" [Output(value.id, value.type, value.label, value.members,
-            output_key!(workspace.cache.db, row.index, value.id), value_revision(value.id, record.result_revision)) for value in saved]
+    outputs = @timed_dbg "restored.outputs" Output[Output(x.id, x.type, x.label, x.members,
+        output_key!(workspace.cache.db, row.index, x.id), value_revision(x.id, record.result_revision)) for x in record.items]
     try
         @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
     catch
         ## The row runs, so that it fails again, or gives its values when the other row is gone.
         # TODO: when the saved result has an older revision than the row, its values stay in the
         # stores.
-        delete_computation_revision!(workspace.cache.db, row.index)
+        delete!(workspace.cache.db, row.index)
         Catalogs.invalidate!(workspace.catalog, row)
         return false
     end
-    failed || foreach(((output, value),) -> store!(workspace.items, output, value.metadata), zip(outputs, something(saved, ())))
+    foreach((output, x) -> store!(workspace.items, output, x.metadata), outputs, record.items)
     return true
 end
 
@@ -757,7 +775,7 @@ function publish!(workspace::Workspace)::Nothing
         haskey(workspace.errors, row) && (workspace.errors = Base.delete(workspace.errors, row))
         Catalogs.state(catalog, row) == Catalogs.REMOVED || continue
         forget!(workspace, Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row))
-        delete_computation_revision!(workspace.cache.db, row.index)
+        delete!(workspace.cache.db, row.index)
         foreach(found -> delete!(found, row), (workspace.signatures, workspace.row_locks, workspace.evaluated))
         ## The cells of a removed row go back to the defaults, those of `NOWHERE`.
         foreach(column -> write!(workspace.items, column, row.index, column[Catalogs.NOWHERE]), workspace.items.rows)
@@ -773,9 +791,11 @@ end
 # Each signature of a row, its function and the types of its arguments, has a code revision: a
 # content hash of the code it can reach from its roots ([`CodeRevisions.jl`](../CodeRevisions.md)).
 # The roots of a row of the pipeline are the type it runs for and the methods of the stage that can
-# apply to it, with the `label` methods of the project when the row reads or processes an item. A
-# Recipes project defines these methods from its registrations, with the callbacks in them, so a
-# changed callback is changed code too. The roots of any other row are its function. A callable
+# apply to it. A Recipes project defines these methods from its registrations, with the callbacks in
+# them, so a changed callback is changed code too. The values that the row gives add a signature for
+# each of their types, whose roots are the type and its `label`, `id`, `members` and `metadata`
+# methods: when only these change, the row computes the labels, ids, members and metadata of its
+# values again, from the values in the stores. The roots of any other row are its function. A callable
 # object that is not a function, such as a fit, has as roots its type and the methods that make the
 # type callable: the parameters of the type include the types of the functions it holds, such as the
 # curve of the fit. The workspace follows the code only into `Main` and into packages developed from
@@ -843,8 +863,8 @@ function check_code!(workspace::Workspace)::Nothing
                 signature, changes=sort!(unique!(first.(symdiff(before, after)))))
         end
         merge!(workspace.code, current)
-        for (row, signature) in workspace.signatures
-            signature in changed && Catalogs.invalidate!(catalog, row)
+        for (row, signatures) in workspace.signatures
+            any(in(changed), signatures) && Catalogs.invalidate!(catalog, row)
         end
         publish!(workspace)
     end

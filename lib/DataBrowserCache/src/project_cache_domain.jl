@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 45
+const PROJECT_CACHE_SCHEMA_VERSION = 46
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -46,8 +46,8 @@ struct ProjectCacheIdentity
 end
 
 """
-A value that a computation gave, as the cache saved it: its id, the stage of the pipeline that the
-computation runs, its label and type, the ids of its members when it is a group, and its metadata.
+An item that a row gave, as the cache saves it: its id, the stage of the pipeline that the row
+runs, its label and type, the ids of its members when it is a group, and its metadata.
 """
 const SavedOutput = @NamedTuple{
     id::String,
@@ -58,11 +58,33 @@ const SavedOutput = @NamedTuple{
     metadata::Dict{Symbol,Any},
 }
 
+"""
+What the cache saves for one row, under the key of the row (see [`key!`](@ref)): `call`, the id of
+the computation of the row; `revision`, the revision that the row computed before it ran;
+`result_revision`, the revision of its result, which is `revision` or the revision of an earlier
+result `isequal` to it; `item_revision`, the revision of the code that describes its items; `type`,
+the type of its result; `failure`, its message when it failed, else empty; and `items`, the items
+that it gave, in their order.
+
+`cache[key] = record` saves the record whole, in place of the record that the cache had for `key`,
+or throws and changes nothing when the cache cannot hold one of its metadata values.
+`get(cache, key, nothing)` gives the record, and `delete!(cache, key)` removes it.
+"""
+const Record = @NamedTuple{
+    call::String,
+    revision::UInt64,
+    result_revision::UInt64,
+    item_revision::UInt64,
+    type::Type,
+    failure::String,
+    items::Vector{SavedOutput},
+}
+
 # Storage rows (field names are the table columns; `R(database_row)` is the pure decoder)
 
 """
-One value that a computation gave: the key of its row, the stage of the pipeline it runs, and the
-position of the value among the values it gave. `output_key` is the key of the value's metadata.
+One item that a row gave: the key of its row, the stage of the pipeline it runs, and the position
+of the item among the items it gave. `output_key` is the key of the item's metadata.
 """
 struct OutputRow
     output_key::Int64
@@ -78,25 +100,20 @@ end
 OutputRow(row)::OutputRow = OutputRow(Int64(row.output_key), Int64(row.computation), String(row.id),
     Int8(row.stage), Int64(row.position), String(row.label), String(row.type_hex), _null_to_nothing(row.members_hex))
 
-"""
-The revision that one row computed before it ran, by the key of the row, with `call`, the id of its
-computation, and the item type under which its store keeps its result; or, when it failed, its
-message. `result_revision` is the revision of the result, which the rows that read it see:
-`revision`, or the revision of an earlier result of the row that is `isequal` to this one.
-`dropped` is the message of the metadata values of the row that were not kept.
-"""
+"""The fields of a [`Record`](@ref) but its items, by the key of the row."""
 struct ComputationRevisionRow
     key::Int64
     call::String
     revision::UInt64
     result_revision::UInt64
+    item_revision::UInt64
     type_hex::String
     failure::String
-    dropped::String
 end
 
 ComputationRevisionRow(row)::ComputationRevisionRow = ComputationRevisionRow(Int64(row.key), String(row.call),
-    UInt64(row.revision), UInt64(row.result_revision), String(row.type_hex), String(row.failure), String(row.dropped))
+    UInt64(row.revision), UInt64(row.result_revision), UInt64(row.item_revision), String(row.type_hex),
+    String(row.failure))
 
 # Identity
 
@@ -134,11 +151,13 @@ mutable struct CacheDB
     outputs::RowStore{Int64,OutputRow}
     output_metadata::WideRowStore{Int64}
     computation_revision_rows::RowStore{Int64,ComputationRevisionRow}
-    # The same revisions, read at opening, so that a lookup does not read the table.
-    computation_revisions::Dict{Int64,ComputationRevisionRow}
-    # The key of each call of the revisions at opening, until a row of this session takes it.
+    # The records of the three tables above, read at opening, so that a lookup does not read them.
+    # TODO: this holds the metadata of every item a second time, beside the table `items` of the
+    # workspace.
+    records::Dict{Int64,Record}
+    # The key of each call of the records at opening, until a row of this session takes it.
     kept_keys::Dict{String,Int64}
-    # The key of each value, by the key of its row and its id.
+    # The key of each item, by the key of its row and its id.
     output_keys::Dict{Tuple{Int64,String},Int64}
     # The new keys: the keys below `next_key` that nothing had at opening, then `next_key` and up.
     free_keys::Vector{Int64}
@@ -227,21 +246,35 @@ function open_cache_db(
             DBInterface.close!(connection)
         end
         outputs = started(RowStore{Int64,OutputRow}(db, "outputs", ("output_key",)))
+        output_metadata = started(WideRowStore{Int64}(db, "output_metadata", "output_key"))
         computation_revision_rows = started(RowStore{Int64,ComputationRevisionRow}(
             db, "computation_revisions", ("key",)))
-        revisions = read(computation_revision_rows)
-        output_keys = Dict{Tuple{Int64,String},Int64}((row.computation, row.id) => key for (key, row) in read(outputs))
-        used = union!(Set{Int64}(keys(revisions)), values(output_keys), (key for (key, _) in keys(output_keys)))
+        # A type that no longer exists, as after a rename, reads as `Union{}`.
+        types = Dict{String,Type}()
+        type(hex) = get!(() -> try _deserialize_type(hex) catch; Union{} end, types, hex)
+        records = Dict{Int64,Record}(key => (; row.call, row.revision, row.result_revision, row.item_revision,
+            type=type(row.type_hex), row.failure, items=SavedOutput[]) for (key, row) in read(computation_revision_rows))
+        output_keys = Dict{Tuple{Int64,String},Int64}()
+        metadata = read(output_metadata)
+        # TODO: the cache writes the items of a row and its record apart, so after a crash, a row can
+        # come back with fewer items than it gave.
+        for row in sort!(collect(values(read(outputs))); by=row -> row.position)
+            output_keys[(row.computation, row.id)] = row.output_key
+            haskey(records, row.computation) && push!(records[row.computation].items, (; row.id, row.stage,
+                row.label, type=type(row.type_hex), members=_deserialize_hex(row.members_hex),
+                metadata=get(metadata, row.output_key, Dict{Symbol,Any}())))
+        end
+        used = union!(Set{Int64}(keys(records)), values(output_keys), (key for (key, _) in keys(output_keys)))
         next_key = maximum(used; init=Int64(0)) + 1
-        return CacheDB(
+        cache = CacheDB(
             identity,
             db,
             metrics,
             outputs,
-            started(WideRowStore{Int64}(db, "output_metadata", "output_key")),
+            output_metadata,
             computation_revision_rows,
-            revisions,
-            Dict{String,Int64}(row.call => key for (key, row) in revisions),
+            records,
+            Dict{String,Int64}(record.call => key for (key, record) in records),
             output_keys,
             # Reversed, so that `pop!` gives the smallest first.
             reverse!(setdiff(Int64(1):next_key - 1, used)),
@@ -249,6 +282,10 @@ function open_cache_db(
             ReentrantLock(),
             Symbol[],
         )
+        # The cache forgets a record with a type that no longer exists: its row runs again.
+        foreach(key -> delete!(cache, key), [key for (key, record) in records
+            if Union{} in (record.type, (item.type for item in record.items)...)])
+        return cache
     catch
         for store in stores
             try
@@ -312,78 +349,45 @@ end
 # The domain write/read surface over the generic stores: the values of computations map onto
 # RowStore rows. The stores know none of this; they buffer typed rows.
 
-"""
-    store_output!(cache, key, stage, position, output) -> Vector{String}
-
-Save one value that the row with key `key` gave, in place of what the cache saved for the value with
-the same id before. `output` has the fields of a [`SavedOutput`](@ref) but `stage`. `stage` is the
-stage of the pipeline that the row runs, and `position` the place of the value among the values it
-gave.
-
-Returns a message for each metadata value that could not be saved.
-"""
-function store_output!(cache::CacheDB, key::Integer, stage::Integer, position::Integer,
-        output::NamedTuple)::Vector{String}
-    started = time_ns()
-    output_key = output_key!(cache, key, output.id)
-    edit!(cache.outputs, output_key, OutputRow(output_key, key, output.id, stage, position, output.label,
-        _serialize_type(output.type), _serialize_hex(output.members)))
-    record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
-    started = time_ns()
-    dropped = edit!(cache.output_metadata, output_key, output.metadata)
+function Base.setindex!(cache::CacheDB, record::NamedTuple, key::Integer)::Record
+    record, key, started = convert(Record, record), Int64(key), time_ns()
+    item_keys = [output_key!(cache, key, item.id) for item in record.items]
+    ## The metadata goes first: it is the only part that the cache may refuse.
+    edit!(cache.output_metadata, [x => item.metadata for (x, item) in zip(item_keys, record.items)])
     record_cache_phase!(cache.metrics.metadata_write_ns, cache.metrics.metadata_writes, started)
-    return dropped
-end
-
-"""Forget what [`store_output!`](@ref) saved for the value `id` of the row with key `key`."""
-function delete_output!(cache::CacheDB, key::Integer, id::AbstractString)::Nothing
-    output_key = output_key!(cache, key, id)
-    delete!(cache.outputs, output_key)
-    delete!(cache.output_metadata, output_key)
-    return nothing
-end
-
-"""
-    store_computation_revision!(cache, key, call, revision, type; failure="", dropped="", result_revision=revision)
-
-Record the `revision` that the row with key `key` computed before it ran, the revision of its
-result, `result_revision`, and the item type under which its store keeps the result. `call` is the
-id of the computation of the row, under which the next session finds the key again (see
-[`key!`](@ref)). A row that failed has the message `failure` instead of a result. `dropped` is the
-message of the metadata values of the row that were not kept.
-"""
-function store_computation_revision!(cache::CacheDB, key::Integer, call::AbstractString, revision::UInt64,
-        type::Type; failure::AbstractString="", dropped::AbstractString="", result_revision::UInt64=revision)::Nothing
-    row = ComputationRevisionRow(Int64(key), String(call), revision, result_revision, _serialize_type(type),
-        String(failure), String(dropped))
-    @lock cache.key_lock cache.computation_revisions[row.key] = row
-    edit!(cache.computation_revision_rows, row.key, row)
-    return nothing
-end
-
-"""Forget what [`store_computation_revision!`](@ref) recorded for the row with key `key`."""
-function delete_computation_revision!(cache::CacheDB, key::Integer)::Nothing
-    @lock cache.key_lock delete!(cache.computation_revisions, Int64(key))
-    delete!(cache.computation_revision_rows, Int64(key))
-    return nothing
-end
-
-"""
-    recorded_revision(cache, key) -> Union{Nothing,NamedTuple}
-
-What [`store_computation_revision!`](@ref) recorded for the row with key `key`, as
-`(; revision, result_revision, type, failure, dropped)`, or `nothing`. A type that no longer exists counts as
-no record.
-"""
-function recorded_revision(cache::CacheDB, key::Integer)::Union{Nothing,NamedTuple}
-    row = @lock cache.key_lock get(cache.computation_revisions, Int64(key), nothing)
-    row === nothing && return nothing
-    type = try
-        _deserialize_type(row.type_hex)
-    catch
-        return nothing
+    started = time_ns()
+    before = @lock cache.key_lock get(cache.records, key, nothing)
+    @lock cache.key_lock cache.records[key] = record
+    ids = Set(item.id for item in record.items)
+    for item in (before === nothing ? SavedOutput[] : before.items)
+        item.id in ids && continue
+        delete!(cache.outputs, output_key!(cache, key, item.id))
+        delete!(cache.output_metadata, output_key!(cache, key, item.id))
     end
-    return (; row.revision, row.result_revision, type, row.failure, row.dropped)
+    for (position, (x, item)) in enumerate(zip(item_keys, record.items))
+        edit!(cache.outputs, x, OutputRow(x, key, item.id, item.stage, position, item.label,
+            _serialize_type(item.type), _serialize_hex(item.members)))
+    end
+    edit!(cache.computation_revision_rows, key, ComputationRevisionRow(key, record.call, record.revision,
+        record.result_revision, record.item_revision, _serialize_type(record.type), record.failure))
+    record_cache_phase!(cache.metrics.item_write_ns, cache.metrics.item_writes, started)
+    return record
+end
+
+Base.get(cache::CacheDB, key::Integer, default) = @lock cache.key_lock get(cache.records, Int64(key), default)
+
+"""The keys of the rows that have a [`Record`](@ref) in `cache`."""
+Base.keys(cache::CacheDB)::Vector{Int64} = @lock cache.key_lock collect(keys(cache.records))
+
+function Base.delete!(cache::CacheDB, key::Integer)::CacheDB
+    record = @lock cache.key_lock pop!(cache.records, Int64(key), nothing)
+    record === nothing && return cache
+    for item in record.items
+        delete!(cache.outputs, output_key!(cache, key, item.id))
+        delete!(cache.output_metadata, output_key!(cache, key, item.id))
+    end
+    delete!(cache.computation_revision_rows, Int64(key))
+    return cache
 end
 
 """Every store of `cache`."""
@@ -511,24 +515,6 @@ function _validate_meta(meta::Dict{String,String}, identity::ProjectCacheIdentit
         "'$(identity.source_id)'; use Rebuild Cache to replace it",
     ))
     return nothing
-end
-
-"""
-    load_outputs(cache) -> Dict{Int64,Vector{SavedOutput}}
-
-What [`store_output!`](@ref) saved, including buffered updates: for the key of each row, the values
-it gave, in their order.
-"""
-function load_outputs(cache::CacheDB)::Dict{Int64,Vector{SavedOutput}}
-    metadata = read(cache.output_metadata)
-    rows = sort!(collect(values(read(cache.outputs))); by=row -> row.position)
-    saved = Dict{Int64,Vector{SavedOutput}}()
-    for row in rows
-        push!(get!(Vector{SavedOutput}, saved, row.computation), (; row.id, row.stage, row.label,
-            type=_deserialize_type(row.type_hex), members=_deserialize_hex(row.members_hex),
-            metadata=get(metadata, row.output_key, Dict{Symbol,Any}())))
-    end
-    return saved
 end
 
 # Query surface

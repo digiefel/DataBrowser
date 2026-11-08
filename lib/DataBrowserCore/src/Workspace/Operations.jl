@@ -236,10 +236,8 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
     token = get_token(cancel_source)
     canceled() = is_cancellation_requested(token) && throw(OperationCanceledException(token))
     task = Threads.@spawn @timed_dbg "scan_source" try
-        saved = rebuild ? nothing : @timed_dbg load_outputs(db)
         @lock catalog.lock begin
-            saved === nothing || (workspace.saved = saved)
-            workspace.cache_state = saved === nothing ? :missing : :ready
+            workspace.cache_state = rebuild ? :missing : :ready
             publish!(workspace)
         end
         # Jobs that start during the walk slow it down: the source items get their rows after it.
@@ -266,12 +264,11 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
             # TODO: this also forgets the rows that the workspace adds after the walk, when a job
             # restores one of their inputs, such as the rows below a group that a source lists before
             # its members: they run again.
-            for (key, outputs) in collect(workspace.saved)
-                Row(key) in catalog && continue
-                gone += first(outputs).stage == Int(SOURCE_READ)
-                foreach(output -> delete_output!(db, key, output.id), outputs)
-                delete_computation_revision!(db, key)
-                delete!(workspace.saved, key)
+            for key in keys(db)
+                record = get(db, key, nothing)
+                (Row(key) in catalog || isempty(record.items)) && continue
+                gone += first(record.items).stage == Int(SOURCE_READ)
+                delete!(db, key)
             end
             scan.state = read_again == 0 && gone == 0 ? :unchanged : :done
             workspace.cache_state = :ready

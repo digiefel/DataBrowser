@@ -204,8 +204,9 @@ store can keep its results from one session to the next:
     part                    under                  what it holds, for row 2: process(project, a)
     catalog, in memory      key 2                  the computation, its state, its inputs and the
                                                    rows that have it as an input, and its priority
-    cache, a DuckDB file    key 2                  the id of the computation, and the revision of
-                                                   its result, or its error
+    cache, a DuckDB file    key 2                  the record of the row: the id of the
+                                                   computation, the revision of its result or its
+                                                   error, and the items it gives
                             key 12                 the item a that row 2 gives: its id, label, type
                                                    and metadata
     store of its type       the revision of a      the item a
@@ -279,6 +280,12 @@ something needs it, and runs again when the store lost the result, as a `MemoryS
 Julia exits. A read row whose source item has the same fingerprint is current without calling
 `read`. To run failed rows again without a change, open the workspace with `rebuild=true`, which
 empties its cache, so that every row calls its function again.
+
+The cache also saves the *item revision* of each row: the code revision of the `label`, `id`,
+`members` and `metadata` methods of the types of the items that the row gives. When only the item
+revision changed, as after an edit of a `label` method, the row takes its items from their stores,
+without calling its function, and computes their labels, ids, members and metadata again. A row
+whose store lost one of these items calls its function.
 
 These pages of DataBrowserCore give the details:
 

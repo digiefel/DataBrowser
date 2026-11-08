@@ -115,15 +115,11 @@ function Base.write(store::DuckDBStore, key::Integer, value)
         ## The value replaces what was written before under its key.
         delete!(store, stored)
         if item
-            dropped = edit!(store.metadata_rows, stored, given)
             ## TODO: when a code change gives a metadata name values of another type, each write
             ## of the new values fails until the file is deleted. The column should take the new
             ## type; the workspace cache and the metadata of the workspace in memory keep the
             ## first type of a name too.
-            if !isempty(dropped)
-                delete!(store.metadata_rows, stored)
-                error("$(typeof(value)) $(id(value)) cannot be stored: " * join(dropped, "; "))
-            end
+            edit!(store.metadata_rows, [stored => given])
             store.metadata[stored] = given
             shell = StoredShell(stored, id(value), _serialize_type(typeof(value)))
             edit!(store.shell_rows, stored, shell)
