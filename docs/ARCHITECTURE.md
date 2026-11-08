@@ -296,6 +296,88 @@ These pages of DataBrowserCore give the details:
 | [`Evaluate.jl`](code/lib/DataBrowserCore/src/Workspace/Evaluate.md) | how rows run, the ids of computations and the revisions of results, where results are kept, code changes |
 | [`CodeRevisions.jl`](code/lib/DataBrowserCore/src/CodeRevisions.md) | the code revision of a function: what it follows and what it cannot see |
 
+### How windows and scripts read the workspace
+
+The workers run project code without a lock. To change the catalog, before and after a row runs,
+they take the *lock of the catalog*, which lets one task at a time change it. Windows and scripts
+read the workspace without that lock, so a frame of the browser never waits for a worker. Instead,
+they read two snapshots that the workspace *publishes*: it replaces each of them whole and never
+changes a published one, so a reader needs no lock.
+
+- The *table `items`*, with one row for each item, groups included: its id, label, type, readiness,
+  groups and metadata, and where its latest version is kept. A background task of the workspace,
+  the *publishing task*, makes a new version of the table from the catalog when items change: at
+  once while a window or a script waits for an item, or when no work is left, and otherwise at most
+  every 0.05 s. It also adds to the catalog the rows of the new computations that `evaluate` gets.
+- The *shared state*: the selection of the workspace, its tags and the order of its items.
+  `select!`, `tag!`, `untag!` and `sort!` replace it whole, one at a time, and `tag!` saves the tags
+  in `tags.txt` before the new state replaces the old one. Every window and script sees the same
+  shared state: a script that selects items selects them in the browser too.
+
+```mermaid
+flowchart LR
+    workers["the workers:<br/>read and process"]
+    catalog["the catalog"]
+    task["the publishing task"]
+    subgraph published["published, read without a lock"]
+        table["the latest version<br/>of the table items"]
+        shared["the shared state:<br/>selection, tags, order"]
+    end
+    clients["windows and scripts"]
+    workers -- "results, under<br/>the lock of the catalog" --> catalog
+    catalog -- "the rows that changed" --> task
+    task -- "publishes" --> table
+    clients -- "evaluate" --> task
+    task -- "adds their rows" --> catalog
+    clients -- "select!, tag!, sort!:<br/>replace it" --> shared
+    published -- "read" --> clients
+```
+
+Each publish of the table or of the shared state takes the next number of a counter of the
+workspace, its *generation*. `select(workspace, f)` gives the items whose row passes the function
+`f`, such as the items with a tag. Another background task keeps its answers: it runs `f` on the
+rows of the items that changed since its last pass, outside the lock of the catalog, and marks each
+answer with the generation that it shows. `select(workspace, f)` returns an answer only when it
+shows the latest generation at the time of the call, so a script reads its own change right after
+it makes it:
+
+```mermaid
+sequenceDiagram
+    participant C as a script
+    participant S as the shared state
+    participant A as the answers of select
+    C->>S: tag!(workspace, ids, "check")
+    Note over S: replaced whole,<br/>generation 413
+    S-->>C: tag! returns
+    C->>A: select(workspace, row -> "check" in row.tags)
+    Note over A: the answer for generation 413,<br/>from the rows whose tags changed
+    A-->>C: the items with the tag
+```
+
+`select(workspace, ids)`, `evaluate` and `wait_workspace_idle!` wait for work. The first two wait
+until the items or the result that they ask for are computed, which run ahead of background work;
+`wait_workspace_idle!` waits until no scan and no job is left. Each call waits in its own task for
+a version of the table that shows what it waits for, so many calls can wait at once.
+
+The browser draws each frame from the latest version of the table and from the shared state. It
+builds its tree in a background task from answers of `select(workspace, f)`, such as the items
+that no group holds, and builds it again when one of those answers changes. Also, when
+`modify_workspace!` rebuilds the workspace, it replaces its catalog and its table together, so a
+frame never sees one without the other.
+
+One read takes the lock of the catalog: the result of a row that its store lacks, which the caller
+computes again in its own task. The caller takes the lock for a moment, to read the row and its
+inputs, and runs the code of the row without the lock. A `MemoryStore` lacks every result
+after Julia restarts. Besides, two kinds of rows never keep their result in a store: the rows that
+take a part of an item, such as the rows of a table that a person selects in a window, and the rows
+that take one item out of the items that a `process` call gives.
+
+| Page | What it explains |
+| --- | --- |
+| [`Items.jl`](code/lib/DataBrowserCore/src/Workspace/Items.md) | the publishing task, the task that answers `select(workspace, f)`, and the reads by id |
+| [`Selection.jl`](code/lib/DataBrowserCore/src/Workspace/Selection.md) | `select`, the `Selection` that it gives, and the data of its items |
+| [`Operations.jl`](code/lib/DataBrowserCore/src/Workspace/Operations.md) | opening, rebuilding and closing a workspace, `select!` and the shared state |
+
 <!-- TODO: move the sections below into the code that they describe (Items.jl, Calls.jl). -->
 
 ### Other computations

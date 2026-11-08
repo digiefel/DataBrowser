@@ -87,7 +87,7 @@ condition that a client can filter and sort by:
 | `readiness` | `CURRENT`, `WORKING`, `FAILED` or `UNPROCESSED` | `readiness(workspace, id)`, internal |
 | `source` | the id of the source item that it comes from | `source_item_id(workspace, id)`, internal |
 | `groups` | the ids of the groups that hold it | a column |
-| `tags` | the names of its tags, from the shared state | a column, from the catalog |
+| `tags` | the names of its tags, from the shared state | a column |
 | one per metadata key | its metadata, `missing` where it has none | columns |
 
 The data of an item is a column of the `Selection` that `select(workspace, ids)` gives, and loads
@@ -216,37 +216,25 @@ sequenceDiagram
 | `materialize_items(workspace, ids)` | `items(select(workspace, ids))` |
 | `items(workspace, tag)` and `items(workspace, !tag)` | `select(workspace, f)` with `row.tags` |
 | `close_workspace!` | `close` and `isopen` |
-| the counters `generation`, `status_revision`, `selection.revision` and `tags.revision` | the generation of each publish |
+| `generation(workspace)`, internal | `generation(workspace)`, public |
 | the fields that the browser reads: the catalog, the selection, the tags, the cache, the scan and the locks | the calls above, and the fields of `workspace_status` |
 
 ## Open questions
 
 - What form do conditions and orders take across the protocol? Every read by condition takes a
   Julia function today; `SortKeys` is already an order as data.
+- How does a client read, without the lock of the catalog, the result of a row that its store
+  lacks? Today the workspace computes it again in the caller, under the lock. The row could read
+  its inputs from a published version of the table instead; or the publishing task could give the
+  row to a worker, and other clients would see it working again until it ends.
 
 ## Building it
 
-Each step keeps the public functions as they are, and lands on the branch `visualizers`. Each step
-puts in place what replaces a lock before the lock goes:
-
-1. **The shared state.** The selection (its ids in the order given, including ids of items that
-   come later), the tags and the order become one value that a write replaces whole, under a lock of
-   its own, and that `tag!` saves to `tags.txt` under the same lock. The rows take their tags from
-   it. `select!`, `tag!`, `untag!` and `sort!` then take neither the catalog lock nor the lifecycle
-   lock.
-2. **Generations.** A version of the table, the shared state and each answer of `select` carry the
-   generation that they show; `select(workspace, f)` gives only an answer at the latest generation.
-   The answers are made outside the catalog lock, so that a slow function given to `select` delays
-   neither a version nor a write.
-3. **`evaluate` and the code of an item.** `evaluate` puts its computation in the queue and waits
-   in the caller, so that many calls at once, as DataBrowserPlots makes them, wait in parallel. The
-   computation and the inputs of each row are published with the table, so that `computation`,
-   `inputs` and `calls` read them without the lock.
-4. **Rebuilding.** A rebuild replaces the catalog and the table `items` together, in one atomic
-   step, so that a frame never sees one without the other. The browser's frame then stops taking
-   the lifecycle lock.
-5. **The rest.** `wait_workspace_idle!` and the data of an item that its store lacks no longer take
-   the catalog lock.
+The parts that keep the public functions as they are landed on the branch `visualizers` on
+8 November 2026: the shared state, generations, `evaluate` waiting in its caller, a rebuild that
+replaces the catalog and the table together, and `wait_workspace_idle!` without the lock of the
+catalog. [Architecture](../ARCHITECTURE.md) describes them. Only the result of a row that its store
+lacks still takes that lock, as the open question above says.
 
 The parts that change public functions wait on a branch of their own until they are approved: the
 new columns of the row, `generation` with a public docstring, `isopen`, `close`, `Readiness` with
