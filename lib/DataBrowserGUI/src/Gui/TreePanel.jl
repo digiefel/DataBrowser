@@ -212,9 +212,10 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     ig.SetNextItemShortcut(ig.ImGuiMod_Ctrl | ig.ImGuiKey_F, ig.ImGuiInputFlags_Tooltip)
     ig.SetNextItemWidth(stop - start - unsafe_load(ig.GetStyle()).ItemSpacing.x)
     ig.ImGuiTextFilter_Draw(filter_tree, "##tree_filter")
-    ## A text field with the keyboard, such as the filter, takes Ctrl+A to select its text.
-    if ig.IsKeyPressed(ig.ImGuiKey_A) && ig.IsWindowFocused() && unsafe_load(ig.GetIO().KeyCtrl) &&
-            !unsafe_load(ig.GetIO().WantTextInput)
+    ## A text field with the keyboard, such as the filter, takes Ctrl+A to select its text. A click
+    ## on an item gives the keyboard to the list, a child window of the tree.
+    if ig.IsKeyPressed(ig.ImGuiKey_A) && ig.IsWindowFocused(ig.ImGuiFocusedFlags_ChildWindows) &&
+            unsafe_load(ig.GetIO().KeyCtrl) && !unsafe_load(ig.GetIO().WantTextInput)
         Workspace.select!(workspace, unique!([item.id for item in items]))
         # The browser made this selection itself: nothing to reveal.
         state.selection_revision = workspace.selection.revision
@@ -225,8 +226,11 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     target = state.scroll_to_item_id === nothing ? nothing : findfirst(item -> item.id == state.scroll_to_item_id, items)
     state.scroll_to_item_id = nothing
     drawn = 0
+    ## The list scrolls in a child window of its own, which fills the rest of the tree: the lines
+    ## above it stay in place.
     table_flags = ig.ImGuiTableFlags_BordersV | ig.ImGuiTableFlags_BordersOuterH | ig.ImGuiTableFlags_Resizable |
-        ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_Reorderable | ig.ImGuiTableFlags_Hideable
+        ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_Reorderable | ig.ImGuiTableFlags_Hideable |
+        ig.ImGuiTableFlags_ScrollY
     if isempty(items)
         ig.TextDisabled(ig.ImGuiTextFilter_IsActive(filter_tree) ? "No items match filter" :
             state.tree_build_task === nothing ? "No data loaded" : "Loading")
