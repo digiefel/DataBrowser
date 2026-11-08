@@ -1,26 +1,26 @@
 # `select` gives items of a workspace as a `Selection`: a table with one row for each item, as in a
 # spreadsheet, with the columns `id`, `label`, `groups` and `tags`, and one column for each metadata
-# key. The data of the items, which can be large, stays outside the columns: the property
-# `selection.data` reads the data of an item only when code uses it, and `unnest` puts the data of
+# key. The data of the items, which can be large, stays outside the columns: the property `data` of
+# a `Selection` reads the data of an item only when code uses it, and `unnest` puts the data of
 # several items together in one table. For two measurements, `IV_A` of the device `D2` and `IV_B` of
 # the device `D3`, each with a table of voltages `V`:
 #
 # ```julia
-# selection = select(workspace, ["IV_A", "IV_B"])
-# selection.label     # ["IV_A", "IV_B"]
-# selection.device    # ["D2", "D3"], the metadata key `device` of each item
-# selection.data[1]   # reads the data of IV_A: (V = [0.0, 1.0],)
-# selection.data.V    # the column V of each item, read when shown: [[0.0, 1.0], [0.0, 2.0]]
+# measurements = select(workspace, ["IV_A", "IV_B"])
+# measurements.label     # ["IV_A", "IV_B"]
+# measurements.device    # ["D2", "D3"], the metadata key `device` of each item
+# measurements.data[1]   # reads the data of IV_A: (V = [0.0, 1.0],)
+# measurements.data.V    # the column V of each item, read when shown: [[0.0, 1.0], [0.0, 2.0]]
 # ```
 #
 # ```text
-#                  id      label   groups  tags  device │ selection.data
+#                  id      label   groups  tags  device │ measurements.data
 #                  "IV_A"  "IV_A"  []      []    "D2"   │ read when used ──▶ (V = [0.0, 1.0],)
 #                  "IV_B"  "IV_B"  []      []    "D3"   │ read when used ──▶ (V = [0.0, 2.0],)
-#                  └────── the columns of selection ────┘
+#                  └────── the columns of measurements ┘
 #                    copied when select returns           from the latest version of each item
 #
-#     unnest(device = selection.device, V = selection.data.V)
+#     unnest(device = measurements.device, V = measurements.data.V)
 #
 #                  device  V
 #                  "D2"    0.0    ◀── IV_A: one row for each entry of its V
@@ -32,14 +32,14 @@
 # A `Selection` comes from one of three calls: `select(workspace, ids)` gives the items with the ids
 # `ids`, `select(workspace, f)` the items for which `f(row)` returns `true`, and
 # `selection(workspace)` the items selected in the browser or with `select!`. Also, `filter` and an
-# index, such as `selection[2:5]`, give a smaller `Selection`. To read one item by its id instead,
-# use the functions of [`Items.jl`](Items.md), such as `label`, `metadata` and `readiness`, which
-# tells how far the work on the item is.
+# index, such as `measurements[2:5]`, give a smaller `Selection`. To read one item by its id
+# instead, use the functions of [`Items.jl`](Items.md), such as `label`, `metadata` and `readiness`,
+# which tells how far the work on the item is.
 #
 # Some of these calls wait for the items. An item is *computed* when its *latest version*, the
 # result of the last function call that gives the item, such as its `process` after its `read`, is
 # ready ([`Items.jl`](Items.md) shows how the workspace tracks it). `select(workspace, ids)`,
-# `selection(workspace)` and `selection.data` *ask for* the items that are not computed yet: they
+# `selection(workspace)` and `measurements.data` *ask for* the items that are not computed yet: they
 # move these items to the front of the background work, wait for them, and throw the error of an
 # item that failed. `select(workspace, f)` gives each item as the workspace shows it, computed or
 # not.
