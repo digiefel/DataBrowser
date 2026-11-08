@@ -213,8 +213,7 @@ and changes the fields inside `@lock catalog.lock`, except `findfirst`, which ta
 # readers of all rows in flat vectors when a workspace with millions of items needs it.
 mutable struct Catalog
     const lock::ReentrantLock
-    ## Notified at every change: for the workers that wait for a job, and the tasks that wait for
-    ## the workspace to be idle.
+    ## Notified at every change: for the workers that wait for a job.
     const changed::Threads.Condition
     const key::Function
     ## The positions that no row has hold `EMPTY`.

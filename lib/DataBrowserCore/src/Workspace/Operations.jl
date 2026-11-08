@@ -190,26 +190,6 @@ can_rebuild_cache(workspace::Workspace)::Bool =
 cache_work_running(workspace::Workspace)::Bool =
     workspace.cache_state in (:loading, :canceling)
 
-"""
-Whether the scan runs, a job is queued or runs, or the latest version of the table `items` does not
-follow the catalog yet.
-"""
-function engine_work_running(workspace::Workspace)::Bool
-    catalog, items = workspace.catalog, workspace.items
-    return source_scan_running(workspace) || cache_work_running(workspace) ||
-        @lock catalog.lock (workspace.running > 0 || queued(catalog) > 0 ||
-            !items.closed && (items.changed || !isempty(catalog.touched)))
-end
-
-"""
-Whether a watcher should keep refreshing: engine work is in flight or writes are still flushing.
-
-Pending cache writes are display-only busyness — reads overlay the write buffer and appends
-backpressure on row pressure, so nothing in the engine gates on flush completion.
-"""
-workspace_busy(workspace::Workspace)::Bool =
-    engine_work_running(workspace) || cache_has_pending_writes(workspace.cache.db)
-
 """Keep a background task alive until workspace shutdown."""
 function track_task!(workspace::Workspace, task::Task)::Task
     filter!(!istaskdone, workspace.background_tasks)
@@ -331,19 +311,23 @@ query_items(workspace::Workspace, predicate::AbstractString)::Vector{String} =
 query_items(workspace::Workspace)::Vector{String} = sort!(items(workspace))
 
 """
-Block until the workspace has no running scan and no queued or running work, or until `timeout`
-seconds pass. Every change of the catalog and of the scan wakes it. Cache writes still flushing do
-not delay it: reads overlay the write buffer, and closing the workspace drains it.
+Block until the workspace has no running scan, no cache loading and no queued or running work, and
+the latest version of the table `items` shows it, or until `timeout` seconds pass. Cache writes
+still flushing do not delay it: reads overlay the write buffer, and closing the workspace drains it.
 """
 function wait_workspace_idle!(workspace::Workspace; timeout::Real=60)::Workspace
     # TODO: Surface timeout through the public API instead of returning an unfinished workspace.
     deadline = time() + Float64(timeout)
-    catalog = workspace.catalog
-    @lock catalog.lock begin
-        timer = Timer(_ -> @lock(catalog.lock, notify(catalog.changed)), max(deadline - time(), 0))
+    items = workspace.items
+    ## The call waits, without the catalog lock, for a pass of `keep!` that ends after it and finds
+    ## no work left.
+    @lock items.lock begin
+        timer = Timer(_ -> @lock(items.lock, notify(items.published)), max(deadline - time(), 0))
         try
-            while engine_work_running(workspace) && time() < deadline
-                wait(catalog.changed)
+            asked = items.passes
+            notify(items.event)
+            while items.idle <= asked && !items.closed && time() < deadline
+                wait(items.published)
             end
         finally
             close(timer)

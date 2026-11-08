@@ -79,8 +79,8 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                             write!(items, rows.members, row.index, [at for (_, at) in member_values(workspace, row)])
                         write!(items, rows.failure, row.index, readiness == FAILED ? failure(workspace, row) : "")
                         write!(items, rows.changes, row.index, Catalogs.changes(catalog, row))
-                        write!(items, rows.stored, row.index, readiness == CURRENT && rows.stage[row] === nothing ?
-                            (Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row)) : nothing)
+                        write!(items, rows.stored, row.index,
+                            readiness == CURRENT ? (Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row)) : nothing)
                         value = catalog[row]
                         rows.computation[row] === value || write!(items, rows.computation, row.index, value)
                         write!(items, rows.signature, row.index,
@@ -104,8 +104,13 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                         items.draft, items.changed = items.draft + 1, false
                         last = time()
                     end
-                    ## `wait_workspace_idle!` waits until the cells follow the catalog.
-                    isempty(catalog.touched) && notify(catalog.changed)
+                    ## A pass that ends after a call of `wait_workspace_idle!` and finds no work
+                    ## left ends the call.
+                    isempty(catalog.touched) && @lock items.lock begin
+                        items.passes += 1
+                        !source_scan_running(workspace) && !cache_work_running(workspace) && workspace.running == 0 &&
+                            queued(catalog) == 0 && (items.idle = items.passes)
+                    end
                     isempty(catalog.touched)
                 end
             end

@@ -34,7 +34,6 @@ using DataBrowserCache:
     ProjectCacheSchemaError,
     ProjectCacheIdentity,
     SavedOutput,
-    cache_has_pending_writes,
     cache_pending_counts,
     close_cache_db!,
     key!,
@@ -303,12 +302,12 @@ workspace, its version in the draft is `Catalogs.NOWHERE`, and the next new item
 
 Each row of the catalog keeps cells in `rows`, at its position: its [`Readiness`](@ref), the message
 of its failure, its number of changes (see `Catalogs.changes`), for a row of the pipeline its stage
-and the values that it gave when it last ran, for any other current row the type and the revision
-under which the store of that type keeps its result, the last execution of its function, its
-computation as the catalog keeps it, the signature of its call, and for the row of a group the rows
-of the member values that it took when it last ran. An item reads its readiness, its failure and its
-revision from the row of its latest version, and `computation` and `calls` read the computation,
-the signature and the members.
+and the values that it gave when it last ran, for a current row the type and the revision of its
+result, under which the store of that type keeps the result of a row outside the pipeline, the last
+execution of its function, its computation as the catalog keeps it, the signature of its call, and
+for the row of a group the rows of the member values that it took when it last ran. An item reads
+its readiness, its failure and its revision from the row of its latest version, and `computation`
+and `calls` read the computation, the signature and the members.
 
 Each value that a row of the pipeline gives keeps its metadata in `metadata`, in the cells at its
 key: one column for each metadata key, with `missing` where a value has none. An item shows the
@@ -356,6 +355,10 @@ mutable struct Items
     ## Notified when answers are asked for, after a publish that changes them, and at each write of
     ## the shared state: it wakes `answer!`.
     const asking::Base.Event
+    ## Under `lock`: the passes of `keep!` that reached their last part, and the number of the last
+    ## of them that found no scan, no cache loading and no job; see `wait_workspace_idle!`.
+    passes::Int
+    idle::Int
     closed::Bool
 end
 function Items(catalog::Catalog)
@@ -365,7 +368,7 @@ function Items(catalog::Catalog)
         Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
             Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts(), 0, catalog),
         Union{AbstractVector{<:AbstractString},Base.RefValue{Any}}[], lock, Threads.Condition(lock), Set{String}(),
-        Dict{Any,@NamedTuple{selection::Any, generation::Int, asked::Float64}}(), Set{Int32}(), Base.Event(true), false)
+        Dict{Any,@NamedTuple{selection::Any, generation::Int, asked::Float64}}(), Set{Int32}(), Base.Event(true), 0, 0, false)
 end
 
 """

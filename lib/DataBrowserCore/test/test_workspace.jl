@@ -138,7 +138,8 @@ end
         Threads.atomic_add!(ws.generation, 1)
         reader = Threads.@spawn (W.workspace_status(ws), W.work_counts(ws), W.revision(ws, value),
             W.cache_info(ws, value), W.last_execution(ws, value), W.readiness(ws, "1"),
-            W.computation(ws, "1"), inputs(value), W.id(value), W.calls(ws, ["1"]))
+            W.computation(ws, "1"), inputs(value), W.id(value), W.calls(ws, ["1"]),
+            W.wait_workspace_idle!(ws; timeout=0.2))
         @test timedwait(() -> istaskdone(reader), 1.0) === :ok
         @test fetch(reader)[4].cached
         writer = Threads.@spawn begin

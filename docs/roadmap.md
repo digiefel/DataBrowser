@@ -211,8 +211,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
   layers live in one place: the catalog.
 - [ ] One status model. `scan.state` (7 symbols), `cache_state` (8), `cache.operation` (4), and the
   `status.label in ("Fresh", "Loaded", "Errors")` check in `workspace_status` collapse into one
-  enum and one `busy` derivation; `source_scan_running`, `cache_work_running`,
-  `engine_work_running`, `workspace_busy` become one function.
+  enum and one `busy` derivation; `source_scan_running` and `cache_work_running` become one
+  function.
 - [ ] The scan's `current::Dict{String,Any}` fingerprint map gets a type.
 - [ ] Use compact integer item keys in SQL tables and other measured hot paths while retaining
   stable logical item identities at the project boundary.

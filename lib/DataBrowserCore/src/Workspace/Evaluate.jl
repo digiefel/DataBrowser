@@ -672,11 +672,11 @@ function forget!(workspace::Workspace, type::Type, at::UInt64)::Nothing
     return nothing
 end
 
-# The type and the revision under which the stores keep the result of `row`, or for a row of the
-# pipeline, each value that it gives, from the cells `rows` of the draft or of a version of the
-# table `items`. `stored` is the type and the revision of the result of a row outside the pipeline.
-store_keys(rows::NamedTuple, row::Row, stored::Tuple{Type,UInt64})::Vector{Tuple{Type,UInt64}} = rows.stage[row] !== nothing ?
-    Tuple{Type,UInt64}[(output.type, output.revision) for output in something(rows.outputs[row], Output[])] : [stored]
+# The type and the revision under which the stores keep the result of a row, or for a row of the
+# pipeline, each value that it gives, from its stage, the values that it gave, and `stored`, the type
+# and the revision of its result.
+store_keys(stage, outputs, stored::Tuple{Type,UInt64})::Vector{Tuple{Type,UInt64}} = stage !== nothing ?
+    Tuple{Type,UInt64}[(output.type, output.revision) for output in something(outputs, Output[])] : [stored]
 
 """
     results(workspace, rows) -> Vector{Any}
@@ -699,15 +699,22 @@ failed. The results of `view` and `pick`, which `keep!` does not save, are alway
 """
 function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Some}}
     catalog = workspace.catalog
-    unsaved, vectors, parts = @lock catalog.lock begin
-        vectors = [workspace.items.rows.stage[row] !== nothing && Catalogs.result_type(catalog, row) <: AbstractVector for row in rows]
-        [catalog[row].f in (view, pick) || vector && workspace.items.rows.outputs[row] === nothing for (row, vector) in zip(rows, vectors)], vectors,
-            [store_keys(workspace.items.rows, row, (Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row))) for row in rows]
-    end
-    found = kept(workspace, parts)
+    return kept(workspace, @lock catalog.lock [(catalog[row].f, workspace.items.rows.stage[row], workspace.items.rows.outputs[row],
+        (Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row))) for row in rows])
+end
+# The results of `rows`, which `version` shows current, from the cells of `version`: without the
+# catalog lock.
+kept(workspace::Workspace, version::Version, rows::Vector{Row})::Vector{Union{Nothing,Some}} = kept(workspace,
+    [(something(version.rows.computation[row]).f, version.rows.stage[row], version.rows.outputs[row], something(version.rows.stored[row]))
+        for row in rows])
+# The results of rows, each given as its function, its stage, the values that it gave, and the type
+# and the revision of its result.
+function kept(workspace::Workspace, facts::Vector)::Vector{Union{Nothing,Some}}
+    vectors = [stage !== nothing && first(stored) <: AbstractVector for (_, stage, _, stored) in facts]
+    found = kept(workspace, Vector{Tuple{Type,UInt64}}[store_keys(stage, outputs, stored) for (_, stage, outputs, stored) in facts])
     ## Any other result has one part, or none when a row of the pipeline failed.
-    return Union{Nothing,Some}[again || any(isnothing, values) ? nothing : vector ? Some(identity.(something.(values))) : get(values, 1, nothing)
-        for (values, vector, again) in zip(found, vectors, unsaved)]
+    return Union{Nothing,Some}[f in (view, pick) || vector && outputs === nothing || any(isnothing, values) ? nothing :
+        vector ? Some(identity.(something.(values))) : get(values, 1, nothing) for ((f, _, outputs, _), values, vector) in zip(facts, found, vectors)]
 end
 
 """
@@ -747,6 +754,8 @@ time, and keep it. The row stays current: it ran before with the same revision, 
 dropped the result.
 """
 function computed!(workspace::Workspace, row::Row)
+    ## TODO: this reads the catalog under its lock, so a client that asks for a result that its
+    ## store lacks waits for the lock.
     catalog = workspace.catalog
     one = @lock catalog.lock get!(ReentrantLock, workspace.row_locks, row)
     @lock one begin
@@ -981,7 +990,9 @@ function evaluate(workspace::Workspace, value::Computation)
     end
     row = added[]
     version.rows.readiness[row] == FAILED && error(version.rows.failure[row])
-    return only(results(workspace, [row]))
+    ## The result from its store, as the version shows it, or else computed again.
+    found = only(kept(workspace, version, [row]))
+    return found === nothing ? computed!(workspace, row) : something(found)
 end
 
 """
@@ -1036,8 +1047,7 @@ function cache_info(workspace::Workspace, value::Computation)
     found = row(workspace, version, value)
     version.rows.readiness[found] == CURRENT || return (cached=false, bytes=nothing)
     bytes = 0
-    ## A row that left the pipeline keeps its result nowhere.
-    for (type, key) in store_keys(version.rows, found, something(version.rows.stored[found], (Nothing, UInt64(0))))
+    for (type, key) in store_keys(version.rows.stage[found], version.rows.outputs[found], something(version.rows.stored[found]))
         place = store(workspace, type)
         (place !== nothing && haskey(place, type, key)) || return (cached=false, bytes=nothing)
         bytes += DataBrowserAPI.stored_size(place, type, key)
