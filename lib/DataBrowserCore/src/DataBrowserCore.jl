@@ -29,7 +29,10 @@ using .Workspace:
     Tag,
     tags,
     tag!,
-    untag!
+    untag!,
+    visualize!,
+    LiveSelection,
+    FixedItems
 
 export Computation,
     ComputationExecution,
@@ -52,6 +55,9 @@ export Computation,
     Tag,
     tags,
     tag!,
-    untag!
+    untag!,
+    visualize!,
+    LiveSelection,
+    FixedItems
 
 end
