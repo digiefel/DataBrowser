@@ -542,11 +542,16 @@ function _pass_on!(view::TableView)::Nothing
     shown = _shown_columns(view)
     picked = filter(in(shown), view.grid.selected_columns)
     columns = table.paths[isempty(picked) ? shown : sort(picked)]
-    view.output = map(unique(table.row_item[view.output_rows])) do index
+    ## Each item with rows to pass on, in the order of its first row, and those rows of the item.
+    items, rows_in = Int[], Dict{Int,Vector{Int}}()
+    for row in view.output_rows
+        index = table.row_item[row]
+        haskey(rows_in, index) || push!(items, index)
+        push!(get!(Vector{Int}, rows_in, index), table.item_row[row])
+    end
+    view.output = map(items) do index
         source = Workspace.computation(selection, table.item_index[index])
-        # Not `rows`: assigned here, `rows` would be the variable above, of a type unknown to the compiler.
-        item_rows = table.item_row[[row for row in view.output_rows if table.row_item[row] == index]]
-        return Workspace.Computation(Base.view, source, TableSelection(item_rows, columns))
+        return Workspace.Computation(Base.view, source, TableSelection(rows_in[index], columns))
     end
     return nothing
 end
