@@ -1,28 +1,23 @@
 # What the browser, extensions and scripts read about the values of a workspace, by their ids, from
-# the latest version of the table `items`, and the task that publishes those versions.
+# the latest version of the table `items`, the task that publishes those versions, and the task that
+# answers `select(workspace, f)`.
 
 """
     keep!(items, workspace)
 
-The task that keeps the table `items` of `workspace` current, and the answers of
-`select(workspace, f)`, until `close(items)`. At each notification of `items.event`, it requests
-in the catalog the latest versions of the ids asked for by readers, ahead of background work. Then,
-at once while a reader waits in `wait_processed` or `evaluate` or when no scan or job is left, and
-otherwise at most once each `PUBLISH_INTERVAL`, it writes the readiness, failure, changes and store
-key of the catalog rows whose state, priority or job changed, 1000 at a time, each part under the
-catalog lock. Once none is left and a cell changed, it stores the draft as a new version. Then,
-without a lock, it runs each function given to `select` in the last 10 seconds on the rows of the
-items whose cells shown by `select` changed in that version, or whose tags changed in the shared
-state, and merges the items that pass into the order set by `sort!`. A new function runs on the row
-of every item, and a new order sorts every item again. An error stops the task, and readers that
+The task that keeps the table `items` of `workspace` current, until `close(items)`. At each
+notification of `items.event`, it requests in the catalog the latest versions of the ids asked for
+by readers, ahead of background work. Then, at once while a reader waits in `wait_processed` or
+`evaluate` or when no scan or job is left, and otherwise at most once each `PUBLISH_INTERVAL`, it
+writes the readiness, failure, changes and store key of the catalog rows whose state, priority or
+job changed, 1000 at a time, each part under the catalog lock. Once none is left and a cell
+changed, it stores the draft as a new version with the next generation, and passes the items whose
+cells shown by `select` changed to [`answer!`](@ref). An error stops the task, and readers that
 wait throw from then on.
 """
 function keep!(items::Items, workspace::Workspace)::Nothing
     catalog, columns, rows = workspace.catalog, items.columns, items.rows
     last, timer = 0.0, Timer(0)
-    ## Owned by this task: the sort key of each item, by its number, the order of those keys, for
-    ## each function the sorted numbers of the items that pass it, and the tags of the last pass.
-    keys_of, sorted_by, passed, tagged = Dict{Int32,Any}(), nothing, Dict{Any,Vector{Int32}}(), nothing
     try
         while true
             wait(items.event)
@@ -47,9 +42,9 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             ## 1000 rows at a time, each part under the catalog lock, so that a worker waits for one
             ## part at most. The last part takes all that is left, and in the same take of the
             ## lock, the draft becomes the new version when a cell changed.
-            changed = nothing
-            while changed === nothing
-                changed = @lock catalog.lock begin
+            done = false
+            while !done
+                done = @lock catalog.lock begin
                     part = length(catalog.touched) > 1000 ? 1000 : typemax(Int)
                     for row in [pop!(catalog.touched) for _ in 1:min(part, length(catalog.touched))]
                         ## `publish!` clears the cells of a removed row.
@@ -62,43 +57,71 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                         write!(items, rows.stored, row.index, readiness == CURRENT && rows.stage[row] === nothing ?
                             (Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row)) : nothing)
                     end
-                    if isempty(catalog.touched)
-                        shown = Set{Int32}()
-                        if items.changed || workspace.errors !== (@atomic items.version).errors
-                            ## The counts change only together with cells.
-                            counts = WorkspaceStageCounts(length(workspace.sources),
-                                count(catalog, typeof(read), Catalogs.CURRENT) + count(catalog, typeof(read), Catalogs.FAILED),
-                                length(workspace.versions), count(catalog, typeof(process), Catalogs.CURRENT))
+                    if isempty(catalog.touched) && (items.changed || workspace.errors !== (@atomic items.version).errors)
+                        ## The counts change only together with cells.
+                        counts = WorkspaceStageCounts(length(workspace.sources),
+                            count(catalog, typeof(read), Catalogs.CURRENT) + count(catalog, typeof(read), Catalogs.FAILED),
+                            length(workspace.versions), count(catalog, typeof(process), Catalogs.CURRENT))
+                        ## `answer!` takes a version together with the items whose cells shown by
+                        ## `select` changed up to it.
+                        @lock items.lock begin
                             @atomic items.version = Version(items.index, map(column -> Cells(column, items.count), columns),
                                 map(column -> Cells(column, BLOCK * length(column.blocks)), rows),
                                 Dict{Symbol,Cells}(name => Cells(column, BLOCK * length(column.blocks)) for (name, column) in items.metadata),
-                                workspace.errors, counts)
-                            items.draft, items.changed, shown, items.shown = items.draft + 1, false, items.shown, shown
-                            last = time()
-                            ## A window reads the `revision` of its items again when
-                            ## `status_revision` rises, and a view that keeps what it read, by
-                            ## `generation`, reads again.
-                            Threads.atomic_add!(CHANGES, 1)
-                            Threads.atomic_add!(workspace.generation, 1)
+                                workspace.errors, counts, Threads.atomic_add!(workspace.generation, 1) + 1)
+                            isempty(items.answers) || (union!(items.pending, items.shown); notify(items.asking))
                         end
-                        ## `wait_workspace_idle!` waits until the cells follow the catalog.
-                        notify(catalog.changed)
-                        shown
+                        empty!(items.shown)
+                        items.draft, items.changed = items.draft + 1, false
+                        last = time()
                     end
+                    ## `wait_workspace_idle!` waits until the cells follow the catalog.
+                    isempty(catalog.touched) && notify(catalog.changed)
+                    isempty(catalog.touched)
                 end
             end
-            ## The requests end with this version, or with the last one when no cell changed. The
-            ## answers that nobody asked for in the last 10 seconds are dropped.
-            version, shared = (@atomic items.version), (@atomic workspace.shared)
-            order = shared.order
-            functions = @lock items.lock begin
+            ## The requests end with this version, or with the last one when no cell changed.
+            @lock items.lock begin
                 setdiff!(items.requested, requested)
                 ## The calls of `evaluate` that waited since the start of this pass return.
                 foreach(row -> deleteat!(items.readers, findfirst(isequal(row), items.readers)), filter(reader -> reader isa Row, readers))
                 notify(items.published)
-                filter!(answer -> time() - answer.second.asked < 10, items.answers)
-                collect(keys(items.answers))
             end
+        end
+    catch error
+        @error "The table of the items stopped following the workspace" exception = (error, catch_backtrace())
+    finally
+        close(items)
+    end
+    return nothing
+end
+
+"""
+    answer!(items, workspace)
+
+The task that keeps the answers of `select(workspace, f)` current, until `close(items)`. At each
+notification of `items.asking`, it runs each function given to `select` in the last 10 seconds on
+the rows of the items whose cells shown by `select` changed in the versions published since its
+last pass, or whose tags changed in the shared state, and merges the items that pass into the order
+set by `sort!`. A new function runs on the row of every item, and a new order sorts every item
+again. Each answer then carries the generation of the version and of the shared state that it shows.
+The task takes no catalog lock, so a slow function delays neither a version nor a write.
+"""
+function answer!(items::Items, workspace::Workspace)::Nothing
+    ## Owned by this task: the sort key of each item, by its number, the order of those keys, for
+    ## each function the sorted numbers of the items that pass it, and the tags of the last pass.
+    keys_of, sorted_by, passed, tagged = Dict{Int32,Any}(), nothing, Dict{Any,Vector{Int32}}(), nothing
+    try
+        while true
+            wait(items.asking)
+            items.closed && return nothing
+            ## The answers that nobody asked for in the last 10 seconds are dropped.
+            version, shared, changed, functions = @lock items.lock begin
+                filter!(answer -> time() - answer.second.asked < 10, items.answers)
+                changed, items.pending = items.pending, Set{Int32}()
+                (@atomic items.version), (@atomic workspace.shared), changed, collect(keys(items.answers))
+            end
+            order, generation = shared.order, max(version.generation, shared.generation)
             ## The items whose tags changed count as changed, and when the tags were defined again,
             ## every item with a tag, whose tags may sort in another order.
             if tagged !== nothing && shared.tags !== tagged
@@ -118,70 +141,73 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             isequal(order, sorted_by) || union!(changed, Int32(1):Int32(length(version.columns.id)))
             foreach(n -> present(n) || delete!(keys_of, n), changed)
             ## The answers stay as they are when no item that `select` shows changed.
-            isempty(changed) && all(f -> haskey(passed, f), functions) && continue
-            ## The rows as `select` gives them, with `missing` for each metadata key that an item
-            ## does not have: of the changed items, or of every item when a function is new.
-            ## TODO(scale): a new function runs on the row of every item.
-            asked = any(f -> !haskey(passed, f), functions) ? filter(present, Int32(1):Int32(length(version.columns.id))) :
-                filter(present, collect(changed))
-            table = Selection(workspace, version, shared, asked; every=true)
-            ## The functions of a script run in the latest world, so that they can call the code
-            ## that the script defined after the workspace opened.
             remade = Any[]
-            try
-                for (n, row) in zip(asked, table)
-                    n in changed && (keys_of[n] = Base.invokelatest(order.by, row))
-                end
-                for f in functions
-                    before = get(passed, f, nothing)
-                    moved = Int32[]
+            if !isempty(changed) || any(f -> !haskey(passed, f), functions)
+                ## The rows as `select` gives them, with `missing` for each metadata key that an
+                ## item does not have: of the changed items, or of every item when a function is
+                ## new.
+                ## TODO(scale): a new function runs on the row of every item.
+                asked = any(f -> !haskey(passed, f), functions) ? filter(present, Int32(1):Int32(length(version.columns.id))) :
+                    filter(present, collect(changed))
+                table = Selection(workspace, version, shared, asked; every=true)
+                ## The functions of a script run in the latest world, so that they can call the code
+                ## that the script defined after the workspace opened.
+                try
                     for (n, row) in zip(asked, table)
-                        before === nothing || n in changed || continue
-                        pass = try
-                            Base.invokelatest(f, row) === true
-                        catch error
-                            @error("A function given to `select` failed: the items it fails on are left out",
-                                item = version.columns.id[n], exception = (error, catch_backtrace()), _id = objectid(f), maxlog = 1)
-                            false
+                        n in changed && (keys_of[n] = Base.invokelatest(order.by, row))
+                    end
+                    for f in functions
+                        before = get(passed, f, nothing)
+                        moved = Int32[]
+                        for (n, row) in zip(asked, table)
+                            before === nothing || n in changed || continue
+                            pass = try
+                                Base.invokelatest(f, row) === true
+                            catch error
+                                @error("A function given to `select` failed: the items it fails on are left out",
+                                    item = version.columns.id[n], exception = (error, catch_backtrace()), _id = objectid(f), maxlog = 1)
+                                false
+                            end
+                            pass && push!(moved, n)
                         end
-                        pass && push!(moved, n)
+                        Base.invokelatest(sort!, moved; by=n -> keys_of[n], order=order.order)
+                        ## The items that did not change keep their order, and the others that pass
+                        ## are merged in.
+                        ## TODO(scale): this goes through all the items of the answer.
+                        kept = before === nothing ? Int32[] : filter(!in(changed), before)
+                        numbers, next = sizehint!(Int32[], length(kept) + length(moved)), 1
+                        for n in moved
+                            stop = Base.invokelatest(searchsortedlast, kept, n; by=m -> keys_of[m], order=order.order)
+                            append!(numbers, @view kept[next:stop])
+                            push!(numbers, n)
+                            next = stop + 1
+                        end
+                        append!(numbers, @view kept[next:end])
+                        passed[f] = numbers
+                        (before === nothing || before != numbers || any(in(changed), numbers)) && push!(remade, f)
                     end
-                    Base.invokelatest(sort!, moved; by=n -> keys_of[n], order=order.order)
-                    ## The items that did not change keep their order, and the others that pass are
-                    ## merged in.
-                    ## TODO(scale): this goes through all the items of the answer.
-                    kept = before === nothing ? Int32[] : filter(!in(changed), before)
-                    numbers, next = sizehint!(Int32[], length(kept) + length(moved)), 1
-                    for n in moved
-                        stop = Base.invokelatest(searchsortedlast, kept, n; by=m -> keys_of[m], order=order.order)
-                        append!(numbers, @view kept[next:stop])
-                        push!(numbers, n)
-                        next = stop + 1
-                    end
-                    append!(numbers, @view kept[next:end])
-                    passed[f] = numbers
-                    (before === nothing || before != numbers || any(in(changed), numbers)) && push!(remade, f)
+                    sorted_by = order
+                catch error
+                    @error("The order that `sort!` set failed: the items sort by their labels",
+                        exception = (error, catch_backtrace()), _id = objectid(order.by), maxlog = 1)
+                    labels = SortKeys([:label => false])
+                    sort!(workspace; by=labels, lt=labels)
+                    continue
                 end
-                sorted_by = order
-            catch error
-                @error("The order that `sort!` set failed: the items sort by their labels",
-                    exception = (error, catch_backtrace()), _id = objectid(order.by), maxlog = 1)
-                labels = SortKeys([:label => false])
-                sort!(workspace; by=labels, lt=labels)
-                continue
             end
             ## The answers that are new, or whose items or cells changed, copy the cells of this
             ## version. Typed, so that a new function compiles nothing here.
-            answers = Pair{Any,Any}[f => Selection(workspace, version, shared, passed[f]) for f in remade]
+            answers = Dict{Any,Any}(f => Selection(workspace, version, shared, passed[f]) for f in remade)
             @lock items.lock begin
-                for (f, selection) in answers
-                    items.answers[f] = (; selection, items.answers[f].asked)
+                for f in functions
+                    answer = items.answers[f]
+                    items.answers[f] = (; selection=get(answers, f, answer.selection), generation, answer.asked)
                 end
                 notify(items.published)
             end
         end
     catch error
-        @error "The table of the items stopped following the workspace" exception = (error, catch_backtrace())
+        @error "The answers of `select` stopped following the workspace" exception = (error, catch_backtrace())
     finally
         close(items)
     end
@@ -191,12 +217,14 @@ end
 """
     close(items::Items)
 
-Stop the task that keeps the table `items`, [`keep!`](@ref), and wake the calls that wait for it,
-such as `select(workspace, f)`: they throw.
+Stop the tasks that keep the table `items` and the answers of `select`, [`keep!`](@ref) and
+[`answer!`](@ref), and wake the calls that wait for them, such as `select(workspace, f)`: they
+throw.
 """
 function Base.close(items::Items)::Nothing
     @lock items.lock (items.closed = true; notify(items.published))
     notify(items.event)
+    notify(items.asking)
     return nothing
 end
 

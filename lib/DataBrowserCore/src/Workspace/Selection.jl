@@ -175,23 +175,38 @@ select(workspace, row -> "run1" in row.groups && !("bad" in row.tags))
 ```
 
 Each item counts with the row that it has now: unlike `select(workspace, ids)`, the call does not
-wait for items to be processed. The workspace keeps the answer for `f` current for 10 seconds after
-each call: when an item changes, it runs `f` on the row of that item only, and the next call returns
-the current answer at once. The first call waits until `f` has run on the row of every item. Two
-closures of the same code are the same function when their captured values are `===`, such as
-strings, numbers and tuples of them, so a closure that a script or a window makes again at each
-call keeps its answer. A closure that captures a new vector or dictionary is a new function.
+wait for items to be processed. The answer shows every change that the workspace made before the
+call, so a script reads its own `tag!` and `sort!` at once. The workspace keeps the answer for `f`
+current for 10 seconds after each call: when an item changes, it runs `f` on the row of that item
+only. The first call waits until `f` has run on the row of every item. Two closures of the same
+code are the same function when their captured values are `===`, such as strings, numbers and
+tuples of them, so a closure that a script or a window makes again at each call keeps its answer.
+A closure that captures a new vector or dictionary is a new function.
 """
 function select(workspace::Workspace, f::Function)::Selection
     items = workspace.items
+    latest = max((@atomic items.version).generation, (@atomic workspace.shared).generation)
     @lock items.lock while true
-        items.closed && error("The workspace was closed")
-        answer = get(items.answers, f, (selection=nothing, asked=0.0))
-        items.answers[f] = (; answer.selection, asked=time())
-        answer.selection === nothing || return answer.selection
-        ## The task that keeps the answers runs `f` on every row, and notifies `published`.
-        notify(items.event)
+        found = answer(workspace, f)
+        found.generation >= latest && return found.selection
+        ## `answer!` notifies `published` after each pass.
         wait(items.published)
+    end
+end
+
+# The answer kept for the function `f` given to `select`, as `(; selection, generation, asked)`,
+# without waiting: `selection` is `nothing`, at generation -1, until `answer!` has run `f`. The call
+# keeps the answer current for 10 more seconds, and wakes `answer!` when the answer is older than
+# the latest version of the table `items` or of the shared state.
+function answer(workspace::Workspace, f::Function)
+    items = workspace.items
+    @lock items.lock begin
+        items.closed && error("The workspace was closed")
+        found = get(items.answers, f, (selection=nothing, generation=-1, asked=0.0))
+        items.answers[f] = (; found.selection, found.generation, asked=time())
+        found.generation < max((@atomic items.version).generation, (@atomic workspace.shared).generation) &&
+            notify(items.asking)
+        return found
     end
 end
 

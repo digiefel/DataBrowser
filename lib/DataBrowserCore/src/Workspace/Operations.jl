@@ -108,9 +108,11 @@ function close_workspace!(workspace::Workspace)::Nothing
     end
 end
 
-# Start the workers, the scan, and the watchers of the source and of the code.
+# Start the tasks that keep the table `items` and the answers of `select`, the workers, the scan,
+# and the watchers of the source and of the code.
 function start!(workspace::Workspace; rebuild::Bool)::Nothing
     track_task!(workspace, Threads.@spawn keep!(workspace.items, workspace))
+    track_task!(workspace, Threads.@spawn answer!(workspace.items, workspace))
     start_workers!(workspace)
     scan_source!(workspace; rebuild)
     watch_source(workspace.source, event -> publish_source_event!(workspace, event);
@@ -157,16 +159,18 @@ end
     share!(change, workspace)
 
 Internal. Replace the [`Shared`](@ref) state of `workspace` with the current one merged with
-`change(shared)`, a named tuple of the parts that change, and wake the tasks that follow it. Writers
-take `workspace.shared_lock`, one at a time, and `change` runs under it, so that `tag!` writes
-`tags.txt` in the order of the changes. A browser restores its saved selection this way.
+`change(shared)`, a named tuple of the parts that change, at the next generation, and wake
+[`answer!`](@ref). Writers take `workspace.shared_lock`, one at a time, and `change` runs under it,
+so that `tag!` writes `tags.txt` in the order of the changes. A browser restores its saved selection
+this way.
 """
 function share!(change::Function, workspace::Workspace)::Nothing
     @lock workspace.shared_lock begin
         shared = @atomic workspace.shared
-        @atomic workspace.shared = merge(shared, change(shared))
+        @atomic workspace.shared =
+            merge(shared, change(shared), (; generation=Threads.atomic_add!(workspace.generation, 1) + 1))
     end
-    changed!(workspace)
+    notify(workspace.items.asking)
     return nothing
 end
 

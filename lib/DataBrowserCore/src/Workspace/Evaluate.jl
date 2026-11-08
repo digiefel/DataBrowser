@@ -1191,17 +1191,6 @@ revision(version::Version, row::Row)::UInt = row == Catalogs.NOWHERE ? UInt(0) :
     hash(row.index, hash(version.rows.readiness[row] == CURRENT, hash(version.rows.changes[row])))
 
 """
-    status_revision(workspace) -> Int
-
-A number that rises whenever this or any other workspace updates what [`select`](@ref),
-[`revision`](@ref) and [`workspace_status`](@ref) give. All workspaces of the Julia session share
-it, so it may also rise for a change in another workspace. While the number stays the same, so do
-the [`revision`](@ref) of any values and the latest version of each id. Reading it costs the same
-for any number of items.
-"""
-status_revision(::Workspace)::Int = CHANGES[]
-
-"""
     work_counts(workspace) -> (completed, total, running)
 
 The jobs that ended, all jobs (ended, running and waiting), and the jobs that run now, as the

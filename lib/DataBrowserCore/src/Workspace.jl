@@ -95,14 +95,15 @@ WorkspaceScan()::WorkspaceScan = WorkspaceScan(:idle, "", nothing, Base.Threads.
 """
 The *shared state* of a workspace: the ids of its selection, in the order given, with ids of items
 that the workspace does not have yet or no longer has; its tags, as `tags.txt` keeps them, and why
-that file could not be read, if it could not; and the order of its items, set by `sort!`. Clients
-set it, and every client sees it: a script that selects items selects them in the browser too.
+that file could not be read, if it could not; the order of its items, set by `sort!`; and the
+generation of the write that made it. Clients set it, and every client sees it: a script that
+selects items selects them in the browser too.
 
 A write replaces the shared state whole with [`share!`](@ref), so a reader loads
 `@atomic workspace.shared` and reads it without a lock. A published value never changes.
 """
 const Shared = @NamedTuple{selection::Vector{String}, tags::TagState, tags_error::String,
-    order::@NamedTuple{by::Any, order::Base.Order.Ordering}}
+    order::@NamedTuple{by::Any, order::Base.Order.Ordering}, generation::Int}
 
 """
 Loaded cache state for one workspace.
@@ -225,11 +226,6 @@ const BLOCK = 1024
 # runs or waits and no reader waits.
 const PUBLISH_INTERVAL = 0.05
 
-# A counter that rises whenever a workspace publishes a version of its table `items`. A window
-# draws again when the counter differs from the value that it drew with. All open workspaces share
-# the counter, so it may also rise for a change in another workspace.
-const CHANGES = Threads.Atomic{Int}(0)
-
 """`BLOCK` cells of a column of the table `items`, with the number of the draft that copied them."""
 struct Block{T}
     draft::Int
@@ -279,8 +275,8 @@ const ROWS = (readiness = (Readiness, UNPROCESSED), failure = (String, ""), chan
 
 """
 A published version of the table `items`, which never changes: the number of each item by its id,
-the cells of each column, the cells of each row of the catalog, the metadata, and the `errors` and
-the counts of the workspace.
+the cells of each column, the cells of each row of the catalog, the metadata, the `errors` and the
+counts of the workspace, and the generation of its publish.
 """
 struct Version
     index::Base.PersistentDict{String,Int32}
@@ -289,6 +285,7 @@ struct Version
     metadata::Dict{Symbol,Cells}
     errors::Base.PersistentDict{Row,Pair{String,String}}
     counts::WorkspaceStageCounts
+    generation::Int
 end
 
 """
@@ -311,9 +308,10 @@ metadata of its value, which is the value of an earlier row when its latest row 
 when its `process` fails.
 
 Workers write the cells of a draft with [`write!`](@ref) and [`store!`](@ref), under the catalog
-lock. The task [`keep!`](@ref) makes the draft a new `Version` and stores it in `version`. A
-reader loads `version` and reads it without a lock; it takes `lock` only to ask for items or for
-the answers of `select(workspace, f)`, so it never waits for a worker.
+lock. The task [`keep!`](@ref) makes the draft a new `Version` and stores it in `version`, and the
+task [`answer!`](@ref) keeps the answers of `select(workspace, f)` current. A reader loads
+`version` and reads it without a lock; it takes `lock` only to ask for items or for answers, so it
+never waits for a worker.
 """
 mutable struct Items
     ## Under the catalog lock: the number of the draft, which each publish increases; the highest
@@ -329,8 +327,7 @@ mutable struct Items
     const metadata::Dict{Symbol,Column}
     shown::Set{Int32}
     changed::Bool
-    ## Notified at each change of the catalog, at each request, at each new function or order, and
-    ## when the table closes.
+    ## Notified at each change of the catalog, at each request, and when the table closes.
     const event::Base.Event
     @atomic version::Version
     ## Under `lock`: for each reader that waits in `wait_processed`, the ids that it waits for, and
@@ -339,13 +336,18 @@ mutable struct Items
     ## `PUBLISH_INTERVAL`.
     const readers::Vector{Union{AbstractVector{<:AbstractString},Row}}
     const lock::ReentrantLock
-    ## Notified at each publish, at each new answer of `select(workspace, f)`, and when the table
-    ## closes.
+    ## Notified at each publish, at each pass of `answer!`, and when the table closes.
     const published::Threads.Condition
-    ## Under `lock`: the ids asked for by readers, until a version follows their request, and the
-    ## answer for each function given to `select`, with the time when it was last asked for.
+    ## Under `lock`: the ids asked for by readers, until a version follows their request; the
+    ## answer for each function given to `select`, with the generation that it shows and the time
+    ## when it was last asked for; and the items whose cells shown by `select` changed in the
+    ## versions that `answer!` did not answer from yet.
     const requested::Set{String}
-    const answers::Dict{Any,@NamedTuple{selection::Any, asked::Float64}}
+    const answers::Dict{Any,@NamedTuple{selection::Any, generation::Int, asked::Float64}}
+    pending::Set{Int32}
+    ## Notified when answers are asked for, after a publish that changes them, and at each write of
+    ## the shared state: it wakes `answer!`.
+    const asking::Base.Event
     closed::Bool
 end
 function Items()
@@ -353,9 +355,9 @@ function Items()
     rows = map(((T, default),) -> Column{T}(default), ROWS)
     return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
-            Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts()),
+            Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts(), 0),
         Union{AbstractVector{<:AbstractString},Row}[], lock, Threads.Condition(lock), Set{String}(),
-        Dict{Any,@NamedTuple{selection::Any, asked::Float64}}(), false)
+        Dict{Any,@NamedTuple{selection::Any, generation::Int, asked::Float64}}(), Set{Int32}(), Base.Event(true), false)
 end
 
 """
@@ -456,7 +458,8 @@ mutable struct Workspace
     # A browser pauses automatic code updates while its main window is inactive.
     # Without a browser, the workspace checks code independently of window focus.
     @atomic code_updates_active::Bool
-    # Increased on every published change.
+    # Increased on every change: each publish of the table `items` or of the shared state takes
+    # the next number as its generation.
     generation::Base.Threads.Atomic{Int}
     # The last computed status with the generation it reflects, replaced as one value so that
     # concurrent callers of `workspace_status` never pair a status with the wrong generation.
@@ -532,7 +535,7 @@ function Workspace(
         # The items sort by their labels until a call to `sort!`.
         (; selection=String[], tags(project, folder)..., order=let labels = SortKeys([:label => false])
             (by=labels, order=Base.Order.ord(labels, Base.identity, false))
-        end),
+        end, generation=0),
         ReentrantLock(),
         WorkspaceCache(identity, cache_db, disk_error, :load),
         WorkspaceScan(),

@@ -145,11 +145,13 @@ end
             tag!(ws, Tag("held"))
             tag!(ws, "1", "held")
             sort!(ws; by=row -> row.id)
+            # A script reads its own writes at once.
+            W.select(ws, row -> "held" in row.tags).id
         end
-        @test timedwait(() -> istaskdone(writer), 1.0) === :ok
+        @test timedwait(() -> istaskdone(writer), 5.0) === :ok
         notify(release)
         wait(holder)
-        wait(writer)
+        @test fetch(writer) == ["1"]
         @test W.selection(ws).tags == [["held"]]
     finally
         W.close_workspace!(ws)

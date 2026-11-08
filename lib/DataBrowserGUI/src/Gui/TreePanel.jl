@@ -180,11 +180,11 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
             cache = state.tree_cache = built
         end
     end
-    ## While no build runs, ask for every answer at each frame: the workspace keeps an answer
-    ## current while it is asked for, and returns it right away.
+    ## While no build runs, ask for every answer at each frame, without waiting: the workspace keeps
+    ## an answer current while it is asked for.
     ## TODO(scale): one call for each group that shows its members.
     if state.tree_build_task === nothing && (cache === nothing || cache.key != key ||
-            any(((f, answer),) -> Workspace.select(workspace, f) !== answer, cache.answers))
+            any(((f, answer),) -> Workspace.answer(workspace, f).selection !== answer, cache.answers))
         ## The build reads copies of the state, since the frame keeps changing it, and never calls
         ## ImGui.
         expanded, tree_filter, tag_visibility, tags_ready =
