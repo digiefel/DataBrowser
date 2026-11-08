@@ -212,7 +212,9 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     ig.SetNextItemShortcut(ig.ImGuiMod_Ctrl | ig.ImGuiKey_F, ig.ImGuiInputFlags_Tooltip)
     ig.SetNextItemWidth(stop - start - unsafe_load(ig.GetStyle()).ItemSpacing.x)
     ig.ImGuiTextFilter_Draw(filter_tree, "##tree_filter")
-    if ig.IsKeyPressed(ig.ImGuiKey_A) && ig.IsWindowFocused() && unsafe_load(ig.GetIO().KeyCtrl)
+    ## A text field with the keyboard, such as the filter, takes Ctrl+A to select its text.
+    if ig.IsKeyPressed(ig.ImGuiKey_A) && ig.IsWindowFocused() && unsafe_load(ig.GetIO().KeyCtrl) &&
+            !unsafe_load(ig.GetIO().WantTextInput)
         Workspace.select!(workspace, unique!([item.id for item in items]))
         # The browser made this selection itself: nothing to reveal.
         state.selection_revision = workspace.selection.revision
