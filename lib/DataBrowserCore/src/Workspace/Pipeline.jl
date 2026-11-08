@@ -20,9 +20,16 @@
 # string that the project chooses and that stays the same from one session to the next. A value
 # with the id of a value that an earlier row gives is a later *version* of that value: the rows of
 # one id run in the order of the table, and the last one gives its *latest version*, which windows
-# show. A value with another id is a new value. Two rows that give the same id at the same stage,
-# or a row that gives the id of a value that it does not read, are a project error: the status panel
-# of the browser shows it next to the row, and the value keeps the version it had.
+# show. A value with another id is a new value.
+#
+# A row fails when it gives one id twice. It also fails when another row of the same *stage* gives
+# one of its ids already. A stage is a line of the table, except that reads and group reads are one
+# stage: when two files hold an item with the same id, the read that finishes second fails.
+# Finally, a row fails when it gives the id of a value of an earlier row that it does not read. Like
+# any failure, a failed row gives no values, and the status panel of the browser shows the error
+# next to it. The cache saves the failure of a row that gives one id twice, which depends on that
+# row alone. When another row gives the id, the next session runs the row again, and the row
+# succeeds once the other row is gone.
 #
 # A group is a value with members: [`members`](@ref) gives their ids. A group read and a group
 # process take the values of its members of the type `T` that their method takes: for each member,
@@ -182,7 +189,8 @@ end
 Make `outputs` the values that the row of the pipeline `row` gives, and add, change or release the
 rows that read them. `nothing` stands for a row without a result, which did not run yet or failed. A
 worker calls `finished!` when the row finishes, and so does `restore!` when the cache saved its
-result.
+result. When the row may not give one of these values, `finished!` throws the error of
+[`given!`](@ref) and changes nothing.
 """
 function finished!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Nothing
     read_id = source(workspace, row)
@@ -203,55 +211,53 @@ end
 """
     given!(workspace, row, outputs) -> Vector{String}
 
-Make `outputs` the values of `row`: each is a version of its id, unless another row gives that id
-at the same stage, or an earlier row gives it and `row` does not read it. With `outputs = nothing`,
-for a row without a result, `row` is a version of the value it is expected to give: the value that a
+Make `outputs` the values of `row`, each a version of its id. `given!` throws an error, and changes
+nothing, when `row` gives one id twice, when another row of its stage gives one of these ids, or
+when an earlier row gives one of them and `row` does not read it. With `outputs = nothing`, for a
+row without a result, `row` is a version of the value it is expected to give: the value that a
 `process` method takes, or for a read, the source item itself, with its id. The cache forgets the
 values of the ids that `row` no longer gives. The stores forget the values that `row` no longer
-gives with the same revision, and those that the workspace does not keep. Returns the ids of the
-values whose versions changed, or none when `row` gives values of the same ids, types and members
-as before.
+gives with the same revision. Returns the ids of the values whose versions changed, or none when
+`row` gives values of the same ids, types and members as before.
 """
 function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Vector{String}
     catalog, items = workspace.catalog, workspace.items
-    stage, accepted, conflicts = items.rows.stage[row], Output[], String[]
-    for output in something(outputs, Output[])
-        others = filter(!=(row), get(workspace.versions, output.id, Row[]))
+    stage, given = items.rows.stage[row], something(outputs, Output[])
+    ## When the row gives an id that it may not give, `given!` throws before it changes anything.
+    ## Only the rows of this stage and of earlier ones count.
+    allunique(output.id for output in given) ||
+        error("it gives the id \"$(first(x.id for x in given if count(y -> y.id == x.id, given) > 1))\" twice")
+    for output in given
+        others = filter(other -> other != row && items.rows.stage[other] <= stage, get(workspace.versions, output.id, Row[]))
         earlier = filter(other -> items.rows.stage[other] < stage, others)
         reads = any(x -> x isa Part && x.id == output.id && x.of.row in earlier, catalog[row].args)
-        if any(found -> found.id == output.id, accepted)
-            push!(conflicts, "it gives the id \"$(output.id)\" twice")
-        elseif any(other -> items.rows.stage[other] == stage, others) || !(isempty(earlier) || reads)
-            push!(conflicts, "the value \"$(output.id)\" comes from $(id(catalog[others[end]]))")
-        else
-            push!(accepted, output)
-        end
+        (any(other -> items.rows.stage[other] == stage, others) || !(isempty(earlier) || reads)) &&
+            error("the item \"$(output.id)\" comes from $(id(catalog[others[end]]))")
     end
     expected = [stage == SOURCE_READ ? id(catalog[row].args[3]) : catalog[row].args[2].id]
     before = items.rows.outputs[row]
-    ids = unique!(String[[output.id for output in something(before, Output[])]; [output.id for output in accepted]; expected])
+    ids = unique!(String[[output.id for output in something(before, Output[])]; [output.id for output in given]; expected])
     for x in ids
         rows = filter!(!=(row), get!(Vector{Row}, workspace.versions, x))
-        (outputs === nothing ? x in expected : any(output -> output.id == x, accepted)) &&
+        (outputs === nothing ? x in expected : any(output -> output.id == x, given)) &&
             insert!(rows, something(findfirst(other -> items.rows.stage[other] > stage, rows), length(rows) + 1), row)
         isempty(rows) && delete!(workspace.versions, x)
     end
     ## The cache and the table `items` forget the values of the ids that the row no longer gives, and
     ## their metadata. The stores forget the values that it gave before, unless it gives them again
-    ## with the same revision, and the values that it gives and the workspace does not keep.
-    for output in [something(before, Output[]); filter(!in(accepted), something(outputs, Output[]))]
-        if !any(found -> found.id == output.id, accepted)
+    ## with the same revision.
+    for output in something(before, Output[])
+        if !any(found -> found.id == output.id, given)
             store!(items, output, Dict{Symbol,Any}())
             delete_output!(workspace.cache.db, row.index, output.id)
         end
-        any(found -> (found.type, found.revision) == (output.type, output.revision), accepted) ||
+        any(found -> (found.type, found.revision) == (output.type, output.revision), given) ||
             forget!(workspace, output.type, output.revision)
     end
-    write!(items, items.rows.outputs, row.index, outputs === nothing ? nothing : accepted)
+    write!(items, items.rows.outputs, row.index, outputs)
     foreach(x -> write!(workspace, x), ids)
     ## The group rows that take one of these values take its latest version now.
     foreach(x -> foreach(group -> input!(workspace, group, x), get(workspace.takers, x, Row[])), ids)
-    conflicts!(workspace, row, conflicts)
     shape(found) = found === nothing ? nothing : [(output.id, output.type, output.members) for output in found]
     return before !== nothing && isequal(shape(before), shape(items.rows.outputs[row])) ? String[] : ids
 end
@@ -606,18 +612,3 @@ end
 conflict_message(conflict::MetadataConflict)::String =
     "metadata :$(conflict.name) has type $(conflict.found) here but $(conflict.expected) in earlier items: " *
     "give it one type in the project, then rebuild the cache"
-
-"""
-    conflicts!(workspace, row, messages)
-
-Add the values of a row that the workspace or the cache did not keep to the error of that row: the
-status panel of the browser shows the error next to the row, and a warning with the id of its
-computation goes to the log.
-"""
-function conflicts!(workspace::Workspace, row::Row, messages::Vector{String})::Nothing
-    isempty(messages) && return nothing
-    workspace.errors = Base.PersistentDict(workspace.errors,
-        row => subject(workspace, row) => join(filter(!isempty, [last(get(workspace.errors, row, "" => "")); messages]), "; "))
-    @warn("Values were not kept", computation=id(workspace.catalog[row]), messages)
-    return nothing
-end

@@ -99,7 +99,7 @@ end
     end
 end
 
-@testset "conflicting item ids do not prevent recovery after the conflicting file is removed" begin
+@testset "of two files that give the same id, the one read second fails, and recovers after the other is removed" begin
     mktempdir() do root
         a, b = joinpath(root, "a.dat"), joinpath(root, "b.dat")
         write(a, "sample 4")
@@ -107,9 +107,11 @@ end
         ws = open_workspace(FileProject(), DirectorySource(root); cache=false, background_processing=true)
         try
             wait_workspace_idle!(ws; timeout=20)
-            @test !isempty(workspace_status(ws).errors)
-            @test query_items(ws) == [".", "sample"]
-            @test API.data(only(materialize_items(ws, ["sample"]))).value in ([2.0], [3.0])
+            # The file whose read finishes second fails, and the tree shows it in place of its item.
+            failed = first(only(workspace_status(ws).errors))
+            @test query_items(ws) == [".", failed, "sample"]
+            @test API.data(only(materialize_items(ws, ["sample"]))).value == (failed == "a.dat" ? [3.0] : [2.0])
+            # A failed file is read again when it changes.
             rm(b)
             write(a, "sample 16")
             @test timedwait(() -> reading_is(ws, "sample", 4.0), 20) === :ok

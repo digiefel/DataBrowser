@@ -9,7 +9,7 @@ struct GroupProject <: API.AbstractProject
 end
 API.project_name(::GroupProject) = "groups"
 
-# A file holds a name and one number.
+# A file holds a name and one number on each line.
 struct Reading <: API.AbstractDataItem
     name::String
     data::NamedTuple{(:value,),Tuple{Vector{Float64}}}
@@ -24,10 +24,11 @@ API.storage(project::GroupProject, ::Type{Reading}) = DuckDBStore(project.values
 const READS = Threads.Atomic{Int}(0)
 function API.read(::GroupProject, ::DirectorySource, file::SourceFile)
     Threads.atomic_add!(READS, 1)
-    ## A file of another kind, such as a note, gives no readings.
+    ## A file of another kind, such as a note, gives no readings, and a file of several lines gives
+    ## a vector of readings, one for each line.
     endswith(file.filename, ".dat") || return Reading[]
-    name, value = split(read(file.filepath, String))
-    return Reading(name, (value=[parse(Float64, value)],), Dict{Symbol,Any}())
+    readings = [Reading(name, (value=[parse(Float64, value)],), Dict{Symbol,Any}()) for (name, value) in split.(eachline(file.filepath))]
+    return length(readings) == 1 ? only(readings) : readings
 end
 
 # A folder with the total of the readings of all files below it.
@@ -119,6 +120,20 @@ end
             @test timedwait(() -> share(ws, "c") == 0.5, 20) === :ok
             @test total(ws, ".") == 8
             @test timedwait(() -> isempty(workspace_status(ws).errors), 20) === :ok
+        end
+    end; end
+end
+
+@testset "a file that gives one id twice fails, also after reopening, without being read again" begin
+    # The failing read is expected: its error log is hidden.
+    Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do; mktempdir() do dir
+        root, depot = mkpath(joinpath(dir, "files")), mkpath(joinpath(dir, "depot"))
+        write(joinpath(root, "a.dat"), "a 1\na 2")
+        in_workspace(ws -> (@test query_items(ws) == [".", "a.dat"] && !isempty(workspace_status(ws).errors)), root, depot)
+        reads = READS[]
+        in_workspace(root, depot) do ws
+            @test query_items(ws) == [".", "a.dat"] && !isempty(workspace_status(ws).errors)
+            @test READS[] == reads
         end
     end; end
 end
