@@ -686,26 +686,30 @@ end
 # larger than a million, and as many decimals as the most precise number needs, at most 6, or 3 in
 # engineering. `nothing` for a column that holds values other than numbers; `missing` is no value.
 function _number_format(values)::Union{Nothing,NumberFormat}
-    numbers = Real[]
-    for value in values
-        ismissing(value) && continue
-        _number(value) || return nothing
-        isfinite(value) && push!(numbers, value)
-    end
+    ## Table cells can have different types. `collect` gives a column of numbers of one type a
+    ## vector of that type, without converting any of its values.
+    numbers = [value for value in values if !ismissing(value)]
+    all(_number, numbers) || return nothing
+    numbers = filter(isfinite, numbers)
     isempty(numbers) && return nothing
-    # Table cells can have different types. Narrow a homogeneous numeric column before doing
-    # its repeated arithmetic, without converting any of its values.
-    return _numeric_format(identity.(numbers))
+    return _numeric_format(numbers)
 end
 
 function _numeric_format(numbers::AbstractVector{<:Real})::NumberFormat
     all(isinteger, numbers) && return (decimals=0, engineering=false, exponent_width=0)
-    sizes = [abs(number) for number in numbers if number != 0]
-    engineering = minimum(sizes) < 1e-3 || maximum(sizes) >= 1e6
-    shown = engineering ? first.(_engineering.(numbers)) : numbers
+    smallest, largest = extrema(abs(number) for number in numbers if number != 0)
+    engineering = smallest < 1e-3 || largest >= 1e6
     limit = engineering ? 3 : 6
-    decimals = maximum(number -> _number_decimals(number, limit), shown)
-    exponent_width = engineering ? maximum(length ∘ _exponent_text ∘ last ∘ _engineering, numbers) : 0
+    decimals = 0
+    for number in numbers
+        shown = engineering ? first(_engineering(number)) : number
+        decimals = max(decimals, _number_decimals(shown, limit))
+        ## No number needs more decimals than the limit.
+        decimals == limit && break
+    end
+    ## The longest exponent is that of the smallest or of the largest number.
+    exponent_width = engineering ?
+        maximum(length ∘ _exponent_text ∘ last ∘ _engineering, (smallest, largest)) : 0
     return (; decimals, engineering, exponent_width)
 end
 
