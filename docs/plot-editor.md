@@ -2,8 +2,7 @@
 
 Design decisions, curated on 21 October 2026. This plan owns panel interaction and source editing.
 [Graphics grammar](plans/graphics-grammar.md) owns declarations; [tabs](plans/tabs.md) owns files
-and [fitting](plans/fitting.md) owns numerical fitting. The linked screens are mockups, not the
-complete production editor.
+and [fitting](plans/fitting.md) owns numerical fitting.
 
 ## Layout
 
@@ -64,20 +63,29 @@ alongside presentation values; “Show in a window” opens a table over groups.
 Selecting code alone does not select a group or invent an evaluated Inspector value. Selection
 from the code view and overriding theme/default values are still open interaction questions.
 
-## Declaration and current evidence
+## What is built
+
+The plot builder of DataBrowserPlots, in
+[`BuilderView.jl`](../lib/DataBrowserPlots/ext/DataBrowserPlotsGUIExt/BuilderView.jl), is a window
+that draws a plot written as code, for the selection:
+
+- The user names the plot in the window's header: the name `tlm` is the file `plots/tlm.jl`. The
+  code shows under the figure and is edited there or in any other editor; "Save" writes the file and
+  draws the plot again, and a change from another editor shows when the window has no unsaved code.
+- The panel at the left shows the parts of `@plot` as the code names them: its `mapping`, its layers
+  with the `mapping` and `visual` of each, its `scales`, its `legend` and its `theme`. A click on a
+  value edits it, and Enter writes it into the code. Markers, line styles, axis limits, ticks and
+  palettes have controls of their own.
+- "+" adds a value, a layer, a scale or an analysis such as `fit`, offering only what the plot can
+  use; "×" removes one. The eye button hides a layer by writing `@invisible` before its line.
+
+The Inspector panel at the right, the code overlays and selection from the code are not built.
+Makie's own data inspector shows the values of the plot element under the mouse as a tooltip.
 
 The [graphics plan](plans/graphics-grammar.md#accepted-single-panel-source-form) owns the accepted
 single-panel form: a shared header, one layer per statement, explicit `*` within a layer and named
-results usable by dependent lines. Separate-panel composition remains deferred.
-
-`@plot` is now exported by [DataBrowserPlots](../lib/DataBrowserPlots/README.md), including a
-shared-header declaration and named `linear` path. The
-[scratch prototype](../work/gui-editing/fit-capture-probe.jl) explored additional dependency,
-endpoint/facet and pooling mechanics. Neither establishes a complete source editor, general
-fitting, full schema coverage or live workspace integration.
-
-[Generic screen](../work/gui-editing/header-editor-generic.png) ·
-[Synthetic TLM screen](../work/gui-editing/header-editor-tlm.png). Plot images came from the Julia
-prototype; surrounding panels are HTML mockups. Their editing-form Inspector and group chooser
-are superseded by the read-only Inspector above. The
+results usable by dependent lines, such as `contacts = fit(resistance, (Rc=1.0, Rsh=1.0))`.
+Separate-panel composition remains deferred. The HTML mockups of the panels and the prototype
+`fit-capture-probe.jl` left the repository in commit `99e6737`;
+`git show 00f1e65:work/gui-editing/fit-capture-probe.jl` prints the prototype. The
 [archive](plans/archive/2026-10-21-discussion/plot-editor.md) preserves the original document.
