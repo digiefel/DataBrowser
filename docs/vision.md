@@ -49,12 +49,11 @@ instrument integration as in LabVIEW. These capabilities share projects, workspa
 items, and public operations. They do not require a different data model for each interface.
 
 The system should support both exploratory and repeatable work. A user should be able to click around
-interactively, but also replay, script, inspect, export, and automate what happened. Instead of
-treating code as blind text files separate from data, the workspace acts as a live database of its
-source items, the dependency graph of function calls, the runtime types and values inside those
-calls, and its visualizers. Neither a scientist nor an agent writes code blind: from any visual they
-can reach the code that produced it and see the values its local variables held during that run
-([code editor](plans/code-editor.md)).
+interactively, but also replay, script, inspect, export, and automate what happened. The workspace
+already holds its source items, the function calls that it ran with the types of their arguments,
+and its visualizers. The aim is that it also keeps the values inside those calls, so that neither a
+scientist nor an agent writes code blind: from any visual they reach the code that produced it, and
+see the values that its local variables held during that run ([code editor](plans/code-editor.md)).
 
 The long-term product should make it natural to distribute open, modifiable analysis packages. These
 packages may include loaders, processors, visualizers, custom UI components, examples, documentation,

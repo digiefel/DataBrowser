@@ -57,8 +57,8 @@ Four rules follow:
 3. **A write to the shared state replaces it whole**, under a lock of its own, and saves it. The
    function returns once the new state is in place, so the next read shows the change. `evaluate`
    of a new computation queues it for the catalog, and the caller waits for the result.
-4. **Each change to the items or the shared state has a number, its generation**, which rises at
-   each change. The items, the shared state and each answer of `select` carry the generation that
+4. **Each publish of the items or of the shared state has a number, its generation**, which rises
+   at each publish; the workspace publishes the items at most every 0.05 s while work runs. The items, the shared state and each answer of `select` carry the generation that
    they show, so a client knows how recent its read is. `select(workspace, f)` gives an answer only
    at the latest generation, so a script reads its own change right after the call.
 
