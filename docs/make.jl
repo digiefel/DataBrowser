@@ -8,7 +8,8 @@ const ROOT = dirname(@__DIR__)
 # The API page shows the docstrings of the packages, which the bench environment loads.
 pushfirst!(LOAD_PATH, joinpath(ROOT, "bench"))
 import DataBrowserAPI, DataBrowserSources, DataBrowserRecipes, DataBrowserCore, DataBrowserPlots,
-    DataBrowserGUI
+    DataBrowserGUI, DataBrowserCache, DataBrowserAnnotations, DataBrowserProfiling
+include("codemap.jl")
 const GENERATED = joinpath(@__DIR__, "generated")
 # The folders whose Julia files become pages, in the order of the sidebar.
 const FOLDERS = ["src", "ext", "lib", "scripts", "test", "examples"]
@@ -20,6 +21,13 @@ mkpath(GENERATED)
 cp(joinpath(@__DIR__, "ARCHITECTURE.md"), joinpath(GENERATED, "ARCHITECTURE.md"))
 cp(joinpath(@__DIR__, "api.md"), joinpath(GENERATED, "api.md"))
 cp(joinpath(@__DIR__, "index.md"), joinpath(GENERATED, "index.md"))
+# The code map: its page, the script that draws it, and its data, made from the code.
+cp(joinpath(@__DIR__, "codemap.md"), joinpath(GENERATED, "codemap.md"))
+mkpath(joinpath(GENERATED, "assets"))
+cp(joinpath(@__DIR__, "codemap-view.js"), joinpath(GENERATED, "assets", "codemap-view.js"))
+write_codemap(joinpath(GENERATED, "assets", "codemap.js"),
+    [DataBrowserAPI, DataBrowserSources, DataBrowserRecipes, DataBrowserCore, DataBrowserPlots,
+        DataBrowserGUI, DataBrowserCache, DataBrowserAnnotations, DataBrowserProfiling], ROOT)
 
 # The Julia files that git tracks and that exist, and the new ones that it does not ignore.
 files = readlines(Cmd(`git ls-files --cached --others --exclude-standard -- '*.jl'`; dir=ROOT))
@@ -59,5 +67,5 @@ makedocs(
     # TODO: an error again once `AbstractDataItem` has a docstring and the public docstrings link
     # only to public names.
     warnonly=[:cross_references, :docs_block],
-    pages=["Home" => "index.md", "Architecture" => "ARCHITECTURE.md", "API" => "api.md", sections...],
+    pages=["Home" => "index.md", "Architecture" => "ARCHITECTURE.md", "Code map" => "codemap.md", "API" => "api.md", sections...],
 )

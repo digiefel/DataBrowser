@@ -15,6 +15,7 @@ the same project and work with the same data and results.
 ## This documentation
 
 - [Architecture](ARCHITECTURE.md) describes how the packages work together.
+- [Code map](codemap.md) shows the types of every package, made from the code.
 - [API](api.md) describes the public functions and types.
 - The remaining pages show the Julia files of the repository, one file per page: its comments as
   text, and its code.
