@@ -77,6 +77,9 @@ function open_duckdb_store(path::String, max_bytes::Integer)
     # (see `_execute_on_duckdb_threads`).
     _run(serialized, "SET external_threads = 1")
     _run(serialized, "SET threads = $(Sys.CPU_THREADS)")
+    # The buffer of the pages that DuckDB read has the limit of the cache: without it, DuckDB keeps
+    # them up to most of the memory of the computer.
+    _run(serialized, _memory_limit_sql(CACHE_MEMORY_LIMIT_MIB[]))
     ## A file that holds values of another layout is refused before anything reads or writes it.
     tables = Set(String(row.table_name) for row in
         _execute_on_duckdb_threads(serialized, "SELECT table_name FROM information_schema.tables"))

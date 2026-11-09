@@ -374,13 +374,57 @@ function call(workspace::Workspace, row::Row, value::Computation)
     end
 end
 
+"""
+    Members{T}
+
+The values of the members of a group that its `process` receives: a vector that reads each value from
+its store when the code reads it, so that a group process holds only the members that its code
+keeps. The vector reads `MEMBER_BATCH` values at a time and keeps only the last batch.
+"""
+mutable struct Members{T} <: AbstractVector{T}
+    const workspace::Workspace
+    ## The id of each member value, the row that gives it, and its type and revision in its store.
+    const ids::Vector{String}
+    const rows::Vector{Row}
+    const keys::Vector{Tuple{Type,UInt64}}
+    const lock::ReentrantLock
+    batch::Int
+    values::Vector{Any}
+end
+
+# TODO(scale): a batch of a number of values, whatever their size.
+const MEMBER_BATCH = 256
+
+Base.size(members::Members) = (length(members.ids),)
+
+function Base.getindex(members::Members{T}, index::Int)::T where {T}
+    @boundscheck checkbounds(members, index)
+    batch = cld(index, MEMBER_BATCH)
+    @lock members.lock begin
+        if members.batch != batch
+            numbers = (batch - 1) * MEMBER_BATCH + 1:min(batch * MEMBER_BATCH, length(members))
+            found = kept(members.workspace, [Tuple{Type,UInt64}[members.keys[n]] for n in numbers])
+            ## A value missing from its store is computed again, with the other values of its row.
+            members.values = Any[only(value) === nothing ? pick(computed!(members.workspace, members.rows[n]), members.ids[n]) :
+                something(only(value)) for (value, n) in zip(found, numbers)]
+            members.batch = batch
+        end
+        return members.values[index - (batch - 1) * MEMBER_BATCH]
+    end
+end
+
 # The value that a function receives for an argument: an input is the result of its row, a part is
-# the value with its id in that result, and the values of members that the row takes are read
-# together, in the order of the members.
+# the value with its id in that result, and the values of members that the row takes are a
+# `Members` vector, in the order of the members.
 function resolved(workspace::Workspace, row::Row, ::MemberValues{T}) where {T}
     catalog = workspace.catalog
-    taken = @lock catalog.lock filter!(((x, at),) -> output(workspace, at, x) !== nothing, member_values(workspace, row))
-    return T[pick(result, x) for ((x, _), result) in zip(taken, results(workspace, last.(taken)))]
+    ids, rows, keys = String[], Row[], Tuple{Type,UInt64}[]
+    @lock catalog.lock for (x, at) in member_values(workspace, row)
+        found = output(workspace, at, x)
+        found === nothing && continue
+        push!(ids, x); push!(rows, at); push!(keys, (found.type, found.revision))
+    end
+    return Members{T}(workspace, ids, rows, keys, ReentrantLock(), 0, Any[])
 end
 resolved(workspace::Workspace, ::Row, x) = resolved(workspace, x)
 resolved(workspace::Workspace, x::Input) = only(results(workspace, [x.row]))
@@ -484,7 +528,7 @@ function argument_type(workspace::Workspace, x::Part)
     found = output(workspace, x.of.row, x.id)
     return found === nothing ? Any : found.type
 end
-argument_type(::Workspace, ::MemberValues{T}) where {T} = Vector{T}
+argument_type(::Workspace, ::MemberValues{T}) where {T} = Members{T}
 argument_type(::Workspace, x) = typeof(x)
 
 # The values of members count as the sum of a hash of the id and the revision of each, which the

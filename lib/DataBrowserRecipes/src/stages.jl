@@ -100,9 +100,10 @@ registration. The id of a collection names its levels from the top down, as `waf
 function _collections(
     items::AbstractVector{RegisteredDataItem}, paths::Tuple, levels::Tuple,
 )::Vector{NamedCollection}
-    ## Each collection, by id in the order they are named, with the items below it.
-    found, below, order = Dict{String,NamedCollection}(), Dict{String,Vector{RegisteredDataItem}}(), String[]
-    for item in items
+    ## Each collection, by id in the order they are named, with the places in `items` of the items
+    ## below it. `items` reads each item when the code reads it, so the places keep no data.
+    found, below, order = Dict{String,NamedCollection}(), Dict{String,Vector{Int}}(), String[]
+    for (n, item) in enumerate(items)
         index = findfirst(path -> first(path) === label(typeof(item)), paths)
         index === nothing && continue
         path = last(paths[index])(item.data, item.metadata)
@@ -113,19 +114,20 @@ function _collections(
         for (level, name) in pairs(path)
             above, x = x, (isempty(x) ? "" : x * "/") * "$level:$name"
             if !haskey(found, x)
-                found[x], below[x] = NamedCollection{level}(x, string(name)), RegisteredDataItem[]
+                found[x], below[x] = NamedCollection{level}(x, string(name)), Int[]
                 push!(order, x)
                 isempty(above) || push!(found[above].members, x)
             end
-            push!(below[x], item)
+            push!(below[x], n)
         end
         isempty(x) || push!(found[x].members, item.id)
     end
     for x in order, (level, members, process, analyze) in levels
         collection = found[x]
         level === label(typeof(collection)) || continue
-        group = members === nothing ? below[x] :
-            filter(item -> label(typeof(item)) === members, below[x])
+        ## Only a collection with callbacks reads its items again.
+        group = members === nothing ? collect(view(items, below[x])) :
+            filter(item -> label(typeof(item)) === members, view(items, below[x]))
         isempty(group) && continue
         outputs = data.(group)
         if process !== nothing
