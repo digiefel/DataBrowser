@@ -200,6 +200,8 @@ mutable struct Node
     type::Type
 end
 
+# TODO: a row costs about 300 bytes, and each of its inputs an entry of `edges`. Keep the inputs and
+# readers of all rows in flat vectors when a workspace with millions of items needs it.
 """
     Catalog(key)
 
@@ -209,8 +211,6 @@ the computation after it replaced the computations among its arguments with thei
 [`Input`](@ref)s. The workers and the tasks of the workspace share the catalog: every function reads
 and changes the fields inside `@lock catalog.lock`, except `findfirst`, which takes no lock.
 """
-# TODO: a row costs about 300 bytes, and each of its inputs an entry of `edges`. Keep the inputs and
-# readers of all rows in flat vectors when a workspace with millions of items needs it.
 mutable struct Catalog
     const lock::ReentrantLock
     ## Notified at every change: for the workers that wait for a job.
@@ -633,6 +633,8 @@ end
 
 # ## Priority
 
+# TODO: an input keeps what it inherited after its reader is lowered, replaced or removed. The
+# workspace lowers only source rows, which read no rows.
 """
     want!(catalog, row, priority)
 
@@ -641,8 +643,6 @@ runs, and 0 means that nothing wants it. The workspace has a constant for each p
 `BACKGROUND_ITEM` for the `process` of an item in the background. Each row that `row` reads,
 directly or through other rows, inherits the priority when it has a lower one.
 """
-# TODO: an input keeps what it inherited after its reader is lowered, replaced or removed. The
-# workspace lowers only source rows, which read no rows.
 function want!(catalog::Catalog, row::Row, priority::Int)::Nothing
     @lock catalog.lock begin
         current = node(catalog, row)

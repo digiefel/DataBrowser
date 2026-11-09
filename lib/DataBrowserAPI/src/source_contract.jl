@@ -29,6 +29,8 @@ function metadata end
 """Return metadata supplied directly by a source item. The default is an empty `Dict`."""
 metadata(::AbstractDataSourceItem)::Dict = Dict()
 
+# TODO: the workspace ignores `metadata_changed`, meant to say that the metadata of source items
+# changed without the source items themselves. Implement it, or delete the field.
 """
     SourceChanges(upserts, removals; metadata_changed=false)
 
@@ -37,8 +39,6 @@ holds the source items that are new or changed, and `removals` the ids of the so
 gone. The workspace reads each source item of `upserts` again and removes the values of each source
 item of `removals`.
 """
-# TODO: the workspace ignores `metadata_changed`, meant to say that the metadata of source items
-# changed without the source items themselves. Implement it, or delete the field.
 struct SourceChanges{S<:AbstractDataSourceItem}
     upserts::Vector{S}
     removals::Vector{String}
