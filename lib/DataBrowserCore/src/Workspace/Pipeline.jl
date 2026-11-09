@@ -9,9 +9,9 @@
 #
 # Each value has an *id*, a string that the project chooses and that stays the same from one session
 # to the next. A call that takes a value and gives a value with the same id gives a later *version*
-# of it, and the windows show the *latest version*: the one with the most versions before it. A
-# value with another id is a new value. One rule makes every call of `process`, for each version `v`
-# that has a result:
+# of it. The *depth* of a version is the number of calls of `process` between it and the read of
+# its source item, and the windows show the *latest version*: the deepest one. A value with another
+# id is a new value. One rule makes every call of `process`, for each version `v` that has a result:
 #
 # | Call                           | When                                                               |
 # | ------------------------------ | ------------------------------------------------------------------ |
@@ -27,18 +27,31 @@
 #
 # A call takes the version that it is for, and its other inputs at their latest version that does
 # not come from the call itself: the group of a member `process`, and the members of a group
-# `process`. So when a member `process` gives a later version of a member, the group keeps the
-# version that it took, and the group process of the next version of the group takes the new one.
+# `process`. So when a member `process` gives a later version of a member, the group process keeps
+# the version that it took.
+#
+# The workspace gives the same values whatever the order in which the calls finish. So when two
+# results claim one id and any choice between them would depend on that order, neither counts:
+#
+# - Two calls give a value with one id, and neither takes a version of it: for example, two files
+#   hold an item with the same id.
+# - Two calls give versions of one id at the same depth: for example, `process(project, v)` and
+#   `process(project, v, group)` on the same `v`.
+#
+# Each call keeps its result, also in the cache, but gives no version of that id; a call whose
+# values are all in such a conflict stands for the version that it takes, as a call without a
+# result does. The status panel of the browser shows the conflict next to both calls. When one of
+# them no longer gives the id, the other gives its version again, without running.
+#
+# A group process also fails when it takes a version of a member that a member process with the
+# same group gave: each would give a later version of the other without end. To fix any of these,
+# change the type or the id that one of the methods returns.
 #
 # Besides the reads of the source items, the workspace adds one more row, the *source group*,
 # which makes the [`SourceGroup`](@ref) of the whole source: its members are all the source items.
 #
-# A row fails when it gives one id twice. It also fails when it gives an id that another row
-# gives, and neither of the two takes a version of it: when two files hold an item with the same id, the read that
-# finishes second fails. Like any failure, a failed row gives no values, and the status panel of the
-# browser shows the error next to it. The cache saves the failure of a row that gives one id twice,
-# which depends on that row alone. When another row gives the id, the next session runs the row
-# again, and the row succeeds once the other row is gone.
+# A row fails when it gives one id twice. Like any failure, a failed row gives no values, the status
+# panel of the browser shows the error next to it, and the cache saves the failure.
 #
 # A group is a value with members: [`members`](@ref) gives their ids. Each of these ids names a
 # value, or a source item, which stands for the values that it gives: a group that a source item
@@ -204,8 +217,7 @@ end
 Make `outputs` the values that the row of the pipeline `row` gives, and add, change or release the
 rows that read them. `nothing` stands for a row without a result, which did not run yet or failed. A
 worker calls `finished!` when the row finishes, and so does `restore!` when the cache saved its
-result. When the row may not give one of these values, `finished!` throws the error of
-[`given!`](@ref) and changes nothing.
+result.
 """
 function finished!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Nothing
     read_id = source(workspace, row)
@@ -230,30 +242,28 @@ end
 """
     given!(workspace, row, outputs) -> Vector{String}
 
-Make `outputs` the values of `row`, each a version of its id at the depth of `row`. `given!` throws
-an error, and changes nothing, when another row gives one of these ids, and neither of the two rows
-takes a version of it. With `outputs = nothing`, for a row without a result, `row` is a version of the value
-whose version it takes: for a read, the source item itself, with its id. The table `items` forgets
-the metadata of the ids that `row` no longer gives. The stores forget the values that `row` no
-longer gives with the same revision. Returns the ids of the values whose versions changed, or none
-when `row` gives values of the same ids, types and members as before.
+Make `outputs` the values of `row`, each a version of its id at the depth of `row`, unless it
+conflicts with the value of another row. Two rows conflict on an id that they both give when neither
+takes a version of it, as two reads that give one id, or when they give versions of it at the same
+depth. Each of them keeps its results, but gives no version of the ids in conflict, and the status
+of the workspace shows the conflict next to it; a row that gives only such ids counts as a row
+without a result. The conflict is a property of the results, so it does not depend on the order in
+which the rows finish, and it ends when one of the rows no longer gives the id.
+
+With `outputs = nothing`, for a row without a result, `row` is a version of the value whose version
+it takes: for a read, the source item itself, with its id. The table `items` forgets the metadata of
+the ids that `row` no longer gives. The stores forget the values that `row` no longer gives with the
+same revision. Returns the ids of the values whose versions changed, or none when `row` gives values
+of the same ids, types and members as before.
 """
 function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Vector{String}
     catalog, items = workspace.catalog, workspace.items
-    depth, given, taken = items.rows.depth[row], something(outputs, Output[]), version_of(catalog[row])
-    ## When the row gives an id that it may not give, `given!` throws before it changes anything.
-    for output in given
-        output.id == taken && continue
-        others = filter(other -> other != row && version_of(catalog[other]) != output.id, get(workspace.versions, output.id, Row[]))
-        isempty(others) || error("the item \"$(output.id)\" comes from $(id(catalog[others[end]]))")
-    end
-    before = items.rows.outputs[row]
-    ids = unique!(String[[output.id for output in something(before, Output[])]; [output.id for output in given]; taken])
+    given, before = something(outputs, Output[]), items.rows.outputs[row]
+    ids = unique!(String[[output.id for output in something(before, Output[])]; [output.id for output in given]; version_of(catalog[row])])
     for x in ids
-        rows = filter!(!=(row), get!(Vector{Row}, workspace.versions, x))
-        (outputs === nothing ? x == taken : any(output -> output.id == x, given)) &&
-            insert!(rows, something(findfirst(other -> items.rows.depth[other] > depth, rows), length(rows) + 1), row)
-        isempty(rows) && delete!(workspace.versions, x)
+        claims = filter!(!=(row), get!(Vector{Row}, workspace.claims, x))
+        any(output -> output.id == x, given) && push!(claims, row)
+        isempty(claims) && delete!(workspace.claims, x)
     end
     ## The table `items` forgets the metadata of the ids that the row no longer gives. The stores
     ## forget the values that it gave before, unless it gives them again with the same revision.
@@ -263,11 +273,68 @@ function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Ou
             forget!(workspace, output.type, output.revision)
     end
     write!(items, items.rows.outputs, row.index, outputs)
-    foreach(x -> write!(workspace, x), ids)
-    ## The group rows that take one of these values take its latest version now.
-    foreach(x -> foreach(group -> input!(workspace, group, x), get(workspace.takers, x, Row[])), ids)
+    ## The conflicts of the row, and of each other row that gives one of these ids, follow from
+    ## their results now. The row itself gives versions of `ids`; another row changes only when its
+    ## conflicts do.
+    moved = Pair{Row,Vector{String}}[row => ids]
+    for other in unique!(Row[x_row for x in ids for x_row in get(workspace.claims, x, Row[]) if x_row != row])
+        conflicted!(workspace, other) && push!(moved, other => unique!(String[[output.id for output in something(items.rows.outputs[other], Output[])]; version_of(catalog[other])]))
+    end
+    conflicted!(workspace, row)
+    for (r, xs) in moved, x in xs
+        rows = filter!(!=(r), get!(Vector{Row}, workspace.versions, x))
+        x in versions_given(workspace, r) &&
+            insert!(rows, something(findfirst(other -> items.rows.depth[other] > items.rows.depth[r], rows), length(rows) + 1), r)
+        isempty(rows) && delete!(workspace.versions, x)
+        write!(workspace, x)
+        ## The group rows that take this value take its latest version now.
+        foreach(group -> input!(workspace, group, x), get(workspace.takers, x, Row[]))
+    end
+    ## The calls of the versions of another row follow its conflicts.
+    for (r, xs) in moved[2:end]
+        refresh!(workspace, r, xs)
+    end
     shape(found) = found === nothing ? nothing : [(output.id, output.type, output.members) for output in found]
     return before !== nothing && isequal(shape(before), shape(items.rows.outputs[row])) ? String[] : ids
+end
+
+"""
+    conflicted!(workspace, row) -> Bool
+
+Make the conflicts of `row` follow the results of the rows that give its ids (see [`given!`](@ref)),
+with their message in the status of the workspace. Returns whether they changed.
+"""
+function conflicted!(workspace::Workspace, row::Row)::Bool
+    catalog, items, outputs = workspace.catalog, workspace.items, workspace.items.rows.outputs[row]
+    conflict(x, other) = other != row && (version_of(catalog[row]) != x && version_of(catalog[other]) != x ||
+        items.rows.depth[other] == items.rows.depth[row])
+    found, messages = String[], String[]
+    for output in something(outputs, Output[])
+        claims = get(workspace.claims, output.id, Row[])
+        at = findfirst(other -> conflict(output.id, other), claims)
+        at === nothing && continue
+        push!(found, output.id)
+        push!(messages, version_of(catalog[claims[at]]) == output.id ?
+            "two calls of process give a version of \"$(output.id)\" at the same depth: change the id or the type of the result of one of them" :
+            "the item \"$(output.id)\" also comes from \"$(subject(workspace, claims[at]))\"")
+    end
+    changed = found != get(workspace.conflicts, row, String[])
+    isempty(found) ? delete!(workspace.conflicts, row) : (workspace.conflicts[row] = found)
+    ## A row without a result keeps the message of its failure.
+    if outputs !== nothing
+        workspace.errors = isempty(found) ? Base.delete(workspace.errors, row) : Base.PersistentDict(workspace.errors,
+            row => subject(workspace, row) => "$(function_name(catalog[row].f)) failed: " * join(messages, "\n"))
+    end
+    return changed
+end
+
+# The ids of which `row` gives a version: those of its values that are in no conflict, or, for a
+# row without a result or with only values in conflict, the id of the value whose version it takes.
+function versions_given(workspace::Workspace, row::Row)::Vector{String}
+    outputs, conflicts = workspace.items.rows.outputs[row], get(workspace.conflicts, row, String[])
+    outputs === nothing && return [version_of(workspace.catalog[row])]
+    kept = String[output.id for output in outputs if !(output.id in conflicts)]
+    return isempty(kept) && !isempty(conflicts) ? [version_of(workspace.catalog[row])] : kept
 end
 
 """
@@ -492,8 +559,10 @@ function latest(workspace::Workspace, x::String; T=nothing, skip::Row=Catalogs.N
     return nothing
 end
 
-# The value with id `x` that `row` gave, or `nothing`.
+# The value with id `x` that `row` gave, or `nothing`, also when it conflicts with the value of
+# another row (see `given!`).
 function output(workspace::Workspace, row::Row, x::String)::Union{Nothing,Output}
+    x in get(workspace.conflicts, row, String[]) && return nothing
     found = something(workspace.items.rows.outputs[row], Output[])
     index = findfirst(output -> output.id == x, found)
     return index === nothing ? nothing : found[index]

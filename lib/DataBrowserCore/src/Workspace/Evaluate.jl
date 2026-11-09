@@ -187,8 +187,9 @@ revision of its saved result. When only the code that describes its values chang
 members and metadata again; it runs when a store no longer has one of them. A result `isequal` to
 the last result of the row keeps the revision of the last result, so that the rows that read it
 find the revisions they last ran with. A result of the wrong type fails the row: a `read` or a
-`process` must return an `AbstractDataItem`, or a vector of them. So does a result with an id that
-the row may not give (see [`given!`](@ref)), or with a metadata value that the cache cannot hold.
+`process` must return an `AbstractDataItem`, or a vector of them. So does a result that gives one id
+twice, or a metadata value that the cache cannot hold. A result whose id conflicts with the result
+of another row is kept, but gives no version of that id (see [`given!`](@ref)).
 """
 function run!(workspace::Workspace, job::Job)::Nothing
     catalog, row = workspace.catalog, job.row
@@ -310,8 +311,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
         @timed_dbg "job.finish.publish!" publish!(workspace)
     catch error
         ## When the cache cannot hold a metadata value, the row fails, and the cache saves the
-        ## failure. When another row gives one of its ids, `finished!` throws, the row fails, and the
-        ## next session runs the row again.
+        ## failure.
         written && keep!(workspace, value, output, result; pipeline, forget=true)
         failed!(workspace, job, saved ? nothing : at, error, catch_backtrace(), unique(typeof.(given)))
     end
@@ -435,6 +435,15 @@ function resolved(workspace::Workspace, row::Row, ::MemberValues{T}) where {T}
     @lock catalog.lock for (x, at) in member_values(workspace, row)
         found = output(workspace, at, x)
         found === nothing && continue
+        ## A group process that takes a version made by a member process with the same group would
+        ## make a later version of the group, then of the member, without end: the project fails.
+        group, version = version_of(catalog[row]), at
+        while catalog[version].f === process
+            value = catalog[version]
+            length(value.args) == 3 && value.args[3] isa Part && value.args[3].id == group &&
+                error("the member process of \"$x\" in \"$group\" gives the version of \"$x\" that this group process takes, so each gives a later version of the other without end: change the type that one of them returns")
+            version = value.args[2].of.row
+        end
         push!(ids, x); push!(rows, at); push!(keys, (found.type, found.revision))
     end
     return Members{T}(workspace, ids, rows, keys, ReentrantLock(), 0, Any[])

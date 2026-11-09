@@ -161,7 +161,7 @@ The workspace keeps each function call in a row of its *catalog*, a table with o
 As an example, a source has the source items `a` and `b`, and a source item `g` with the members `a`
 and `b`. Its project has the methods `read`, which gives an `Item` for `a` and `b` and a `Group`
 for `g`; `process(project, x::Item)`, which gives a `ProcessedItem`; `process(project, g::Group,
-members::Vector{ProcessedItem})`; and `process(project, x::ProcessedItem, g::Group)`, which gives
+members::AbstractVector{ProcessedItem})`; and `process(project, x::ProcessedItem, g::Group)`, which gives
 an item of a fourth type. When the workspace was opened with `background_processing=true`, which
 runs every row, the catalog has these rows:
 
@@ -183,8 +183,9 @@ runs every row, the catalog has these rows:
 The workspace adds a read row when the source lists a source item, and a `process` row when the item
 that it takes exists. A row runs after its inputs: row 2 calls `process` with the item that row 1
 gives. A row that takes an item and gives an item with the same id gives a later *version* of it:
-rows 1, 2 and 7 give three versions of `a`. Windows show the *latest version* of each item, the one
-at the end of the longest chain of calls: here `a` from row 7, `b` from row 8, `g` from row 5, and
+rows 1, 2 and 7 give three versions of `a`. The *depth* of a version is the number of `process`
+calls between it and the read: 0 for row 1, 1 for row 2 and 2 for row 7. Windows show the *latest
+version* of each item, the deepest one: here `a` from row 7, `b` from row 8, `g` from row 5, and
 `fit` from row 6, a new item. A call takes the other items that it needs at their latest version
 that does not come from its own result. So the group process takes, for each member, its latest
 version of the type that its method takes: here from rows 2 and 4, since rows 7 and 8 give another
@@ -192,6 +193,14 @@ type. `background_processing` is off by default: the workspace adds every row, r
 reads, and runs a `process` row only when a window shows its item or a script asks for it. A group
 process then takes, for each member, the latest version of that type among those that have a
 result or will run.
+
+The values do not depend on the order in which rows finish. When two rows give versions of one item
+at the same depth, or two rows that take no version of an item both give it, neither result counts
+as a version of that item, and the status panel shows the conflict next to both rows. Also, when a
+group process takes a version of a member that a member process of the same group gave, each would
+give a later version of the other without end, so the group process fails: if row 7 gave a
+`ProcessedItem`, row 6 would take it and fail. The
+[`Pipeline.jl`](code/lib/DataBrowserCore/src/Workspace/Pipeline.md) page describes these rules.
 
 ### Keys and revisions
 

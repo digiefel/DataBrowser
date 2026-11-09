@@ -103,7 +103,7 @@ end
     end
 end
 
-@testset "of two files that give the same id, the one read second fails, and recovers after the other is removed" begin
+@testset "two files that give the same id both show the conflict, whatever the order of their reads, until one is removed" begin
     mktempdir() do root
         a, b = joinpath(root, "a.dat"), joinpath(root, "b.dat")
         write(a, "sample 4")
@@ -111,11 +111,9 @@ end
         ws = open_workspace(FileProject(), DirectorySource(root); cache=false, background_processing=true)
         try
             wait_workspace_idle!(ws; timeout=20)
-            # The file whose read finishes second fails, and the tree shows it in place of its item.
-            failed = first(only(workspace_status(ws).errors))
-            @test items_of(ws) == [failed, "sample"]
-            @test API.data(only(materialize_items(ws, ["sample"]))).value == (failed == "a.dat" ? [3.0] : [2.0])
-            # A failed file is read again when it changes.
+            # The tree shows each file in place of the item in conflict.
+            @test Set(first.(workspace_status(ws).errors)) == Set(["a.dat", "b.dat"])
+            @test items_of(ws) == ["a.dat", "b.dat"]
             rm(b)
             write(a, "sample 16")
             @test timedwait(() -> reading_is(ws, "sample", 4.0), 20) === :ok
