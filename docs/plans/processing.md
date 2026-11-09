@@ -322,6 +322,11 @@ Some of this graph exists in Julia, for compiled code. The probe `compiler-struc
 Julia records nothing about data: which values were computed, from which input revisions, and
 where the results are. The `Computed` value, the record per id and the cache are Core's own.
 
+The split of [runtime and clients](runtime-and-clients.md) follows the same line. Its *Julia
+host*, the process that loads and runs project code, answers the questions about code: which
+methods take a value of a type, and the code revision of a function. *DBCore*, the piece that
+keeps the workspace, keeps the calls and their revisions.
+
 Core's code revisions (`DataBrowserCore.CodeRevisions`, described in
 [ARCHITECTURE](../ARCHITECTURE.md)) hash the code reachable from a function by following the names in
 lowered code, and every method of each function reached. The two records differ:

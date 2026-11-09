@@ -51,6 +51,12 @@ the same result in any workspace and session, so a `DuckDBStore` keeps its resul
 to the next. Core writes a copy of the complete native result, and a store gives copies. A missing
 read throws `KeyError`; a result that its store cannot read counts as lost, and its call runs again.
 
+[Runtime and clients](runtime-and-clients.md) splits Core in two: a *host*, a process that loads
+and runs the project code of one language, and *DBCore*, which keeps the workspace. A store then
+runs in the host that produced its values. The Julia host writes the copy of each result and gives
+copies, with the store from `storage(project, T)`. DBCore decides when to write, read and remove a
+result, and asks the host by the revision of that result.
+
 The schematic interface of 21 October was an object called by Core:
 
 ```julia

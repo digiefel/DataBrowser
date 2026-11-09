@@ -50,7 +50,8 @@ The [discussion archive](archive/2026-10-21-discussion/README.md) preserves the 
 | [Fitting](fitting.md) | Fitting behavior and numerical contracts | Noise models, uncertainty, failure states and solver validation |
 | [Plot editor](../plot-editor.md) | Panels, Inspector and source editing | Supported source edits, external edits, defaults and code selection |
 | [Tabs](tabs.md) | Analysis files, live work and independent selections | File/window ownership, debug capture and repeat scope |
-| [Runtime and clients](runtime-and-clients.md) | The split between the Julia runtime and its clients, and the protocol between them | One protocol for all clients; providers in other languages |
+| [Runtime and clients](runtime-and-clients.md) | The pieces (DBCore, hosts and clients), the two contracts between them, their messages, and the path from a save to the redraw | Building that path; what crosses for a visualizer; which process the browser runs in |
+| [Code editor](code-editor.md) | The code editor of the web client: structure while typing, types and values in the code, dragging code | The parser for Julia; the Julia language server, and whether LSP carries everything |
 | [Client API](client-api.md) | The functions that scripts, the browser and other clients call on a workspace | The form of a `select` condition across the protocol; the result that a store lacks, read without the catalog lock |
 | [Visualizers](visualizers.md) | Native values, view inputs and linked interaction | Input targeting, provenance and linked interaction behavior |
 | [Scientific workspace](scientific-workspace.md) | Shared source, analysis and acquisition requirements | Source/acquisition integration with the newer processing model |
