@@ -320,12 +320,15 @@ Base.@kwdef mutable struct BrowserState
     # that writes the view to its file.
     project_view_checked::Float64 = 0.0
     project_view_write::Union{Nothing,Task} = nothing
-    # The ids of the groups that show their members in the tree.
+    # The ids of the groups that show their members in the tree, and of the groups closed by the
+    # user while the filters open them, with a hash of the filters that opened them.
     expanded::Set{String} = Set{String}()
     tree_filter::String = ""
     tree_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
     # The selection of the workspace that the browser last revealed or made itself, and the id of
     # the row to scroll the tree to.
+    collapsed::Set{String} = Set{String}()
+    collapsed_for::UInt = zero(UInt)
     selection::Vector{String} = String[]
     scroll_to_item_id::Union{Nothing,String} = nothing
     # How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,

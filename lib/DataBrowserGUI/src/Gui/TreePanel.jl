@@ -1,6 +1,6 @@
 import CImGui as ig
 
-using DataBrowserAPI: AbstractGroup, kind_label, label
+using DataBrowserAPI: AbstractGroup, id, kind_label, label
 import DataBrowserCore.Workspace
 
 """
@@ -62,20 +62,22 @@ function _kind(workspace::Workspace.Workspace, x::AbstractString)::Union{Nothing
 end
 
 """
-    TreeCache(workspace, key, columns; expanded, tree_filter, filters)
+    TreeCache(workspace, key, columns; expanded, collapsed, tree_filter, filters)
 
 Build the tree drawn by the browser for `workspace`, with its items in the order set by `sort!`,
 filtered by `tree_filter` and by the [`TreeFilters`](@ref) `filters`, and with the members of each
 group in `expanded` below that group.
 
-The items held by no group are at the top, such as the group of the whole source. An item held by
-several groups appears under each of them, and a group that holds itself, directly or through its
+The items held by no group are at the top, such as the group of the whole source. Below the group
+of the source, the tree shows the items that no other group holds. An item held by several other
+groups appears under each of them, and a group that holds itself, directly or through its
 members, shows no members where it repeats.
 
 An item passes the filters when no filter hides it, and when it matches the text of `tree_filter`
 by its label or kind, has every tag and matches every condition that `filters` show alone. A group
 passes only through the text, a tag or a condition shown alone; otherwise the tree shows it only
-above the items that pass, opened. Below a group that passes, all its members show, except those
+above the items that pass, opened unless it is in `collapsed`. A word of `tree_filter` that starts
+with - hides the items it matches, as a filter does. Below a group that passes, all its members show, except those
 that `filters` hide.
 
 The result keeps `key`, `columns` and the answer from `select` used to build it, so that the
@@ -84,7 +86,8 @@ until the function has run on every item, so the browser calls this in a backgro
 copies of its state.
 """
 function TreeCache(workspace::Workspace.Workspace, key::UInt, columns::Vector{Symbol};
-        expanded::Set{String}, tree_filter::String, filters::TreeFilters)::TreeCache
+        expanded::Set{String}, collapsed::Set{String}, tree_filter::String,
+        filters::TreeFilters)::TreeCache
     ## Every item, in the order of the tree, from one function given to `select`: for each new
     ## function, the workspace copies the row of every item. This function captures nothing, so it
     ## is the same at each build, and the workspace keeps its answer current between builds.
@@ -93,12 +96,17 @@ function TreeCache(workspace::Workspace.Workspace, key::UInt, columns::Vector{Sy
     ## The columns with their types, so that going through every item stays quick.
     ids, labels = every.id::Vector{String}, every.label::Vector{String}
     groups, tags = every.groups::Vector{Vector{String}}, every.tags::Vector{Vector{String}}
-    ## The members of each group and the items held by no group, by their place in `every`.
+    ## The members of each group and the items held by no group, by their place in `every`. The
+    ## source group holds every source item; the tree shows below it only the items that no other
+    ## group holds.
     ## TODO(scale): goes through every item at each build.
-    members, top = Dict{String,Vector{Int}}(), Int[]
+    members, top, source = Dict{String,Vector{Int}}(), Int[], id(workspace.source)
     for n in eachindex(ids)
         isempty(groups[n]) && push!(top, n)
-        foreach(group -> push!(get!(Vector{Int}, members, group), n), groups[n])
+        for group in groups[n]
+            group == source && length(groups[n]) > 1 && continue
+            push!(get!(Vector{Int}, members, group), n)
+        end
     end
     ## The words of the filter, read as the ImGui text filter reads them: the first word found in
     ## the text decides, and a word starting with - excludes.
@@ -119,11 +127,15 @@ function TreeCache(workspace::Workspace.Workspace, key::UInt, columns::Vector{Sy
         type = Workspace.valuetype(workspace, ids[n])
         passing[n] = !hidden[n] && (seeks || !(type <: AbstractGroup)) &&
             _keeps(filters, tags[n], matches)
-        if passing[n] && !isempty(words)
+        if !hidden[n] && !isempty(words)
             text = lowercase(type === Any ? labels[n] :
                 string(labels[n], "\n", kind_label(workspace.project, label(type))))
             found = findfirst(((_, word),) -> occursin(word, text), words)
-            passing[n] = found === nothing ? all(first, words) : !first(words[found])
+            ## A word with - hides what it matches, as the other filters hide items, so that the
+            ## item stays hidden below a group that passes.
+            exclude = found !== nothing && first(words[found])
+            hidden[n] |= exclude
+            passing[n] &= !exclude && (found !== nothing || all(first, words))
         end
     end
     ## Whether the group `x` holds an item that passes, directly or through members that no filter
@@ -148,7 +160,7 @@ function TreeCache(workspace::Workspace.Workspace, key::UInt, columns::Vector{Sy
             passes || holds(x) || continue
             parent = Workspace.valuetype(workspace, x) <: AbstractGroup && !(x in path)
             passes || parent || continue
-            open = parent && (x in expanded || seeks && !passes)
+            open = parent && (x in expanded || seeks && !passes && !(x in collapsed))
             place = hash(x, at)
             push!(items, TreeRow(x, every[n], depth, place, parent, open, passes))
             open || continue
@@ -174,7 +186,10 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     _render_tag_state_error!(state)
     _render_filter_bar!(state)
     workspace, filters = state.workspace, TreeFilters(state)
-    key = hash((state.tree_filter, state.expanded, filters))
+    ## The groups closed by the user while a filter opens them open again when the filters change.
+    looked_for = hash((state.tree_filter, filters))
+    looked_for == state.collapsed_for || (empty!(state.collapsed); state.collapsed_for = looked_for)
+    key = hash((state.tree_filter, state.expanded, state.collapsed, filters))
     cache, task = state.tree_cache, state.tree_build_task
     ## When a build is done, show its tree, with the columns added by the frame meanwhile. If the
     ## build failed, keep the old tree until the key changes.
@@ -197,10 +212,10 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
             any(((f, answer),) -> Workspace.answer(workspace, f).selection !== answer, cache.answers))
         ## The build reads copies of the state, since the frame keeps changing it, and never calls
         ## ImGui.
-        expanded, tree_filter = copy(state.expanded), state.tree_filter
+        expanded, collapsed, tree_filter = copy(state.expanded), copy(state.collapsed), state.tree_filter
         known = cache === nothing ? Symbol[] : copy(cache.columns)
         state.tree_build_task = Threads.@spawn @timed_dbg "tree_build" TreeCache(workspace, key, known;
-            expanded, tree_filter, filters)
+            expanded, collapsed, tree_filter, filters)
     end
     items, columns = cache === nothing ? (TreeRow[], Symbol[]) : (cache.items, cache.columns)
     selected = _visible_selection(state)
@@ -235,7 +250,7 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     ## TODO: if a revealed item only appears in a later build, the tree never scrolls to it.
     target = state.scroll_to_item_id === nothing ? nothing : findfirst(item -> item.id == state.scroll_to_item_id, items)
     state.scroll_to_item_id = nothing
-    drawn = 0
+    drawn, toggled = 0, nothing
     ## The list scrolls in a child window of its own, which fills the rest of the tree: the lines
     ## above it stay in place.
     table_flags = ig.ImGuiTableFlags_BordersV | ig.ImGuiTableFlags_BordersOuterH | ig.ImGuiTableFlags_Resizable |
@@ -278,9 +293,14 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                     opened = ig.TreeNodeEx("", flags, item.row.label)
                     tagged && ig.PopStyleColor()
                     index == target && ig.SetScrollHereY(0.5)
-                    if item.parent && ig.IsItemToggledOpen()
-                        opened ? push!(state.expanded, item.id) : delete!(state.expanded, item.id)
-                    elseif ig.IsItemClicked()
+                    ## Space or Enter on the item under the keyboard selects it, as a click does. On a
+                    ## group, ImGui also opens or closes it; the next frame undoes that.
+                    keyboard = ig.IsItemActivated() && !ig.IsMouseClicked(ig.ImGuiMouseButton_Left)
+                    if item.parent && ig.IsItemToggledOpen() && !keyboard
+                        opened ? (push!(state.expanded, item.id); delete!(state.collapsed, item.id)) :
+                            (delete!(state.expanded, item.id); push!(state.collapsed, item.id))
+                        toggled = index => opened
+                    elseif ig.IsItemClicked() || keyboard
                         io = ig.GetIO()
                         ids = copy(selected.ids)
                         _update_multi_selection!(ids, item.id, [other.id for other in items],
@@ -301,7 +321,7 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                         # invalidate the compiled code here.
                         for ext in state.extensions
                             Base.invokelatest(item_context_menu!, ext, state; item_ids=() -> targets,
-                                label=name, kind=_kind(workspace, item.id))
+                                label=item.row.label, kind=_kind(workspace, item.id))
                         end
                         _render_tag_menu!(state, targets)
                         ig.EndPopup()
@@ -328,6 +348,15 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
             ig.Destroy(clipper)
         end
         ig.EndTable()
+    end
+    ## Until the new build is done, the old tree shows a group that the user opened or closed in its
+    ## new state, without the members of a closed group, so that it doesn't open again meanwhile.
+    if toggled !== nothing
+        index, opened = toggled
+        item = items[index]
+        stop = something(findnext(other -> other.depth <= item.depth, items, index + 1), length(items) + 1)
+        opened || deleteat!(items, index+1:stop-1)
+        items[index] = TreeRow(item.id, item.row, item.depth, item.place, item.parent, opened, item.passes)
     end
     state.performance.rows, state.performance.rows_drawn = length(items), drawn
     ig.EndChild()
