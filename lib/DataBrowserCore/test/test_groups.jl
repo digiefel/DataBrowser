@@ -176,3 +176,69 @@ end
         end
     end
 end
+
+# A project whose calls of `process` conflict: `ROUND` chooses the conflict.
+struct ConflictProject <: API.AbstractProject
+    values::String
+end
+API.project_name(::ConflictProject) = "conflicts"
+API.storage(project::ConflictProject, ::Type{Reading}) = DuckDBStore(project.values)
+API.read(::ConflictProject, ::DirectorySource, file::SourceFile) =
+    Reading(first(split(file.filename, '.')), (value=[parse(Float64, read(file.filepath, String))],), Dict{Symbol,Any}())
+API.read(::ConflictProject, source::DirectorySource, folder::SourceDirectory) =
+    Folder(API.id(folder), API.id.(API.members(source, folder)), nothing)
+
+# A later version of a reading that no method takes, so that its chain of versions ends.
+struct Scaled <: API.AbstractDataItem
+    name::String
+    data::Float64
+end
+API.id(scaled::Scaled) = scaled.name
+API.data(scaled::Scaled) = scaled.data
+API.metadata(::Scaled) = Dict{Symbol,Any}()
+
+const ROUND = Ref(false)
+const ROUNDS = Threads.Atomic{Int}(0)
+# Without `ROUND`, two methods take a reading and give a later version of it: a tie. With `ROUND`,
+# the process of the folder and the process of its members take each other's results.
+API.process(::ConflictProject, reading::Reading) = ROUND[] ? Reading[] : Scaled(reading.name, 2 * only(reading.data.value))
+function API.process(::ConflictProject, reading::Reading, folder::Folder)
+    ROUND[] || return Scaled(reading.name, 3 * only(reading.data.value))
+    return Reading(reading.name, (value=[only(reading.data.value) + something(folder.total, 0.0)],), reading.metadata)
+end
+function API.process(::ConflictProject, folder::Folder, readings::AbstractVector{Reading})
+    Threads.atomic_add!(ROUNDS, 1)
+    return Folder(folder.name, folder.members, sum(only(r.data.value) for r in readings; init=0.0))
+end
+
+function conflict_workspace(f, round)
+    ROUND[] = round
+    Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do; mktempdir() do dir
+        root, depot = mkpath(joinpath(dir, "files", "run")), mkpath(joinpath(dir, "depot"))
+        write(joinpath(root, "a.dat"), "1")
+        pushfirst!(DEPOT_PATH, depot)
+        ws = open_workspace(ConflictProject(joinpath(depot, "values.duckdb")), DirectorySource(dirname(root)); background_processing=true)
+        try
+            wait_workspace_idle!(ws; timeout=20)
+            f(ws)
+        finally
+            close_workspace!(ws)
+            popfirst!(DEPOT_PATH)
+        end
+    end; end
+end
+
+@testset "two calls that give a version of one item at one depth both show the conflict" begin
+    conflict_workspace(false) do ws
+        @test length(workspace_status(ws).errors) == 2
+        @test API.data(only(materialize_items(ws, ["a"]))).value == [1.0]
+    end
+end
+
+@testset "a group process that takes the result of a member process of its group fails the project after one round" begin
+    ROUNDS[] = 0
+    conflict_workspace(true) do ws
+        @test !isempty(workspace_status(ws).errors)
+        @test ROUNDS[] <= 2
+    end
+end

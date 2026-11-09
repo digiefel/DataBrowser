@@ -409,6 +409,10 @@ mutable struct Workspace
     ## one gives its latest version. A row that did not run yet counts for the value it is expected
     ## to give.
     versions::Dict{String,Vector{Row}}
+    ## The rows whose results give each id, also those whose results conflict, and the ids of each
+    ## row whose results conflict with those of another row (see `given!`).
+    claims::Dict{String,Vector{Row}}
+    conflicts::Dict{Row,Vector{String}}
     ## The ids of the members of each group, of the groups of each value, and of the groups whose
     ## members name each id, which can be a source item.
     members::Dict{String,Vector{String}}
@@ -534,6 +538,7 @@ function Workspace(
     return Workspace(
         project, source, folder, catalog,
         Dict{String,Row}(), Dict{String,Row}(), Dict{String,Vector{Row}}(),
+        Dict{String,Vector{Row}}(), Dict{Row,Vector{String}}(),
         Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(),
         Dict{Row,Taken}(), Dict{String,Vector{Row}}(),
         Dict{Tuple,Any}(),
