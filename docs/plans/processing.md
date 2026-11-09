@@ -180,7 +180,7 @@ changes a display never makes a read or an unrelated `process` call stale.
 
 Davide, 21 October: `reconstruct` is to be deleted. DataBrowserAPI still has it: `DuckDBStore`
 and `view` of an item call it. A typed store read returns the complete native value;
-[storage](storage.md#current-store-proposal) owns that interface.
+[storage](storage.md#the-store-contract) owns that interface.
 This plan owns initial construction, group formation and binding members to a native group.
 
 The public contract needs to cover initial construction and group member binding, with restored

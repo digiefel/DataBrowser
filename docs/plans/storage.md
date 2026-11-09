@@ -32,24 +32,28 @@ Earlier wording that metadata lives only in the internal store, or that Core mus
 recordings from project deletion/retention choices, is superseded. An unavailable retained input
 does not itself authorize another acquisition; source commands remain explicit operations.
 
-## Current store proposal
+## The store contract
 
-On 28 October, Davide settled the rule for computation results: authors choose caching per type.
-Cached results are copied when used. For uncached results, authors are responsible for their use;
-Core can replay their computations when a value is requested. This does not require operating-system
-copy-on-write support or wrappers around native project values.
+Built. On 28 October, Davide settled the rule for computation results: authors choose caching per
+type. Cached results are copied when used. For uncached results, authors are responsible for their
+use, and Core runs their computations again when a value is requested. This needs neither
+operating-system copy-on-write nor wrappers around native project values.
 
-The implementation uses `storage(project, T)`, defaulting to `storage(T)`, for results of any type
-`T`: items, and any other value that a computation returns. `nothing` means no store for that
-type; the supplied default is a bounded `MemoryStore`, and a DBRecipes project keeps its results in
-one `DuckDBStore`. The project's calls and interactive computations share these stores.
+`storage(project, T)` chooses the store for results of any type `T`: items, and any other value
+that a computation returns. It defaults to `storage(T)`, and `nothing` means no store for that
+type. The default is a bounded `MemoryStore`, and a DBRecipes project keeps its results in one
+`DuckDBStore`. The project's calls and interactive computations share these stores. A project
+declares the store of a type with a method, for example
+`storage(::MyProject, ::Type{MyFit}) = DuckDBStore(joinpath(@__DIR__, "results.duckdb"))`.
 
 The docstring of `AbstractStore` gives the methods of a store: `write(store, key, item)`,
 `read(store, T, keys)`, `read(store, T, key)`, `haskey(store, T, key)`, `delete!(store, T, key)`,
-`stored_size(store, T, key)` and `close(store)`. The key is the revision of the result, which means
-the same result in any workspace and session, so a `DuckDBStore` keeps its results from one opening
-to the next. Core writes a copy of the complete native result, and a store gives copies. A missing
-read throws `KeyError`; a result that its store cannot read counts as lost, and its call runs again.
+`stored_size(store, T, key)` and `close(store)`. The key is the *revision* of the result, a 64-bit
+hash that means the same result in any workspace and session, so a `DuckDBStore` keeps its results
+from one opening to the next. Core decides when to write, read and remove a result; the store
+decides how. Core writes a copy of the complete native result, and a store gives copies. A missing
+read throws `KeyError`; a result that its store cannot read counts as lost, and its call runs
+again. When a call gets a result with another revision, its last result leaves the store.
 
 [Runtime and clients](runtime-and-clients.md) splits Core in two: a *host*, a process that loads
 and runs the project code of one language, and *DBCore*, which keeps the workspace. A store then
@@ -57,30 +61,14 @@ runs in the host that produced its values. The Julia host writes the copy of eac
 copies, with the store from `storage(project, T)`. DBCore decides when to write, read and remove a
 result, and asks the host by the revision of that result.
 
-The schematic interface of 21 October was an object called by Core:
-
-```julia
-write(store, id, value)
-read(store, ::Type{T}, id) -> T
-delete!(store, id)
-```
-
-Core decides when an operation is needed; the store decides how. This candidate keyed current
-retained values by item identity, replacing/removing them through Core; the built contract above
-keys them by revision. Neither chooses a permanent history store for every old revision.
-
-Supplied stores could cover tables, files and serialized values, configurable by ordinary
-constructors. DataBrowserCache supplies `MemoryStore`, the default, and `DuckDBStore`; the final
-set is not decided. A file reference inside a value
-can be handled by a file store; it does not need a separate universal value model.
-
-A project declares the store of a type with `storage`, for example
-`storage(::MyProject, ::Type{MyFit}) = DuckDBStore(joinpath(@__DIR__, "results.duckdb"))`;
-`payload_store` was rejected.
+DataBrowserCache supplies `MemoryStore` and `DuckDBStore`; the final set is not decided. Supplied
+stores could also cover tables and files, configurable by ordinary constructors. A file reference
+inside a value can be handled by a file store; it does not need a separate universal value model.
 
 Typed store reads restore the complete native value. Davide, 21 October: the `reconstruct` hook
-is to be deleted. DataBrowserAPI still has it, and `DuckDBStore` calls it. Group formation still
-needs a public construction and member-binding contract in [processing](processing.md).
+is to be deleted. DataBrowserAPI still has it, and `DuckDBStore` calls it to save an item as its
+data and metadata. Group formation still needs a public construction and member-binding contract
+in [processing](processing.md).
 
 ## Metadata and completeness
 
@@ -88,15 +76,16 @@ A value returned directly by a helper, a value restored from storage, and a valu
 the GUI must expose consistent metadata. Core's query copy should describe that value, not contain
 additional scientific results inaccessible through `metadata(value)`.
 
-Davide, 21 October: Core drops `analyze`. Every `process` method returns a value and
-`metadata(value)` supplies its metadata. Recipes keeps an `analyze` callback and implements it
+Core has no `analyze` (Davide, 21 October). Every `process` method returns a value and
+`metadata(value)` supplies its metadata. DBRecipes keeps an `analyze` callback and implements it
 with `process`.
 
-The store keeps the value's metadata, so `read` needs no metadata argument. Core keeps its own
-metadata index in its database between sessions. Rebuilding it from the stores is needed only when
-that index is lost or damaged, or when stores are opened without it; in that rare case Core loads
-the values and calls `metadata(value)`. A separate `metadata(store, id)` hook is not proposed for
-now (Davide, 21 October).
+A store keeps the value with its metadata, so `read` needs no metadata argument. Besides, the
+workspace keeps its own copy of the metadata of each item, for queries and the browser. The cache
+file saves it in its table `output_metadata`, under the key of each item, and only there; when the
+workspace opens, it fills its table `items` in memory from that table, so a restored item shows its
+metadata at once. When the cache file is lost, the calls run again and give the metadata anew. A
+separate `metadata(store, id)` hook is not proposed for now (Davide, 21 October).
 
 ## Data queries across items: candidate capability
 
