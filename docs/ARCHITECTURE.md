@@ -111,7 +111,7 @@ flowchart TB
 
 ## The workspace
 
-A *workspace* is one opening of a project. It reads one source, such as a folder of files, a
+A *workspace* is one opening of a project. It reads one source, such as a set of files, a
 database or an instrument, which lists *source items*, such as files or the tables of a database.
 The project, a value of a subtype of `AbstractProject`, says in Julia how to read each source item
 and how to process the items that reading gives. The workspace calls these functions, keeps their

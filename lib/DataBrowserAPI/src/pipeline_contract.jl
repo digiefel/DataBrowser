@@ -20,7 +20,7 @@ item that holds several items, such as a table with one item per cycle, gives on
 `process` method that returns a vector makes the several items from it. A source item that gives no
 value, such as a file the project does not use, gives an empty vector.
 
-A source item with [`members`](@ref), such as a folder, can give a group of the project's own type,
+A source item with [`members`](@ref) can give a group of the project's own type,
 whose `members` are the ids that `members(source, item)` gives, or some of them. Each of these ids
 names a source item, which stands for the values that it gives. The source item can also give any
 other value, or none.

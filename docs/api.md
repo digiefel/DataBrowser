@@ -85,8 +85,8 @@ DataBrowserAPI.stored_size
 ### Sources
 
 A source finds source items and reports when they change. A source item is one unit that `read`
-loads, such as a file, a database record or one acquisition of an instrument. A source item with
-members, such as a folder, is a group. One source type can serve many projects.
+loads, such as a file, a database record or one acquisition of an instrument. A source item can have
+members, the source items that it holds, and its `read` can make a group of them. One source type can serve many projects.
 
 ```@docs
 DataBrowserAPI.AbstractDataSource

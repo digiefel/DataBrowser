@@ -60,8 +60,8 @@ reconstruct(::Type{<:ReadData{K}}, id::AbstractString, data, metadata::Dict) whe
     ReadData{K}(String(id), data, metadata_dict(metadata))
 
 """
-The group of a source item with members, such as a folder: its members are the ids of the source
-items in it, as the source gives them. It has the id and the label of the source item.
+The group of a source item with members: its members are the ids of the source items that it
+holds, as the source gives them. It has the id and the label of the source item.
 """
 struct SourceItemGroup <: AbstractGroup
     ## The label comes from the source item when it is needed, so that the `read` that makes the
