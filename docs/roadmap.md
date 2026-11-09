@@ -159,12 +159,12 @@ Decisions taken during the audit:
   clearing results preserves identity; closing flushes stores and checkpoints the database.
 - [x] Use one DuckDB cache backend: `cache=false` opens a private `":memory:"` database. Persistent
   and in-memory caches share stage results, metadata, queries, payload storage and invalidation.
-- [ ] Give stage outputs exact publication references and preserve metadata by producing stage.
+- [ ] Give the outputs of each row exact publication references and preserve metadata by producing row.
   Separate recorded outcome from payload availability. Reuse valid downstream results after
   upstream eviction; reconstruct resident and restored values with the same metadata.
-- [ ] Check two guarantees: a stage counts as done only after its data and metadata are stored, and
+- [ ] Check two guarantees: a row counts as done only after its data and metadata are stored, and
   a result left half-stored by a crash is computed again on reopening. Views may show a mix of
-  older and newer stage outputs, marked as not final; storing all stages in one step is not needed.
+  older and newer versions, marked as not final; storing all rows in one step is not needed.
 - [x] Replace one source's output through one Cache operation, `replace_source_output!`. Core
   supplies the earlier item ids and the new items; Cache deletes the earlier items with their
   results, stores the new ones and records the expand stage.
@@ -273,7 +273,8 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] Replace the single-reader `status_dirty` flag with `generation(ws)`, a counter every watcher
   can compare, and let `workspace_status(ws)` recompute only when it moved.
 - [ ] Add the remaining workspace accessors: `selection(ws)` and `errors(ws)`.
-- [ ] Recipes: look the recipe up once per stage chain instead of three linear scans.
+- [ ] Recipes: find the `collection` callback of an item by dispatch instead of a linear scan of the
+  registrations.
 - [ ] Strengthen internal module boundaries and import hygiene across the package family.
 - [ ] Run every example entirely through the documented public APIs and remove any remaining public
   callback dependency on cache, index, scheduler, or browser values.
