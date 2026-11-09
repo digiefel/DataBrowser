@@ -83,7 +83,7 @@ or directly produce data for each member.
 The storage direction requires native values to expose complete metadata through
 `metadata(value)`, with a rebuildable internal query copy. Group-aware member work uses the
 member's `process` method.
-The `item_data` accessor is to become `data`; the implementation has not been renamed here.
+The accessor of an item's data is `data`.
 
 Two groups writing the same metadata name to one member is unsupported and undefined; Davide
 explicitly requested no detection/reporting code. Do not use that decision to imply that every
@@ -134,8 +134,9 @@ produced is not the same as a completed producer with no matching output. Previo
 metadata keys do not prove readiness after a code change.
 
 Group selection must not be reevaluated indiscriminately on every intermediate item version.
-A source group is read with the member values its `read` signature states, and again only when
-a member gets a later value of that type; see [source-groups.md](source-groups.md).
+A group `process` method is called with the member values of the type that its signature states,
+and again only when a member gets a later value of that type. The group `read` of
+[source-groups.md](source-groups.md) was not built.
 
 The existing catalog remains the common dependency/status model. The new design must extend that
 model rather than introduce a private graph for plots or Recipes. The fixed stages are gone: every
@@ -161,8 +162,9 @@ version of a value gets the calls of `process` that a method takes. These contra
 
 ## Consistent construction
 
-Davide, 21 October: `reconstruct` is deleted. A typed store read returns the complete native
-value; [storage](storage.md#current-store-proposal) owns that interface.
+Davide, 21 October: `reconstruct` is to be deleted. DataBrowserAPI still has it: `DuckDBStore`
+and `view` of an item call it. A typed store read returns the complete native value;
+[storage](storage.md#current-store-proposal) owns that interface.
 This plan owns initial construction, group formation and binding members to a native group.
 
 The public contract needs to cover initial construction and group member binding, with restored
@@ -214,12 +216,13 @@ Direction agreed with Davide on 25 October 2026, refined on 28 October.
 The first Core implementation provides `Computation(f, args...; settings...)`, `inputs`,
 `computation(workspace, item)` and `evaluate(workspace, computation)`. Project calls and interactive
 operations use the same definition type and invocation. Definitions retain preceding computations;
-project functions receive native values. Looking up definitions does not evaluate them. Existing
-stage caches can supply evaluation results, which are copied when reused.
+project functions receive native values. Looking up definitions does not evaluate them. The
+results that the workspace keeps for the project's calls serve evaluation, and are copied when
+reused.
 
-The project's calls now form chains of any length, without fixed stages. Publication and the
-storage layout remain. Adding per-type caching, recording execution information and connecting
-the Code visualizer are still pending. The examples below describe the broader target, not the
+The project's calls now form chains of any length, without fixed stages. The store of each result
+type (`storage(project, T)`), the record of each execution (`last_execution`) and the Code
+visualizer are built. The examples below describe the broader target, not the
 completed interface. The implemented type is named `Computation`, rather than the earlier
 illustrative `Computed`.
 
@@ -232,7 +235,7 @@ keeps, so that a computation defined in a plot is reusable everywhere else.
 
 Project types are used where project code runs: `read` and the `process` methods. Values that Core
 computes are never of a project type, because no project code made them. They follow the same
-interface as project values (`id`, `metadata`, `item_data`, `members`), so Core code and project
+interface as project values (`id`, `metadata`, `data`, `members`), so Core code and project
 code read them in the same way. Their data and metadata are what the computation produced from the
 project's data and metadata, unchanged.
 
@@ -271,7 +274,7 @@ What the type gives:
 - The dependency graph is the nesting of the types and the inputs, read without running anything.
 
 A `Computed` value follows the item interface. `id` is built from the function names and the
-inputs' ids, such as `tlm([corrected(resistance(s1)), …])`. `item_data` is the result, computed
+inputs' ids, such as `tlm([corrected(resistance(s1)), …])`. `data` is the result, computed
 when it is used. `metadata` gives the named parts of the result, if it has any. `members` gives the
 items the computation read: it is derived from `args`, by following the inputs back to items, and
 not stored, so the two cannot disagree. `args` are the direct inputs and make the graph; `members`
@@ -320,7 +323,7 @@ Julia records nothing about data: which values were computed, from which input r
 where the results are. The `Computed` value, the record per id and the cache are Core's own.
 
 Core's code revisions (`DataBrowserCore.CodeRevisions`, described in
-[ARCHITECTURE](../ARCHITECTURE.md)) hash the code reachable from a stage by following the names in
+[ARCHITECTURE](../ARCHITECTURE.md)) hash the code reachable from a function by following the names in
 lowered code, and every method of each function reached. The two records differ:
 
 - The compiler's edges follow types, so they list only the methods that the argument types select.
@@ -343,7 +346,7 @@ So the code revisions already cover what the edges cover, across sessions, and t
 avoid some needless recomputations. They differ only when a method is added or changed that the
 data's types never select. In the RuO2 project every function has one method, so editing one
 recomputes the same items under both. A new method such as `analyze_pund(::Vector{Float64})`,
-which no item calls, would recompute the `process` stage of 62,381 of its 65,197 items (PUND
+which no item calls, would recompute the `process` calls of 62,381 of its 65,197 items (PUND
 fatigue, PUND and wakeup) under the code revisions, and none under the edges. Proposal, not decided: code revisions that count only the methods a call can select. The walk
 reads the code inferred for the observed argument types, instead of the lowered code:
 
@@ -362,7 +365,7 @@ a `Float64`; adding `helper(::Float64)` changes it, and then editing `helper(::R
 `helper(::Float64)` now hides from that data, does not. Code that calls `helper` with a value from a
 `Dict{Symbol,Any}`, or passes it to `map`, changes in every case.
 
-Limits: a walk is needed for each distinct observed argument type of a stage; inference costs more
+Limits: a walk is needed for each distinct observed argument type of a function; inference costs more
 than reading lowered code, not measured; the walk reads inferred code, which is internal to the
 compiler in the same way as lowered code is for today's walk. Not tested on the RuO2 project.
 
@@ -454,7 +457,8 @@ record the rows it read; other data is understood only as far as its type allows
    does a window's output. Example: the Table window keeps the points of
    an IV sweep where |V| > threshold, and passes them to the Plot Builder. The Table's output is a
    computed value whose computation is the filter, with the rows and columns selected in it, if
-   any. Today the output is the Table's own display model, which the Plot Builder refuses.
+   any. The Table built this in part: its output is one computation `view(item, selection)` for
+   each item, with the rows and columns selected in it, as the docstring of `output` describes.
    Direction agreed (Davide, 2026-10-25), in place of storing row numbers:
    - Every visualizer has a transform and a selection. Its output is the selection applied to what
      the transform gave.
@@ -486,7 +490,8 @@ record the rows it read; other data is understood only as far as its type allows
        gets a copy.
      - Inference does not see speed: a view through a mask is slower to read element by element, so
        a function that reads the data many times may be faster with a copy.
-6. Whether Core's concrete `Group` remains.
+6. Whether Core's concrete `Group` remains. Core has none today: a computation's result keeps
+   its own type, and `storage(project, T)` chooses its store by that type.
 7. How the cache stores a value, and finding functions by their code: the lookup by module and
    enclosing function, captured values in the id, and functions from packages.
 8. The first-use cost in the real catalog, cache and GUI, and whether a generated package of
@@ -503,8 +508,9 @@ recorded in [workspace-graph](workspace-graph/workspace-graph.md). That work is 
 new invocation, group reconstruction or Recipes contracts. The earlier engineering and product
 reviews are preserved in the [group discussion archive](archive/2026-10-21-discussion/groupings.md).
 
-The probes in [work/computation-graph](../../work/computation-graph) were run outside the
-workspace, on Julia 1.13.2 and Revise 3.17.3:
+The probes in `work/computation-graph` were run outside the workspace, on Julia 1.13.2 and
+Revise 3.17.3. The folder left the repository in commit `99e6737`; `git show 00f1e65:work/computation-graph/lazy-computed.jl`
+prints a probe.
 
 - `lazy-computed.jl`: the lazy `Computed` value on a chain of two steps and a fit per chip. Equal
   types for different items, ids before running, the inferred result type, a `process` method on

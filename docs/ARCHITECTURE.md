@@ -44,7 +44,7 @@ flowchart TB
         core["<b>DataBrowserCore</b><br/>workspace, job scheduling, coordination"]
         src["<b>DataBrowserSources</b><br/>DirectorySource, ..."]
         cache["<b>DataBrowserCache</b> 🦆<br/>Caching and persistence"]
-        ann["<b>DataBrowserAnnotations</b><br/>tags, notes, layout"]
+        ann["<b>DataBrowserAnnotations</b><br/>tags, notes"]
     end
 
     subgraph contracts["Contracts"]
@@ -318,8 +318,9 @@ changes a published one, so a reader needs no lock.
   the *publishing task*, makes a new version of the table from the catalog when items change: at
   once while a window or a script waits for an item, or when no work is left, and otherwise at most
   every 0.05 s. It also adds to the catalog the rows of the new computations that `evaluate` gets.
-- The *shared state*: the selection of the workspace, its tags and the order of its items.
-  `select!`, `tag!`, `untag!` and `sort!` replace it whole, one at a time, and `tag!` saves the tags
+- The *shared state*: the selection of the workspace, its tags, the order of its items and its
+  visualizers. `select!`, `tag!`, `untag!`, `sort!` and `visualize!` replace it whole, one at a
+  time, and `tag!` saves the tags
   in `tags.txt` before the new state replaces the old one. Every window and script sees the same
   shared state: a script that selects items selects them in the browser too.
 
@@ -387,6 +388,48 @@ that take one item out of the items that a `process` call gives.
 | [`Selection.jl`](code/lib/DataBrowserCore/src/Workspace/Selection.md) | `select`, the `Selection` that it gives, and the data of its items |
 | [`Operations.jl`](code/lib/DataBrowserCore/src/Workspace/Operations.md) | opening, rebuilding and closing a workspace, `select!` and the shared state |
 
+### Visualizers
+
+A *visualizer* of the workspace shows a value, such as a plot of the selected items. It has an id,
+the settings of its visualizer type, an input, and optionally a *transform*, a function of the
+project that the value passes through. `visualize!(workspace, TableView())` adds one, and
+`visualize!(browser, v)` shows the visualizer `v` in a window of the browser. A script and the
+browser change the same object: `v.name = value` changes a setting in every client that shows
+`v`, and closing the window leaves `v` in the workspace until `close(v)`.
+
+The input of a visualizer is the selection of the workspace (`LiveSelection()`), fixed items
+(`FixedItems(ids)`), the items for which a function of their row returns `true`, or another
+visualizer. A client draws the value of a visualizer with an instance of the visualizer type, which
+it owns, and can publish the output of that instance, such as the rows selected in a table, for the
+visualizers that take their input from it:
+
+```mermaid
+flowchart LR
+    selection["the selection<br/>of the workspace"]
+    subgraph workspace["the workspace"]
+        table["visualizer 1:<br/>TableView"]
+        plot["visualizer 2:<br/>PlotView, input = visualizer 1"]
+    end
+    w1["window of the browser"]
+    w2["window of the browser"]
+    script["a script"]
+    selection --> table
+    table -- "value" --> w1
+    w1 -- "output!: the rows<br/>that the user selects" --> table
+    table -- "output" --> plot
+    plot -- "value" --> w2
+    script -- "v.name = value" --> plot
+```
+
+The workspace computes the value of a visualizer in a task of its own, once for every client that
+shows it, and only while some client asks for it with `refresh!`, as a window of the browser does
+at each frame. It computes the value again when the items of the input get later versions, when
+the input gives other items, or when the code of the transform changes.
+
+| Page | What it explains |
+| --- | --- |
+| [`Visualizers.jl`](code/lib/DataBrowserCore/src/Workspace/Visualizers.md) | `visualize!`, the inputs of a visualizer, and when its value is computed |
+
 <!-- TODO: move the sections below into the code that they describe (Items.jl, Calls.jl). -->
 
 ### Other computations
@@ -398,7 +441,7 @@ catalog, runs it ahead of background work, waits for its result, and keeps the r
 workspace closes. In the next session, the same computation gets the same key, and its result comes
 from its store when the store kept it. An item of the workspace among its arguments stands for the
 row of its latest version, so the next `evaluate` of the computation runs it again after the item
-changed. Windows evaluate computations this way when they prepare their data in a background task.
+changed. Visualizers evaluate their transforms this way.
 `computation(workspace, id)` gives the computation of the latest version of an item, and
 `inputs(c)` the computations among the arguments of `c`. Neither loads a result nor runs project
 code.
@@ -412,168 +455,16 @@ output of the window: another window can take them as its input and show their r
 
 ## Subpackages
 
-<!-- TODO: diagrams for the other packages. -->
-
-Each package of this section has two diagrams. A class diagram shows its data model: the structs,
-their fields, and how they subtype the API abstractions and compose. The call flow diagram shows
-which functions call which as arrows, with A -data-> B meaning "A calls B, which returns `data`".
-
-A solid arrow is a call, labelled with the value the callee returns, or for an external library,
-with the function that it calls. External calls from other packages are shown as thicker arrows.
-"hot path" calls which are very frequent and performance-critical are shown in red.
-A dashed arrow is a value that a function passes to another package through a function that the
-other package gave it, as the watcher passes the changes of the source to DataBrowserCore.
-
-A thick border marks a symbol the package exports.
-`X_or_Nothing` means a field may contain either `X` or `nothing`.
+The [code map](codemap.md) shows the types of every package: each type in the box of its file and
+package, with arrows to its supertype and to the types of its fields. It is made from the code at
+each build of these pages, and each type links to its code.
 
 ### DataBrowserSources
 
 DataBrowserSources gives `DirectorySource`, a source that lists the files of a folder as
-`SourceFile`s and its folders as `SourceDirectory`s, and watches the folder for changes. A
-`SourceDirectory` has members, so its `read` gives a group. The `FileFingerprint` of a file, its
-size and modification time, is its fingerprint. DataBrowserSources adds methods to functions of
-DataBrowserAPI, such as `id` and `label` of a `SourceFile`: DataBrowserCache, DataBrowserGUI and
-DataBrowserPlots call them through DataBrowserAPI, without depending on DataBrowserSources.
-
-#### Data model
-
-```mermaid
-%%{init: {'theme':'base','themeVariables':{'textColor':'#111','lineColor':'#555'}}}%%
-classDiagram
-    direction TB
-    class AbstractDataSource
-    class AbstractDataSourceItem
-
-    class DirectorySource {
-        String root_path
-        Bool recursive
-        Task_or_Nothing watcher_task
-        CancellationTokenSource_or_Nothing watcher_cancel
-    }
-    class SourceFile {
-        String filepath
-        String filename
-        String relative_path
-        FileFingerprint fingerprint
-    }
-    class FileFingerprint {
-        String path
-        Int64 size_bytes
-        Int64 mtime_ns
-    }
-    class SourceDirectory {
-        String path
-        String relative_path
-        Vector~AbstractDataSourceItem~ members
-    }
-
-    AbstractDataSource <|-- DirectorySource
-    AbstractDataSourceItem <|-- SourceFile
-    AbstractDataSourceItem <|-- SourceDirectory
-    DirectorySource --> SourceFile : scans
-    DirectorySource --> SourceDirectory : scans
-    SourceFile *-- FileFingerprint : fingerprint
-    SourceDirectory o-- AbstractDataSourceItem : members
-
-    style AbstractDataSource fill:#cfd8e3,stroke:#5a6b80,stroke-width:1px,color:#111
-    style AbstractDataSourceItem fill:#cfd8e3,stroke:#5a6b80,stroke-width:1px,color:#111
-    style DirectorySource fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
-    style SourceFile fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
-    style FileFingerprint fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
-    style SourceDirectory fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111
-```
-
-#### Call flow
-
-```mermaid
-%%{init: {'theme':'base','themeVariables':{'textColor':'#111','lineColor':'#555'}}}%%
-flowchart TD
-    subgraph sgScan["scan"]
-        si("items(source)")
-        isf("index_source_file")
-    end
-
-    subgraph sgLife["watch / lifecycle"]
-        osrc("open_source")
-        wsrc("watch_source")
-        csrc("close_source!")
-        cpyds("copy")
-    end
-
-    subgraph sgContract["contract methods"]
-        idsf("id(::SourceFile) → String")
-        lblsf("label(::SourceFile) → String")
-        fpsf("fingerprint(::SourceFile) → FileFingerprint")
-        metasf("metadata(::SourceFile) → Dict")
-        sid("id(::DirectorySource) → String")
-        slbl("label(::DirectorySource) → String")
-    end
-
-    extCore["DataBrowserCore"]
-    extAPI["DataBrowserAPI"]
-    extCache["DataBrowserCache"]
-    extRecipes["DataBrowserRecipes"]
-    extGUI["DataBrowserGUI"]
-    extPlots["DataBrowserPlots"]
-
-    subgraph sgExt["external"]
-        FSYS["filesystem"]
-        BFW["BetterFileWatching"]
-        CT["CancellationTokens"]
-    end
-
-    si -->|"SourceFile"| isf
-    si -->|"readdir"| FSYS
-    isf -->|"stat"| FSYS
-
-    osrc -->|"isdir"| FSYS
-    wsrc -->|"source items"| si
-    wsrc -->|"String"| idsf
-    wsrc -->|"FileFingerprint"| fpsf
-    wsrc -->|"watch_folder"| BFW
-    wsrc -->|"token"| CT
-    csrc -->|"cancel"| CT
-
-    extCore ==> osrc
-    extCore ==> si
-    extCore ==> wsrc
-    extCore ==> csrc
-    extCore ==> sid
-    extCore ==> idsf
-    extCore ==> lblsf
-    extCore ==> metasf
-    extCore ==> fpsf
-    extCore ==> cpyds
-    extCache ==> sid
-    extCache ==> fpsf
-    extAPI ==> sid
-    extAPI ==> slbl
-    extGUI ==> slbl
-    extPlots ==> slbl
-
-    wsrc -.->|"SourceChanges<br/>SourceError"| extCore
-
-    idsf ~~~ lblsf ~~~ fpsf ~~~ metasf ~~~ sid ~~~ slbl
-
-    classDef srcExp fill:#c9e4c5,stroke:#5a9a52,stroke-width:3px,color:#111;
-    classDef srcInt fill:#c9e4c5,stroke:#5a9a52,stroke-width:1px,color:#111;
-    classDef ext fill:#eceff1,stroke:#90a4ae,stroke-width:1px,color:#111;
-    classDef coreC fill:#bcd4f0,stroke:#3f6fb0,color:#111;
-    classDef apiC fill:#cfd8e3,stroke:#5a6b80,color:#111;
-    classDef cacheC fill:#f5d6a8,stroke:#c08a3f,color:#111;
-    classDef recipesC fill:#f5ecc0,stroke:#b09a3f,color:#111;
-    classDef guiC fill:#d9c6ec,stroke:#7d54b0,color:#111;
-    classDef plotsC fill:#f2c6d4,stroke:#b0466a,color:#111;
-
-    class si,isf,osrc,wsrc,csrc,cpyds,idsf,lblsf,fpsf,metasf,sid,slbl srcInt;
-    class extCore coreC;
-    class extAPI apiC;
-    class extCache cacheC;
-    class extRecipes recipesC;
-    class extGUI guiC;
-    class extPlots plotsC;
-    class FSYS,BFW,CT ext;
-
-    linkStyle 0,2 stroke:#d1495b,stroke-width:3px;
-```
+`SourceFile`s and the folders below it as `SourceDirectory`s, and watches the folder for changes. A
+`SourceDirectory` has members, so the `read` of a project can give a group for it. The
+`FileFingerprint` of a file, its size and modification time, is its fingerprint.
+DataBrowserSources adds methods to functions of DataBrowserAPI, such as `id` and `label` of a
+`SourceFile`: DataBrowserCache, DataBrowserGUI and DataBrowserPlots call them through
+DataBrowserAPI, without depending on DataBrowserSources.

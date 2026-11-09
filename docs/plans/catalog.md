@@ -56,7 +56,8 @@ The engine's tables take about 4.5 KB of memory per item, without the project's 
 The cache file lacks these parts of the catalog:
 
 - the inputs of each row;
-- the stage of a row that gave no value, such as a failed `process`;
+- the depth of a row that gave no value, such as a failed `process`: the number of calls before
+  it in its chain of calls;
 - the fingerprint of each source item, which only enters the revision of its read row;
 - the code revision of each function;
 - the rows that never ran, such as each `process` row without background processing;
@@ -90,7 +91,7 @@ rest for the rows in use:
 
 ```text
                       in the cache file                         in memory
-    per row           computation id, stage, state, revision,   state, function, revisions,
+    per row           computation id, depth, state, revision,   state, function, revisions,
                       revision of the result, type, error,      inputs and readers, as numbers:
                       inputs                                    ≈ 35 B
     per value         id, row, label, type, members, metadata   id → key: ≈ 20 B

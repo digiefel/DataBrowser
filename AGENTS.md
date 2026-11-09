@@ -92,19 +92,18 @@ julia --project=docs docs/make.jl
 ```
 
 ## Architecture
-Project scripts describe how to recognize files, parse them into items, and draw plots. The package  
-handles directory scanning, background processing, DuckDB caching, the item tree, selection, and the  
-browser UI.  
-Project code should not touch cache files, background jobs, or UI state. It is user code: a black box,  
+Project scripts describe how to read source items, such as files, into items, how to process them,
+and how to draw plots. The package handles scanning the source, background processing, caching,
+the item tree, selection, and the browser UI.
+Project code should not touch cache files, background jobs, or UI state. It is user code: a black box,
 never to be thought about or optimized.
 
-When a workspace opens, the package works through a dependency graph with multiple stages: 
-read each source item, expand what it holds into data items, process each item, process each collection from its items,
-then process each item again from the collections above it (member `process`).
-If the user selects items that are still processing, that work gets higher priority. 
+When a workspace opens, the package calls the project's `read` for each source item, then `process`
+for every value that a call gives, as long as a method of the project takes it: on an item, on a
+group with the values of its members, and on each member with its group. A result with the id of
+the value it took is a later version of that value, and a result `isequal` to that value ends the
+chain. If the user selects items that are still processing, that work gets higher priority.
 Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-Planned work lives in `docs/roadmap.md`.
 
 ## Testing
 

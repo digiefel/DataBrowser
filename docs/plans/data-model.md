@@ -1,6 +1,7 @@
 # Data model: reaching the values of selected items
 
-Proposal, 22 October 2026. Not reviewed, not implemented.
+Proposal, 22 October 2026. Partly built: `selection.data`, paths such as `:data.V` in `@plot`, and
+`unnest`. A selected group's members one level down, and folder names as metadata, are not built.
 
 This plan owns how code and the GUI reach the values of selected items: names, levels, positions
 and how values of different levels combine. Every consumer uses the same rules: plots, the table
@@ -10,8 +11,9 @@ how values are stored belongs to [storage](storage.md); plot syntax belongs to t
 
 ## The problem
 
-Today a selection is one table with one row per item. Its columns are `id`, `label`, one column per
-level of the collection tree, the metadata keys, and `data`, which holds each item's whole data.
+On 22 October, a selection was one table with one row per item. Its columns were `id`, `label`, one
+column per level of the collection tree, the metadata keys, and `data`, which held each item's whole
+data. The problems below are those of that table.
 
 - `data` appears next to the metadata as if it held one value per item. AlgebraOfGraphics offers
   it as a column, and `data.VoltageLow_V` fails.
@@ -172,7 +174,8 @@ vector per device. The TLM plot of two chips:
 @plot mapping(:devices.gap_um, :devices.R; color=:Chip) * visual(Scatter)
 ```
 
-Groups are not selectable this way today; see [groups](groupings.md#selection-and-browsing).
+Today a selection holds a group as one item, without its members one level down; see
+[groups](groupings.md#selection-and-browsing).
 
 ## In code outside plots
 
@@ -232,7 +235,8 @@ mapping. Only the values a mapping names are read.
 
 ## Relation to the current code
 
-The current [`Selection`](../../lib/DataBrowserCore/src/Workspace/Selection.jl) is the item level
-of this model with a `data` column. The proposal removes that column, replaces it with the
-`selection.data` view, names tree levels as described, and adds `unnest`. The plot builder and
-`@plot` read values through paths.
+The current [`Selection`](../../lib/DataBrowserCore/src/Workspace/Selection.jl) follows this model
+at the item level. Its columns are `id`, `label`, `groups`, `tags` and one for each metadata key;
+`selection.data` reads the data of each item when code uses it, and `unnest` makes a flat table.
+`@plot` reads values through paths. The tree levels have no metadata names: the `groups` column
+holds the ids of the groups that hold each item.

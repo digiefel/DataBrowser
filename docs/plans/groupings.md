@@ -6,17 +6,19 @@ retention. [The plan index](README.md) distinguishes the target from the impleme
 
 ## Current direction and open decisions
 
-Groups generalize collections. The existing collection tree remains the default organization;
-other groupings must compose with it. A group is an item whose inputs are other items. It has its
-own data and metadata and can be used in later calculations. A processed group remains a group.
+Groups generalize collections. The tree of the groups that reads give, such as one group for each
+folder in a DBRecipes project, remains the default organization; other groupings must compose with
+it. A group is an item whose inputs are other items. It has its own data and metadata and can be
+used in later calculations. A processed group remains a group.
 
-The type direction replaces `AbstractCollection` with `AbstractGroup`. Constructing groups from
-sets of inputs is preferred over asking each item for its one collection. Group construction, identity and hierarchy do not yet form a complete approved API.
+`AbstractGroup` has replaced `AbstractCollection`, and each group gives its own members, so no item
+names its one collection. Group construction, identity and hierarchy do not yet form a complete approved API.
 
 ## Settled behavior
 
 These decisions were made by Davide in the PM discussion or relayed by the external agent. They
-are target behavior, not claims that Core already implements groups.
+are target behavior. Core implements groups as [Architecture](../ARCHITECTURE.md) describes, but
+not every behavior below.
 
 ### Selection and browsing
 
@@ -55,26 +57,31 @@ case. This scope decision does not settle the composition of multiple member dat
 
 ## Working proposal: groups from sources, users and `process` methods
 
-Proposal by the external agent with Davide, 21 October; not implemented. The source API is in
-[source-groups.md](source-groups.md); the [toy example](groups-toy.md) works it through.
+Proposal by the external agent with Davide, 21 October. Partly built: groups from sources and
+from `process` methods exist, groups from the user or the GUI do not, and [Architecture](../ARCHITECTURE.md)
+describes what is built. The source API is in [source-groups.md](source-groups.md); the
+[toy example](groups-toy.md) works it through.
 
 A group is an `AbstractDataItem` that contains items or groups and defines `members`. Whoever
 creates a group gives it its members. There are three creators:
 
 - **The source.** It lists group source items and states their members between source items,
-  `members(source, group)`. Core reads every source item once and passes the member values to the
-  group's `read`; the element type of that argument states which values the group needs.
+  `members(source, group)`. As built, the `read` of a group source item can give a group of the
+  project's own type, whose members are the ids of those source items, and the workspace makes one
+  `SourceGroup` of the whole source. A group `process` method states the member values that it
+  needs by the element type of its third argument. The proposal's group `read`, which received
+  the member values, was not built.
 - **The user or the GUI.** A selection, the bins of a plot, a canvas node that splits items.
 - **`process` methods on groups.** A `process` method on a group returns results, which may be groups themselves, for
   example the samples above a temperature or one fit per bin.
 
 ```julia
 abstract type AbstractGroup <: AbstractDataItem end
-members(group::AbstractGroup) -> AbstractVector{<:AbstractDataItem}
+members(group::AbstractGroup) -> AbstractVector{<:AbstractDataItem}   # as built: Vector{String}, the ids
 ```
 
 A `process` method can return a single item or a vector of items. The general multiple-output contract
-replaces source `expand`. Groups are ordinary runtime values, not a fresh Julia type or method per
+replaces source `expand`, and DataBrowserAPI has no `expand`. Groups are ordinary runtime values, not a fresh Julia type or method per
 group.
 
 ### Multi-input results are groups
@@ -138,7 +145,7 @@ for all four; they await review:
    return-type graph before execution. This does not reopen the agreed completion policy.
 
 The engineer's findings are based on source and complexity reasoning; no timings or performance
-claims for this unimplemented model are established. Produced groups retain the actual member
+claims for this model, unimplemented at the time, are established. Produced groups retain the actual member
 versions they were made from.
 Sharing unchanged data is a store responsibility; Recipes chooses storage automatically.
 
@@ -146,8 +153,8 @@ Sharing unchanged data is a store responsibility; Recipes chooses storage automa
 
 The earlier query/withmembers prototype model, type-only interpreted queries, field-inferred
 hierarchy, and reevaluating rules on every intermediate version have been withdrawn. `process` methods over an implicit
-group of all values of a type are withdrawn. The current proposal replaces a separate source `expand` with general multiple-item returns;
-that change is proposed, not implemented. Mandatory
+group of all values of a type are withdrawn. General multiple-item returns of `process` have
+replaced a separate source `expand`. Mandatory
 `Lazy` fields in project types were also rejected. Earlier attached-value and qualified-conflict
 models do not replace the chosen member-owned `process` methods.
 

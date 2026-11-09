@@ -5,8 +5,11 @@ contract. [Graphics](graphics-grammar.md) owns declarations; [processing](proces
 shared execution and [storage](storage.md) owns retained results. Fitting is one analysis operation,
 not the organizing model for every workspace result.
 
-The general `DataBrowserFitting` package described here is planned. The existing named `linear`
-path in `DataBrowserPlots` does not implement this complete API.
+Partly built. `DataBrowserFitting` holds the least-squares solver behind `fit(curve, starts;
+xlim)` in `@plot`, which fits one curve for each group of points. Its result gives each parameter
+as the estimate ± one standard error, from the covariance scaled by the residuals, and the
+workspace keeps it until it closes. Bands, the methods `:covariance` and `:deltachi2`,
+`fullrange`, the shared result contract and the connection to Core's cache are not built.
 
 ## Goal
 
@@ -166,6 +169,5 @@ Use small constructed cases for known failures and interval coverage, not as the
 The existing contract probe demonstrates selected counterexamples; it is not a solver benchmark
 or verification of a complete real-data workflow.
 
-Once implemented, this fitting path can replace plot-builder linear-fit marks and the borrowed
-`linear` statistic. The older proposal and coordination are preserved in the
+The older proposal and coordination are preserved in the
 [archive](archive/2026-10-21-discussion/fitting.md).

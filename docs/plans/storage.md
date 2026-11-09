@@ -39,20 +39,19 @@ Cached results are copied when used. For uncached results, authors are responsib
 Core can replay their computations when a value is requested. This does not require operating-system
 copy-on-write support or wrappers around native project values.
 
-The first native-result implementation, 29 October, uses `storage(project, T)`, defaulting to
-`storage(T)`, for `T <: AbstractDataItem`. `nothing` means no native computation cache; the
-supplied default is `MemoryStore()`. The policy follows the returned native item type. Plain Julia
-results use the workspace's `Group` item type, rather than the computation's function type.
-Scheduled project calls and interactive computations share native result records and this store
-selection. The old fixed-stage payload paths still need migration and do not yet follow this policy.
+The implementation uses `storage(project, T)`, defaulting to `storage(T)`, for results of any type
+`T`: items, and any other value that a computation returns. `nothing` means no store for that
+type; the supplied default is a bounded `MemoryStore`, and a DBRecipes project keeps its results in
+one `DuckDBStore`. The project's calls and interactive computations share these stores.
 
-The current store implements `write(store, id, value)`, `read(store, typeof(value), id)`,
-`haskey(store, id)` and `delete!(store, id)`. Core writes a copy of the complete native result and
-copies reads before passing values to consumers. Missing reads throw `KeyError`; other errors
-propagate. Native result keys are scoped to a computation revision within one workspace opening.
-Persistent restoration of native results across openings remains pending.
+The docstring of `AbstractStore` gives the methods of a store: `write(store, key, item)`,
+`read(store, T, keys)`, `read(store, T, key)`, `haskey(store, T, key)`, `delete!(store, T, key)`,
+`stored_size(store, T, key)` and `close(store)`. The key is the revision of the result, which means
+the same result in any workspace and session, so a `DuckDBStore` keeps its results from one opening
+to the next. Core writes a copy of the complete native result, and a store gives copies. A missing
+read throws `KeyError`; a result that its store cannot read counts as lost, and its call runs again.
 
-The latest schematic interface is an object called by Core:
+The schematic interface of 21 October was an object called by Core:
 
 ```julia
 write(store, id, value)
@@ -60,22 +59,21 @@ read(store, ::Type{T}, id) -> T
 delete!(store, id)
 ```
 
-This is a candidate, not an implemented or approved public protocol. Core decides when an operation
-is needed; the store decides how. The proposal keys current retained values by item identity,
-replacing/removing them through Core. It does not choose a permanent history store for every old
-revision.
+Core decides when an operation is needed; the store decides how. This candidate keyed current
+retained values by item identity, replacing/removing them through Core; the built contract above
+keys them by revision. Neither chooses a permanent history store for every old revision.
 
 Supplied stores could cover tables, files and serialized values, configurable by ordinary
-constructors. The exact set and default selection are not decided. A file reference inside a value
+constructors. DataBrowserCache supplies `MemoryStore`, the default, and `DuckDBStore`; the final
+set is not decided. A file reference inside a value
 can be handled by a file store; it does not need a separate universal value model.
 
-The method for declaring a type's store is not decided. Davide prefers the name `storage`, for
-example `storage(::Project, ::Type{Item}) = FileStore("results/items")`; `payload_store` was
-rejected.
-The `item_data` accessor is to be renamed `data`; that direction is not a claim of implementation.
+A project declares the store of a type with `storage`, for example
+`storage(::MyProject, ::Type{MyFit}) = DuckDBStore(joinpath(@__DIR__, "results.duckdb"))`;
+`payload_store` was rejected.
 
 Typed store reads restore the complete native value. Davide, 21 October: the `reconstruct` hook
-is deleted. Group formation still
+is to be deleted. DataBrowserAPI still has it, and `DuckDBStore` calls it. Group formation still
 needs a public construction and member-binding contract in [processing](processing.md).
 
 ## Metadata and completeness
@@ -137,12 +135,14 @@ examined. No end-to-end speedup is established.
 
 Open work:
 
-1. Type API store declaration, automatic Recipes storage selection and a consistent protocol.
+1. Automatic Recipes storage selection: today a DBRecipes project keeps its results in one
+   `DuckDBStore`.
 2. Metadata ownership in `read`, restoration of native values and rebuilding the internal index,
    which the [catalog plan](catalog.md) covers.
 3. Core/store interaction for replacement, invalidation, missing values, errors and interrupted work.
 4. Lifetime/mutation of values held by callers; member access after replacement or close.
-6. Supported default value shapes and measured behavior on actual tables, arrays and domain values.
+5. Supported default value shapes and measured behavior on actual tables, arrays and domain values.
 
-The latest external discussion is coordinated in [the curation note](../../work/doc-curation.md).
+The external discussion of 21 October was coordinated in the curation note `work/doc-curation.md`,
+which left the repository in commit `99e6737`; `git show 00f1e65:work/doc-curation.md` prints it.
 Earlier alternatives remain in the archive; they are not simultaneous requirements.

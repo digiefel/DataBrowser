@@ -95,7 +95,7 @@ semantics. A module-per-file alternative was explored, not chosen.
 Edits to processing, analysis and visualization code automatically refresh affected active results.
 This does not mean reevaluating every top-level expression in a file. Definition loading,
 dependency tracking and recognized declarations need a coherent contract. The current engine
-already has stage-code invalidation; the earlier claim that nothing notices analysis edits is
+already invalidates the project's calls when their code changes; the earlier claim that nothing notices analysis edits is
 obsolete. It does not establish the complete tab execution model.
 
 Keep source definitions, browser geometry, durable user annotations and retained computation

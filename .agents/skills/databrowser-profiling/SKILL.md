@@ -41,7 +41,7 @@ track the module by its own name, not as `DataBrowser.DataBrowserCache`.
 using Revise                          # FIRST — see above
 using DataBrowserProfiling            # loading this enables @timed_dbg
 include(".../databrowser-profiling/project/definitions.jl")   # defines PROJECT
-ws = open_workspace(PROJECT, root; metadata_file="device_info.txt")
+ws = open_workspace(PROJECT, DirectorySource(root))   # root: the folder of the RuO2 data
 browser = open_browser(ws)
 ```
 

@@ -50,11 +50,12 @@ same window input and processing operations; they do not introduce another compu
 
 ## Code selection and step information
 
-UX direction agreed on 28 October 2026; not implemented.
+UX direction agreed on 28 October 2026; built in the Code visualizer, which shows whether a step is
+cached with its size, without the cache location.
 
 The Code visualizer presents its function steps as a selectable list. Below the list it shows
 information about the selected step, rather than a preview of its returned value. The window's
-output is the selected step's Computable, supplied through the ordinary visualizer output
+output is the selected step's `Computation`, supplied through the ordinary visualizer output
 contract. Another visualizer can take Code as its input and present that value, as it takes the
 output of any other window. There is no separate open-output action.
 
@@ -68,7 +69,7 @@ Step information includes:
 State, input count, output type/shape and failure information are additional candidate details.
 The source link continues to open the step's code.
 
-Selecting a Computable retains the existing lazy computation semantics. The backend work is
+Selecting a `Computation` retains the existing lazy computation semantics. The backend work is
 to expose the computation graph's inputs and selected computations cheaply through the shared
 API. Exact APIs and selection behavior for rows representing several computations remain open.
 
