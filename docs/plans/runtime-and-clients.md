@@ -272,27 +272,30 @@ Each part costs the following today and in the target:
 
 | Part | Today | Target |
 | --- | --- | --- |
-| Noticing the save | `watch_code` looks 50 times a second at the queue where Revise puts each saved file, but only while the browser has the keyboard focus | The same look, in the host, whatever window has the keyboard focus |
+| Noticing the save | `watch_code` looks 50 times a second at the queue where Revise puts each saved file | The same look, in the host |
 | Loading the edit | Revise: 5 to 9 ms for one changed method, and about 4 s for the first edit of a file | The same. The host could pay the cost of the first edit in the background when it opens the project; whether Revise allows this is not checked |
 | New code revisions | Every known function is hashed again: about 50 ms on the RuO2 project | Only the functions that reach the edited method. Not built, not measured |
 | Marking stale, telling clients | Under the lock of the catalog; the publish follows at most 0.05 s later | The same work in DBCore; the event goes out with the publish |
 | Running the calls | The calls shown by a window run first | The same, with the priority from what each client says it shows |
 | Drawing | The window draws the figure made by `prepare!`, in the same process | A form of the visualizer crosses to the client |
 
-The focus condition is the largest fixed cost today: a save made in an editor waits until the
-browser has the keyboard focus again. From the save to the mark on the screen, the target costs
-the look, the load by Revise, the new code revisions and one publish. After that, the time is that
-of the project's own code.
+From the save to the mark on the screen, the target costs the look, the load by Revise, the new
+code revisions and one publish. After that, the time is that of the project's own code.
 
-The look replaced a check every 0.5 s on 9 November 2026. On a project with one item, a call
-became stale 426 ms after the save with the check (median of 11 saves, 78 to 507 ms), and becomes
-stale after 48 ms with the look (36 to 65 ms); Revise's file watcher takes 14 ms of these. The look
-costs processor time while the workspace is idle: a Julia task that wakes 50 times a second uses
-2.7 % of one core, and one that wakes twice a second 0.25 %. Waiting for `Revise.revision_event`,
-the event that Revise sets when a watched file changes, would cost nothing while idle. However,
-each notification of the event wakes only one of the tasks that wait for it, so a second waiting
-tool takes every second save. KaimonGate 1.7.0 is such a tool. Both were measured on Julia 1.13.3
-with Revise 3.17.3 and two threads.
+The look replaced a check every 0.5 s on 9 November 2026. Until then, the check also ran only while
+the browser had the keyboard focus, so a save made in an editor waited until the user came back to
+the browser. On a project with one item, a call became stale 426 ms after the save with the check
+(median of 11 saves, 78 to 507 ms), and becomes stale after 48 ms with the look (36 to 65 ms);
+Revise's file watcher takes 14 ms of these. With a browser window open in the background, the call
+becomes stale after 62 ms (median of 40 saves, 48 to 97 ms). An editor that writes a file in several
+steps makes the workspace load the file at each step: when a save left the file empty for 50 ms, the
+`process` call failed first, and gave its result 100 ms after the last step. The look also costs
+processor time while the workspace is idle: a Julia task that wakes 50 times a second uses 2.7 % of
+one core, and one that wakes twice a second 0.25 %. Waiting for `Revise.revision_event`, the event
+that Revise sets when a watched file changes, would cost nothing while idle. However, each
+notification of the event wakes only one of the tasks that wait for it, so a second waiting tool
+takes every second save. KaimonGate 1.7.0 is such a tool. Both were measured on Julia 1.13.3 with
+Revise 3.17.3 and two threads.
 
 Revise was measured on Julia 1.13.3 with Revise 3.18.0, one thread, and files of 200 to 500
 one-line methods; with 2000 methods a later edit takes 29 to 53 ms and the first one 19 s. The code

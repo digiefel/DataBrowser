@@ -470,9 +470,6 @@ mutable struct Workspace
     ## Held for the whole of `modify_workspace!` and `close_workspace!`, so that one waits for the
     ## other.
     lifecycle_lock::ReentrantLock
-    ## A browser pauses automatic code updates while its main window is inactive.
-    ## Without a browser, the workspace checks code independently of window focus.
-    @atomic code_updates_active::Bool
     ## Increased on every change: each publish of the table `items` or of the shared state takes
     ## the next number as its generation.
     generation::Base.Threads.Atomic{Int}
@@ -557,7 +554,7 @@ function Workspace(
         WorkspaceScan(),
         :idle, "", "",
         background_processing, cache,
-        Base.Lockable(Task[]), metrics, ReentrantLock(), true,
+        Base.Lockable(Task[]), metrics, ReentrantLock(),
         Base.Threads.Atomic{Int}(0), -1 => WorkspaceStatus(),
         CancellationTokenSource(), false,
     )
