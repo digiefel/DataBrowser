@@ -27,10 +27,14 @@ double-click a box to close or open it.
   #codemap-info { width: 22em; overflow: auto; font-size: 0.85em; }
   #codemap-info table { font-size: 0.95em; }
 </style>
+<!-- Documenter loads RequireJS, whose `define` would make these libraries modules of RequireJS
+instead of globals: hide it while they load. -->
+<script>window.codemapDefine = window.define; window.define = undefined;</script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-elk@2.2.0/dist/cytoscape-elk.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-expand-collapse@4.1.1/cytoscape-expand-collapse.js"></script>
+<script>window.define = window.codemapDefine;</script>
 <script src="assets/codemap.js"></script>
 <script src="assets/codemap-view.js"></script>
 ```
