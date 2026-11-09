@@ -71,12 +71,12 @@ Base.getindex(result::Result, index::Int) = getfield(result, :groups)[index]
 Base.getproperty(result::Result, name::Symbol) = [group[name] for group in getfield(result, :groups)]
 Base.propertynames(result::Result) = unique(reduce(vcat, [collect(keys(group)) for group in getfield(result, :groups)]; init=Symbol[]))
 
+# The curve's type is part of the type of its fit, so the workspace computes a fit again when the
+# code of the curve changes (`DataBrowserCore.CodeRevisions`).
 """
 A curve to fit to the points of a layer, as `fit(curve, starts; options...)` in [`@plot`](@ref)
 writes it. The fit is done when the layer has its points, and gives a [`Result`](@ref).
 """
-# The curve's type is part of the type of its fit, so the workspace computes a fit again when the
-# code of the curve changes (`DataBrowserCore.CodeRevisions`).
 struct Fit{C}
     curve::C
     starts::NamedTuple

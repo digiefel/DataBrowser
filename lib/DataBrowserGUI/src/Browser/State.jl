@@ -94,17 +94,17 @@ struct WindowPreparation
     initial_size::Tuple{Int,Int}
 end
 
+# The window draws the value of its visualizer with `instance`, an instance of the visualizer type
+# that the window owns. It hands exclusive access to the instance and its cells to background
+# preparation, then regains them when the task completes.
+# TODO: a visualizer type should hold only its settings, and be defined without the GUI; what an
+# instance prepares and draws then belongs to the window.
 """
     Window
 
 A window `w` of the browser, which shows the visualizer `w.visualizer` of the workspace.
 `visualize!(browser, v)` opens one, and `close(w)` closes it.
 """
-# The window draws the value of its visualizer with `instance`, an instance of the visualizer type
-# that the window owns. It hands exclusive access to the instance and its cells to background
-# preparation, then regains them when the task completes.
-# TODO: a visualizer type should hold only its settings, and be defined without the GUI; what an
-# instance prepares and draws then belongs to the window.
 mutable struct Window
     ## Names the window for ImGui. Unique in the browser.
     id::String

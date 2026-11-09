@@ -40,6 +40,8 @@ function computation_inputs(values::AbstractVector{T}) where {T}
 end
 computation_inputs(_) = Computation[]
 
+# A dynamic call: the compiled code of the engine then does not include the project's code, and a
+# package loaded later that invalidates the project's code does not invalidate the engine.
 """
     evaluate(computation)
 
@@ -47,8 +49,6 @@ Evaluate a computation and its inputs, and return the result of its function. Ea
 when one computation is the input of several others. `evaluate(workspace, computation)` reuses the
 results that the workspace keeps.
 """
-# A dynamic call: the compiled code of the engine then does not include the project's code, and a
-# package loaded later that invalidates the project's code does not invalidate the engine.
 evaluate(value::Computation) = Base.invokelatest(value.f, map(evaluated, value.args)...; value.settings...)
 evaluated(value::Computation) = evaluate(value)
 # A result of a row of a workspace is computed again, as any other input.

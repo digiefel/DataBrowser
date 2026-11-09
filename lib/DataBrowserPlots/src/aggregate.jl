@@ -1,10 +1,10 @@
+# The types of the functions are part of the type of the aggregate, so the workspace computes it
+# again when their code changes (`DataBrowserCore.CodeRevisions`).
 """
 The functions to apply to the y values of a layer's points that share x and their groups, as
 `aggregate(mean, std)` in [`@plot`](@ref) writes them. The aggregate is done when the layer has its
 points, and gives a [`Result`](@ref) with the value of each function under its name.
 """
-# The types of the functions are part of the type of the aggregate, so the workspace computes it
-# again when their code changes (`DataBrowserCore.CodeRevisions`).
 struct Aggregate{F<:Tuple}
     functions::F
     Aggregate(functions...) = new{typeof(functions)}(functions)
