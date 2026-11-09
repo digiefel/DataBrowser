@@ -164,8 +164,12 @@ function _render_filter_bar!(state::BrowserState)::Nothing
         next = _render_filter_button!(_condition_text(condition.key, condition.filter),
             (0.5f0, 0.5f0, 0.5f0), visibility, "Items that match", "Right-click to change the condition.")
         state.conditions[index] = condition => next
-        ig.OpenPopupOnItemClick("##condition", ig.ImGuiPopupFlags_MouseButtonRight)
-        state.open_condition == index && (ig.OpenPopup("##condition"); state.open_condition = 0)
+        ## The editor opens below the button of its condition, as the Sort menu does.
+        if ig.IsItemClicked(ig.ImGuiMouseButton_Right) || state.open_condition == index
+            ig.SetNextWindowPos(ig.ImVec2(ig.GetItemRectMin().x, ig.GetItemRectMax().y))
+            ig.OpenPopup("##condition")
+            state.open_condition = 0
+        end
         if ig.BeginPopup("##condition")
             _render_condition_editor!(state, index) && (removed = index; ig.CloseCurrentPopup())
             ig.EndPopup()
