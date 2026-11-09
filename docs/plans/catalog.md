@@ -25,7 +25,9 @@ workspace with no work per item" in [0.2.3](../roadmap.md) tracks the change.
 ## Today
 
 Measured on 5 November 2026 with the bench project of `bench/workloads.jl`: items of one table row,
-10 Julia threads, an M1 Pro.
+10 Julia threads, an M1 Pro. These figures predate commit `87f9681`, which keeps the metadata of
+items only in the cache file and the table `items`, so the records of the cache in memory no longer
+hold it.
 
 The cache saves results, and not the catalog. So each open runs the pipeline again for every
 source item:

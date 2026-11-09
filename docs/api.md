@@ -128,7 +128,7 @@ DataBrowserAPI.settings
 DataBrowserAPI.initial_size
 DataBrowserAPI.output
 DataBrowserAPI.select!
-DataBrowserAPI.selection
+DataBrowserAPI.selection(::DataBrowserAPI.AbstractVisualizer)
 DataBrowserAPI.export!
 ```
 
@@ -159,6 +159,8 @@ DataBrowserCore.workspace_status
 
 ```@docs
 DataBrowserCore.select
+DataBrowserCore.select!(::DataBrowserCore.Workspace.Workspace, ::AbstractVector{<:AbstractString})
+DataBrowserCore.selection(::DataBrowserCore.Workspace.Workspace)
 DataBrowserCore.Selection
 DataBrowserCore.materialize_items
 DataBrowserCore.query_items

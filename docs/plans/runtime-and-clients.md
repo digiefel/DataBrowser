@@ -484,5 +484,7 @@ in that process too. No provider protocol, server or host exists.
 Measured on 30 October 2026, the GUI and DataBrowserPlots used 61 Core names that Core does not
 export, at 267 places in 15 files, and read Core structures and locks directly. The
 [boundary inventory](../../work/runtime-boundary/inventory.md) lists them by need. Identity (internal
-keys in place of ids) is the largest group. DataBrowserPlots also computes fits itself and
-depends on DataBrowserGUI.
+keys in place of ids) is the largest group. DataBrowserPlots has DataBrowserGUI as a weak
+dependency: its extension `DataBrowserPlotsGUIExt` holds the plot windows and the plot builder, and
+loads with DataBrowserGUI and GLMakie. Each group of a fit in the browser is a `Computation` of the
+workspace.

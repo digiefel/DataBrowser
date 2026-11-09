@@ -248,9 +248,9 @@ Workspace actions, such as `select!(workspace, ids)`, operate on shared state an
 GUI. Views connected to the shared workspace selection follow changes from the REPL or GUI.
 Tab trees can keep independent selections; changing the shared selection does not reset them.
 Public operations must identify the selection being changed without relying on GUI focus.
-`select(workspace, ids)` changes nothing and waits for nothing: it returns a selection of these items
-at once. Reading the data of the selection asks for the items: the workspace moves those that are not
-processed yet ahead of other work, and the read waits for them.
+`select(workspace, ids)` changes nothing: it moves the items that are not processed yet ahead of
+other work, waits for them and returns them as a selection. When an item failed, it throws the error
+of that failure.
 Core has no GUI dependency. REPL code and GUI controls share the workspace rather than copying its state.
 
 A script that calls `define_project(project_file; config)` creates or reopens the project file, then
@@ -263,23 +263,24 @@ explicitly asks to overwrite.
 The package is split along **function**, because function and dependencies coincide — the plotter
 needs GLMakie, the cache needs DuckDB, the loaders need file libraries — so splitting by what code
 *does* also isolates heavy dependencies (fast recompiles) and puts package edges exactly where
-extensions plug in. The organizing idea: **`DataBrowserAPI` is what every interface and extension
-talks to; the engine packages implement it; the frontends call it.**
+extensions plug in. The organizing idea: **`DataBrowserAPI` is what every extension implements;
+`DataBrowserCore` holds the workspace and the commands that every interface calls.**
 
 ```
-DataBrowserAPI     the shared surface every interface calls and every extension implements:
-                   command declarations (open_workspace, scan, load, select, reconstruct, plot,
-                   export, query, …), the extension definitions (what a source / loader /
-                   visualizer / command is), the pipeline contract (`read` and `process`), and the
-                   `AbstractProject` contract. Payload-agnostic; tiny deps.
+DataBrowserAPI     the surface every extension implements: the contracts of a project, a source,
+                   an item, a group, a computation, a store and a visualizer, the pipeline
+                   contract (`read` and `process`), and the generic functions that several
+                   packages extend, such as `evaluate`, `select!` and `selection`.
+                   Payload-agnostic; tiny deps.
 DataBrowserProfiling  instrumentation / traces (leaf: traces don't reference item identity)
 DataBrowserAnnotations : tags / notes / spatial-layout model, attached to item identities
 DataBrowserSources → API : file discovery, loading, metadata extraction, data summaries
 DataBrowserRecipes → API, Sources, Cache : the callback dialect (define_project, register_*) implemented
                    as a client of the pipeline contract, plus premade recipes (CSV first)
 DataBrowserCache   → API : persistence (DuckDB where it fits); keyed by PROJECT, not workspace
-DataBrowserCore    → API, Annotations, Sources, Cache : the workspace, the index, background work,
-                   command execution, project save/load, provenance, REPL, and the runtime that
+DataBrowserCore    → API, Annotations, Sources, Cache : the workspace and its commands
+                   (open_workspace, select, select!, tag!, sort!, visualize!, …), the catalog,
+                   background work, project save/load, provenance, REPL, and the runtime that
                    drives a project's callbacks through read → process; base support
                    for common data shapes such as tables, vectors, arrays, and image-like data; shapes
                    needing heavy dependencies (audio, say) live in extension packages

@@ -387,9 +387,11 @@ frame never sees one without the other.
 One read takes the lock of the catalog: the result of a row that its store lacks, which the caller
 computes again in its own task. The caller takes the lock for a moment, to read the row and its
 inputs, and runs the code of the row without the lock. A `MemoryStore` lacks every result
-after Julia restarts. Besides, two kinds of rows never keep their result in a store: the rows that
-take a part of an item, such as the rows of a table that a person selects in a window, and the rows
-that take one item out of the items that a `process` call gives.
+after Julia restarts. Besides, four kinds of results never go to a store: `nothing`; a `Selection`,
+which reads the workspace each time something takes an item from it; the part of an item that a
+window chose, such as the rows of a table that a person selects; and one item taken out of the
+result of another row, such as one of the items that a `process` call gives, which the store of
+that row already holds.
 
 | Page | What it explains |
 | --- | --- |
