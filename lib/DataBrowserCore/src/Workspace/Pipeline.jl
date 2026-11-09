@@ -41,8 +41,8 @@
 # again, and the row succeeds once the other row is gone.
 #
 # A group is a value with members: [`members`](@ref) gives their ids. Each of these ids names a
-# value, or a source item, which stands for the values that it gives: a group that a folder gives can name the
-# files of the folder, and holds the items read from them. A group process takes the values of its
+# value, or a source item, which stands for the values that it gives: a group that a source item
+# gives can name the source items that it holds, and holds the items read from them. A group process takes the values of its
 # members of the type `T` that its method takes: for each member, its latest version of type `T`, in
 # the order of the members. A member that is a group with no value of type `T` gives the values of
 # type `T` of its own members instead, and so on below them. The workspace reads `T` from the

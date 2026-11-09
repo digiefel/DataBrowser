@@ -1,14 +1,14 @@
 using CancellationTokens: CancellationToken
 
 """
-Supertype for sources: the origins of the source items of a workspace, such as a folder of
-measurement files. A source lists its source items with [`items`](@ref), and can report changes
+Supertype for sources: the origins of the source items of a workspace, such as a database, an
+instrument or a set of measurement files. A source lists its source items with [`items`](@ref), and can report changes
 with [`watch_source`](@ref).
 """
 abstract type AbstractDataSource end
 
 """
-Supertype for source items: what a source lists, such as one file of a folder. The workspace makes
+Supertype for source items: what a source lists, such as one file or one database record. The workspace makes
 values from a source item with `read`.
 """
 abstract type AbstractDataSourceItem end
@@ -90,8 +90,8 @@ function items end
 """
     members(source, item) -> Vector{<:AbstractDataSourceItem}
 
-The members of the source item `item`: the source items that it holds, such as the files and folders
-directly in a folder. The `read` of `item` can make a group of them. The default is empty.
+The members of the source item `item`: the source items that it holds, such as the tables of a database
+file. The `read` of `item` can make a group of them. The default is empty.
 
 When the members of a source item change, its [`fingerprint`](@ref) changes too, so that the
 workspace reads it again.
