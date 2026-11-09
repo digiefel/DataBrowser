@@ -6,9 +6,9 @@ struct CacheItem <: AbstractDataItem end
 """Save the record of the row with key 1, which gives one item for each metadata dictionary."""
 store_fixture_item!(cache, metadata...) = cache[1] = (; call="item", revision=UInt64(1),
     result_revision=UInt64(1), item_revision=UInt64(0), type=Vector{CacheItem}, failure="",
-    items=SavedOutput[(; id="item$i", depth=Int8(1), label="item", type=CacheItem, members=nothing,
-        metadata=Dict{Symbol,Any}(x)) for (i, x) in enumerate(metadata)])
-saved(cache) = only(get(cache, 1, nothing).items).metadata
+    items=SavedOutput[(; id="item$i", depth=Int8(1), label="item", type=CacheItem, members=nothing)
+        for i in eachindex(metadata)], metadata=Dict{Symbol,Any}[Dict{Symbol,Any}(x) for x in metadata])
+saved(cache) = only(values(read(cache.output_metadata)))
 
 @testset "in-memory storage supports queries without touching the cache file" begin
     mktempdir() do dir
@@ -113,7 +113,8 @@ end
         end
         cache = open_cache_db(identity)
         try
-            @test [item.metadata[:fit] for item in get(cache, 1, nothing).items] == fits
+            metadata = read(cache.output_metadata)
+            @test [metadata[output_key!(cache, 1, item.id)][:fit] for item in get(cache, 1, nothing).items] == fits
         finally
             close_cache_db!(cache)
         end

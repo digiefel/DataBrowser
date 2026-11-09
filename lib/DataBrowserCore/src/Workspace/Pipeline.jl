@@ -373,13 +373,15 @@ end
 
 """
     store!(items, output, values)
+    store!(items, key, values) -> Bool
 
-Replace the metadata of the value `output` in the draft of `items` with `values`, keeping a copy of
-each vector value. The column of a metadata name holds the types of all its values: a value of
-another type gives the column a wider element type, such as `Union{Missing,Int,Float64}`. The
-caller holds the catalog lock.
+Replace the metadata of the value `output`, or of the value with the cache key `key`, in the draft of
+`items` with `values`, keeping a copy of each vector value. The method with `key` returns whether a
+cell changed. The column of a metadata name holds the types of all its values: a value of another
+type gives the column a wider element type, such as `Union{Missing,Int,Float64}`. The caller holds
+the catalog lock.
 """
-function store!(items::Items, output::Output, values::AbstractDict{Symbol})::Nothing
+function store!(items::Items, key::Int64, values::AbstractDict{Symbol})::Bool
     for (name, value) in values
         value === missing && continue
         column = get(items.metadata, name, nothing)
@@ -392,10 +394,15 @@ function store!(items::Items, output::Output, values::AbstractDict{Symbol})::Not
                 items.draft, Block{T}(0, column.empty.cells))
         end
     end
-    shown = false
+    changed = false
     for (name, column) in items.metadata
-        shown |= write!(items, column, output.key, get(values, name, missing))
+        changed |= write!(items, column, key, get(values, name, missing))
     end
+    return changed
+end
+
+function store!(items::Items, output::Output, values::AbstractDict{Symbol})::Nothing
+    shown = store!(items, output.key, values)
     ## `select` shows the metadata of the value of an item.
     number = get(items.index, output.id, Int32(0))
     shown && number != 0 && items.columns.key[number] == output.key && push!(items.shown, number)

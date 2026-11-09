@@ -251,10 +251,11 @@ function run!(workspace::Workspace, job::Job)::Nothing
     end
     ## The ids, labels, members and metadata of the values are the project's code too: when it
     ## throws, the cache saves the failure with the types of the values, whose code describes them.
-    items = SavedOutput[]
+    items, item_metadata = SavedOutput[], Dict{Symbol,Any}[]
     try
         pipeline && append!(items, (; id=id(x), depth, label=label(workspace.project, x), type=typeof(x),
-            members=x isa AbstractGroup ? members(x) : nothing, metadata=metadata_dict(metadata(x))) for x in given)
+            members=x isa AbstractGroup ? members(x) : nothing) for x in given)
+        pipeline && append!(item_metadata, metadata_dict(metadata(x)) for x in given)
         allunique(x.id for x in items) ||
             error("it gives the id \"$(first(x.id for x in items if count(y -> y.id == x.id, items) > 1))\" twice")
     catch error
@@ -298,11 +299,12 @@ function run!(workspace::Workspace, job::Job)::Nothing
         ## The cache saves the record of the row whole, or throws and changes nothing when it cannot
         ## hold one of the metadata values. The table `items` then takes the same metadata.
         @timed_dbg "job.finish.record" workspace.cache.db[row.index] = (; call=id(value), revision=at, result_revision=result,
-            item_revision=revision(workspace, row, [x.type for x in items]), type=typeof(output), failure="", items)
+            item_revision=revision(workspace, row, [x.type for x in items]), type=typeof(output), failure="", items,
+            metadata=item_metadata)
         saved = true
         if pipeline
             @timed_dbg "job.finish.finished!" finished!(workspace, row, outputs)
-            foreach((output, x) -> store!(workspace.items, output, x.metadata), outputs, items)
+            foreach((output, x) -> store!(workspace.items, output, x), outputs, item_metadata)
         end
         @timed_dbg "job.finish.publish!" publish!(workspace)
     catch error
@@ -341,7 +343,7 @@ function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, erro
         ## TODO: a record removed here may leave its values in the stores.
         at === nothing ? delete!(workspace.cache.db, row.index) : (workspace.cache.db[row.index] = (; call=id(catalog[row]),
             revision=at, result_revision=UInt64(0), item_revision=revision(workspace, row, types), type=Tuple{types...},
-            failure=message, items=SavedOutput[]))
+            failure=message, items=SavedOutput[], metadata=Dict{Symbol,Any}[]))
         workspace.items.rows.depth[row] === nothing || finished!(workspace, row, nothing)
         publish!(workspace)
     end
@@ -631,7 +633,8 @@ end
 described(workspace::Workspace, row::Row, record)::Bool = record.item_revision ==
     revision(workspace, row, isempty(record.failure) ? [x.type for x in record.items] : fieldtypes(record.type))
 
-# The values and the metadata of a row, or its error, as its record holds them.
+# The values of a row, or its error, as its record holds them; the table `items` took their metadata
+# from the cache when the workspace opened.
 function restored!(workspace::Workspace, row::Row, record)::Nothing
     failed = !isempty(record.failure)
     failed && (workspace.errors = Base.PersistentDict(workspace.errors,
@@ -640,7 +643,6 @@ function restored!(workspace::Workspace, row::Row, record)::Nothing
     outputs = @timed_dbg "restored.outputs" Output[Output(x.id, x.type, x.label, x.members,
         output_key!(workspace.cache.db, row.index, x.id), value_revision(x.id, record.result_revision)) for x in record.items]
     @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
-    foreach((output, x) -> store!(workspace.items, output, x.metadata), outputs, record.items)
     return nothing
 end
 

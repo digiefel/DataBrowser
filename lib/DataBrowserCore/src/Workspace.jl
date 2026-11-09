@@ -532,6 +532,12 @@ function Workspace(
     folder = dirname(Base.active_project())
     ## The cache keeps the key of each computation, by its id, for the next session.
     catalog = Catalog(value -> key!(cache_db, id(value)))
+    ## The table `items` takes the metadata of every value that the cache saved, under the key of the
+    ## value, so that a row that the cache restores shows its metadata at once.
+    items = Items(catalog)
+    for (key, values) in read(cache_db.output_metadata)
+        store!(items, key, values)
+    end
     return Workspace(
         project, source, folder, catalog,
         Dict{String,Row}(), Dict{String,Row}(), Dict{String,Vector{Row}}(),
@@ -544,7 +550,7 @@ function Workspace(
         Dict{Row,ReentrantLock}(), Set{Row}(),
         Task[], 0, 0, (0, 0, 0),
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
-        Items(catalog),
+        items,
         ## The items sort by their labels until a call to `sort!`.
         (; selection=String[], tags(project, folder)..., order=let labels = SortKeys([:label => false])
             (by=labels, order=Base.Order.ord(labels, Base.identity, false))
