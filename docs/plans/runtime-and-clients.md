@@ -39,7 +39,7 @@ flowchart LR
         script["a script, an agent,<br/>a Python package"]
         vscode["VS Code"]
     end
-    core["DBCore:<br/>the catalog, the table items,<br/>the shared state, the visualizers"]
+    core["DBCore:<br/>the catalog, the items,<br/>the shared state, the visualizers"]
     subgraph host["the Julia host"]
         providers["the providers:<br/>project code, sources, stores"]
         server["the Julia language server"]
@@ -125,7 +125,7 @@ DBCore keeps what decides which calls run and when, and what clients read:
 | --- | --- |
 | The *catalog*, which has one entry for each function call that the workspace runs: its state, its inputs, its jobs, its priority, and what becomes stale when something changes | `Catalogs.jl` |
 | The *revision* of each result: a hash of the code revision of the function, the revisions of its inputs, its other arguments and its settings. The code revision comes from the host | `Evaluate.jl`, in part |
-| The table `items`, its generations, publishing and change events | `Items.jl` |
+| The items (their state, metadata and generations) and change events | `Items.jl` |
 | The shared state (selection, tags, order) and its files | `Tags.jl`, `Selection.jl`, DataBrowserAnnotations |
 | The visualizers of the workspace: id, settings, input and links | `Visualizers.jl`, in part |
 | The catalog file, and the copy of the metadata that queries read | DataBrowserCache, in part |
@@ -266,7 +266,8 @@ sequenceDiagram
    running.
 8. **`prepare!`.** DBCore asks the host for the `prepare!` of `v`, whose input now has a new
    revision.
-9. **`changed`, the second time.** DBCore publishes and tells the client that `a` and `v` changed.
+9. **`changed`, the second time.** DBCore updates the items and tells the client that `a` and `v`
+   changed.
 10. **`value`.** The client asks for `v` in a form that it can draw, the host gives it, and the
     client redraws. [What crosses for a visualizer](#what-crosses-for-a-visualizer) lists the forms.
 
@@ -406,7 +407,7 @@ the description is therefore WGLMakie's own traffic between the host and the pag
   and pictures from runtime visualizers always exist. Large values stay in the runtime and the
   client asks for slices or a size.
 - No client call takes the catalog lock. A client call that changes the workspace, such as `tag!`
-  or `evaluate` of a new computation, returns for now once the published version shows the change,
+  or `evaluate` of a new computation, returns for now once the workspace shows the change,
   so a script sees its own change right after the call. A call that returns at once may come
   later. [The client API](client-api.md) that does this is designed whole first, as a target of
   its own.
@@ -457,7 +458,9 @@ These are not yet agreed.
   of its own, each value arrives as a copy.
 - Do values pass through DBCore, or go from the host to the client directly? Through DBCore,
   unopened, is the simplest first form. A direct path would give the client a ticket that it shows
-  to the host, as Arrow Flight does.
+  to the host, as Arrow Flight does. On the same machine, the host or DBCore can also place items
+  and large values in shared memory that clients map read-only or copy-on-write, so that reading
+  copies nothing and an in-place edit in a client cannot corrupt the shared bytes.
 - One Julia host or several? Several hosts keep work running while one is stopped, and each of them
   loads and compiles the project's code. With one host, stopping it for one stale call also ends
   every other call that runs.

@@ -49,8 +49,12 @@ instrument integration as in LabVIEW. These capabilities share projects, workspa
 items, and public operations. They do not require a different data model for each interface.
 
 The system should support both exploratory and repeatable work. A user should be able to click around
-interactively, but also replay, script, inspect, export, and automate what happened. This matters for
-scientific trust, reproducibility, and agentic use.
+interactively, but also replay, script, inspect, export, and automate what happened. Instead of
+treating code as blind text files separate from data, the workspace acts as a live database of its
+source items, the dependency graph of function calls, the runtime types and values inside those
+calls, and its visualizers. Neither a scientist nor an agent writes code blind: from any visual they
+can reach the code that produced it and see the values its local variables held during that run
+([code editor](plans/code-editor.md)).
 
 The long-term product should make it natural to distribute open, modifiable analysis packages. These
 packages may include loaders, processors, visualizers, custom UI components, examples, documentation,
@@ -520,7 +524,9 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
   workspace as data, and a Julia host loads and runs project code. See
   [runtime and clients](plans/runtime-and-clients.md).
 - **Browser frontend.** A browser client served by a local runtime first, a remote one later. It uses
-  the command model and should not require rewriting the scientific core.
+  the [client API](plans/client-api.md), starts with a structural [code editor](plans/code-editor.md)
+  that shows live types and runtime values inside the project's code, and should not require
+  rewriting the scientific core.
 - **Plots in every client.** The runtime builds every plot as a Makie figure. Makie is the figure
   model; a backend draws the figure, chosen per client. GLMakie draws with OpenGL in the process
   that holds the figure. WGLMakie sends the figure to a browser, which draws it with WebGL.
