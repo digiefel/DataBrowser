@@ -2,8 +2,7 @@
 
 Target design, curated on 21 October 2026. This plan owns analysis files, window ownership,
 independent selections and interactive development. [Visualizers](visualizers.md) owns view inputs
-and presentation; [processing](processing.md) owns execution. The old canvas, planes and one-file
-workspace presentation model are superseded.
+and presentation; [processing](processing.md) owns execution.
 
 ## Agreed workflow
 
@@ -74,7 +73,7 @@ After that, combining data, exploring it, making figures and saving reproducible
 same tools for everyone (Davide, 21 October). A tab's analysis code is not a recipe and does not
 require DBRecipes declarations. A recipe means something specifically defined by DBRecipes.
 
-Davide's direction, 21 October: stable plot, analysis and canvas definitions should use clear
+Davide's direction, 21 October: stable plot and analysis definitions should use clear
 macros, following the role of `@plot`. Names such as `@process` or `@analyze` are illustrative;
 the grammar is not chosen. Ordinary one-off REPL calls and queries do not require a declaration.
 A query can instead be part of a saved definition when it describes that analysis's input.
@@ -85,11 +84,39 @@ functions, declarations, queries and named results. Windows present those values
 person edit the same source; attaching a GUI must not recreate analysis or repeat external effects.
 Scientific definitions and results are available headlessly.
 
-The following details remain proposed:
+Today the browser saves its windows, their visualizers, inputs and settings, and its other
+controls in `databrowser.toml`, in the folder of the workspace, which is the folder of the active
+Julia environment. The browser writes that file while it is open, so it overwrites an edit made by
+another program.
+
+Direction agreed with Davide on 7 November, not built: a tab is a live Julia file, and a `@layout`
+macro in it declares its windows. The macro defines a method, so Revise runs only the layout again
+when it changes, and deleting it closes the tab. The layout holds the geometry too, with
+`Split(direction, ratio, first, second)` and `Window(name, visualizer; input)`, which replaces the
+earlier rule that geometry stays out of analysis files:
+
+```julia
+@layout begin
+    Split(:horizontal, 0.4,
+        Window(:peaks, TableView; input=LiveSelection()),
+        Window(:fit, BuilderView; input=VisualizerOutput(:peaks)))
+end
+```
+
+- Core knows visualizers, never windows: one visualizer for each name, with its input and
+  settings. The name, such as `:peaks`, identifies the visualizer across runs and keeps its state.
+  The named visualizers exist when the tab file loads, with or without a browser; `Window` and
+  `Split` belong to the GUI.
+- An input is `LiveSelection()`, `FixedItems(ids)`, a function that `select` keeps current, or
+  `VisualizerOutput(:name)`, the output of another named visualizer.
+- A window that `@layout` places cannot be moved or resized in the browser; a drag may later write
+  the change into the file.
+
+These details remain proposed:
 
 - A window belongs to the tab whose file or explicit GUI action opened it.
 - Window-opening/changing actions write recognized code into that tab's file.
-- Geometry and debug markers live in browser layout state, separate from analysis definitions.
+- Debug markers live in browser state, separate from analysis definitions.
 - A window may show a named value or run a helper on a chosen input; the exact declaration and
   result-access APIs are not designed.
 
@@ -124,7 +151,7 @@ Payload/index ownership and durable state are tracked in [storage](storage.md).
 4. Selected trials versus default analysis: compare alternatives, retain results and promote the
    chosen definition without unintentionally changing the whole project.
 5. Saved layout and undo: what source edits, presentation state and debug markers retain across
-   reopen; headless access must not depend on layout files.
+   reopen; headless access must not depend on `databrowser.toml`.
 6. Tags versus computed queries: ownership and removal when an automated definition changes.
 
 ## Existing implementation

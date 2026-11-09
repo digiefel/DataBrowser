@@ -2,8 +2,7 @@
 
 Target design, curated on 21 October 2026; the visualizer as an object of the workspace was agreed
 on 8 November 2026. This plan owns values presented by visualizers, input binding and linked
-interaction. [Tabs](tabs.md) owns analysis files and window ownership. The old canvas,
-planes and single-workspace-file layout have been retired, not retained as parallel requirements.
+interaction. [Tabs](tabs.md) owns analysis files and window ownership.
 
 The implemented extension contract is documented in
 [visualizer_contract.jl](../../lib/DataBrowserAPI/src/visualizer_contract.jl). Method sketches in
@@ -61,10 +60,10 @@ output of any other window. There is no separate open-output action.
 
 Step information includes:
 
-- **Cached:** yes or no, with the cache location and size when available, for example
-  `Yes — memory, 2.4 MiB`.
+- **Cached:** yes or no, with the stored size when available, for example `Cached: yes (2.4 MiB)`.
 - **Last execution:** duration and date together, for example
-  `18 ms (28 Oct, 15:12:45)`. Reading a cached result does not change its execution date.
+  `Last execution: 18 ms (2026-10-28 15:12:45)`. Reading a cached result does not change its
+  execution date.
 
 State, input count, output type/shape and failure information are additional candidate details.
 The source link continues to open the step's code.
@@ -75,9 +74,10 @@ API. Exact APIs and selection behavior for rows representing several computation
 
 ## The value of a selection
 
-The current public selection API provides item values and metadata through a tabular selection.
-The target adds groups as selectable items with their own native results. Selecting a group does
-not expand it into members; that is a separate action. A mean image appears directly, with its
+The public selection API provides item values and metadata through a `Selection`, a Tables.jl
+table. Groups are items: the tree shows each group with its members below it, and selecting a group
+selects the group itself, with its own data. Selecting its members is a separate action, not built
+yet. A mean image appears directly, with its
 input images accessible on expansion. See [groups](groupings.md#selection-and-browsing).
 
 The target must make identity, labels, metadata and native data available consistently. Native data
