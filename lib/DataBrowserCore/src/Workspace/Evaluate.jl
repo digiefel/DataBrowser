@@ -103,11 +103,8 @@
 #
 # When the store refuses a result, as a `DuckDBStore` refuses metadata that it cannot save, the row
 # fails in the same way, but the cache does not save the error: the next session runs the row again.
-# The cache does not save the failure of a row that gives the id of an item of another row either.
-# Also, a row whose saved values have such an id runs instead of taking them from the cache.
 #
-# TODO: a way to run one failed row again, as after a file was locked for a moment, or after the
-# row that gave the same id is gone.
+# TODO: a way to run one failed row again, as after a file was locked for a moment.
 
 """
     start_workers!(workspace)
@@ -613,8 +610,7 @@ end
 
 Give `row` the result that the cache saved for it, with the revision of that result, when the
 revision and the item revision of the row are those of its record, and its inputs are current,
-without a job. Return whether it did. When another row gives one of the saved values, the cache
-forgets the record, and the row is stale and runs again. The caller holds the catalog lock.
+without a job. Return whether it did. The caller holds the catalog lock.
 """
 function restore!(workspace::Workspace, row::Row)::Bool
     catalog = workspace.catalog
@@ -625,7 +621,8 @@ function restore!(workspace::Workspace, row::Row)::Bool
     record === nothing && return false
     @timed_dbg("restore.revision", record.revision == revision(workspace, row) && described(workspace, row, record)) || return false
     Catalogs.restore!(catalog, row; failed=!isempty(record.failure), revision=record.result_revision, type=record.type) || return false
-    return @timed_dbg "restore.restored!" restored!(workspace, row, record)
+    @timed_dbg "restore.restored!" restored!(workspace, row, record)
+    return true
 end
 
 # Whether the code that describes the values of `record`, the record of `row`, is the code that
@@ -634,27 +631,17 @@ end
 described(workspace::Workspace, row::Row, record)::Bool = record.item_revision ==
     revision(workspace, row, isempty(record.failure) ? [x.type for x in record.items] : fieldtypes(record.type))
 
-# The values and the metadata of a row, or its error, as its record holds them. Gives `false` when
-# another row gives one of these values: the row is stale then, and runs again.
-function restored!(workspace::Workspace, row::Row, record)::Bool
+# The values and the metadata of a row, or its error, as its record holds them.
+function restored!(workspace::Workspace, row::Row, record)::Nothing
     failed = !isempty(record.failure)
     failed && (workspace.errors = Base.PersistentDict(workspace.errors,
         row => subject(workspace, row) => "$(function_name(workspace.catalog[row].f)) failed: " * record.failure))
-    workspace.items.rows.depth[row] === nothing && return true
+    workspace.items.rows.depth[row] === nothing && return nothing
     outputs = @timed_dbg "restored.outputs" Output[Output(x.id, x.type, x.label, x.members,
         output_key!(workspace.cache.db, row.index, x.id), value_revision(x.id, record.result_revision)) for x in record.items]
-    try
-        @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
-    catch
-        ## The row runs, so that it fails again, or gives its values when the other row is gone.
-        ## TODO: when the saved result has an older revision than the row, its values stay in the
-        ## stores.
-        delete!(workspace.cache.db, row.index)
-        Catalogs.invalidate!(workspace.catalog, row)
-        return false
-    end
+    @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
     foreach((output, x) -> store!(workspace.items, output, x.metadata), outputs, record.items)
-    return true
+    return nothing
 end
 
 # ## Results
