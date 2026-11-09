@@ -5,9 +5,9 @@ using .JuliaSyntax: SyntaxNode, byte_range, children, kind, sourcetext, @K_str
 # the first value) or a symbol, and its bytes in the code.
 struct EntryCode
     name::Union{Int,Symbol}
-    # The bytes of the value.
+    ## The bytes of the value.
     value::UnitRange{Int}
-    # The bytes of the whole value with its name, as in `color = :Chip`.
+    ## The bytes of the whole value with its name, as in `color = :Chip`.
     range::UnitRange{Int}
 end
 
@@ -18,22 +18,23 @@ struct CallCode
     entries::Vector{EntryCode}
 end
 
-# A line of the block of `@plot` that is a layer, that is, not a `scales`, `legend` or `theme` line.
+# A line of the block of `@plot` that is a layer, that is, not a `scales`, `legend`, `theme` or
+# `coord` line.
 struct LineCode
-    # The bytes of the line, after `@invisible` if it has one.
+    ## The bytes of the line, after `@invisible` if it has one.
     range::UnitRange{Int}
-    # The bytes of `@invisible ` before the line, or `nothing` when the line is drawn.
+    ## The bytes of `@invisible ` before the line, or `nothing` when the line is drawn.
     invisible::Union{Nothing,UnitRange{Int}}
-    # The name the line gives to its value, as in `contacts = fit(...)`, or `nothing`.
+    ## The name the line gives to its value, as in `contacts = fit(...)`, or `nothing`.
     name::Union{Nothing,Symbol}
-    # The line's own mapping, a factor of its product such as `mapping(; marker=:Site) * visual(Scatter)`.
+    ## The line's own mapping, a factor of its product such as `mapping(; marker=:Site) * visual(Scatter)`.
     mapping::Union{Nothing,CallCode}
-    # The line's `visual(...)`, whose first value is the plot type.
+    ## The line's `visual(...)`, whose first value is the plot type.
     visual::Union{Nothing,CallCode}
-    # The names of the other factors of the line, such as `expectation` or a fit.
+    ## The names of the other factors of the line, such as `expectation` or a fit.
     analyses::Vector{String}
-    # Whether the line takes the header's mapping: not when it has its own data, `data(...)` or the
-    # name of an earlier line, whose value has its data, such as a fit's result.
+    ## Whether the line takes the header's mapping: not when it has its own data, `data(...)` or the
+    ## name of an earlier line, whose value has its data, such as a fit's result.
     inherits::Bool
 end
 
@@ -47,15 +48,15 @@ struct PlotCode
     mapping::Union{Nothing,CallCode}
     lines::Vector{LineCode}
     scales::Union{Nothing,CallCode}
-    # The settings of each scale of `scales`, such as `(; label = "V")` for `y`, in its order.
+    ## The settings of each scale of `scales`, such as `(; label = "V")` for `y`, in its order.
     scale_settings::Vector{Union{Nothing,CallCode}}
     legend::Union{Nothing,CallCode}
     theme::Union{Nothing,CallCode}
-    # The settings of each group of `theme`, such as `(; xgridvisible = false)` for `Axis`, in the
-    # order of its values; `nothing` for a value that is not a named tuple.
+    ## The settings of each group of `theme`, such as `(; xgridvisible = false)` for `Axis`, in the
+    ## order of its values; `nothing` for a value that is not a named tuple.
     theme_groups::Vector{Union{Nothing,CallCode}}
-    # The last byte of the block, after which a new line goes, and the indent of its lines; `nothing`
-    # when `@plot` has no block.
+    ## The last byte of the block, after which a new line goes, and the indent of its lines; `nothing`
+    ## when `@plot` has no block.
     ending::Union{Nothing,Int}
     indent::String
 end
@@ -80,7 +81,7 @@ function Base.tryparse(::Type{PlotCode}, code::CodeFile)::Union{Nothing,PlotCode
     settings, groups = Union{Nothing,CallCode}[], Union{Nothing,CallCode}[]
     for line in statements
         hidden = kind(line) == K"macrocall" && sourcetext(children(line)[1]) == "invisible" && length(children(line)) == 2
-        # The line starts after the space that follows `@invisible`.
+        ## The line starts after the space that follows `@invisible`.
         start = hidden ? findnext(!isspace, text, last(byte_range(children(line)[1])) + 1) : first(byte_range(line))
         invisible = hidden ? (first(byte_range(line)):start-1) : nothing
         range = start:last(byte_range(line))
@@ -98,7 +99,7 @@ function Base.tryparse(::Type{PlotCode}, code::CodeFile)::Union{Nothing,PlotCode
                 call_code(text, named[entry.name]) : nothing for entry in theme.entries]
         end
         is_call(line, "legend") && (legend = call_code(text, line))
-        # TODO: show the `coord(...)` lines in the panel.
+        ## TODO: show the `coord(...)` lines in the panel.
         any(name -> is_call(line, name), ("scales", "legend", "theme", "coord")) && continue
         named = kind(line) == K"=" && kind(children(line)[1]) == K"Identifier"
         value = named ? children(line)[2] : line
@@ -170,16 +171,16 @@ function call_code(text::String, node::SyntaxNode)::Union{Nothing,CallCode}
     arguments = kind(node) == K"call" ? children(node)[2:end] : children(node)
     entries = EntryCode[]
     entry(name, argument, value) = push!(entries, EntryCode(name, trimmed(text, value), trimmed(text, argument)))
-    # A value without a name, even after `;` where Julia refuses it, is read as the next position.
+    ## A value without a name, even after `;` where Julia refuses it, is read as the next position.
     read(argument) = kind(argument) == K"=" ?
         entry(Symbol(sourcetext(children(argument)[1])), argument, children(argument)[2]) :
         entry(count(e -> e.name isa Int, entries) + 1, argument, argument)
     for argument in arguments
         kind(argument) == K"parameters" ? foreach(read, children(argument)) : read(argument)
     end
-    # A named tuple of settings has only names; other tuples are read as code.
+    ## A named tuple of settings has only names; other tuples are read as code.
     kind(node) == K"tuple" && any(e -> e.name isa Int, entries) && return nothing
-    # Positions come first, as `mapping` takes them.
+    ## Positions come first, as `mapping` takes them.
     return CallCode(byte_range(node), sort(entries; by=e -> e.name isa Symbol))
 end
 

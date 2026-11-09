@@ -6,10 +6,10 @@ Close the workspace with [`close_workspace!`](@ref). A workspace that is still o
 is closed then.
 
 Saved edits to code tracked by Revise, including files loaded with `Revise.includet`, are loaded
-automatically while the workspace is open. The workspace then reads the affected source items and
-computes the affected items added with `push!` again, in the background. It processes the other
-affected items again when a window shows them or a script reads them, or in the background with
-`background_processing=true`.
+automatically while the workspace is open. The workspace then reads the affected source items
+again, in the background. It processes the affected items again when a window shows them or a
+script reads them, or in the background with `background_processing=true`, and computes a
+computation given to `evaluate` again at its next call.
 An open browser pauses these automatic updates while its main window is inactive.
 """
 function open_workspace(
@@ -19,7 +19,7 @@ function open_workspace(
     cache::Bool=true,
     background_processing::Bool=false,
 )::Workspace
-    # The first opening logs a line, so that a script run from a shell shows that it goes on.
+    ## The first opening logs a line, so that a script run from a shell shows that it goes on.
     @info "Opening workspace" maxlog=1
     opened_source = open_source(source)
     workspace = try
@@ -30,7 +30,7 @@ function open_workspace(
     end
     try
         start!(workspace; rebuild)
-        # A workspace that is still open when Julia exits is closed, so the cache keeps its results.
+        ## A workspace that is still open when Julia exits is closed, so the cache keeps its results.
         open_at_exit = WeakRef(workspace)
         atexit(() -> open_at_exit.value === nothing || close_workspace!(open_at_exit.value))
         return workspace
@@ -64,9 +64,9 @@ function modify_workspace!(
             fresh = Workspace(workspace.project, opened_source; rebuild,
                 cache=something(cache, workspace.disk_cache),
                 background_processing=something(background_processing, workspace.background_processing))
-            # What a browser keeps of the workspace stays: its lock, its shared state, its
-            # generation. The table `items` comes last, with its catalog: a frame that finds it open
-            # reads the other fields of the rebuilt workspace.
+            ## What a browser keeps of the workspace stays: its lock, its shared state, its
+            ## generation. The table `items` comes last, with its catalog: a frame that finds it open
+            ## reads the other fields of the rebuilt workspace.
             for field in fieldnames(typeof(workspace))
                 field in (:lifecycle_lock, :shared, :shared_lock, :generation, :code_updates_active, :status, :work, :items) ||
                     setfield!(workspace, field, getfield(fresh, field))
@@ -220,12 +220,12 @@ Scan the source once. The walk lists the source items, and after it each gets it
 item that is unchanged since the cache saved it is current at once, with the values the cache saved
 for it, and so are the rows of `process` whose inputs are current. The cache forgets what it saved
 for the rows that the workspace no longer has, such as those of source items that the walk no
-longer finds. The source group holds the source items found. `rebuild=true` means the cache was just
+longer finds. The [`SourceGroup`](@ref) of the source holds the source items found. `rebuild=true` means the cache was just
 emptied.
 """
 function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
     scan, catalog, db = workspace.scan, workspace.catalog, workspace.cache.db
-    # Under the catalog lock, so that `cancel_scan!` sees the scan once it runs.
+    ## Under the catalog lock, so that `cancel_scan!` sees the scan once it runs.
     cancel_source = @lock catalog.lock begin
         source_scan_running(workspace) && error("A source scan is already running")
         workspace.closed && error("The workspace is closed")
@@ -244,12 +244,12 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
             workspace.cache_state = rebuild ? :missing : :ready
             publish!(workspace)
         end
-        # Jobs that start during the walk slow it down: the source items get their rows after it.
+        ## Jobs that start during the walk slow it down: the source items get their rows after it.
         walked = AbstractDataSourceItem[]
         listed = @timed_dbg "source_walk" items(workspace.source; cancel_token=token,
             on_progress=count -> (scan.discovered[] = count; changed!(workspace)),
             on_item=item -> push!(walked, item))
-        # A source that ignores `on_item` gives its source items when the walk ends.
+        ## A source that ignores `on_item` gives its source items when the walk ends.
         isempty(walked) && (walked = collect(AbstractDataSourceItem, listed))
         read_again = 0
         for batch in Iterators.partition(walked, 256)
@@ -270,9 +270,9 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
             ## The rows of `process` that the cache did not restore run now.
             workspace.background_processing && foreach(row -> want!(catalog, row, BACKGROUND_ITEM), values(workspace.rows))
             gone = 0
-            # TODO: this also forgets the rows that the workspace adds after the walk, when a job
-            # restores one of their inputs, such as the rows below a group that a source lists before
-            # its members: they run again.
+            ## TODO: this also forgets the rows that the workspace adds after the walk, when a job
+            ## restores one of their inputs, such as the rows below a group that a source lists before
+            ## its members: they run again.
             for key in keys(db)
                 record = get(db, key, nothing)
                 (Row(key) in catalog || isempty(record.items)) && continue
@@ -324,7 +324,7 @@ the latest version of the table `items` shows it, or until `timeout` seconds pas
 still flushing do not delay it: reads overlay the write buffer, and closing the workspace drains it.
 """
 function wait_workspace_idle!(workspace::Workspace; timeout::Real=60)::Workspace
-    # TODO: Surface timeout through the public API instead of returning an unfinished workspace.
+    ## TODO: Surface timeout through the public API instead of returning an unfinished workspace.
     deadline = time() + Float64(timeout)
     items = workspace.items
     ## The call waits, without the catalog lock, for a pass of `keep!` that ends after it and finds
@@ -375,10 +375,10 @@ function watch_code(workspace::Workspace)::Task
         while true
             try
                 if @atomic workspace.code_updates_active
-                    # File watchers queue edits; load them even when the REPL is idle. Revise
-                    # serializes concurrent callers, including other workspaces and the REPL.
+                    ## File watchers queue edits; load them even when the REPL is idle. Revise
+                    ## serializes concurrent callers, including other workspaces and the REPL.
                     Base.invokelatest(Revise.revise)
-                    # The latest world, so the check sees methods defined after the workspace opened.
+                    ## The latest world, so the check sees methods defined after the workspace opened.
                     Base.invokelatest(check_code!, workspace)
                 end
             catch error

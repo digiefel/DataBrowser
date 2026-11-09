@@ -81,8 +81,8 @@ function _close_window!(state::BrowserState, window::Window)::Nothing
 end
 
 """
-The title of a window that shows `v`: what it shows, not how. Up to three items are named by their
-labels, more are counted. The header of the window names the visualizer.
+The title of a window that shows `v`: the items it shows. Up to three items are named by their
+labels, and more are counted. The header of the window names the visualizer.
 """
 function title(state::BrowserState, v::Workspace.Visualizer)::String
     ids = Workspace.item_ids(v)
@@ -103,7 +103,7 @@ function visualizers(T::Type)::Vector{AbstractVisualizer}
     types = Set{Type}()
     for method in (T <: Workspace.Selection ? methods(prepare!) : methods(prepare!, Tuple{AbstractVisualizer,T,Any}))
         V = Base.unwrap_unionall(method.sig).parameters[2]
-        # `methods` also lists methods that accept only some values of type `T`.
+        ## `methods` also lists methods that accept only some values of type `T`.
         V isa DataType && V <: AbstractVisualizer && isconcretetype(V) &&
             (T <: Workspace.Selection || hasmethod(prepare!, Tuple{V,T,Any})) && push!(types, V)
     end
@@ -130,7 +130,7 @@ The functions a window can pass its value through: those the project defines in 
 name.
 """
 function transforms()::Vector{GlobalRef}
-    # TODO: also the functions of packages the project develops (`Pkg.develop`).
+    ## TODO: also the functions of packages the project develops (`Pkg.develop`).
     found = GlobalRef[]
     for name in names(Main; all=true)
         (startswith(String(name), '#') || name in (:eval, :include)) && continue
@@ -199,7 +199,7 @@ function refresh!(state::BrowserState, window::Window)::Workspace.Result
     end
     window.presentation_dirty && window.revision > 0 && _prepare_presentations!(state, window)
     ## A grid has no single output, and an instance that failed to prepare passes on the value.
-    # TODO: when several windows show one visualizer, the one that published last gives its output.
+    ## TODO: when several windows show one visualizer, the one that published last gives its output.
     if !preparing(window)
         passed = window.revision == 0 || window.arrangement == "grid" || !isempty(window.error) ? nothing :
             output(window.instance)

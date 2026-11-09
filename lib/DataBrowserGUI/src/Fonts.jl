@@ -55,8 +55,8 @@ const _ICON_RANGE = CImGui.lib.ImWchar[0xe000, 0xf8ff, 0]
 function _load_fonts!()::_GUIFonts
     assets = joinpath(pkgdir(@__MODULE__), "assets")
     atlas = unsafe_load(CImGui.GetIO().Fonts)
-    # The fonts of one weight: the interface font and the code font, each with the icons. ImGui keeps
-    # a copy of each configuration, so one configuration serves several fonts.
+    ## The fonts of one weight: the interface font and the code font, each with the icons. ImGui keeps
+    ## a copy of each configuration, so one configuration serves several fonts.
     function load(weight::String)
         merge = CImGui.lib.ImFontConfig_ImFontConfig()
         merge.MergeMode = true
@@ -64,11 +64,11 @@ function _load_fonts!()::_GUIFonts
         code_config.GlyphExcludeRanges = pointer(_ICON_RANGE)
 
         interface = CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "Lexend-$weight.ttf"), 13.0f0)
-        # JuliaMono draws the characters that Lexend lacks, such as those of scientific labels. A
-        # merged font only adds characters, so Lexend keeps its own.
+        ## JuliaMono draws the characters that Lexend lacks, such as those of scientific labels. A
+        ## merged font only adds characters, so Lexend keeps its own.
         merge.GlyphExcludeRanges = pointer(_ICON_RANGE)
         CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "JuliaMono-$weight.ttf"), 13.0f0, merge)
-        # Icons fill their font size; they load smaller and move down onto the line of the text.
+        ## Icons fill their font size; they load smaller and move down onto the line of the text.
         merge.GlyphExcludeRanges = C_NULL
         merge.GlyphOffset = CImGui.ImVec2(0.0f0, 1.0f0)
         CImGui.AddFontFromFileTTF(atlas, joinpath(assets, "lucide.ttf"), 10.0f0, merge)
@@ -80,7 +80,7 @@ function _load_fonts!()::_GUIFonts
         CImGui.lib.ImFontConfig_destroy(code_config)
         return interface, code
     end
-    # The regular weight loads first: ImGui takes the first font as the default.
+    ## The regular weight loads first: ImGui takes the first font as the default.
     interface, code = load("Regular")
     interface_bold, code_bold = load("Bold")
     return _GUIFonts(interface, code, interface_bold, code_bold)

@@ -1,7 +1,7 @@
 import CImGui as ig
 import ModernGL as GL
 
-"""The last rendered window contents, owned by the browser rather than its visualizer."""
+"""The content of a window as it was last drawn, in a texture that the browser owns."""
 Base.@kwdef mutable struct WindowPreview
     texture::GL.GLuint = 0
     size::Tuple{Int,Int} = (0, 0)
@@ -21,7 +21,7 @@ const _WINDOW_PREVIEWS = ScopedValues.ScopedValue{WindowPreviewCache}()
 _window_preview(id::String)::WindowPreview = get!(WindowPreview, _WINDOW_PREVIEWS[].windows, id)
 
 function _discard_window_preview!(id::String)::Nothing
-    # A window closed outside a browser, such as in a script, has no preview.
+    ## A window closed outside a browser, such as in a script, has no preview.
     isassigned(_WINDOW_PREVIEWS) || return nothing
     cache = _WINDOW_PREVIEWS[]
     preview = pop!(cache.windows, id, nothing)
@@ -83,9 +83,9 @@ function _capture_window_preview(_draw_list::Ptr{Cvoid}, command::Ptr{Cvoid})::C
     else
         GL.glCopyTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, x, y, width, height)
     end
-    # Platform windows share textures but have separate GL contexts.
+    ## Platform windows share textures but have separate GL contexts.
     GL.glFlush()
-    # ImGui's renderer expects the texture it bound before.
+    ## ImGui's renderer expects the texture it bound before.
     GL.glBindTexture(GL.GL_TEXTURE_2D, GL.GLuint(binding[]))
     return nothing
 end
@@ -114,8 +114,8 @@ end
 function _draw_window_preview!(id::String, position, size)::Nothing
     preview = _window_preview(id)
     if preview.texture != 0
-        # Include padding and the frozen scrollbars, rather than clipping to the live widgets'
-        # content rectangle. The image remains anchored to the window when its contents scroll.
+        ## Include padding and the frozen scrollbars, rather than clipping to the live widgets'
+        ## content rectangle. The image remains anchored to the window when its contents scroll.
         edge = (position.x + size.x, position.y + size.y)
         ig.PushClipRect(position, edge, false)
         ig.AddImage(ig.GetWindowDrawList(), ig.ImTextureRef(ig.ImTextureID(preview.texture)),
@@ -137,7 +137,7 @@ end
 
 function _preparing_window_flags(window::Window)
     preparing(window) || return ig.ImGuiWindowFlags_None
-    # Keep ImGui's retained scroll extent while displaying the frozen contents.
+    ## Keep ImGui's retained scroll extent while displaying the frozen contents.
     native = ig.FindWindowByName("###$(window.id)")
     if native != C_NULL
         ig.SetNextWindowContentSize(unsafe_load(native.ContentSize))
@@ -147,7 +147,7 @@ function _preparing_window_flags(window::Window)
 end
 
 function _window_caption(state::BrowserState, window::Window)::String
-    # The stable ### id also keeps a docked tab's identity while its indicator rotates.
+    ## The stable ### id also keeps a docked tab's identity while its indicator rotates.
     spinner = ("◐", "◓", "◑", "◒")
     prefix = preparing(window) ? spinner[mod(floor(Int, ig.GetTime() * 8), length(spinner)) + 1] * " " : ""
     return "$(prefix)$(title(state, window.visualizer))###$(window.id)"

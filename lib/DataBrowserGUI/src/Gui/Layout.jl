@@ -52,7 +52,7 @@ function _promote_to_foreground_app()
             nsapplication::Ptr{Cvoid}, objc_sel("sharedApplication")::Ptr{Cvoid},
         )::Ptr{Cvoid}
         app == C_NULL && return nothing
-        # NSApplicationActivationPolicyRegular = 0
+        ## NSApplicationActivationPolicyRegular = 0
         @ccall objc_msgSend(
             app::Ptr{Cvoid}, objc_sel("setActivationPolicy:")::Ptr{Cvoid}, 0::Clong,
         )::Bool
@@ -81,11 +81,11 @@ function _leave_foreground_app()
             nsapplication::Ptr{Cvoid}, objc_sel("sharedApplication")::Ptr{Cvoid},
         )::Ptr{Cvoid}
         app == C_NULL && return nothing
-        # Hiding activates the app that was in front before.
+        ## Hiding activates the app that was in front before.
         @ccall objc_msgSend(
             app::Ptr{Cvoid}, objc_sel("hide:")::Ptr{Cvoid}, C_NULL::Ptr{Cvoid},
         )::Cvoid
-        # NSApplicationActivationPolicyAccessory = 1: no Dock icon and no entry in Cmd-Tab.
+        ## NSApplicationActivationPolicyAccessory = 1: no Dock icon and no entry in Cmd-Tab.
         @ccall objc_msgSend(
             app::Ptr{Cvoid}, objc_sel("setActivationPolicy:")::Ptr{Cvoid}, 1::Clong,
         )::Bool
@@ -210,8 +210,8 @@ function _run_browser(
         (; window_size=Tuple(view.window_size)) : (;)
     _set_browser_window_hints(window_start)
     _set_browser_position_hints(view.window_position)
-    # A GLFW error while the browser runs, such as a paste when the clipboard holds no text, is a
-    # warning: GLFW.jl's own handler throws it out of the frame and stops the drawing.
+    ## A GLFW error while the browser runs, such as a paste when the clipboard holds no text, is a
+    ## warning: GLFW.jl's own handler throws it out of the frame and stops the drawing.
     GLFW.SetErrorCallback(error -> @warn "GLFW: $(error.description)")
     first_frame       = Ref(true)
     startup_presented = Ref(false)
@@ -226,14 +226,14 @@ function _run_browser(
         opengl_version=v"3.3",
         wait_events=false,
         on_exit=() -> begin
-            # The workspace keeps running after the browser closes.
+            ## The workspace keeps running after the browser closes.
             @atomic state.workspace.code_updates_active = true
-            # An instance may hold a figure that must be released before the window goes. The
-            # windows stay in the list, so that they are saved and open again next time, and their
-            # visualizers stay in the workspace.
-            # Finish handovers while the graphics context and workspace are still available.
+            ## An instance may hold a figure that must be released before the window goes. The
+            ## windows stay in the list, so that they are saved and open again next time, and their
+            ## visualizers stay in the workspace.
+            ## Finish handovers while the graphics context and workspace are still available.
             for window in Iterators.flatten((state.windows, state.closing_windows))
-                # `wait` is this function's keyword here.
+                ## `wait` is this function's keyword here.
                 preparing(window) && Base.wait(window.preparation.task)
                 _finish_preparation!(window)
             end
@@ -247,8 +247,8 @@ function _run_browser(
             _save_project_view_if_changed!(state; every=0)
             GLFW.HideWindow(ig.current_window())
             window_start == :normal && _leave_foreground_app()
-            # macOS takes the window off the screen while the process handles window events, and
-            # nothing handles them after the loop ends.
+            ## macOS takes the window off the screen while the process handles window events, and
+            ## nothing handles them after the loop ends.
             for _ in 1:20
                 GLFW.PollEvents()
                 sleep(0.01)
@@ -260,27 +260,27 @@ function _run_browser(
         @atomic state.workspace.code_updates_active =
             GLFW.GetWindowAttrib(ig.current_window(), GLFW.FOCUSED) != 0
         state.performance.frame += 1
-        # The backend renders and swaps the previous frame before calling us again.
-        # Discard startup timings once the first full frame has been presented, or on request.
-        # No timed section is open at frame top, so resetting the section stack is safe.
+        ## The backend renders and swaps the previous frame before calling us again.
+        ## Discard startup timings once the first full frame has been presented, or on request.
+        ## No timed section is open at frame top, so resetting the section stack is safe.
         if state.performance.reset_main_timer || (full_frame_submitted[] && !state.performance.ready)
             TimerOutputs.reset_timer!(MAIN_TIMER)
             state.performance.reset_main_timer = false
         end
         state.performance.ready |= full_frame_submitted[]
         workspace = state.workspace
-        # A rebuild closes the table `items`, and replaces it last.
+        ## A rebuild closes the table `items`, and replaces it last.
         if workspace.items.closed
             _render_workspace_updating!()
             return nothing
         end
-        # The parts of the frame are dynamic calls (`@invokelatest`). A package that loads while
-        # the browser is open can invalidate the compiled code of some parts: the next frame then
-        # compiles those parts again, not the whole frame.
+        ## The parts of the frame are dynamic calls (`@invokelatest`). A package that loads while
+        ## the browser is open can invalidate the compiled code of some parts: the next frame then
+        ## compiles those parts again, not the whole frame.
         @invokelatest _check_source_identity!(state, workspace)
         @invokelatest _check_cache_error!(state, workspace)
-        # Reveal a selection made through the workspace, from the REPL or by an action: one
-        # that differs from the selection that the browser revealed or made itself.
+        ## Reveal a selection made through the workspace, from the REPL or by an action: one
+        ## that differs from the selection that the browser revealed or made itself.
         selected = (@atomic workspace.shared).selection
         if selected !== state.selection
             selected == state.selection || @invokelatest _reveal_selected_items!(state)
@@ -289,20 +289,20 @@ function _run_browser(
         exit_after_frames !== nothing && state.performance.frame >= exit_after_frames &&
             return :imgui_exit_loop
         if first_frame[]
-            # The main window has been created. Do not give its placement hints to other
-            # windows created by visualizers or by ImGui's multi-viewport backend.
+            ## The main window has been created. Do not give its placement hints to other
+            ## windows created by visualizers or by ImGui's multi-viewport backend.
             _set_browser_position_hints()
             state.performance.gl_info = _gl_info()
             window_start == :normal && _promote_to_foreground_app()
-            # The backend always creates the window visible.
+            ## The backend always creates the window visible.
             window_start == :hidden && GLFW.HideWindow(ig.current_window())
             first_frame[] = false
         end
-        # Extensions of packages loaded while the browser is open, such as its plot windows.
+        ## Extensions of packages loaded while the browser is open, such as its plot windows.
         @invokelatest _add_new_extensions!(state)
         if !full_frame_submitted[] && !(@invokelatest _extensions_ready(state))
-            # Present the preparation surface for one frame before running any blocking
-            # extension warmup, so the window is never blank during the expensive part.
+            ## Present the preparation surface for one frame before running any blocking
+            ## extension warmup, so the window is never blank during the expensive part.
             _render_startup_preparation!()
             if startup_presented[]
                 @timed "extension_warmup" begin
@@ -316,7 +316,7 @@ function _run_browser(
             return nothing
         end
         @timed "frame_ui" begin
-            # The toolbar comes first, so that the windows dock in the room below it.
+            ## The toolbar comes first, so that the windows dock in the room below it.
             @timed "toolbar" begin
                 @invokelatest render_toolbar!(state)
             end
@@ -332,7 +332,7 @@ function _run_browser(
             end
             @timed "extensions" begin
                 for ext in state.extensions
-                    # An extension added after the startup screen prepares during the frames.
+                    ## An extension added after the startup screen prepares during the frames.
                     @invokelatest(is_ready(ext, state)) || @invokelatest(warmup!(ext, state))
                     @invokelatest draw!(ext, state)
                 end
@@ -380,8 +380,8 @@ Start Julia with `--threads=auto,1`: thread 1 runs the UI and the default pool p
 `:background` shows it without the focus, and `:hidden` does not show it.
 
 After `using DataBrowser`, the browser loads GLMakie on a worker thread after its first frame, when
-it is in the active environment and not loaded yet. The plot windows appear when it has loaded,
-after a few seconds; saved plot windows show "Loading" until then.
+it is in the active environment and not loaded yet. The plot windows, saved ones included, open
+when it has loaded, after a few seconds.
 """
 function open_browser(
     workspace::Workspace.Workspace;
@@ -393,8 +393,8 @@ function open_browser(
     workspace.closed && error("The workspace is closed. Open it again with `open_workspace`.")
     Threads.threadpool(1) === :interactive && Threads.threadpoolsize(:default) > 0 ||
         error("The browser needs a UI thread and background workers. Start Julia with --threads=auto,1.")
-    # The first opening logs a line, so that a script run from a shell shows that it goes on until
-    # the window appears.
+    ## The first opening logs a line, so that a script run from a shell shows that it goes on until
+    ## the window appears.
     @info "Opening browser" maxlog=1
     state = BrowserState(; workspace)
     state.extensions = _instantiate_extensions()

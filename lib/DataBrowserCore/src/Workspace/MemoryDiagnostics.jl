@@ -18,7 +18,7 @@ function workspace_memory_snapshot(workspace::Workspace)::WorkspaceMemorySnapsho
     gc_live_bytes = Int64(Base.gc_live_bytes())
     _completed, _total, active = work_counts(workspace)
     processing = (jobs=Int64(active), selected_queue=Int64(0), background_waiting=Int64(0))
-    # Writes live in the cache buffers, not in the catalog.
+    ## Writes live in the cache buffers, not in the catalog.
     staged = cache_pending_counts(workspace.cache.db)
     return WorkspaceMemorySnapshot(
         time_ns(),

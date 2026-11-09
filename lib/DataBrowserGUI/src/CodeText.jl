@@ -21,8 +21,8 @@ The tokens of Julia code, each with the kind that gives its color: `:call`, `:sy
 function code_tokens(text::AbstractString)::Vector{Tuple{String,Symbol}}
     tokens = JuliaSyntax.tokenize(text)
     found = Tuple{String,Symbol}[]
-    # Whether the last token that is not a space ends a value, after which a colon is a range, as
-    # in `1:n`, not the start of a symbol.
+    ## Whether the last token that is not a space ends a value, after which a colon is a range, as
+    ## in `1:n`, not the start of a symbol.
     after_value = false
     for (index, token) in enumerate(tokens)
         kind = JuliaSyntax.kind(token)
@@ -74,7 +74,7 @@ function draw_code(draw_list, position, text::AbstractString, width::Real; alpha
     for (piece, role) in code_tokens(text)
         size = ig.CalcTextSize(piece).x
         if x + size > right
-            # The characters that fit before the ellipsis.
+            ## The characters that fit before the ellipsis.
             fitting = ""
             for character in piece
                 x + ig.CalcTextSize(fitting * character).x + ellipsis > right && break

@@ -1,16 +1,19 @@
 """
-Payload-agnostic project and item contracts for DataBrowser.
+The types and functions that connect projects, sources, stores and visualizers to the workspace.
 
-The project contract, the calls of a project, the source and item contracts, and the
-visualizer contract live here. The registration dialect lives in `DataBrowserRecipes`, plot registration and rendering in
-`DataBrowserPlots`; both are ordinary clients of what this package declares.
+A project defines methods of `read` and `process` for its item types, a source lists its source
+items with `items`, a store saves the results of the workspace, and a visualizer shows a value in a
+window of the browser. `DataBrowserCore` calls these functions. `DataBrowserSources`,
+`DataBrowserCache`, `DataBrowserRecipes`, `DataBrowserGUI` and `DataBrowserPlots` define methods of
+them, as a project does.
 """
 module DataBrowserAPI
 
 using Dates
 
-# `read` is the call that reads the source, which is exactly what `Base.read` means.
-# Extending it keeps `using DataBrowser` from shadowing a function every Julia user already knows.
+# A project reads a source item with a method of `Base.read`, the function that Julia users know
+# for reading files. Extending it keeps `using DataBrowser` from hiding `Base.read` behind a
+# function of the same name.
 import Base: read
 
 include("project_contract.jl")

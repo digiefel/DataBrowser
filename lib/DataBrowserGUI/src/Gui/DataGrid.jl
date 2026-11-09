@@ -132,8 +132,8 @@ function render_data_grid!(
     columns_before = copy(state.selected_columns)
     n_cols = length(columns)
 
-    # The grid draws the lines between rows itself, so that a cell can span several rows, and the
-    # lines between the columns below the headers, so that a band has none.
+    ## The grid draws the lines between rows itself, so that a cell can span several rows, and the
+    ## lines between the columns below the headers, so that a band has none.
     flags = ig.ImGuiTableFlags_RowBg          |
             ig.ImGuiTableFlags_BordersInnerV  |
             ig.ImGuiTableFlags_NoBordersInBody |
@@ -146,37 +146,37 @@ function render_data_grid!(
 
     ig.BeginTable("##datagrid_$id", n_cols, flags) || return nothing
 
-    # The header rows stay in place.
+    ## The header rows stay in place.
     levels = maximum(column -> length(column_groups(column)), 1:n_cols)
     ig.TableSetupScrollFreeze(0, levels + 1)
 
-    # Column headers — width 0 with SizingFixedFit = auto-fit on first appearance;
-    # imgui.ini restores saved widths on subsequent opens.
+    ## Column headers — width 0 with SizingFixedFit = auto-fit on first appearance;
+    ## imgui.ini restores saved widths on subsequent opens.
     for col in columns
         ig.TableSetupColumn(col, ig.ImGuiTableColumnFlags_WidthFixed, 0.0f0)
     end
-    # A hidden column keeps its width, and shows again with it.
+    ## A hidden column keeps its width, and shows again with it.
     for column in 1:n_cols
         ig.TableSetColumnEnabled(column - 1, !hidden(column))
     end
     grid_table = ig.GetCurrentTable()
     style = unsafe_load(ig.GetStyle())
     draw_list = ig.GetWindowDrawList()
-    # The left edge and the width of the grid on screen, which a band spans.
+    ## The left edge and the width of the grid on screen, which a band spans.
     grid_left = ig.GetWindowPos().x
     grid_width = ig.GetWindowWidth()
-    # An arrow as ImGui draws it in a tree node, at the left of the text at `position`.
+    ## An arrow as ImGui draws it in a tree node, at the left of the text at `position`.
     function draw_arrow(position, open)
         ig.RenderArrow(draw_list, ig.ImVec2(position.x, position.y + ig.GetFontSize() * 0.15f0),
             ig.GetColorU32(ig.ImGuiCol_Text), open ? ig.ImGuiDir_Down : ig.ImGuiDir_Right, 0.7f0)
     end
     arrow_width = ig.GetFontSize() + style.ItemInnerSpacing.x
     shown_columns = [column for column in 1:n_cols if !hidden(column)]
-    # The rows of group names. A group is one cell over its shown columns, with no lines between
-    # them, and its name stays at the left edge of the grid while the group is in view, as the text
-    # of a band. Each column of a group with an arrow has a button that folds the group.
+    ## The rows of group names. A group is one cell over its shown columns, with no lines between
+    ## them, and its name stays at the left edge of the grid while the group is in view, as the text
+    ## of a band. Each column of a group with an arrow has a button that folds the group.
     for level in 1:levels
-        # The row is as high as a row of headers, also when it holds no button.
+        ## The row is as high as a row of headers, also when it holds no button.
         ig.TableNextRow(ig.ImGuiTableRowFlags_Headers, ig.TableGetHeaderRowHeight())
         for column in 1:n_cols
             ig.TableSetColumnIndex(column - 1)
@@ -190,7 +190,7 @@ function render_data_grid!(
             ig.PopID()
         end
         group(column) = length(column_groups(column)) >= level ? column_groups(column)[1:level] : nothing
-        # The background channel is above the lines that ImGui draws between the columns.
+        ## The background channel is above the lines that ImGui draws between the columns.
         ig.TablePushBackgroundChannel()
         first = 1
         while first <= length(shown_columns)
@@ -215,7 +215,7 @@ function render_data_grid!(
             end
             first = last + 1
         end
-        # The line below the row, across the grid.
+        ## The line below the row, across the grid.
         bottom = ig.TableGetCellBgRect(grid_table, 0).Max.y
         ig.AddLine(draw_list, ig.ImVec2(ig.GetWindowPos().x, bottom), ig.ImVec2(ig.GetWindowPos().x + ig.GetWindowWidth(), bottom),
             ig.GetColorU32(ig.ImGuiCol_TableBorderLight))
@@ -225,23 +225,23 @@ function render_data_grid!(
     io = ig.GetIO()
     for column in 1:n_cols
         ig.TableSetColumnIndex(column - 1)
-        # The header is known by its name, so that it stays the one the user drags when it moves.
+        ## The header is known by its name, so that it stays the one the user drags when it moves.
         ig.PushID(join([column_groups(column); columns[column]], '.'))
         icon = header_icon(column)
         header_open = header_fold(column, length(column_groups(column)) + 1)
         place = findfirst(spec -> first(spec) == column, state.sort)
-        # The place of the column among the columns to sort by, written before its arrow when
-        # sorting by several.
+        ## The place of the column among the columns to sort by, written before its arrow when
+        ## sorting by several.
         number = place === nothing || length(state.sort) == 1 ? "" : string(place)
         position = ig.GetCursorScreenPos()
         column in state.selected_columns &&
             ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, ig.GetColorU32(ig.ImGuiCol_Header))
-        # The arrows are buttons of their own on top of the header.
+        ## The arrows are buttons of their own on top of the header.
         ig.SetNextItemAllowOverlap()
-        # The text after "###" is the id of the header, so that its popup stays open when the
-        # text changes. Spaces before the name make room for the fold arrow, and spaces after it
-        # make room for the sort arrow and the icon when the column fits its content. ImGui would
-        # cut a long name at the edge of the column, so the grid writes the name itself, below.
+        ## The text after "###" is the id of the header, so that its popup stays open when the
+        ## text changes. Spaces before the name make room for the fold arrow, and spaces after it
+        ## make room for the sort arrow and the icon when the column fits its content. ImGui would
+        ## cut a long name at the edge of the column, so the grid writes the name itself, below.
         room = (on_sort === nothing ? 0 : 2 + (isempty(number) ? 0 : length(number) + 1)) + (isempty(icon) ? 0 : 2)
         ig.PushStyleColor(ig.ImGuiCol_Text, 0x00000000)
         ig.TableHeader("$(header_open === nothing ? "" : " "^3)$(columns[column])$(" "^room)###header")
@@ -251,8 +251,8 @@ function render_data_grid!(
                 unsafe_load(io.KeyShift), unsafe_load(io.KeyCtrl))
         end
         header_min, header_max = ig.GetItemRectMin(), ig.GetItemRectMax()
-        # Dragging the header out of its column moves the column past the one next to it, once the
-        # mouse is far enough that the header is still under it after the move.
+        ## Dragging the header out of its column moves the column past the one next to it, once the
+        ## mouse is far enough that the header is still under it after the move.
         if on_move !== nothing && ig.IsItemActive()
             at = findfirst(==(column), shown_columns)
             mouse = unsafe_load(io.MousePos).x
@@ -261,7 +261,7 @@ function render_data_grid!(
             to = at > 1 && mouse < min(own.Min.x, own.Max.x - width(at - 1)) ? at - 1 :
                 at < length(shown_columns) && mouse > max(own.Max.x, own.Min.x + width(at + 1)) ? at + 1 : at
             if to != at
-                # TODO: keep the widths of the two columns, rather than fitting them to their content.
+                ## TODO: keep the widths of the two columns, rather than fitting them to their content.
                 ig.TableSetColumnWidthAutoSingle(grid_table, column - 1)
                 ig.TableSetColumnWidthAutoSingle(grid_table, shown_columns[to] - 1)
                 on_move(column, shown_columns[to])
@@ -276,7 +276,7 @@ function render_data_grid!(
                 ig.Separator()
             end
             if on_sort !== nothing
-                # Sorting from the menu sorts by this column only; "Clear sort" stops sorting by it.
+                ## Sorting from the menu sorts by this column only; "Clear sort" stops sorting by it.
                 sort = nothing
                 ig.MenuItem("Sort ascending", C_NULL, (column, true) in state.sort) && (sort = [(column, true)])
                 ig.MenuItem("Sort descending", C_NULL, (column, false) in state.sort) && (sort = [(column, false)])
@@ -292,7 +292,7 @@ function render_data_grid!(
             ig.EndPopup()
         end
         if on_sort !== nothing
-            # The arrow as ImGui draws it in a sorted header, after the place of the column.
+            ## The arrow as ImGui draws it in a sorted header, after the place of the column.
             arrow = floor(ig.GetFontSize() * 0.65f0)
             left = right - arrow - (isempty(number) ? 0.0f0 : ig.CalcTextSize(number).x + style.ItemInnerSpacing.x)
             if place !== nothing || hovered
@@ -305,7 +305,7 @@ function render_data_grid!(
             end
             ig.SetCursorScreenPos(ig.ImVec2(left, top))
             if ig.InvisibleButton("##sort", ig.ImVec2(right - left, ig.GetFontSize()))
-                # Ascending, then descending, then not sorted.
+                ## Ascending, then descending, then not sorted.
                 ascending = place === nothing ? true : last(state.sort[place]) ? false : nothing
                 if unsafe_load(io.KeyShift)
                     sort = copy(state.sort)
@@ -329,7 +329,7 @@ function render_data_grid!(
             ig.AddText(draw_list, ig.ImVec2(right, top), ig.GetColorU32(ig.ImGuiCol_Text), icon)
             right -= style.ItemInnerSpacing.x
         end
-        # The name, cut with "..." before the arrow and the icon.
+        ## The name, cut with "..." before the arrow and the icon.
         left = position.x + (header_open === nothing ? 0.0f0 : ig.CalcTextSize(" "^3).x)
         ig.RenderTextEllipsis(draw_list, ig.ImVec2(left, position.y),
             ig.ImVec2(right, position.y + ig.GetFontSize()), right, columns[column], C_NULL, C_NULL)
@@ -346,11 +346,11 @@ function render_data_grid!(
         state.fit_columns = false
     end
 
-    # The grid reacts to keys only when it has the keyboard focus. A scrolling table has a child
-    # window of its own, so several grids in one window do not all react to the same key.
+    ## The grid reacts to keys only when it has the keyboard focus. A scrolling table has a child
+    ## window of its own, so several grids in one window do not all react to the same key.
     window_focused = ig.IsWindowFocused()
-    # The grid takes the keys it moves through its rows with from ImGui's keyboard navigation, which
-    # would move through the rows and the links too, scroll on its own, and press a row with Space.
+    ## The grid takes the keys it moves through its rows with from ImGui's keyboard navigation, which
+    ## would move through the rows and the links too, scroll on its own, and press a row with Space.
     if window_focused
         for key in (ig.ImGuiKey_UpArrow, ig.ImGuiKey_DownArrow, ig.ImGuiKey_Space,
                     ig.ImGuiKey_Enter, ig.ImGuiKey_KeypadEnter)
@@ -391,26 +391,26 @@ function render_data_grid!(
     end
 
     selected_set = Set(state.selected_rows)
-    # ImGui tables cannot merge cells. A cell that spans several rows shows its text in the first
-    # visible row of the span, has no line between its rows, and covers the stripes of the rows.
+    ## ImGui tables cannot merge cells. A cell that spans several rows shows its text in the first
+    ## visible row of the span, has no line between its rows, and covers the stripes of the rows.
     padding = unsafe_load(ig.GetStyle().CellPadding)
     border = ig.GetColorU32(ig.ImGuiCol_TableBorderLight)
     background = ig.GetColorU32(ig.ImGuiCol_WindowBg)
     selected_columns = Set(state.selected_columns)
     selected_column = ig.GetColorU32(ig.ImGuiCol_Header)
-    # Between the color of the headers and that of the rows, so that a band is not taken for a header.
+    ## Between the color of the headers and that of the rows, so that a band is not taken for a header.
     band_color = ig.GetColorU32(ig.ImGuiCol_TableHeaderBg, 0.5f0)
-    # The top of the rows below a band that stays at the top of the view.
+    ## The top of the rows below a band that stays at the top of the view.
     body_top = Ref(-Inf32)
-    # The row's selection, which spans all columns, is in the first column the grid shows.
+    ## The row's selection, which spans all columns, is in the first column the grid shows.
     first_column = something(findfirst(column -> !hidden(column), 1:n_cols), 1)
-    # The functions below give their variables names that the grid does not use: a variable that a
-    # function shares with the grid and assigns is boxed, and allocates at every frame.
-    # A band across the whole row, with its arrow and its text at the left edge of the grid, in the
-    # color `color`. `top` is the top of the row's text.
+    ## The functions below give their variables names that the grid does not use: a variable that a
+    ## function shares with the grid and assigns is boxed, and allocates at every frame.
+    ## A band across the whole row, with its arrow and its text at the left edge of the grid, in the
+    ## color `color`. `top` is the top of the row's text.
     function paint_band(row, text, color, top)
-        # The color of a band lets through what is below it, which is the rows for a band that
-        # stays at the top.
+        ## The color of a band lets through what is below it, which is the rows for a band that
+        ## stays at the top.
         for fill in (background, color)
             ig.AddRectFilled(draw_list, ig.ImVec2(grid_left, top - padding.y),
                 ig.ImVec2(grid_left + grid_width, top + ig.GetTextLineHeightWithSpacing() + padding.y), fill)
@@ -423,13 +423,13 @@ function render_data_grid!(
             ig.GetColorU32(ig.ImGuiCol_Text), text)
         return nothing
     end
-    # The button on the arrow of a band, whose text has its top at `top`.
+    ## The button on the arrow of a band, whose text has its top at `top`.
     function band_button(row, top)
         fold(row) === nothing && return nothing
         ig.SetCursorScreenPos(ig.ImVec2(grid_left + padding.x, top))
-        # Out of ImGui's keyboard navigation; a click on the text selects, as anywhere else in the row.
+        ## Out of ImGui's keyboard navigation; a click on the text selects, as anywhere else in the row.
         ig.PushItemFlag(ig.ImGuiItemFlags_NoNav, true)
-        # The button takes no room: the row stays as high as its selection.
+        ## The button takes no room: the row stays as high as its selection.
         reach = Ptr{ig.ImVec2}(ig.GetCurrentWindow().DC +
             fieldoffset(ig.lib.ImGuiWindowTempData, Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
         kept = unsafe_load(reach)
@@ -438,17 +438,17 @@ function render_data_grid!(
         ig.PopItemFlag()
         return nothing
     end
-    # The item that selects the row, across all columns, and the row's menu. Returns whether a click
-    # changed the selection, and the color of the row if it is a band.
+    ## The item that selects the row, across all columns, and the row's menu. Returns whether a click
+    ## changed the selection, and the color of the row if it is a band.
     function select_row(row)
         is_selected = row in selected_set
-        # The id of the row is pushed before.
+        ## The id of the row is pushed before.
         clicked = ig.Selectable("##row", is_selected,
             ig.ImGuiSelectableFlags_SpanAllColumns | ig.ImGuiSelectableFlags_AllowOverlap,
             (0.0f0, ig.GetTextLineHeightWithSpacing()))
         clicked && _update_multi_selection!(
             state.selected_rows, row, all_rows, unsafe_load(io.KeyShift), unsafe_load(io.KeyCtrl))
-        # The band covers the highlight of the row's selection, so it draws it itself.
+        ## The band covers the highlight of the row's selection, so it draws it itself.
         color = is_selected ? ig.GetColorU32(ig.ImGuiCol_Header) :
             ig.IsItemHovered() ? ig.GetColorU32(ig.ImGuiCol_HeaderHovered) : band_color
         if row_popup !== nothing
@@ -461,11 +461,11 @@ function render_data_grid!(
         end
         return clicked, color
     end
-    # Right-clicking a row that is not selected selects it, before its menu opens.
+    ## Right-clicking a row that is not selected selects it, before its menu opens.
     function right_click(row, column)
         state.menu_column = column
         if !(row in selected_set)
-            # In place, so that the loop over the rows keeps reading the set directly.
+            ## In place, so that the loop over the rows keeps reading the set directly.
             state.selected_rows = [row]
             empty!(selected_set)
             push!(selected_set, row)
@@ -474,7 +474,7 @@ function render_data_grid!(
         return nothing
     end
     function draw_cell(row, column, position, last_visible, row_height)
-        # The line at the right of the cell, below the lines between the rows.
+        ## The line at the right of the cell, below the lines between the rows.
         ig.TablePushBackgroundChannel()
         right = ig.TableGetCellBgRect(grid_table, column - 1).Max.x
         ig.AddLine(ig.GetWindowDrawList(), ig.ImVec2(right, position.y - padding.y),
@@ -491,10 +491,10 @@ function render_data_grid!(
             ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, background)
         end
         column in selected_columns && ig.TableSetBgColor(ig.ImGuiTableBgTarget_CellBg, selected_column)
-        # The text of a cell that spans several rows stays at the top of the rows on screen, below
-        # the header, until the end of the span pushes it up. Only the first row of the cell and the
-        # row at the top of the view write it: the clipper also draws rows out of view, such as the
-        # first row, which it measures.
+        ## The text of a cell that spans several rows stays at the top of the rows on screen, below
+        ## the header, until the end of the span pushes it up. Only the first row of the cell and the
+        ## row at the top of the view write it: the clipper also draws rows out of view, such as the
+        ## first row, which it measures.
         clip_top = max(ig.GetClipRectMin(ig.GetWindowDrawList()).y, body_top[])
         row_top = position.y - padding.y
         full_height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
@@ -509,14 +509,14 @@ function render_data_grid!(
             last_row < last_visible && (top = min(top, position.y + (last_row - row) * row_height))
         end
         moved = top != ig.GetCursorScreenPos().y
-        # The row keeps its height: ImGui measures it from the lowest point the cell's items reach.
+        ## The row keeps its height: ImGui measures it from the lowest point the cell's items reach.
         reach = Ptr{ig.ImVec2}(ig.GetCurrentWindow().DC +
             fieldoffset(ig.lib.ImGuiWindowTempData, Base.fieldindex(ig.lib.ImGuiWindowTempData, :CursorMaxPos)))
         content_bottom = unsafe_load(reach).y
         moved && ig.SetCursorScreenPos(ig.ImVec2(ig.GetCursorScreenPos().x, top))
         if clickable(row, column)
             ig.TextLink("$(cell(row, column))##link_$column") && on_click(row, column)
-            # The link takes the mouse from the row, so it opens the row's menu itself.
+            ## The link takes the mouse from the row, so it opens the row's menu itself.
             if row_popup !== nothing
                 ig.IsItemClicked(ig.ImGuiMouseButton_Right) && right_click(row, column)
                 if ig.BeginPopupContextItem("##link_popup_$column")
@@ -533,8 +533,8 @@ function render_data_grid!(
             muted(row, column) && ig.PushStyleColor(ig.ImGuiCol_Text, ig.GetColorU32(ig.ImGuiCol_TextDisabled))
             ig.TextUnformatted(text)
             muted(row, column) && ig.PopStyleColor()
-            # ImGui fits a column to the rightmost point its items reach, which is the right edge
-            # for right-aligned text: the cell reaches only as far as its text would from the left.
+            ## ImGui fits a column to the rightmost point its items reach, which is the right edge
+            ## for right-aligned text: the cell reaches only as far as its text would from the left.
             align_right(column) && unsafe_store!(reach,
                 ig.ImVec2(max(widest, left + ig.CalcTextSize(text).x), unsafe_load(reach).y))
         end
@@ -543,19 +543,19 @@ function render_data_grid!(
         end
         return nothing
     end
-    # The band that heads the rows at the top of the view stays there, until the next band pushes it
-    # up. Its item is the last one in the grid, so that it takes the mouse from the rows below it,
-    # and it is painted over them after the table. A band in its own row draws only while all of it
-    # is in view. `pinned` is -1 until the first row in view is drawn, then the band, or 0 for none.
+    ## The band that heads the rows at the top of the view stays there, until the next band pushes it
+    ## up. Its item is the last one in the grid, so that it takes the mouse from the rows below it,
+    ## and it is painted over them after the table. A band in its own row draws only while all of it
+    ## is in view. `pinned` is -1 until the first row in view is drawn, then the band, or 0 for none.
     pinned = -1
     pinned_added = false
     pinned_x = pinned_top = view_top = view_bottom = 0.0f0
     pinned_color = band_color
     clipper = ig.lib.ImGuiListClipper()
     try
-        # The clipper measures the height of a row from the first one.
+        ## The clipper measures the height of a row from the first one.
         ig.Begin(clipper, n_rows, -1.0f0)
-        # The row to scroll to is drawn even when it is out of view.
+        ## The row to scroll to is drawn even when it is out of view.
         target = state.scroll_to_row
         target !== nothing && 1 <= target <= n_rows && ig.IncludeItemByIndex(clipper, target - 1)
         while ig.Step(clipper)
@@ -566,7 +566,7 @@ function render_data_grid!(
                 ig.PushID(row)
                 ig.TableNextRow()
                 if row == target
-                    # The grid scrolls only as far as the row needs to be in view, below the headers.
+                    ## The grid scrolls only as far as the row needs to be in view, below the headers.
                     ig.TableSetColumnIndex(first_column - 1)
                     top = ig.GetCursorScreenPos().y - padding.y
                     bottom = top + max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
@@ -583,14 +583,14 @@ function render_data_grid!(
                 position = ig.GetCursorScreenPos()
                 row_top = position.y - padding.y
                 full_height = max(row_height, ig.GetTextLineHeightWithSpacing() + 2 * padding.y)
-                # The clipper draws the rows from the top down, after a first row it measures.
+                ## The clipper draws the rows from the top down, after a first row it measures.
                 if pinned == -1 && row_top + full_height > ig.GetClipRectMin(ig.GetWindowDrawList()).y
                     view_top = ig.GetClipRectMin(ig.GetWindowDrawList()).y
                     view_bottom = ig.GetClipRectMax(ig.GetWindowDrawList()).y
                     pinned = band_of(row)
                     pinned == row && row_top >= view_top - 1 && (pinned = 0)
                     if pinned != 0
-                        # A band in the next row pushes it up.
+                        ## A band in the next row pushes it up.
                         pushed = row < n_rows && band(row + 1) !== nothing
                         pinned_x = position.x
                         pinned_top = (pushed ? row_top : view_top) + padding.y
@@ -599,7 +599,7 @@ function render_data_grid!(
                 end
                 text = band(row)
                 if text !== nothing && row_top < ig.GetClipRectMin(ig.GetWindowDrawList()).y - 1
-                    # Room for the band, which stays at the top of the view or is out of view.
+                    ## Room for the band, which stays at the top of the view or is out of view.
                     ig.Dummy(ig.ImVec2(0.0f0, ig.GetTextLineHeightWithSpacing()))
                     ig.PopID()
                     continue
@@ -608,9 +608,9 @@ function render_data_grid!(
                 clicked && (selected_set = Set(state.selected_rows); row_selection_changed = true)
                 if text !== nothing
                     band_button(row, position.y)
-                    # Items in the background channel may be anywhere in the grid, not only in
-                    # their column. The band covers the lines between the columns, which ImGui
-                    # draws below this channel.
+                    ## Items in the background channel may be anywhere in the grid, not only in
+                    ## their column. The band covers the lines between the columns, which ImGui
+                    ## draws below this channel.
                     ig.TablePushBackgroundChannel()
                     paint_band(row, text, color, position.y)
                     ig.TablePopBackgroundChannel()
@@ -623,7 +623,7 @@ function render_data_grid!(
                         draw_cell(row, column, ig.GetCursorScreenPos(), end_idx, row_height)
                     end
                 end
-                # The band at the top comes with the last row in view, after the rows below it.
+                ## The band at the top comes with the last row in view, after the rows below it.
                 if pinned > 0 && !pinned_added && (row == n_rows ||
                         row_top + full_height >= ig.GetClipRectMax(ig.GetWindowDrawList()).y)
                     pinned_added = true

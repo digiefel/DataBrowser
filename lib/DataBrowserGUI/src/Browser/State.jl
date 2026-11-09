@@ -11,13 +11,13 @@ imgui.ini under `id`.
 Base.@kwdef struct PersistedWindow
     id::String = ""
     visualizer::String = ""
-    # "selection", "items" with the item ids in `ids`, or "window" with the id of the other window.
+    ## "selection", "items" with the item ids in `ids`, or "window" with the id of the other window.
     input::String = "selection"
     ids::Vector{String} = String[]
-    # The name of a function in `Main`, or empty.
+    ## The name of a function in `Main`, or empty.
     transform::String = ""
     settings::Dict{String,Any} = Dict{String,Any}()
-    # What `selection` gave, for `select!` when the window opens again.
+    ## What `selection` gave, for `select!` when the window opens again.
     selection::Dict{String,Any} = Dict{String,Any}()
     arrangement::String = "auto"
     active_item::String = ""
@@ -31,17 +31,17 @@ Only stable ids and text are persisted. Runtime objects, loaded data, figures, a
 remain in memory.
 """
 Base.@kwdef struct PersistedProjectView
-    # Native content-area geometry in screen coordinates; empty until the browser is shown.
+    ## Native content-area geometry in screen coordinates; empty until the browser is shown.
     window_size::Vector{Int} = Int[]
     window_position::Vector{Int} = Int[]
-    # The ids of the selected values, of the groups that show their members in the tree, the text
-    # of the filter of the tree, and the keys of its Sort menu, each with "ascending" or
-    # "descending".
+    ## The ids of the selected values, of the groups that show their members in the tree, the text
+    ## of the filter of the tree, and the keys of its Sort menu, each with "ascending" or
+    ## "descending".
     selected::Vector{String} = String[]
     expanded::Vector{String} = String[]
     filter::String = ""
-    # The filter bar: each tag that is "hidden" or "only", and each condition as its metadata key,
-    # "hidden" or "only", and the texts of the fields of its filter.
+    ## The filter bar: each tag that is "hidden" or "only", and each condition as its metadata key,
+    ## "hidden" or "only", and the texts of the fields of its filter.
     tags::Dict{String,String} = Dict{String,String}()
     conditions::Vector{Vector{String}} = Vector{String}[]
     sort::Vector{Vector{String}} = Vector{String}[]
@@ -64,15 +64,16 @@ Base.@kwdef mutable struct DataGridState
     scroll_to_row::Union{Nothing,Int}    = nothing
     fit_columns::Bool                    = true
     selected_columns::Vector{Int}        = Int[]
-    # The columns the rows are sorted by, as `(column, ascending)` pairs from the first to the last.
+    ## The columns the rows are sorted by, as `(column, ascending)` pairs from the first to the last.
     sort::Vector{Tuple{Int,Bool}}        = Tuple{Int,Bool}[]
-    # The column of the cell whose row's menu is open; 0 for a band.
+    ## The column of the cell whose row's menu is open; 0 for a band.
     menu_column::Int                     = 0
 end
 
 """
-An instance for one displayed item. The browser owns its identity and preparation revision;
-the visualizer owns the prepared value and drawing state.
+A cell of a window, which shows one item in a stack or a grid: the id and label of the item, the
+instance of the visualizer type that prepares and draws it, the revision of the window it was
+prepared for, and why it failed to prepare or to draw, or "".
 """
 mutable struct VisualizerCell
     id::String
@@ -105,37 +106,37 @@ A window `w` of the browser, which shows the visualizer `w.visualizer` of the wo
 # TODO: a visualizer type should hold only its settings, and be defined without the GUI; what an
 # instance prepares and draws then belongs to the window.
 mutable struct Window
-    # Names the window for ImGui. Unique in the browser.
+    ## Names the window for ImGui. Unique in the browser.
     id::String
     const visualizer::Workspace.Visualizer
-    # The instance that prepares and draws the value, and the definition of the visualizer whose
-    # type and settings it has.
+    ## The instance that prepares and draws the value, and the definition of the visualizer whose
+    ## type and settings it has.
     instance::AbstractVisualizer
     definition::Workspace.Definition
-    # The value given to the instance, and the revision of the result of the visualizer that it
-    # comes from; 0 before the first.
+    ## The value given to the instance, and the revision of the result of the visualizer that it
+    ## comes from; 0 before the first.
     value::Any
     revision::Int
-    # The output that the window published last, as `Workspace.output!` takes it.
+    ## The output that the window published last, as `Workspace.output!` takes it.
     published::Union{Nothing,Tuple{Int,Any}}
-    # Why the instance could not prepare the value; empty when it did.
+    ## Why the instance could not prepare the value; empty when it did.
     error::String
-    # Why the last "Export" failed; empty when it succeeded.
+    ## Why the last "Export" failed; empty when it succeeded.
     export_error::String
-    # Why the visualizer failed to draw in the last frame; empty when it drew.
+    ## Why the visualizer failed to draw in the last frame; empty when it drew.
     draw_error::String
-    # Apply the default once for a newly created window, even if ImGui has a stale size for its id.
+    ## Apply the default once for a newly created window, even if ImGui has a stale size for its id.
     initial_size_pending::Bool
-    # How the window arranges the items, which it chooses itself for "auto", and the item that a
-    # stack shows. The visualizer has no Stack/Grid contract.
+    ## How the window arranges the items, which it chooses itself for "auto", and the item that a
+    ## stack shows.
     arrangement::String
     active_item::String
     cells::Vector{VisualizerCell}
     presentation_revision::UInt
     presentation_dirty::Bool
-    # While present, the task exclusively owns the instance and its cells.
+    ## While present, the task exclusively owns the instance and its cells.
     preparation::Union{Nothing,WindowPreparation}
-    # Set by `close(w)`, from any thread: the browser closes the window in its next frame.
+    ## Set by `close(w)`, from any thread: the browser closes the window in its next frame.
     @atomic closing::Bool
 end
 
@@ -182,7 +183,7 @@ Base.@kwdef mutable struct PerformanceState
     """Whether a full browser frame has passed through the renderer, after extension warmup."""
     ready::Bool = false
     gl_info::Dict{Symbol,String} = Dict{Symbol,String}()
-    # The rows of the tree, and those drawn in the last frame.
+    ## The number of items in the tree, and of those drawn in the last frame.
     rows::Int = 0
     rows_drawn::Int = 0
     history::PerfHistory = PerfHistory()
@@ -220,9 +221,9 @@ end
 
 """
 How the filter bar above the tree filters the items: the tags and the metadata conditions that hide
-the items they match, and those that an item must have or match to show. The tuples make a function
-that captures the filters the same function from one build of the tree to the next, so that
-`select` finds its answer.
+the items they match, and those that an item must have or match to show. The fields are tuples, so
+that two `TreeFilters` with the same filters are `===`, and the selection that
+`_visible_selection` keeps stays valid while the filters stay the same.
 """
 struct TreeFilters
     hidden_tags::Tuple{Vararg{String}}
@@ -251,15 +252,15 @@ end
 """
 The tree drawn by the browser, kept from frame to frame together with the answers from `select`
 used to build it. The browser builds the tree again when one of these answers changes, or when
-`key` changes; the key covers the open groups, the filter and the tags.
+`key` changes; the key covers the open and closed groups, the text filter and the filter bar.
 """
 mutable struct TreeCache
     key::UInt
     answers::Vector{Pair{Function,Any}}
     items::Vector{TreeRow}
-    # The metadata keys of the groups drawn so far, one column each.
-    # TODO(query model): a column stays once a drawn group had its key; the query model can give the
-    # keys of the groups in the tree.
+    ## The metadata keys of the groups drawn so far, one column each.
+    ## TODO(query model): a column stays once a drawn group had its key; the query model can give the
+    ## keys of the groups in the tree.
     columns::Vector{Symbol}
 end
 
@@ -278,53 +279,54 @@ end
 """
 Runtime state owned by the browser.
 
-The workspace owns items, selection, cache state, data, and background work. This type owns
-only controls, windows, local persistence, annotations, and rendering state.
+The workspace owns the items, the selection, the cache, the data, the visualizers and the
+background work. The browser state owns the controls, the windows, the saved view and the drawing
+state.
 """
 Base.@kwdef mutable struct BrowserState
     workspace::Workspace.Workspace
     tree_cache::Union{Nothing,TreeCache} = nothing
-    # The background task that builds the tree, until the frame picks up its result.
+    ## The background task that builds the tree, until the frame picks up its result.
     tree_build_task::Union{Nothing,Task} = nothing
     visible_selection::Union{Nothing,VisibleSelection} = nothing
-    # The windows that show a visualizer, those that `visualize!` opened since the last frame, and
-    # the number of the last one opened.
+    ## The windows that show a visualizer, those that `visualize!` opened since the last frame, and
+    ## the number of the last one opened.
     windows::Vector{Window} = Window[]
     opening::Channel{Window} = Channel{Window}(Inf)
     next_window::Threads.Atomic{Int} = Threads.Atomic{Int}(0)
-    # Closed windows retain their resources until preparation returns ownership to the UI.
+    ## Closed windows retain their resources until preparation returns ownership to the UI.
     closing_windows::Vector{Window} = Window[]
     performance::PerformanceState = PerformanceState()
     saved_project_view::PersistedProjectView = PersistedProjectView()
-    # When the browser last compared its view with `saved_project_view`, as `time()`, and the task
-    # that writes the view to its file.
+    ## When the browser last compared its view with `saved_project_view`, as `time()`, and the task
+    ## that writes the view to its file.
     project_view_checked::Float64 = 0.0
     project_view_write::Union{Nothing,Task} = nothing
-    # The ids of the groups that show their members in the tree, and of the groups closed by the
-    # user while the filters open them, with a hash of the filters that opened them.
+    ## The ids of the groups that show their members in the tree, and of the groups closed by the
+    ## user while the filters open them, with a hash of the filters that opened them.
     expanded::Set{String} = Set{String}()
     collapsed::Set{String} = Set{String}()
     collapsed_for::UInt = zero(UInt)
     tree_filter::String = ""
     tree_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
-    # The selection of the workspace that the browser last revealed or made itself, and the id of
-    # the row to scroll the tree to.
+    ## The selection of the workspace that the browser last revealed or made itself, and the id of
+    ## the row to scroll the tree to.
     selection::Vector{String} = String[]
     scroll_to_item_id::Union{Nothing,String} = nothing
-    # How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,
-    # `:only` hides the items without it.
+    ## How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,
+    ## `:only` hides the items without it.
     tag_visibility::Dict{String,Symbol} = Dict{String,Symbol}()
-    # The conditions on metadata in the filter bar, each with its visibility, as for the tags, and
-    # the index of the condition whose editor opens in the next frame, or 0.
+    ## The conditions on metadata in the filter bar, each with its visibility, as for the tags, and
+    ## the index of the condition whose editor opens in the next frame, or 0.
     conditions::Vector{Pair{MetadataCondition,Symbol}} = Pair{MetadataCondition,Symbol}[]
     open_condition::Int = 0
-    # The typed text and the highlight of the list of keys in the "+ Filter" menu.
+    ## The typed text and the highlight of the list of keys in the "+ Filter" menu.
     filter_picker::ListPicker = ListPicker()
-    # The text typed in the "New tag" field of the tag menu.
+    ## The text typed in the "New tag" field of the tag menu.
     new_tag::Vector{UInt8} = zeros(UInt8, 64)
-    # The typed text and the highlight of the list of visualizers in the "+ Window" menu.
+    ## The typed text and the highlight of the list of visualizers in the "+ Window" menu.
     window_picker::ListPicker = ListPicker()
-    # The typed text and the highlight of the list of keys in the Sort menu of the tree.
+    ## The typed text and the highlight of the list of keys in the Sort menu of the tree.
     sort_picker::ListPicker = ListPicker()
     show_performance_window::Bool = false
     show_imgui_metrics::Bool = false
@@ -363,8 +365,8 @@ Base.show(io::IO, session::BrowserSession) = print(
 """Call `shutdown!` on every extension instance."""
 function _shutdown_extensions!(state::BrowserState)::Nothing
     for ext in state.extensions
-        # The latest world: the browser calls this in the world where it started, which lacks the
-        # methods of the extensions that loaded later.
+        ## The latest world: the browser calls this in the world where it started, which lacks the
+        ## methods of the extensions that loaded later.
         Base.invokelatest(shutdown!, ext, state)
     end
     return nothing

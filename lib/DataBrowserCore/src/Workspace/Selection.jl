@@ -85,8 +85,8 @@ property follows a path into the data: `selection.data.V` is the column `V` of t
 item, or the field `V` of other data, and `selection.data.fit.slope` goes one level further.
 Reading the entry of an item whose data has no such column or field throws an error.
 
-The vector reads the data of an item only when code reads its entry, from its *store*, the part of
-the cache that keeps the results of one type, in memory or in a file. A property, such as
+The vector reads the data of an item only when code reads its entry, from its *store*, which keeps
+the results of one type, in memory or in a file. A property, such as
 `selection.data.V`, and a range, such as `selection.data[2:3]`, give another `ItemData`, which reads
 nothing yet. Reading an entry asks for the item, as `select(workspace, ids)` does: it moves the item
 to the front of the background work when it is not computed yet, waits for it, and throws the error

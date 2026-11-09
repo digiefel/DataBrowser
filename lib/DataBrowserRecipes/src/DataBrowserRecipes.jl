@@ -1,14 +1,14 @@
 """
-The registration dialect: `define_project`, `register_item!`, `register_collection!`.
+The registration dialect: `define_project`, `register_item!`, `register_collection!` and
+`register_csv!`, which describe a project with callbacks that take data and metadata.
 
-This is a convenience layer written over ordinary `(data, metadata)` values, and nothing more. It
-holds no privileged position in the engine: its recipes become methods of `read` and `process`,
-the functions of `DataBrowserAPI` that any project implements, so a registered project and an
-equivalent typed project run the same calls, cache on the same terms, and rehydrate the same way.
+Each registration defines methods of `read` and `process`, the functions of `DataBrowserAPI` that
+every project implements. So a registered project runs the same calls as a project written with its
+own types, keeps its results in the same stores, and rebuilds them from the cache with the same
+`reconstruct`.
 
-Being built purely on the public type API makes this package a living conformance test of that
-extension surface — the role `DataBrowserPlots` plays for the GUI extension surface. If something
-here needs a private hook, the type API is missing something.
+This package uses only the public API of `DataBrowserAPI`, as `DataBrowserPlots` does for the GUI.
+So when it needs something that this API does not give, the API lacks it.
 """
 module DataBrowserRecipes
 

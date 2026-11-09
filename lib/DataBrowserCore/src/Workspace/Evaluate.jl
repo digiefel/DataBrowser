@@ -203,9 +203,9 @@ function run!(workspace::Workspace, job::Job)::Nothing
             if record !== nothing && record.revision != at
                 ## A row that runs no longer gives the result that the cache saved in an earlier
                 ## session: the result or its values leave the stores.
-                # TODO: a row outside the pipeline that failed keeps its last result in its store, and
-                # the cache saves the failure without the revision of that result: when the session
-                # ends before the row has a result again, the store keeps that result for good.
+                ## TODO: a row outside the pipeline that failed keeps its last result in its store, and
+                ## the cache saves the failure without the revision of that result: when the session
+                ## ends before the row has a result again, the store keeps that result for good.
                 if previous.revision == 0 && isempty(record.failure)
                     workspace.items.rows.depth[row] === nothing && forget!(workspace, record.type, record.result_revision)
                     foreach(x -> forget!(workspace, x.type, value_revision(x.id, record.result_revision)), record.items)
@@ -267,9 +267,9 @@ function run!(workspace::Workspace, job::Job)::Nothing
     ## result: the row keeps the revision of the last result. The readers of a row of the pipeline
     ## find its values by id, so the ids count too. `isequal` is the project's code: when it throws,
     ## the results differ.
-    # TODO: compare each value of a row of the pipeline on its own. A `Part` follows the revision of
-    # the whole row, so one changed value of a read runs the `process` of every value again.
-    # TODO: when the values from the stores get other ids, those under the old ids stay in the stores.
+    ## TODO: compare each value of a row of the pipeline on its own. A `Part` follows the revision of
+    ## the whole row, so one changed value of a read runs the `process` of every value again.
+    ## TODO: when the values from the stores get other ids, those under the old ids stay in the stores.
     ids = [x.id for x in items]
     same = reuse ? isequal(ids, [x.id for x in record.items]) :
         previous.revision != 0 && typeof(output) === previous.type && @timed_dbg "job.compare" try
@@ -342,7 +342,7 @@ function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, erro
     @lock catalog.lock begin
         finish!(catalog, job; failed=true) || return nothing
         workspace.errors = Base.PersistentDict(workspace.errors, row => subject(workspace, row) => "$(function_name(catalog[row].f)) failed: " * message)
-        # TODO: a record removed here may leave its values in the stores.
+        ## TODO: a record removed here may leave its values in the stores.
         at === nothing ? delete!(workspace.cache.db, row.index) : (workspace.cache.db[row.index] = (; call=id(catalog[row]),
             revision=at, result_revision=UInt64(0), item_revision=revision(workspace, row, types), type=Tuple{types...},
             failure=message, items=SavedOutput[]))
@@ -481,7 +481,7 @@ resolved(::Workspace, x::Selection) = x
 # the row changes, so that the workspace drops the result of a job that started before (see
 # [`Catalogs.jl`](../Catalogs.md)).
 #
-# `revision(workspace, computation)` and `revision(workspace, items)` are numbers that a window
+# `revision(workspace, computation)` and `revision(workspace, ids)` are numbers that a window
 # compares to know when to draw again; they follow the changes of the rows. `cache[key] = record`
 # saves the record of a row whole, and `get(cache, key, nothing)` reads it.
 #
@@ -639,8 +639,8 @@ function restored!(workspace::Workspace, row::Row, record)::Bool
         @timed_dbg "restored.finished!" finished!(workspace, row, failed ? nothing : outputs)
     catch
         ## The row runs, so that it fails again, or gives its values when the other row is gone.
-        # TODO: when the saved result has an older revision than the row, its values stay in the
-        # stores.
+        ## TODO: when the saved result has an older revision than the row, its values stay in the
+        ## stores.
         delete!(workspace.cache.db, row.index)
         Catalogs.invalidate!(workspace.catalog, row)
         return false
@@ -673,12 +673,13 @@ end
 # value. When `storage` throws, as when another Julia process has the file of a `DuckDBStore` open,
 # the workspace warns and keeps the results of that type in a `MemoryStore`. A result that its
 # store cannot read counts as lost: the row runs again. A store receives a copy of each result and
-# gives copies; the docstring of `AbstractStore` gives its methods. Three kinds of results never go
+# gives copies; the docstring of `AbstractStore` gives its methods. Four kinds of results never go
 # to a store:
 #
 # - `nothing`;
 # - a `Selection`, which reads the workspace each time something takes an item from it;
-# - the result of `view(item, selection)`, the part of an item that a window chose.
+# - the result of `view(item, selection)`, the part of an item that a window chose;
+# - the result of `pick`, one value taken from the result of another row, whose store has it.
 
 """
     store(workspace, type) -> Union{Nothing,AbstractStore}
@@ -887,8 +888,8 @@ end
 # The revision of each row includes the code revision of its signature. Twice a second, the
 # workspace asks Revise to load saved edits, including files tracked with `includet`, even when the
 # REPL is idle. After a method definition, or when the roots differ, the workspace computes the code
-# revision again; `evaluate` does the same check first when a method was defined since the last
-# check. When the code revision changed, the rows of that signature become stale, and with them
+# revision again; `evaluate`, `select(workspace, ids)` and `materialize_items` do the same check
+# first when a method was defined since the last check. When the code revision changed, the rows of that signature become stale, and with them
 # every row that reads them: source items are read again, as if the source had changed them, and
 # items are processed again when a window shows them or a script reads them, or in the background
 # with `background_processing=true`. The same code defined again, as when a script runs again,

@@ -13,9 +13,9 @@ struct RegisteredPlot
     draw::Function
 end
 
-# Keyed by project value, not by weak reference: a typed project is naturally an immutable
-# singleton, which `WeakKeyDict` cannot hold. Mutable dialect projects still key by identity, so
-# separately defined projects keep separate plots.
+# The plots of each project, by kind and label. The dictionary holds the projects themselves: a
+# project defined as a type is an immutable singleton, which a `WeakKeyDict` cannot hold. A project
+# of DataBrowserRecipes is mutable and so keys by identity: two such projects keep separate plots.
 const PROJECT_PLOTS = Dict{AbstractProject,Dict{Symbol,Dict{String,RegisteredPlot}}}()
 
 """

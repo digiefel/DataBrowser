@@ -26,8 +26,8 @@ function guarded_draw(f, context::String, last::String)::String
         return ""
     catch err
         backtrace = catch_backtrace()
-        # Without this, ImGui stops at an assertion, logs, and shows a tooltip, for each call `f`
-        # left without its end, such as a `Begin` without `End`.
+        ## Without this, ImGui stops at an assertion, logs, and shows a tooltip, for each call `f`
+        ## left without its end, such as a `Begin` without `End`.
         io = ig.GetIO()
         options = (io.ConfigErrorRecoveryEnableAssert, io.ConfigErrorRecoveryEnableDebugLog,
             io.ConfigErrorRecoveryEnableTooltip)

@@ -6,7 +6,7 @@ workspace has changed since the last call, so watchers can call this every frame
 it reads the errors and counts of the latest version of the table `items`, and the work counts.
 """
 function workspace_status(workspace::Workspace)::WorkspaceStatus
-    # Read the generation first: a change during the computation then triggers the next one.
+    ## Read the generation first: a change during the computation then triggers the next one.
     current = generation(workspace)
     seen, previous = @atomic workspace.status
     current == seen && return previous
@@ -15,7 +15,7 @@ function workspace_status(workspace::Workspace)::WorkspaceStatus
     workspace.scan.state === :discovering &&
         (counts = WorkspaceCounts(workspace.scan.discovered[], counts.read, counts.items, counts.processed))
     status = build_status(workspace, previous, counts, sort!(collect(values(version.errors)); by=first))
-    # If another caller stored an older pair meanwhile, the next call sees the mismatch and recomputes.
+    ## If another caller stored an older pair meanwhile, the next call sees the mismatch and recomputes.
     @atomic workspace.status = current => status
     return status
 end
@@ -24,15 +24,15 @@ end
 function build_status(workspace::Workspace, previous::WorkspaceStatus, counts::WorkspaceCounts,
         errors::Vector{Pair{String,String}})::WorkspaceStatus
     scan = workspace.scan
-    # During an incremental update, keep the last settled verdict on the chip instead of flashing
-    # colors. A rebuild or first build voids any verdict — the cache was just discarded or has
-    # never existed — and without one nothing is known fresh yet, so the chip says Building.
+    ## During an incremental update, keep the last settled verdict on the chip instead of flashing
+    ## colors. A rebuild or first build voids any verdict — the cache was just discarded or has
+    ## never existed — and without one nothing is known fresh yet, so the chip says Building.
     settled = workspace.cache.operation === :update &&
         previous.label in ("Fresh", "Loaded", "Errors")
     calm_level = settled ? previous.level : :busy
     calm_label = settled ? previous.label : "Building"
 
-    # Active work: one live line, determinate bar when totals are known.
+    ## Active work: one live line, determinate bar when totals are known.
     if scan.state == :discovering
         return WorkspaceStatus(
             calm_level,
@@ -61,7 +61,7 @@ function build_status(workspace::Workspace, previous::WorkspaceStatus, counts::W
         )
     end
 
-    # Settled: a single merged summary line, no bar.
+    ## Settled: a single merged summary line, no bar.
     scan.state == :error && return WorkspaceStatus(
         :error, "Scan Error", scan.error, false, nothing, counts, errors)
     isempty(workspace.source_error) || return WorkspaceStatus(
@@ -81,8 +81,8 @@ function build_status(workspace::Workspace, previous::WorkspaceStatus, counts::W
         return WorkspaceStatus(:fresh, "Loaded",
             "Cache loaded; source not checked.", false, nothing, counts, errors)
     end
-    # A settled successful scan has ingested every difference it found, so the cache mirrors the
-    # source; the scan's stale/new/deleted counts describe the work it did, not pending work.
+    ## A settled successful scan has ingested every difference it found, so the cache mirrors the
+    ## source; the scan's stale/new/deleted counts describe the work it did, not pending work.
     return WorkspaceStatus(:fresh, "Fresh", "Cache is current.", false, nothing, counts, errors)
 end
 

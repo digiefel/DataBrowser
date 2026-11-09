@@ -16,7 +16,7 @@ function draw_vector_overlay!(view::VectorView, ctx)::Nothing
     isempty(child.values) || draw_vector_numbers!(child)
     ig.TextDisabled(view.overlay_labels[active])
     draw_vector_statistics!(child)
-    # Short spectra or a nonfinite sample affect only their own item.
+    ## Short spectra or a nonfinite sample affect only their own item.
     if view.signal
         for (i, child) in enumerate(view.overlay)
             isempty(child.signal_data.issue) || ig.TextWrapped("$(view.overlay_labels[i]): $(child.signal_data.issue)")

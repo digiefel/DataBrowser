@@ -138,12 +138,12 @@ function prepare!(view::VectorView, selection::Selection, ctx)::Nothing
 end
 
 function prepare_vector!(view::VectorView, values::Numbers, ctx)::Nothing
-    # Copy in iteration order: an AbstractVector need not start at index 1 or own its storage.
+    ## Copy in iteration order: an AbstractVector need not start at index 1 or own its storage.
     view.indices = Float64[i for i in eachindex(values)]
     view.value_labels = [sprint(show, v; context=:compact => true) for v in values]
     view.numeric_reset = true
     view.values = Float64[isfinite(v) ? v : NaN for v in values]
-    # A finite Real can overflow when converted to Float64.
+    ## A finite Real can overflow when converted to Float64.
     map!(v -> isfinite(v) ? v : NaN, view.values, view.values)
     view.numeric_characters = maximum(v -> length(@sprintf("%.4g", v)), view.values; init=1)
     view.finite = filter(isfinite, view.values)
@@ -152,7 +152,7 @@ function prepare_vector!(view::VectorView, values::Numbers, ctx)::Nothing
     reset_vector_frequency!(view)
     sorted = sort(view.finite)
     n = length(sorted)
-    # Extra endpoints extend the ECDF's zero and one tails to the visible value range.
+    ## Extra endpoints extend the ECDF's zero and one tails to the visible value range.
     view.cdf_values = n == 0 ? Float64[] : [first(sorted); sorted; last(sorted)]
     view.cdf_fractions = n == 0 ? Float64[] : [0.0; (1:n) ./ n; 1.0]
     view.smooth_values, view.smooth_density = vector_density(view.finite)
@@ -222,8 +222,8 @@ function draw_vector_statistics!(view::VectorView)::Nothing
 end
 
 function draw_vector_plots!(view::VectorView, ctx)::Nothing
-    # One subplot row aligns all value axes. The color strip is drawn in the trace's own
-    # coordinate system, so its index positions cannot drift from the Index axis.
+    ## One subplot row aligns all value axes. The color strip is drawn in the trace's own
+    ## coordinate system, so its index positions cannot drift from the Index axis.
     flags = ig.lib.ImPlotSubplotFlags_NoTitle | ig.lib.ImPlotSubplotFlags_NoLegend
     ig.lib.ImPlot_PushStyleVar_Vec2(ig.lib.ImPlotStyleVar_PlotMinSize, ig.ImVec2(1, 1))
     ig.lib.ImPlot_PushStyleVar_Vec2(ig.lib.ImPlotStyleVar_PlotPadding, ig.ImVec2(10, 10))
@@ -305,8 +305,8 @@ function draw_vector_strip!(view::VectorView)::Nothing
     lo, hi = view.color_limits
     start = 0
     previous = UInt32(0)
-    # Sample at screen-pixel centers. This keeps the strip aligned under zoom, pan and axis
-    # inversion, without drawing a separate plot with different axis padding.
+    ## Sample at screen-pixel centers. This keeps the strip aligned under zoom, pan and axis
+    ## inversion, without drawing a separate plot with different axis padding.
     for pixel in 0:ceil(Int, size.x)-1
         x = ig.lib.ImPlot_PixelsToPlot_Float(pos.x + min(pixel + 0.5, size.x), pos.y,
             ig.lib.ImAxis_X1, ig.lib.ImAxis_Y1).x

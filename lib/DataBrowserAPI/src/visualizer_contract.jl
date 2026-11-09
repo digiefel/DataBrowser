@@ -1,18 +1,19 @@
 """
     AbstractVisualizer
 
-A way to show a value, for example as a table or as a plot. A visualizer of the workspace,
-which `visualize!` adds, holds the settings, and each window of the browser that shows it draws
-the value with instances of its own, which take the settings.
+A way to show a value, for example as a table or as a plot. `visualize!` adds a visualizer to the
+workspace, which holds its settings. Each window of the browser that shows it draws the value with
+*instances* of its own: objects of the visualizer type, which take the settings of the visualizer of
+the workspace.
 
-In Stack the browser passes one selected item's value to one instance. In Grid it manages one
-instance per item, with the same declared settings and separate prepared data and drawing state.
-The visualizer does not need to know either mode. Each instance receives its own stable `ctx.id`,
-including when several draw in the same window.
-
-A visualizer that accepts a whole selection through `prepare!` also supports Overlay: it receives
-the selection together and decides how to present its items. Selection-only visualizers receive
-a one-item selection in Stack and Grid so they retain the item's metadata.
+When the input of a window is a selection of several items, the menu of the window arranges them in
+one of three ways. *Stack* shows one item at a time with one instance, and the arrows beside the
+menu go through the items. *Grid* shows each item in a cell with an instance of its own: the
+instances have the same settings, and each has its own prepared data and drawing state. *Overlay*
+gives the whole selection to one instance, which decides how to show its items; the browser offers
+it when the visualizer has a `prepare!` method for a selection. In Stack and Grid, a visualizer
+whose `prepare!` methods take only a selection gets a selection of one item, which keeps the
+metadata of the item.
 
 An instance holds what it prepared for drawing. A visualizer type `V` has:
 
@@ -43,7 +44,8 @@ through its `prepare!` methods.
 
 `ctx` is what the browser tells the visualizer about its window:
 
-- `ctx.id` names the window. It is unique in the browser and stays the same from frame to frame.
+- `ctx.id` names the window, or the cell of the window in which the instance draws. It is unique
+  in the browser and stays the same from frame to frame.
 - `ctx.workspace` is the open workspace.
 - `ctx.open_window(visualizer)` adds a visualizer to the workspace that shows the input of this
   window with `visualizer`, through the same function, and opens a window that shows it. The
@@ -192,10 +194,10 @@ function export!(visualizer::AbstractVisualizer, path::AbstractString; options..
     index = findfirst(type -> first(type) == extension, MIME_TYPES)
     index === nothing && error("Export saves $(join(first.(MIME_TYPES), ", ")) files, not \"$extension\"")
     mime = last(MIME_TYPES[index])
-    # Write the file only once `show` has finished, so that an error leaves no partial file.
+    ## Write the file only once `show` has finished, so that an error leaves no partial file.
     buffer = IOBuffer()
-    # A dynamic call: packages add `show` methods for their visualizers when they load, and a static
-    # call would make each of them invalidate the compiled code here and in its callers.
+    ## A dynamic call: packages add `show` methods for their visualizers when they load, and a static
+    ## call would make each of them invalidate the compiled code here and in its callers.
     Base.invokelatest(show, buffer, mime, visualizer; options...)
     write(path, take!(buffer))
     return nothing
@@ -206,8 +208,8 @@ end
 
 Draw what `prepare!` stored. The browser calls `draw!` in every frame in which the window is
 visible, inside the window and below its header, and only after `prepare!` succeeded.
-It runs on the UI thread, with exclusive access to the instance. Request expensive preparation
-with `ctx.prepare()` rather than performing it in this callback.
+It runs on the UI thread, with exclusive access to the instance. For slow work, call
+`ctx.prepare()`, which calls `prepare!` again after drawing returns.
 """
 function draw! end
 
@@ -219,9 +221,8 @@ their input from the visualizer of the window. For example, a table passes on th
 selected, and another visualizer plots them.
 
 A visualizer without a method passes on the value it was given, and so does one that returns
-`nothing`. Stack keeps the whole input in this case; navigating it does not narrow what the other
-visualizers take. Grid currently passes on the whole input; combining per-cell interaction outputs
-is not yet part of the contract.
+`nothing`. In Stack, the window then passes on its whole input, whichever item it shows. In Grid,
+the window always passes on its whole input.
 
 The browser reads the output in every frame, and passes it on when it is another object than
 before. Keep the output in a field and return that field; replace the object when the output

@@ -18,20 +18,20 @@ function draw_field!(view::BuilderView, buffer::Vector{UInt8}=view.editing.buffe
     style = unsafe_load(ig.GetStyle())
     position = ig.GetCursorScreenPos()
     width = ig.GetContentRegionAvail().x
-    # The row keeps its place under the field.
+    ## The row keeps its place under the field.
     ig.Dummy((width, ig.GetFrameHeight()))
     viewport = ig.GetWindowViewport()
     right = unsafe_load(viewport.Pos).x + unsafe_load(viewport.Size).x - style.WindowPadding.x
     font = plain ? :interface : :code
     size = with_font(() -> ig.CalcTextSize(unsafe_string(pointer(buffer)) * "  "), font)
     ig.SetNextWindowPos(position)
-    # Two points more than the text, or ImGui scrolls the field up and down to keep the cursor in view.
+    ## Two points more than the text, or ImGui scrolls the field up and down to keep the cursor in view.
     ig.SetNextWindowSize((clamp(size.x + 2style.FramePadding.x, width, max(width, right - position.x)),
         size.y + 2style.FramePadding.y + 2))
     edit.focus && ig.SetNextWindowFocus()
     ig.PushStyleVar(ig.ImGuiStyleVar_WindowPadding, (0.0f0, 0.0f0))
     ig.PushStyleVar(ig.ImGuiStyleVar_WindowBorderSize, 0.0f0)
-    # Windows are at least 32 points high otherwise, almost two rows.
+    ## Windows are at least 32 points high otherwise, almost two rows.
     ig.PushStyleVar(ig.ImGuiStyleVar_WindowMinSize, (1.0f0, 1.0f0))
     ig.Begin("##field", C_NULL, ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoSavedSettings |
         ig.ImGuiWindowFlags_NoDocking | ig.ImGuiWindowFlags_NoMove)
@@ -42,7 +42,7 @@ function draw_field!(view::BuilderView, buffer::Vector{UInt8}=view.editing.buffe
         ig.ImGuiInputTextFlags_NoHorizontalScroll
     edit.problem === nothing || ig.PushStyleColor(ig.ImGuiCol_FrameBg, ig.GetColorU32(ig.ImVec4(0.45f0, 0.16f0, 0.16f0, 1.0f0)))
     plain && push_text_colors()
-    # The field grows with its text, so it has no scroll bar.
+    ## The field grows with its text, so it has no scroll bar.
     ig.PushStyleVar(ig.ImGuiStyleVar_ScrollbarSize, 0.0f0)
     entered = with_font(font) do
         ig.InputTextMultiline("##value", buffer, length(buffer), (-1.0f0, -1.0f0), flags)
@@ -60,7 +60,7 @@ function draw_field!(view::BuilderView, buffer::Vector{UInt8}=view.editing.buffe
         view.editing = nothing
         return text
     elseif done && !isempty(text)
-        # Text that Julia cannot read is not written; Julia's message says why.
+        ## Text that Julia cannot read is not written; Julia's message says why.
         parsed = Meta.parse(text; raise=false)
         edit.problem = Meta.isexpr(parsed, (:error, :incomplete)) ? only(parsed.args).msg : nothing
         edit.problem === nothing || (edit.focus = true; return nothing)
@@ -128,8 +128,8 @@ function heading!(view::BuilderView, id::String, title::String, offered::Abstrac
     end
     picked = nothing
     if !isempty(offered)
-        # A bold "+" of the text font, which stands out more than the icon, at the right end of the
-        # row as the values under it.
+        ## A bold "+" of the text font, which stands out more than the icon, at the right end of the
+        ## row as the values under it.
         clicked = with_font(:interface; bold=true) do
             to_right_end(ig.CalcTextSize("+").x + 2unsafe_load(ig.GetStyle()).FramePadding.x)
             icon_button("+", tooltip)
@@ -252,7 +252,7 @@ function code_box(id::String, value::String, width::Float32; dimmed::Bool=false,
     alpha = dimmed ? 0.45f0 : 1.0f0
     left = position.x + style.FramePadding.x
     middle = position.y + height / 2
-    # The marker or line style of the value, drawn before it.
+    ## The marker or line style of the value, drawn before it.
     offset = 0.0f0
     if glyph !== nothing
         name, symbol = glyph
@@ -264,7 +264,7 @@ function code_box(id::String, value::String, width::Float32; dimmed::Bool=false,
     top = position.y + style.FramePadding.y
     room = width - 2style.FramePadding.x - offset
     if parts === nothing
-        # A value written over several lines of code shows on one.
+        ## A value written over several lines of code shows on one.
         shown = replace(value, r"\s+" => " ")
         clipped = with_font(() -> draw_code(draw_list, ig.ImVec2(left + offset, top), shown, room; alpha), :code)
     else
@@ -272,7 +272,7 @@ function code_box(id::String, value::String, width::Float32; dimmed::Bool=false,
         x = left + offset
         for (kind, text) in parts
             if kind === :title
-                # A line between the value and its title.
+                ## A line between the value and its title.
                 x += 4
                 ig.AddLine(draw_list, (x, position.y + 4), (x, high[2] - 4), ig.GetColorU32(ig.ImGuiCol_Border))
                 x += 6
@@ -280,7 +280,7 @@ function code_box(id::String, value::String, width::Float32; dimmed::Bool=false,
                 x += ig.CalcTextSize(text).x
             else
                 with_font(:code) do
-                    # A formula written over several lines of code shows on one.
+                    ## A formula written over several lines of code shows on one.
                     shown = replace(text, r"\s+" => " ")
                     kind === :column ? ig.AddText(draw_list, (x, top), ig.GetColorU32(code_color(:symbol, alpha)), shown) :
                         draw_code(draw_list, ig.ImVec2(x, top), shown, room - (x - left - offset); alpha)

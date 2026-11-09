@@ -12,7 +12,7 @@ function _render_readiness_mark!(readiness::Workspace.Readiness)::Nothing
     if readiness == Workspace.FAILED
         ig.TextColored(ig.ImVec4(0.9f0, 0.3f0, 0.3f0, 1.0f0), ICON_FAILED)
     elseif readiness == Workspace.WORKING
-        # A spinner: spokes that fade around the circle and turn with time. A font cannot animate.
+        ## A spinner: spokes that fade around the circle and turn with time. A font cannot animate.
         cursor = ig.GetCursorScreenPos()
         center = ig.ImVec2(cursor.x + size / 2, cursor.y + size / 2)
         radius = size * 0.28f0
@@ -77,8 +77,8 @@ An item passes the filters when no filter hides it, and when it matches the text
 by its label or kind, has every tag and matches every condition that `filters` show alone. A group
 passes only through the text, a tag or a condition shown alone; otherwise the tree shows it only
 above the items that pass, opened unless it is in `collapsed`. A word of `tree_filter` that starts
-with - hides the items it matches, as a filter does. Below a group that passes, all its members show, except those
-that `filters` hide.
+with - hides the items it matches, as a filter does. Below a group that passes, all its members
+show, except those that the filters hide.
 
 The result keeps `key`, `columns` and the answer from `select` used to build it, so that the
 browser can tell when to build the tree again. The first time `select` gets its function, it waits
@@ -178,8 +178,8 @@ Draw the tree of groups and their members, and change the selection of the works
 A click on a group selects the group itself; its context menu selects its members.
 
 The tree is built in a background task, so drawing never waits for it. When the open groups, the
-filter, the tags or an answer from `select` change, the browser starts a new build and keeps
-drawing the old tree until the build is done.
+text filter, the filter bar or an answer from `select` change, the browser starts a new build and
+keeps drawing the old tree until the build is done.
 """
 function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTextFilter})::Nothing
     ig.BeginChild("Tree", (0, 0), true)
@@ -229,7 +229,7 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
     ig.SameLine()
     _helpmarker("Words separated by commas. A word that starts with - hides what it matches: run,-old")
     ig.SameLine()
-    # The Sort button is at the end of the line, and the filter takes the line up to it.
+    ## The Sort button is at the end of the line, and the filter takes the line up to it.
     start = ig.GetCursorPosX()
     stop = _render_tree_sort!(state)
     ig.SameLine(start)
@@ -312,13 +312,13 @@ function _render_tree_panel(state::BrowserState, filter_tree::Ptr{ig.lib.ImGuiTe
                     if ig.BeginPopupContextItem()
                         targets = item.id in selected.set ? selected.ids : [item.id]
                         length(targets) > 1 && ig.TextDisabled("Apply to $(length(targets)) items")
-                        # The browser reveals the members it selects.
+                        ## The browser reveals the members it selects.
                         x = item.id
                         isgroup && ig.MenuItem("Select members") &&
                             Workspace.select!(workspace, Workspace.select(workspace, row -> x in row.groups).id)
-                        # A dynamic call: packages add `item_context_menu!` methods for their
-                        # extensions when they load, and a static call would make each of them
-                        # invalidate the compiled code here.
+                        ## A dynamic call: packages add `item_context_menu!` methods for their
+                        ## extensions when they load, and a static call would make each of them
+                        ## invalidate the compiled code here.
                         for ext in state.extensions
                             Base.invokelatest(item_context_menu!, ext, state; item_ids=() -> targets,
                                 label=item.row.label, kind=_kind(workspace, item.id))

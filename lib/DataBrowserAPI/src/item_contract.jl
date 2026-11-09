@@ -7,11 +7,12 @@ abstract type AbstractDataItem end
 """
     id(item)::String
 
-What identifies one item. Stored, displayed in messages, and used for selection, annotation, and
-cache lookup exactly as returned — nothing wraps or namespaces it.
+The id of `item`, which names it in the tree, in the selection, in annotations and in the cache,
+exactly as returned. Every item type defines `id`: there is no default.
 
-There is no default, and no uniqueness is inferred: two items answering the same `id` collide, and
-that is a project error the engine reports. Source items answer the same contract the same way.
+A `process` result with the id of its input is a later version of that value. Besides that, two
+values with the same id are an error, which the workspace reports. Source items have ids under the
+same rules.
 """
 id(item::AbstractDataItem)::String = error(
     "Item type $(typeof(item)) must implement id(::$(typeof(item)))::String")
@@ -22,9 +23,9 @@ id(item::AbstractDataItem)::String = error(
 
 Human-readable label for an item.
 
-The workspace calls `label` when the item is created, and again after `process`, each time on the
-item with its metadata so far. A label can therefore use metadata that
-only a later `process` adds; until then, `get(metadata(item), key, nothing)` returns `nothing`.
+The workspace calls `label` on each value that `read` or `process` gives, so each version of a
+value gets a label from its own metadata. A label can use metadata that a later `process` method
+adds: for the earlier versions, `get(metadata(item), key, nothing)` returns `nothing`.
 
 The default is the item's id. Define `label(item)` for a more descriptive label, or the project form
 when the label depends on the project.
@@ -47,13 +48,13 @@ abstract type AbstractGroup <: AbstractDataItem end
     members(group::AbstractGroup) -> Vector{String}
 
 The ids of the members of `group`, as the code that made the group gave them: a `read` of a source
-item, the user, a `process` method, or the workspace, for a [`SourceGroup`](@ref). An id names a
+item, a `process` method, or the workspace, for a [`SourceGroup`](@ref). An id names a
 value, or a source item, which stands for the values that it gives. Every group type defines
 `members`: there is no default.
 """
 members(::AbstractGroup)
 
-"""Return metadata supplied directly by a data item. The default is an empty `Dict`."""
+"""Return the metadata of a data item. The default is an empty `Dict`."""
 metadata(::AbstractDataItem)::Dict = Dict()
 
 """

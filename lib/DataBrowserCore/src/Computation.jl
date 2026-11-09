@@ -14,8 +14,8 @@ end
 
 The values of the members of `group` that a group `process` receives: a vector of the latest
 value of type `T` of each member, in the order of the members, which reads each value when the code
-reads it (`Members`). The
-workspace keeps which rows give these values, so the computation stays the same when they change.
+reads it (`Members`). The workspace keeps which rows give these values, so the computation stays the
+same when they change.
 """
 struct MemberValues{T}
     group::String

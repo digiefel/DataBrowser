@@ -1,19 +1,22 @@
 """
-Package-owned carriers for the registration dialect.
+The types of the values of a registered project: its items, what `read` gives, and its groups.
 
-A registration name is a type parameter, not a field, so every `process` after `read` selects its
-recipe by dispatch and the engine can specialize the whole call behind one function barrier.
-`RegisteredDataItem{:pund,:made,DataFrame}` is a distinct concrete type, which is what lets registered
-items behave like any other typed item rather than like a tagged bag.
+The kind of a registration is a type parameter of its items, `K` in `RegisteredDataItem{K}`. So each
+`process` method selects the callbacks of its registration by dispatch, and Julia compiles the call
+for the types of one registration. `RegisteredDataItem{:trace,:made,DataFrame}` is a concrete type,
+as the item type of a project written with its own types is. A second parameter, `S`, says how far a
+value got, so that each `process` method takes it once.
 """
 
 """
-Private carrier for ordinary data produced by `register_item!`.
+The item type of a registered project: one item of a registration, made by its callbacks.
 
-The carrier holds the id, the data and the metadata. Its label and its collections come from the
-`label` and `collection` callbacks of the registration. `S` is `:made` for the item that the
-registration makes, and `:collected` once its collection gave it new data and metadata, so that the
-`process` of its collection takes it only once.
+It holds the id, the data and the metadata. `K` is the kind of the registration, such as `:trace`.
+The label of the item comes from the `label` callback of the registration, or is its id without
+one, and its collections come from the `collection` callback. `S` is `:made` for the item that the
+callbacks of the registration make, and `:collected` for its later version, with the new data and
+metadata that its collection gives it. The member `process` of a collection takes only `:made`
+items, so it never takes its own results again.
 """
 struct RegisteredDataItem{K,S,D} <: AbstractDataItem
     id::String
@@ -25,10 +28,11 @@ RegisteredDataItem{K,S}(id::AbstractString, data::D, metadata::Dict{Symbol,Any})
     RegisteredDataItem{K,S,D}(String(id), data, metadata)
 
 """
-Private carrier for what the `read` callback of a registration with `expand`, `process` or
-`analyze` gives: the data and the metadata that the `process` of the registration makes its items
-from. It is not one of these items, so the collections and the plots of the registration leave it
-out, and the items are of another type, so that `process` does not take them again.
+What the `read` callback of a registration gives when the registration also has an `expand`,
+`process` or `analyze` callback: the data and the metadata from which `process` makes the items of
+the registration. A `ReadData` is not an item of the registration, so the collections and the plots
+of the registration leave it out. Also, the items have another type, so that the `process` method
+of `ReadData` does not take them again.
 """
 struct ReadData{K,D} <: AbstractDataItem
     id::String
@@ -46,8 +50,9 @@ metadata(item::Union{RegisteredDataItem,ReadData})::Dict{Symbol,Any} = item.meta
 data(item::Union{RegisteredDataItem,ReadData}) = item.data
 
 """
-Rebuild a registered carrier from a cached payload. The registration comes from the type, so it
-survives the round trip without entering the payload.
+Rebuild a value of a registered project from the data and the metadata kept in the cache. The kind
+of the registration and the state `S` are parameters of the type, so the cache keeps them with the
+type.
 """
 reconstruct(::Type{<:RegisteredDataItem{K,S}}, id::AbstractString, data, metadata::Dict) where {K,S} =
     RegisteredDataItem{K,S}(String(id), data, metadata_dict(metadata))
@@ -75,14 +80,14 @@ One collection that a `collection` callback names, as a group. `Level` is the na
 gives the level, such as `:wafer`, and `name` is the value at that level, such as `"W1"`. Its
 members are the collections and the items directly below it. `data` holds the new data of items
 below it, by id, that the collection `process` callbacks returned, and `member_metadata` the
-metadata of items below it, by id, that the collection `analyze` callbacks returned; both include
-those of the collections above it once it is a later version of itself as their member. The
-collection has no metadata of its own.
+metadata of items below it, by id, that the collection `analyze` callbacks returned. Once the
+collection above it gives it its values, both also hold those, and where both collections have a
+value for an item, the one above wins. The collection has no metadata of its own.
 
 `S` says how far the collection got, so that each `process` takes it once: `:made` for the
-collection that the `process` of the source group makes, when its level has callbacks; `:processed`
-once its own group `process` ran them, or from the start for a level without callbacks; and
-`:collected` once the collection above it gave it its data.
+collection that the `process` of the `SourceGroup` makes, when its level has callbacks;
+`:processed` once its own group `process` ran them, or from the start for a level without
+callbacks; and `:collected` once the collection above it gave it its values.
 """
 struct NamedCollection{Level,S} <: AbstractGroup
     id::String

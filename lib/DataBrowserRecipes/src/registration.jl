@@ -135,8 +135,7 @@ receive every item below the collection. Registering the same level and `members
 the callbacks.
 
 Each collection is a group whose members are the collections and the items directly below it. Its id
-names its levels from the top down: `wafer:W1/device:A` for `(wafer = "W1", device = "A")`. Only
-the items of a `DirectorySource` are in collections.
+names its levels from the top down: `wafer:W1/device:A` for `(wafer = "W1", device = "A")`.
 """
 function register_collection!(
     project::Project,

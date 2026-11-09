@@ -15,7 +15,7 @@ label(::ValueView)::String = "Value"
 
 # The one `prepare!` method that accepts everything: see `prepare!`.
 function prepare!(view::ValueView, value, ctx)::Nothing
-    # Long values are cut, as in the REPL, so that the text stays quick to draw.
+    ## Long values are cut, as in the REPL, so that the text stays quick to draw.
     view.text = sprint(show, MIME"text/plain"(), value; context=(:limit => true, :displaysize => (200, 120)))
     return nothing
 end

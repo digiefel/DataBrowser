@@ -23,7 +23,7 @@ its end.
 module Notes
 
 # TODO: nothing reads notes yet. Roadmap 0.4.0 connects them to items. When connected, `notes.txt`
-# lives in the same folder as `tags.txt`, with one section per project.
+# lives in the same folder as `tags.txt` and, like it, keeps the notes of each project apart.
 
 export read_section, merged_view, write_section!, notes_path,
        NOTES_FILENAME, NotesParseError
@@ -33,6 +33,10 @@ const FENCE = "```"
 
 notes_path(root::AbstractString) = joinpath(String(root), NOTES_FILENAME)
 
+"""
+The error raised by a line of `notes.txt` that does not follow the format. It holds the `path` of
+the file, the `line_number` of the line and a `message` that says what is wrong.
+"""
 struct NotesParseError <: Exception
     path::String
     line_number::Int
@@ -116,7 +120,7 @@ end
     merged_view(root, key, ancestor_keys) -> Vector{NamedTuple}
 
 The notes of `ancestor_keys` in the given order, then the note of `key`. Each entry is
-`(path, body, editable)`. A key in `ancestor_keys` without a note has no entry, and `key` has an
+`(path, body, editable)`, where `path` is the key of the note. A key in `ancestor_keys` without a note has no entry, and `key` has an
 entry with an empty `body`. Only the entry of `key` is `editable`.
 """
 function merged_view(root::AbstractString, key::AbstractString, ancestor_keys)

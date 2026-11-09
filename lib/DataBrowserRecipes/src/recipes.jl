@@ -13,7 +13,7 @@ struct ItemRecipe
     label
     collection
     id
-    # The module and the line of the project's code that registered the recipe.
+    ## The module and the line of the project's code that registered the recipe.
     mod::Module
     registered::LineNumberNode
 end
@@ -30,11 +30,8 @@ struct CollectionRecipe
 end
 
 """
-A callback project assembled from registered recipes.
-
-The dialect's implementation of `AbstractProject`, and nothing more: reading and data processing
-are defined by the registered callbacks, plot registration lives in `DataBrowserPlots`, and
-package-owned cache, job, and browser state does not belong here.
+A project made of registrations: the `read` and `process` methods of its type run the callbacks
+given to `register_item!` and `register_collection!`. Plots are registered with `DataBrowserPlots`.
 
 `recipes` keeps the order of registration, in which `read` asks the `detect` callbacks: the first
 that accepts a source item wins.

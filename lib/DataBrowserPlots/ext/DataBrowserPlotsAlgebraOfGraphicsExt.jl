@@ -13,8 +13,8 @@ using DataBrowserCore: Selection
 using DataBrowserPlots: Tables
 using PrecompileTools: @setup_workload, @compile_workload
 
-# The legend is ours, not AoG's: roles share a section when one determines the others
-# (plans/graphics-grammar.md). `texts` are the texts of the entries in the section of a role.
+# The package draws the legend itself, in place of AoG's, so that roles share a section when one
+# determines the others (plans/graphics-grammar.md). `texts` are the texts of the entries in the section of a role.
 # `groups` are the values of every group's roles, as `key => value`, also of the roles that its
 # layer cannot show.
 function figure(
@@ -48,8 +48,8 @@ function label_inspector!(grid)
     for entries in grid
         axis = entries.axis
         axis isa AoG.Makie.Axis || continue
-        # AlgebraOfGraphics draws a plot for each group of each layer, in the order of the groups. A
-        # plot type that draws all groups in one plot, such as `BarPlot`, has a value for each point.
+        ## AlgebraOfGraphics draws a plot for each group of each layer, in the order of the groups. A
+        ## plot type that draws all groups in one plot, such as `BarPlot`, has a value for each point.
         for (plot, p) in zip(axis.scene.plots, entries.processedlayers)
             mapping = AoG.aesthetic_mapping(p)
             roles = [(AoG.getlabel(scale), Dict(zip(AoG.datavalues(scale), AoG.datalabels(scale))), value)
@@ -75,7 +75,7 @@ function inspected(value)::String
     value isa Real && isfinite(value) || return string(value)
     value == 0 && return "0"
     power = floor(Int, log10(abs(value)))
-    # A whole number shows without its ".0".
+    ## A whole number shows without its ".0".
     digits(x) = replace(string(round(x; sigdigits=4)), r"\.0$" => "")
     -3 <= power < 4 && return digits(value)
     superscript = map(c -> c == '-' ? '⁻' : "⁰¹²³⁴⁵⁶⁷⁸⁹"[nextind("⁰¹²³⁴⁵⁶⁷⁸⁹", 0, c - '0' + 1)], string(power))
@@ -107,7 +107,7 @@ function figure(plot::PlotLines, args...; yscales=Dict{Symbol,Any}(), options...
     settings = !isempty(args) && first(args) isa AoG.Scales ? first(args) : AoG.scales()
     drawn = reduce(vcat, [layers for (line, layers) in zip(plot.lines, processed_lines(plot, settings)) if line.drawn];
         init=Pair{AoG.ProcessedLayer,Any}[])
-    # The values of each group's roles, one group for each element of a layer's values.
+    ## The values of each group's roles, one group for each element of a layer's values.
     groups = [Dict{Symbol,Any}(key => values[i] for (key, values) in pairs(primary))
         for (_, primary) in drawn if !isempty(primary) for i in eachindex(first(values(primary)))]
     return figure(AoG.ProcessedLayers(first.(drawn)), args...; options..., groups)
@@ -221,7 +221,7 @@ function scale_kinds(plot::PlotLines)::Dict{Symbol,Symbol}
         layer isa AoG.Layer && layer.data isa AoG.Columns || continue
         columns = Tables.columns(layer.data.columns)
         type(name::Union{Symbol,AbstractString}) = eltype(Tables.getcolumn(columns, Symbol(name)))
-        # A title after `=>` stays out, and a function after it applies to each value.
+        ## A title after `=>` stays out, and a function after it applies to each value.
         type(value::Pair) = last(value) isa AbstractString ? type(first(value)) :
             Base.infer_return_type(last(value) isa Pair ? first(last(value)) : last(value), Tuple{type(first(value))})
         type(_) = Any
@@ -273,9 +273,9 @@ function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge, all_
     categorical, continuous = Dict(scales(:categorical)), scales(:continuous)
     order = first.(scales(:categorical))
     processed = mapreduce(entry -> entry.processedlayers, vcat, grid)
-    # Each drawn group: its piece, and the value of each categorical legend role it maps. A role that
-    # its piece cannot show, such as `marker` of `Lines`, takes the value of the groups with the same
-    # values in the roles the piece shows, when they all have one.
+    ## Each drawn group: its piece, and the value of each categorical legend role it maps. A role that
+    ## its piece cannot show, such as `marker` of `Lines`, takes the value of the groups with the same
+    ## values in the roles the piece shows, when they all have one.
     groups = map(processed) do p
         mapping = AoG.aesthetic_mapping(p)
         values = Dict(mapping[key] => value for (key, value) in pairs(p.primary)
@@ -291,7 +291,7 @@ function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge, all_
     for (r, _) in texts
         r in role.(order) || error("The legend text is given for $r, which no categorical role of the plot maps")
     end
-    # Each value's name in its scale, for every role: a text may read a role outside its section.
+    ## Each value's name in its scale, for every role: a text may read a role outside its section.
     names = Dict(role(aes) => Dict{Any,String}(zip(AoG.datavalues(scale), string.(AoG.datalabels(scale))))
         for (aes, scale) in categorical)
     sections = map(section_roles(order, groups, merge)) do section
@@ -300,7 +300,7 @@ function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge, all_
         categorical_section(section, categorical, groups, processed, names, isempty(given) ? nothing : only(given))
     end
     append!(sections, [continuous_section(aes, scale, processed) for (aes, scale) in continuous])
-    # A piece with its own `label`, as in `visual(Lines; label="model")`, has an entry of its own.
+    ## A piece with its own `label`, as in `visual(Lines; label="model")`, has an entry of its own.
     labelled = unique(piece, filter(p -> haskey(p.attributes, :label), processed))
     labels = unique(p.attributes[:label] for p in labelled)
     isempty(labels) || push!(sections, (; samples=[reduce(vcat, [AoG._legend_elements(p, AoG.MixedArguments())
@@ -350,7 +350,7 @@ function categorical_section(section, scales, groups, processed, names, text)
     texts = map(found) do combination
         entry = LegendEntry(Dict(role(aes) => v for (aes, v) in zip(section, combination)), names)
         text === nothing ? join(unique(names[role(aes)][v] for (aes, v) in zip(section, combination)), ", ") :
-            # The text was defined by code the browser ran after this drawing started.
+            ## The text was defined by code the browser ran after this drawing started.
             Base.invokelatest(text, entry)
     end
     title = join(filter(!isempty, unique(string(AoG.getlabel(scales[aes])) for aes in section)), ", ")
@@ -404,12 +404,12 @@ struct WithinLimits
 end
 
 function (step::WithinLimits)(p::AoG.ProcessedLayer)
-    # The points of each group that are inside the limits.
+    ## The points of each group that are inside the limits.
     inside = map(eachindex(first(p.positional))) do group
         keep = trues(length(first(p.positional)[group]))
         for (position, limits) in enumerate(step.limits)
             (limits === nothing || position > length(p.positional)) && continue
-            # A bound of `nothing` is Makie's own, so it removes no points.
+            ## A bound of `nothing` is Makie's own, so it removes no points.
             low, high = something(first(limits), -Inf), something(last(limits), Inf)
             keep .&= coalesce.(low .<= p.positional[position][group] .<= high, false)
         end
@@ -457,8 +457,8 @@ function figure(plot::Scaled, args...; options...)
         is_y_scale(r) && continue
         haskey(ROLE_SCALES, r) || error("scales sets the scale of a role such as color; $r is not one")
     end
-    # `limits` and `reversed` of x and y are ours: Makie's axis draws them, and the limits also
-    # remove the points outside them before the analyses run.
+    ## The package handles `limits` and `reversed` of x and y itself: Makie's axis draws them, and
+    ## the limits also remove the points outside them before the analyses run.
     limits = Any[nothing, nothing]
     axis = Pair{Symbol,Any}[]
     primary = get(Dict(plot.scales), :y, (;))
@@ -471,24 +471,24 @@ function figure(plot::Scaled, args...; options...)
         return r => Base.structdiff(value, NamedTuple{(:limits, :reversed, :position)})
     end
     push!(axis, :yaxisposition => get(primary, :position, :left))
-    # The `coord` lines only change where the values are drawn, after the analyses: their functions
-    # move the points, then Makie's axis draws their scales, limits and reversed axes, and their
-    # limits remove no points.
-    # TODO: two scales of one axis, and a function after a scale, composed in the order of the lines.
-    # TODO: `polar(angle = :x, turn = 2π, start = 0, clockwise = false, inner = 0)` as a `coord` step.
-    #   AlgebraOfGraphics draws only on Axis and Axis3, so we draw its processed layers ourselves on
-    #   a Makie PolarAxis: each entry of `AoG.compute_axes_grid` holds a plot type, its positions and
-    #   its attributes. The settings map to PolarAxis's: `angle = :y` to `theta_as_x = false`, `start`
-    #   to `theta_0`, `clockwise` to `direction = -1`, `inner` to `radius_at_origin`. `turn` is the
-    #   angle of one unit of the angle values; `turn = :range` stretches their range over one turn,
-    #   as ggplot's coord_polar does. Lines bend along circles only if we add points between theirs
-    #   before drawing, as ggplot does: PolarAxis draws a straight line between two points.
-    # TODO: shapes that move with a function of the points, such as heatmap cells turned into
-    #   diamonds: the function becomes Makie's `transform_func` of the axis (`PointTrans{2}`), which
-    #   also needs `Makie.inverse_transform` and `Makie.apply_transform(f, ::Rect3)` for the limits.
-    #   Only functions with an inverse can do this, so it is a setting of the line, not the default.
-    # TODO: a tilted plot, such as one slanted by 45°: Makie's `rotate!` of the axis scene turns the
-    #   drawing, and we draw the slanted grid and ticks that the turned axis lacks.
+    ## The `coord` lines only change where the values are drawn, after the analyses: their functions
+    ## move the points, then Makie's axis draws their scales, limits and reversed axes, and their
+    ## limits remove no points.
+    ## TODO: two scales of one axis, and a function after a scale, composed in the order of the lines.
+    ## TODO: `polar(angle = :x, turn = 2π, start = 0, clockwise = false, inner = 0)` as a `coord` step.
+    ##   AlgebraOfGraphics draws only on Axis and Axis3, so we draw its processed layers ourselves on
+    ##   a Makie PolarAxis: each entry of `AoG.compute_axes_grid` holds a plot type, its positions and
+    ##   its attributes. The settings map to PolarAxis's: `angle = :y` to `theta_as_x = false`, `start`
+    ##   to `theta_0`, `clockwise` to `direction = -1`, `inner` to `radius_at_origin`. `turn` is the
+    ##   angle of one unit of the angle values; `turn = :range` stretches their range over one turn,
+    ##   as ggplot's coord_polar does. Lines bend along circles only if we add points between theirs
+    ##   before drawing, as ggplot does: PolarAxis draws a straight line between two points.
+    ## TODO: shapes that move with a function of the points, such as heatmap cells turned into
+    ##   diamonds: the function becomes Makie's `transform_func` of the axis (`PointTrans{2}`), which
+    ##   also needs `Makie.inverse_transform` and `Makie.apply_transform(f, ::Rect3)` for the limits.
+    ##   Only functions with an inverse can do this, so it is a setting of the line, not the default.
+    ## TODO: a tilted plot, such as one slanted by 45°: Makie's `rotate!` of the axis scene turns the
+    ##   drawing, and we draw the slanted grid and ticks that the turned axis lacks.
     zoom = Any[nothing, nothing]
     functions, scaled = Any[], false
     for step in plot.coords, (key, value) in pairs(step)
@@ -529,7 +529,7 @@ end
 # of `Hist`.
 # TODO: show that where it matters.
 function makie_theme(theme::PlotTheme)::AoG.Makie.Theme
-    # Makie fills in its default theme under any theme, so an empty one is the default.
+    ## Makie fills in its default theme under any theme, so an empty one is the default.
     base = theme.base === nothing ? AoG.Makie.current_default_theme() :
         theme.base === :default ? AoG.Makie.Theme() : getproperty(AoG.Makie, Symbol(:theme_, theme.base))()
     return merge(AoG.Makie.Theme(; pairs(theme.settings)...), base)
@@ -548,11 +548,11 @@ function Base.:*(result::Result, layer::AoG.Layer)
     layer.transformation isa AoG.Visual ||
         error("A result is drawn by multiplying it with a visual")
     plottype = layer.transformation.plottype
-    # An aggregate's values fill the places of the visual after x, in the order of its functions:
-    # `aggregate(mean, std) * visual(Errorbars)` draws x, mean and std. A function with several
-    # values, such as `extrema`, fills one place for each.
-    # TODO: with `direction = :x`, group the points by y and draw the values on x.
-    # TODO: `aggregate(y = mean, low = minimum, high = maximum)`, with each value named by its place.
+    ## An aggregate's values fill the places of the visual after x, in the order of its functions:
+    ## `aggregate(mean, std) * visual(Errorbars)` draws x, mean and std. A function with several
+    ## values, such as `extrema`, fills one place for each.
+    ## TODO: with `direction = :x`, group the points by y and draw the values on x.
+    ## TODO: `aggregate(y = mean, low = minimum, high = maximum)`, with each value named by its place.
     if !isempty(getfield(result, :scaled))
         groups = getfield(result, :groups)
         places = Pair{Symbol,Vector}[]
@@ -562,20 +562,20 @@ function Base.:*(result::Result, layer::AoG.Layer)
                 append!(places, [Symbol(name, "[", i, "]") => getindex.(computed, i) for i in eachindex(first(computed))]) :
                 push!(places, name => computed)
         end
-        # A third place of `Lines` or `Scatter` is z, which this axis does not draw. AlgebraOfGraphics
-        # fails with its own message for a plot type that takes no such number of places.
+        ## A third place of `Lines` or `Scatter` is z, which this axis does not draw. AlgebraOfGraphics
+        ## fails with its own message for a plot type that takes no such number of places.
         kinds = AoG.aesthetic_mapping(plottype, ntuple(_ -> AoG.Continuous(), length(places) + 1)...)
         any(==(AoG.AesZ), values(kinds)) &&
             error("$(plottype) cannot draw the $(length(places)) values of this aggregate at each x: " *
                 join(first.(places), ", "))
-        # The first value is drawn as the points' y, under its title.
+        ## The first value is drawn as the points' y, under its title.
         positional = Any[nothing; [i == 1 ? name => title(getfield(result, :positional)[2]) : name for (i, (name, _)) in enumerate(places)]]
         return over_result(result, (; places...), AoG.Layer(layer.transformation, nothing, positional, layer.named))
     end
-    # The data of each fit, its first column as x and its second as y, with the group's value in
-    # each role.
+    ## The data of each fit, its first column as x and its second as y, with the group's value in
+    ## each role.
     positional = getfield(result, :positional)
-    # A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
+    ## A role the plot type cannot show, such as `marker` for `Lines`, is left out of its mapping.
     shown = keys(AoG.aesthetic_mapping(plottype, ntuple(_ -> AoG.Continuous(), length(positional))...))
     roles = [(role, value, column(value)) for (role, value) in getfield(result, :named) if role in shown]
     drawn = column.(positional)
@@ -600,7 +600,7 @@ end
 function inherit(header::AoG.Layer, line::AoG.Layer)
     line.data === nothing || return line
     positional = isempty(line.positional) ? header.positional : line.positional
-    # A line with `y` and no `x` takes the header's `x`.
+    ## A line with `y` and no `x` takes the header's `x`.
     first(positional, 1) == [nothing] && length(header.positional) >= 1 &&
         (positional = [header.positional[1]; positional[2:end]])
     named = filter(!isnothing, merge(header.named, line.named))
@@ -703,12 +703,12 @@ function taken(analysis::Analysis, columns)
     for (position, r) in enumerate((:x, :y))
         limits = setting(analysis, r, :limits, nothing)
         (limits === nothing || position > length(positional)) && continue
-        # A bound of `nothing` is Makie's own, so it removes no points.
+        ## A bound of `nothing` is Makie's own, so it removes no points.
         low, high = something(first(limits), -Inf), something(last(limits), Inf)
         value = positional[position]
         inside .&= [v isa Real && low <= v <= high for v in category.(Ref(value), columns[column(value)])]
     end
-    # AlgebraOfGraphics draws no plot without points.
+    ## AlgebraOfGraphics draws no plot without points.
     isempty(inside) || any(inside) || error("The limits of the axes remove every point: " * join(
         ("$r = $(setting(analysis, r, :limits, nothing))" for r in (:x, :y) if setting(analysis, r, :limits, nothing) !== nothing), ", "))
     return map(values -> values[inside], columns), positional, named
@@ -735,7 +735,7 @@ function computed(analysis::Analysis, columns, items::Selection, workspace)::Res
         places = sort(unique(table[ITEM][[row for row in eachindex(keys) if isequal(keys[row], key)]]))
         return Workspace.Computation(analysis, items[places]; group=key)
     end
-    # The groups wait together, so that the workers compute them at the same time.
+    ## The groups wait together, so that the workers compute them at the same time.
     groups = @timed_dbg "plot_results" reduce(vcat, asyncmap(value -> Workspace.evaluate(workspace, value), values); init=NamedTuple[])
     return Result(analysis.step, groups, positional, roles; scale=setting(analysis, :y, :scale, identity))
 end
@@ -789,12 +789,12 @@ function one_y(table, positional::Vector, named::Vector)
     ys = positional[2]
     repeated = [name => reduce(vcat, [columns[name] for _ in ys]) for name in keys(columns)]
     count = length(first(columns))
-    # Each value after its transformation, as in `:I => abs => "V < 0"`.
+    ## Each value after its transformation, as in `:I => abs => "V < 0"`.
     stacked = (; repeated..., y=reduce(vcat, [category.(Ref(v), columns[column(v)]) for v in ys]),
         ydims=reduce(vcat, [fill(title(v), count) for v in ys]))
     order = AoG.sorter(unique(title.(ys))...)
     named = [role => (column(value) isa AoG.DimsSelector ? :ydims => order => "" : value) for (role, value) in named]
-    # TODO: a label of y from the values' own labels.
+    ## TODO: a label of y from the values' own labels.
     return stacked, [positional[1], :y => ""], named
 end
 resolve(layers::AoG.Layers, items, axes, points=nothing) = foldl(+, (resolve(layer, items, axes, points) for layer in layers.layers))
@@ -810,13 +810,13 @@ function over_result(result::Result, table, layer)
     x = first(getfield(result, :positional))
     xs = haskey(table, column(x)) ? [] : [column(x) => [group[column(x)] for group in groups]]
     with_x(l) = first(l.positional, 1) == [nothing] ? AoG.Layer(l.transformation, l.data, [x; l.positional[2:end]], l.named) : l
-    # The values computed after the y scale's function, such as an aggregate's `mean` and `std`,
-    # are placed back on the axis by what the visual draws with them: a y value is a position, and
-    # the third value of `Errorbars` a length on each side of y, drawn as the distances to the ends.
-    # A value read by index, as `result.extrema[1]`, is one too; a value the line computes itself, as
-    # `10^result.mean`, is drawn as it is.
+    ## The values computed after the y scale's function, such as an aggregate's `mean` and `std`,
+    ## are placed back on the axis by what the visual draws with them: a y value is a position, and
+    ## the third value of `Errorbars` a length on each side of y, drawn as the distances to the ends.
+    ## A value read by index, as `result.extrema[1]`, is one too; a value the line computes itself, as
+    ## `10^result.mean`, is drawn as it is.
     scale = getfield(result, :scale)
-    # The column of `result.extrema[1]` is named `(:extrema)[1]`.
+    ## The column of `result.extrema[1]` is named `(:extrema)[1]`.
     is_computed(name) = any(n -> occursin(Regex("^\\(?:?\\Q$n\\E\\)?(\\[.*\\])?\$"), string(name)), getfield(result, :scaled))
     back = unscaled(scale)
     placed = Dict{Symbol,Any}()
@@ -871,7 +871,7 @@ figure(result::Result, args...; options...) = figure(drawable(result), args...; 
     rows = [(x=x, y=2x + offset, chip=chip)
         for (chip, offset) in (("A", 1.0), ("B", 3.0)) for x in (1.0, 2.0, 3.0)]
     @compile_workload begin
-        # Build figures without a window, so this also runs without a graphics backend.
+        ## Build figures without a window, so this also runs without a graphics backend.
         ordinary = @plot data(rows) * mapping(:x, :y; color=:chip) begin
             visual(Scatter)
             visual(Lines)

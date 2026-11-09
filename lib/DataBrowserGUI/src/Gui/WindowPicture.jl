@@ -9,13 +9,13 @@ using Zlib_jll: libz
 mutable struct WindowPicture
     window::String
     path::String
-    # The area in pixels of the screen the window is on, from the bottom left corner; the width is 0
-    # until the browser has measured it.
+    ## The area in pixels of the screen the window is on, from the bottom left corner; the width is 0
+    ## until the browser has measured it.
     x::Int
     y::Int
     width::Int
     height::Int
-    # Rows of RGB bytes, from the bottom up; empty until ImGui has drawn the window.
+    ## Rows of RGB bytes, from the bottom up; empty until ImGui has drawn the window.
     pixels::Vector{UInt8}
 end
 
@@ -33,7 +33,7 @@ function _read_window_picture(_draw_list::Ptr{Cvoid}, _command::Ptr{Cvoid})::Cvo
 end
 
 """
-Measure the area the visualizer of `window` draws in, when `export!` asked for its picture. Call it
+Measure the area the visualizer of `window` draws in, when "Export" asked for its picture. Call it
 inside the window, right before `draw!`.
 """
 function measure_window_picture!(window_id::String)::Nothing
@@ -46,7 +46,7 @@ function measure_window_picture!(window_id::String)::Nothing
     picture.x = round(Int, (position.x - screen.Pos.x) * scale.x)
     picture.y = round(Int, screen.Size.y * scale.y) - round(Int, (position.y - screen.Pos.y) * scale.y) -
         picture.height
-    # The foreground of the screen is drawn last, over every window.
+    ## The foreground of the screen is drawn last, over every window.
     callback = @cfunction(_read_window_picture, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}))
     ig.AddCallback(ig.GetForegroundDrawList(viewport), callback, C_NULL, 0)
     return nothing
@@ -66,7 +66,7 @@ end
 
 # A PNG file of 8-bit RGB `pixels`, given as rows from the bottom up.
 function _write_png(path::AbstractString, pixels::Vector{UInt8}, width::Int, height::Int)::Nothing
-    # The file has the top row first, and each row starts with the byte 0: the row is not filtered.
+    ## The file has the top row first, and each row starts with the byte 0: the row is not filtered.
     rowbytes = 3 * width
     raw = UInt8[]
     for y in height:-1:1
@@ -83,9 +83,9 @@ function _write_png(path::AbstractString, pixels::Vector{UInt8}, width::Int, hei
     crc(bytes) = UInt32(ccall((:crc32, libz), Culong, (Culong, Ptr{UInt8}, Cuint), 0, bytes, length(bytes)))
     open(path, "w") do io
         write(io, b"\x89PNG\r\n\x1a\n")
-        # `append!`, not `vcat`, here and below: methods of packages loaded later invalidate the code
-        # of `vcat` for these arrays.
-        # 8 bits for each of red, green and blue (color type 2), no interlacing.
+        ## `append!`, not `vcat`, here and below: methods of packages loaded later invalidate the code
+        ## of `vcat` for these arrays.
+        ## 8 bits for each of red, green and blue (color type 2), no interlacing.
         header = append!(collect(reinterpret(UInt8, hton.(UInt32[width, height]))), UInt8[8, 2, 0, 0, 0])
         for (type, data) in (("IHDR", header), ("IDAT", compressed), ("IEND", UInt8[]))
             chunk = append!(Vector{UInt8}(codeunits(type)), data)

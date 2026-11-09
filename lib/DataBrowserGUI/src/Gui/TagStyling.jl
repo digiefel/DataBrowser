@@ -79,7 +79,7 @@ The type of the value of the metadata key `key` in the first item that has the k
 until the workspace finds such an item, which it does in a background task.
 """
 function _value_type(workspace::Workspace.Workspace, key::Symbol)::Union{Nothing,Type}
-    # TODO: the type of the values of every item, as the metadata column gives it.
+    ## TODO: the type of the values of every item, as the metadata column gives it.
     found = Workspace.answer(workspace, MetadataCondition(key, nothing)).selection
     (found === nothing || isempty(found)) && return nothing
     return typeof(getproperty(found, key)[1])
@@ -131,8 +131,8 @@ end
 
 """
 Draw the filter bar above the tree: one button per tag, in the color of the tag, one button per
-condition on metadata, and the "+ Filter" button, which adds a condition on a metadata key and opens
-its editor. A click on a tag or a condition steps it through shown, hidden and shown alone. Hidden
+condition on metadata, and the "+ Filter" button, which adds a condition on a metadata key, shown
+alone, and opens its editor. A click on a tag or a condition steps it through shown, hidden and shown alone. Hidden
 hides the items that have the tag or match the condition; shown alone shows only the items that have
 every such tag and match every such condition, below the groups that hold them. A right click on a
 condition opens its editor.
@@ -233,7 +233,7 @@ function _render_tag_menu!(state::BrowserState, ids::Vector{String})::Nothing
         ig.PopStyleColor()
         clicked && (own ? untag!(workspace, ids, tag) : tag!(workspace, ids, tag))
     end
-    # TODO: choose the color and the priority of a new tag here.
+    ## TODO: choose the color and the priority of a new tag here.
     ig.SetNextItemWidth(max(ig.GetContentRegionAvail().x, ig.GetFontSize() * 10))
     if ig.InputTextWithHint("##new_tag", "New tag", state.new_tag, length(state.new_tag),
             ig.ImGuiInputTextFlags_EnterReturnsTrue)

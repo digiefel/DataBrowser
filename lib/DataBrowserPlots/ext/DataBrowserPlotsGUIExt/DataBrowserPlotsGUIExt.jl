@@ -48,7 +48,7 @@ end
 
 @compile_workload begin
     MakieImguiIntegration.draw_in_hidden_window(example_figure())
-    # The browser draws the figure through ImGui, which needs a browser to run.
+    ## The browser draws the figure through ImGui, which needs a browser to run.
     precompile(Browser.warmup!, (PlotsExtension, Browser.BrowserState))
 end
 

@@ -121,7 +121,7 @@ function _append_table!(emit::Function, connection, table::AbstractString)::Noth
     appender = DuckDB.Appender(connection, table)
     try
         emit(appender)
-        # As in `_run`: the garbage collector may run while the rows are written.
+        ## As in `_run`: the garbage collector may run while the rows are written.
         @ccall gc_safe=true DuckDB.libduckdb.duckdb_appender_flush(
             appender.handle::DuckDB.duckdb_appender)::DuckDB.duckdb_state
     finally
@@ -139,8 +139,8 @@ function _append_rows!(appender, seq::UInt32, rows::Int, columns::Tuple)::Nothin
         DuckDB.append(appender, seq)
         DuckDB.append(appender, UInt64(row_index))
         foreach(column -> DuckDB.append(appender, column[row_index]), columns)
-        # Ending a row sometimes writes the rows appended so far. As in `_run`, the garbage
-        # collector may run meanwhile.
+        ## Ending a row sometimes writes the rows appended so far. As in `_run`, the garbage
+        ## collector may run meanwhile.
         @ccall gc_safe=true DuckDB.libduckdb.duckdb_appender_end_row(
             appender.handle::DuckDB.duckdb_appender)::DuckDB.duckdb_state
     end
@@ -152,17 +152,17 @@ const PayloadShape = Tuple{Tuple{Vararg{String}},Tuple{Vararg{String}}}
 """
     can_store_payload(data) -> Bool
 
-Whether the legacy DuckDB payload store can encode this value as table columns. This is an
-encoding capability, independent of the item's storage policy. Unsupported values can still be
-kept by their native result store. Errors in a declared table's column access are propagated.
+Whether `data` is a Tables.jl table whose columns DuckDB can hold, so that a `DuckDBStore` keeps
+it as DuckDB columns. A `DuckDBStore` serializes other data. An error in reading a column of a table
+is thrown.
 """
 function can_store_payload(data)::Bool
-    # A named tuple can hold arbitrary named values. It is a column table only when each value
-    # is a vector; Tables.jl's iterable fallback also accepts nested blocks of unrelated values.
+    ## A named tuple can hold arbitrary named values. It is a column table only when each value
+    ## is a vector; Tables.jl's iterable fallback also accepts nested blocks of unrelated values.
     data isa NamedTuple && !all(value -> value isa AbstractVector, values(data)) && return false
     Tables.istable(data) || return false
     columns = Tables.columns(data)
-    # Typed: `any` and `all` on a vector of unknown type are calls that a package loaded later can invalidate.
+    ## Typed: `any` and `all` on a vector of unknown type are calls that a package loaded later can invalidate.
     names = collect(Symbol, Tables.columnnames(columns))::Vector{Symbol}
     any(name -> String(name) in (MB_SEQ_COLUMN, MB_ROW_COLUMN), names) && return false
     return all(name -> _duckdb_sql_type_maybe(eltype(Tables.getcolumn(columns, name))) !== nothing, names)
@@ -186,11 +186,16 @@ _payload_table_name(storage_id::UInt16)::String = "payload_$(storage_id)"
 
 function _buffer_rows end
 
-# Database-backed ordinary tables
+# Stores of database tables
+#
+# A store of a database table keeps the changes of its rows in memory, in `queued`, and a background
+# task writes them to the table when 2 seconds have passed since the last write, when the queue reaches `row_limit` rows, or when the store closes. While the task writes
+# them, the changes are in `writing`. A read gives the rows of the table with the changes of
+# `writing` and `queued` on top. `RowStore` keeps rows of one struct type, by their key.
 
 mutable struct RowStore{K,R} <: AbstractDatabaseStore{K,R}
     read_connection::DuckDB.Connection
-    # DuckDB connections are not thread-safe; every read_connection use holds this lock.
+    ## DuckDB connections are not thread-safe; every read_connection use holds this lock.
     read_lock::ReentrantLock
     write_connection::DuckDB.Connection
     table_name::String
@@ -246,7 +251,7 @@ function RowStore{K,R}(
     return store
 end
 
-# Database-backed dynamically-widened metadata table
+# A metadata table, which gets a new column for each new metadata name
 
 # A metadata value is saved as `StructUtils.lower` gives it: numbers, strings, symbols and dates as
 # they are, vectors element by element, a dictionary whose values have one type as a DuckDB map, so
@@ -381,9 +386,9 @@ mutable struct WideRowStore{K} <: AbstractDatabaseStore{K,Dict{Symbol,Any}}
     closing::Bool
     flush_task::Task
     columns::Dict{Symbol,MetadataColumn}
-    # The columns in the order of the table.
+    ## The columns in the order of the table.
     column_order::Vector{Symbol}
-    # Columns first seen since the last write, which the table does not have yet.
+    ## Columns first seen since the last write, which the table does not have yet.
     pending_columns::Vector{Symbol}
 end
 
@@ -493,7 +498,7 @@ function Base.read(store::WideRowStore{K})::Dict{K,Dict{Symbol,Any}} where {K}
     while true
         writing, queued, columns, stored_columns = lock(store.flush_condition) do
             _require_open(store)
-            # Columns not written yet are only in `queued` and `writing`.
+            ## Columns not written yet are only in `queued` and `writing`.
             (
                 store.writing,
                 store.queued,
@@ -609,17 +614,17 @@ end
 # Memory-only least-recently-used store
 
 """
-A memory-only cache that drops the least recently used values first. Each entry counts against
+A store in memory that removes the least recently used values first. Each value counts against
 `capacity` by its weight: the one given to `append!`, by default `weight(value)`.
 
-Weights are recorded on insertion so later mutation cannot corrupt eviction accounting. One value
-larger than the capacity remains usable until another value arrives. Cache eviction only releases
-its reference; values held by running consumers remain alive. Writing, reading and removing a value
-take the same time for any number of entries.
+The store saves the weight of a value when the value arrives, so a later change of the value does
+not change its weight. One value larger than the capacity stays until another value arrives. A
+value removed from the store stays alive for the code that still holds it. Writing, reading and
+removing a value take the same time for any number of values.
 """
 mutable struct MemoryStore{K,R} <: DataBrowserAPI.AbstractStore
     lock::ReentrantLock
-    # Each value with its weight, the least recently used first.
+    ## Each value with its weight, the least recently used first.
     entries::OrderedDict{K,Tuple{R,Int}}
     size::Int
     capacity::Int
@@ -657,19 +662,21 @@ function Base.delete!(store::MemoryStore{K}, key::K)::Nothing where {K}
     return nothing
 end
 
-"""Return a cache hit marker and its value atomically, or `nothing` on a miss."""
-# A hit is a copy, which the caller may change.
+"""
+`Some` copy of the value under `key`, which the caller may change, or `nothing` when the store has
+no value under `key`. The value becomes the most recently used.
+"""
 function read_hit(store::MemoryStore{K,R}, key::K)::Union{Nothing,Some} where {K,R}
     found = lock(store.lock) do
         store.closed && error("memory store is closed")
         found = pop!(store.entries, key, nothing)
         found === nothing && return nothing
-        # The value read becomes the most recently used.
+        ## The value read becomes the most recently used.
         store.entries[key] = found
         return Some(first(found))
     end
-    # `deepcopy` of a value of any type is a dynamic call: a `deepcopy` method of a package loaded later then
-    # does not invalidate the compiled code here.
+    ## `deepcopy` of a value of any type is a dynamic call: a `deepcopy` method of a package loaded later then
+    ## does not invalidate the compiled code here.
     return found === nothing ? nothing : Some(Base.invokelatest(deepcopy, something(found)))
 end
 
@@ -707,13 +714,13 @@ function close!(store::MemoryStore)::Nothing
     return nothing
 end
 
-# Database-backed tabular table family
+# A store of tables as DuckDB columns
 
 # Tables kept as DuckDB columns, one DuckDB table per set of column names and types, under string
 # ids. Writes are queued and written in batches by a background task.
 
-# `body` is the caller's original Tables.jl container; pending reads hand it back untouched, and
-# the flush loop reads it only through the interface. `container` is the hex-serialized container
+# `body` is the Tables.jl table that the caller gave; a read before it is written gives a copy of
+# it, and the background task reads it only through Tables.jl. `container` is the hex-serialized container
 # type, carried in the batch because the store's `containers` map can drop a superseded location
 # while its append is still being flushed.
 struct TabularBodyBatch
@@ -731,10 +738,10 @@ const PAYLOAD_APPEND_TASKS = 4
 mutable struct TabularFamilyStore <:
                AbstractDatabaseStore{Tuple{UInt16,UInt32},TabularBodyBatch}
     read_connection::DuckDB.Connection
-    # DuckDB connections are not thread-safe; every read_connection use holds this lock.
+    ## DuckDB connections are not thread-safe; every read_connection use holds this lock.
     read_lock::ReentrantLock
     write_connection::DuckDB.Connection
-    # One connection for each task that appends payload rows during a flush.
+    ## One connection for each task that appends payload rows during a flush.
     append_connections::Vector{DuckDB.Connection}
     flush_condition::Base.Threads.Condition
     queued::Dict{Tuple{UInt16,UInt32},BufferMutation{TabularBodyBatch}}
@@ -747,11 +754,11 @@ mutable struct TabularFamilyStore <:
     flush_task::Task
     item_locations::Dict{String,Tuple{UInt16,UInt32}}
     payload_schemas::Dict{PayloadShape,UInt16}
-    # Hex-serialized container type per stored payload, rebuilt on read via Tables.materializer.
+    ## Hex-serialized container type per stored payload, rebuilt on read via Tables.materializer.
     containers::Dict{Tuple{UInt16,UInt32},String}
-    # Number of rows per stored payload, which sets how many payloads one query of a read takes.
+    ## Number of rows per stored payload, which sets how many payloads one query of a read takes.
     rows::Dict{Tuple{UInt16,UInt32},Int}
-    # The hex-serialized name of each container type stored so far.
+    ## The hex-serialized name of each container type stored so far.
     container_names::Dict{Type,String}
     next_seq::UInt32
 end
@@ -798,8 +805,8 @@ function TabularFamilyStore(
     end
     max_seq = Int128(only(_execute_on_duckdb_threads(
         read_connection, "SELECT coalesce(max(seq), 0) AS seq FROM item_data")).seq)
-    # A flush that stopped half way leaves payload rows that `item_data` does not name. Their
-    # sequence numbers are not given out again.
+    ## A flush that stopped half way leaves payload rows that `item_data` does not name. Their
+    ## sequence numbers are not given out again.
     for storage_id in values(schemas)
         table = _quote_identifier(_payload_table_name(storage_id))
         max_seq = max(max_seq, Int128(only(_execute_on_duckdb_threads(
@@ -832,7 +839,7 @@ function TabularFamilyStore(
     return store
 end
 
-# Shared database queue
+# The queue of changes, which every store of a database table shares
 
 _require_open(store::AbstractDatabaseStore)::Nothing =
     store.closing ? error("cache store is closed") : nothing
@@ -862,9 +869,9 @@ function _set_queued!(
         store.queued[key] = mutation
         store.queued_rows += _mutation_rows(store, mutation)
     end
-    # The flush task is woken only when its wait can end: the queue got its first entry, or
-    # reached its limit. A removed entry can make room for a writer that waits. Waking the flush
-    # task for every entry makes all writers queue for the lock behind it.
+    ## The flush task is woken only when its wait can end: the queue got its first entry, or
+    ## reached its limit. A removed entry can make room for a writer that waits. Waking the flush
+    ## task for every entry makes all writers queue for the lock behind it.
     at_limit = store.row_limit !== nothing && store.queued_rows >= store.row_limit
     (was_empty || at_limit || mutation === nothing) && notify(store.flush_condition)
     return nothing
@@ -878,8 +885,8 @@ function _accept_rows!(
     store.row_limit === nothing && return nothing
     previous = get(store.queued, key, nothing)
     previous_rows = _mutation_rows(store, previous)
-    # A writer waits only while the queue is at its limit, which is also when a flush is due:
-    # otherwise the writer and the flush task would wait for each other until the flush interval.
+    ## A writer waits only while the queue is at its limit, which is also when a flush is due:
+    ## otherwise the writer and the flush task would wait for each other until the flush interval.
     while store.queued_rows - previous_rows >= store.row_limit
         wait(store.flush_condition)
         _require_writable(store)
@@ -986,7 +993,7 @@ function Base.append!(
         old_mutation = old_location === nothing ?
             nothing : get(store.queued, old_location, nothing)
         old_rows = _mutation_rows(store, old_mutation)
-        # A writer waits only while the queue is at its limit, which is also when a flush is due.
+        ## A writer waits only while the queue is at its limit, which is also when a flush is due.
         while store.row_limit !== nothing && store.queued_rows - old_rows >= store.row_limit
             wait(store.flush_condition)
             _require_writable(store)
@@ -1071,7 +1078,7 @@ function _flush_loop!(store::AbstractDatabaseStore{K,R})::Nothing where {K,R}
             while !_flush_due(store, time())
                 store.closing && _queue_empty(store) && return nothing
                 if _queue_empty(store)
-                    # No queued rows means no flush deadline; sleep until an append notifies.
+                    ## No queued rows means no flush deadline; sleep until an append notifies.
                     wait(store.flush_condition)
                 else
                     _wait_condition_deadline(
@@ -1164,7 +1171,7 @@ function _pending_tabular_body(
     location::Tuple{UInt16,UInt32},
 )::Tuple{Bool,Any}
     queued = _read_mutation(store.queued, location)
-    # A payload that waits to be written is handed out as a copy, as one read from the database is new.
+    ## A payload that waits to be written is handed out as a copy, as one read from the database is new.
     queued[1] && return (true, queued[2] === nothing ? nothing : Base.invokelatest(deepcopy, queued[2].body))
     writing = _read_mutation(store.writing, location)
     return writing[1] ?
@@ -1193,7 +1200,7 @@ function _read_tabular_locations(
         push!(get!(() -> UInt32[], by_storage, storage_id), seq)
     end
     rows_by_location = Dict{Tuple{UInt16,UInt32},Any}()
-    # The column names and DuckDB column types of each payload table.
+    ## The column names and DuckDB column types of each payload table.
     shapes = lock(() -> Dict(storage_id => shape for (shape, storage_id) in store.payload_schemas), store.flush_condition)
     for (storage_id, seqs) in by_storage
         table = _quote_identifier(_payload_table_name(storage_id))
@@ -1247,7 +1254,7 @@ function _read_direct(store::TabularFamilyStore, table::String, storage_id::UInt
                 try
                     size = Int(DuckDB.get_size(chunk))
                     all(index -> DuckDB.all_valid(chunk, index + 2), eachindex(element_types)) || return false
-                    # The chunk's own memory, of which the first `size` values are its rows.
+                    ## The chunk's own memory, of which the first `size` values are its rows.
                     _runs!(runs, columns, DuckDB.get_array(chunk, 1, UInt32), DuckDB.get_array(chunk, 2, UInt64), size)
                     for (index, T) in enumerate(element_types)
                         _scatter!(runs, index, DuckDB.get_array(chunk, index + 2, T))
@@ -1273,8 +1280,8 @@ Julia columns, which handles every column type and missing values.
 function _read_converted(store::TabularFamilyStore, table::String, storage_id::UInt16, seqs::Vector{UInt32})
     seq_name, row_name = Symbol(MB_SEQ_COLUMN), Symbol(MB_ROW_COLUMN)
     placeholders = join(fill("?", length(seqs)), ", ")
-    # One materialized query, which DuckDB runs on all threads. Its rows come in no order; each
-    # value goes to its place from the seq and row columns.
+    ## One materialized query, which DuckDB runs on all threads. Its rows come in no order; each
+    ## value goes to its place from the seq and row columns.
     result = lock(store.read_lock) do
         Tables.columntable(_execute_on_duckdb_threads(store.read_connection,
             "SELECT * FROM $table WHERE $MB_SEQ_COLUMN IN ($placeholders)", seqs))
@@ -1289,8 +1296,8 @@ function _read_converted(store::TabularFamilyStore, table::String, storage_id::U
         _scatter!(runs, index, result[name])
     end
     return Dict(seq => NamedTuple{data_names}(Tuple(map(columns[seq]) do column
-        # The database reports a column as one that allows missing values when any row of the
-        # query has one; a payload column without missing values comes back without it.
+        ## The database reports a column as one that allows missing values when any row of the
+        ## query has one; a payload column without missing values comes back without it.
         Missing <: eltype(column) && !any(ismissing, column) ?
             convert(Vector{nonmissingtype(eltype(column))}, column) : column
     end)) for seq in seqs)
@@ -1326,9 +1333,9 @@ function _scatter!(runs::Vector{Run}, index::Int, values::AbstractVector{T}) whe
 end
 
 """
-Rebuild one stored payload as the container type it was stored with, via `Tables.materializer`.
-A container type that no longer deserializes (changed project code) is a cache miss — the cache
-may always be rebuilt — so the caller recomputes and replaces the entry.
+Build the columns of the payload at `location` as the type of table it had when written, with
+`Tables.materializer`. `nothing` when that type no longer exists, as after a change of the
+project's code: the value counts as missing, so Core computes it again.
 """
 function _materialize_payload(store::TabularFamilyStore, location::Tuple{UInt16,UInt32}, columns)
     hex = get(store.containers, location, nothing)
@@ -1349,7 +1356,7 @@ function Base.read(
     store::TabularFamilyStore,
     payload_keys::Vector{String},
 )::Dict{String,Any}
-    # Typed, as each pass replaces it: a captured variable that changes is otherwise of unknown type.
+    ## Typed, as each pass replaces it: a captured variable that changes is otherwise of unknown type.
     remaining::Vector{String} = unique(payload_keys)
     results = Dict{String,Any}()
     while !isempty(remaining)
@@ -1500,10 +1507,9 @@ function _delete_payloads!(
     connection,
     locations::Vector{Tuple{UInt16,UInt32}},
 )::Nothing
-    # TODO: add a cold processed-data maintenance pass that drops unreferenced
-    # payload tables, prunes stale payload_schemas rows, checkpoints/compacts
-    # DuckDB, and optionally rewrites rows in WorkspaceIndex item order for locality.
-    # Keep it out of flush: deletes here should stay blind and cheap.
+    ## TODO: a cleanup outside the writes, which drops the payload tables that no item uses, removes
+    ## their rows of `payload_schemas`, compacts the file, and maybe rewrites the rows in the order
+    ## of the items of the workspace. Deletes here stay cheap and read nothing.
     isempty(locations) && return nothing
     by_storage = Dict{UInt16,Vector{UInt32}}()
     for (storage_id, seq) in locations
@@ -1548,8 +1554,8 @@ function _flush_to_db!(
     for append in appends
         push!(get!(() -> Pair{Tuple{UInt16,UInt32},TabularBodyBatch}[], groups, append.first[1]), append)
     end
-    # The flush has three transactions, so that several tasks can append the payload rows. A
-    # reader finds a payload through `item_data`, which is written last.
+    ## The flush has three transactions, so that several tasks can append the payload rows. A
+    ## reader finds a payload through `item_data`, which is written last.
     _transaction(store.write_connection) do
         _delete_payloads!(store.write_connection, deleted)
         for (storage_id, storage_appends) in groups
@@ -1566,7 +1572,7 @@ function _flush_to_db!(
     end
     isempty(appends) && return nothing
 
-    # Each task takes parts of the payloads of one table until none is left.
+    ## Each task takes parts of the payloads of one table until none is left.
     parts = Channel{Tuple{UInt16,Vector{Pair{Tuple{UInt16,UInt32},TabularBodyBatch}}}}(Inf)
     for (storage_id, storage_appends) in groups,
             part in Iterators.partition(storage_appends, cld(length(storage_appends), PAYLOAD_APPEND_TASKS))
@@ -1589,7 +1595,7 @@ function _flush_to_db!(
             end
         end
     end
-    # Every writer finishes before the payload locations are recorded, also when one fails.
+    ## Every writer finishes before the payload locations are recorded, also when one fails.
     waitall(tasks; failfast=false)
 
     _transaction(store.write_connection) do

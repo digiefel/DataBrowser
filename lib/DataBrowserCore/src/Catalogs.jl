@@ -16,8 +16,8 @@
 #
 # When an argument is another computation, that computation is a row too: it is an *input* of the
 # row, and the row is a *reader* of it. The rows and their inputs form a graph. The workspace can
-# also give a row inputs that are not among its arguments, with `connect!`: the row of a group reads
-# the rows of the values of its members.
+# also give a row inputs that are not among its arguments, with `connect!`: the row of a group
+# process reads the rows of the values of its members.
 #
 # When a plot window draws a fit of the item `a/1`, which the `process` of the table in the source
 # item `a.csv` gives, the catalog has three rows:

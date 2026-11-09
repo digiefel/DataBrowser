@@ -14,7 +14,7 @@ function plot_spec(changes::Pair...)
     spec = ig.lib.ImPlotSpec_ImPlotSpec()
     try
         for (property, value) in changes
-            # ImPlot converts the number to the type of the property, such as a marker style.
+            ## ImPlot converts the number to the type of the property, such as a marker style.
             ig.lib.ImPlotSpec_SetProp_double(spec, property, value isa Real ? value : Integer(value))
         end
         return unsafe_load(spec)

@@ -69,73 +69,73 @@ right-aligned, so that their decimal points line up. In a column with numbers sm
 larger than a million, each number is written with a power of ten of its own, a multiple of 3, such
 as `38.990e-9`.
 
-The window passes on computations for the rows the user selected, or all rows when none is
-selected. Each retains its producing computation and returns the item with only those rows and
-the selected columns, or the columns the table shows when none is selected. These references do
-not add items to the workspace catalog.
+The output of the table, which a visualizer that takes its input from this one receives, is a
+computation for each item. It gives the item with only the rows the user selected, or all rows when
+none is selected, and with the selected columns, or the columns the table shows when none is
+selected. These computations add no items to the workspace.
 """
 Base.@kwdef mutable struct TableView <: AbstractVisualizer
-    # The table as it was built, and the table it shows: the same, with the columns in the order the
-    # user moved them to.
+    ## The table as it was built, and the table it shows: the same, with the columns in the order the
+    ## user moved them to.
     built::Union{Nothing,ItemTable} = nothing
     table::Union{Nothing,ItemTable} = nothing
-    # The names of the columns in the order the user moved them to; the column `item` stays first.
+    ## The names of the columns in the order the user moved them to; the column `item` stays first.
     column_order::Vector{String} = String[]
-    # The table has a first column `item`, built here from several items.
+    ## The table has a first column `item`, built here from several items.
     item_column::Bool = false
-    # "Group by item": the rows of each item follow each other, under the row with its label.
-    # Otherwise the column `item` shows the label of each row's item.
+    ## "Group by item": the rows of each item follow each other, under the row with its label.
+    ## Otherwise the column `item` shows the label of each row's item.
     group::Bool = true
-    # The selection the table was built from, the metadata it has, and the metadata the user picked
-    # as columns.
+    ## The selection the table was built from, the metadata it has, and the metadata the user picked
+    ## as columns.
     selection::Union{Nothing,Selection} = nothing
     metadata_names::Vector{Symbol} = Symbol[]
     metadata::Vector{Symbol} = Symbol[]
-    # The columns of the data the user hid, by name.
+    ## The columns of the data the user hid, by name.
     hidden::Set{String} = Set{String}()
     data_picker::ListPicker = ListPicker()
     metadata_picker::ListPicker = ListPicker()
-    # The cell the table shows the value of: the label of its item, and the steps from the item's
-    # data to the value. Each step is the row, within the item, and the path of a column; the row is
-    # 0 for a cell that holds one value for the whole item. No steps when the table shows the items.
-    # TODO: an item is found by its label, which another item may have too.
+    ## The cell the table shows the value of: the label of its item, and the steps from the item's
+    ## data to the value. Each step is the row, within the item, and the path of a column; the row is
+    ## 0 for a cell that holds one value for the whole item. No steps when the table shows the items.
+    ## TODO: an item is found by its label, which another item may have too.
     zoom_item::String = ""
     zoom::Vector{Tuple{Int,Vector{String}}} = Tuple{Int,Vector{String}}[]
-    # The paths of the blocks of names that show one column for each name.
+    ## The paths of the blocks of names that show one column for each name.
     unfolded::Set{Vector{String}} = Set{Vector{String}}()
-    # How each column of `built` and of `table` writes its numbers; `nothing` for a column of other
-    # values.
+    ## How each column of `built` and of `table` writes its numbers; `nothing` for a column of other
+    ## values.
     built_formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
     formats::Vector{Union{Nothing,NumberFormat}} = Union{Nothing,NumberFormat}[]
-    # The text of each cell of `table` drawn so far, by row of `table` and column.
+    ## The text of each cell of `table` drawn so far, by row of `table` and column.
     texts::Dict{Tuple{Int,Int},String} = Dict{Tuple{Int,Int},String}()
-    # The items that show only the row with their label.
+    ## The items that show only the row with their label.
     folded::Set{Int} = Set{Int}()
-    # The columns to sort by, by name, as `(name, ascending)` pairs.
+    ## The columns to sort by, by name, as `(name, ascending)` pairs.
     sort::Vector{Tuple{String,Bool}} = Tuple{String,Bool}[]
-    # The filter of each column, by name, as the user typed it, and the error of a filter that
-    # could not be used.
+    ## The filter of each column, by name, as the user typed it, and the error of a filter that
+    ## could not be used.
     filters::Dict{String,String} = Dict{String,String}()
     filter_errors::Dict{String,String} = Dict{String,String}()
-    # The rows of `table` that pass the filters, sorted.
+    ## The rows of `table` that pass the filters, sorted.
     order::Vector{Int} = Int[]
-    # The row of `table` that each row on screen shows, and whether it is the row with the label of
-    # the item, which holds the item's first row.
+    ## The row of `table` that each row on screen shows, and whether it is the row with the label of
+    ## the item, which holds the item's first row.
     shown::Vector{Int} = Int[]
     label_row::Vector{Bool} = Bool[]
-    # For each row on screen, the first row on screen of the rows of the same item.
+    ## For each row on screen, the first row on screen of the rows of the same item.
     run_start::Vector{Int} = Int[]
-    # The rows of each item, in the order of `order`.
+    ## The rows of each item, in the order of `order`.
     item_rows::Dict{Int,Vector{Int}} = Dict{Int,Vector{Int}}()
-    # The rows of `table` the window passes on, and what it passes on to other windows: the
-    # selected rows of each item.
+    ## The rows of `table` the window passes on, and what it passes on to other windows: the
+    ## selected rows of each item.
     output_rows::Vector{Int} = Int[]
     output::Union{Nothing,Vector{Workspace.Computation}} = nothing
     warnings::Vector{String} = String[]
     grid::DataGridState = DataGridState()
-    # Names the grid for ImGui: the table of the items, or of the cell it zooms into.
+    ## Names the grid for ImGui: the table of the items, or of the cell it zooms into.
     grid_id::String = "table"
-    # The names of the selected columns, kept also while an updated table lacks them.
+    ## The names of the selected columns, kept also while an updated table lacks them.
     selected_column_names::Vector{String} = String[]
 end
 
@@ -203,11 +203,11 @@ end
 
 function prepare!(view::TableView, selection::Selection, ctx)::Nothing
     names = [name for name in propertynames(selection) if !(name in (:label, :data))]
-    # The metadata the user picked stays picked when the selection changes, and shows when the items
-    # have it.
+    ## The metadata the user picked stays picked when the selection changes, and shows when the items
+    ## have it.
     metadata = filter(in(names), view.metadata)
-    # The value of the cell the table zooms into, found again in the data of the new selection. The
-    # zoom stops at the last step the data still has.
+    ## The value of the cell the table zooms into, found again in the data of the new selection. The
+    ## zoom stops at the last step the data still has.
     value = nothing
     index = findfirst(==(view.zoom_item), selection.label)
     if index === nothing
@@ -224,17 +224,17 @@ function prepare!(view::TableView, selection::Selection, ctx)::Nothing
         merge_item_tables(selection; item_column=true, metadata, view.unfolded) :
         (value_table(view.zoom_item, value; view.unfolded), String[])
     view.built = table
-    # The first column `item` holds the labels of several items.
+    ## The first column `item` holds the labels of several items.
     view.item_column = length(table.item_labels) > 1
     view.selection = selection
     view.metadata_names = names
     view.warnings = warnings
-    # TODO: read each column once rather than each cell, for large tables.
+    ## TODO: read each column once rather than each cell, for large tables.
     view.built_formats = @timed_dbg "table.formats" [_number_format(table.getvalue(row, column) for row in 1:table.rows)
                           for column in eachindex(table.columns)]
     view.folded = Set{Int}()
     view.grid = DataGridState()
-    # A zoomed table has a grid of its own, so ImGui does not take its columns for those of the items.
+    ## A zoomed table has a grid of its own, so ImGui does not take its columns for those of the items.
     view.grid_id = join(["table"; [join(path, ".") for (_, path) in view.zoom]], ">")
     @timed_dbg "table.order" _order!(view)
     @timed_dbg "table.arrange" _arrange!(view)
@@ -256,7 +256,7 @@ end
 function draw_header!(view::TableView, ctx)::Nothing
     table = view.table
     table === nothing && return nothing
-    # Each button opens its list below it.
+    ## Each button opens its list below it.
     function open_list(label, id, tooltip)
         clicked = ig.Button(label)
         ig.SetItemTooltip(tooltip)
@@ -296,7 +296,7 @@ function draw_header!(view::TableView, ctx)::Nothing
 end
 
 function draw!(view::TableView, ctx)::Nothing
-    # The path from the items to the cell the table shows.
+    ## The path from the items to the cell the table shows.
     if !isempty(view.zoom) && view.selection !== nothing
         steps = nothing
         ig.ArrowButton("##back", ig.ImGuiDir_Left) && (steps = length(view.zoom) - 1)
@@ -334,27 +334,27 @@ function draw!(view::TableView, ctx)::Nothing
     shown = view.shown
     grouped = view.item_column && view.group
     item(row) = table.row_item[shown[row]]
-    # The text of a cell is kept until the table changes: writing it at every frame costs memory for
-    # each cell in view.
+    ## The text of a cell is kept until the table changes: writing it at every frame costs memory for
+    ## each cell in view.
     texts = view.texts
     function cell(row, column)
         key = (shown[row], column)
         text = get(texts, key, nothing)
         text === nothing || return text
-        # A table scrolled through from top to bottom keeps at most this many texts.
+        ## A table scrolled through from top to bottom keeps at most this many texts.
         length(texts) >= 100_000 && empty!(texts)
         text = _number_text(table.getvalue(shown[row], column), view.formats[column])
         return texts[key] = something(text, table.getcell(shown[row], column))
     end
-    # The cells of the data that hold a table of their own; not those of the columns `item` and of
-    # the metadata.
+    ## The cells of the data that hold a table of their own; not those of the columns `item` and of
+    ## the metadata.
     function zoomable(row, column)
         (view.selection === nothing || !_data_column(view, column)) && return false
         return _zoomable(table.getvalue(shown[row], column))
     end
-    # The step from the table to the value of a cell.
+    ## The step from the table to the value of a cell.
     function zoom_step(row, column)
-        # The rows of an item follow each other in the table.
+        ## The rows of an item follow each other in the table.
         within = shown[row] - findfirst(==(item(row)), table.row_item) + 1
         return (table.spans_item(shown[row], column) ? 0 : within, table.paths[column])
     end
@@ -364,17 +364,17 @@ function draw!(view::TableView, ctx)::Nothing
         push!(view.zoom, zoom_step(row, column))
         zoomed = true
     end
-    # TODO: the browser does not save the zoom of a window, which shows all of its items when the
-    # browser opens again.
+    ## TODO: the browser does not save the zoom of a window, which shows all of its items when the
+    ## browser opens again.
     function open_zoomed(row, column)
         ig.MenuItem("Open in a new window") || return nothing
         zoom_item = isempty(view.zoom) ? table.item_labels[item(row)] : view.zoom_item
         ctx.open_window(TableView(; zoom_item, zoom=[view.zoom; [zoom_step(row, column)]]))
         return nothing
     end
-    # Hiding metadata and unfolding blocks change the columns, so the table is built again after
-    # the grid is drawn. Filters, sorting and folding change the rows, which the grid reads as they
-    # are while it draws them: `change` arranges them after the grid is drawn.
+    ## Hiding metadata and unfolding blocks change the columns, so the table is built again after
+    ## the grid is drawn. Filters, sorting and folding change the rows, which the grid reads as they
+    ## are while it draws them: `change` arranges them after the grid is drawn.
     rebuild = false
     change = nothing
     function filter_popup(column)
@@ -399,7 +399,7 @@ function draw!(view::TableView, ctx)::Nothing
         if view.item_column && ig.MenuItem("Group by item", C_NULL, view.group)
             change = () -> _group!(view, !view.group)
         end
-        # The column `item` shows unless the rows are grouped by item.
+        ## The column `item` shows unless the rows are grouped by item.
         view.item_column && column == 1 && return nothing
         ig.MenuItem("Hide column") || return nothing
         if _data_column(view, column)
@@ -411,12 +411,12 @@ function draw!(view::TableView, ctx)::Nothing
         end
         return nothing
     end
-    # The menu of a row with an item's label acts on the items of the selected rows, which include
-    # the row; the menu of a cell acts on the cell and on the selected rows.
+    ## The menu of a row with an item's label acts on the items of the selected rows, which include
+    ## the row; the menu of a cell acts on the cell and on the selected rows.
     function row_menu(row, column)
         if view.label_row[row]
             items = unique(item(selected) for selected in sort(view.grid.selected_rows))
-            # With several items, each menu item says how many it acts on.
+            ## With several items, each menu item says how many it acts on.
             count = length(items) > 1 ? " $(length(items)) items" : ""
             fold = !issubset(items, view.folded)
             ig.MenuItem((fold ? "Fold" : "Unfold") * count) && (change = () -> _fold!(view, items, fold))
@@ -447,8 +447,8 @@ function draw!(view::TableView, ctx)::Nothing
             n_rows=length(shown),
             columns=last.(table.paths),
             column_groups=column -> table.paths[column][1:end-1],
-            # An unfolded block has an open arrow above its columns; a table inside the data always
-            # shows its columns, and has no arrow.
+            ## An unfolded block has an open arrow above its columns; a table inside the data always
+            ## shows its columns, and has no arrow.
             header_fold=(column, level) -> level > length(table.paths[column]) - 1 ?
                 (column in table.groups ? false : nothing) :
                 (table.paths[column][1:level] in view.unfolded ? true : nothing),
@@ -466,7 +466,7 @@ function draw!(view::TableView, ctx)::Nothing
             span=(row, column) -> table.spans_item(shown[row], column) ? view.run_start[row] : row,
             band=row -> view.label_row[row] ? table.item_labels[item(row)] : nothing,
             fold=row -> view.label_row[row] ? !(item(row) in view.folded) : nothing,
-            # The rows of an item follow the row with its label.
+            ## The rows of an item follow the row with its label.
             band_of=row -> view.label_row[row] ? row : grouped ? view.run_start[row] - 1 : 0,
             on_fold=function (row)
                 folding = item(row)
@@ -477,16 +477,16 @@ function draw!(view::TableView, ctx)::Nothing
             header_icon=column -> haskey(view.filters, table.columns[column]) &&
                 !haskey(view.filter_errors, table.columns[column]) ? ICON_FILTER : "",
             header_popup=filter_popup,
-            # The rows with the labels of the items show the column `item`.
+            ## The rows with the labels of the items show the column `item`.
             hidden=column -> table.columns[column] in view.hidden || grouped && column == 1,
-            # The column `item` stays first.
+            ## The column `item` stays first.
             on_move=(column, to) -> view.item_column && 1 in (column, to) ||
                 (change = () -> _move!(view, column, to)),
             on_selection_change=_ -> _table_selection_changed!(view),
         )
     end
-    # Enter folds the items whose selected rows include the row with their label, or unfolds them
-    # when they are all folded.
+    ## Enter folds the items whose selected rows include the row with their label, or unfolds them
+    ## when they are all folded.
     if grouped && ig.IsWindowFocused(ig.ImGuiFocusedFlags_ChildWindows) &&
             (ig.IsKeyPressed(ig.ImGuiKey_Enter, false) || ig.IsKeyPressed(ig.ImGuiKey_KeypadEnter, false))
         items = Set(table.row_item[view.shown[row]] for row in view.grid.selected_rows if view.label_row[row])
@@ -511,7 +511,7 @@ end
 
 # Fold `items`, or unfold them. The selected rows that are still on screen stay selected.
 function _fold!(view::TableView, items, fold::Bool)::Nothing
-    # A row on screen is a row of `table`, or the row with the label of the item that holds it.
+    ## A row on screen is a row of `table`, or the row with the label of the item that holds it.
     selected = Set((view.shown[row], view.label_row[row]) for row in view.grid.selected_rows)
     fold ? union!(view.folded, items) : setdiff!(view.folded, items)
     _arrange!(view)
@@ -594,20 +594,20 @@ function _arrange!(view::TableView)::Nothing
         try
             f = Core.eval(Main, Meta.parse(text))
             f isa Function || error("`$text` is not a function")
-            # The function was just defined, so it is called in the newest world.
+            ## The function was just defined, so it is called in the newest world.
             filter!(row -> Base.invokelatest(f, table.getvalue(row, column)) === true, rows)
         catch err
             view.filter_errors[name] = sprint(showerror, err)
         end
     end
-    # Julia's sort keeps the order of equal values, so sorting by the last column first and by the
-    # first column last sorts by all of them.
+    ## Julia's sort keeps the order of equal values, so sorting by the last column first and by the
+    ## first column last sorts by all of them.
     for (name, ascending) in reverse(view.sort)
         column = findfirst(==(name), table.columns)
         column === nothing && continue
         sort!(rows; by=row -> _sort_key(table.getvalue(row, column), ascending), rev=!ascending)
     end
-    # The rows of each item stay together, under the row with the item's label.
+    ## The rows of each item stay together, under the row with the item's label.
     grouped = view.item_column && view.group
     grouped && sort!(rows; by=row -> table.row_item[row])
     view.order = rows
@@ -626,14 +626,14 @@ function _arrange!(view::TableView)::Nothing
             push!(view.run_start, length(view.shown))
         end
         grouped && item in view.folded && continue
-        # A row below a row of the same item, other than the row with its label, continues its run.
+        ## A row below a row of the same item, other than the row with its label, continues its run.
         continues = !isempty(view.shown) && !last(view.label_row) && table.row_item[last(view.shown)] == item
         push!(view.run_start, continues ? last(view.run_start) : length(view.shown) + 1)
         push!(view.shown, row)
         push!(view.label_row, false)
     end
 
-    # The rows on screen change, so the selection is cleared.
+    ## The rows on screen change, so the selection is cleared.
     empty!(view.grid.selected_rows)
     _pass_on!(view)
     return nothing
@@ -663,8 +663,8 @@ _number(value) = value isa Real && !(value isa Bool)
 # A number as a number from 1 to 1000 and a power of ten, a multiple of 3.
 # TODO: 999.9996 with 3 decimals is written 1000.000e-6 rather than 1.000e-3.
 function _engineering(number::Real)::Tuple{Float64,Int}
-    # In Float64: on a number of a type unknown to the compiler, `floor` is a call that a method of a
-    # package loaded later invalidates.
+    ## In Float64: on a number of a type unknown to the compiler, `floor` is a call that a method of a
+    ## package loaded later invalidates.
     value = Float64(number)::Float64
     value == 0 && return (0.0, 0)
     exponent = 3 * floor(Int, log10(abs(value)) / 3)

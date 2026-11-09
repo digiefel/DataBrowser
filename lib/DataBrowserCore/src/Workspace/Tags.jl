@@ -12,7 +12,7 @@ function tags(project::AbstractProject, folder::String)::@NamedTuple{tags::TagSt
         error isa Union{Tags.TagsParseError,Base.IOError} || rethrow()
         return (tags=TagState(), tags_error=sprint(showerror, error))
     end
-    # A name that the file assigns without defining it becomes a tag with the default properties.
+    ## A name that the file assigns without defining it becomes a tag with the default properties.
     assigned = Set{String}()
     foreach(names -> union!(assigned, names), values(state.assignments))
     defined = Set(tag.name for tag in state.catalog)

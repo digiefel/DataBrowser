@@ -1,15 +1,12 @@
 """
-Premade recipes: complete registrations for formats common enough to ship.
+Premade recipes: complete registrations for common formats.
 
-Each one is written against `register_item!` and nothing else. A premade recipe must never reach
-past the public dialect — if one needs something that is not there, that is a gap in the dialect to
-close rather than a private hook to add.
+Each one calls only `register_item!`, so a project can do the same with callbacks of its own. When
+a premade recipe needs something that `register_item!` does not give, add it to `register_item!`.
 
-Reading formats is what this package is for, so their parsers are ordinary dependencies and a
-premade recipe simply works after `using DataBrowser`. A format heavy enough that projects not
-using it should not pay for it belongs behind a package extension instead; that trades the
-zero-ceremony story for load time, and only earns it when the dependency is genuinely large and not
-already in the graph.
+The parsers of these formats, such as CSV.jl, are dependencies of this package, so a premade recipe
+works after `using DataBrowser`. A format whose parser is large and not yet a dependency belongs in
+a package extension instead, so that projects that do not use the format do not load its parser.
 """
 
 """Whether one source item's name carries any of the given lowercase extensions."""
@@ -30,8 +27,8 @@ Register delimited text files as items, one item per file.
 `detect` matches by file extension (case-insensitively, `[".csv"]` by default), `read` parses
 with CSV.jl into a `DataFrame`, and the default `label` is the filename, including its extension.
 Supply a `label=(data, metadata) -> ...` callback to customize it, or `label=nothing` to use the
-item ID. Every other keyword is an ordinary `register_item!` callback and is forwarded untouched,
-so a premade recipe is a starting point rather than a different kind of thing:
+item id. Every other keyword goes to `register_item!` as it is, so the call below registers
+`:sweep` items as `register_item!` would, with these defaults:
 
 ```julia
 register_csv!(project, :sweep;
@@ -43,9 +40,9 @@ register_csv!(project, :sweep;
 ```
 
 Detection runs in registration order and the first match wins, so register narrower recipes before
-this one when several could claim the same file. `read` has a method for the `SourceFile` items of a
-directory source; a source with another type of source item needs a registration with its own
-`read` callback.
+this one when several could claim the same file. The `read` callback takes the `SourceFile`s of a
+`DirectorySource`. For a source with another type of source item, call `register_item!` with a
+`read` callback of your own.
 """
 function register_csv!(
     project::Project,

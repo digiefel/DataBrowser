@@ -31,9 +31,9 @@ tags_path(root::AbstractString) = joinpath(String(root), TAGS_FILENAME)
 
 A label that the user puts on items, for example `Tag("bad")`.
 
-The name identifies the tag. `color` is six hexadecimal digits, and is the color of tagged rows
-in the browser. When several tags apply to one row, the tag with the highest `priority` gives the
-color.
+The name identifies the tag. `color` is six hexadecimal digits, with or without a `#` before
+them, and is the color of tagged items in the browser. When an item has several tags, the tag with
+the highest `priority` gives the color.
 """
 struct Tag
     name::String
@@ -76,6 +76,10 @@ end
 
 TagState() = TagState(Tag[], Dict{String,Set{String}}())
 
+"""
+The error raised by a row of `tags.txt` that does not follow the format. It holds the `path` of the
+file, the `line_number` of the row and a `message` that says what is wrong.
+"""
 struct TagsParseError <: Exception
     path::String
     line_number::Int
@@ -159,7 +163,8 @@ end
     save(root, project, state::TagState)
 
 Write `state` as the tags of the project named `project` to `tags.txt` in the folder `root`. The
-sections of other projects stay. When no project has tags, the file is removed.
+sections of other projects stay. The file is written again from the tags alone, so its comments are
+lost. When no project has tags, the file is removed.
 """
 function save(root::AbstractString, project::AbstractString, state::TagState)
     path = tags_path(root)
