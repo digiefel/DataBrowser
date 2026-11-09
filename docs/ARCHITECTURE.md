@@ -353,9 +353,9 @@ flowchart LR
 ```
 
 Each publish of the table or of the shared state takes the next number of a counter of the
-workspace, its *generation*. `select(workspace, f)` gives the items whose row passes the function
-`f`, such as the items with a tag. Another background task keeps its answers: it runs `f` on the
-rows of the items that changed since its last pass, outside the lock of the catalog, and marks each
+workspace, its *generation*. `select(workspace, f)` gives the items that pass the function
+`f`, such as the items with a tag. Another background task keeps its answers: it runs `f` on
+the items that changed since its last pass, outside the lock of the catalog, and marks each
 answer with the generation that it shows. `select(workspace, f)` returns an answer only when it
 shows the latest generation at the time of the call, so a script reads its own change right after
 it makes it:
@@ -368,8 +368,8 @@ sequenceDiagram
     C->>S: tag!(workspace, ids, "check")
     Note over S: replaced whole,<br/>generation 413
     S-->>C: tag! returns
-    C->>A: select(workspace, row -> "check" in row.tags)
-    Note over A: the answer for generation 413,<br/>from the rows whose tags changed
+    C->>A: select(workspace, item -> "check" in item.tags)
+    Note over A: the answer for generation 413,<br/>from the items whose tags changed
     A-->>C: the items with the tag
 ```
 

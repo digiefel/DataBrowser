@@ -35,7 +35,7 @@ another native value. The plot builder is one consumer of that shared work, not 
 processing and analysis.
 
 A visualizer takes its value from the selection of the workspace (`LiveSelection()`, the
-default), from fixed items (`FixedItems(ids)`), from the items that a function of the row keeps, as
+default), from fixed items (`FixedItems(ids)`), from the items that a function keeps, as
 `select(workspace, f)` gives them, or from the output of another visualizer (`input=v`). Each input
 works without a GUI.
 
