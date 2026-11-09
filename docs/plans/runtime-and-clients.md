@@ -277,6 +277,7 @@ Each part costs the following today and in the target:
 | New code revisions | Every known function is hashed again: about 50 ms on the RuO2 project | Only the functions that reach the edited method. Not built, not measured |
 | Marking stale, telling clients | Under the lock of the catalog; the publish follows at most 0.05 s later | The same work in DBCore; the event goes out with the publish |
 | Running the calls | The calls shown by a window run first | The same, with the priority from what each client says it shows |
+| A call that becomes stale while it runs | The call runs to its end and its result is dropped. The same call starts again only then | DBCore sends `cancel`. What a Julia host can do with it is an [open question](#open-questions) |
 | Drawing | The window draws the figure made by `prepare!`, in the same process | A form of the visualizer crosses to the client |
 
 From the save to the mark on the screen, the target costs the look, the load by Revise, the new
@@ -296,6 +297,19 @@ that Revise sets when a watched file changes, would cost nothing while idle. How
 notification of the event wakes only one of the tasks that wait for it, so a second waiting tool
 takes every second save. KaimonGate 1.7.0 is such a tool. Both were measured on Julia 1.13.3 with
 Revise 3.17.3 and two threads.
+
+A second save can make a call stale while it runs. This was measured on 9 November 2026 with one
+item, a `process` that takes 1 s, and two saves 0.2 s apart. When the second save changed the same
+function again, the running call ended 1.13 s after the first save and the workspace dropped its
+result. The call then ran again, and gave the result of the second save after 2.16 s; a call
+started at the second save would have given it after 1.3 s. When the second save changed a function
+that `process` does not call, or added a comment, no call became stale: the running call gave its
+result after 1.10 s. When the second save brought back the code from before the first save, the
+workspace still had the result of that code and ran no call for it. However, it gave this result
+only when the stale call had ended, after 1.12 s. A call that still waits for a worker runs once,
+with the code of the last save: with six items and two workers, `process` ran eight times, twice
+with the code of the first save. All of this was measured on Julia 1.13.3 with one thread and no
+browser.
 
 Revise was measured on Julia 1.13.3 with Revise 3.18.0, one thread, and files of 200 to 500
 one-line methods; with 2000 methods a later edit takes 29 to 53 ms and the first one 19 s. The code
@@ -420,6 +434,11 @@ These are not yet agreed.
   to the host, as Arrow Flight does.
 - One Julia host or several? Several hosts keep work running while one is stopped, and each of them
   loads and compiles the project's code.
+- What does a Julia host do with `cancel` for a call that already runs? Julia 1.13 has no function
+  that stops a running task from outside. The host can let the call end and drop its result, as
+  the workspace does today. It can also start the new call at once on another worker, so that one
+  call runs twice at the same time, with the old code and with the new code. Only stopping the host
+  from outside ends the call itself.
 - What does a client show for a visualizer it has no drawing part for: a picture drawn by the
   host, the value as a table or text, or nothing?
 - How does Python code provide sources, `process` methods and visualizers: in a Python host of its
