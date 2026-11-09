@@ -41,8 +41,8 @@ Base.close(::AbstractStore) = nothing
 
 The store for computation results of type `T`: items, and any other value a computation returns.
 The project form defaults to `storage(T)`. Return `nothing` to keep no results of type `T`. The
-default is a bounded `DataBrowserCache.MemoryStore`. Core calls this once per result type and
-workspace opening; when it throws, the workspace warns and keeps the results of type `T` in a
+default is a bounded `DataBrowserCache.MemoryStore`. The workspace calls it once for each result type
+each time it opens; when it throws, the workspace warns and keeps the results of type `T` in a
 `MemoryStore`.
 """
 function storage end

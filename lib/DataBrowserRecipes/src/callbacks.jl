@@ -6,7 +6,10 @@ of the registration. The `process` of the group of the source makes the collecti
 collection gives the items and the collections directly below it their new data and metadata.
 """
 
-"""Split the documented `(data=..., metadata=Dict(...))` result form."""
+"""
+Split a callback result of the form `(data=..., metadata=...)` into its data and its metadata. Any
+other result is data with no metadata.
+"""
 function _data_and_metadata(value)::Tuple{Any,Dict{Symbol,Any}}
     if value isa NamedTuple && keys(value) == (:data, :metadata)
         return value.data, metadata_dict(value.metadata)
@@ -16,14 +19,10 @@ end
 
 
 """
-Adapt one registration callback result into a `RegisteredDataItem`.
-
-This translates the registration dialect (entry tuples and callback-supplied keys) into the item
-contract.
-
-Identity is the dialect's job, not the engine's: `id(item)` is verbatim for every item type, so this
-builds one from the source item, the registration, and either the `id` callback's value or the
-entry's position. A `register_item!` user never supplies or sees it.
+Make the item of one entry that the `expand` callback returned. Its metadata is the metadata of
+`read` with the metadata of the entry. Its id joins the id of the source item, the kind and a key,
+as `a.csv#trace:2`: the key is what the `id` callback returns, or the position of the entry when
+there is no `id` callback or it returns `nothing` or `""`.
 """
 function _registered_item(
     kind::Symbol,
@@ -74,8 +73,10 @@ function _items(value::ReadData{K}, expand, id, process, analyze) where {K}
 end
 
 """
-Run the `read` callback of a registration on a source item, and make a `carrier` from what it gave:
-the item of the registration, or what its `expand` callback makes the items from.
+Run the `read` callback of a registration on a source item, and make a value of type `carrier` from
+what it gave: the item of the registration, or the `ReadData` from which `process` makes the
+items. The value has the id of the source item, and its metadata also holds the metadata of the
+source item.
 """
 function _read(carrier::Type, read, source_item::AbstractDataSourceItem)
     data, read_metadata = _data_and_metadata(@timed_dbg "read" read(source_item))
@@ -113,8 +114,9 @@ function _collections(items::AbstractVector, paths::Tuple, levels::Tuple)::Vecto
 end
 
 """
-Run the callbacks registered for the level of `collection` over the `items` below it. `levels` holds
-the level, the members, and the `process` and `analyze` callbacks of each collection registration.
+Run the callbacks registered for the level of `collection` over the `items` below it, and return
+the `:processed` version of the collection, which holds their results. `levels` holds the level,
+the members, and the `process` and `analyze` callbacks of each collection registration.
 """
 function _processed(collection::NamedCollection{L}, items::AbstractVector, levels::Tuple) where {L}
     processed = NamedCollection{L,:processed}(collection.id, collection.name, collection.members)
@@ -145,7 +147,7 @@ function _processed(collection::NamedCollection{L}, items::AbstractVector, level
     return processed
 end
 
-# A collection whose level ran its callbacks, so that its members take its data.
+# A collection whose members can take its data: its level ran its callbacks, or has none.
 const Processed = Union{NamedCollection{<:Any,:processed},NamedCollection{<:Any,:collected}}
 
 """A registered item gets the new data and the metadata that its collection has for it."""

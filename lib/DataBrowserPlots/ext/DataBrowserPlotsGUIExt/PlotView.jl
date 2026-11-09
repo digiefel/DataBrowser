@@ -9,26 +9,26 @@ Shows a selection of items of one type with a plot that the project registered f
 `register_plot!`. The header of the window lists the plots registered for the items.
 """
 Base.@kwdef mutable struct PlotView <: FigureView
-    # The label of the registered plot the window shows. Empty while no plot fits the items.
+    ## The label of the registered plot the window shows. Empty while no plot fits the items.
     plot::String = ""
-    # Whether the figure shows the values of the plot element under the mouse.
+    ## Whether the figure shows the values of the plot element under the mouse.
     inspect::Bool = false
-    # The selection, the type of its items, and the labels of the plots registered for that type.
+    ## The selection, the type of its items, and the labels of the plots registered for that type.
     selection::Union{Nothing,Selection} = nothing
     kind::Union{Nothing,Symbol} = nothing
     plots::Vector{String} = String[]
-    # The plot chosen last for each type of item. A window that follows the selection returns to
-    # that plot when items of the type are selected again.
-    # TODO: save the choices with the view, and share them between windows if that proves useful.
+    ## The plot chosen last for each type of item. A window that follows the selection returns to
+    ## that plot when items of the type are selected again.
+    ## TODO: save the choices with the view, and share them between windows if that proves useful.
     chosen::Dict{Symbol,String} = Dict{Symbol,String}()
-    # The world and the result of `plot_code` when the window was last prepared.
+    ## The world and the result of `plot_code` when the window was last prepared.
     code::Tuple{UInt,String} = (UInt(0), "")
     figure::Any = nothing
-    # The theme `figure` was built with.
+    ## The theme `figure` was built with.
     dark::Bool = true
-    # Names the figure for GLMakie. Taken from the id of the window.
+    ## Names the figure for GLMakie. Taken from the id of the window.
     figure_id::String = ""
-    # Why the window shows no figure, and why the last export failed.
+    ## Why the window shows no figure, and why the last export failed.
     message::String = "No item selected"
     error_details::String = ""
 end
@@ -65,7 +65,8 @@ function prepare!(view::PlotView, selection::Selection, ctx)::Nothing
     return nothing
 end
 
-# The labels of the plots registered for `kind`, and the code revision of the plot with `label`.
+# The labels of the plots registered for `kind` and the code revision of the plot with `label`, as
+# one text that changes when either changes.
 # TODO: remove when the registered plots run through Computations, which follow their code.
 function plot_code(project, kind::Union{Nothing,Symbol}, label::String)::String
     kind === nothing && return ""
@@ -76,8 +77,8 @@ function plot_code(project, kind::Union{Nothing,Symbol}, label::String)::String
 end
 
 function draw!(view::PlotView, ctx)::Nothing
-    # After a new method definition, the window is prepared again if the code of its plot changed,
-    # or if `register_plot!` added a plot for the items.
+    ## After a new method definition, the window is prepared again if the code of its plot changed,
+    ## or if `register_plot!` added a plot for the items.
     world = Base.get_world_counter()
     if first(view.code) != world
         code = plot_code(ctx.workspace.project, view.kind, view.plot)

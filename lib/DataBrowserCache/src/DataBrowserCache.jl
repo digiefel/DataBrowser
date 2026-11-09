@@ -1,4 +1,7 @@
-"""DuckDB cache buffers, build metrics, and project cache domain."""
+"""
+The cache of a workspace, a DuckDB file that saves a record of each computation for the next
+session, and the stores that keep the results of computations: `MemoryStore` and `DuckDBStore`.
+"""
 module DataBrowserCache
 
 import DataBrowserAPI

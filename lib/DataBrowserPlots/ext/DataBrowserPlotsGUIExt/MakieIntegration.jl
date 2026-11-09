@@ -17,12 +17,12 @@ end
 mutable struct ImMakieFigure
     figure::GLMakie.Figure
     screen::GLMakie.Screen{ImMakieWindow}
-    # The last right click panned or reset the axes, so it does not open the axis menu.
+    ## The last right click panned or reset the axes, so it does not open the axis menu.
     menu_blocked::Bool
     display_texture::gl.GLuint
     display_size::Tuple{Int,Int}
     gesture::Union{Nothing,AxisGesture}
-    # The axes the user zoomed or panned. A figure that replaces this one keeps their limits.
+    ## The axes the user zoomed or panned. A figure that replaces this one keeps their limits.
     zoomed::Vector{Makie.Axis}
 end
 
@@ -64,7 +64,7 @@ function _sync_display_texture!(imfigure::ImMakieFigure, rendered::Bool)::gl.GLu
     end
     gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
     gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
-    # Make the copy visible to the platform-window contexts before they sample it.
+    ## Make the copy visible to the platform-window contexts before they sample it.
     gl.glFlush()
     return imfigure.display_texture
 end
@@ -97,7 +97,7 @@ ImGui. The precompile workload calls it, so that the first plot window in the br
 compile them.
 """
 function draw_in_hidden_window(figure::GLMakie.Figure)::Nothing
-    # The context of the browser's window: OpenGL 3.3, core profile.
+    ## The context of the browser's window: OpenGL 3.3, core profile.
     GLFW.WindowHint(GLFW.VISIBLE, false)
     GLFW.WindowHint(GLFW.CONTEXT_VERSION_MAJOR, 3)
     GLFW.WindowHint(GLFW.CONTEXT_VERSION_MINOR, 3)
@@ -314,10 +314,10 @@ function MakieFigure(
     if haskey(MAKIE_CONTEXT, id)
         imf = MAKIE_CONTEXT[id]
         if imf.figure !== figure
-            # Reuse the existing screen, but only clear the previous figure
-            # after GLMakie has detached it from the screen. Clearing it before
-            # display(screen, f) prevents GLMakie from walking the old scene and
-            # releasing its render objects.
+            ## Reuse the existing screen, but only clear the previous figure
+            ## after GLMakie has detached it from the screen. Clearing it before
+            ## display(screen, f) prevents GLMakie from walking the old scene and
+            ## releasing its render objects.
             old_figure = imf.figure
             scene = Makie.get_scene(figure)
             scene.events.window_open[] = true
@@ -366,10 +366,10 @@ function MakieFigure(
 
     gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0) # Unbind the framebuffer to avoid issues with ImGui rendering
 
-    # ImGui draws a plain copy of the render, never the FBO attachment itself (see
-    # `_sync_display_texture!`). We add it to the drawlist and then create an InvisibleButton of
-    # the same size to create a space in the layout that can respond to key presses and clicks
-    # etc (which a regular Image() can't do).
+    ## ImGui draws a plain copy of the render, never the FBO attachment itself (see
+    ## `_sync_display_texture!`). We add it to the drawlist and then create an InvisibleButton of
+    ## the same size to create a space in the layout that can respond to key presses and clicks
+    ## etc (which a regular Image() can't do).
     display_texture = _sync_display_texture!(imfigure, do_render)
     drawlist = ig.GetWindowDrawList()
     cursor_pos = ig.GetCursorScreenPos()
@@ -383,7 +383,7 @@ function MakieFigure(
 
     ig.InvisibleButton("figure_image", image_size)
 
-    # Update the scene events
+    ## Update the scene events
     if scene.events.hasfocus[] != ig.IsItemHovered()
         scene.events.hasfocus[] = ig.IsItemHovered()
     end
@@ -397,8 +397,8 @@ function MakieFigure(
     imfigure.gesture = axis_gestures!(imfigure.gesture, imfigure.zoomed, imfigure.figure, position, hovered,
         point -> (cursor_pos.x + point[1], cursor_pos.y + image_size[2] - point[2]))
 
-    # Makie receives the mouse for everything the axis gestures leave to it, such as legends,
-    # sliders and the interactions a project adds.
+    ## Makie receives the mouse for everything the axis gestures leave to it, such as legends,
+    ## sliders and the interactions a project adds.
     events = scene.events
     hovered && position != events.mouseposition[] && (events.mouseposition[] = position)
     for (button, makie_button) in ((0, Makie.Mouse.left), (1, Makie.Mouse.right))
@@ -452,8 +452,8 @@ function inspect!(figure::Makie.Figure, shown::Bool)::Nothing
     scene = Makie.get_scene(figure)
     inspector = scene.data_inspector
     if shown && inspector === nothing
-        # The tooltip takes the colors of the figure. Makie gives it the text color of the theme
-        # on a white background, which cannot be read in a dark theme.
+        ## The tooltip takes the colors of the figure. Makie gives it the text color of the theme
+        ## on a white background, which cannot be read in a dark theme.
         background, text = scene.backgroundcolor[], Makie.theme(scene, :textcolor)[]
         Makie.DataInspector(scene; backgroundcolor=background, strokecolor=background, outline_color=text)
     elseif !shown && inspector !== nothing

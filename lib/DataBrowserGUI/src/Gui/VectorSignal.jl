@@ -28,13 +28,13 @@ function vector_signal(values::Vector{Float64}, spacing::Float64; remove_mean::B
     interior = 2:(iseven(n) ? length(amplitude) - 1 : length(amplitude))
     amplitude[interior] .*= 2
 
-    # A periodic Hann window, with power normalization (not amplitude normalization).
+    ## A periodic Hann window, with power normalization (not amplitude normalization).
     window = [0.5 - 0.5cospi(2i / n) for i in 0:n-1]
     psd = abs2.(rfft(signal .* window)) .* (spacing / sum(abs2, window))
     psd[interior] .*= 2
 
-    # Zero padding gives linear rather than circular correlation. Scaling the centered data
-    # first avoids overflowing its squared amplitude; normalization removes that scale again.
+    ## Zero padding gives linear rather than circular correlation. Scaling the centered data
+    ## first avoids overflowing its squared amplitude; normalization removes that scale again.
     correlation = Float64[]
     scale = maximum(abs, centered)
     if isfinite(scale) && scale > 0

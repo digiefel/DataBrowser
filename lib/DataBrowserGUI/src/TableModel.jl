@@ -57,7 +57,7 @@ _table_columns(value) = Tables.columns(value)
 function _cell_text(value::Any)::String
     _is_block(value) && return length(value) == 1 ? "1 field" : "$(length(value)) fields"
     value isa AbstractArray && return summary(value)
-    # Plain text, such as a date without `DateTime(...)` around it.
+    ## Plain text, such as a date without `DateTime(...)` around it.
     text = sprint(print, value)
     return length(text) > 90 ? first(text, 87) * "..." : text
 end
@@ -85,14 +85,14 @@ function _item_columns(data, unfolded::Set{Vector{String}})
                 add!([path; name], part)
             end
         elseif isempty(path) && value isa AbstractVecOrMat
-            # The data itself is a vector or a matrix: each of its columns is a column, named by
-            # its number.
+            ## The data itself is a vector or a matrix: each of its columns is a column, named by
+            ## its number.
             rows = size(value, 1)
             for column in axes(value, 2)
                 push!(columns, [string(column)] => (value[:, column], true))
             end
         else
-            # TODO: only the first table of an item gives rows; a further table is one value.
+            ## TODO: only the first table of an item gives rows; a further table is one value.
             push!(columns, (isempty(path) ? ["data"] : path) => (value, false))
         end
     end
@@ -127,8 +127,8 @@ function merge_item_tables(
     item_rows = Int[]
     warnings = String[]
     for (index, (item_label, item)) in enumerate(zip(selection.label, items(selection)))
-        # The project's `data` may fail for one item; the table shows the others. The data of a
-        # computed value is its result.
+        ## The project's `data` may fail for one item; the table shows the others. The data of a
+        ## computed value is its result.
         payload = try
             item isa Computation ? selection.data[index] : data(item)
         catch err
@@ -137,8 +137,8 @@ function merge_item_tables(
             continue
         end
         columns, rows = _item_columns(payload, unfolded)
-        # TODO: a metadata key that is also the name of a column of the data is then in the table
-        # twice, and so is a column of the data called `item`.
+        ## TODO: a metadata key that is also the name of a column of the data is then in the table
+        ## twice, and so is a column of the data called `item`.
         leading = Pair{Vector{String},Tuple{Any,Bool}}[
             [string(name)] => (getproperty(selection, name)[index], false) for name in metadata
             if !ismissing(getproperty(selection, name)[index])]
@@ -148,11 +148,11 @@ function merge_item_tables(
         push!(item_columns, [leading; columns])
         push!(item_rows, rows)
     end
-    # A single item needs no column `item`.
+    ## A single item needs no column `item`.
     if item_column && length(labels) == 1
         popfirst!(only(item_columns))
     end
-    # The column `item` and the metadata come first, also when the first item lacks some metadata.
+    ## The column `item` and the metadata come first, also when the first item lacks some metadata.
     first_paths = [item_column ? [["item"]] : Vector{String}[]; [[string(name)] for name in metadata]]
     return _union_table(labels, item_columns, item_rows, first_paths; item_index), warnings
 end
@@ -171,8 +171,8 @@ end
 # of `first_paths` that an item has come first, in their order.
 function _union_table(labels::Vector{String}, item_columns, item_rows::Vector{Int},
         first_paths::Vector{Vector{String}}=Vector{String}[]; item_index::Vector{Int}=Int[])::ItemTable
-    # The union of the items' columns, in the order they first appear, and the value of each column
-    # for each item.
+    ## The union of the items' columns, in the order they first appear, and the value of each column
+    ## for each item.
     paths = Vector{String}[]
     index = Dict{Vector{String},Int}()
     found = Set(path for columns in item_columns for (path, _) in columns)
@@ -222,7 +222,7 @@ The value in the cell of the table of `value` at the column `path`, in row `row`
 cell of the column when `row` is 0. `nothing` when the table has no such cell.
 """
 function zoom_value(value, row::Int, path::Vector{String})::Union{Nothing,Some}
-    # The blocks of names that hold the column are unfolded.
+    ## The blocks of names that hold the column are unfolded.
     columns, rows = _item_columns(value, Set(path[1:level] for level in 1:length(path)-1))
     index = findfirst(column -> first(column) == path, columns)
     index === nothing && return nothing
@@ -279,7 +279,7 @@ Base.getindex(item::AbstractDataItem, s::TableSelection) = invoke(getindex, Tupl
 # `_item_columns`: only the first table gives rows. `nothing` drops a value.
 function _selected(data, s::TableSelection, take)
     rows, columns = s.rows, s.columns
-    # A value kept whole is the value itself in a view, and a copy of it otherwise.
+    ## A value kept whole is the value itself in a view, and a copy of it otherwise.
     whole(value) = take === view ? value : deepcopy(value)
     table_found = false
     function cut(path::Vector{String}, value)::Union{Nothing,Some}
@@ -301,7 +301,7 @@ function _selected(data, s::TableSelection, take)
             kept = [name => something(part) for (name, part) in parts if part !== nothing]
             return Some(value isa NamedTuple ? NamedTuple(kept) : Dict(kept))
         elseif isempty(path) && !_is_block(value)
-            # Data that is one value is the column `data`.
+            ## Data that is one value is the column `data`.
             return ["data"] in columns ? Some(whole(value)) : nothing
         end
         return nothing

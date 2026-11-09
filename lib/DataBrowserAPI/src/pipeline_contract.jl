@@ -14,7 +14,8 @@ method takes stays as it is.
 """
     read(project, source, item) -> AbstractDataItem
 
-Perform the one expensive source operation for a source item, and return its data item. A source
+Read the source item `item` of `source`, and return its value, an item of the project: the only
+function of a project that reads the source. A source
 item that holds several items, such as a table with one item per cycle, gives one item here, and a
 `process` method that returns a vector makes the several items from it. A source item that gives no
 value, such as a file the project does not use, gives an empty vector.
@@ -22,7 +23,7 @@ value, such as a file the project does not use, gives an empty vector.
 A source item with [`members`](@ref), such as a folder, can give a group of the project's own type,
 whose `members` are the ids that `members(source, item)` gives, or some of them. Each of these ids
 names a source item, which stands for the values that it gives. The source item can also give any
-other value, or none: nothing obliges it to be a group.
+other value, or none.
 
 There is no default: the workspace reads only the source items that a method of the project takes.
 """
@@ -104,20 +105,16 @@ process(::AbstractProject, ::AbstractDataItem, ::AbstractGroup)
 """
     reconstruct(::Type{T}, id, data, metadata::Dict) -> Union{Nothing,T}
 
-Rebuild one concrete item from its id, cached payload, and the metadata of the item when it
-was stored. The engine can call this method before or after item processing. The item id, payload,
-and metadata must therefore contain everything the method needs at that point.
+Make an item of type `T` again from its id, its data and its metadata. A store calls it to give
+back an item that it saved, and `view(item, selection)` and `item[selection]` call it to make an
+item with part of the data of `item`.
 
-The default returns the payload when it is already a `T`, preserving the identity of custom items
-whose `data(item)` is the item itself. Otherwise it returns `nothing`. While preparing an
-unprocessed input, the engine reruns `read`. While preparing a processed input, it also reruns
-`process`. The fallback restores those outputs, but it cannot add later metadata to a custom
-item. A type that needs later metadata must retain it in its `reconstruct` result. Cached payloads
-remain available for views either way; reconstruction is needed to run further project dispatch on
-a cached item.
+The default returns `data` when it is already a `T`, as for an item type whose `data` is the item
+itself, and `nothing` otherwise. When `reconstruct` returns `nothing`, `DuckDBStore` saves the whole
+item as one serialized value, and `view` and `getindex` throw an error.
 
-Rehydration must be a pure function of cached content. Anything a type needs to rebuild itself
-belongs in its id, data, or metadata, never in live workspace state.
+The result depends only on `id`, `data` and `metadata`, so an item type keeps in these three
+everything that it needs to be made again.
 """
 reconstruct(::Type{T}, id::AbstractString, data, metadata::Dict) where {T} =
     data isa T ? data : nothing

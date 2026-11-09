@@ -4,7 +4,7 @@ using DataBrowserAPI:
 using DataBrowserCache: ProjectCacheSchemaError
 import DataBrowserCore.Workspace
 
-"""Reload tags and the persisted view when the workspace source identity changes."""
+"""When the source of the workspace changes, reset the extensions and apply the saved view of the source."""
 function _check_source_identity!(
     state::BrowserState,
     workspace::Workspace.Workspace,
@@ -12,8 +12,8 @@ function _check_source_identity!(
     current = id(workspace.source)
     current == state.loaded_source_id && return nothing
     isempty(state.loaded_source_id) || _reset_extensions!(state)
-    # The initial view was read before creating the native window. Later source changes read
-    # their own view, without moving or resizing the already-open window.
+    ## The initial view was read before creating the native window. Later source changes read
+    ## their own view, without moving or resizing the already-open window.
     view = isempty(state.loaded_source_id) ? state.saved_project_view : _load_project_view(workspace)
     _apply_project_view!(state, view)
     state.saved_project_view = view
@@ -50,7 +50,7 @@ function select_failed!(state::BrowserState, failed::AbstractVector{<:AbstractSt
     workspace = state.workspace
     ids = String[x for x in failed if haskey(workspace, x)]
     sources = Set{String}(x for x in failed if !haskey(workspace, x))
-    # TODO(scale): goes through every value of the workspace; ask Core for the values of the source items.
+    ## TODO(scale): goes through every value of the workspace; ask Core for the values of the source items.
     isempty(sources) ||
         append!(ids, filter(x -> Workspace.source_item_id(workspace, x) in sources, Workspace.items(workspace)))
     isempty(ids) && return false

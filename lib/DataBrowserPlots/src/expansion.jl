@@ -40,7 +40,7 @@ source_text(value) = string(value)
 function map_mapped(f, expression; chosen=value -> !isempty(paths(value)))
     expression isa Expr || return expression
     if Meta.isexpr(expression, :call) && expression.args[1] === :mapping
-        # A list of values, as `y` and `y2` give, has each of them.
+        ## A list of values, as `y` and `y2` give, has each of them.
         mapped(value) = Meta.isexpr(value, :call) && value.args[1] === :(=>) ?
             Expr(:call, :(=>), mapped(value.args[2]), value.args[3:end]...) :
             Meta.isexpr(value, :vect) ? Expr(:vect, map(mapped, value.args)...) :
@@ -118,7 +118,7 @@ function tabulate(layer, column; chosen=value -> !isempty(paths(value)))
         return value
     end
     isempty(order) && return nothing
-    # A path's column is named after its last part, unless another column has that name too.
+    ## A path's column is named after its last part, unless another column has that name too.
     short(t) = path(values[t]) === nothing ? t : String(last(path(values[t])))
     names = Dict(t => Symbol(count(==(short(t)), map(short, order)) == 1 ? short(t) : lstrip(t, ':'))
         for t in order)
@@ -174,7 +174,7 @@ function declare_line(header, line, names::Vector{Symbol}, input::Symbol)
     isempty(found) && return declare_layers(:($inherit($header, $line)), input)
     length(unique(found)) == 1 || error("A line reads the values of one named result, not of $(join(unique(found), " and "))")
     result = first(found)
-    # `result.count` is the path `:count` into each group of `result`.
+    ## `result.count` is the path `:count` into each group of `result`.
     paths_of(e) = reads(e) ? e.args[2] : e isa Expr ? Expr(e.head, map(paths_of, e.args)...) : e
     tabulated = tabulate(paths_of(line), value -> per_item(value, result))
     tabulated === nothing && return declare_layers(:($inherit($header, $line)), input)
@@ -212,7 +212,7 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
     end
     for line in filter(line -> line.args[1] === :coord, settings)
         positional, named = call_arguments(line)
-        # TODO: `polar` and a tilt of the drawn axes; the plan is at `figure(plot::Scaled)` in the AlgebraOfGraphics extension.
+        ## TODO: `polar` and a tilt of the drawn axes; the plan is at `figure(plot::Scaled)` in the AlgebraOfGraphics extension.
         length(positional) <= 1 || error("coord takes one function of the points, such as `coord((x, y) -> (y, x))`")
         points = [Expr(:kw, :points, f) for f in positional]
         push!(coords, Expr(:tuple, Expr(:parameters, points..., (Expr(:kw, k, v) for (k, v) in named)...)))
@@ -221,7 +221,7 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
         line.args[1] === :scales ? push!(scales, :($(QuoteNode(key)) => $value)) :
         key in LEGEND_ROLES ? push!(templates, key => value) : push!(legend, Expr(:kw, key, value))
     end
-    # The paths the texts read, each as a column of the rows of the header.
+    ## The paths the texts read, each as a column of the rows of the header.
     read = Dict{String,Any}()
     for (_, template) in templates
         replace_reads(template, names; onpath=p -> (read[source_text(p)] = p), onname=identity)
@@ -304,7 +304,7 @@ function positions_named(expression)
     expression = Expr(expression.head, map(positions_named, expression.args)...)
     Meta.isexpr(expression, :call) && expression.args[1] === :mapping || return expression
     positional, named = call_arguments(expression)
-    # The position and the number of a named position, such as `(2, 3)` for `y3`, or `nothing`.
+    ## The position and the number of a named position, such as `(2, 3)` for `y3`, or `nothing`.
     function position(name::Symbol)
         found = match(r"^([xyz])(\d*)$", String(name))
         found === nothing && return nothing
@@ -316,7 +316,7 @@ function positions_named(expression)
         values = sort([(position(name)[2], name, value) for (name, value) in named
             if position(name) !== nothing && position(name)[1] == index])
         isempty(values) && continue
-        # A position written by place is the first value, such as y in `mapping(:gap, :R; y2=:R2)`.
+        ## A position written by place is the first value, such as y in `mapping(:gap, :R; y2=:R2)`.
         index <= length(slots) && slots[index] !== nothing && pushfirst!(values, (1, :place, slots[index]))
         numbers = first.(values)
         allunique(numbers) || error("`mapping` has the same position twice, such as y and y1, or y by place and by name")

@@ -26,7 +26,7 @@ The plot builder: a plot written as code, drawn for the selection.
 
 The user names the plot in the window's header: the name `tlm` is the file `plots/tlm.jl`, and a
 name ending in `.jl` is a path. A name that has no file yet saves the code under it; a name that
-has a file opens it. A new plot starts with code that draws the selection's columns. The code is
+has a file opens it. A new plot starts with code that draws the selection's metadata. The code is
 shown under the figure and edited there or, once the plot has a name, in any other editor. "Save"
 (or Ctrl+S in the code) writes the file and draws the plot again; without a name, "Draw" only
 draws. A change to the file from another editor shows at once, unless the code in the window has
@@ -68,51 +68,51 @@ The names in `mapping` are paths into the selected items, as [`@plot`](@ref) des
 is a metadata value of each item, `:data.V` a column of each item's data.
 """
 Base.@kwdef mutable struct BuilderView <: FigureView
-    # The name of the plot, which the user gives: the file `plots/<name>.jl`, or a path to a `.jl`
-    # file, relative to the directory Julia started in. Until then the code is in the window only.
+    ## The name of the plot, which the user gives: the file `plots/<name>.jl`, or a path to a `.jl`
+    ## file, relative to the directory Julia started in. Until then the code is in the window only.
     file::String = ""
-    # The path the code was read from, or `nothing` before the first selection.
-    # TODO: ask before a change of file drops code that is not saved.
+    ## The path the code was read from, or `nothing` before the first selection.
+    ## TODO: ask before a change of file drops code that is not saved.
     loaded::Union{Nothing,String} = nothing
     code::CodeFile = CodeFile()
-    # The parts of the `@plot` of the code, and the code they were read from.
+    ## The parts of the `@plot` of the code, and the code they were read from.
     plot::Union{Nothing,PlotCode} = nothing
     parsed::Union{Nothing,String} = nothing
-    # The named mappings each line of the block can show, as the last drawing found them.
+    ## The named mappings each line of the block can show, as the last drawing found them.
     mappings::Vector{Vector{Symbol}} = Vector{Symbol}[]
-    # Whether the scale of each named mapping holds categories or numbers, from the types of its
-    # values; see `scale_kinds`.
+    ## Whether the scale of each named mapping holds categories or numbers, from the types of its
+    ## values; see `scale_kinds`.
     scale_kinds::Dict{Symbol,Symbol} = Dict{Symbol,Symbol}()
-    # The values of each named mapping that divides the points into groups, as the last drawing
-    # found them.
+    ## The values of each named mapping that divides the points into groups, as the last drawing
+    ## found them.
     categories::Dict{Symbol,Vector{Any}} = Dict{Symbol,Vector{Any}}()
     editing::Union{Nothing,EntryEdit} = nothing
-    # The columns a mapping can pick, for the selection; `nothing` until the panel needs them.
+    ## The columns a mapping can pick, for the selection; `nothing` until the panel needs them.
     columns::Union{Nothing,Vector{ListItem}} = nothing
-    # The text of each field of a widget, such as the lowest of `limits`, while the user types in it.
+    ## The text of each field of a widget, such as the lowest of `limits`, while the user types in it.
     fields::Dict{String,Vector{UInt8}} = Dict{String,Vector{UInt8}}()
-    # The value of each bound of a widget, such as the lowest of `limits`, while the user drags it.
+    ## The value of each bound of a widget, such as the lowest of `limits`, while the user drags it.
     bounds::Dict{String,Float32} = Dict{String,Float32}()
-    # The bound being typed, and whether its field takes the keyboard in the next frame.
+    ## The bound being typed, and whether its field takes the keyboard in the next frame.
     typing::Union{Nothing,Tuple{String,Bool}} = nothing
-    # The place of a palette being changed in a popup, with the key of its widget, and the color
-    # being picked for it, red, green, blue and alpha, as the picker changes it.
+    ## The place of a palette being changed in a popup, with the key of its widget, and the color
+    ## being picked for it, red, green, blue and alpha, as the picker changes it.
     picking::Union{Nothing,Tuple{String,Int}} = nothing
     color::Vector{Float32} = zeros(Float32, 4)
-    # The type-ahead of the open menu of names.
+    ## The type-ahead of the open menu of names.
     picker::ListPicker = ListPicker()
-    # The part of the window width the panel takes; the user drags the border.
+    ## The part of the window width the panel takes; the user drags the border.
     panel_width::Float32 = 0.28f0
-    # The code `first_code` gave, while the file does not exist.
+    ## The code `first_code` gave, while the file does not exist.
     first::String = ""
-    # The text buffer ImGui edits.
+    ## The text buffer ImGui edits.
     buffer::Vector{UInt8} = zeros(UInt8, CODE_ROOM)
-    # Counts the reads of the file. It is part of the text box's ImGui id: a new id makes ImGui
-    # show the code just read, even while the user is typing in the box.
+    ## Counts the reads of the file. It is part of the text box's ImGui id: a new id makes ImGui
+    ## show the code just read, even while the user is typing in the box.
     reads::Int = 0
     selection::Union{Nothing,Selection} = nothing
-    # What the code last ran with, its code, file and the names of `Main` with their values, and
-    # the value it gave; `nothing` until it ran without an error.
+    ## What the code last ran with, its code, file and the names of `Main` with their values, and
+    ## the value it gave; `nothing` until it ran without an error.
     ran::Union{Nothing,Tuple} = nothing
     value::Any = nothing
     inspect::Bool = false
@@ -121,7 +121,7 @@ Base.@kwdef mutable struct BuilderView <: FigureView
     figure_id::String = ""
     message::String = "Select items to plot."
     error_details::String = ""
-    # Why the panel, or the figure, failed to draw in the last frame; empty when it drew.
+    ## Why the panel, or the figure, failed to draw in the last frame; empty when it drew.
     panel_error::String = ""
     figure_error::String = ""
 end
@@ -194,10 +194,10 @@ function prepare!(view::BuilderView, selection::Selection, ctx)::Nothing
     view.selection = selection
     view.columns = nothing
     path = code_path(view)
-    # Until it is edited, the first code follows the columns of the selection.
+    ## Until it is edited, the first code follows the columns of the selection.
     unedited = !isempty(view.first) && view.code.text == view.first && isempty(view.code.saved)
     if view.loaded !== nothing && view.loaded != path && !isempty(path) && !isfile(path)
-        # A new name for the plot saves its code under that name.
+        ## A new name for the plot saves its code under that name.
         save_code!(view)
     elseif view.loaded != path || unedited
         load_code!(view)
@@ -226,30 +226,30 @@ function build!(view::BuilderView, ctx)::Nothing
         return nothing
     end
     try
-        # The names defined in Main, such as the project's functions, are reached by name.
+        ## The names defined in Main, such as the project's functions, are reached by name.
         defined = [name for name in names(Main; all=true) if isdefinedglobal(Main, name) &&
             !startswith(String(name), '#') && name ∉ (:eval, :include, :Base, :Core, :Main)]
         run = (view.code.text, code_path(view), defined, Any[getglobal(Main, name) for name in defined])
-        # The code runs again only when it changes, or the names of Main do, so that the functions
-        # it defines keep the code Julia compiled for them. Code that reads `selection` itself runs
-        # for each selection.
-        # TODO: an edit, even of a visual, runs the code again: the functions `@plot` makes are new
-        # types, and the code that handles the plot and its fits compiles again (about 0.5 s).
+        ## The code runs again only when it changes, or the names of Main do, so that the functions
+        ## it defines keep the code Julia compiled for them. Code that reads `selection` itself runs
+        ## for each selection.
+        ## TODO: an edit, even of a visual, runs the code again: the functions `@plot` makes are new
+        ## types, and the code that handles the plot and its fits compiles again (about 0.5 s).
         same = view.ran !== nothing && view.ran[1:3] == run[1:3] && all(map(===, view.ran[4], run[4])) &&
             !reads_selection(view.code.text)
         if !same
             view.ran = nothing
             mod = @timed_dbg "builder_module" begin
-            # A new module for each run, so that nothing from an earlier run of the file is left.
-            # TODO: modules are never freed; reuse one module per window if this grows.
+            ## A new module for each run, so that nothing from an earlier run of the file is left.
+            ## TODO: modules are never freed; reuse one module per window if this grows.
             mod = Module(Symbol("plot_$(ctx.id)"))
             Core.eval(mod, :(const AlgebraOfGraphics = $(Base.require(ALGEBRA_OF_GRAPHICS))))
             Core.eval(mod, :(const Makie = $Makie))
             Core.eval(mod, :(const DataBrowserPlots = $DataBrowserPlots))
             Core.eval(mod, :(using .AlgebraOfGraphics, .Makie, .DataBrowserPlots))
-            # The names of Main come through `using`, so a name that the file defines itself takes
-            # their place.
-            # TODO: a sandbox for plot code, for example the project's code in a module of its own.
+            ## The names of Main come through `using`, so a name that the file defines itself takes
+            ## their place.
+            ## TODO: a sandbox for plot code, for example the project's code in a module of its own.
             shared = Module(:Main_names)
             for (name, value) in zip(defined, run[4])
                 Core.eval(shared, :(const $name = $value))
@@ -260,16 +260,16 @@ function build!(view::BuilderView, ctx)::Nothing
             Core.eval(mod, :(selection = $selection))
             mod
             end
-            # Code that does not run has no kinds: each scale offers the settings of both.
+            ## Code that does not run has no kinds: each scale offers the settings of both.
             view.scale_kinds = Dict{Symbol,Symbol}()
             view.value = @timed_dbg "builder_code" Base.invokelatest(include_string, mod, view.code.text, code_path(view))
             view.ran = run
         end
         plot = view.value
-        # AlgebraOfGraphics may have loaded during this call: the methods it adds to `scale_kinds`,
-        # `mappings` and `figure` are reached through `invokelatest`.
-        # A declaration of paths is drawn for the selection, and the kinds of its scales come from
-        # the types of the selection's values. Any other plot has its own data.
+        ## AlgebraOfGraphics may have loaded during this call: the methods it adds to `scale_kinds`,
+        ## `mappings` and `figure` are reached through `invokelatest`.
+        ## A declaration of paths is drawn for the selection, and the kinds of its scales come from
+        ## the types of the selection's values. Any other plot has its own data.
         if plot isa DataBrowserPlots.Declaration
             view.scale_kinds = Base.invokelatest(scale_kinds, plot, selection)
             plot = @timed_dbg "builder_layers" Base.invokelatest(plot.layers, selection)
@@ -307,8 +307,8 @@ function reads_selection(code::String)::Bool
 end
 
 function draw!(view::BuilderView, ctx)::Nothing
-    # A change of the file in another editor is shown at once, unless the window has edits that
-    # are not saved; then "Reload" shows it.
+    ## A change of the file in another editor is shown at once, unless the window has edits that
+    ## are not saved; then "Reload" shows it.
     edited = isunsaved(view.code) && view.code.text != view.first
     path = code_path(view)
     changed = ischanged_on_disk(view.code)
@@ -320,11 +320,11 @@ function draw!(view::BuilderView, ctx)::Nothing
 
     available = ig.GetContentRegionAvail()
     ig.BeginChild("panel", (round(available.x * view.panel_width), 0.0f0), ig.ImGuiChildFlags_Borders)
-    # A failure of the panel, or of the figure, leaves the code below editable, to fix it.
+    ## A failure of the panel, or of the figure, leaves the code below editable, to fix it.
     view.panel_error = guarded_draw(() -> draw_panel!(view, ctx), "Plot builder: the panel failed to draw", view.panel_error)
     isempty(view.panel_error) || ig.TextWrapped(view.panel_error)
     ig.EndChild()
-    # The border between the panel and the figure, which the user drags.
+    ## The border between the panel and the figure, which the user drags.
     ig.SameLine(0.0f0, 0.0f0)
     ig.InvisibleButton("border", (6.0f0, max(available.y, 1.0f0)))
     if ig.IsItemHovered() || ig.IsItemActive()
@@ -349,7 +349,7 @@ function draw!(view::BuilderView, ctx)::Nothing
 
     ig.AlignTextToFramePadding()
     if isempty(path)
-        # Without a name the code is only drawn; the name in the header gives it a file.
+        ## Without a name the code is only drawn; the name in the header gives it a file.
         ig.TextDisabled("Name the plot in the header to save its code.")
         ig.SameLine()
         save = ig.SmallButton("Draw")
@@ -376,7 +376,7 @@ function draw!(view::BuilderView, ctx)::Nothing
         (-1.0f0, -1.0f0), ig.ImGuiInputTextFlags_AllowTabInput)
     if edited
         view.code.text = unsafe_string(pointer(view.buffer))
-        # Room for the next edits.
+        ## Room for the next edits.
         sizeof(view.code.text) > length(view.buffer) - CODE_ROOM ÷ 4 && set_code!(view, view.code.text)
     end
     save |= ig.IsItemActive() && ig.IsKeyChordPressed(ig.ImGuiMod_Ctrl | ig.ImGuiKey_S)

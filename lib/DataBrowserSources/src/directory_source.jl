@@ -18,7 +18,8 @@ import DataBrowserAPI:
     watch_source
 
 """
-Fingerprint used to decide whether a physical source file has changed.
+The fingerprint of a [`SourceFile`](@ref): its path, its size in bytes and its modification time in
+nanoseconds. When the fingerprint of a file changes, the workspace reads the file again.
 """
 struct FileFingerprint
     path::String
@@ -29,7 +30,7 @@ end
 """
     DirectorySource(root_path; recursive=true)
 
-A data source that reads the files in the folder `root_path`. Each file is one source item, a
+A data source that lists the files in the folder `root_path`. Each file is one source item, a
 [`SourceFile`](@ref). With `recursive=true`, the files and folders below `root_path` are source items
 too: each folder is a [`SourceDirectory`](@ref), whose members are the files and folders directly in
 it. An empty folder is not a source item.
@@ -47,8 +48,8 @@ mutable struct DirectorySource <: AbstractDataSource
 end
 
 function DirectorySource(root_path::AbstractString; recursive::Bool=true)::DirectorySource
-    # `dirname(joinpath(path, ""))` removes a trailing `/`. With it, the same folder would have
-    # another id, and so another cache.
+    ## `dirname(joinpath(path, ""))` removes a trailing `/`. With it, the same folder would have
+    ## another id, and so another cache.
     root = dirname(joinpath(abspath(expanduser(root_path)), ""))
     return DirectorySource(root, recursive, nothing, nothing)
 end
@@ -67,8 +68,8 @@ struct SourceFile <: AbstractDataSourceItem
     fingerprint::FileFingerprint
 end
 
-# Identity is the path relative to the source root, not the absolute one: it is unique within the
-# source, short enough to show as-is, and unchanged when the directory is moved or copied.
+# The id is the path below the folder of the source: it is unique within the source, short enough to
+# show as it is, and stays the same when the folder is moved or copied.
 id(file::SourceFile)::String = file.relative_path
 label(file::SourceFile)::String = file.relative_path
 fingerprint(file::SourceFile)::FileFingerprint = file.fingerprint
@@ -89,8 +90,9 @@ end
 
 id(directory::SourceDirectory)::String = directory.relative_path
 label(directory::SourceDirectory)::String = directory.relative_path
-# A folder changes when a member is added, removed or renamed, not when a member changes. Each id is
-# hashed in turn: the `hash` of a long vector reads only some of its elements.
+# The fingerprint of a folder changes when a member is added, removed or renamed. A member that
+# changes has a fingerprint of its own. Each id is hashed in turn: the `hash` of a long vector reads
+# only some of its elements.
 fingerprint(directory::SourceDirectory)::UInt64 = foldl((h, member) -> hash(id(member), h), directory.members; init=UInt64(0))
 members(::DirectorySource, directory::SourceDirectory)::Vector{AbstractDataSourceItem} = directory.members
 
@@ -126,16 +128,16 @@ function items(
         on_progress !== nothing && length(found) % 256 == 0 && on_progress(length(found))
         return item
     end
-    # The source items directly in `folder`. A folder is reported after its members, so that its
-    # members are complete when it is. An empty folder holds nothing, so it is not a source item.
+    ## The source items directly in `folder`. A folder is reported after its members, so that its
+    ## members are complete when it is. An empty folder holds nothing, so it is not a source item.
     function scan(folder::String)::Vector{AbstractDataSourceItem}
         folder_members = AbstractDataSourceItem[]
         for name in readdir(folder)
             is_cancellation_requested(cancel_token) && throw(OperationCanceledException(cancel_token))
-            # Hidden files and folders, such as `.git`, hold no source files.
+            ## Hidden files and folders, such as `.git`, hold no source files.
             startswith(name, ".") && continue
             path = joinpath(folder, name)
-            # A link to a folder can point to a folder above it, so links are not followed.
+            ## A link to a folder can point to a folder above it, so links are not followed.
             if isdir(path) && source.recursive && !islink(path)
                 below = scan(path)
                 isempty(below) || push!(folder_members,
@@ -168,10 +170,10 @@ function watch_source(
     )
     cancel_source = CancellationTokenSource(cancel_token)
     watch_token = get_token(cancel_source)
-    # Typed, as the watcher replaces it: a captured variable that changes is otherwise of unknown type.
+    ## Typed, as the watcher replaces it: a captured variable that changes is otherwise of unknown type.
     known::Dict{String,Any} = Dict(id(item) => fingerprint(item) for item in items(source; cancel_token=watch_token))
-    # Ignore what `items` does not read: hidden files and folders, and the folders below a source
-    # that is not recursive.
+    ## Ignore what `items` does not read: hidden files and folders, and the folders below a source
+    ## that is not recursive.
     ignore(path::AbstractString)::Bool =
         any(startswith('.'), split(path, '/')) || (!source.recursive && occursin('/', path))
     task = Base.Threads.@spawn begin
@@ -200,13 +202,14 @@ end
 """
     copy(source::DirectorySource) -> DirectorySource
 
-Unopened directory source with the same root and scan depth. Does not copy the watcher.
+A new `DirectorySource` with the same folder and the same `recursive`. The copy is closed and starts
+without a watcher.
 """
 Base.copy(source::DirectorySource) = DirectorySource(source.root_path; recursive=source.recursive)
 
 function close_source!(source::DirectorySource)::Nothing
     source.watcher_cancel === nothing || cancel(source.watcher_cancel)
-    # The task reports its own errors through `on_change`, so waiting for it does not throw.
+    ## The task reports its own errors through `on_change`, so waiting for it does not throw.
     source.watcher_task === nothing || wait(source.watcher_task)
     source.watcher_task = nothing
     source.watcher_cancel = nothing

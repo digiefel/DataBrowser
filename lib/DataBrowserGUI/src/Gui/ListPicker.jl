@@ -13,8 +13,8 @@ closes the popup.
 """
 Base.@kwdef mutable struct ListPicker
     query::String = ""
-    # The place of the item the arrow keys are on, among the items that match the query; 0 before
-    # the user types or presses an arrow key, and after a click.
+    ## The place of the item the arrow keys are on, among the items that match the query; 0 before
+    ## the user types or presses an arrow key, and after a click.
     cursor::Int = 0
 end
 
@@ -53,12 +53,12 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem}; sectio
         ig.CloseCurrentPopup()
         return nothing
     end
-    # The items that match, each with the places of the letters that match.
+    ## The items that match, each with the places of the letters that match.
     matches = Tuple{Int,Vector{Int}}[]
     for (index, item) in enumerate(items)
         letters = _fuzzy_match(picker.query, item.name)
         if letters === nothing && sections && !isempty(item.section)
-            # The letters that match the section first, then those that match the name.
+            ## The letters that match the section first, then those that match the name.
             both = _fuzzy_match(picker.query, item.section * "\0" * item.name)
             start = ncodeunits(item.section) + 1
             both === nothing || (letters = [at - start for at in both if at > start])
@@ -72,7 +72,7 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem}; sectio
 
     style = unsafe_load(ig.GetStyle())
     box = ig.GetFontSize()
-    # The room before the name: a checkbox, an icon, or both.
+    ## The room before the name: a checkbox, an icon, or both.
     before(item) = (item.checked === nothing ? 0.0f0 : box + style.ItemInnerSpacing.x) +
         (isempty(item.icon) ? 0.0f0 : ig.CalcTextSize(item.icon).x + style.ItemInnerSpacing.x)
     strip = any(item -> !isempty(item.colors), items) ? ig.GetFontSize() * 7 : 0.0f0
@@ -87,7 +87,7 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem}; sectio
     if ig.InputTextWithHint("##query", "type to filter", buffer, length(buffer),
             ig.ImGuiInputTextFlags_EnterReturnsTrue)
         picker.cursor == 0 || (picked = first(matches[picker.cursor]))
-        # Enter ends the typing, so the field takes the keys again.
+        ## Enter ends the typing, so the field takes the keys again.
         ig.SetKeyboardFocusHere(-1)
     end
     query = unsafe_string(pointer(buffer))
@@ -99,12 +99,12 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem}; sectio
     if isempty(matches)
         ig.TextDisabled("No match")
     else
-        # TODO: rank the names that match, for example those with the letters next to each other first.
+        ## TODO: rank the names that match, for example those with the letters next to each other first.
         line = ig.GetTextLineHeightWithSpacing()
         headings = length(unique(items[index].section for (index, _) in matches if !isempty(items[index].section)))
-        # The arrow keys move through the list here, not ImGui's keyboard navigation, which would
-        # take the keys away from the field: neither the names nor the list take the keyboard. A
-        # list with a scroll bar is itself an item that ImGui's navigation would move to.
+        ## The arrow keys move through the list here, not ImGui's keyboard navigation, which would
+        ## take the keys away from the field: neither the names nor the list take the keyboard. A
+        ## list with a scroll bar is itself an item that ImGui's navigation would move to.
         ig.PushItemFlag(ig.ImGuiItemFlags_NoNav, true)
         ig.BeginChild("##names", ig.ImVec2(width, min(length(matches) + headings, 14) * line))
         draw_list = ig.GetWindowDrawList()
@@ -138,7 +138,7 @@ function render_list_picker!(picker::ListPicker, items::Vector{ListItem}; sectio
                 draw_colors(draw_list, ig.ImVec2(position.x + width - strip - style.ScrollbarSize, position.y + 2),
                     ig.ImVec2(position.x + width - style.ScrollbarSize, position.y + box - 2), item.colors)
             end
-            # The name, letter by letter, with the letters that match in the color of the checkmark.
+            ## The name, letter by letter, with the letters that match in the color of the checkmark.
             text = item.color === nothing ? ig.GetColorU32(ig.ImGuiCol_Text) : ig.GetColorU32(item.color)
             for (at, letter) in pairs(item.name)
                 color = at in letters ? ig.GetColorU32(ig.ImGuiCol_CheckMark) : text

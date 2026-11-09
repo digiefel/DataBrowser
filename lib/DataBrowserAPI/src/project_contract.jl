@@ -1,10 +1,9 @@
 """
 Supertype of every DataBrowser project.
 
-A project answers the declarations in this file and implements `read` and `process` in
-`pipeline_contract.jl`. It carries no package-owned state: caches, jobs, indexes, and browser state
-belong to the workspace. The registration dialect's recipe-holding project is one implementation
-of this contract, not the contract itself.
+A project defines methods of `read` and `process` for its item types, and may define the
+functions below. The workspace keeps the caches, the jobs and the state of the browser, so a project
+holds only what its own methods need. `DataBrowserRecipes.Project` is one project type.
 """
 abstract type AbstractProject end
 
@@ -14,14 +13,16 @@ project_name(project::AbstractProject)::String = string(nameof(typeof(project)))
 """Return a short human-readable description of a project."""
 project_description(::AbstractProject)::String = ""
 
-"""Return the human-readable label for a project item kind."""
+"""
+The name that the browser shows for the item type whose `label` is `kind`. The default is
+`string(kind)`.
+"""
 kind_label(::AbstractProject, kind::Symbol)::String = string(kind)
 
+# TODO: no package reads `PROJECTS` or `DEFAULT_PROJECT`. Use them for the choice of a project in
+# the browser, or delete them.
 """
-Projects a GUI session can offer when the caller did not supply one, and the preferred default.
-
-Registries of `AbstractProject`, not of any one dialect: the GUI picks between projects without
-knowing how they were defined.
+The projects that the browser can offer when the caller gives none, and the project it offers first.
 """
 const PROJECTS = AbstractProject[]
 const DEFAULT_PROJECT = Ref{Union{AbstractProject,Nothing}}(nothing)

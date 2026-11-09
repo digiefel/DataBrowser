@@ -89,7 +89,7 @@ windows that waited for a visualizer of its package.
 function _add_new_extensions!(state)::Nothing
     new = @lock _GUI_EXTENSION_LOCK filter(T -> !any(ext -> ext isa T, state.extensions), _GUI_EXTENSION_TYPES)
     isempty(new) && return nothing
-    # The latest world: the package that defines the new types may have loaded during this frame.
+    ## The latest world: the package that defines the new types may have loaded during this frame.
     Base.invokelatest() do
         added = GuiExtension[T() for T in new]
         for ext in added
@@ -97,11 +97,11 @@ function _add_new_extensions!(state)::Nothing
             view = get(state.saved_project_view.extensions, extension_id(ext), nothing)
             view === nothing || load_view!(ext, state, view)
         end
-        # A new list, not a longer one: other threads may be reading the list.
+        ## A new list, not a longer one: other threads may be reading the list.
         state.extensions = [state.extensions; added]
         _open_saved_windows!(state, state.saved_project_view.windows)
-        # FIXME: CImGui calls exit handlers in the world the render loop started in. That world lacks
-        # the handlers that packages loaded since then registered, such as those of these extensions.
+        ## FIXME: CImGui calls exit handlers in the world the render loop started in. That world lacks
+        ## the handlers that packages loaded since then registered, such as those of these extensions.
         handlers = ig._exit_handlers
         for (index, handler) in pairs(handlers)
             handler isa LatestCall || (handlers[index] = LatestCall(handler))

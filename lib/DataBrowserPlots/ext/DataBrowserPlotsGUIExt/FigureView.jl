@@ -56,16 +56,16 @@ end
 
 function draw_header!(view::FigureView, ctx)::Nothing
     if theme_button(view)
-        # The theme button looks like the theme in use: dark with a light frame, or light with a dark
-        # frame. After a click its colors blend from one to the other. `blend` is 0 for dark and 1
-        # for light, and ImGui keeps it between frames.
+        ## The theme button looks like the theme in use: dark with a light frame, or light with a dark
+        ## frame. After a click its colors blend from one to the other. `blend` is 0 for dark and 1
+        ## for light, and ImGui keeps it between frames.
         storage, blend_id = ig.GetStateStorage(), ig.GetID("theme_blend")
         blend = ig.GetFloat(storage, blend_id, DARK[] ? 0.0f0 : 1.0f0)
         step = unsafe_load(ig.GetIO().DeltaTime) / THEME_BLEND_SECONDS
         blend = DARK[] ? max(blend - step, 0.0f0) : min(blend + step, 1.0f0)
         ig.SetFloat(storage, blend_id, blend)
         fill = ntuple(i -> Float32((0.1, 0.1, 0.1, 1.0)[i] * (1 - blend) + blend), 4)
-        # The frame and the text switch at the middle of the blend, so they stay readable.
+        ## The frame and the text switch at the middle of the blend, so they stay readable.
         frame = blend < 0.5 ? (0.9f0, 0.9f0, 0.9f0, 1.0f0) : (0.1f0, 0.1f0, 0.1f0, 1.0f0)
         hovered_fill = ntuple(i -> 0.85f0 * fill[i] + 0.15f0 * frame[i], 4)
         ig.PushStyleColor(ig.ImGuiCol_Button, fill)
@@ -102,7 +102,7 @@ function Base.show(io::IO, mime::MIME, view::FigureView; backend=nothing)
     if backend === nothing
         backend = showable(mime, view.figure) ? Makie.current_backend() : Base.require(CAIRO_MAKIE)
     end
-    # CairoMakie may have loaded during this call: its methods are reached through `invokelatest`.
+    ## CairoMakie may have loaded during this call: its methods are reached through `invokelatest`.
     Base.invokelatest(show, io, mime, view.figure; backend)
     return nothing
 end
@@ -115,7 +115,7 @@ function draw!(view::FigureView, ctx)::Nothing
         destroy_figure!(view.figure_id)
         view.figure_id = figure_id
     end
-    # The figure was built before the theme changed.
+    ## The figure was built before the theme changed.
     if theme_button(view) && view.figure !== nothing && view.dark != DARK[]
         ctx.prepare()
         return nothing
@@ -130,7 +130,7 @@ function draw!(view::FigureView, ctx)::Nothing
         end
         return nothing
     end
-    # The i key does what "Inspect" does, with the mouse over the window.
+    ## The i key does what "Inspect" does, with the mouse over the window.
     if ig.IsWindowHovered(ig.ImGuiHoveredFlags_ChildWindows) &&
             ig.IsKeyPressed(ig.ImGuiKey_I, false) && !unsafe_load(ig.GetIO().WantTextInput)
         view.inspect = !view.inspect

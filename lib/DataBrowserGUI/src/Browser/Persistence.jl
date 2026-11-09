@@ -128,15 +128,15 @@ _waiting_windows(state::BrowserState)::Vector{PersistedWindow} =
 
 function _persisted_window(state::BrowserState, window::Window)::PersistedWindow
     (; type, settings, input, transform, arrangement, active_item) = @atomic window.visualizer.definition
-    # A setting is saved as TOML text, number or boolean; a symbol as its text.
+    ## A setting is saved as TOML text, number or boolean; a symbol as its text.
     values = Dict{String,Any}()
     for (name, value) in pairs(settings)
         value isa Symbol && (value = String(value))
         value isa Union{AbstractString,Real} && (values[String(name)] = value)
     end
     ## An input visualizer is saved as the first window that shows it.
-    # TODO: an input visualizer that no window shows, and a function, are saved as the selection.
-    # Save visualizers with the tab file (@layout, 7 Nov).
+    ## TODO: an input visualizer that no window shows, and a function, are saved as the selection.
+    ## Save visualizers with the tab file (@layout, 7 Nov).
     shown = input isa Workspace.Visualizer ? findfirst(other -> other.visualizer === input, state.windows) : nothing
     return PersistedWindow(;
         id=window.id,
@@ -163,17 +163,17 @@ function _visualizer_type(name::AbstractString)::Union{Nothing,Type}
 end
 
 """
-Open the saved windows again, in place of those the browser shows. A window whose visualizer is not
-loaded now is not opened, and stays in the file until its visualizer loads; then
-`_open_saved_windows!` opens it.
+Open the saved windows again, in place of those the browser shows, whose visualizers leave the
+workspace. A window whose visualizer type is not loaded now stays in the file, and
+`_open_saved_windows!` opens it once the type loads.
 """
 function _restore_windows!(state::BrowserState, saved::Vector{PersistedWindow})::Nothing
-    # TODO: when the browser opens again on a workspace, the visualizers of the windows it showed
-    # before stay beside those it opens. Save visualizers with the tab file (@layout, 7 Nov).
+    ## TODO: when the browser opens again on a workspace, the visualizers of the windows it showed
+    ## before stay beside those it opens. Save visualizers with the tab file (@layout, 7 Nov).
     foreach(window -> (close(window.visualizer); _close_window!(state, window)), copy(state.windows))
     _open_saved_windows!(state, saved)
-    # New windows take ids after the saved ones, also those not opened, so ImGui does not give
-    # them a saved place.
+    ## New windows take ids after the saved ones, also those not opened, so ImGui does not give
+    ## them a saved place.
     numbers = [parse(Int, m.captures[1]) for m in
         (match(r"^window_(\d+)$", window.id) for window in saved) if m !== nothing]
     state.next_window[] = maximum(numbers; init=0)
@@ -201,8 +201,8 @@ function _open_saved_windows!(state::BrowserState, saved::Vector{PersistedWindow
             push!(values, name => fieldtype(V, name) === Symbol ? Symbol(value) : value)
         end
         instance = V(; values...)
-        # A dynamic call: packages add `select!` methods for their visualizers when they load, and a
-        # static call would make each of them invalidate the compiled code here.
+        ## A dynamic call: packages add `select!` methods for their visualizers when they load, and a
+        ## static call would make each of them invalidate the compiled code here.
         isempty(window.selection) ||
             Base.invokelatest(select!, instance; (Symbol(name) => value for (name, value) in window.selection)...)
         v = visualize!(state.workspace, instance;
@@ -216,7 +216,7 @@ function _open_saved_windows!(state::BrowserState, saved::Vector{PersistedWindow
         push!(opened, window => w)
     end
     ## A window that took its value from another one takes it again, when that window is open.
-    # TODO: a window that follows one whose visualizer loads later follows the selection.
+    ## TODO: a window that follows one whose visualizer loads later follows the selection.
     windows = [state.windows; last.(opened)]
     for (window, w) in opened
         window.input == "window" || continue
@@ -246,9 +246,9 @@ function _apply_project_view!(
 )::Nothing
     workspace = state.workspace
     state.expanded = Set(view.expanded)
-    # Not `select!`: the saved ids may name items the workspace does not have yet. The browser
-    # restores the selection without revealing it.
-    # TODO: `select!`, once it keeps the ids of items that come later (docs/plans/client-api.md).
+    ## Not `select!`: the saved ids may name items the workspace does not have yet. The browser
+    ## restores the selection without revealing it.
+    ## TODO: `select!`, once it keeps the ids of items that come later (docs/plans/client-api.md).
     state.selection = collect(String, view.selected)
     Workspace.share!(_ -> (; selection=state.selection), workspace)
     state.tree_filter = view.filter
@@ -278,9 +278,9 @@ twice a second at most, and a task writes the file; `every=0` compares it now an
 file, as when the browser closes.
 """
 function _save_project_view_if_changed!(state::BrowserState; every::Real=0.5)::Nothing
-    # A failed initial restore must not overwrite the saved view with startup defaults.
+    ## A failed initial restore must not overwrite the saved view with startup defaults.
     isempty(state.loaded_source_id) && return nothing
-    # Building and serializing the view at every frame allocates in proportion to the selection.
+    ## Building and serializing the view at every frame allocates in proportion to the selection.
     time() - state.project_view_checked < every && return nothing
     ## One write at a time: the frames compare the view again after the running write.
     writing = state.project_view_write

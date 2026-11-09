@@ -5,7 +5,7 @@ A function call before its value is needed: the function `f`, its inputs `args` 
 `settings`, the keyword arguments that are not inputs. Inputs may themselves be computations.
 [`evaluate`](@ref) gives its value: it calls `f` with the values of the inputs and the settings.
 
-`DataBrowserCore` implements evaluation and workspace access.
+`DataBrowserCore` defines the methods of `evaluate`, [`inputs`](@ref) and [`computation`](@ref).
 """
 struct Computation{F,Args<:Tuple,S<:NamedTuple} <: AbstractDataItem
     f::F
@@ -23,16 +23,16 @@ Base.hash(value::Computation, h::UInt) = hash(value.settings, hash(value.args, h
 """
     inputs(computation) -> Vector{Computation}
 
-The preceding computations directly supplying this call, including those in input tuples or
-vectors. Read their own inputs to continue backward through the graph.
+The computations whose values are the inputs of `computation`, also those inside a tuple or a
+vector of inputs. Call `inputs` on each of them to go further back.
 """
 function inputs end
 
 """
     computation(workspace, item)
 
-The computation supplying an item's current value. Reading a computation's definition does not
-load its data or execute its function.
+The computation that gives the current value of `item`, an item or its id. It loads no data and
+calls no function.
 """
 function computation end
 
@@ -40,18 +40,19 @@ function computation end
     evaluate(computation)
     evaluate(workspace, computation)
 
-Obtain a computation's native result. Direct evaluation runs the call and its inputs; workspace
-evaluation can reuse available results. Evaluation does not change the workspace selection.
+The value of `computation`. `evaluate(computation)` calls its function and the functions of its
+inputs. `evaluate(workspace, computation)` reuses the results that the workspace already has, and
+leaves the selection of the workspace as it is.
 """
 function evaluate end
 
 """
     ComputationExecution
 
-Information about one completed function call, including a call that threw an error. `duration`
-is the elapsed time in seconds, including compilation and scheduling waits but excluding input
-evaluation and result storage. `finished_at` is
-its local completion date and time; `succeeded` says whether the function returned normally.
+Information about one finished function call, also a call that threw an error. `duration` is the
+time in seconds from the start of the call to its end, including compilation; the evaluation of the
+inputs and the saving of the result are not part of it. `finished_at` is the local date and time at
+which the call ended, and `succeeded` says whether the function returned.
 """
 struct ComputationExecution
     duration::Float64

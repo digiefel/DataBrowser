@@ -66,12 +66,12 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
     if found !== nothing
         edit!(code, call.entries[found].value, text)
     elseif call !== nothing && target[1] in (:theme, :visual) && name isa Int
-        # The theme of `theme(...)` goes first.
+        ## The theme of `theme(...)` goes first.
         opening = findnext('(', code.text, first(call.range))
         next = findnext(!isspace, code.text, opening + 1)
         edit!(code, opening+1:opening, code.text[next] in (';', ')') ? text : "$text, ")
     elseif call !== nothing && isempty(call.entries) && code.text[first(call.range)] == '('
-        # An empty named tuple, `(;)`.
+        ## An empty named tuple, `(;)`.
         edit!(code, call.range, "(; $(entry_name(name))=$text)")
     elseif call !== nothing && isempty(call.entries)
         opening = findnext('(', code.text, first(call.range))
@@ -79,9 +79,9 @@ function write_entry!(code::CodeFile, plot::PlotCode, target, name, text::String
         separator = occursin(';', code.text[opening+1:stop]) ? " " : "; "
         edit!(code, stop+1:stop, "$separator$(entry_name(name))=$text")
     elseif call !== nothing
-        # After the last value, so that a call over several lines, or with a comma after its last
-        # value, stays as it is written.
-        # A value written with its name, including a position such as `x = :gap`.
+        ## After the last value, so that a call over several lines, or with a comma after its last
+        ## value, stays as it is written.
+        ## A value written with its name, including a position such as `x = :gap`.
         named = any(entry -> entry.range != entry.value, call.entries)
         after = isempty(call.entries) ? last(call.range) - 1 : maximum(last(entry.range) for entry in call.entries)
         edit!(code, after+1:after, "$(named ? ", " : "; ")$(entry_name(name))=$text")

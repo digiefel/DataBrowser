@@ -35,7 +35,7 @@ share them. Ids that the workspace has no value for are left out.
 calls(workspace::Workspace, ids::AbstractVector{<:AbstractString})::Vector{Call} =
     calls(workspace, Computation[computation(workspace, x) for x in ids if haskey(workspace, x)])
 
-"""The calls producing a selection, including unindexed computation results."""
+"""The calls that made the values of `selection`, and the results of its computations."""
 calls(workspace::Workspace, selection::Selection) =
     calls(workspace, Computation[computation(selection, i) for i in eachindex(selection)])
 
@@ -44,7 +44,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
     ## The rows of the computations, their depths, errors and members, as the latest version of the
     ## table `items` shows them.
     version = @atomic workspace.items.version
-    # The calls made so far, by their code and inputs; the same code on the same inputs is one call.
+    ## The calls made so far, by their code and inputs; the same code on the same inputs is one call.
     known = Dict{Tuple{String,Any,Vector{UInt}},Call}()
     visited = IdDict{Computation,Vector{Call}}()
     function calls_of(value::Computation)::Vector{Call}
@@ -67,7 +67,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
             if version.rows.computation[member] !== nothing]
         preceding = unique!(reduce(vcat, map(calls_of, [inputs(value); members]); init=Call[]))
         signature = version.rows.signature[row]
-        # The call of `value`, with the calls it reads, kept with each call of the same code on the same inputs.
+        ## The call of `value`, with the calls it reads, kept with each call of the same code on the same inputs.
         function call!(title, code, result)::Call
             entry = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding), known, (title, code, map(objectid, preceding)))
             entry.items[first(ran_for)] = last(ran_for)

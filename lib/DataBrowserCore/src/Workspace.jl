@@ -105,8 +105,8 @@ Loaded cache state for one workspace.
 mutable struct WorkspaceCache
     identity::ProjectCacheIdentity
     db::CacheDB
-    # The error that keeps the cache file, or a store file, from use, such as an old layout: the
-    # browser then offers a rebuild. A store sets it when it first opens, from any thread.
+    ## The error that keeps the cache file, or a store file, from use, such as an old layout: the
+    ## browser then offers a rebuild. A store sets it when it first opens, from any thread.
     @atomic disk_error::Union{Nothing,Exception}
     operation::Symbol
 end
@@ -396,84 +396,84 @@ written under `catalog.lock`.
 mutable struct Workspace
     project::AbstractProject
     source::AbstractDataSource
-    # The folder of the Julia environment that was active when the workspace opened; it holds
-    # `tags.txt` and the browser's `databrowser.toml`.
+    ## The folder of the Julia environment that was active when the workspace opened; it holds
+    ## `tags.txt` and the browser's `databrowser.toml`.
     folder::String
     catalog::Catalog
-    # The row that reads each source item, by its id, and the rows of the calls of `process`, by
-    # their keys, such as "process:x@3" for the `process` of the version of x that row 3 gives (see
-    # `calls!`).
+    ## The row that reads each source item, by its id, and the rows of the calls of `process`, by
+    ## their keys, such as "process:x@3" for the `process` of the version of x that row 3 gives (see
+    ## `calls!`), with the row of the source group under "source group".
     sources::Dict{String,Row}
     rows::Dict{String,Row}
-    # The rows that give a version of each value, by its id, in the order of their depth: the last
-    # one gives its latest version. A row that did not run yet counts for the value it is expected
-    # to give.
+    ## The rows that give a version of each value, by its id, in the order of their depth: the last
+    ## one gives its latest version. A row that did not run yet counts for the value it is expected
+    ## to give.
     versions::Dict{String,Vector{Row}}
-    # The ids of the members of each group, of the groups of each value, and of the groups whose
-    # members name each id, which can be a source item.
+    ## The ids of the members of each group, of the groups of each value, and of the groups whose
+    ## members name each id, which can be a source item.
     members::Dict{String,Vector{String}}
     groups::Dict{String,Vector{String}}
     parents::Dict{String,Vector{String}}
-    # The member values that each row of a group process takes, and the rows that
-    # take each value, by its id (see `input!`).
+    ## The member values that each row of a group process takes, and the rows that
+    ## take each value, by its id (see `input!`).
     taken::Dict{Row,Taken}
     takers::Dict{String,Vector{Row}}
-    # What the methods of the project answered about the types of the values, until the next code
-    # change (see `asked`).
+    ## What the methods of the project answered about the types of the values, until the next code
+    ## change (see `asked`).
     methods::Dict{Tuple,Any}
-    # The code each row ran with, as signatures: the signature of its call first, then those of the
-    # code that describes its items (see `revision`). Also, the code of each signature. When the
-    # revision of a signature's code changes, the rows of that signature are stale.
+    ## The code each row ran with, as signatures: the signature of its call first, then those of the
+    ## code that describes its items (see `revision`). Also, the code of each signature. When the
+    ## revision of a signature's code changes, the rows of that signature are stale.
     signatures::Dict{Row,Vector{Type}}
     code::Dict{Type,Code}
-    # The subject and the message of each failed row; see `subject`. Each version of the table
-    # `items` keeps the errors of its time.
+    ## The subject and the message of each failed row; see `subject`. Each version of the table
+    ## `items` keeps the errors of its time.
     errors::Base.PersistentDict{Row,Pair{String,String}}
-    # One lock per row whose result is computed again outside its job.
+    ## One lock per row whose result is computed again outside its job.
     row_locks::Dict{Row,ReentrantLock}
-    # TODO: rows that `evaluate` added stay until the workspace closes; release those nothing uses.
+    ## TODO: rows that `evaluate` added stay until the workspace closes; release those nothing uses.
     evaluated::Set{Row}
     workers::Vector{Task}
-    # Jobs that run now, and jobs that ended since the workspace opened; and as `work_counts` gives
-    # them, written at the start and the end of each job.
+    ## Jobs that run now, and jobs that ended since the workspace opened; and as `work_counts` gives
+    ## them, written at the start and the end of each job.
     running::Int
     completed::Int
     @atomic work::NTuple{3,Int}
-    # The store that the project chooses for each result type, or a `MemoryStore` when `storage`
-    # throws.
+    ## The store that the project chooses for each result type, or a `MemoryStore` when `storage`
+    ## throws.
     stores::Dict{Type,Union{Nothing,AbstractStore}}
     stores_lock::ReentrantLock
     items::Items
-    # The shared state, and the lock that its writers take, and the writers of the definitions of
-    # its visualizers; see `share!` and `define!`.
+    ## The shared state, and the lock that its writers take, and the writers of the definitions of
+    ## its visualizers; see `share!` and `define!`.
     @atomic shared::Shared
     shared_lock::ReentrantLock
     cache::WorkspaceCache
     scan::WorkspaceScan
-    # The cache is the persistence side of the scan, not a separately cancellable job, so it needs
-    # only a visible state and last error.
+    ## The cache is the persistence side of the scan, not a separately cancellable job, so it needs
+    ## only a visible state and last error.
     cache_state::Symbol
     cache_error::String
-    # Last recoverable failure reported by the source watcher; cleared by the next good update.
+    ## Last recoverable failure reported by the source watcher; cleared by the next good update.
     source_error::String
     background_processing::Bool
-    # Requested disk cache. Kept even when a schema error falls back to a memory cache, so a
-    # rebuild can open a real disk cache again.
+    ## Requested disk cache. Kept even when a schema error falls back to a memory cache, so a
+    ## rebuild can open a real disk cache again.
     disk_cache::Bool
-    # The tasks that `stop!` waits for; see `track_task!`.
+    ## The tasks that `stop!` waits for; see `track_task!`.
     background_tasks::Base.Lockable{Vector{Task},ReentrantLock}
     metrics::BuildMetrics
-    # Held for the whole of `modify_workspace!` and `close_workspace!`, so that one waits for the
-    # other.
+    ## Held for the whole of `modify_workspace!` and `close_workspace!`, so that one waits for the
+    ## other.
     lifecycle_lock::ReentrantLock
-    # A browser pauses automatic code updates while its main window is inactive.
-    # Without a browser, the workspace checks code independently of window focus.
+    ## A browser pauses automatic code updates while its main window is inactive.
+    ## Without a browser, the workspace checks code independently of window focus.
     @atomic code_updates_active::Bool
-    # Increased on every change: each publish of the table `items` or of the shared state takes
-    # the next number as its generation.
+    ## Increased on every change: each publish of the table `items` or of the shared state takes
+    ## the next number as its generation.
     generation::Base.Threads.Atomic{Int}
-    # The last computed status with the generation it reflects, replaced as one value so that
-    # concurrent callers of `workspace_status` never pair a status with the wrong generation.
+    ## The last computed status with the generation it reflects, replaced as one value so that
+    ## concurrent callers of `workspace_status` never pair a status with the wrong generation.
     @atomic status::Pair{Int,WorkspaceStatus}
     cancel_source::CancellationTokenSource
     closed::Bool
@@ -529,7 +529,7 @@ function Workspace(
     cache_db, disk_error, identity =
         _open_workspace_cache(project, source, metrics; rebuild, cache)
     folder = dirname(Base.active_project())
-    # The cache keeps the key of each computation, by its id, for the next session.
+    ## The cache keeps the key of each computation, by its id, for the next session.
     catalog = Catalog(value -> key!(cache_db, id(value)))
     return Workspace(
         project, source, folder, catalog,
@@ -543,7 +543,7 @@ function Workspace(
         Task[], 0, 0, (0, 0, 0),
         Dict{Type,Union{Nothing,AbstractStore}}(), ReentrantLock(),
         Items(catalog),
-        # The items sort by their labels until a call to `sort!`.
+        ## The items sort by their labels until a call to `sort!`.
         (; selection=String[], tags(project, folder)..., order=let labels = SortKeys([:label => false])
             (by=labels, order=Base.Order.ord(labels, Base.identity, false))
         end, visualizers=Any[], generation=0),

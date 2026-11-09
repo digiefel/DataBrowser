@@ -62,8 +62,8 @@ changes nothing, `(0.25, 0.75)` shows the middle half. Fractions are taken on th
 so a logarithmic axis zooms evenly.
 """
 function reframe!(windows::Function, axes::Vector{Makie.Axis}, zoomed_axes::Vector{Makie.Axis})::Nothing
-    # Every new limit is computed before any is set: setting the limits of an axis also moves
-    # the axes linked to it.
+    ## Every new limit is computed before any is set: setting the limits of an axis also moves
+    ## the axes linked to it.
     framed = map(axes) do axis
         limits = axis.targetlimits[]
         scales = (axis.xscale[], axis.yscale[])
@@ -104,7 +104,7 @@ function axis_gestures!(
         haskey(Makie.interactions(axis), name) && Makie.deregister_interaction!(axis, name)
     end
     io = ig.GetIO()
-    # Holding x or y limits a gesture in the plot area to that direction.
+    ## Holding x or y limits a gesture in the plot area to that direction.
     held = Int[dim for (dim, key) in ((1, ig.ImGuiKey_X), (2, ig.ImGuiKey_Y)) if ig.IsKeyDown(key)]
     free = isempty(held) ? [1, 2] : held
 
@@ -121,7 +121,7 @@ function axis_gestures!(
             else
                 area = first(gesture.axes).scene.viewport[]
                 low, high = area.origin, area.origin .+ area.widths
-                # A rectangle limited to one direction spans the plot area in the other.
+                ## A rectangle limited to one direction spans the plot area in the other.
                 from = ntuple(dim -> dim in free ? gesture.start[dim] : low[dim], 2)
                 to = ntuple(dim -> dim in free ? clamp(position[dim], low[dim], high[dim]) : high[dim], 2)
                 ig.AddRectFilled(ig.GetWindowDrawList(), to_screen(from), to_screen(to),
@@ -132,7 +132,7 @@ function axis_gestures!(
         end
         if gesture.kind == :rectangle
             drawn = [dim for dim in free if abs(gesture.last[dim] - gesture.start[dim]) >= MIN_RECTANGLE]
-            # Every direction that is not held to its full span must be drawn.
+            ## Every direction that is not held to its full span must be drawn.
             if drawn == free
                 reframe!(gesture.axes, zoomed_axes) do axis
                     ntuple(2) do dim
@@ -147,8 +147,8 @@ function axis_gestures!(
     end
     hovered || return nothing
 
-    # Inside the plot area a gesture acts on every axis there. On the ticks and label of one axis
-    # it acts on that axis, in that direction.
+    ## Inside the plot area a gesture acts on every axis there. On the ticks and label of one axis
+    ## it acts on that axis, in that direction.
     targets = Makie.Axis[axis for axis in axes if inside(position, axis.scene.viewport[])]
     dims = free
     if isempty(targets)
@@ -164,7 +164,7 @@ function axis_gestures!(
             ntuple(dim -> dim in dims ? zoomed(fraction(axis, dim, position), share) : (0.0, 1.0), 2)
         end
     end
-    # macOS reports a left click with Ctrl held as a right click.
+    ## macOS reports a left click with Ctrl held as a right click.
     control_click = (ig.IsMouseClicked(0) && unsafe_load(io.KeyCtrl)) ||
         (ig.IsMouseClicked(1) && unsafe_load(io.MouseCtrlLeftAsRightClick))
     if control_click

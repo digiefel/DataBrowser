@@ -23,38 +23,41 @@
 # length, and each call runs as soon as its inputs have results. A call that gives a value `isequal`
 # to the version that it took gives no new version: the chain of that id ends there. This also ends
 # a `process` method that returns the type that it takes, once its result stops changing. After
-# `MAX_VERSIONS` versions of one id, the next call fails instead.
+# `MAX_VERSIONS` calls in a chain from its source item, the next call fails instead.
 #
 # A call takes the version that it is for, and its other inputs at their latest version that does
 # not come from the call itself: the group of a member `process`, and the members of a group
 # `process`. So when a member `process` gives a later version of a member, the group keeps the
 # version that it took, and the group process of the next version of the group takes the new one.
 #
-# The source group gives the [`SourceGroup`](@ref) of the source, whose members are all its source
-# items. A row fails when it gives one id twice. It also fails when it gives an id that another row
+# Besides the reads of the source items, the workspace adds one more row, the *source group*,
+# which makes the [`SourceGroup`](@ref) of the whole source: its members are all the source items.
+#
+# A row fails when it gives one id twice. It also fails when it gives an id that another row
 # gives, and neither of the two takes a version of it: when two files hold an item with the same id, the read that
 # finishes second fails. Like any failure, a failed row gives no values, and the status panel of the
 # browser shows the error next to it. The cache saves the failure of a row that gives one id twice,
 # which depends on that row alone. When another row gives the id, the next session runs the row
 # again, and the row succeeds once the other row is gone.
 #
-# A group is a value with members: [`members`](@ref) gives their ids. An id names a value, or a
-# source item, which stands for the values that it gives: a group that a folder gives can name the
+# A group is a value with members: [`members`](@ref) gives their ids. Each of these ids names a
+# value, or a source item, which stands for the values that it gives: a group that a folder gives can name the
 # files of the folder, and holds the items read from them. A group process takes the values of its
 # members of the type `T` that its method takes: for each member, its latest version of type `T`, in
 # the order of the members. A member that is a group with no value of type `T` gives the values of
 # type `T` of its own members instead, and so on below them. The workspace reads `T` from the
 # signature of the method, and asks again when the code changes.
-
+#
 # The row of a group process reads the rows of the versions that it takes, so it runs after all of
 # them, and again when one of them gives a later version. It also takes a later version that did not
 # run yet but will: one that is wanted or requested, and does not read a failed row. A `process` that
 # nothing wants does not run for its group: the group takes the version before it, and runs again
-# when a window or a script asks for that `process`. A member whose row fails is left out until it
-# runs again. When a member gets a later version, the workspace changes what the group takes for
+# when a window or a script asks for that `process`. When the latest version of a member fails,
+# the group takes the version before it; a member whose read fails is left out until the read runs
+# again. When a member gets a later version, the workspace changes what the group takes for
 # that member alone, and the revision of the group follows from a sum over its members, so that the
 # change takes the same time whatever the number of members.
-
+#
 # Windows come first: the rows of the values that a window shows run before all others (see
 # "Workers" in [`Evaluate.jl`](Evaluate.md)). Reads always run in the background. The rows of
 # `process` run in the background only with the option `background_processing` of `open_workspace`,
@@ -167,7 +170,7 @@ and the source items that are new or changed (the field `upserts`). The source g
 function apply!(workspace::Workspace, changes::SourceChanges)::Nothing
     foreach(source -> remove_source_item!(workspace, source), changes.removals)
     foreach(source_item -> source!(workspace, source_item), changes.upserts)
-    # TODO: this takes the time of the number of source items, for each batch of changes.
+    ## TODO: this takes the time of the number of source items, for each batch of changes.
     row = get(workspace.rows, "source group", nothing)
     row === nothing ||
         source_group!(workspace, union(setdiff(workspace.catalog[row].args[3], changes.removals), String[id(x) for x in changes.upserts]))
@@ -551,7 +554,7 @@ end
 """
     input!(workspace, row, id, change=0)
 
-Follow the value `id` among the values that the row of a group takes, after its versions changed,
+Follow the value `id` among the values that the row of a group process takes, after its versions changed,
 or after one more (`change` 1) or one fewer (`change` -1) of the ids above it lead to it. The row
 takes the latest version of the type `T` of its argument `MemberValues{T}` that does not come from
 its own result (see [`latest`](@ref)), or a later version that did not run yet but will: it is

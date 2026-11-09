@@ -10,8 +10,8 @@ nothing. Loading this package turns them on: each marked section then adds its t
     finish_debug_timings!()    # stop timing, and return the timings so far
     reset_debug_timings!()     # discard the timings, and time again
 
-Each function returns a `TimerOutput`, so the functions of TimerOutputs show, flatten and merge
-it. A section counts once its outermost marked section on the same task has ended.
+The first three functions return a `TimerOutput`, so the functions of TimerOutputs show, flatten
+and merge it. A section counts once its outermost marked section on the same task has ended.
 """
 module DataBrowserProfiling
 
@@ -77,8 +77,8 @@ end
 """
     take_debug_timings!() -> TimerOutput
 
-The timings so far. The timings start again from zero. A section belongs to the call after it
-ends.
+The timings so far. The timings start again from zero. A section that has not ended belongs to the
+first call after it ends.
 """
 function take_debug_timings!()
     lock(MASTER_LOCK) do

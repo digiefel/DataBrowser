@@ -65,7 +65,7 @@ function _finish_preparation!(window::Window)::Bool
     istaskdone(job.task) || return false
     result = fetch(job.task)
     window.preparation = nothing
-    # A dynamic call, as in `_close_visualizers!`.
+    ## A dynamic call, as in `_close_visualizers!`.
     for visualizer in result.retired::Vector{AbstractVisualizer}
         Base.invokelatest(close, visualizer)
     end
@@ -96,13 +96,13 @@ function _prepare_presentations_value!(window::Window, ctx::WindowContext, retir
         return nothing
     end
     if window.arrangement == "auto"
-        # Do not settle the default before the input has any items.
+        ## Do not settle the default before the input has any items.
         if isempty(given)
             _retire_cells!(window, retired)
             return nothing
         end
-        # A visualizer that takes the data of one item shows each item in a cell of a stack. One
-        # that takes only a whole selection, such as the table, shows all items together.
+        ## A visualizer that takes the data of one item shows each item in a cell of a stack. One
+        ## that takes only a whole selection, such as the table, shows all items together.
         native = applicable(prepare!, visualizer, first(given.data), ctx)
         window.arrangement = !native && _can_overlay(window, ctx) ? "overlay" : "stack"
     end
@@ -116,7 +116,7 @@ function _prepare_presentations_value!(window::Window, ctx::WindowContext, retir
     window.active_item in ids || (window.active_item = isempty(ids) ? "" : first(ids))
     indices = window.arrangement == "stack" ? findall(==(window.active_item), ids) : collect(eachindex(ids))
     existing = Dict(cell.id => cell for cell in window.cells)
-    # Stack reuses one instance. Grid reuses it for the first item and has one instance per other item.
+    ## Stack reuses one instance. Grid reuses it for the first item and has one instance per other item.
     next = VisualizerCell[]
     for (position, i) in enumerate(indices)
         v = position == 1 ? visualizer : haskey(existing, ids[i]) &&
@@ -133,7 +133,7 @@ function _prepare_presentations_value!(window::Window, ctx::WindowContext, retir
     end
     window.cells = next
     _sync_cell_settings!(window)
-    # Grid reads the payloads together; Stack loads only its active item.
+    ## Grid reads the payloads together; Stack loads only its active item.
     data = window.arrangement == "grid" ? collect(given.data) : nothing
     for (cell, i) in zip(window.cells, indices)
         cell.label = String(given.label[i])
@@ -141,8 +141,8 @@ function _prepare_presentations_value!(window::Window, ctx::WindowContext, retir
         try
             child_ctx = _cell_context(ctx, cell)
             value = data === nothing ? given.data[i] : data[i]
-            # A visualizer that takes only a selection gets a selection of this one item, with its
-            # metadata.
+            ## A visualizer that takes only a selection gets a selection of this one item, with its
+            ## metadata.
             applicable(prepare!, cell.visualizer, value, child_ctx) || (value = given[[i]])
             prepare!(cell.visualizer, value, child_ctx)
             cell.error = cell.draw_error = ""

@@ -28,8 +28,8 @@ empty `to`, every time from the start of 5 November 2026 passes. When a bound is
 struct Between{T} <: MetadataFilter
     from::String
     to::String
-    # The bounds as values of type `T`, `nothing` when empty, and whether each bound that is not
-    # empty is a value of type `T`.
+    ## The bounds as values of type `T`, `nothing` when empty, and whether each bound that is not
+    ## empty is a value of type `T`.
     low::Union{Nothing,T}
     high::Union{Nothing,T}
     readable::Bool

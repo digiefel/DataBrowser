@@ -15,9 +15,10 @@ using NonlinearSolve: LevenbergMarquardt, NonlinearLeastSquaresProblem, SciMLBas
 """
     least_squares(curve, x, y, starts; scale=identity) -> (estimates, errors)
 
-The least-squares estimates of the parameters named in `starts`, the keywords of `curve`, and one
-standard error for each, from the covariance scaled by the residuals. The residuals are measured
-after `scale`, the function of the y axis, such as `log10`.
+Fit `curve`, a function of x with its parameters as keywords, to the points `x`, `y`. `starts`
+gives a starting value for each parameter. Returns the least-squares estimate of each parameter,
+in the order of `starts`, and one standard error for each, from the covariance scaled by the
+residuals. The residuals are measured after `scale`, the function of the y axis, such as `log10`.
 """
 function least_squares(curve, x::Vector{Float64}, y::Vector{Float64}, starts::NamedTuple; scale=identity)
     names = keys(starts)

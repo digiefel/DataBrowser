@@ -17,7 +17,7 @@ Base.@kwdef mutable struct CodeFile
     path::String = ""
     text::String = ""
     saved::String = ""
-    # The modification time of the file when it was last read or written; 0 without a file.
+    ## The modification time of the file when it was last read or written; 0 without a file.
     mtime::Float64 = 0.0
 end
 CodeFile(path::String) = CodeFile(; path)

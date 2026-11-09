@@ -13,7 +13,7 @@ function error_summary(error, backtrace)
     end
 end
 
-"""Log a concise error and return its summary and full details for a view to retain."""
+"""Log a short form of the error, and return it with the full error, for a window to keep."""
 function report_error(context, error, backtrace; details="")
     summary = context * "\n" * error_summary(error, backtrace)
     full = context * "\n" * sprint(showerror, error, backtrace) *
@@ -23,6 +23,6 @@ function report_error(context, error, backtrace; details="")
     return summary, full
 end
 
-"""Describe the source by its type and display label without exposing its internal state."""
+"""Describe the source by its type and its label, as in `DirectorySource("data")`."""
 source_description(source::AbstractDataSource) =
     "$(nameof(typeof(source)))($(repr(label(source))))"

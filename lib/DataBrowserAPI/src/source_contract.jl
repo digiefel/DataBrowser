@@ -1,9 +1,16 @@
 using CancellationTokens: CancellationToken
 
-"""A data origin with lifecycle and discovery of source items."""
+"""
+Supertype for sources: the origins of the source items of a workspace, such as a folder of
+measurement files. A source lists its source items with [`items`](@ref), and can report changes
+with [`watch_source`](@ref).
+"""
 abstract type AbstractDataSource end
 
-"""One addressable unit discovered inside a data source."""
+"""
+Supertype for source items: what a source lists, such as one file of a folder. The workspace makes
+values from a source item with `read`.
+"""
 abstract type AbstractDataSourceItem end
 
 """
@@ -23,12 +30,15 @@ function metadata end
 metadata(::AbstractDataSourceItem)::Dict = Dict()
 
 """
-One source-owned change batch.
+    SourceChanges(upserts, removals; metadata_changed=false)
 
-Sources report physical source-item replacements/removals and source-provided metadata changes
-through the same update contract. An empty item batch with `metadata_changed=true` updates
-existing logical items without reading their source items again.
+One batch of changes that a source reports to `on_change` of [`watch_source`](@ref): `upserts`
+holds the source items that are new or changed, and `removals` the ids of the source items that are
+gone. The workspace reads each source item of `upserts` again and removes the values of each source
+item of `removals`.
 """
+# TODO: the workspace ignores `metadata_changed`, meant to say that the metadata of source items
+# changed without the source items themselves. Implement it, or delete the field.
 struct SourceChanges{S<:AbstractDataSourceItem}
     upserts::Vector{S}
     removals::Vector{String}
@@ -42,34 +52,38 @@ SourceChanges(
 ) where {S<:AbstractDataSourceItem} = SourceChanges(upserts, removals, metadata_changed)
 
 """
-One recoverable source failure reported through the watch contract.
+    SourceError(message)
 
-Failures are expected states, not watcher deaths: a source that cannot currently produce a
-consistent update (e.g. a malformed live metadata file) reports the reason as a value and keeps
-watching; a later successful update clears it.
+A failure that a source reports to `on_change` of [`watch_source`](@ref) when it cannot give a
+batch of changes, such as a metadata file that it cannot parse. The source keeps watching and
+reports later changes as usual.
 """
 struct SourceError
     message::String
 end
 
-"""Prepare a source for use. Simple immutable sources return themselves."""
+"""
+Prepare a source for use, when the workspace opens. The default returns `source` itself.
+"""
 open_source(source::AbstractDataSource)::AbstractDataSource = source
 
-"""Release resources owned by a source."""
+"""
+Release the resources of a source, such as open files, when the workspace closes. The default does
+nothing.
+"""
 close_source!(::AbstractDataSource)::Nothing = nothing
 
 """
     items(source; cancel_token, on_progress, on_item) -> Vector{<:AbstractDataSourceItem}
 
-Return the current source items discovered by a source, also the source items with
-[`members`](@ref).
+Return the source items of `source` now, including the source items with [`members`](@ref).
 
-The engine always passes the three keywords, so every method must accept them — a source that
-discovers everything at once absorbs them with `; kwargs...` and ignores them. A source slow enough
-to be worth streaming calls `on_item` per item as it finds them (the engine then queues each one
-immediately rather than waiting for the return), reports counts through `on_progress`, and honors
-`cancel_token`. The returned vector is queued only when `on_item` was never called, so a streaming
-source may return its items as well without them being processed twice.
+The workspace always passes the three keywords, so every method accepts them; a source that lists
+everything at once can take them with `; kwargs...` and ignore them. A slow source can instead call
+`on_item` with each source item as it finds it, so that the workspace starts on it at once. Such a
+source also reports counts through `on_progress`, and stops when `cancel_token` is cancelled. The
+workspace uses the returned vector only when `on_item` was never called, so a source that calls
+`on_item` may also return its source items.
 """
 function items end
 
@@ -85,29 +99,38 @@ workspace reads it again.
 members(::AbstractDataSource, ::AbstractDataSourceItem)::Vector{AbstractDataSourceItem} = AbstractDataSourceItem[]
 
 """
-Watch a source and call `on_change` with each `SourceChanges` batch or recoverable `SourceError`.
-`nothing` means the source is static.
+    watch_source(source, on_change; cancel_token)
+
+Watch `source` and call `on_change` with each [`SourceChanges`](@ref) or [`SourceError`](@ref),
+until `cancel_token` is cancelled. The default returns `nothing`, for a source that never changes.
 """
 watch_source(::AbstractDataSource, ::Function; cancel_token::CancellationToken) = nothing
 
 """
     id(value)::String
 
-Stable identity supplied by `value`, used exactly as returned. Sources, source items and data items
-all implement it; none has a default, and none has its answer wrapped or namespaced. An id has to stay stable across scans and reopenings, and two values answering the same
-id collide. The id of a source says which cache belongs to it.
+The id of `value`, used exactly as returned. Sources, source items and data items each define `id`:
+there is no default. An id stays the same when the workspace lists the source again or opens again.
+The cache of a workspace saves the id of its source, and opens only for a source with that id.
 """
 function id end
 
 """
     label(value) -> String
 
-Human-readable label supplied by `value`. Sources and source items must implement this; data items
-have a default (see the item contract).
+Human-readable label of `value`. Sources and source items define `label`; data items have a
+default, their `id`.
 """
 function label end
 
-"""Optional invalidation token for source items and data items."""
+"""
+    fingerprint(item)
+
+A value that changes when the content of the source item `item` changes, such as the size and the
+modification time of a file. When the fingerprint changes, the workspace reads the source item
+again. The default, `nothing`, makes the workspace read the source item each time it lists the
+source, and never reuse a saved result of that `read`.
+"""
 function fingerprint end
 
 fingerprint(::AbstractDataSourceItem) = nothing

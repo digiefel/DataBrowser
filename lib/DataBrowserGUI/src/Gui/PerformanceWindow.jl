@@ -106,7 +106,7 @@ function _render_timings_tab(state::BrowserState)::Nothing
     if isempty(MAIN_TIMER.inner_timers)
         ig.TextDisabled("No sections recorded yet.")
     else
-        # Reuse TimerOutputs' own tree rendering.
+        ## Reuse TimerOutputs' own tree rendering.
         with_font(:code) do
             ig.TextUnformatted(rstrip(_timer_text(:ascii)))
         end

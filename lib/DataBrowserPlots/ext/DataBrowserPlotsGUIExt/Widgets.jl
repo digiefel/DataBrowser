@@ -98,7 +98,7 @@ function widget_of(view::BuilderView, (kind, index), name)::Union{Nothing,Widget
     kind === :scale || return get(WIDGETS, (kind, name), nothing)
     scales = view.plot.scales === nothing ? EntryCode[] : view.plot.scales.entries
     index in eachindex(scales) && scales[index].name isa Symbol || return nothing
-    # Every scale of a mapping has a label, and those of categories their order.
+    ## Every scale of a mapping has a label, and those of categories their order.
     name === :label && return Words()
     name === :categories && return Categories()
     role = scales[index].name
@@ -132,7 +132,7 @@ function widget_parts(::Bounds, value::String)::Union{Nothing,Vector{String}}
     isempty(strip(value)) && return ["", ""]
     bounds = code_parts(value, '(', ')')
     (bounds === nothing || length(bounds) != 2) && return nothing
-    # A bound written as code, such as `extrema(x)`, leaves the pair to the code.
+    ## A bound written as code, such as `extrema(x)`, leaves the pair to the code.
     number(b) = b == "nothing" || tryparse(Float64, b) !== nothing
     return all(number, bounds) ? [b == "nothing" ? "" : b for b in bounds] : nothing
 end
@@ -172,7 +172,7 @@ function part_field!(view::BuilderView, key::String, shown::String, width::Float
     text = unsafe_string(pointer(buffer))
     code || return text
     text = String(strip(text))
-    # Text that Julia cannot read leaves the code as it is.
+    ## Text that Julia cannot read leaves the code as it is.
     Meta.isexpr(Meta.parse(text; raise=false), (:error, :incomplete)) && return nothing
     return text
 end
@@ -189,7 +189,7 @@ function draw_widget!(view::BuilderView, ::Words, target, name, (text,), focus::
     key = "$target/$name"
     edit = view.editing
     if edit !== nothing && edit.target == target && edit.name == name
-        # The text being typed starts as the code's.
+        ## The text being typed starts as the code's.
         focus && (view.fields[key] = [codeunits(text); zeros(UInt8, max(1024, 2sizeof(text)))])
         typed = draw_field!(view, view.fields[key]; plain=true)
         return typed === nothing ? nothing : repr(typed)
@@ -261,17 +261,17 @@ end
 # `nothing`, Makie's own.
 function draw_widget!(view::BuilderView, widget::Bounds, target, name, (low, high), focus::Bool)::Union{Nothing,String}
     key = "$target/$name"
-    # A bound set while the code has none yet, as the first of a pair that is not optional, stays.
+    ## A bound set while the code has none yet, as the first of a pair that is not optional, stays.
     kept(part, value) = !widget.optional && isempty(value) && haskey(view.fields, "$key/$part") ?
         unsafe_string(pointer(view.fields["$key/$part"])) : value
     low, high = kept("low", low), kept("high", high)
     parsed = (tryparse(Float32, low), tryparse(Float32, high))
-    # The drag speed follows the size of the values, as a bound can be 10⁻¹² or 10⁶.
+    ## The drag speed follows the size of the values, as a bound can be 10⁻¹² or 10⁶.
     size = max(abs(something(parsed[1], 0.0f0)), abs(something(parsed[2], 0.0f0)))
     speed = 0.005f0 * (iszero(size) ? 1.0f0 : size)
     spacing = unsafe_load(ig.GetStyle()).ItemInnerSpacing.x
     each = (ig.GetContentRegionAvail().x - spacing) / 2
-    # A setting just added starts with its lowest bound typed.
+    ## A setting just added starts with its lowest bound typed.
     focus && (view.typing = ("$key/low", true))
     written = nothing
     for (i, part) in enumerate(("low", "high"))
@@ -287,11 +287,11 @@ function draw_widget!(view::BuilderView, widget::Bounds, target, name, (low, hig
             typed === nothing || (written = i == 1 ? (typed, high) : (low, typed))
             continue
         end
-        # The value shown is the code's, except while the user drags it.
+        ## The value shown is the code's, except while the user drags it.
         ig.GetActiveID() == ig.GetID("##$key/$part") || (view.bounds["$key/$part"] = something(parsed[i], NaN32))
         ref = Ref(view.bounds["$key/$part"])
         format = parsed[i] === nothing && ig.GetActiveID() != ig.GetID("##$key/$part") ? hint : "%g"
-        # Neither bound passes the other.
+        ## Neither bound passes the other.
         lowest, highest = i == 1 ? (-Inf32, something(other, Inf32)) : (something(other, -Inf32), Inf32)
         ig.SetNextItemWidth(each)
         with_font(() -> ig.DragFloat("##$key/$part", ref, speed, lowest, highest, format,
@@ -322,11 +322,11 @@ function draw_widget!(view::BuilderView, widget::Ticks, target, name, (kind, cou
     key = "$target/$name"
     written(kind, text) = kind == "values" ? "[$text]" : kind == "LogTicks" ? "LogTicks(LinearTicks($text))" : "$kind($text)"
     code = nothing
-    # The menu is as wide as the kind's name, and the field takes the rest of the row.
+    ## The menu is as wide as the kind's name, and the field takes the rest of the row.
     if with_font(() -> ig.BeginCombo("##kind", isempty(kind) ? "kind" : kind, ig.ImGuiComboFlags_WidthFitPreview), :code)
         for choice in widget.kinds
             with_font(() -> ig.Selectable(choice, choice == kind), :code) && choice != kind || continue
-            # A list of values starts empty, so it waits for the user to write them.
+            ## A list of values starts empty, so it waits for the user to write them.
             choice == "values" ? start_edit!(view, target, name, "[]"; typed=false) :
                 (code = written(choice, kind != "values" && !isempty(count) ? count : "5"))
         end
@@ -351,7 +351,7 @@ end
 function written_color(text::AbstractString)::Union{Nothing,ig.ImVec4}
     expression = Meta.parse(text; raise=false)
     value = expression isa QuoteNode ? expression.value : expression isa String ? expression : return nothing
-    # Makie refuses a name or a text that is not a color.
+    ## Makie refuses a name or a text that is not a color.
     return try
         imcolor(value)
     catch err
@@ -455,7 +455,7 @@ function draw_chips!(count::Int, width::Float32, draw)::Union{Nothing,Tuple{Symb
     height = ig.GetFrameHeight()
     left = ig.GetCursorScreenPos().x
     right = left + ig.GetContentRegionAvail().x
-    # The next chip follows the one before on its row, or starts the next row.
+    ## The next chip follows the one before on its row, or starts the next row.
     next!(width) = ig.GetItemRectMax().x + 3 + width <= right ? ig.SameLine(0.0f0, 3.0f0) :
         ig.SetCursorScreenPos((left, ig.GetCursorScreenPos().y))
     action = nothing
@@ -500,14 +500,14 @@ end
 # The swatches of the colors, or those of the scheme; a click on one opens a color picker, which
 # writes the list once it closes. The button after them opens the list of color schemes.
 function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, reversed, colors), focus::Bool)::Union{Nothing,String}
-    # The colors of a gradient are drawn as it, and they change as a colormap does.
+    ## The colors of a gradient are drawn as it, and they change as a colormap does.
     scheme !== nothing && !discrete(scheme) && return draw_colormap!(view, scheme, reversed, focus, palette_code)
     key = "$target/$name"
     shown = scheme === nothing ? [written_color(c) for c in colors] : sampled(scheme)
     codes = scheme === nothing ? colors : color_code.(shown)
     written(codes) = "[" * join(codes, ", ") * "]"
     code = nothing
-    # The color picked, written once its picker closes.
+    ## The color picked, written once its picker closes.
     if view.picking !== nothing && first(view.picking) == key && !ig.IsPopupOpen("color")
         picked = color_code(ig.ImVec4(view.color...))
         place = last(view.picking)
@@ -528,7 +528,7 @@ function draw_widget!(view::BuilderView, ::ColorPalette, target, name, (scheme, 
         view.picking = (key, action[2])
         ig.OpenPopup("color")
     elseif action !== nothing
-        # A color added is Makie's next default one.
+        ## A color added is Makie's next default one.
         defaults = Makie.wong_colors()
         code = written(changed(codes, action, color_code(imcolor(defaults[mod1(length(codes) + 1, length(defaults))]))))
     end
@@ -555,7 +555,7 @@ function draw_widget!(view::BuilderView, ::Categories, target, name, listed::Vec
     written(rows) = "[" * join((isempty(n) ? repr(v) : "$(repr(v)) => $(repr(n))" for (v, n) in rows), ", ") * "]"
     width = with_font(() -> maximum(row -> ig.CalcTextSize(repr(first(row))).x, rows), :code) + 2unsafe_load(ig.GetStyle()).FramePadding.x
     code = nothing
-    # The rows start under the first, in the column of the values.
+    ## The rows start under the first, in the column of the values.
     ig.BeginGroup()
     for (i, (value, label)) in enumerate(rows)
         ig.PushID(i)
@@ -633,11 +633,11 @@ function draw_widget!(view::BuilderView, widget::GlyphPalette, target, name, gly
         view.picking = ("$target/$name", action[2])
         ig.OpenPopup("glyphs")
     elseif action !== nothing
-        # A value added is the first one the list lacks.
+        ## A value added is the first one the list lacks.
         added = widget.choices[something(findfirst(g -> !(g in glyphs), widget.choices), 1)]
         code = written(changed(glyphs, action, added))
     end
-    # All of them in a grid, the one being changed lit.
+    ## All of them in a grid, the one being changed lit.
     if ig.BeginPopup("glyphs")
         place = view.picking === nothing ? 0 : last(view.picking)
         columns = widget.role === :marker ? 4 : 1
@@ -689,7 +689,7 @@ function draw_colormap!(view::BuilderView, colormap, reversed::Bool, focus::Bool
     else
         colors = sampled(colormap)
         draw_colors(draw_list, low, high, reversed ? reverse(colors) : colors)
-        # The name on a band of the frame's color, readable on any colormap.
+        ## The name on a band of the frame's color, readable on any colormap.
         text = with_font(() -> ig.CalcTextSize(String(colormap)), :code)
         ig.AddRectFilled(draw_list, (low.x + 3, low.y + 3), (low.x + text.x + 11, high.y - 3), ig.GetColorU32(ig.ImGuiCol_FrameBg, 0.85f0), 2.0f0)
         with_font(() -> ig.AddText(draw_list, (low.x + 7, low.y + (size - text.y) / 2), ig.GetColorU32(ig.ImGuiCol_Text), String(colormap)), :code)

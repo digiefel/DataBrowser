@@ -1,10 +1,10 @@
 """
-Plots of ordinary Julia data and selected items in the browser.
+Plots of ordinary Julia data and of selected items.
 
-The `figure` function draws AlgebraOfGraphics declarations when AoG is loaded, such as those written
-with `@plot`.
-This package also holds what a project needs to register a plot. The plot windows of the browser
-are an extension of this package, loaded with DataBrowserGUI and GLMakie.
+`@plot` writes a plot declaration in AlgebraOfGraphics syntax, and `figure` draws it once
+AlgebraOfGraphics is loaded. A project can also add plots for a kind of item with
+`register_plot!`. The plot windows of the browser and its plot builder are an extension of this
+package, which loads with DataBrowserGUI and GLMakie.
 """
 module DataBrowserPlots
 

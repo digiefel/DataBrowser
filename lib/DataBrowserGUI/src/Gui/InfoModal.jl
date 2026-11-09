@@ -11,8 +11,8 @@ function render_info_window(state::BrowserState)::Nothing
     if ig.Begin("Information Panel")
         if length(selected) == 1
             x = only(selected)
-            # The metadata that the project's functions and the visualizers receive: that of the
-            # value, and the computed metadata.
+            ## The metadata that the project's functions and the visualizers receive: that of the
+            ## value, and the computed metadata.
             metadata = Workspace.metadata(workspace, x)
             ig.Text("Title: $(label(workspace, x))")
             ig.Separator()

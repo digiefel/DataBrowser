@@ -64,14 +64,14 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
     change = nothing
     ig.PushID("$target/$name")
     ig.AlignTextToFramePadding()
-    # The room of the cross, which every row keeps so that the names line up.
+    ## The room of the cross, which every row keeps so that the names line up.
     row = ig.GetCursorScreenPos()
     gutter = ig.CalcTextSize(ICON_X).x + 6
     if removable && ig.IsMouseHoveringRect(row, (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight()))
         ig.PushStyleVar(ig.ImGuiStyleVar_FramePadding, (2.0f0, unsafe_load(ig.GetStyle()).FramePadding.y))
         call = target_call(view.plot, target)
         written = call !== nothing && any(entry -> entry.name == name, call.entries)
-        # A value being added is not in the code yet.
+        ## A value being added is not in the code yet.
         icon_button(ICON_X, "Remove $(entry_name(name))"; danger=true) &&
             (written ? (change = () -> remove_entry!(view.code, call, name)) : (view.editing = nothing))
         ig.PopStyleVar()
@@ -86,14 +86,14 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         ig.TextDisabled(ICON_INFO)
         ig.SetItemTooltip(info)
     end
-    # A name longer than the others, such as one being added, pushes its value to the right.
+    ## A name longer than the others, such as one being added, pushes its value to the right.
     label_width + unsafe_load(ig.GetStyle()).ItemSpacing.x > name_width ? ig.SameLine() : ig.SameLine(start + name_width)
     edit = view.editing
     editing = edit !== nothing && edit.target == target && edit.name == name
-    # A mapping is a column, picked from a menu, or a formula, typed as code. A setting with a
-    # widget, such as `limits`, is set with it, or typed as code when its code is more than the
-    # widget writes. The badge before either shows which: ƒ for code, otherwise the kind of value
-    # the widget writes. A click on it switches.
+    ## A mapping is a column, picked from a menu, or a formula, typed as code. A setting with a
+    ## widget, such as `limits`, is set with it, or typed as code when its code is more than the
+    ## widget writes. The badge before either shows which: ƒ for code, otherwise the kind of value
+    ## the widget writes. A click on it switches.
     mapping = target[1] === :mapping
     parts = mapping && !isempty(value) ? mapping_parts(value) : nothing
     widget = widget_of(view, target, name)
@@ -111,7 +111,7 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         with_font(() -> draw_icon(draw_list, low, high, icon, ig.GetColorU32(code_color(role))), formula ? :code : :interface)
         ig.SetItemTooltip(mapping ? (formula ? "A formula; click to pick a column instead" : "A column; click to write a formula instead") :
             formula ? "Code; click to set the value with the widget" : "Sets $kind; click to write the value as code")
-        # The badge is part of the value: the value starts where it ends.
+        ## The badge is part of the value: the value starts where it ends.
         ig.SameLine(0.0f0, 0.0f0)
         if switched && editing
             edit.typed = !edit.typed
@@ -123,9 +123,9 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
         end
     end
     if widget !== nothing && !formula
-        # The parts of a widget of several parts sit on one frame, joined to the badge, in a lighter
-        # tint than theirs. The frame has room around them, and they are shorter by as much, so the
-        # row is as tall as any other.
+        ## The parts of a widget of several parts sit on one frame, joined to the badge, in a lighter
+        ## tint than theirs. The frame has room around them, and they are shorter by as much, so the
+        ## row is as tall as any other.
         style = unsafe_load(ig.GetStyle())
         drawn = something(fields, widget_parts(widget, ""))
         text = if !framed(widget)
@@ -150,7 +150,7 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
             change = () -> write_entry!(view.code, view.plot, target, name, text)
         end
     elseif editing && !edit.typed
-        # A mapping being added: an empty box with the menu of columns open.
+        ## A mapping being added: an empty box with the menu of columns open.
         clicked, _, _ = code_box("value", "", max(ig.GetContentRegionAvail().x, 24.0f0))
         (edit.focus || clicked) && (pick_column = true)
         edit.focus = false
@@ -191,13 +191,13 @@ function draw_entry!(view::BuilderView, target, name, value::String; name_width:
             view.picker = ListPicker()
             ig.OpenPopup("names")
         end
-        # With several values of y, a named mapping can also show which of them a point shows.
+        ## With several values of y, a named mapping can also show which of them a point shows.
         calls = filter(!isnothing, [view.plot.mapping; [line.mapping for line in view.plot.lines]])
         several = !is_position(name) && any(call -> any(entry -> mapping_order(entry.name)[1] == 1, call.entries), calls)
         offered = several ? [columns(view); ListItem("ydims()"; section="y, y2, …")] : columns(view)
         column = names_menu(view, offered)
         if column !== nothing
-            # The column replaces the formula; the title after `=>` stays.
+            ## The column replaces the formula; the title after `=>` stays.
             title = parts === nothing ? nothing : findfirst(((kind, _),) -> kind === :title, parts)
             text = (column == "ydims()" ? column : ":$column") * (title === nothing ? "" : " => $(repr(parts[title][2]))")
             change = () -> write_entry!(view.code, view.plot, target, name, text)
@@ -234,8 +234,8 @@ function analysis_menu!(view::BuilderView, layer::Int, index::Int; adding::Bool=
     return changes
 end
 
-# A layer, as a card: a band with a button that folds it, its eye, its plot type, the names of its analyses and a picture of
-# its marker and line, and under it, when open, its `mapping` and `visual`. `takes(line, name)`
+# A layer, as a card: a band with a button that folds it, its eye, its plot type, the names of its
+# analyses and a picture of its marker and line, and under it, when open, its `mapping` and `visual`. `takes(line, name)`
 # tells whether the line takes a mapping from the header, and `names` are the mappings it can show,
 # or `nothing` when unknown. Returns the changes of the code the user asked for.
 function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Function}
@@ -249,8 +249,8 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         all(entry -> entry.name != edit.name, present))
     style = unsafe_load(ig.GetStyle())
 
-    # The band's items go on the upper of two layers of the draw list; the band goes under them once
-    # their height is known.
+    ## The band's items go on the upper of two layers of the draw list; the band goes under them once
+    ## their height is known.
     draw_list = ig.GetWindowDrawList()
     ig.ChannelsSplit(draw_list, 2)
     ig.ChannelsSetCurrent(draw_list, 1)
@@ -261,14 +261,14 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
     hidden = line.invisible !== nothing
     alpha = hidden ? 0.45f0 : 1.0f0
     ig.AlignTextToFramePadding()
-    # Whether the layer shows its `mapping` and `visual`, which ImGui keeps from frame to frame.
+    ## Whether the layer shows its `mapping` and `visual`, which ImGui keeps from frame to frame.
     storage, key = ig.GetStateStorage(), ig.GetID("open")
     opened = ig.GetBool(storage, key, true)
     icon_button(opened ? ICON_CHEVRON_DOWN : ICON_CHEVRON_RIGHT, opened ? "Fold the layer" : "Unfold the layer") &&
         ig.SetBool(storage, key, !opened)
     ig.SameLine()
     if icon_button(hidden ? ICON_EYE_OFF : ICON_EYE, hidden ? "Draw the layer" : "Hide the layer, keeping its line")
-        # `@invisible` keeps the line in the plot without drawing it.
+        ## `@invisible` keeps the line in the plot without drawing it.
         start = first(line.range)
         push!(changes, hidden ? () -> edit!(view.code, line.invisible, "") : () -> edit!(view.code, start:start-1, "@invisible "))
     end
@@ -294,7 +294,7 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         end
         ig.EndPopup()
     end
-    # The tags, on more rows under the picture when they do not fit before the room of the cross.
+    ## The tags, on more rows under the picture when they do not fit before the room of the cross.
     for (k, analysis) in enumerate(line.analyses)
         width = with_font(() -> ig.CalcTextSize(analysis).x, :code) + 8
         ig.GetItemRectMax().x + 4 + width > right - 2ig.GetFrameHeight() ? ig.SetCursorPosX(sample_x) : ig.SameLine()
@@ -319,8 +319,8 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         after = ig.GetCursorScreenPos()
         ig.SetCursorScreenPos((right - ig.GetFrameHeight(), band.y))
         icon_button(ICON_X, "Remove the layer"; danger=true) && push!(changes, () -> remove_line!(view.code, line))
-        # ImGui asks for an item after the cursor moves back: an empty one where the last item
-        # ends, so the cursor lands where it was.
+        ## ImGui asks for an item after the cursor moves back: an empty one where the last item
+        ## ends, so the cursor lands where it was.
         ig.SetCursorScreenPos((after.x, after.y - style.ItemSpacing.y))
         ig.Dummy((0.0f0, 0.0f0))
     end
@@ -330,8 +330,8 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
 
     if opened
         ig.Indent(style.FramePadding.x + 4)
-        # The line's own mappings, and those it takes from the header: positions first, in order,
-        # then the named ones.
+        ## The line's own mappings, and those it takes from the header: positions first, in order,
+        ## then the named ones.
         own = entries(line.mapping)
         rows = [[(entry, true) for entry in entries(plot.mapping) if takes(line, entry.name)]; [(entry, false) for entry in own]]
         sort!(rows; by=((entry, _),) -> mapping_order(entry.name))
@@ -339,8 +339,8 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
 
         type = plottype === nothing || !isdefined(Makie, Symbol(plottype)) ? nothing : getproperty(Makie, Symbol(plottype))
         attributes = type isa Type && type <: Makie.AbstractPlot ? collect(Makie.attribute_names(type)) : Symbol[]
-        # The mappings the layer showed when it was last drawn; before, the settings of its plot type.
-        # TODO: mappings of a named line, such as the groups of a fit.
+        ## The mappings the layer showed when it was last drawn; before, the settings of its plot type.
+        ## TODO: mappings of a named line, such as the groups of a fit.
         offered = mapping_offers([entry.name for entry in own], something(names, union(attributes, LAYOUT)))
         name = heading!(view, "mapping", "mapping", offered; tooltip="Add a mapping to this layer")
         name === nothing || start_edit!(view, (:mapping, index), entry_key(name), ""; typed=false)
@@ -349,7 +349,7 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
             skipped = inherited && names !== nothing && !is_position(entry.name) && !(entry.name in names)
             offer(draw_entry!(view, (:mapping, index), entry.name, text(entry.value); name_width=width, inherited, skipped))
         end
-        # A mapping taken from the header is edited in its own row.
+        ## A mapping taken from the header is edited in its own row.
         adding((:mapping, index), first.(rows)) && offer(draw_entry!(view, (:mapping, index), view.editing.name, ""; name_width=width))
 
         ig.Dummy((0.0f0, 2.0f0))
@@ -363,7 +363,7 @@ function draw_layer!(view::BuilderView, index::Int, takes, names)::Vector{Functi
         adding((:visual, index), visual) && offer(draw_entry!(view, (:visual, index), view.editing.name, ""; name_width=width))
         ig.Unindent(style.FramePadding.x + 4)
     end
-    # The frame of the card, around its band and what is under it.
+    ## The frame of the card, around its band and what is under it.
     bottom = ig.GetCursorScreenPos().y
     opened && ig.AddRect(ig.GetWindowDrawList(), band, (band_end[1], bottom), ig.GetColorU32(ig.ImGuiCol_Header, 0.6f0), style.FrameRounding)
     return changes
@@ -383,11 +383,11 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
     text(range) = view.code.text[range]
     entries(call) = call === nothing ? EntryCode[] : call.entries
     header = entries(plot.mapping)
-    # A line takes a mapping of the header that it does not set itself; a position of the line
-    # replaces all of the header's positions.
+    ## A line takes a mapping of the header that it does not set itself; a position of the line
+    ## replaces all of the header's positions.
     takes(line, name) = line.inherits && all(entry -> entry.name != name, entries(line.mapping)) &&
         !(is_position(name) && any(entry -> is_position(entry.name), entries(line.mapping)))
-    # The mappings each line can show, as the last drawing found them; a named line is not drawn.
+    ## The mappings each line can show, as the last drawing found them; a named line is not drawn.
     drawn_lines = [index for (index, line) in enumerate(plot.lines) if line.name === nothing]
     known = length(drawn_lines) == length(view.mappings)
     shown(index) = known && index in drawn_lines ? view.mappings[findfirst(==(index), drawn_lines)] : nothing
@@ -395,7 +395,7 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
         line = plot.lines[index]
         line.invisible === nothing && takes(line, name) && name in shown(index)
     end
-    # The changes the user asked for in this frame; the first one is made.
+    ## The changes the user asked for in this frame; the first one is made.
     changes = Function[]
     offer(change) = change === nothing || push!(changes, change)
     adding(target, present) = (edit = view.editing; edit !== nothing && edit.target == target &&
@@ -431,20 +431,20 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
     if plot.ending !== nothing
         section("scales") do
             scales = entries(plot.scales)
-            # The scales of the mappings the plot has, which `scales` can set.
+            ## The scales of the mappings the plot has, which `scales` can set.
             used = [entry_name(entry.name) for call in [plot.mapping; [line.mapping for line in plot.lines]] for entry in entries(call)]
             names = union(String.(SCALED), filter(name -> DataBrowserPlots.is_y_scale(Symbol(name)), used))
             offered = filter(name -> name in used && !any(scale -> entry_name(scale.name) == name, scales), names)
             name = heading!(view, "scales", "scales", offered; tooltip="Add the scale of a mapping")
             name === nothing || push!(changes, () -> write_entry!(view.code, plot, (:scales, 0), Symbol(name), "(;)"))
-            # The names of the settings of every scale and, after some, an info button.
+            ## The names of the settings of every scale and, after some, an info button.
             present_names = [entry.name for settings in plot.scale_settings if settings !== nothing for entry in settings.entries]
             width = names_width(present_names) + ig.CalcTextSize(ICON_INFO).x + 2
             for (k, scale) in enumerate(scales)
                 ig.PushID(k)
                 settings = plot.scale_settings[k]
                 present = settings === nothing ? EntryCode[] : settings.entries
-                # The scale's name, with a "+" for its settings and, under the mouse, a cross.
+                ## The scale's name, with a "+" for its settings and, under the mouse, a cross.
                 row = ig.GetCursorScreenPos()
                 row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
                 numbers = get(NUMBER_SETTINGS, scale.name, Symbol[])
@@ -470,7 +470,7 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 end
                 ig.Indent(8.0f0)
                 if settings === nothing
-                    # A scale written as other code than a named tuple is edited as code.
+                    ## A scale written as other code than a named tuple is edited as code.
                     offer(draw_entry!(view, (:scales, 0), scale.name, text(scale.value); name_width=width, removable=false))
                 else
                     for setting in present
@@ -485,8 +485,8 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
         end
         section("legend") do
             settings = entries(plot.legend)
-            # The texts of the entries of the mappings the plot has, then the settings of `figure`'s
-            # legend, then those of Makie's `Legend`.
+            ## The texts of the entries of the mappings the plot has, then the settings of `figure`'s
+            ## legend, then those of Makie's `Legend`.
             used = unique(entry.name for call in [plot.mapping; [line.mapping for line in plot.lines]]
                 for entry in entries(call) if entry.name isa Symbol && !(entry.name in LAYOUT))
             present = [entry.name for entry in settings]
@@ -504,7 +504,7 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
         section("theme") do
             values = entries(plot.theme)
             present = [entry.name for entry in values]
-            # Makie's themes as the code names them, then the figure-wide settings, then the groups.
+            ## Makie's themes as the code names them, then the figure-wide settings, then the groups.
             setting_icon(name) = occursin("color", name) || name in ("palette", "colormap") ? ICON_PALETTE :
                 occursin("font", name) ? ICON_TEXT : ICON_SETTING
             offered = [
@@ -529,8 +529,8 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
                 elseif group === nothing
                     offer(draw_entry!(view, (:theme, 0), value.name, text(value.value); name_width=width))
                 else
-                    # A group, such as `Axis = (; ...)`: its name with a "+" for its settings and,
-                    # under the mouse, a cross, then its settings.
+                    ## A group, such as `Axis = (; ...)`: its name with a "+" for its settings and,
+                    ## under the mouse, a cross, then its settings.
                     row = ig.GetCursorScreenPos()
                     row_end = (row.x + ig.GetContentRegionAvail().x, row.y + ig.GetFrameHeight())
                     type = isdefined(Makie, value.name) ? getproperty(Makie, value.name) : nothing
@@ -563,7 +563,7 @@ function draw_panel!(view::BuilderView, ctx)::Nothing
         first(changes)()
         view.editing = nothing
         set_code!(view, view.code.text)
-        # A new id for the text box, which shows the edited code.
+        ## A new id for the text box, which shows the edited code.
         view.reads += 1
         save_and_build!(view, ctx)
     end

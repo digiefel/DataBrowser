@@ -1,4 +1,4 @@
-"""The id and the item type, hex-serialized, of a stored item."""
+"""An item that a `DuckDBStore` keeps: its key in the file, its id, and its serialized type."""
 struct StoredShell
     id::String
     item_id::String
@@ -36,22 +36,22 @@ deletes such a file and starts it over.
 """
 mutable struct DuckDBStore <: DataBrowserAPI.AbstractStore
     path::String
-    # Held for `serialized`, `serialized_ids`, `shells` and `metadata`; the table store has its own
-    # lock.
+    ## Held for `serialized`, `serialized_ids`, `shells` and `metadata`; the table store has its own
+    ## lock.
     lock::ReentrantLock
     database::DuckDB.DB
     serialized::DuckDB.Connection
-    # The ids in `stored_values`, so that writes and lookups need no query.
+    ## The ids in `stored_values`, so that writes and lookups need no query.
     serialized_ids::Set{String}
     serialized_rows::RowStore{String,@NamedTuple{id::String, value::Vector{UInt8}}}
     tables::TabularFamilyStore
     shell_rows::RowStore{String,StoredShell}
-    # The id and the type of each item.
+    ## The id and the type of each item.
     shells::Dict{String,StoredShell}
     metadata_rows::WideRowStore{String}
-    # The metadata of each item.
+    ## The metadata of each item.
     metadata::Dict{String,Dict{Symbol,Any}}
-    # Recently written items, by their key in the file.
+    ## Recently written items, by their key in the file.
     recent::MemoryStore{String,Any}
 end
 
@@ -72,13 +72,13 @@ function open_duckdb_store(path::String, max_bytes::Integer)
     mkpath(dirname(path))
     database = DuckDB.DB(path)
     serialized = DBInterface.connect(database)
-    # DuckDB.jl lets DuckDB run queries only on Julia tasks, one per Julia thread. With one
-    # external thread, DuckDB runs its own threads on the other cores, which every query uses
-    # (see `_execute_on_duckdb_threads`).
+    ## DuckDB.jl lets DuckDB run queries only on Julia tasks, one per Julia thread. With one
+    ## external thread, DuckDB runs its own threads on the other cores, which every query uses
+    ## (see `_execute_on_duckdb_threads`).
     _run(serialized, "SET external_threads = 1")
     _run(serialized, "SET threads = $(Sys.CPU_THREADS)")
-    # The buffer of the pages that DuckDB read has the limit of the cache: without it, DuckDB keeps
-    # them up to most of the memory of the computer.
+    ## The buffer of the pages that DuckDB read has the limit of the cache: without it, DuckDB keeps
+    ## them up to most of the memory of the computer.
     _run(serialized, _memory_limit_sql(CACHE_MEMORY_LIMIT_MIB[]))
     ## A file that holds values of another layout is refused before anything reads or writes it.
     tables = Set(String(row.table_name) for row in
@@ -197,7 +197,7 @@ function Base.read(store::DuckDBStore, ::Type{T}, keys::AbstractVector)::Vector{
             end
         end
     end
-    # A value read from the file is new, so the caller may change it; it is not kept in memory.
+    ## A value read from the file is new, so the caller may change it; it is not kept in memory.
     if !isempty(tables)
         found = read(store.tables, [stored[position] for (position, _) in tables])
         for (position, shell) in tables
@@ -230,7 +230,7 @@ function _rebuilt(store::DuckDBStore, shell::StoredShell, data)
     try
         return DataBrowserAPI.reconstruct(_deserialize_type(shell.type_hex), shell.item_id, data, given)
     catch
-        # Written by another Julia or package version: compute it again.
+        ## Written by another Julia or package version: compute it again.
         return nothing
     end
 end
@@ -258,7 +258,7 @@ function _read_serialized(store::DuckDBStore, keys::Vector{String})::Dict{String
             try
                 found[key] = deserialize(IOBuffer(value))
             catch
-                # Written by another Julia or package version: compute it again.
+                ## Written by another Julia or package version: compute it again.
                 delete!(store, key)
             end
         end
@@ -297,7 +297,7 @@ DataBrowserAPI.stored_size(store::DuckDBStore, ::Type{T}, key::Integer) where {T
 # Queued tables are written, then the write-ahead log is moved into the file, so the next opening
 # does not replay it.
 function Base.close(store::DuckDBStore)
-    # Every item type that shares the store closes it; only the first close does the work.
+    ## Every item type that shares the store closes it; only the first close does the work.
     @lock OPEN_STORES.lock begin
         get(OPEN_STORES.paths, store.path, nothing) === store || return nothing
         delete!(OPEN_STORES.paths, store.path)

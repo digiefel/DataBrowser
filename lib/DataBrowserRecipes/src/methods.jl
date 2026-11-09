@@ -36,7 +36,8 @@ Define the methods of the whole project: its `read`, which makes a [`SourceItemG
 source item with members and asks the `detect` callback of each item registration, in the order of
 registration, for any other source item; the `process` of the [`SourceGroup`](@ref) of the source,
 which makes the collections; and the group `process` of a collection, which runs the callbacks of
-its level. A project without collections has neither `process`.
+its level. Without a `collection` callback, the project has no `process` of the `SourceGroup`,
+and without collection callbacks, it has no group `process` of a collection.
 """
 function define!(project::Project{N}, mod::Module, line::LineNumberNode) where {N}
     P, C, V = Project{N}, NamedCollection{<:Any,:made}, AbstractVector{RegisteredDataItem{<:Any,:made}}

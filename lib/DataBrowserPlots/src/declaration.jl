@@ -3,16 +3,17 @@ A plot whose values come from an input given when it is drawn, as `@plot` writes
 `data(...)`. Draw it with `figure(declaration, input)`.
 """
 struct Declaration
-    # The AlgebraOfGraphics declaration for an input.
+    ## The AlgebraOfGraphics declaration for an input.
     layers::Function
-    # The type of the values of each named role of each line for an input, as `role => type`,
-    # inferred without drawing; see `scale_kinds`.
+    ## The type of the values of each named role of each line for an input, as `role => type`,
+    ## inferred without drawing; see `scale_kinds`.
     types::Function
 end
 
-# A line of a plot as a layer of the header, `inherit(header, line)`, a layer with its fit done over
-# its points, `resolve(layer, items, axes)`, and a line drawn over the groups of a named result,
-# `over_result(result, table, line)`. The AlgebraOfGraphics extension defines them.
+# A line of a plot as a layer of the header, `inherit(header, line)`, a layer with its fit or
+# aggregate done over its points, `resolve(layer, items, axes, points)`, and a line drawn over the
+# groups of a named result, `over_result(result, table, line)`. The AlgebraOfGraphics extension
+# defines them.
 function inherit end
 function resolve end
 function over_result end
@@ -85,15 +86,15 @@ Layers with the plot's own scales, legend texts and theme, as the `scales(...)`,
 """
 struct Scaled
     layers::Any
-    # Each role's scale settings, such as `:color => (; categories=["72b", "719a"])`.
+    ## Each role's scale settings, such as `:color => (; categories=["72b", "719a"])`.
     scales::Vector{Pair{Symbol,Any}}
-    # The text of each entry in the section that holds a role: `:color => entry -> text`.
+    ## The text of each entry in the section that holds a role: `:color => entry -> text`.
     texts::Vector{Pair{Symbol,Function}}
-    # The legend's settings, such as `merge` and `position`.
+    ## The legend's settings, such as `merge` and `position`.
     legend::NamedTuple
     theme::Union{Nothing,PlotTheme}
-    # The settings of each `coord(...)` line, in order, such as `(; y = (; scale = log10))`; the
-    # function of the points that a line takes by place is under `points`.
+    ## The settings of each `coord(...)` line, in order, such as `(; y = (; scale = log10))`; the
+    ## function of the points that a line takes by place is under `points`.
     coords::Vector{NamedTuple}
 end
 
@@ -200,8 +201,9 @@ replace the header's; its named roles, such as `marker`, add to the header's or 
 role set to `nothing` is removed. A role of the header that the line's plot type cannot show, such as
 `markersize` for `Lines`, is left out of that line, while its values still divide the line's points
 into groups and place them in the legend: with `marker` and `linestyle` in one legend section, the
-entry for a value shows its marker from `Scatter` and its line style from `Lines`. A role of the line's own mapping that its plot type cannot show is an error. Write a
-layer with `*` within a line; a line that continues on the next one ends with `*`.
+entry for a value shows its marker from `Scatter` and its line style from `Lines`. A role of the
+line's own mapping that its plot type cannot show is an error. Write a layer with `*` within a
+line; a line that continues on the next one ends with `*`.
 
 With `data(table)`, the declaration is ordinary AlgebraOfGraphics over that table, and the names in
 `mapping` are its columns. Draw it with `figure(declaration)`.
@@ -226,8 +228,9 @@ line changes the points as any line does: `mapping(; color=nothing) * fit(...)` 
 at once.
 `fit` gives a [`Result`](@ref): one named tuple for each group of points. It holds the group's
 values, such as `:Chip`, each parameter, such as `:Rc`, a `Measurement` of
-[Measurements.jl](https://github.com/JuliaPhysics/Measurements.jl): the estimate ± one standard error, and the drawn curve, as `curve`. `fit(...; xlim=(0, 25))` draws the curve over that range of x instead
-of over the fitted points. With `data(table)` in the header, `fit` takes the rows of that table.
+[Measurements.jl](https://github.com/JuliaPhysics/Measurements.jl): the estimate ± one standard
+error, and the drawn curve, as `curve`. `fit(...; xlim=(0, 25))` draws the curve over that range
+of x instead of over the fitted points. With `data(table)` in the header, `fit` takes the rows of that table.
 `fit` comes before the visual in its line: the visual draws the result.
 
 The visual draws the fit on the axes of the points and in the roles of its group, so the group's
@@ -269,8 +272,8 @@ A line that maps only `y` takes the x of the groups.
 
 `aggregate` gives a [`Result`](@ref) with one named tuple for each x and group of points, in order
 of x, so that `Lines` joins them from left to right. It holds the x and the roles' values, the value
-of each function under its name, such as `:mean`, and the `count` of the points. Without a visual, an aggregate of one function is drawn
-with `Scatter`.
+of each function under its name, such as `:mean`, and the `count` of the points. Without a
+visual, an aggregate of one function is drawn with `Scatter`.
 
 A named result reads the values of its groups by name: `result.count` is the count of each group,
 and `contacts.Rc` the parameter `Rc` of each fit. A line that reads them, such as
@@ -378,8 +381,8 @@ of its own, also when one determines another.
 ## Theme
 
 A `theme` line sets the look of the plot: one of Makie's themes, such as `:dark` for `theme_dark`
-or `:default` for Makie's default theme, changed by Makie's theme settings. Settings for the whole figure come first, then a group for each
-of Makie's blocks or plot types:
+or `:default` for Makie's default theme, changed by Makie's theme settings. Settings for the whole
+figure come first, then a group for each of Makie's blocks or plot types:
 
     theme(:dark; fontsize = 14, Axis = (; xgridvisible = false), Scatter = (; markersize = 10))
 
@@ -400,17 +403,17 @@ macro plot(header, block)
     names = Symbol[first(statement.args) for statement in statements]
     settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme, :coord), lines)
     input = gensym("input")
-    # Each line, named or drawn, is a layer of the header; a name holds its line's value.
+    ## Each line, named or drawn, is a layer of the header; a name holds its line's value.
     statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))
         for (name, value) in (statement.args for statement in statements)]
     uses(block, :fit) && pushfirst!(statements, :(fit = $Fit))
     uses(block, :aggregate) && pushfirst!(statements, :(aggregate = $Aggregate))
-    # The settings of x and y in the `scales` lines, which the analyses take.
+    ## The settings of x and y in the `scales` lines, which the analyses take.
     axes = [Expr(:kw, key, value) for line in settings if line.args[1] === :scales
         for (key, value) in last(call_arguments(line)) if key === :x || is_y_scale(key)]
     pushfirst!(statements, :($AXES = $(Expr(:tuple, Expr(:parameters, axes...)))))
-    # Each line that is a layer, with the named roles it takes from the header: those its own
-    # mapping does not set.
+    ## Each line that is a layer, with the named roles it takes from the header: those its own
+    ## mapping does not set.
     call = find_call(header, :mapping)
     header_roles = call === nothing ? Symbol[] : first.(last(call_arguments(call)))
     own_roles(line) = (own = find_call(line, :mapping); own === nothing ? Symbol[] : first.(last(call_arguments(own))))
@@ -423,9 +426,9 @@ macro plot(header, block)
         :($PlotLine($declared, Symbol[$(shared...)], $(!hidden)))
     end
     declared = isempty(drawn) ? declare_layers(header, input) : :($PlotLines([$(drawn...)]))
-    # The type of each named role's values in each drawn line, for `scale_kinds`. A line with data of
-    # its own, or that reads a named result, is left out.
-    # TODO: the types of the values of a line that reads a named result, such as `result.mean`.
+    ## The type of each named role's values in each drawn line, for `scale_kinds`. A line with data of
+    ## its own, or that reads a named result, is left out.
+    ## TODO: the types of the values of a line that reads a named result, such as `result.mean`.
     named = call === nothing ? Pair{Symbol,Any}[] : last(call_arguments(call))
     types = has_data(header) ? Expr[] : [:($(QuoteNode(role)) => $(per_item_type(value, input)))
         for line in lines if !Meta.isexpr(line, :(=)) && !(line in settings) && !has_data(line) && !any(name -> uses(line, name), names)

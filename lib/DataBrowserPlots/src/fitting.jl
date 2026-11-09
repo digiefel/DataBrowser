@@ -53,14 +53,14 @@ fit.
 """
 struct Result <: AbstractVector{NamedTuple}
     groups::Vector{NamedTuple}
-    # The values the points mapped to x and y, as `mapping` takes them, such as `:gap => "gap (µm)"`.
+    ## The values the points mapped to x and y, as `mapping` takes them, such as `:gap => "gap (µm)"`.
     positional::Vector{Any}
-    # The named roles that form the groups, such as `:color => :Chip`.
+    ## The named roles that form the groups, such as `:color => :Chip`.
     named::Vector{Pair{Symbol,Any}}
-    # The plot type it is drawn with when no visual is given, a name in Makie.
+    ## The plot type it is drawn with when no visual is given, a name in Makie.
     plottype::Symbol
-    # The function of the y axis, such as `log10`, that the values named `scaled` were computed
-    # after, such as an aggregate's `mean`. Drawing places them back on the axis.
+    ## The function of the y axis, such as `log10`, that the values named `scaled` were computed
+    ## after, such as an aggregate's `mean`. Drawing places them back on the axis.
     scale::Any
     scaled::Vector{Symbol}
 end
