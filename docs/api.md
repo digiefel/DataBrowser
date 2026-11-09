@@ -36,8 +36,8 @@ Two packages implement a provider surface and add functions of their own:
 
 ### Type API
 
-A project describes its data with Julia types and methods. DataBrowser calls the methods in the
-order of the stages below, and keeps their results.
+A project describes its data with Julia types and methods. DataBrowser calls the methods as soon
+as their arguments are ready, and keeps their results.
 
 #### Projects
 
@@ -60,10 +60,12 @@ Base.isequal(::DataBrowserAPI.AbstractDataItem, ::DataBrowserAPI.AbstractDataIte
 DataBrowserAPI.members(::DataBrowserAPI.AbstractGroup)
 ```
 
-#### Stages
+#### Reading and processing
 
 `read` loads a source item, or makes a group of the source items that a source item holds. `process` computes
-results from an item, from a group with the values of its members, or from a member with its group.
+values from an item, from a group with the values of its members, or from a member with its group.
+DataBrowser calls `process` again for each value that it gives, so a chain of calls ends at a value
+that no method takes.
 
 ```@docs
 Base.read(::DataBrowserAPI.AbstractProject, ::DataBrowserAPI.AbstractDataSource, ::DataBrowserAPI.AbstractDataSourceItem)

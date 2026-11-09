@@ -342,6 +342,22 @@ inputs(catalog::Catalog, row::Row)::Vector{Row} = node(catalog, row).inputs
 readers(catalog::Catalog, row::Row)::Vector{Row} = node(catalog, row).readers
 
 """
+    reads(catalog, row, other) -> Bool
+
+Whether `row` reads `other`, directly or through other rows: then `other` must not read `row`,
+which would make a cycle. Call it inside `@lock catalog.lock`.
+"""
+function reads(catalog::Catalog, row::Row, other::Row)::Bool
+    seen, next = Set{Row}(), Row[row]
+    while !isempty(next)
+        at = pop!(next)
+        at == other && return true
+        at in seen || (push!(seen, at); append!(next, inputs(catalog, at)))
+    end
+    return false
+end
+
+"""
     running(catalog, row) -> Bool
 
 Whether a job runs for `row` now. Call it inside `@lock catalog.lock`.

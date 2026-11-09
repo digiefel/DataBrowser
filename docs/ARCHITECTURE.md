@@ -146,43 +146,52 @@ The project defines these methods, which the [API](api.md) page describes:
 | Function call | Gives |
 | --- | --- |
 | `read(project, source, s)` | the item of the source item `s`, or a group of the source items in `s` |
-| `process(project, x)` | an item or a vector of items made from the item `x`; by default `x` itself |
-| `process(project, g, members)` | items made from the group `g` and the vector `members` of the items of its members, such as a fit through all of them; no default |
-| `process(project, x, g)` | items made from the member `x` with its group `g`; no default |
+| `process(project, x)` | an item or a vector of items made from the item `x` |
+| `process(project, g, members)` | items made from the group `g` and the vector `members` of the items of its members, such as a fit through all of them |
+| `process(project, x, g)` | items made from the member `x` with its group `g` |
 
-Without a method `process(project, g, members)`, the catalog has no group process row, and without
-a method `process(project, x, g)`, no member process rows.
+None of them has a default: the workspace makes a function call only when a method of the project
+takes its arguments. It makes these calls for every item that a call gives, so a chain of calls
+ends at an item that no method takes. A method that returns the type that it takes runs again on
+its result, as a loop, and the chain ends when the result is `isequal` to the item that the call
+took.
 
 The workspace keeps each function call in a row of its *catalog*, a table with one row for each
 *computation*, a function call before it runs. The rows whose results a row takes are its *inputs*.
-When the source has a source item `g` with the members `a` and `b`, the `read` of `g` gives a group
-of `a` and `b`, the project defines the three methods of `process` for that group, and the workspace was opened with `background_processing=true`, which runs
-every row, the catalog has these rows:
+As an example, a source has the source items `a` and `b`, and a source item `g` with the members `a`
+and `b`. Its project has the methods `read`, which gives an `Item` for `a` and `b` and a `Group`
+for `g`; `process(project, x::Item)`, which gives a `ProcessedItem`; `process(project, g::Group,
+members::Vector{ProcessedItem})`; and `process(project, x::ProcessedItem, g::Group)`, which gives
+an item of a fourth type. When the workspace was opened with `background_processing=true`, which
+runs every row, the catalog has these rows:
 
 ```text
     row  function call                      kind             inputs   gives
-    1    read(project, source, a)           read                      a
+    1    read(project, source, a)           read                      a, an Item
     2    process(project, a)                process          1        a later version of a
-    3    read(project, source, b)           read                      b
+    3    read(project, source, b)           read                      b, an Item
     4    process(project, b)                process          3        a later version of b
-    5    read(project, source, g)           read                      g, a group with members a and b
-    6    process(project, g)                process          5        a later version of g
-    7    process(project, g, [a, b])        group process    6, 2, 4  fit, a new item
-    8    process(project, a, g)             member process   2, 6     a later version of a
-    9    process(project, b, g)             member process   4, 6     a later version of b
-    10   SourceGroup(source, [a, b, g])     read                      the source group
+    5    read(project, source, g)           read                      g, a Group with members a and b
+    6    process(project, g, [a, b])        group process    5, 2, 4  fit, a new item
+    7    process(project, a, g)             member process   2, 5     a later version of a
+    8    process(project, b, g)             member process   4, 5     a later version of b
+    9    SourceGroup(source, [a, b, g])     read                      the source group
 
     Each item has the id of its source item. [a, b] is the items of the members a and b.
 ```
 
 The workspace adds a read row when the source lists a source item, and a `process` row when the item
 that it takes exists. A row runs after its inputs: row 2 calls `process` with the item that row 1
-gives. Several rows can give an item with the same id, in this order of their kinds: read, process, group process, member process. Each of them gives a later *version* of the item, and
-windows show the *latest version* of each item: here `a` from row 8, `b` from row 9, `g` from row 6,
-and `fit` from row 7, a new item that the group `process` of the project gives. A group process takes, for each member, its latest version from before the member `process` methods,
-among the versions that have a result or will run. `background_processing` is off by default: the
-workspace adds every row, runs the reads, and runs a `process` row only when a window shows its item
-or a script asks for it. Row 7 then takes rows 1 and 3, because rows 2 and 4 will not run.
+gives. A row that takes an item and gives an item with the same id gives a later *version* of it:
+rows 1, 2 and 7 give three versions of `a`. Windows show the *latest version* of each item, the one
+at the end of the longest chain of calls: here `a` from row 7, `b` from row 8, `g` from row 5, and
+`fit` from row 6, a new item. A call takes the other items that it needs at their latest version
+that does not come from its own result. So the group process takes, for each member, its latest
+version of the type that its method takes: here from rows 2 and 4, since rows 7 and 8 give another
+type. `background_processing` is off by default: the workspace adds every row, runs the
+reads, and runs a `process` row only when a window shows its item or a script asks for it. A group
+process then takes, for each member, the latest version of that type among those that have a
+result or will run.
 
 ### Keys and revisions
 
@@ -267,9 +276,9 @@ row runs, the workspace computes the *revision of the row*, which its result get
 
 When the source item `a` is saved again with the same content, row 1 becomes stale, because the
 *fingerprint* of `a`, a value that changes when a source item may have changed, such as the size
-and modification time of a file, changed. Rows 2 and 5 to 9 have row 1 among their inputs, directly
+and modification time of a file, changed. Rows 2, 6 and 7 have row 1 among their inputs, directly
 or through other rows, and become stale too. Row 1 runs again and gives an item `isequal` to the
-last one, so its result keeps the revision of the last result. Rows 2 and 5 to 9 then compute the
+last one, so its result keeps the revision of the last result. Rows 2, 6 and 7 then compute the
 revisions that they last ran with, which the cache saved: they become current without calling their
 functions, and only `read` ran. An edit of a function that still returns `isequal` results ends the
 same way.

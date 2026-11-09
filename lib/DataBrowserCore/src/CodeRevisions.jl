@@ -1,7 +1,8 @@
 """
-The revision of the code that a stage runs: a content hash of every method, type and constant the
-stage can reach by name from its roots, in modules that can change during a session. The roots of a
-stage are the methods, functions and types that it starts from, which the workspace gives.
+The revision of the code that a computation runs: a content hash of every method, type and constant
+that the computation can reach by name from its roots, in modules that can change during a session.
+The roots of a computation are the methods, functions and types that it starts from, which the
+workspace gives.
 
 Two definitions with the same source give the same revision, also in a new session, so running a
 script again changes nothing, and the cache can keep a revision from one session to the next. The
@@ -10,10 +11,10 @@ environment develops from a local folder (`Pkg.develop`) or is itself, except Da
 packages. Base, the standard library and every other package count through the Julia version and
 the Manifest instead.
 
-The revision reads the code without running it, and takes in every method that a stage may call:
-every method of a reached function is part of it, and every project method added to a library
+The revision reads the code without running it, and takes in every method that a computation may
+call: every method of a reached function is part of it, and every project method added to a library
 function (such as `Base.show` or `Base.iterate` for a project type) is part of the revision of every
-stage. The revision lists in `untracked` the code that it cannot follow. See
+computation. The revision lists in `untracked` the code that it cannot follow. See
 `research_notes/code-change-detection/design.md`.
 """
 module CodeRevisions
@@ -25,7 +26,7 @@ using DataBrowserAPI: AbstractProject, AbstractDataSource
 export CodeRevision, code_revision
 
 """
-The hash of the code a stage can reach, and the reasons some of that code may change unseen.
+The hash of the code a computation can reach, and the reasons some of that code may change unseen.
 `parts` gives the hash of each method, type and value, to tell what changed.
 """
 struct CodeRevision
@@ -208,9 +209,9 @@ const EXTENSIONS = Ref{Any}(nothing)
 
 """
 The parts of the methods that changeable modules add to functions they do not own, such as
-`Base.show` for a project type. Library code may call any of them, so each counts for every stage.
-DataBrowser's own functions are left out, because the roots of each stage already include the
-project methods of the DataBrowser functions that the stage calls.
+`Base.show` for a project type. Library code may call any of them, so each counts for every
+computation. DataBrowser's own functions are left out, because the roots of each computation
+already include the project methods of the DataBrowser functions that it calls.
 """
 function extensions(world::UInt)
     known = @lock LOCK EXTENSIONS[]
@@ -248,7 +249,7 @@ function environment()::String
     return found
 end
 
-"""Whether `method` adds to a function of a library, other than a stage function of DataBrowser."""
+"""Whether `method` adds to a function of a library, other than `read` or `process` of DataBrowser."""
 function library(method::Method)::Bool
     parameters = Base.unwrap_unionall(method.sig).parameters
     F = parameters[1]
@@ -256,7 +257,7 @@ function library(method::Method)::Bool
     if F === typeof(Core.kwcall) && length(parameters) >= 3
         F = parameters[3]
     end
-    ## `read` is `Base.read`; a `read` for a project or source is a stage method.
+    ## `read` is `Base.read`; a `read` for a project or source is a method of DataBrowser's `read`.
     F === typeof(Base.read) && length(parameters) >= 2 &&
         parameters[2] isa Type && parameters[2] <: Union{AbstractProject,AbstractDataSource} && return false
     ## A constructor belongs to the module of its type.
@@ -331,7 +332,7 @@ end
     code_revision(roots) -> CodeRevision
 
 The revision of the code reachable from `roots`: methods, functions and closures, and types.
-`code_revision` leaves out a root method of a library, such as a default stage method that calls
+`code_revision` leaves out a root method of a library, such as a method of DataBrowser that calls
 the project's method, because the roots already include the project's methods that it calls.
 
 When the walk itself fails, the hash is `"not tracked"`, and `untracked` gives the reason.
@@ -346,7 +347,7 @@ function code_revision(roots::AbstractVector)::CodeRevision
         append!(walk.untracked, untracked)
     catch error
         ## Each step catches its own errors: this is an error of the walk itself.
-        @error "Could not follow the code of a stage" exception=(error, catch_backtrace()) maxlog=1
+        @error "Could not follow the code of a computation" exception=(error, catch_backtrace()) maxlog=1
         return CodeRevision("not tracked", [], ["the code could not be followed: $(sprint(showerror, error))"])
     end
     push!(walk.parts, "Julia and package versions" => environment())
@@ -480,7 +481,7 @@ const FIRST_SEEN = Dict{UInt,Tuple{WeakRef,String}}()
 Add `x` to `context`; a `context` of `nothing` only follows the functions and types inside `x`.
 
 A mutable value keeps the hash it had when first seen, even when it changes in place: counters and
-caches that stages fill would otherwise change the revision on every run. A new object, such as
+caches that the project fills would otherwise change the revision on every run. A new object, such as
 the value of a constant defined again, is hashed again.
 """
 function value_hash!(walk::Walk, context, @nospecialize(x), seen::IdDict{Any,Nothing}, depth::Int)::Nothing

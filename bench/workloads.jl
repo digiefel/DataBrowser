@@ -15,20 +15,25 @@ const MAX_EXPONENT = 1.3
 const SELECTION_SIZE = 10
 const SELECTION_REPEATS = 5
 
-"""Prepared user value: the benchmark times engine work, not generating or analyzing this data."""
-struct BenchItem <: API.AbstractDataItem
+"""
+Prepared user value: the benchmark times engine work, not generating or analyzing this data. `S` is
+`:read` for what `read` gives, and `:processed` for what `process` gives, so that `process` takes
+only what `read` gives.
+"""
+struct BenchItem{S} <: API.AbstractDataItem
     identity::String
     data::Any
     metadata::Dict{Symbol,Any}
 end
+BenchItem(identity, data, metadata) = BenchItem{:read}(identity, data, metadata)
 API.id(item::BenchItem) = item.identity
 API.label(item::BenchItem) = item.identity
 API.data(item::BenchItem) = item.data
 API.metadata(item::BenchItem) = item.metadata
-API.reconstruct(::Type{BenchItem}, id::AbstractString, data, metadata::Dict) = BenchItem(id, data, metadata)
+API.reconstruct(::Type{T}, id::AbstractString, data, metadata::Dict) where {T<:BenchItem} = T(id, data, metadata)
 
 struct BenchSourceItem <: API.AbstractDataSourceItem
-    item::BenchItem
+    item::BenchItem{:read}
 end
 # A source item has the id of a file, and its read gives an item with another id, as for most projects.
 API.id(item::BenchSourceItem) = API.id(item.item) * ".csv"
@@ -52,16 +57,16 @@ Base.@kwdef struct BenchProject <: API.AbstractProject
     values::Union{Nothing,String} = nothing
 end
 # The 128 MiB of tables of the cache workload fit in memory with their metadata.
-API.storage(project::BenchProject, ::Type{BenchItem}) = project.values === nothing ?
+API.storage(project::BenchProject, ::Type{<:BenchItem}) = project.values === nothing ?
     MemoryStore(; max_bytes=512 * 1024^2) : DuckDBStore(project.values; max_bytes=512 * 1024^2)
 
 function API.read(project::BenchProject, ::PreparedSource, item::BenchSourceItem)
     Threads.atomic_add!(project.reads, 1)
     return item.item
 end
-function API.process(project::BenchProject, item::BenchItem)
+function API.process(project::BenchProject, item::BenchItem{:read})
     Threads.atomic_add!(project.processes, 1)
-    return item
+    return BenchItem{:processed}(item.identity, item.data, item.metadata)
 end
 callback_counts(project::BenchProject) = (project.reads[], project.processes[])
 
@@ -80,7 +85,7 @@ function settle!(ws)
     status = Workspace.workspace_status(ws)
     status.busy && error("Benchmark workspace timed out")
     status.level === :error && error("Benchmark workspace failed: $status")
-    isempty(status.errors) || error("Benchmark stage failures: $(status.errors)")
+    isempty(status.errors) || error("Benchmark failures: $(status.errors)")
     return nothing
 end
 

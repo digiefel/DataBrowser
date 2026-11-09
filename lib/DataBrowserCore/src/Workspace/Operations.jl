@@ -267,6 +267,8 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
             ## The source group comes after the rows of its members, so that its group `process`
             ## finds their versions, and the cache restores it when they are unchanged.
             source_group!(workspace, unique(String[id(x) for x in walked]))
+            ## The rows of `process` that the cache did not restore run now.
+            workspace.background_processing && foreach(row -> want!(catalog, row, BACKGROUND_ITEM), values(workspace.rows))
             gone = 0
             # TODO: this also forgets the rows that the workspace adds after the walk, when a job
             # restores one of their inputs, such as the rows below a group that a source lists before
@@ -274,7 +276,7 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
             for key in keys(db)
                 record = get(db, key, nothing)
                 (Row(key) in catalog || isempty(record.items)) && continue
-                gone += first(record.items).stage == Int(SOURCE_READ)
+                gone += first(record.items).depth == 0
                 delete!(db, key)
             end
             scan.state = read_again == 0 && gone == 0 ? :unchanged : :done

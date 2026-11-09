@@ -57,7 +57,7 @@ the member (same id) or a new value, for example a group that keeps both inputs.
   **OPEN:** an explicit `AbstractDataSourceGroup <: AbstractDataSourceItem` instead, so that
   signatures say "group" by type.
 
-## Member values: Core reads, the signature states the stage
+## Member values: Core reads, the signature states the version
 
 **Davide:** the group's `read` does not read its members. Core reads every source item once, as it
 does anyway, and passes those values to the group's `read`. A file in two groups is read once and
@@ -312,7 +312,7 @@ process(.)                         HotGroup [S1, S2]
 process(S1), process(S2)           no output
 ```
 
-**COST:** Core's fallback accepts any value, so it is read again at each stage of each member. A
+**COST:** Core's fallback accepts any value, so it is read again at each version of each member. A
 project that cares states a narrower type in its own group `read`, as in case 2.
 
 **COST:** Core's `SourceGroup` is one type for every directory, so a `process` method cannot dispatch on

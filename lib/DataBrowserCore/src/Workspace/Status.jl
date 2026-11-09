@@ -13,7 +13,7 @@ function workspace_status(workspace::Workspace)::WorkspaceStatus
     version = @atomic workspace.items.version
     counts = version.counts
     workspace.scan.state === :discovering &&
-        (counts = WorkspaceStageCounts(workspace.scan.discovered[], counts.read, counts.items, counts.processed))
+        (counts = WorkspaceCounts(workspace.scan.discovered[], counts.read, counts.items, counts.processed))
     status = build_status(workspace, previous, counts, sort!(collect(values(version.errors)); by=first))
     # If another caller stored an older pair meanwhile, the next call sees the mismatch and recomputes.
     @atomic workspace.status = current => status
@@ -21,7 +21,7 @@ function workspace_status(workspace::Workspace)::WorkspaceStatus
 end
 
 """Fold a workspace's job and cache state and its `errors` into a status, using the previous one where noted."""
-function build_status(workspace::Workspace, previous::WorkspaceStatus, counts::WorkspaceStageCounts,
+function build_status(workspace::Workspace, previous::WorkspaceStatus, counts::WorkspaceCounts,
         errors::Vector{Pair{String,String}})::WorkspaceStatus
     scan = workspace.scan
     # During an incremental update, keep the last settled verdict on the chip instead of flashing
@@ -91,7 +91,6 @@ What a failed row computes, for a reader: the source item it reads, or the sourc
 group, the value its `process` takes, or else its name. The caller holds the catalog lock.
 """
 function subject(workspace::Workspace, row::Row)::String
-    stage = workspace.items.rows.stage[row]
-    stage === nothing && return id(workspace.catalog[row])
-    return stage == SOURCE_READ ? first(read_of(workspace.catalog[row])) : workspace.catalog[row].args[2].id
+    workspace.items.rows.depth[row] === nothing && return id(workspace.catalog[row])
+    return version_of(workspace.catalog[row])
 end

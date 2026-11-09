@@ -10,10 +10,13 @@ using DataBrowserGUI.Browser: BrowserState, CodeView, TableView, refresh!, prepa
 struct WindowTestProject <: DataBrowserAPI.AbstractProject end
 struct WindowTestSource <: DataBrowserAPI.AbstractDataSource end
 struct WindowTestFile <: DataBrowserAPI.AbstractDataSourceItem end
-struct WindowTestNumber <: DataBrowserAPI.AbstractDataItem
+# `S` is `:read` for what `read` gives, and `:processed` for what `process` gives, so that `process`
+# takes only what `read` gives.
+struct WindowTestNumber{S} <: DataBrowserAPI.AbstractDataItem
     name::String
     value::Int
 end
+WindowTestNumber(name, value) = WindowTestNumber{:read}(name, value)
 DataBrowserAPI.project_name(::WindowTestProject) = "windows"
 DataBrowserAPI.id(::WindowTestSource) = "numbers"
 DataBrowserAPI.label(::WindowTestSource) = "numbers"
@@ -23,12 +26,12 @@ DataBrowserAPI.label(::WindowTestFile) = "file"
 DataBrowserAPI.fingerprint(::WindowTestFile) = 1
 # The file holds the three numbers.
 DataBrowserAPI.read(::WindowTestProject, ::WindowTestSource, ::WindowTestFile) = WindowTestNumber("file", 0)
-DataBrowserAPI.process(::WindowTestProject, ::WindowTestNumber) = [WindowTestNumber("n$i", i) for i in 1:3]
+DataBrowserAPI.process(::WindowTestProject, ::WindowTestNumber{:read}) = [WindowTestNumber{:processed}("n$i", i) for i in 1:3]
 DataBrowserAPI.id(number::WindowTestNumber) = number.name
 DataBrowserAPI.metadata(number::WindowTestNumber) = Dict{Symbol,Any}(:number => number.value)
 DataBrowserAPI.label(number::WindowTestNumber) = number.name
 DataBrowserAPI.data(number::WindowTestNumber) = (; value=[number.value])
-DataBrowserAPI.reconstruct(::Type{WindowTestNumber}, name::AbstractString, data, ::Dict) = WindowTestNumber(name, only(data.value))
+DataBrowserAPI.reconstruct(::Type{T}, name::AbstractString, data, ::Dict) where {T<:WindowTestNumber} = T(name, only(data.value))
 
 # A visualizer that keeps the value it is given.
 mutable struct Kept <: DataBrowserAPI.AbstractVisualizer

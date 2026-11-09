@@ -76,7 +76,7 @@ workspace internals.
   `WorkspaceIndex`. Collection records expose a durable occurrence ID, compact internal key, and
   resolved label. Treat the browser tree as one projection of that index, not as the data model.
 - [x] Replace the monolithic typed `data_items` hook with the staged typed contract of
-  [stage contract](../lib/DataBrowserAPI/src/stage_contract.jl): explicit `read` and `entries` stages, item and collection
+  [`pipeline_contract.jl`](../lib/DataBrowserAPI/src/pipeline_contract.jl): explicit `read` and `entries` stages, item and collection
   `process`/`analyze`, project-aware stage forms with context-free defaults, and the source as an
   argument to `read` only. Give the stages distinct work/cache boundaries without a compatibility
   shim.
@@ -88,7 +88,7 @@ workspace internals.
   the first premade recipe.
 - [x] Clean-up and rename/file organization pass of DataBrowserAPI. `interface.jl` is gone: its
   declarations were the project contract and now sit in `project_contract.jl` beside
-  `AbstractProject`, with the stage contract in `stage_contract.jl`.
+  `AbstractProject`, with `read` and `process` in `pipeline_contract.jl`.
 - [x] Remove the custom internal tracing system; keep workspace diagnostics and use Julia's standard tools for scoped profiling. ([#11])
 
 ## 0.2.0 — Engine consolidation
@@ -230,8 +230,10 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] Recipes: `register_collection!(project, level; members, process, analyze)` registers the
   callbacks of one collection level, optionally for the items of one registration. The new data of
   each member is the data of the collection, and a member `process` takes its own part.
-- [ ] Run group and member `process` again until the members stop changing, with an error after a
-  maximum number of rounds. Today each runs once.
+- [x] Every version of a value gets the calls of `process` that a method takes, in place of fixed
+  stages: a chain of calls ends at a value that no method takes, or at a result `isequal` to the
+  version that it took, and fails after 100 versions of one id. In DataBrowserRecipes, each
+  collection runs the callbacks of its level in its own group `process`.
 - [x] Items carry all their metadata: they no longer inherit the metadata of their collections. A
   member `process` method copies it when needed; the Recipes one does.
 - [x] The workspace hands out each item as its `process` returned it, without rebuilding it.

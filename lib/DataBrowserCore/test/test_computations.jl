@@ -25,12 +25,15 @@ function DataBrowserAPI.storage(project::ComputationProject, ::Type{T}) where {T
 end
 struct ComputationSource <: AbstractDataSource end
 struct ComputationFile <: AbstractDataSourceItem end
-struct ComputationItem <: AbstractDataItem
+# `S` is `:read` for what `read` gives, and `:processed` for what `process` gives, so that `process`
+# takes only what `read` gives.
+struct ComputationItem{S} <: AbstractDataItem
     name::String
     data::NamedTuple{(:signal,),Tuple{Vector{Int}}}
     metadata::Dict{Symbol,Any}
     gain::Float64
 end
+ComputationItem(name, data, metadata, gain) = ComputationItem{:read}(name, data, metadata, gain)
 ComputationItem(name, data, metadata) = ComputationItem(name, data, metadata, 1.0)
 DataBrowserAPI.project_name(::ComputationProject) = "computation-graph"
 DataBrowserAPI.id(::ComputationSource) = "computation-source"
@@ -42,14 +45,14 @@ DataBrowserAPI.fingerprint(::ComputationFile) = 1
 DataBrowserAPI.id(value::ComputationItem) = value.name
 DataBrowserAPI.data(value::ComputationItem) = value.data
 DataBrowserAPI.metadata(value::ComputationItem) = value.metadata
-DataBrowserAPI.reconstruct(::Type{ComputationItem}, id::AbstractString, data, metadata::Dict) =
-    ComputationItem(String(id), data, metadata)
+DataBrowserAPI.reconstruct(::Type{T}, id::AbstractString, data, metadata::Dict) where {T<:ComputationItem} =
+    T(String(id), data, metadata, 1.0)
 DataBrowserAPI.read(::ComputationProject, ::ComputationSource, ::ComputationFile) =
     ComputationItem("sample", (signal=[1, 2, 3],), Dict{Symbol,Any}(:step => "read"))
-function DataBrowserAPI.process(project::ComputationProject, value::ComputationItem)
+function DataBrowserAPI.process(project::ComputationProject, value::ComputationItem{:read})
     project.processes[] += 1
     signal = value.data.signal .* 2
-    return ComputationItem(id(value), (; signal), Dict{Symbol,Any}(:step => "process", :total => sum(signal)), 2.0)
+    return ComputationItem{:processed}(id(value), (; signal), Dict{Symbol,Any}(:step => "process", :total => sum(signal)), 2.0)
 end
 
 @testset "ordinary computations retain their inputs and pass native values" begin
@@ -68,12 +71,12 @@ struct UncachedComputationProject <: AbstractProject
     project::ComputationProject
 end
 DataBrowserAPI.project_name(::UncachedComputationProject) = "uncached-computation-graph"
-DataBrowserAPI.storage(::UncachedComputationProject, ::Type{ComputationItem}) = nothing
+DataBrowserAPI.storage(::UncachedComputationProject, ::Type{<:ComputationItem}) = nothing
 DataBrowserAPI.storage(project::UncachedComputationProject, ::Type{T}) where {T} =
     storage(project.project, T)
 DataBrowserAPI.read(project::UncachedComputationProject, source::ComputationSource, file::ComputationFile) =
     read(project.project, source, file)
-DataBrowserAPI.process(project::UncachedComputationProject, value::ComputationItem) =
+DataBrowserAPI.process(project::UncachedComputationProject, value::ComputationItem{:read}) =
     process(project.project, value)
 
 @testset "native item type chooses caching for scheduled work and replay" begin
@@ -126,10 +129,10 @@ DataBrowserAPI.project_name(::PolicyProject) = "type-policy-reopen"
 DataBrowserAPI.id(::PolicySource) = "policy-source"
 DataBrowserAPI.label(::PolicySource) = "policy-source"
 DataBrowserAPI.items(source::PolicySource; kwargs...) = (source.scans[] += 1; [ComputationFile()])
-DataBrowserAPI.storage(project::PolicyProject, ::Type{ComputationItem}) = project.retain[] ? MemoryStore() : nothing
+DataBrowserAPI.storage(project::PolicyProject, ::Type{<:ComputationItem}) = project.retain[] ? MemoryStore() : nothing
 DataBrowserAPI.read(project::PolicyProject, ::PolicySource, file::ComputationFile) =
     read(project.project, ComputationSource(), file)
-DataBrowserAPI.process(project::PolicyProject, value::ComputationItem) = process(project.project, value)
+DataBrowserAPI.process(project::PolicyProject, value::ComputationItem{:read}) = process(project.project, value)
 
 @testset "disabling type storage also bypasses an earlier persisted payload" begin
     mktempdir() do depot
@@ -159,10 +162,13 @@ DataBrowserAPI.process(project::PolicyProject, value::ComputationItem) = process
 end
 
 struct VectorValueProject <: AbstractProject end
-struct VectorValueItem <: AbstractDataItem
+# `S` is `:read` for what `read` gives, and `:processed` for what `process` gives, so that `process`
+# takes only what `read` gives.
+struct VectorValueItem{S} <: AbstractDataItem
     data::Vector{Float64}
     calibration::Float64
 end
+VectorValueItem(data, calibration) = VectorValueItem{:read}(data, calibration)
 DataBrowserAPI.project_name(::VectorValueProject) = "native-vector"
 DataBrowserAPI.id(::VectorValueItem) = "vector"
 DataBrowserAPI.data(value::VectorValueItem) = value.data
@@ -206,7 +212,7 @@ end
         @test id(latest) == "sample"
         @test latest.data.signal == [2, 4, 6]
         @test metadata(latest)[:total] == 12
-        # An ordinary computation can consume any earlier call, without a stage-specific adapter.
+        # An ordinary computation can consume any earlier call, without an adapter for each kind of call.
         @test evaluate(workspace, Computation(item -> sum(data(item).signal), reader)) == 6
         # Changing an evaluated cached result leaves the retained value available for replay.
         raw = evaluate(workspace, processed)
@@ -261,9 +267,9 @@ struct ReplayProject <: AbstractProject end
 DataBrowserAPI.project_name(::ReplayProject) = "earlier-call-updates"
 DataBrowserAPI.read(::ReplayProject, ::DirectorySource, file::SourceFile) =
     VectorValueItem(parse.(Float64, split(read(file.filepath, String))), 2.5)
-DataBrowserAPI.process(::ReplayProject, value::VectorValueItem) = VectorValueItem(2 .* value.data, value.calibration)
+DataBrowserAPI.process(::ReplayProject, value::VectorValueItem{:read}) = VectorValueItem{:processed}(2 .* value.data, value.calibration)
 
-@testset "an exposed earlier call follows source changes at its producing stage" begin
+@testset "an exposed earlier call follows source changes through the call that gives it" begin
     mktempdir() do root
         path = joinpath(root, "signal.dat")
         write(path, "1 2")
@@ -356,7 +362,7 @@ end
 DataBrowserAPI.project_name(::KeptProject) = "kept-computations"
 DataBrowserAPI.read(::KeptProject, source::ComputationSource, file::ComputationFile) =
     read(ComputationProject(), source, file)
-DataBrowserAPI.process(::KeptProject, value::ComputationItem) = process(ComputationProject(), value)
+DataBrowserAPI.process(::KeptProject, value::ComputationItem{:read}) = process(ComputationProject(), value)
 DataBrowserAPI.storage(project::KeptProject, ::Type) = DuckDBStore(project.values)
 const KEPT_CALLS = Threads.Atomic{Int}(0)
 kept_total(value) = (Threads.atomic_add!(KEPT_CALLS, 1); sum(data(value).signal))
@@ -458,7 +464,7 @@ end
 DataBrowserAPI.project_name(::RefusingProject) = "refusing-store"
 DataBrowserAPI.read(::RefusingProject, source::ComputationSource, file::ComputationFile) =
     read(ComputationProject(), source, file)
-DataBrowserAPI.process(::RefusingProject, value::ComputationItem) = process(ComputationProject(), value)
+DataBrowserAPI.process(::RefusingProject, value::ComputationItem{:read}) = process(ComputationProject(), value)
 DataBrowserAPI.storage(project::RefusingProject, ::Type) = project.store
 
 @testset "a result that its store refuses fails its item until the next opening" begin

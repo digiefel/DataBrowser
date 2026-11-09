@@ -24,7 +24,7 @@ Human-readable label for an item.
 
 The workspace calls `label` when the item is created, and again after `process`, each time on the
 item with its metadata so far. A label can therefore use metadata that
-only a later stage adds; until then, `get(metadata(item), key, nothing)` returns `nothing`.
+only a later `process` adds; until then, `get(metadata(item), key, nothing)` returns `nothing`.
 
 The default is the item's id. Define `label(item)` for a more descriptive label, or the project form
 when the label depends on the project.
@@ -81,5 +81,3 @@ Base.hash(item::AbstractDataItem, h::UInt) = hash((typeof(item), data(item), met
 Base.isequal(a::AbstractGroup, b::AbstractGroup) = typeof(a) === typeof(b) && isequal((data(a), metadata(a), members(a)), (data(b), metadata(b), members(b)))
 Base.hash(group::AbstractGroup, h::UInt) = hash((typeof(group), data(group), metadata(group), members(group)), h)
 
-"""Process an item. Optional; default identity."""
-process(item::AbstractDataItem) = item

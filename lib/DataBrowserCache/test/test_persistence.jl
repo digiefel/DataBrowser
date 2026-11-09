@@ -6,7 +6,7 @@ struct CacheItem <: AbstractDataItem end
 """Save the record of the row with key 1, which gives one item for each metadata dictionary."""
 store_fixture_item!(cache, metadata...) = cache[1] = (; call="item", revision=UInt64(1),
     result_revision=UInt64(1), item_revision=UInt64(0), type=Vector{CacheItem}, failure="",
-    items=SavedOutput[(; id="item$i", stage=Int8(1), label="item", type=CacheItem, members=nothing,
+    items=SavedOutput[(; id="item$i", depth=Int8(1), label="item", type=CacheItem, members=nothing,
         metadata=Dict{Symbol,Any}(x)) for (i, x) in enumerate(metadata)])
 saved(cache) = only(get(cache, 1, nothing).items).metadata
 

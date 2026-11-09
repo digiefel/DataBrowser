@@ -1,36 +1,42 @@
 # The pipeline of a project is the calls of its code: `read` for each source item, and `process` for
-# the values that reading gives, for groups, and for the members of groups. The workspace runs each
-# call as a row of its *catalog*, a table with one row for each computation, which holds the state
-# of the computation (missing, stale, current or failed) and the rows that it reads
-# ([`Catalogs.jl`](../Catalogs.md)).
+# every value that a call gives. The workspace runs each call as a row of its *catalog*, a table with
+# one row for each computation, which holds the state of the computation (missing, stale, current or
+# failed) and the rows that it reads ([`Catalogs.jl`](../Catalogs.md)).
 # The workspace *holds* a row to keep it in the catalog, and *wants* it, with a priority, so that a
 # worker runs it, and runs it again when it is *stale*: when its code, an input or its computation
 # changed since it ran. A window or a script that reads a row *requests* it: a worker runs it ahead
 # of the wanted rows, until it has a result.
 #
-# | Row            | Calls                                  | Added when                                              |
-# | -------------- | -------------------------------------- | ------------------------------------------------------- |
-# | read           | `read(project, source, item)`          | the source reports a source item                        |
-# | source group   | `SourceGroup(id, label, ids)`          | the workspace scans its source                          |
-# | process        | `process(project, value)`              | a read gives the value                                  |
-# | group process  | `process(project, group, members)`     | a value is a group, and a method of the project takes it |
-# | member process | `process(project, member, group)`      | a value is a member of a group, and a method of the project takes both |
+# Each value has an *id*, a string that the project chooses and that stays the same from one session
+# to the next. A call that takes a value and gives a value with the same id gives a later *version*
+# of it, and the windows show the *latest version*: the one with the most versions before it. A
+# value with another id is a new value. One rule makes every call of `process`, for each version `v`
+# that has a result:
 #
-# A row gives one value, or several when its result is a vector of items. Each value has an *id*, a
-# string that the project chooses and that stays the same from one session to the next. A value
-# with the id of a value that an earlier row gives is a later *version* of that value: the rows of
-# one id run in the order of the table, and the last one gives its *latest version*, which windows
-# show. A value with another id is a new value. The source group gives the [`SourceGroup`](@ref) of
-# the source, whose members are all its source items.
+# | Call                           | When                                                               |
+# | ------------------------------ | ------------------------------------------------------------------ |
+# | `process(project, v)`          | a method of the project takes `v`                                  |
+# | `process(project, v, members)` | `v` is a group, and a method of the project takes it               |
+# | `process(project, v, group)`   | `v` is a member of `group`, and a method of the project takes both |
 #
-# A row fails when it gives one id twice. It also fails when another row of the same *stage* gives
-# one of its ids already. A stage is a line of the table, except that reads and the source group are
-# one stage: when two files hold an item with the same id, the read that finishes second fails.
-# Finally, a row fails when it gives the id of a value of an earlier row that it does not read. Like
-# any failure, a failed row gives no values, and the status panel of the browser shows the error
-# next to it. The cache saves the failure of a row that gives one id twice, which depends on that
-# row alone. When another row gives the id, the next session runs the row again, and the row
-# succeeds once the other row is gone.
+# Each value that a call gives is a version with calls of its own, so a chain of calls has any
+# length, and each call runs as soon as its inputs have results. A call that gives a value `isequal`
+# to the version that it took gives no new version: the chain of that id ends there. This also ends
+# a `process` method that returns the type that it takes, once its result stops changing. After
+# `MAX_VERSIONS` versions of one id, the next call fails instead.
+#
+# A call takes the version that it is for, and its other inputs at their latest version that does
+# not come from the call itself: the group of a member `process`, and the members of a group
+# `process`. So when a member `process` gives a later version of a member, the group keeps the
+# version that it took, and the group process of the next version of the group takes the new one.
+#
+# The source group gives the [`SourceGroup`](@ref) of the source, whose members are all its source
+# items. A row fails when it gives one id twice. It also fails when it gives an id that another row
+# gives, and neither of the two takes a version of it: when two files hold an item with the same id, the read that
+# finishes second fails. Like any failure, a failed row gives no values, and the status panel of the
+# browser shows the error next to it. The cache saves the failure of a row that gives one id twice,
+# which depends on that row alone. When another row gives the id, the next session runs the row
+# again, and the row succeeds once the other row is gone.
 #
 # A group is a value with members: [`members`](@ref) gives their ids. An id names a value, or a
 # source item, which stands for the values that it gives: a group that a folder gives can name the
@@ -85,6 +91,10 @@
 # which forgets what the workspace kept for removed rows and tells the windows that something
 # changed.
 
+# The number of versions after which the next call of an id fails, because its results keep
+# changing.
+const MAX_VERSIONS = 100
+
 # ## Source items
 
 """
@@ -114,7 +124,7 @@ function source!(workspace::Workspace, rows::Dict{String,Row}, key::String, valu
     row === nothing || (replace!(catalog, row, value); return nothing)
     row = rows[key] = @timed_dbg "source.add!" add!(catalog, value)
     hold!(catalog, row)
-    write!(workspace.items, workspace.items.rows.stage, row.index, SOURCE_READ)
+    write!(workspace.items, workspace.items.rows.depth, row.index, 0)
     want!(catalog, row, SOURCES_FIRST)
     @timed_dbg "source.restore" restore!(workspace, row) || finished!(workspace, row, nothing)
     return nothing
@@ -167,19 +177,20 @@ end
 """
     values(workspace, source_item_id) -> Vector{String}
 
-The ids of the values of a source item: the value that reading it gives, and the values that the
-`process` of that value gives. Until its read has a result, the source item is a value of its own,
-with its id.
+The ids of the values of a source item: the values that reading it gives, and the new values that
+the calls of `process` give from them, at any depth. Until its read has a result, the source item
+is a value of its own, with its id.
 """
 function Base.values(workspace::Workspace, read_id::AbstractString)::Vector{String}
     outputs, row = workspace.items.rows.outputs, get(workspace.sources, read_id, Catalogs.NOWHERE)
     found = String[output.id for output in something(outputs[row], Output[])]
     outputs[row] === nothing && row in get(workspace.versions, read_id, Row[]) && push!(found, read_id)
-    for value in copy(found)
-        processed = get(workspace.rows, "process:" * value, Catalogs.NOWHERE)
-        append!(found, output.id for output in something(outputs[processed], Output[]))
+    ## `found` grows while the loop walks it, so the loop reaches the new values too.
+    for x in found, version in get(workspace.versions, x, Row[]), key in call_keys(workspace, x, version)
+        given = something(outputs[get(workspace.rows, key, Catalogs.NOWHERE)], Output[])
+        append!(found, output.id for output in given if !(output.id in found))
     end
-    return unique!(found)
+    return found
 end
 
 # ## Values and their versions
@@ -197,7 +208,7 @@ function finished!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector
     read_id = source(workspace, row)
     before = values(workspace, read_id)
     ids = @timed_dbg "finished.given!" given!(workspace, row, outputs)
-    @timed_dbg "finished.refresh!" refresh!(workspace, ids)
+    @timed_dbg "finished.refresh!" refresh!(workspace, row, ids)
     after = values(workspace, read_id)
     added, gone = setdiff(after, before), setdiff(before, after)
     ## The groups that name the source item hold the values that it gives now, and so do the rows of
@@ -216,34 +227,29 @@ end
 """
     given!(workspace, row, outputs) -> Vector{String}
 
-Make `outputs` the values of `row`, each a version of its id. `given!` throws an error, and changes
-nothing, when another row of its stage gives one of these ids, or when an earlier row gives one of
-them and `row` does not read it. With `outputs = nothing`, for a row without a result, `row` is a
-version of the value it is expected to give: the value that a `process` method takes, or for a
-read, the source item itself, with its id. The table `items` forgets the metadata of the ids that
-`row` no longer gives. The stores forget the values that `row` no longer gives with the same
-revision. Returns the ids of the values whose versions changed, or none when `row` gives values of
-the same ids, types and members as before.
+Make `outputs` the values of `row`, each a version of its id at the depth of `row`. `given!` throws
+an error, and changes nothing, when another row gives one of these ids, and neither of the two rows
+takes a version of it. With `outputs = nothing`, for a row without a result, `row` is a version of the value
+whose version it takes: for a read, the source item itself, with its id. The table `items` forgets
+the metadata of the ids that `row` no longer gives. The stores forget the values that `row` no
+longer gives with the same revision. Returns the ids of the values whose versions changed, or none
+when `row` gives values of the same ids, types and members as before.
 """
 function given!(workspace::Workspace, row::Row, outputs::Union{Nothing,Vector{Output}})::Vector{String}
     catalog, items = workspace.catalog, workspace.items
-    stage, given = items.rows.stage[row], something(outputs, Output[])
+    depth, given, taken = items.rows.depth[row], something(outputs, Output[]), version_of(catalog[row])
     ## When the row gives an id that it may not give, `given!` throws before it changes anything.
-    ## Only the rows of this stage and of earlier ones count.
     for output in given
-        others = filter(other -> other != row && items.rows.stage[other] <= stage, get(workspace.versions, output.id, Row[]))
-        earlier = filter(other -> items.rows.stage[other] < stage, others)
-        reads = any(x -> x isa Part && x.id == output.id && x.of.row in earlier, catalog[row].args)
-        (any(other -> items.rows.stage[other] == stage, others) || !(isempty(earlier) || reads)) &&
-            error("the item \"$(output.id)\" comes from $(id(catalog[others[end]]))")
+        output.id == taken && continue
+        others = filter(other -> other != row && version_of(catalog[other]) != output.id, get(workspace.versions, output.id, Row[]))
+        isempty(others) || error("the item \"$(output.id)\" comes from $(id(catalog[others[end]]))")
     end
-    expected = [stage == SOURCE_READ ? first(read_of(catalog[row])) : catalog[row].args[2].id]
     before = items.rows.outputs[row]
-    ids = unique!(String[[output.id for output in something(before, Output[])]; [output.id for output in given]; expected])
+    ids = unique!(String[[output.id for output in something(before, Output[])]; [output.id for output in given]; taken])
     for x in ids
         rows = filter!(!=(row), get!(Vector{Row}, workspace.versions, x))
-        (outputs === nothing ? x in expected : any(output -> output.id == x, given)) &&
-            insert!(rows, something(findfirst(other -> items.rows.stage[other] > stage, rows), length(rows) + 1), row)
+        (outputs === nothing ? x == taken : any(output -> output.id == x, given)) &&
+            insert!(rows, something(findfirst(other -> items.rows.depth[other] > depth, rows), length(rows) + 1), row)
         isempty(rows) && delete!(workspace.versions, x)
     end
     ## The table `items` forgets the metadata of the ids that the row no longer gives. The stores
@@ -320,25 +326,16 @@ function store!(items::Items, output::Output, values::AbstractDict{Symbol})::Not
 end
 
 """
-    refresh!(workspace, ids)
+    refresh!(workspace, row, ids)
 
-Add, change or release the rows that read the values `ids`, after their versions changed: the
-`process` of a value that a read gives, the group `process` of a group, the member `process`
-methods of its members, and those of a value in each group it is a member of. The members of a
-group are those of its latest version, and a member that names a source item stands for the values
-that it gives.
+Add, change or release the calls of the versions of the values `ids` that `row` gives, after their
+versions changed (see [`calls!`](@ref)). Also make each value whose latest version is a group hold
+the members of that version, and a member that names a source item stands for the values that it
+gives.
 """
-function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
-    catalog, project = workspace.catalog, workspace.project
+function refresh!(workspace::Workspace, row::Row, ids::Vector{String})::Nothing
     for x in ids
-        versions = get(workspace.versions, x, Row[])
-        ## The `process` of a value starts when a read gives the value, not while the read runs.
-        read_row = findfirst(row -> workspace.items.rows.stage[row] == SOURCE_READ && output(workspace, row, x) !== nothing, versions)
-        # TODO: `process` runs once, on what `read` gave; call it again on its results until they are
-        # `isequal` to its inputs.
-        row!(workspace, "process:" * x, ITEM_PROCESS, read_row === nothing ? nothing :
-            Computation(process, project, Part(Input(catalog, versions[read_row]), x)))
-        group!(workspace, x)
+        calls!(workspace, x, row)
         value = output(workspace, x)
         held = value === nothing || value.members === nothing ? String[] : value.members
         before = get(workspace.members, x, String[])
@@ -362,8 +359,8 @@ function refresh!(workspace::Workspace, ids::Vector{String})::Nothing
             foreach(member -> input!(workspace, group, member, 1), setdiff(held, before))
             foreach(member -> input!(workspace, group, member, -1), setdiff(before, held))
         end
+        ## The member calls in `x` take its latest version.
         foreach(v -> membership!(workspace, v, x, true), values_of(held))
-        foreach(group -> member!(workspace, x, group), copy(get(workspace.groups, x, String[])))
     end
     return nothing
 end
@@ -371,70 +368,75 @@ end
 """
     membership!(workspace, x, group, holds)
 
-Make the value `x` a member of `group`, with its member `process`, or with `holds = false` no longer
-one.
+Make the value `x` a member of `group`, with the member calls of its versions, or with `holds =
+false` no longer one.
 """
 function membership!(workspace::Workspace, x::String, group::String, holds::Bool)::Nothing
     groups = get!(Vector{String}, workspace.groups, x)
-    if holds
-        group in groups || (push!(groups, group); write!(workspace, x))
-        member!(workspace, x, group)
-    else
-        changed = group in groups
-        filter!(!=(group), groups)
-        isempty(groups) && delete!(workspace.groups, x)
-        changed && write!(workspace, x)
-        row!(workspace, "member process:$x in $group", MEMBER_PROCESS, nothing)
+    changed = holds != (group in groups)
+    holds ? (changed && push!(groups, group)) : filter!(!=(group), groups)
+    isempty(groups) && delete!(workspace.groups, x)
+    changed && write!(workspace, x)
+    for row in copy(get(workspace.versions, x, Row[]))
+        holds ? member!(workspace, x, row, group) : row!(workspace, "member process:$x@$(row.index) in $group", nothing)
     end
     return nothing
 end
 
 """
-    group!(workspace, group)
+    calls!(workspace, x, row)
 
-Add, change or release the group `process` of the value `group`: it runs when the value is a group,
-and a method of the project takes its type and a vector of member values.
+Add, change or release the calls of `process` for the version `v` of the value `x` that `row`
+gives: `process(project, v)`; `process(project, v, members)` when `v` is a group; and
+`process(project, v, group)` for each group of `x`. Each call exists when a method of the project
+takes the types of its arguments, and `v` has a result.
 """
-function group!(workspace::Workspace, group::String)::Nothing
-    project, key = workspace.project, "group process:" * group
-    found = latest(workspace, group, GROUP_PROCESS; T=Any)
-    value = found === nothing ? nothing : output(workspace, found, group)
+function calls!(workspace::Workspace, x::String, row::Row)::Nothing
+    project, value = workspace.project, output(workspace, row, x)
+    key, version = "$x@$(row.index)", Part(Input(workspace.catalog, row), x)
+    takes = value !== nothing && asked(workspace, hasmethod, process, Tuple{typeof(project),value.type})
+    row!(workspace, "process:" * key, takes ? Computation(process, project, version) : nothing)
     T = value === nothing || value.members === nothing ? nothing : asked(workspace, member_type, process, typeof(project), value.type)
-    T === nothing && return row!(workspace, key, GROUP_PROCESS, nothing)
-    row!(workspace, key, GROUP_PROCESS, Computation(process, project,
-        Part(Input(workspace.catalog, latest(workspace, group, GROUP_PROCESS)), group), MemberValues{T}(group)), value.members)
+    row!(workspace, "group process:" * key, T === nothing ? nothing : Computation(process, project, version, MemberValues{T}(x)),
+        T === nothing ? String[] : value.members)
+    foreach(group -> member!(workspace, x, row, group), copy(get(workspace.groups, x, String[])))
     return nothing
 end
 
 """
-    member!(workspace, member, group)
+    member!(workspace, x, row, group)
 
-Add, change or release the member `process` of the value `member` in `group`: it runs when a method
-of the project takes the types of their latest values.
+Add, change or release the member call `process(project, v, g)` of the version `v` of `x` that `row`
+gives, where `g` is the latest version of `group` that does not come from the result of the call
+(see [`latest`](@ref)).
 """
-function member!(workspace::Workspace, member::String, group::String)::Nothing
-    key = "member process:$member in $group"
-    own = get(workspace.rows, key, Catalogs.NOWHERE)
-    of_member, of_group = latest(workspace, member, MEMBER_PROCESS; T=Any, skip=own), latest(workspace, group, nothing; T=Any, skip=own)
-    applies = of_member !== nothing && of_group !== nothing && asked(workspace, hasmethod, process,
-        Tuple{typeof(workspace.project),output(workspace, of_member, member).type,output(workspace, of_group, group).type})
-    row!(workspace, key, MEMBER_PROCESS, applies ? Computation(process, workspace.project,
-        Part(Input(workspace.catalog, latest(workspace, member, MEMBER_PROCESS)), member),
-        Part(Input(workspace.catalog, latest(workspace, group, nothing; skip=own)), group)) : nothing)
+function member!(workspace::Workspace, x::String, row::Row, group::String)::Nothing
+    catalog, project, value = workspace.catalog, workspace.project, output(workspace, row, x)
+    key = "member process:$x@$(row.index) in $group"
+    at = value === nothing ? nothing : latest(workspace, group; T=Any, skip=get(workspace.rows, key, Catalogs.NOWHERE))
+    takes = at !== nothing && asked(workspace, hasmethod, process, Tuple{typeof(project),value.type,output(workspace, at, group).type})
+    row!(workspace, key, takes ?
+        Computation(process, project, Part(Input(catalog, row), x), Part(Input(catalog, at), group)) : nothing)
     return nothing
 end
 
-"""
-    row!(workspace, key, stage, computation, held=String[])
+# The keys of the calls of the version of `x` that `row` gives.
+call_keys(workspace::Workspace, x::String, row::Row)::Vector{String} =
+    ["process:$x@$(row.index)"; "group process:$x@$(row.index)";
+     ["member process:$x@$(row.index) in $group" for group in get(workspace.groups, x, String[])]]
 
-Add the row of `process` that `workspace.rows` holds under `key`, such as `"process:a/1"`, or give
-it `computation` when it has another computation. `nothing` releases the row. Until the row has a
-result, it is a version of the value that its `process` takes. A group process takes the values of
-the members `held`.
 """
-function row!(workspace::Workspace, key::String, stage::PipelineStage, value::Union{Nothing,Computation}, held::Vector{String}=String[])::Nothing
-    catalog = workspace.catalog
+    row!(workspace, key, computation, held=String[])
+
+Add the row of `process` that `workspace.rows` holds under `key`, such as `"process:a/1@3"`, or give
+it `computation` when it has another computation. `nothing` releases the row. The row is one deeper
+than the version that it takes, and until it has a result, it is a version of that value. A group
+process takes the values of the members `held`.
+"""
+function row!(workspace::Workspace, key::String, value::Union{Nothing,Computation}, held::Vector{String}=String[])::Nothing
+    catalog, items = workspace.catalog, workspace.items
     row = get(workspace.rows, key, nothing)
+    group = value !== nothing && value.args[end] isa MemberValues
     if value === nothing
         row === nothing && return nothing
         delete!(workspace.rows, key)
@@ -443,14 +445,15 @@ function row!(workspace::Workspace, key::String, stage::PipelineStage, value::Un
         row = add!(catalog, value)
         hold!(catalog, row)
         workspace.rows[key] = row
-        write!(workspace.items, workspace.items.rows.stage, row.index, stage)
-        workspace.background_processing && want!(catalog, row, BACKGROUND_ITEM)
+        write!(items, items.rows.depth, row.index, items.rows.depth[value.args[2].of.row] + 1)
+        ## During a scan, the cache restores what it can first: the scan wants the rows when it ends.
+        workspace.background_processing && !source_scan_running(workspace) && want!(catalog, row, BACKGROUND_ITEM)
         given!(workspace, row, nothing)
-        stage == GROUP_PROCESS && members!(workspace, row, held)
+        group && members!(workspace, row, held)
         restore!(workspace, row)
     else
         isequal(catalog[row], value) || replace!(catalog, row, value)
-        stage == GROUP_PROCESS && members!(workspace, row, held)
+        group && members!(workspace, row, held)
     end
     return nothing
 end
@@ -463,21 +466,22 @@ Release a row of the pipeline: its values leave the workspace, and the cache for
 function Catalogs.release!(workspace::Workspace, row::Row)::Nothing
     finished!(workspace, row, Output[])
     haskey(workspace.taken, row) && members!(workspace, row, nothing)
-    write!(workspace.items, workspace.items.rows.stage, row.index, nothing)
+    write!(workspace.items, workspace.items.rows.depth, row.index, nothing)
     release!(workspace.catalog, row)
     return nothing
 end
 
 """
-    latest(workspace, id, before; T=nothing, skip=NOWHERE) -> Union{Nothing,Row}
+    latest(workspace, id; T=nothing, skip=NOWHERE) -> Union{Nothing,Row}
 
-The row of the latest version of the value `id` from a stage before `before`, or from any stage for
-`before = nothing`, other than `skip`. With `T`, the latest row that gave a value of type `T`;
-without, also a row that did not run yet. `nothing` when there is none.
+The row of the latest version of the value `id`. With `T`, the latest row that gave a value of type
+`T`; without, also a row that did not run yet. A version that reads the row `skip`, directly or
+through other rows, is left out: the call of `skip` takes its other inputs this way, so that it
+never takes a version that comes from its own result. `nothing` when there is none.
 """
-function latest(workspace::Workspace, x::String, before::Union{Nothing,PipelineStage}; T=nothing, skip::Row=Catalogs.NOWHERE)::Union{Nothing,Row}
+function latest(workspace::Workspace, x::String; T=nothing, skip::Row=Catalogs.NOWHERE)::Union{Nothing,Row}
     for row in Iterators.reverse(get(workspace.versions, x, Row[]))
-        (row == skip || before !== nothing && workspace.items.rows.stage[row] >= before) && continue
+        skip != Catalogs.NOWHERE && Catalogs.reads(workspace.catalog, row, skip) && continue
         T === nothing && return row
         found = output(workspace, row, x)
         found !== nothing && found.type <: T && return row
@@ -494,7 +498,7 @@ end
 
 # The latest version of the value `x` that a row gave, or `nothing`.
 function output(workspace::Workspace, x::String)::Union{Nothing,Output}
-    row = latest(workspace, x, nothing; T=Any)
+    row = latest(workspace, x; T=Any)
     return row === nothing ? nothing : output(workspace, row, x)
 end
 
@@ -549,14 +553,12 @@ end
 
 Follow the value `id` among the values that the row of a group takes, after its versions changed,
 or after one more (`change` 1) or one fewer (`change` -1) of the ids above it lead to it. The row
-takes the latest version of the type `T` of its argument `MemberValues{T}`, from before the member
-`process` methods, or a later version that did not run yet but will: it is wanted or requested, and
-does not read a failed row. A source item stands for the values that it gives, and for its read
-while that will run, and a group without such a version stands for its members. The row reads the row of each version that it
-takes, and its revision follows theirs.
+takes the latest version of the type `T` of its argument `MemberValues{T}` that does not come from
+its own result (see [`latest`](@ref)), or a later version that did not run yet but will: it is
+wanted or requested, and does not read a failed row. A source item stands for the values that it
+gives, and for its read while that will run, and a group without such a version stands for its
+members. The row reads the row of each version that it takes, and its revision follows theirs.
 """
-# TODO: a group process sees the values of members from before the member `process` methods, of its
-# own group too. Choose how they converge (docs/plans/processing.md).
 function input!(workspace::Workspace, row::Row, x::String, change::Int=0)::Nothing
     catalog, taken = workspace.catalog, workspace.taken[row]
     before = get(taken.rows, x, (row=Catalogs.NOWHERE, term=UInt64(0), paths=Int32(0)))
@@ -565,7 +567,7 @@ function input!(workspace::Workspace, row::Row, x::String, change::Int=0)::Nothi
         Catalogs.wanted(catalog, other) && !Catalogs.stuck(catalog, other)
     if paths > 0
         for version in Iterators.reverse(get(workspace.versions, x, Row[]))
-            (version == row || workspace.items.rows.stage[version] >= MEMBER_PROCESS) && continue
+            Catalogs.reads(catalog, version, row) && continue
             found = output(workspace, version, x)
             (found === nothing ? runs(version) : found.type <: taken.T) && (after = version; break)
         end
@@ -603,7 +605,6 @@ The type `T` of the member values that a method of the project for `f` takes aft
 """
 function member_type(f, types...)::Union{Nothing,Type}
     for method in methods(f, Tuple{types...,AbstractVector})
-        Base.moduleroot(method.module) in (Base, Core, DataBrowserAPI) && continue
         vector = Base.unwrap_unionall(Base.unwrap_unionall(method.sig).parameters[end])
         element = vector isa DataType && !isempty(vector.parameters) ? vector.parameters[1] : Any
         T = element isa TypeVar ? element.ub : element
@@ -615,9 +616,14 @@ function member_type(f, types...)::Union{Nothing,Type}
 end
 
 # The answer of `query(arguments...)` about the methods of the project, which `check_code!` asks
-# again after a code change.
+# again after a code change. It looks at the latest methods, also when the caller runs in an older
+# world, as code that defines the methods of a project and opens its workspace in one function.
 asked(workspace::Workspace, query, arguments...) =
-    get!(() -> query(arguments...), workspace.methods, (query, arguments...))
+    get!(() -> Base.invokelatest(query, arguments...), workspace.methods, (query, arguments...))
+
+# The id of the value whose version a row of the pipeline takes: for a read, the source item that
+# it reads, and for the source group, the source.
+version_of(value::Computation)::String = value.f === process ? value.args[2].id : first(read_of(value))
 
 # The id and the label of what the row of a read reads: a source item, or for the source group, the
 # source.

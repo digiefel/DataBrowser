@@ -1,7 +1,7 @@
 """
 Payload-agnostic project and item contracts for DataBrowser.
 
-The project contract, the typed pipeline stage contract, the source and item contracts, and the
+The project contract, the calls of a project, the source and item contracts, and the
 visualizer contract live here. The registration dialect lives in `DataBrowserRecipes`, plot registration and rendering in
 `DataBrowserPlots`; both are ordinary clients of what this package declares.
 """
@@ -9,7 +9,7 @@ module DataBrowserAPI
 
 using Dates
 
-# `read` is the pipeline's source-touching stage, and that is exactly what `Base.read` means.
+# `read` is the call that reads the source, which is exactly what `Base.read` means.
 # Extending it keeps `using DataBrowser` from shadowing a function every Julia user already knows.
 import Base: read
 
@@ -19,7 +19,7 @@ include("source_contract.jl")
 include("item_contract.jl")
 include("computation_contract.jl")
 include("storage_contract.jl")
-include("stage_contract.jl")
+include("pipeline_contract.jl")
 include("visualizer_contract.jl")
 include("timing_debug.jl")
 include("errors.jl")

@@ -116,12 +116,12 @@ function _render_cache_controls!(state::BrowserState)::Nothing
 
     status.progress === nothing && ig.TextWrapped(status.detail)
     counts, issues = status.counts, length(status.errors)
-    if ig.BeginTable("stage_counts", 4, ig.ImGuiTableFlags_SizingStretchSame)
+    if ig.BeginTable("counts", 4, ig.ImGuiTableFlags_SizingStretchSame)
         ig.TableNextRow()
-        _stage_count_cell("$(counts.sources) Sources", ["$(counts.sources) source items found", "$(counts.read) read"])
-        _stage_count_cell("$(counts.items) items", ["$(counts.items) items created"])
-        _stage_count_cell("$(counts.processed) processed", ["$(counts.processed) processed"])
-        _stage_count_cell("$issues $(issues == 1 ? "issue" : "issues")", ["$issues computations failed"])
+        _count_cell("$(counts.sources) Sources", ["$(counts.sources) source items found", "$(counts.read) read"])
+        _count_cell("$(counts.items) items", ["$(counts.items) items created"])
+        _count_cell("$(counts.processed) processed", ["$(counts.processed) processed"])
+        _count_cell("$issues $(issues == 1 ? "issue" : "issues")", ["$issues computations failed"])
         ig.EndTable()
     end
     if status.progress !== nothing
@@ -175,7 +175,7 @@ function _render_cache_controls!(state::BrowserState)::Nothing
 end
 
 """Draw one number of the popup, centered in its cell, with the lines of `tooltip` under the mouse."""
-function _stage_count_cell(text::AbstractString, tooltip::Vector{String})::Nothing
+function _count_cell(text::AbstractString, tooltip::Vector{String})::Nothing
     ig.TableNextColumn()
     ig.SetCursorPosX(ig.GetCursorPosX() + max((ig.GetContentRegionAvail().x - ig.CalcTextSize(text).x) / 2, 0))
     ig.TextUnformatted(text)

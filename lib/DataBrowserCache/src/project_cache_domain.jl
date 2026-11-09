@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 47
+const PROJECT_CACHE_SCHEMA_VERSION = 48
 
 """
 DuckDB buffer-pool limit (MiB) for cache connections.
@@ -46,12 +46,12 @@ struct ProjectCacheIdentity
 end
 
 """
-An item that a row gave, as the cache saves it: its id, the stage of the pipeline that the row
-runs, its label and type, the ids of its members when it is a group, and its metadata.
+An item that a row gave, as the cache saves it: its id, its depth in the pipeline (see
+DataBrowserCore), its label and type, the ids of its members when it is a group, and its metadata.
 """
 const SavedOutput = @NamedTuple{
     id::String,
-    stage::Int8,
+    depth::Int8,
     label::String,
     type::Type,
     members::Union{Nothing,Vector{String}},
@@ -83,14 +83,14 @@ const Record = @NamedTuple{
 # Storage rows (field names are the table columns; `R(database_row)` is the pure decoder)
 
 """
-One item that a row gave: the key of its row, the stage of the pipeline it runs, and the position
+One item that a row gave: the key of its row, its depth in the pipeline, and the position
 of the item among the items it gave. `output_key` is the key of the item's metadata.
 """
 struct OutputRow
     output_key::Int64
     computation::Int64
     id::String
-    stage::Int8
+    depth::Int8
     position::Int64
     label::String
     type_hex::String
@@ -98,7 +98,7 @@ struct OutputRow
 end
 
 OutputRow(row)::OutputRow = OutputRow(Int64(row.output_key), Int64(row.computation), String(row.id),
-    Int8(row.stage), Int64(row.position), String(row.label), String(row.type_hex), _null_to_nothing(row.members_hex))
+    Int8(row.depth), Int64(row.position), String(row.label), String(row.type_hex), _null_to_nothing(row.members_hex))
 
 """The fields of a [`Record`](@ref) but its items, by the key of the row."""
 struct ComputationRevisionRow
@@ -260,7 +260,7 @@ function open_cache_db(
         # come back with fewer items than it gave.
         for row in sort!(collect(values(read(outputs))); by=row -> row.position)
             output_keys[(row.computation, row.id)] = row.output_key
-            haskey(records, row.computation) && push!(records[row.computation].items, (; row.id, row.stage,
+            haskey(records, row.computation) && push!(records[row.computation].items, (; row.id, row.depth,
                 row.label, type=type(row.type_hex), members=_deserialize_hex(row.members_hex),
                 metadata=get(metadata, row.output_key, Dict{Symbol,Any}())))
         end
@@ -365,7 +365,7 @@ function Base.setindex!(cache::CacheDB, record::NamedTuple, key::Integer)::Recor
         delete!(cache.output_metadata, output_key!(cache, key, item.id))
     end
     for (position, (x, item)) in enumerate(zip(item_keys, record.items))
-        edit!(cache.outputs, x, OutputRow(x, key, item.id, item.stage, position, item.label,
+        edit!(cache.outputs, x, OutputRow(x, key, item.id, item.depth, position, item.label,
             _serialize_type(item.type), _serialize_hex(item.members)))
     end
     edit!(cache.computation_revision_rows, key, ComputationRevisionRow(key, record.call, record.revision,
@@ -554,9 +554,9 @@ function _ensure_items_view!(cache::CacheDB)::Nothing
             signature == cache.query_view_signature && return nothing
             _run(connection, """
                 CREATE OR REPLACE VIEW mb_item_query AS
-                SELECT * EXCLUDE (output_key, computation, stage, position, members_hex)
+                SELECT * EXCLUDE (output_key, computation, depth, position, members_hex)
                 FROM outputs LEFT JOIN output_metadata USING (output_key)
-                QUALIFY row_number() OVER (PARTITION BY id ORDER BY stage DESC) = 1
+                QUALIFY row_number() OVER (PARTITION BY id ORDER BY depth DESC) = 1
             """)
             cache.query_view_signature = signature
         end

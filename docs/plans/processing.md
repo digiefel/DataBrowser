@@ -3,7 +3,7 @@
 Target design, curated on 21 October 2026. This plan owns item/group computations, invocation,
 input versions and reconstruction. [Groups](groupings.md) owns formation and hierarchy;
 [storage](storage.md) owns retained payloads. The [architecture](../ARCHITECTURE.md) describes the
-current fixed-stage implementation, not this complete target.
+current implementation, not this complete target.
 
 ## Settled direction
 
@@ -138,8 +138,8 @@ A source group is read with the member values its `read` signature states, and a
 a member gets a later value of that type; see [source-groups.md](source-groups.md).
 
 The existing catalog remains the common dependency/status model. The new design must extend that
-model rather than introduce a private graph for plots or Recipes. Resolve these contracts before
-claiming the fixed stages have been replaced:
+model rather than introduce a private graph for plots or Recipes. The fixed stages are gone: every
+version of a value gets the calls of `process` that a method takes. These contracts remain open:
 
 - Invocation identity, input and code revisions, completion and replacement output sets.
 - Discovery of relevant project methods, including member/group-aware and set methods, from
@@ -217,8 +217,8 @@ operations use the same definition type and invocation. Definitions retain prece
 project functions receive native values. Looking up definitions does not evaluate them. Existing
 stage caches can supply evaluation results, which are copied when reused.
 
-The fixed-stage scheduler, publication and storage layout remain. Replacing those with general
-computation scheduling, adding per-type caching, recording execution information and connecting
+The project's calls now form chains of any length, without fixed stages. Publication and the
+storage layout remain. Adding per-type caching, recording execution information and connecting
 the Code visualizer are still pending. The examples below describe the broader target, not the
 completed interface. The implemented type is named `Computation`, rather than the earlier
 illustrative `Computed`.
@@ -383,9 +383,9 @@ probe, `Raw → Clean → Fitted` is known in advance. The unrolling stops where
 - the result is not one concrete type, as `Union{Fitted, Notes}` for a method whose result depends
   on the data: the next step is known only after running, as today.
 
-So GUI computations and the project's `process` methods form one graph, and the fixed stages of
-today's catalog become a special case of it. The code revisions already work this way: today they
-are computed per stage and type, which is per function and argument types.
+So GUI computations and the project's `process` methods form one graph. The catalog already
+works this way for the calls of the project: each version of a value gets the calls that a method
+takes, and the code revisions are computed per function and argument types.
 
 ### What the workspace records
 
@@ -398,7 +398,7 @@ The function and the inputs are in the value. The workspace keeps, under each va
 This gives memoization (the same id and revisions reuse the result), recomputation (a new revision
 makes every value whose type or inputs contain it out of date), provenance (the inputs, back to the
 files) and laziness (a value is computed when something asks for its result). It extends the
-catalog's stage rows and code revisions, which already do this for `read` and `process`.
+catalog's pipeline rows and code revisions, which already do this for `read` and `process`.
 
 ### Types of values: inferred, then observed
 
@@ -498,7 +498,7 @@ record the rows it read; other data is understood only as far as its type allows
 
 ## Evidence and limits
 
-The current implementation has fixed stages and live code invalidation. Its catalog cutover is
+The current implementation has chains of `process` calls and live code invalidation. Its catalog cutover is
 recorded in [workspace-graph](workspace-graph/workspace-graph.md). That work is not proof of the
 new invocation, group reconstruction or Recipes contracts. The earlier engineering and product
 reviews are preserved in the [group discussion archive](archive/2026-10-21-discussion/groupings.md).

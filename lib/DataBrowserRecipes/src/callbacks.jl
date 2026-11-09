@@ -1,9 +1,9 @@
 """
 The functions that the methods of a registration call, with the callbacks of the registration as
-arguments. A registered `analyze` callback runs inside `process`, and `expand` in the `process` of
-what `read` gave. The `process` of the group of the source makes the collections and runs
-their callbacks, and the member `process` of each collection gives the items below it their new
-data and metadata.
+arguments. The `process` of what `read` gave runs the `expand`, `process` and `analyze` callbacks
+of the registration. The `process` of the group of the source makes the collections, the group
+`process` of each collection runs the callbacks of its level, and the member `process` of each
+collection gives the items and the collections directly below it their new data and metadata.
 """
 
 """Split the documented `(data=..., metadata=Dict(...))` result form."""
@@ -13,14 +13,6 @@ function _data_and_metadata(value)::Tuple{Any,Dict{Symbol,Any}}
     end
     return value, Dict{Symbol,Any}()
 end
-
-function _with_data(item::RegisteredDataItem, data)::RegisteredDataItem
-    return RegisteredDataItem(item, data)
-end
-
-# The item with `analysis` merged over its metadata.
-_with_metadata(item::RegisteredDataItem{K}, analysis::Dict{Symbol,Any}) where {K} = RegisteredDataItem{K}(
-    item.id, item.data, merge(item.metadata, analysis))
 
 
 """
@@ -47,7 +39,7 @@ function _registered_item(
     key = supplied_key === nothing || supplied_key == "" ?
         string(position) : string(supplied_key)
     item_id = "$(source_item_id)#$(kind):$(key)"
-    return RegisteredDataItem{kind}(item_id, data, local_metadata)
+    return RegisteredDataItem{kind,:made}(item_id, data, local_metadata)
 end
 
 
@@ -58,24 +50,25 @@ project_description(project::Project)::String = project.description
 Process one item of a registration with its `process` callback, then its `analyze` callback, whose
 metadata the processed item gets. A callback that is `nothing` is left out.
 """
-function _processed_item(item::RegisteredDataItem, process, analyze)::RegisteredDataItem
-    processed = process === nothing ? item : _with_data(item, process(item.data, item.metadata))
-    analyze === nothing && return processed
-    analysis = @timed_dbg "recipe.analyze" metadata_dict(
-        analyze(processed.data, processed.metadata))
-    return _with_metadata(processed, analysis)
+function _processed_item(item::RegisteredDataItem{K,:made}, process, analyze) where {K}
+    data = process === nothing ? item.data : process(item.data, item.metadata)
+    analyze === nothing && return RegisteredDataItem{K,:made}(item.id, data, item.metadata)
+    analysis = @timed_dbg "recipe.analyze" metadata_dict(analyze(data, item.metadata))
+    return RegisteredDataItem{K,:made}(item.id, data, merge(item.metadata, analysis))
 end
 
 """
-Make the items of a registration from what its `read` callback gave, with its `expand` and `id`
-callbacks, and process each of them as `_processed_item` does.
+Make the items of a registration from what its `read` callback gave, and process each of them as
+`_processed_item` does. Without an `expand` callback, the one item has the data, the metadata and
+the id of what `read` gave; with one, `expand` and `id` make the items.
 """
-function _expanded(
-    value::ReadData{K}, expand, id, process, analyze)::Vector{RegisteredDataItem{K}} where {K}
+function _items(value::ReadData{K}, expand, id, process, analyze) where {K}
+    expand === nothing && return _processed_item(
+        RegisteredDataItem{K,:made}(value.id, value.data, value.metadata), process, analyze)
     entries = @timed_dbg "expand" expand(value.data, value.metadata)
     entries isa AbstractVector || error(
         "expand callback for registration $K must return a vector; got $(typeof(entries))")
-    return RegisteredDataItem{K}[_processed_item(
+    return RegisteredDataItem{K,:made}[_processed_item(
         _registered_item(K, id, entry, value.metadata, value.id, position), process, analyze)
         for (position, entry) in pairs(entries)]
 end
@@ -91,19 +84,14 @@ function _read(carrier::Type, read, source_item::AbstractDataSourceItem)
 end
 
 """
-Make the collections that the `collection` callbacks name for the items of the source, and run the
-callbacks registered for the level of each collection over the items below it.
-`paths` pairs the kind of each item registration with its `collection` callback, and `levels`
-holds the level, the members, and the `process` and `analyze` callbacks of each collection
-registration. The id of a collection names its levels from the top down, as `wafer:W1/device:A`.
+Make the collections that the `collection` callbacks name for the items of the source. `paths`
+pairs the kind of each item registration with its `collection` callback, and a collection of one of
+the `levels` waits for the callbacks of its level. The id of a collection names its levels from the
+top down, as `wafer:W1/device:A`.
 """
-function _collections(
-    items::AbstractVector{RegisteredDataItem}, paths::Tuple, levels::Tuple,
-)::Vector{NamedCollection}
-    ## Each collection, by id in the order they are named, with the places in `items` of the items
-    ## below it. `items` reads each item when the code reads it, so the places keep no data.
-    found, below, order = Dict{String,NamedCollection}(), Dict{String,Vector{Int}}(), String[]
-    for (n, item) in enumerate(items)
+function _collections(items::AbstractVector, paths::Tuple, levels::Tuple)::Vector{NamedCollection}
+    found, order = Dict{String,NamedCollection}(), String[]
+    for item in items
         index = findfirst(path -> first(path) === label(typeof(item)), paths)
         index === nothing && continue
         path = last(paths[index])(item.data, item.metadata)
@@ -114,20 +102,25 @@ function _collections(
         for (level, name) in pairs(path)
             above, x = x, (isempty(x) ? "" : x * "/") * "$level:$name"
             if !haskey(found, x)
-                found[x], below[x] = NamedCollection{level}(x, string(name)), Int[]
+                found[x] = NamedCollection{level,level in levels ? :made : :processed}(x, string(name), String[])
                 push!(order, x)
                 isempty(above) || push!(found[above].members, x)
             end
-            push!(below[x], n)
         end
         isempty(x) || push!(found[x].members, item.id)
     end
-    for x in order, (level, members, process, analyze) in levels
-        collection = found[x]
-        level === label(typeof(collection)) || continue
-        ## Only a collection with callbacks reads its items again.
-        group = members === nothing ? collect(view(items, below[x])) :
-            filter(item -> label(typeof(item)) === members, view(items, below[x]))
+    return NamedCollection[found[x] for x in order]
+end
+
+"""
+Run the callbacks registered for the level of `collection` over the `items` below it. `levels` holds
+the level, the members, and the `process` and `analyze` callbacks of each collection registration.
+"""
+function _processed(collection::NamedCollection{L}, items::AbstractVector, levels::Tuple) where {L}
+    processed = NamedCollection{L,:processed}(collection.id, collection.name, collection.members)
+    for (level, members, process, analyze) in levels
+        level === L || continue
+        group = members === nothing ? collect(items) : filter(item -> label(typeof(item)) === members, items)
         isempty(group) && continue
         outputs = data.(group)
         if process !== nothing
@@ -136,7 +129,7 @@ function _collections(
                 "collection process for level $level must return a vector with one value per " *
                 "member; got $(typeof(outputs)) for $(length(group)) members")
             for (item, output) in zip(group, outputs)
-                collection.data[item.id] = output
+                processed.data[item.id] = output
             end
         end
         if analyze !== nothing
@@ -145,22 +138,25 @@ function _collections(
                 "collection analyze for level $level must return a vector with one metadata set " *
                 "per member; got $(typeof(analysis)) for $(length(group)) members")
             for (item, item_metadata) in zip(group, analysis)
-                merge!(get!(Dict{Symbol,Any}, collection.member_metadata, item.id), metadata_dict(item_metadata))
+                merge!(get!(Dict{Symbol,Any}, processed.member_metadata, item.id), metadata_dict(item_metadata))
             end
         end
     end
-    return NamedCollection[found[x] for x in order]
+    return processed
 end
 
+# A collection whose level ran its callbacks, so that its members take its data.
+const Processed = Union{NamedCollection{<:Any,:processed},NamedCollection{<:Any,:collected}}
+
 """A registered item gets the new data and the metadata that its collection has for it."""
-process(::Project, member::RegisteredDataItem, collection::NamedCollection)::RegisteredDataItem =
-    _with_metadata(_with_data(member, get(collection.data, id(member), member.data)),
-        get(collection.member_metadata, id(member), Dict{Symbol,Any}()))
+process(::Project, member::RegisteredDataItem{K,:made}, collection::Processed) where {K} =
+    RegisteredDataItem{K,:collected}(member.id, get(collection.data, member.id, member.data),
+        merge(member.metadata, get(collection.member_metadata, member.id, Dict{Symbol,Any}())))
 
 """
 A collection gets the new data and the metadata that the collection above it has for the items
 below it. Where both have a value, the one above wins.
 """
-process(::Project, member::NamedCollection, collection::NamedCollection)::NamedCollection =
-    typeof(member)(member.id, member.name, member.members,
+process(::Project, member::NamedCollection{L,:processed}, collection::Processed) where {L} =
+    NamedCollection{L,:collected}(member.id, member.name, member.members,
         merge(member.data, collection.data), mergewith(merge, member.member_metadata, collection.member_metadata))
