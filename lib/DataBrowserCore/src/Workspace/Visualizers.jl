@@ -69,7 +69,7 @@ end
 
 """
 Internal. A visualizer of a workspace, which [`visualize!`](@ref) adds: its workspace, its id, its
-[`Definition`](@ref), its latest [`Result`](@ref), and the output that a client published, as
+[`Definition`](@ref), its latest `Result`, and the output that a client published, as
 `(revision, output)` with the revision of the result it was made from, or `nothing`. Its
 properties are its settings: `v.name` reads the setting `name`, and `v.name = value` changes it.
 """
@@ -319,7 +319,7 @@ end
     refresh!(v) -> Result
 
 Internal. Bring the value of `v` up to date without waiting, and return its latest
-[`Result`](@ref). When the input gives another value than before, or the code of the transform
+`Result`. When the input gives another value than before, or the code of the transform
 changed, a task of the workspace computes the value again, as [`compute`](@ref) does. Before that,
 the items of the input are processed ahead of background work, and the result says it is loading.
 A client calls `refresh!` as long as it shows `v`, for example at each frame: the workspace
