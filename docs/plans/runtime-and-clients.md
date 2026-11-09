@@ -199,7 +199,9 @@ The messages below are proposals; their names and fields are examples.
 | `value` | client → DBCore → host, and back | A value, a part of it, or one of its representations |
 
 DBCore also starts each host, and it can stop a host from outside and start another. Stopping from
-outside is how the workspace survives a call that never returns.
+outside is how the workspace survives a call that never returns. It also ends a call whose result is
+no longer wanted, when the host cannot end that call. A host that ignores `cancel` still works with
+DBCore, which drops such a result in any case.
 
 ### What a host does
 
@@ -277,7 +279,7 @@ Each part costs the following today and in the target:
 | New code revisions | Every known function is hashed again: about 50 ms on the RuO2 project | Only the functions that reach the edited method. Not built, not measured |
 | Marking stale, telling clients | Under the lock of the catalog; the publish follows at most 0.05 s later | The same work in DBCore; the event goes out with the publish |
 | Running the calls | The calls shown by a window run first | The same, with the priority from what each client says it shows |
-| A call that becomes stale while it runs | The call runs to its end and its result is dropped. The same call starts again only then | DBCore sends `cancel`. What a Julia host can do with it is an [open question](#open-questions) |
+| A call that becomes stale while it runs | The call runs to its end and its result is dropped. The same call starts again only then | DBCore sends `cancel`, and the host ends the call where the call next enters the host's own code. DBCore stops a host whose stale call goes on for longer than a new host takes to start |
 | Drawing | The window draws the figure made by `prepare!`, in the same process | A form of the visualizer crosses to the client |
 
 From the save to the mark on the screen, the target costs the look, the load by Revise, the new
@@ -310,6 +312,30 @@ only when the stale call had ended, after 1.12 s. A call that still waits for a 
 with the code of the last save: with six items and two workers, `process` ran eight times, twice
 with the code of the first save. All of this was measured on Julia 1.13.3 with one thread and no
 browser.
+
+In the target, a save never adds to the calls that run at the same time. A host runs a fixed number
+of calls at the same time, and a stale call counts among them until it ends. The new call with the
+same function and inputs starts only after the stale call has ended, because both could write the
+same file, and the stale call could write last. A call that has not started runs once, with the code
+of the last save, as today. A save therefore wastes at most the work of the calls that run at that
+moment. DBCore also marks calls stale at each save without waiting for a later save: a wait would
+delay every save, and it would spare only those calls.
+
+A stale call ends early in two ways. First, the host ends it where it next enters the host's own
+code. For example, a `process` on a group reads the value of each member through the host, and the
+host can end the call at such a read. Second, DBCore stops the host of a stale call that never
+enters the host's code. DBCore lets such a call go on for as long as a new host takes to start and
+to load the project's code, and then stops the host. With this rule, the time lost is at most twice
+the time that the best choice would lose if the length of the call were known. The same rule
+answers the *ski rental* problem, in which a person rents skis until the rent paid equals their
+price, and then buys them. How long a host takes to start is not measured.
+
+Both ways follow from what Julia can do. Julia 1.13 has no function that stops a running task from
+outside, and its documentation calls the use of `schedule` on a task that has already started
+incorrect. The cancellation written for Julia 1.14 stops a task only where the task waits or where
+its code has a check, so a loop that only computes runs to its end
+([description](https://viralinstruction.com/posts/cancellation/), read on 9 November 2026; the Julia
+source was not read).
 
 Revise was measured on Julia 1.13.3 with Revise 3.18.0, one thread, and files of 200 to 500
 one-line methods; with 2000 methods a later edit takes 29 to 53 ms and the first one 19 s. The code
@@ -433,12 +459,13 @@ These are not yet agreed.
   unopened, is the simplest first form. A direct path would give the client a ticket that it shows
   to the host, as Arrow Flight does.
 - One Julia host or several? Several hosts keep work running while one is stopped, and each of them
-  loads and compiles the project's code.
-- What does a Julia host do with `cancel` for a call that already runs? Julia 1.13 has no function
-  that stops a running task from outside. The host can let the call end and drop its result, as
-  the workspace does today. It can also start the new call at once on another worker, so that one
-  call runs twice at the same time, with the old code and with the new code. Only stopping the host
-  from outside ends the call itself.
+  loads and compiles the project's code. With one host, stopping it for one stale call also ends
+  every other call that runs.
+- What does project code see when the host ends its stale call, and can project code ask whether its
+  call is stale? An exception thrown where the call enters the host's code, such as the read of a
+  member's value, is one form. A check that project code calls in a long loop would also end a call
+  that never enters the host's code, as `Base.@cancel_check` does in the cancellation written for
+  Julia 1.14. Both belong to [the methods of an author](#the-methods-of-an-author).
 - What does a client show for a visualizer it has no drawing part for: a picture drawn by the
   host, the value as a table or text, or nothing?
 - How does Python code provide sources, `process` methods and visualizers: in a Python host of its
