@@ -29,6 +29,10 @@ columns and other data the bytes of its serialized form.
 
 While a store is open on `path`, `DuckDBStore(path)` returns that store, so several item types can
 share one file. `close` closes it for all of them; closing it again does nothing.
+
+A file written by an older version of DataBrowser, whose tables have another layout, is refused
+with a `ProjectCacheSchemaError`, as an old cache file is. A workspace opened with `rebuild=true`
+deletes such a file and starts it over.
 """
 mutable struct DuckDBStore <: DataBrowserAPI.AbstractStore
     path::String
@@ -53,6 +57,10 @@ end
 
 const OPEN_STORES = (lock=ReentrantLock(), paths=Dict{String,DuckDBStore}())
 
+# The layout of the tables of a store file. Raise it with each change of the layout that the code of
+# the previous one cannot read: files written before are then refused.
+const DUCKDB_STORE_VERSION = 1
+
 function DuckDBStore(path::AbstractString; max_bytes::Integer=64 * 1024^2)
     path = abspath(path)
     @lock OPEN_STORES.lock get!(OPEN_STORES.paths, path) do
@@ -69,6 +77,23 @@ function open_duckdb_store(path::String, max_bytes::Integer)
     # (see `_execute_on_duckdb_threads`).
     _run(serialized, "SET external_threads = 1")
     _run(serialized, "SET threads = $(Sys.CPU_THREADS)")
+    # The buffer of the pages that DuckDB read has the limit of the cache: without it, DuckDB keeps
+    # them up to most of the memory of the computer.
+    _run(serialized, _memory_limit_sql(CACHE_MEMORY_LIMIT_MIB[]))
+    ## A file that holds values of another layout is refused before anything reads or writes it.
+    tables = Set(String(row.table_name) for row in
+        _execute_on_duckdb_threads(serialized, "SELECT table_name FROM information_schema.tables"))
+    if "stored_values" in tables
+        version = "store_version" in tables ?
+            only([row.version for row in _execute_on_duckdb_threads(serialized, "SELECT version FROM store_version")]) : 0
+        if !isequal(version, DUCKDB_STORE_VERSION)
+            DBInterface.close!(serialized)
+            DBInterface.close!(database)
+            throw(ProjectCacheSchemaError(path, "store file is out of date; pass rebuild=true to discard and rebuild it"))
+        end
+    else
+        _run(serialized, "CREATE OR REPLACE TABLE store_version AS SELECT $DUCKDB_STORE_VERSION AS version")
+    end
     _run(serialized, "CREATE TABLE IF NOT EXISTS stored_values (id VARCHAR PRIMARY KEY, value BLOB NOT NULL)")
     _run(serialized, create_table_sql(StoredShell, "stored_item_types", (:id,)))
     _run(serialized, "CREATE TABLE IF NOT EXISTS stored_item_metadata (id VARCHAR PRIMARY KEY)")

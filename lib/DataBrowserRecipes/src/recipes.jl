@@ -55,3 +55,5 @@ mutable struct Project{Name} <: AbstractProject
 end
 
 DataBrowserAPI.storage(project::Project, ::Type) = DuckDBStore(project.values)
+# The groups of the source and of its source items take nothing to make again.
+DataBrowserAPI.storage(::Project, ::Type{<:Union{SourceGroup,SourceItemGroup}}) = nothing

@@ -105,6 +105,9 @@ function DataBrowserAPI.read(p::GatedProject, ::GatedSource, s::GatedSourceItem)
     return EngineItem(s.name * "/1", (x=[1],), Dict())
 end
 
+# The ids of the items of `ws`, besides the group of its whole source.
+items_of(ws) = setdiff(W.query_items(ws), [id(ws.source)])
+
 function settled(ws)
     W.wait_workspace_idle!(ws; timeout=20)
     @test !W.workspace_status(ws).busy
@@ -114,7 +117,7 @@ end
     busy = Ref(false)
     # `process` runs only after `ws` below is assigned.
     project = ObservedProject(() -> (busy[] = W.workspace_status(ws).busy))
-    ws = W.open_workspace(project, EngineSource("source", 1, false);
+    ws = W.open_workspace(project, EngineSource("engine", 1, false);
         cache=false, background_processing=false)
     try
         settled(ws)
@@ -127,7 +130,7 @@ end
 end
 
 @testset "reading and writing the workspace do not wait for a task that holds the catalog lock" begin
-    ws = W.open_workspace(EngineProject("held", 0), EngineSource("source", 1, false); cache=false, background_processing=true)
+    ws = W.open_workspace(EngineProject("held", 0), EngineSource("engine", 1, false); cache=false, background_processing=true)
     try
         settled(ws)
         value = W.computation(ws, "1")
@@ -176,7 +179,7 @@ end
         put!(source.release, nothing)
         W.rebuild_cache!(ws)
         settled(ws)
-        @test isempty(W.query_items(ws))
+        @test isempty(items_of(ws))
         @test W.workspace_status(ws).level === :fresh
     finally
         W.close_workspace!(ws)
@@ -200,10 +203,10 @@ DataBrowserAPI.process(::RetypedProject, i::EngineItem) = [i, EngineItem("other"
         pushfirst!(DEPOT_PATH, depot)
         try
             project = RetypedProject("one")
-            ws = W.open_workspace(project, EngineSource("source", 1, false); background_processing=true)
+            ws = W.open_workspace(project, EngineSource("engine", 1, false); background_processing=true)
             settled(ws)
             W.close_workspace!(ws)
-            ws = W.open_workspace(project, EngineSource("source", 1, false))
+            ws = W.open_workspace(project, EngineSource("engine", 1, false))
             try
                 settled(ws)
                 @test !isempty(W.workspace_status(ws).errors)
@@ -226,7 +229,7 @@ DataBrowserAPI.read(::LateProject, source::EngineSource, item::EngineSourceItem)
     DataBrowserAPI.read(TypedProject(), source, item)
 
 @testset "processing code defined and changed after the workspace opens updates its results" begin
-    ws = W.open_workspace(LateProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
+    ws = W.open_workspace(LateProject(), EngineSource("engine", 1, false); cache=false, background_processing=false)
     processed() = data(only(W.materialize_items(ws, ["only"]))).x
     try
         settled(ws)
@@ -244,7 +247,7 @@ end
 @testset "a process method changed for another project leaves the results current" begin
     calls = Threads.Atomic{Int}(0)
     project = ObservedProject(() -> Threads.atomic_add!(calls, 1))
-    ws = W.open_workspace(project, EngineSource("source", 1, false); cache=false, background_processing=true)
+    ws = W.open_workspace(project, EngineSource("engine", 1, false); cache=false, background_processing=true)
     try
         settled(ws)
         @test calls[] == 1
@@ -268,7 +271,7 @@ DataBrowserAPI.process(::HelperProject, i::EngineItem) = EngineItem(id(i),
     (x=i.data.x .* helper_scale(),), metadata(i))
 
 @testset "a function that a stage calls, changed after the workspace opens, replaces its results" begin
-    ws = W.open_workspace(HelperProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
+    ws = W.open_workspace(HelperProject(), EngineSource("engine", 1, false); cache=false, background_processing=false)
     processed() = data(only(W.materialize_items(ws, ["only"]))).x
     try
         settled(ws)
@@ -296,10 +299,10 @@ keyword_stage(x) = keyword_helper(x; k=2)
 end
 
 @testset "a read may return the item itself" begin
-    ws = W.open_workspace(TypedProject(), EngineSource("source", 1, false); cache=false)
+    ws = W.open_workspace(TypedProject(), EngineSource("engine", 1, false); cache=false)
     try
         settled(ws)
-        @test data(only(W.materialize_items(ws, W.query_items(ws)))).x == [1]
+        @test data(only(W.materialize_items(ws, items_of(ws)))).x == [1]
     finally
         W.close_workspace!(ws)
     end
@@ -311,7 +314,7 @@ end
         try
             for _ in 1:2
                 ws = W.open_workspace(
-                    TypedProject(), EngineSource("source", 3, false); background_processing=true)
+                    TypedProject(), EngineSource("engine", 3, false); background_processing=true)
                 try
                     settled(ws)
                     @test W.label(ws, "only") == "only · total 3"
@@ -340,7 +343,7 @@ DataBrowserAPI.label(::LabeledProject, ::EngineItem) = "first"
 
 @testset "an edited label method labels the items again, and reads them only when their store lost them (stored=$stored)" for stored in (true, false)
     project = LabeledProject(stored, 0)
-    ws = W.open_workspace(project, EngineSource("source", 1, false); cache=false)
+    ws = W.open_workspace(project, EngineSource("engine", 1, false); cache=false)
     try
         settled(ws)
         @eval DataBrowserAPI.label(::LabeledProject, ::EngineItem) = $("label $stored")
@@ -358,7 +361,7 @@ end
             project = LabeledProject(true, 0)
             @eval DataBrowserAPI.label(::LabeledProject, ::EngineItem) = error("no label")
             for _ in 1:2
-                ws = W.open_workspace(project, EngineSource("source", 1, false))
+                ws = W.open_workspace(project, EngineSource("engine", 1, false))
                 try
                     settled(ws)
                     @test !isempty(W.workspace_status(ws).errors)
@@ -383,7 +386,7 @@ DataBrowserAPI.read(::SharedNameProject, source::EngineSource, item::EngineSourc
 DataBrowserAPI.process(::SharedNameProject, i::EngineItem) = EngineItem(id(i), (x=shared_scale(i.data.x),), metadata(i))
 
 @testset "a stage may call a name that two modules export" begin
-    ws = W.open_workspace(SharedNameProject(), EngineSource("source", 1, false); cache=false, background_processing=false)
+    ws = W.open_workspace(SharedNameProject(), EngineSource("engine", 1, false); cache=false, background_processing=false)
     try
         settled(ws)
         @test data(only(W.materialize_items(ws, ["only"]))).x == [3]
@@ -409,7 +412,7 @@ DataBrowserAPI.process(::ClosedProject, i::EngineItem) =
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
         function reopened(check)
-            ws = W.open_workspace(ClosedProject(), EngineSource("source", 1, false); background_processing=true)
+            ws = W.open_workspace(ClosedProject(), EngineSource("engine", 1, false); background_processing=true)
             try
                 settled(ws)
                 check(ws)
@@ -426,7 +429,7 @@ DataBrowserAPI.process(::ClosedProject, i::EngineItem) =
             @eval closed_scale() = 3
             reopened(ws -> @test first_value(ws) == [3])
             @eval closed_count() = 2
-            reopened(ws -> @test W.query_items(ws) == ["1", "2", "source"])
+            reopened(ws -> @test items_of(ws) == ["1", "2", "source"])
         finally
             popfirst!(DEPOT_PATH)
         end
@@ -438,35 +441,35 @@ end
         pushfirst!(DEPOT_PATH, depot)
         try
             project = EngineProject("engine", 0, joinpath(depot, "values.duckdb"))
-            ws = W.open_workspace(project, EngineSource("source", 2, false); cache, background_processing=true)
+            ws = W.open_workspace(project, EngineSource("engine", 2, false); cache, background_processing=true)
             try
                 settled(ws)
-                @test W.query_items(ws) == ["1", "2", "source"]
+                @test items_of(ws) == ["1", "2", "source"]
                 items = W.materialize_items(ws, ["1", "2"])
                 @test all(i -> data(i).x == [4] && metadata(i)[:total] == 4, items)
             finally
                 W.close_workspace!(ws)
             end
-            ws = W.open_workspace(project, EngineSource("source", 2, false); cache, background_processing=true)
+            ws = W.open_workspace(project, EngineSource("engine", 2, false); cache, background_processing=true)
             try
                 settled(ws)
                 @test metadata(only(W.materialize_items(ws, ["1"])))[:total] == 4
                 @test project.reads == (cache ? 1 : 2)
                 W.select!(ws, ["1", "2"])
-                W.modify_workspace!(ws; source=EngineSource("source", 1, false))
+                W.modify_workspace!(ws; source=EngineSource("engine", 1, false))
                 settled(ws)
-                @test W.query_items(ws) == ["1", "source"]
+                @test items_of(ws) == ["1", "source"]
                 # The item that the source still produces stays selected.
                 @test W.selection(ws).id == ["1"]
                 @test data(only(W.materialize_items(ws, ["1"]))).x == [2]
-                W.modify_workspace!(ws; source=EngineSource("source", 0, false))
+                W.modify_workspace!(ws; source=EngineSource("engine", 0, false))
                 settled(ws)
-                @test isempty(W.query_items(ws))
+                @test isempty(items_of(ws))
                 @test isempty(W.workspace_status(ws).errors)
                 @test W.can_rebuild_cache(ws)
                 W.rebuild_cache!(ws)
                 settled(ws)
-                @test isempty(W.query_items(ws))
+                @test isempty(items_of(ws))
                 @test W.workspace_status(ws).level === :fresh
             finally
                 W.close_workspace!(ws)
@@ -484,7 +487,7 @@ end
         try
             project = EngineProject("failure", 0)
             for _ in 1:2
-                ws = W.open_workspace(project, EngineSource("source", 1, true); cache)
+                ws = W.open_workspace(project, EngineSource("engine", 1, true); cache)
                 try
                     settled(ws)
                     @test !isempty(W.workspace_status(ws).errors)
@@ -496,7 +499,7 @@ end
                 end
             end
             @test project.reads == (cache ? 1 : 2)
-            ws = W.open_workspace(project, EngineSource("source", 1, true); cache)
+            ws = W.open_workspace(project, EngineSource("engine", 1, true); cache)
             try
                 settled(ws)
                 @test !isempty(W.workspace_status(ws).errors)
@@ -507,7 +510,7 @@ end
             finally
                 W.close_workspace!(ws)
             end
-            ws = W.open_workspace(project, EngineSource("source", 1, false); cache, background_processing=true)
+            ws = W.open_workspace(project, EngineSource("engine", 1, false); cache, background_processing=true)
             try
                 settled(ws)
                 @test isempty(W.workspace_status(ws).errors)
@@ -525,12 +528,12 @@ end
     project = GatedProject(Base.Event())
     ws = W.open_workspace(project, GatedSource(); cache=false)
     try
-        @test timedwait(() -> length(W.items(ws)) == 2, 20) === :ok
-        @test sort(W.items(ws)) == ["folder/a", "folder/b"]
+        @test timedwait(() -> length(items_of(ws)) == 2, 20) === :ok
+        @test sort(items_of(ws)) == ["folder/a", "folder/b"]
         W.select!(ws, ["folder/b"])
         notify(project.gate)
         settled(ws)
-        @test sort(W.items(ws)) == ["folder/a/1", "folder/b/1"]
+        @test sort(items_of(ws)) == ["folder/a/1", "folder/b/1"]
     finally
         notify(project.gate)
         W.close_workspace!(ws)
@@ -540,7 +543,7 @@ end
 # The tags file is in the folder of the active environment: under `Pkg.test`, a temporary folder.
 @testset "tags apply to items and are kept in tags.txt" begin
     names(found) = [tag.name for tag in found]
-    ws = W.open_workspace(TagProject(), EngineSource("source", 1, false); cache=false, background_processing=true)
+    ws = W.open_workspace(TagProject(), EngineSource("engine", 1, false); cache=false, background_processing=true)
     try
         settled(ws)
         a, b = "a", "b"
@@ -554,14 +557,14 @@ end
         @test names(tags(ws, b)) == ["bad"]
         @test items(ws, Tag("leaky")) == [a]
         @test W.select(ws, items(ws, Tag("leaky"))).id == ["a"]
-        @test sort(items(ws, !Tag("leaky"))) == [b, "source"]
+        @test sort(setdiff(items(ws, !Tag("leaky")), ["engine"])) == [b, "source"]
         untag!(ws, [a, b], "leaky")
         @test names(tags(ws, a)) == ["bad"]
     finally
         W.close_workspace!(ws)
     end
     @test isfile(joinpath(dirname(Base.active_project()), "tags.txt"))
-    ws = W.open_workspace(TagProject(), EngineSource("source", 1, false); cache=false)
+    ws = W.open_workspace(TagProject(), EngineSource("engine", 1, false); cache=false)
     try
         settled(ws)
         @test names(tags(ws)) == ["leaky", "bad"]

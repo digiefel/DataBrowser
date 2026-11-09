@@ -1,6 +1,9 @@
 using Test, DataBrowserCore, DataBrowserSources
 import DataBrowserAPI as API
 
+# The ids of the items of `ws`, besides the group of its whole source.
+items_of(ws) = setdiff(query_items(ws), [API.id(ws.source)])
+
 struct FileProject <: API.AbstractProject end
 API.project_name(::FileProject) = "file updates"
 
@@ -32,8 +35,7 @@ end
 
 @testset "file changes update the selected data" begin
     mktempdir() do root
-        mkpath(joinpath(root, "run"))
-        a, b = joinpath(root, "run", "a.dat"), joinpath(root, "run", "b.dat")
+        a, b = joinpath(root, "a.dat"), joinpath(root, "b.dat")
         write(a, "a 4")
         write(b, "b 9")
         ws = open_workspace(FileProject(), DirectorySource(root); cache=false, background_processing=true)
@@ -43,14 +45,13 @@ end
             select!(ws, ["a", "b"])
 
             write(b, "c 16")
-            # The folders are groups, whose ids are their paths.
-            @test timedwait(() -> query_items(ws) == [".", "a", "c", "run"], 20) === :ok
+            @test timedwait(() -> items_of(ws) == ["a", "c"], 20) === :ok
             @test API.data(only(materialize_items(ws, ["c"]))).value == [4.0]
 
             rm(b)
-            @test timedwait(() -> query_items(ws) == [".", "a", "run"], 20) === :ok
+            @test timedwait(() -> items_of(ws) == ["a"], 20) === :ok
             write(b, "b 25")
-            @test timedwait(() -> query_items(ws) == [".", "a", "b", "run"], 20) === :ok
+            @test timedwait(() -> items_of(ws) == ["a", "b"], 20) === :ok
             # `b` stays selected while the file gives other items or none, and is shown again when
             # the file gives it again.
             @test selection(ws).id == ["a", "b"]
@@ -86,7 +87,7 @@ end
             @test isempty(workspace_status(ws).errors)
 
             write(path, "sample invalid")
-            @test timedwait(() -> query_items(ws) == [".", "sample.dat"] && !isempty(workspace_status(ws).errors), 20) === :ok
+            @test timedwait(() -> items_of(ws) == ["sample.dat"] && !isempty(workspace_status(ws).errors), 20) === :ok
             @test occursin("Source item: sample", last(only(workspace_status(ws).errors)))
             @test_throws ErrorException materialize_items(ws, ["sample"])
 
@@ -109,7 +110,7 @@ end
             wait_workspace_idle!(ws; timeout=20)
             # The file whose read finishes second fails, and the tree shows it in place of its item.
             failed = first(only(workspace_status(ws).errors))
-            @test query_items(ws) == [".", failed, "sample"]
+            @test items_of(ws) == [failed, "sample"]
             @test API.data(only(materialize_items(ws, ["sample"]))).value == (failed == "a.dat" ? [3.0] : [2.0])
             # A failed file is read again when it changes.
             rm(b)

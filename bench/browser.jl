@@ -44,6 +44,9 @@ end
 function browser_workload(root, opening, started_ns)
     counters = ToyCounters()
     project = toy_project("BrowserSmoke", counters)
+    ## The store file sits next to the cache of the project, so that other processes in the bench
+    ## environment, which keep their results in bench/values.duckdb, leave it alone.
+    project.values = joinpath(DEPOT_PATH[1], "databrowser", "BrowserSmoke", "values.duckdb")
     workspace = open_workspace(project, root; background_processing=true)
     session = nothing
     try

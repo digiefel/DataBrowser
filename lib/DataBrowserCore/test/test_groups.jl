@@ -31,30 +31,49 @@ function API.read(::GroupProject, ::DirectorySource, file::SourceFile)
     return length(readings) == 1 ? only(readings) : readings
 end
 
-# A folder with the total of the readings of all files below it.
+# A folder is a group of the files and folders in it, and its `process` gives it the total of the
+# readings below it.
 struct Folder <: API.AbstractGroup
     name::String
     members::Vector{String}
-    total::Float64
+    total::Union{Nothing,Float64}
 end
 API.id(folder::Folder) = folder.name
 API.members(folder::Folder) = folder.members
 API.data(::Folder) = nothing
-API.metadata(folder::Folder) = Dict{Symbol,Any}(:total => folder.total)
+API.metadata(folder::Folder) = folder.total === nothing ? Dict{Symbol,Any}() : Dict{Symbol,Any}(:total => folder.total)
+API.read(::GroupProject, source::DirectorySource, folder::SourceDirectory) =
+    Folder(API.id(folder), API.id.(API.members(source, folder)), nothing)
+
+# The total of the readings of the whole source.
+struct Total <: API.AbstractGroup
+    name::String
+    members::Vector{String}
+    total::Float64
+end
+API.id(total::Total) = total.name
+API.members(total::Total) = total.members
+API.data(::Total) = nothing
+API.metadata(total::Total) = Dict{Symbol,Any}(:total => total.total)
 
 total_scale() = 1
 const GROUP_PROCESSES = Threads.Atomic{Int}(0)
-function API.process(::GroupProject, folder::API.SourceGroup, readings::AbstractVector{Reading})
+sum_of(readings) = total_scale() * sum(only(API.data(r).value) for r in readings; init=0.0)
+function API.process(::GroupProject, folder::Folder, readings::AbstractVector{Reading})
     Threads.atomic_add!(GROUP_PROCESSES, 1)
-    return Folder(API.id(folder), API.members(folder), total_scale() * sum(only(API.data(r).value) for r in readings; init=0.0))
+    return Folder(folder.name, folder.members, sum_of(readings))
+end
+function API.process(::GroupProject, source::API.SourceGroup, readings::AbstractVector{Reading})
+    Threads.atomic_add!(GROUP_PROCESSES, 1)
+    return Total(API.id(source), API.members(source), sum_of(readings))
 end
 
-# Each reading's share of the total of its folder.
+# Each reading's share of the total of the source.
 const MEMBER_PROCESSES = Threads.Atomic{Int}(0)
-function API.process(::GroupProject, reading::Reading, folder::Folder)
+function API.process(::GroupProject, reading::Reading, total::Total)
     Threads.atomic_add!(MEMBER_PROCESSES, 1)
     return Reading(reading.name, reading.data,
-        merge(reading.metadata, Dict{Symbol,Any}(:share => only(reading.data.value) / folder.total)))
+        merge(reading.metadata, Dict{Symbol,Any}(:share => only(reading.data.value) / total.total)))
 end
 
 # Two files in the folder "run", and beside it one more and a note.
@@ -80,28 +99,31 @@ function in_workspace(f, root, depot)
 end
 
 total(ws, x) = get(W.metadata(ws, x), :total, nothing)
+# The id of the source group of the workspace.
+whole(ws) = API.id(ws.source)
 share(ws, x) = get(W.metadata(ws, x), :share, nothing)
 
-@testset "folders are groups whose group and member processes follow their files" begin
+@testset "folders and the source are groups whose group and member processes follow their files" begin
     mktempdir() do dir
         root, depot = mkpath(joinpath(dir, "files")), mkpath(joinpath(dir, "depot"))
         write_files(root)
         in_workspace(root, depot) do ws
-            @test query_items(ws) == [".", "a", "b", "c", "run"] && W.select(ws, row -> isempty(row.groups)).id == ["."]
-            @test API.members(only(materialize_items(ws, ["run"]))) == ["a", "b"]
-            # The folder "run" has no reading, so it gives the readings of its files.
-            @test total(ws, ".") == 8 && total(ws, "run") == 4
-            @test share(ws, "a") == 0.25 && share(ws, "c") == 0.5
+            @test Set(query_items(ws)) == Set([whole(ws), "a", "b", "c", "run"])
+            @test W.select(ws, row -> isempty(row.groups)).id == [whole(ws)]
+            # The folder names the files in it, and holds the readings read from them.
+            @test W.select(ws, row -> "run" in row.groups).id == ["a", "b"]
+            @test total(ws, whole(ws)) == 8 && total(ws, "run") == 4
+            @test share(ws, "a") == 0.125 && share(ws, "c") == 0.5
 
             write(joinpath(root, "run", "a.dat"), "a 9")
-            @test timedwait(() -> share(ws, "b") == 0.25 && share(ws, "c") == 0.25, 20) === :ok
-            @test total(ws, ".") == 16 && total(ws, "run") == 12
+            @test timedwait(() -> share(ws, "b") == 0.1875 && share(ws, "c") == 0.25, 20) === :ok
+            @test total(ws, whole(ws)) == 16 && total(ws, "run") == 12
 
-            # A file that comes and a file that goes change the totals of the folders above them.
+            # A file that comes and a file that goes change the totals of the groups that hold them.
             write(joinpath(root, "run", "d.dat"), "d 2")
             rm(joinpath(root, "run", "a.dat"))
             @test timedwait(() -> total(ws, "run") == 5, 20) === :ok
-            @test total(ws, ".") == 9
+            @test total(ws, whole(ws)) == 9
         end
     end
 end
@@ -114,11 +136,11 @@ end
         write(joinpath(root, "c.dat"), "c x")
         in_workspace(root, depot) do ws
             @test timedwait(() -> !isempty(workspace_status(ws).errors), 20) === :ok
-            @test total(ws, ".") == 4
+            @test total(ws, whole(ws)) == 4
 
             write(joinpath(root, "c.dat"), "c 4")
             @test timedwait(() -> share(ws, "c") == 0.5, 20) === :ok
-            @test total(ws, ".") == 8
+            @test total(ws, whole(ws)) == 8
             @test timedwait(() -> isempty(workspace_status(ws).errors), 20) === :ok
         end
     end; end
@@ -129,10 +151,10 @@ end
     Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do; mktempdir() do dir
         root, depot = mkpath(joinpath(dir, "files")), mkpath(joinpath(dir, "depot"))
         write(joinpath(root, "a.dat"), "a 1\na 2")
-        in_workspace(ws -> (@test query_items(ws) == [".", "a.dat"] && !isempty(workspace_status(ws).errors)), root, depot)
+        in_workspace(ws -> (@test Set(query_items(ws)) == Set([whole(ws), "a.dat"]) && !isempty(workspace_status(ws).errors)), root, depot)
         reads = READS[]
         in_workspace(root, depot) do ws
-            @test query_items(ws) == [".", "a.dat"] && !isempty(workspace_status(ws).errors)
+            @test Set(query_items(ws)) == Set([whole(ws), "a.dat"]) && !isempty(workspace_status(ws).errors)
             @test READS[] == reads
         end
     end; end
@@ -145,11 +167,11 @@ end
         in_workspace(_ -> nothing, root, depot)
         reads, processes = READS[], (GROUP_PROCESSES[], MEMBER_PROCESSES[])
         in_workspace(root, depot) do ws
-            @test total(ws, ".") == 8 && share(ws, "a") == 0.25
+            @test total(ws, whole(ws)) == 8 && share(ws, "a") == 0.125
             @test (READS[], (GROUP_PROCESSES[], MEMBER_PROCESSES[])) == (reads, processes)
 
             @eval total_scale() = 2
-            @test timedwait(() -> total(ws, ".") == 16 && share(ws, "a") == 0.125, 20) === :ok
+            @test timedwait(() -> total(ws, whole(ws)) == 16 && share(ws, "a") == 0.0625, 20) === :ok
             @test READS[] == reads
         end
     end

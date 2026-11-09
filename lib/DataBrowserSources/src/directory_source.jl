@@ -30,10 +30,9 @@ end
     DirectorySource(root_path; recursive=true)
 
 A data source that reads the files in the folder `root_path`. Each file is one source item, a
-[`SourceFile`](@ref), and the folder is one too, a [`SourceDirectory`](@ref) whose members are the
-files in it. With `recursive=true`, the files and folders below `root_path` are source items too,
-and the members of each folder are the files and folders directly in it. An empty folder is not a
-source item.
+[`SourceFile`](@ref). With `recursive=true`, the files and folders below `root_path` are source items
+too: each folder is a [`SourceDirectory`](@ref), whose members are the files and folders directly in
+it. An empty folder is not a source item.
 
 Hidden files and folders, whose names start with `.`, are not source items.
 
@@ -76,11 +75,11 @@ fingerprint(file::SourceFile)::FileFingerprint = file.fingerprint
 metadata(file::SourceFile)::Dict = Dict{Symbol,Any}(:filename => file.filename)
 
 """
-One folder of a [`DirectorySource`](@ref): the folder of the source, or, with `recursive=true`, a
-folder below it. Its [`members`](@ref) are the source items directly in it.
+A folder below the folder of a [`DirectorySource`](@ref), with `recursive=true`. Its
+[`members`](@ref) are the source items directly in it.
 
 `path` is the absolute path of the folder. `relative_path` is its path below the folder of the
-source, `"."` for the folder of the source itself. It is the `id` and the `label` of the folder.
+source. It is the `id` and the `label` of the folder.
 """
 struct SourceDirectory <: AbstractDataSourceItem
     path::String
@@ -127,9 +126,9 @@ function items(
         on_progress !== nothing && length(found) % 256 == 0 && on_progress(length(found))
         return item
     end
-    # A folder is reported after its members, so that its members are complete when it is. An empty
-    # folder holds nothing, so it is not a source item.
-    function scan(folder::String)::Union{Nothing,SourceDirectory}
+    # The source items directly in `folder`. A folder is reported after its members, so that its
+    # members are complete when it is. An empty folder holds nothing, so it is not a source item.
+    function scan(folder::String)::Vector{AbstractDataSourceItem}
         folder_members = AbstractDataSourceItem[]
         for name in readdir(folder)
             is_cancellation_requested(cancel_token) && throw(OperationCanceledException(cancel_token))
@@ -138,14 +137,14 @@ function items(
             path = joinpath(folder, name)
             # A link to a folder can point to a folder above it, so links are not followed.
             if isdir(path) && source.recursive && !islink(path)
-                directory = scan(path)
-                directory === nothing || push!(folder_members, directory)
+                below = scan(path)
+                isempty(below) || push!(folder_members,
+                    report(SourceDirectory(path, relpath(path, source.root_path), below)))
             elseif isfile(path)
                 push!(folder_members, report(index_source_file(path, source.root_path)))
             end
         end
-        isempty(folder_members) && return nothing
-        return report(SourceDirectory(folder, relpath(folder, source.root_path), folder_members))
+        return folder_members
     end
     scan(source.root_path)
     on_progress === nothing || on_progress(length(found))

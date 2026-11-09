@@ -16,9 +16,8 @@ using CancellationTokens: CancellationTokenSource, get_token
         @test id(DirectorySource(dir * "/")) == id(source)
         try
             found = items(source; cancel_token)
-            @test Set(id.(found)) == Set([".", "a.dat", "nested", "nested/b.dat"])
+            @test Set(id.(found)) == Set(["a.dat", "nested", "nested/b.dat"])
             with_id(name) = only(filter(item -> id(item) == name, found))
-            @test id.(members(source, with_id("."))) == ["a.dat", "nested"]
             @test id.(members(source, with_id("nested"))) == ["nested/b.dat"]
             @test isempty(members(source, with_id("a.dat")))
             original = with_id("a.dat")
@@ -27,8 +26,7 @@ using CancellationTokens: CancellationTokenSource, get_token
             @test id(changed) == id(original)
             @test fingerprint(changed) != fingerprint(original)
             shallow = DirectorySource(dir; recursive=false)
-            top = only(filter(item -> id(item) == ".", items(shallow; cancel_token)))
-            @test id.(members(shallow, top)) == ["a.dat"]
+            @test id.(items(shallow; cancel_token)) == ["a.dat"]
         finally
             close_source!(source)
         end
@@ -62,11 +60,9 @@ end
             upserts, removals = reported(() -> write(joinpath(dir, "nested", "c.dat"), "3"),
                 (upserts, _) -> "nested/c.dat" in upserts)
             @test ["nested", "nested/c.dat"] ⊆ upserts
-            @test !("." in upserts)
             @test isempty(removals)
             upserts, removals = reported(() -> rm(joinpath(dir, "nested"); recursive=true, force=true),
-                (upserts, removals) -> "." in upserts && "nested" in removals)
-            @test "." in upserts
+                (_, removals) -> "nested" in removals)
             @test ["nested", "nested/b.dat", "nested/c.dat"] ⊆ removals
         finally
             close_source!(source)

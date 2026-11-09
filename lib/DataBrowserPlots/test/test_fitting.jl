@@ -42,7 +42,7 @@ function in_workspace(f, devices)
     workspace = W.open_workspace(FitTestProject(), FitTestSource(devices); cache=false, background_processing=true)
     try
         W.wait_workspace_idle!(workspace)
-        return f(workspace, W.select(workspace, W.query_items(workspace)))
+        return f(workspace, W.select(workspace, [device.name for device in devices]))
     finally
         W.close_workspace!(workspace)
     end

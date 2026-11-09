@@ -56,7 +56,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         at = version.rows.stage[row]
         ## The source item that a read reads, or the value that a `process` takes, or the
         ## computation.
-        ran_for = at == SOURCE_READ ? (id(value.args[3]), label(value.args[3])) :
+        ran_for = at == SOURCE_READ ? read_of(value) :
             at !== nothing ? (value.args[2].id, label(workspace, value.args[2].id)) : (id(value), id(value))
         given === value || (ran_for = (given.args[2], label(workspace, given.args[2])))
         failure = last(get(version.errors, row, nothing => nothing))

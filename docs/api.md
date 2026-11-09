@@ -62,12 +62,11 @@ DataBrowserAPI.members(::DataBrowserAPI.AbstractGroup)
 
 #### Stages
 
-`read` loads a source item, or makes the group of a source item with members. `process` computes
+`read` loads a source item, or makes a group of the source items that a source item holds. `process` computes
 results from an item, from a group with the values of its members, or from a member with its group.
 
 ```@docs
 Base.read(::DataBrowserAPI.AbstractProject, ::DataBrowserAPI.AbstractDataSource, ::DataBrowserAPI.AbstractDataSourceItem)
-Base.read(::DataBrowserAPI.AbstractProject, ::DataBrowserAPI.AbstractDataSource, ::DataBrowserAPI.AbstractDataSourceItem, ::AbstractVector{<:DataBrowserAPI.AbstractDataItem})
 DataBrowserAPI.SourceGroup
 DataBrowserAPI.process
 DataBrowserAPI.reconstruct

@@ -36,24 +36,27 @@ function define!(project::Project{N}, r::ItemRecipe) where {N}
 end
 
 """
-Define the methods of the whole project: its `read`, which asks the `detect` callback of each item
-registration in the order of registration, and the `process` of the group of the source folder,
-which makes the collections and runs their callbacks. A project without collections has no such
-`process`.
+Define the methods of the whole project: its `read`, which makes a [`SourceItemGroup`](@ref) of a
+source item with members and asks the `detect` callback of each item registration, in the order of
+registration, for any other source item; and the `process` of the [`SourceGroup`](@ref) of the
+source, which makes the collections and runs their callbacks. A project without collections has no
+such `process`.
 """
 function define!(project::Project{N}, mod::Module, line::LineNumberNode) where {N}
     P, V = Project{N}, AbstractVector{RegisteredDataItem}
     asks = [Expr(:block, r.registered, :($(r.detect)(item)::Bool && return $_read(
         $(r.expand === nothing ? RegisteredDataItem{r.kind} : ReadData{r.kind}), $(r.read), item)))
         for r in project.recipes]
-    define(mod, line, :read, [:(::$P), :(::$AbstractDataSource), :(item::$AbstractDataSourceItem)],
-        Expr(:block, asks..., :(return $AbstractDataItem[])))
+    group = :(isempty($members(source, item)) ||
+        return $SourceItemGroup(item, map($id, $members(source, item))))
+    define(mod, line, :read, [:(::$P), :(source::$AbstractDataSource), :(item::$AbstractDataSourceItem)],
+        Expr(:block, group, asks..., :(return $AbstractDataItem[])))
     paths = [:($(QuoteNode(r.kind)) => $(r.collection))
         for r in project.recipes if r.collection !== nothing]
     levels = [:(($(QuoteNode(c.level)), $(QuoteNode(c.members)), $(c.process), $(c.analyze)))
         for c in project.collections]
     isempty(paths) && isempty(levels) ? forget(process, P, SourceGroup, V) : define(mod, line,
-        :process, [:(::$P), :(folder::$SourceGroup), :(items::$V)],
-        :($_collections(folder, items, ($(paths...),), ($(levels...),))))
+        :process, [:(::$P), :(::$SourceGroup), :(items::$V)],
+        :($_collections(items, ($(paths...),), ($(levels...),))))
     return nothing
 end

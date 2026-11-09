@@ -220,7 +220,8 @@ Scan the source once. The walk lists the source items, and after it each gets it
 item that is unchanged since the cache saved it is current at once, with the values the cache saved
 for it, and so are the rows of `process` whose inputs are current. The cache forgets what it saved
 for the rows that the workspace no longer has, such as those of source items that the walk no
-longer finds. `rebuild=true` means the cache was just emptied.
+longer finds. The source group holds the source items found. `rebuild=true` means the cache was just
+emptied.
 """
 function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
     scan, catalog, db = workspace.scan, workspace.catalog, workspace.cache.db
@@ -263,6 +264,9 @@ function scan_source!(workspace::Workspace; rebuild::Bool=false)::Nothing
         end
         canceled()
         @lock catalog.lock begin
+            ## The source group comes after the rows of its members, so that its group `process`
+            ## finds their versions, and the cache restores it when they are unchanged.
+            source_group!(workspace, unique(String[id(x) for x in walked]))
             gone = 0
             # TODO: this also forgets the rows that the workspace adds after the walk, when a job
             # restores one of their inputs, such as the rows below a group that a source lists before

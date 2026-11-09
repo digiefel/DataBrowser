@@ -374,13 +374,57 @@ function call(workspace::Workspace, row::Row, value::Computation)
     end
 end
 
+"""
+    Members{T}
+
+The values of the members of a group that its `process` receives: a vector that reads each value from
+its store when the code reads it, so that a group process holds only the members that its code
+keeps. The vector reads `MEMBER_BATCH` values at a time and keeps only the last batch.
+"""
+mutable struct Members{T} <: AbstractVector{T}
+    const workspace::Workspace
+    ## The id of each member value, the row that gives it, and its type and revision in its store.
+    const ids::Vector{String}
+    const rows::Vector{Row}
+    const keys::Vector{Tuple{Type,UInt64}}
+    const lock::ReentrantLock
+    batch::Int
+    values::Vector{Any}
+end
+
+# TODO(scale): a batch of a number of values, whatever their size.
+const MEMBER_BATCH = 256
+
+Base.size(members::Members) = (length(members.ids),)
+
+function Base.getindex(members::Members{T}, index::Int)::T where {T}
+    @boundscheck checkbounds(members, index)
+    batch = cld(index, MEMBER_BATCH)
+    @lock members.lock begin
+        if members.batch != batch
+            numbers = (batch - 1) * MEMBER_BATCH + 1:min(batch * MEMBER_BATCH, length(members))
+            found = kept(members.workspace, [Tuple{Type,UInt64}[members.keys[n]] for n in numbers])
+            ## A value missing from its store is computed again, with the other values of its row.
+            members.values = Any[only(value) === nothing ? pick(computed!(members.workspace, members.rows[n]), members.ids[n]) :
+                something(only(value)) for (value, n) in zip(found, numbers)]
+            members.batch = batch
+        end
+        return members.values[index - (batch - 1) * MEMBER_BATCH]
+    end
+end
+
 # The value that a function receives for an argument: an input is the result of its row, a part is
-# the value with its id in that result, and the values of members that the row takes are read
-# together, in the order of the members.
+# the value with its id in that result, and the values of members that the row takes are a
+# `Members` vector, in the order of the members.
 function resolved(workspace::Workspace, row::Row, ::MemberValues{T}) where {T}
     catalog = workspace.catalog
-    taken = @lock catalog.lock filter!(((x, at),) -> output(workspace, at, x) !== nothing, member_values(workspace, row))
-    return T[pick(result, x) for ((x, _), result) in zip(taken, results(workspace, last.(taken)))]
+    ids, rows, keys = String[], Row[], Tuple{Type,UInt64}[]
+    @lock catalog.lock for (x, at) in member_values(workspace, row)
+        found = output(workspace, at, x)
+        found === nothing && continue
+        push!(ids, x); push!(rows, at); push!(keys, (found.type, found.revision))
+    end
+    return Members{T}(workspace, ids, rows, keys, ReentrantLock(), 0, Any[])
 end
 resolved(workspace::Workspace, ::Row, x) = resolved(workspace, x)
 resolved(workspace::Workspace, x::Input) = only(results(workspace, [x.row]))
@@ -484,7 +528,7 @@ function argument_type(workspace::Workspace, x::Part)
     found = output(workspace, x.of.row, x.id)
     return found === nothing ? Any : found.type
 end
-argument_type(::Workspace, ::MemberValues{T}) where {T} = Vector{T}
+argument_type(::Workspace, ::MemberValues{T}) where {T} = Members{T}
 argument_type(::Workspace, x) = typeof(x)
 
 # The values of members count as the sum of a hash of the id and the revision of each, which the
@@ -528,11 +572,11 @@ of the stage that can apply to it. For the signature `Tuple{typeof(label),P,T}`,
 the values of type `T` (see [`revision`](@ref)), these are `T` and its `label`, `id`, `members` and
 `metadata` methods. Else the root is the function. A callable object that is not a function, such
 as a fit, runs the methods that make its type callable, whose parameters include the types of the
-functions it holds.
+functions it holds. A type, such as `SourceGroup`, runs its constructors.
 """
 function code_roots(project::AbstractProject, signature::Type, f)::Vector
     found = stage(signature)
-    found === nothing && return f isa Function ? Any[f] : Any[typeof(f); collect(methods(f))]
+    found === nothing && return f isa Function ? Any[f] : Any[f isa Type ? f : typeof(f); collect(methods(f))]
     at, T = found
     signatures = DataBrowserAPI.stage_signatures(typeof(project), at, T)
     return Any[T; [method for (g, types) in signatures for method in methods(g, types)]]
@@ -543,7 +587,6 @@ function code_roots(project::AbstractProject, ::Type{<:Tuple{typeof(label),Any,T
 end
 
 stage(::Type{<:Tuple{typeof(read),Any,Any,S}}) where {S} = (SOURCE_READ, S)
-stage(::Type{<:Tuple{typeof(read),Any,Any,S,Any}}) where {S} = (SOURCE_READ, S)
 stage(::Type{<:Tuple{typeof(process),Any,I}}) where {I} = (ITEM_PROCESS, I)
 stage(::Type{<:Tuple{typeof(process),Any,G,AbstractVector}}) where {G} = (GROUP_PROCESS, G)
 stage(::Type{<:Tuple{typeof(process),Any,M,G}}) where {M,G} = (MEMBER_PROCESS, G)
@@ -636,15 +679,31 @@ The store that the project chooses for results of `type`, asked once for each ty
 for the types of results that never go to a store, `Nothing` and `Selection`, and when `storage`
 gives `nothing`. When `storage` throws, it is a `MemoryStore`, with a warning. [`keep!`](@ref) also
 skips the result of `view`.
+
+A store file written by an older version of DataBrowser is handled as an old cache file: while the
+cache rebuilds, its file is deleted and the store starts over; otherwise, the results stay in
+memory, and the workspace keeps the error, so that the browser offers a rebuild.
 """
 function store(workspace::Workspace, type::Type)::Union{Nothing,AbstractStore}
     type <: Union{Nothing,Selection} && return nothing
     return @lock workspace.stores_lock get!(workspace.stores, type) do
         try
-            Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
+            try
+                Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
+            catch error
+                error isa ProjectCacheSchemaError && workspace.cache.operation === :rebuild || rethrow()
+                DataBrowserCache._remove_cache_files!(error.path)
+                Base.invokelatest(DataBrowserAPI.storage, workspace.project, type)
+            end
         catch error
-            @warn("The store of a result type cannot be used: its results are kept in memory", type,
-                exception=(error, catch_backtrace()), maxlog=1)
+            if error isa ProjectCacheSchemaError
+                @atomicreplace workspace.cache.disk_error nothing => error
+                @warn("A store file is out of date: its results are kept in memory until the cache rebuilds",
+                    store=error.path, maxlog=1)
+            else
+                @warn("The store of a result type cannot be used: its results are kept in memory", type,
+                    exception=(error, catch_backtrace()), maxlog=1)
+            end
             DataBrowserCache.MemoryStore()
         end
     end
@@ -860,15 +919,11 @@ function check_code!(workspace::Workspace)::Nothing
     answers = Dict{Tuple,Any}(question => first(question)(Base.tail(question)...) for question in keys(asked))
     @lock catalog.lock begin
         workspace.closed && return nothing
-        ## Every value, group and source item with members is checked again when a method applies
-        ## now that did not, or the other way around.
+        ## Every value and group is checked again when a method applies now that did not, or the
+        ## other way around.
         if !isequal(answers, asked)
             workspace.methods = answers
             refresh!(workspace, collect(keys(workspace.versions)))
-            for row in collect(values(workspace.sources))
-                value = catalog[row]
-                length(value.args) == 4 && source!(workspace, value.args[3])
-            end
         end
         changed = Set{Type}(signature for (signature, code) in current
             if code.revision.hash != workspace.code[signature].revision.hash)

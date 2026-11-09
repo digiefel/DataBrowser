@@ -258,9 +258,11 @@ the workers. The task holds the answer of each function until 10 seconds after t
 uses any more. A later call with the function runs it on every item again.
 """
 function answer!(items::Items, workspace::Workspace)::Nothing
-    ## Owned by this task: the sort key of each item, by its number, the order of those keys, for
-    ## each function the sorted numbers of the items that pass it, and the tags that it last read.
-    keys_of, sorted_by, passed, tagged = Dict{Int32,Any}(), nothing, Dict{Any,Vector{Int32}}(), nothing
+    ## Owned by this task: the sort key of each item, by its number, the order of those keys, the
+    ## numbers of every item in that order, the place of each number in it, for each function the
+    ## sorted numbers of the items that pass it, and the tags that it last read.
+    keys_of, sorted_by, ranked, place = Dict{Int32,Any}(), nothing, Int32[], Int32[]
+    passed, tagged = Dict{Any,Vector{Int32}}(), nothing
     try
         while true
             wait(items.asking)
@@ -285,7 +287,7 @@ function answer!(items::Items, workspace::Workspace)::Nothing
             tagged = shared.tags
             filter!(found -> found.first in functions, passed)
             ## Without functions, the task keeps nothing, and the next function runs on every item.
-            isempty(functions) && (empty!(keys_of); sorted_by = nothing; continue)
+            isempty(functions) && (empty!(keys_of); empty!(ranked); sorted_by = nothing; continue)
             ## With another order, every item counts as changed.
             present(n) = version.columns.version[n] != Catalogs.NOWHERE
             isequal(order, sorted_by) || union!(changed, Int32(1):Int32(length(version.columns.id)))
@@ -306,6 +308,24 @@ function answer!(items::Items, workspace::Workspace)::Nothing
                     for (n, row) in zip(asked, table)
                         n in changed && (keys_of[n] = Base.invokelatest(order.by, row))
                     end
+                    ## The changed items leave the order of every item, and join it again sorted.
+                    ## Comparing two sort keys is a dynamic call, so only the changed items are
+                    ## compared, once for all the functions.
+                    if !isempty(changed)
+                        filter!(!in(changed), ranked)
+                        sorted = Base.invokelatest(sort!, filter(present, collect(changed)); by=n -> keys_of[n], order=order.order)
+                        merged, next = sizehint!(Int32[], length(ranked) + length(sorted)), 1
+                        for n in sorted
+                            stop = Base.invokelatest(searchsortedlast, ranked, n; by=m -> keys_of[m], order=order.order)
+                            append!(merged, @view ranked[next:stop])
+                            push!(merged, n)
+                            next = stop + 1
+                        end
+                        append!(merged, @view ranked[next:end])
+                        copy!(ranked, merged)
+                        resize!(place, length(version.columns.id))
+                        foreach(((at, n),) -> place[n] = at, enumerate(ranked))
+                    end
                     for f in functions
                         before = get(passed, f, nothing)
                         moved = Int32[]
@@ -320,19 +340,11 @@ function answer!(items::Items, workspace::Workspace)::Nothing
                             end
                             pass && push!(moved, n)
                         end
-                        Base.invokelatest(sort!, moved; by=n -> keys_of[n], order=order.order)
-                        ## The items that did not change keep their order, and the others that pass
-                        ## are merged in.
+                        ## The items that did not change stay, and the others that pass join them,
+                        ## sorted by their place in the order of every item.
                         ## TODO(scale): this goes through all the items of the answer.
-                        kept = before === nothing ? Int32[] : filter(!in(changed), before)
-                        numbers, next = sizehint!(Int32[], length(kept) + length(moved)), 1
-                        for n in moved
-                            stop = Base.invokelatest(searchsortedlast, kept, n; by=m -> keys_of[m], order=order.order)
-                            append!(numbers, @view kept[next:stop])
-                            push!(numbers, n)
-                            next = stop + 1
-                        end
-                        append!(numbers, @view kept[next:end])
+                        numbers = before === nothing ? moved : append!(filter(!in(changed), before), moved)
+                        sort!(numbers; by=n -> place[n])
                         passed[f] = numbers
                         (before === nothing || before != numbers || any(in(changed), numbers)) && push!(remade, f)
                     end
@@ -443,15 +455,17 @@ groups(workspace::Workspace, x::AbstractString)::Vector{String} = copy(cell(work
 # of the browser. The order is part of the shared state, and `answer!` sorts by it.
 
 """
-    natural_key(text) -> Tuple
+    natural_key(text) -> Vector{Tuple{Bool,Int,String}}
 
 Internal. A sort key for text that compares each run of digits in it as a whole number, so that
 `"a2"` comes before `"a10"`, and the rest of the text without regard to case. A decimal point or a
-minus sign counts as text, so `"1.5"` comes before `"1.25"`.
+minus sign counts as text, so `"1.5"` comes before `"1.25"`. Each run is `(false, 0, text)` or
+`(true, number, "")`. The keys of all texts have one type, so that comparing two of them compiles
+nothing new.
 """
-natural_key(text::AbstractString)::Tuple = Tuple(
-    all(isdigit, part.match) ? (1, parse(Int, part.match)) : (0, lowercase(part.match))
-    for part in eachmatch(r"\d+|\D+", String(text)))
+natural_key(text::AbstractString)::Vector{Tuple{Bool,Int,String}} = [
+    all(isdigit, part.match) ? (true, parse(Int, part.match), "") : (false, 0, lowercase(part.match))
+    for part in eachmatch(r"\d+|\D+", String(text))]
 
 """
     SortKeys(keys)
