@@ -89,6 +89,19 @@ function draw() {
     if (found.length) cy.fit(found, 60);
   });
   document.getElementById("codemap-fit").addEventListener("click", () => cy.fit(undefined, 20));
+  // "Full window" lays the map over the page; the map needs its new size before it fits.
+  const frame = document.getElementById("codemap-frame"), full = document.getElementById("codemap-full");
+  const setFull = on => {
+    frame.classList.toggle("full", on);
+    // The background of the page, whatever its theme: the first element up from the map that has one.
+    let element = frame.parentElement;
+    while (element && getComputedStyle(element).backgroundColor === "rgba(0, 0, 0, 0)") element = element.parentElement;
+    frame.style.background = !on ? "" : element ? getComputedStyle(element).backgroundColor : "#fff";
+    full.textContent = on ? "Back to the page" : "Full window";
+    cy.resize(); cy.fit(undefined, 20);
+  };
+  full.addEventListener("click", () => setFull(!frame.classList.contains("full")));
+  document.addEventListener("keydown", event => { if (event.key === "Escape") setFull(false); });
   document.getElementById("codemap-collapse").addEventListener("click", () => boxes.collapse(cy.nodes(".file")));
   document.getElementById("codemap-expand").addEventListener("click", () => boxes.expandAll());
 }
