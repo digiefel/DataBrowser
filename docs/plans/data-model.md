@@ -1,11 +1,12 @@
 # Data model: reaching the values of selected items
 
 Proposal, 22 October 2026. Partly built: `selection.data`, paths such as `:data.V` in `@plot`, and
-`unnest`. A selected group's members one level down, and folder names as metadata, are not built.
+`unnest`. A selected group's members one level down, and the names of group levels as metadata, are
+not built.
 
 This plan owns how code and the GUI reach the values of selected items: names, levels, positions
 and how values of different levels combine. Every consumer uses the same rules: plots, the table
-window, fits, `analyze` code and the REPL. How groups are formed belongs to [groups](groupings.md);
+window, fits, analysis code and the REPL. How groups are formed belongs to [groups](groupings.md);
 how values are stored belongs to [storage](storage.md); plot syntax belongs to the
 [graphics grammar](graphics-grammar.md), which uses this model.
 
@@ -42,9 +43,11 @@ A **path** names a value by following this nesting: `:Device`, `:data.VoltageLow
 path says where the value lives. Nothing else is named: a matrix is reached as `:data`, and its
 rows and columns are reached by position.
 
-The tree levels of the browser (folders, recipe collections) are metadata with real names: one
-`folder` value with the relative path, such as `"72b/L/bigTLM"`, and the names a recipe gives its
-levels, such as `wafer` and `device`.
+The tree of the browser shows groups, such as the directories of a `DirectorySource` or the levels
+of a DBRecipes project. Today a selection names them only by id, in its `groups` column. In this
+proposal, their levels would also be metadata with real names: one `folder` value with the
+relative path, such as `"72b/L/bigTLM"`, and the names a recipe gives its levels, such as `wafer`
+and `device`.
 
 ## The rules
 
@@ -228,10 +231,12 @@ mapping. Only the values a mapping names are read.
 ## Open questions
 
 1. How a selected group's members are reached when groups are selectable.
-2. Data of a project's own type: its fields as paths (`:data.spectrum`) are the natural reading.
-   Whether every type supports this through `getproperty`, or needs a method, is not decided.
-3. `id` and `label` stay item-level values. Whether the tree-level `folder` value is metadata or a
-   separate kind of value is not decided.
+2. `id` and `label` stay item-level values. Whether the levels of groups, such as a `folder`
+   value, are metadata or a separate kind of value is not decided.
+
+Data of a project's own type was open question 2, and is answered by `follow`, which reads each
+path: a name is a column when the data is a table, and otherwise a property, through
+`getproperty`. So the fields of a type are paths (`:data.spectrum`) with no method to write.
 
 ## Relation to the current code
 

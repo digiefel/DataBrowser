@@ -34,10 +34,9 @@ result to other layers, labels and the Inspector.
 ```julia
 @plot data(table) * mapping(:x, :y; color=:series) begin
     visual(Scatter; markersize=6)
-    fit = linear(; interval=nothing) * subvisual(:prediction; linewidth=2)
-    mapping(fit.x[end], fit.y[end]) *
-        visual(Text; text="Gain = $(round(fit.slope; digits=2))",
-            offset=(8, 0), align=(:left, :center))
+    gain = fit((x; slope, offset) -> slope * x + offset, (slope=1.0, offset=0.0))
+    gain * visual(Lines; linewidth=2)
+    legend(color = "$(:series): gain = $(gain.slope)")
 end
 ```
 
@@ -50,8 +49,8 @@ Explicit positional mappings replace the inherited positional tuple. Omitted nam
 retains the corresponding group/facet identity. Pooling must explicitly resolve varying roles.
 Separate-panel composition remains deferred.
 
-The package no longer has the `linear` statistic of this example. `fit(curve, starts; ...)` is the
-declaration that fits a curve; [fitting](fitting.md) specifies it and says how much of it is built.
+`fit(curve, starts; ...)` is the declaration that fits a curve, once for each group of the points;
+[fitting](fitting.md) specifies it and says how much of it is built.
 
 ## Shared requirements
 
@@ -220,6 +219,10 @@ drawn at 10⁻¹⁰; a column mapped as the half-length of `Errorbars` is a widt
    from the `fit` and `aggregate` lines alone.
 2. Integrate declared computations with Core revisions, invalidation and retained results.
    Standalone use remains possible; workspace integration must not create a private fit cache.
+   Built in part: in the browser, each group of a `fit` or an `aggregate` is a `Computation` of the
+   workspace, named by the code of its line and its items, which the workspace computes again when
+   one of the items changes. A group whose points the plot no longer has stays in the workspace
+   until it closes.
 3. Define result naming and field collisions consistently with fitting. Decide how callers obtain
    native models and a table of grouped summaries without reviving the withdrawn custom API.
 4. Complete common GUI authoring: data/mappings, layers, statistics, images/heatmaps, labels and

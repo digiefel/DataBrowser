@@ -129,9 +129,10 @@ Retain joint covariance or shared samples for derived quantities involving sever
 independent marginal error propagation loses correlation. Repeated sweeps are not automatically
 independent observations. Resampling choices need to reflect the input model.
 
-Fit coordinate space on transformed axes is explicitly open: fitting raw values and fitting
-log/displayed coordinates changes the objective. A logarithmic axis or AoG lowering must not
-silently decide this contract. No raw-space or axis-space default has been chosen.
+Fit coordinate space on transformed axes is chosen: the residuals are measured on the axis, after
+the function of the y scale, such as `log10`. Fitting raw values and fitting displayed coordinates
+give different objectives, so the y scale of a plot changes its fits. Raw-space residuals remain an
+option to offer explicitly.
 
 `fullrange` must not create an axis-expansion feedback loop. Zoom, display range and sampling
 should not mutate the fitted observation set.
@@ -157,9 +158,11 @@ All consumers must see one consistent result revision, including background inte
 
 ## Package evaluation and validation
 
-CurveFit and direct NonlinearSolve use remain candidates. Compare documented public capabilities:
-weighted/bounded solves, status, fixed parameters, derivatives, retained outputs and repeated
-refits. Load time is not the main decision criterion. The archived source review records caveats
+`DataBrowserFitting` uses NonlinearSolve directly: a `NonlinearLeastSquaresProblem` solved with
+Levenberg–Marquardt, and ForwardDiff for the Jacobian of the standard errors. DataBrowserPlots
+loads it on the first fit of a session. Weighted and bounded solves, fixed parameters and status
+beyond convergence are not built; CurveFit remains a candidate for them. Load time is not the main
+decision criterion. The archived source review records caveats
 for the versions inspected; verify them against the chosen version before implementation.
 
 Validation needs real SuperGaN and RuO2 analyses with the curve, selected rows, noise model and
