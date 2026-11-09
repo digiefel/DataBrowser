@@ -91,7 +91,7 @@ end
     mktempdir() do dir
         cache = open_cache_db(ProjectCacheIdentity("test", "source", "source", joinpath(dir, "cache.duckdb")))
         try
-            @test_throws ErrorException store_fixture_item!(cache, Dict(:x => 1), Dict(:x => 1.5))
+            @test_throws ErrorException store_fixture_item!(cache, Dict(:x => 1), Dict(:x => sin))
             @test get(cache, 1, nothing) === nothing
             store_fixture_item!(cache, Dict(:x => 1.5))
             @test saved(cache)[:x] == 1.5

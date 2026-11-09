@@ -316,10 +316,12 @@ function _saved_text(saved)::String
 end
 
 """
-One metadata column: the name of the Julia type its values have (see [`_type_name`](@ref)), that
-type, or `nothing` while its module is not loaded, and the DuckDB column type of its saved values.
+One metadata column: the metadata name of its values, the name of the Julia type they have (see
+[`_type_name`](@ref)), that type, or `nothing` while its module is not loaded, and the DuckDB column
+type of their saved form.
 """
 struct MetadataColumn
+    metadata::Symbol
     name::String
     type::Union{Nothing,Type}
     sql::String
@@ -361,12 +363,15 @@ function _named_type(text::AbstractString)::Union{Nothing,Type}
 end
 
 """
-A metadata table: one row per entity, one column per metadata name.
+A metadata table: one row per entity, and one column for each metadata name and type of its values.
 
-A column takes the type of the first value written under its name, and holds the saved form of its
-values in a DuckDB type, so that queries can read it. `edit!` throws, and changes nothing, when a
-value has another type than its column, or cannot be saved and built again. New columns are added
-with `ALTER TABLE ADD COLUMN` when the buffered rows are written.
+The values of one name can have several types, such as `temperature = 300`, an `Int`, for one
+entity, and `temperature = 300.5`, a `Float64`, for another. Each type has its own column, named
+`temperature::Core.Int64` and `temperature::Core.Float64` in the table, which holds the saved form
+of the values in a DuckDB type, so that queries can read it. Rows come back with one value under
+each name, whatever its column. `edit!` throws, and changes nothing, when a value cannot be saved
+and built again. New columns are added with `ALTER TABLE ADD COLUMN` when the buffered rows are
+written.
 """
 mutable struct WideRowStore{K} <: AbstractDatabaseStore{K,Dict{Symbol,Any}}
     read_connection::DuckDB.Connection
@@ -385,7 +390,10 @@ mutable struct WideRowStore{K} <: AbstractDatabaseStore{K,Dict{Symbol,Any}}
     last_flush::Float64
     closing::Bool
     flush_task::Task
+    ## The columns by their names in the table, and the name of the column of each metadata name and
+    ## loaded type.
     columns::Dict{Symbol,MetadataColumn}
+    typed::Dict{Tuple{Symbol,Type},Symbol}
     ## The columns in the order of the table.
     column_order::Vector{Symbol}
     ## Columns first seen since the last write, which the table does not have yet.
@@ -405,11 +413,14 @@ function WideRowStore{K}(
     write_connection = DBInterface.connect(database)
     columns = Dict{Symbol,MetadataColumn}()
     for row in _execute_on_duckdb_threads(read_connection,
-            "SELECT column_name, julia_type, sql_type FROM wide_columns WHERE table_name = ?",
+            "SELECT column_name, metadata_name, julia_type, sql_type FROM wide_columns WHERE table_name = ?",
             (String(table),))
         name = String(row.julia_type)
-        columns[Symbol(String(row.column_name))] = MetadataColumn(name, _named_type(name), String(row.sql_type))
+        columns[Symbol(String(row.column_name))] =
+            MetadataColumn(Symbol(String(row.metadata_name)), name, _named_type(name), String(row.sql_type))
     end
+    typed = Dict{Tuple{Symbol,Type},Symbol}((column.metadata, column.type) => name
+        for (name, column) in columns if column.type !== nothing)
     column_order = Symbol[]
     for row in _execute_on_duckdb_threads(read_connection, """
             SELECT column_name FROM information_schema.columns
@@ -437,6 +448,7 @@ function WideRowStore{K}(
         false,
         current_task(),
         columns,
+        typed,
         column_order,
         Symbol[],
     )
@@ -454,7 +466,7 @@ function _new_column(name::Symbol, value)::MetadataColumn
         saved = _saved(value)
         sql = _saved_sql(saved)
         isequal(_saved(StructUtils.make(T, saved)), saved) &&
-            return MetadataColumn(_type_name(T), T, sql)
+            return MetadataColumn(name, _type_name(T), T, sql)
         "its saved form builds a different value"
     catch error
         first(split(sprint(showerror, error), '\n'))
@@ -464,23 +476,32 @@ end
 
 """
 Buffer whole-row metadata replacements, one for each pair `key => row` of `rows`. An error, which
-changes nothing, when a value cannot be saved or has another type than its column. The first value
-under a new name gives its column, at once, in memory.
+changes nothing, when a value cannot be saved. The first value of a new name or type gives its
+column, at once, in memory.
 """
 function edit!(store::WideRowStore{K}, rows::AbstractVector{<:Pair{K}})::Nothing where {K}
     lock(store.flush_condition) do
         _require_writable(store)
         ## Every value is checked before anything changes, in one hold of the lock, so that another
-        ## writer cannot give a new name another type in between.
+        ## writer cannot add the same column in between.
         new = Dict{Symbol,MetadataColumn}()
         for (_, row) in rows, (name, value) in row
-            value === missing && continue
-            column = get(() -> get!(() -> _new_column(name, value), new, name), store.columns, name)
-            typeof(value) === column.type || error("metadata :$name has type $(typeof(value)) here " *
-                "but $(something(column.type, column.name)) in earlier items: give it one type in " *
-                "the project, then rebuild the cache")
+            (value === missing || haskey(store.typed, (name, typeof(value)))) && continue
+            column = Symbol(name, "::", _type_name(typeof(value)))
+            found = get(store.columns, column, nothing)
+            if found !== nothing
+                ## The column of a type that was not loaded when the store opened, or of another
+                ## type with the same name, such as one whose parameters `_type_name` leaves out.
+                found.type === nothing || error("metadata :$name has the types $(found.type) and " *
+                    "$(typeof(value)), which the cache cannot tell apart: give it other types")
+                store.columns[column] = MetadataColumn(name, found.name, typeof(value), found.sql)
+                store.typed[(name, typeof(value))] = column
+            else
+                haskey(new, column) || (new[column] = _new_column(name, value))
+            end
         end
         merge!(store.columns, new)
+        merge!(store.typed, Dict((column.metadata, column.type) => name for (name, column) in new))
         append!(store.column_order, keys(new))
         append!(store.pending_columns, keys(new))
         for (key, row) in rows
@@ -517,7 +538,7 @@ function Base.read(store::WideRowStore{K})::Dict{K,Dict{Symbol,Any}} where {K}
                     raw = getproperty(database_row, name)
                     ismissing(raw) && continue
                     type = columns[name].type
-                    dict[name] = raw isa type ? raw : StructUtils.make(type, raw)
+                    dict[columns[name].metadata] = raw isa type ? raw : StructUtils.make(type, raw)
                 end
                 rows[convert(K, raw_key)] = dict
             end
@@ -553,14 +574,20 @@ function _flush_to_db!(
         (copy(store.pending_columns), copy(store.column_order), copy(store.columns))
     end
     nested(name) = occursin(r"\[|STRUCT|MAP", columns[name].sql)
+    ## The value of a row in the column `name`: its value under the metadata name of the column,
+    ## when it has the type of the column.
+    function cell(dict, name)
+        value = get(dict, columns[name].metadata, missing)
+        return typeof(value) === columns[name].type ? value : missing
+    end
     quoted(name) = _quote_identifier(String(name))
     staging = store.table_name * "_staging"
     _transaction(store.write_connection) do
         for name in new_columns
             _run(store.write_connection,
                 "ALTER TABLE $(store.quoted_table) ADD COLUMN $(quoted(name)) $(columns[name].sql)")
-            _run(store.write_connection, "INSERT INTO wide_columns VALUES (?, ?, ?, ?)",
-                (store.table_name, String(name), columns[name].name, columns[name].sql))
+            _run(store.write_connection, "INSERT INTO wide_columns VALUES (?, ?, ?, ?, ?)",
+                (store.table_name, String(name), String(columns[name].metadata), columns[name].name, columns[name].sql))
         end
         _delete_keys!(
             store.write_connection,
@@ -574,7 +601,7 @@ function _flush_to_db!(
                 for (key, dict) in rows
                     DuckDB.append(appender, key)
                     for name in column_order
-                        value = get(dict, name, missing)
+                        value = cell(dict, name)
                         DuckDB.append(appender, value === missing ? missing : _saved(value))
                     end
                     DuckDB.end_row(appender)
@@ -591,7 +618,7 @@ function _flush_to_db!(
             for (key, dict) in rows
                 DuckDB.append(appender, key)
                 for name in column_order
-                    value = get(dict, name, missing)
+                    value = cell(dict, name)
                     saved = value === missing ? missing : _saved(value)
                     DuckDB.append(appender, saved !== missing && nested(name) ? _saved_text(saved) : saved)
                 end

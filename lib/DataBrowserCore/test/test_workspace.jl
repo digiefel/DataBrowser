@@ -193,7 +193,7 @@ end
 
 # Its item has the metadata `:input`, of the type of `input`. Its `process` also gives an item whose
 # `:input` is an `Int`.
-mutable struct RetypedProject <: AbstractProject
+struct RetypedProject <: AbstractProject
     input::Any
 end
 DataBrowserAPI.project_name(::RetypedProject) = "retyped"
@@ -201,7 +201,7 @@ DataBrowserAPI.read(p::RetypedProject, ::EngineSource, ::EngineSourceItem) =
     EngineItem("source", (x=[1],), Dict(:input => p.input))
 DataBrowserAPI.process(::RetypedProject, i::EngineItem{:read}) = [i, EngineItem{:processed}("other", i.data, Dict(:input => 1))]
 
-@testset "metadata of another type is reported, also after reopening, until a rebuild of the cache" begin
+@testset "metadata of two types under one name keeps every value, also after reopening" begin
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
         try
@@ -212,11 +212,9 @@ DataBrowserAPI.process(::RetypedProject, i::EngineItem{:read}) = [i, EngineItem{
             ws = W.open_workspace(project, EngineSource("engine", 1, false))
             try
                 settled(ws)
-                @test !isempty(W.workspace_status(ws).errors)
-                project.input = 1
-                W.rebuild_cache!(ws)
-                settled(ws)
                 @test isempty(W.workspace_status(ws).errors)
+                @test W.metadata(ws, "source")[:input] == "one" && W.metadata(ws, "other")[:input] === 1
+                @test W.query_items(ws, "input = '1'") == ["other"]
             finally
                 W.close_workspace!(ws)
             end
