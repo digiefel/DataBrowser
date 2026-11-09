@@ -1,6 +1,14 @@
 // Draw the code map of `window.CODEMAP`, which docs/codemap.jl writes, on the page codemap.md.
 (function () {
+  const info = document.getElementById("codemap-info");
+  try { draw(); } catch (error) { info.textContent = "Failed to draw the code map: " + error; throw error; }
+
+function draw() {
   const map = window.CODEMAP;
+  // The extensions register themselves when they find `cytoscape`; register them again in case
+  // they loaded first.
+  for (const extension of [window.cytoscapeElk, window.cytoscapeExpandCollapse])
+    try { if (extension) cytoscape.use(extension); } catch (_) {}
   const colors = {
     DataBrowserAPI: "#cfd8e3", DataBrowserCore: "#bcd4f0", DataBrowserCache: "#f5d6a8",
     DataBrowserRecipes: "#f5ecc0", DataBrowserGUI: "#d9c6ec", DataBrowserPlots: "#f2c6d4",
@@ -53,7 +61,6 @@
   const boxes = cy.expandCollapse({ layoutBy: layout, animate: false, undoable: false, fisheye: false, cueEnabled: false });
 
   // The fields and the links of a type, beside the map.
-  const info = document.getElementById("codemap-info");
   cy.on("tap", "node.type", event => {
     const t = event.target.data("type");
     const rows = (t.fields || []).map(f => `<tr><td><code>${escape(f.name)}</code></td><td><code>${escape(f.type)}</code></td></tr>`).join("");
@@ -84,4 +91,5 @@
   document.getElementById("codemap-fit").addEventListener("click", () => cy.fit(undefined, 20));
   document.getElementById("codemap-collapse").addEventListener("click", () => boxes.collapse(cy.nodes(".file")));
   document.getElementById("codemap-expand").addEventListener("click", () => boxes.expandAll());
+}
 })();
