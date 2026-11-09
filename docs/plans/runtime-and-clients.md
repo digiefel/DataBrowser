@@ -2,8 +2,11 @@
 
 Target design, started on 30 October 2026. This plan owns the split between the Julia runtime and
 its clients, and what crosses between them. [Visualizers](visualizers.md) owns what a visualizer
-does inside a window; [graphics](graphics-grammar.md) owns plot declarations. Nothing here is
-implemented.
+does inside a window; [graphics](graphics-grammar.md) owns plot declarations. Of the decisions
+below, the visualizers of the workspace, the browser driven by code and the client calls without
+the catalog lock are built, as [Architecture](../ARCHITECTURE.md) describes; only a read of a result
+that its store lacks still takes that lock. Of the proposals, only `show` and `showable` of a
+visualizer are built, for the Export button of the browser.
 
 ## Terms
 
@@ -123,8 +126,8 @@ These are not yet agreed.
 
 ## Current state
 
-The GUI and DataBrowserPlots use 61 Core names that Core does not export, at 267 places in 15
-files, and read Core structures and locks directly. The
+Measured on 30 October 2026, the GUI and DataBrowserPlots used 61 Core names that Core does not
+export, at 267 places in 15 files, and read Core structures and locks directly. The
 [boundary inventory](../../work/runtime-boundary/inventory.md) lists them by need. Identity (internal
 keys in place of ids) is the largest group. DataBrowserPlots also computes fits itself and
 depends on DataBrowserGUI.

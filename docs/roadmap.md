@@ -102,8 +102,8 @@ baseline.
 Decisions taken during the audit:
 
 - The memory-only cache backend (`MemoryCacheDB`, `AbstractCacheDB`) is removed. `cache=false`
-  opens an in-memory DuckDB through the one remaining code path. Granular caching (per stage, per
-  kind), non-replayable source retention, and disk-budget control are payload *policies* consulted
+  opens an in-memory DuckDB through the one remaining code path. Granular caching (per computation,
+  per kind), non-replayable source retention, and disk-budget control are payload *policies* consulted
   by that one backend. Establish recovery/retention requirements during 0.2.2/0.2.6; complete policy
   controls, production streaming, and pipeline inspection can follow. Do not assume every missing
   payload can be recovered by rerunning its producer.
@@ -113,7 +113,7 @@ Decisions taken during the audit:
 - Files a user may want to inspect with other tools — tags, notes, layout, later the project file —
   live in the project root. Only the cache lives in the depot (and that may change too).
 - The public API has two tiers, both public and both documented: **project authors** use
-  `define_project`, `register_*!`, and the workspace operations; **extension authors** use the stage
+  `define_project`, `register_*!`, and the workspace operations; **extension authors** use the pipeline
   contract, the source/item/collection contracts, `reconstruct`, GUI extension hooks, and plot kinds.
   Every exported name belongs to exactly one tier.
 - Recipes consumes the same public type API as other extensions. Its convenience must not depend
@@ -232,7 +232,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
   each member is the data of the collection, and a member `process` takes its own part.
 - [x] Every version of a value gets the calls of `process` that a method takes, in place of fixed
   stages: a chain of calls ends at a value that no method takes, or at a result `isequal` to the
-  version that it took, and fails after 100 versions of one id. In DataBrowserRecipes, each
+  version that it took, and fails after a chain of 100 calls. In DataBrowserRecipes, each
   collection runs the callbacks of its level in its own group `process`.
 - [x] Items carry all their metadata: they no longer inherit the metadata of their collections. A
   member `process` method copies it when needed; the Recipes one does.
@@ -782,8 +782,8 @@ payload they are given rather than learning special pipeline logic.
   stores. Replay uncached values without rescanning the source.
 - [x] Record execution duration, completion date and success for each computation revision,
   independently of retained data. Expose these records without evaluating or loading results.
-- [ ] Replace fixed-stage input preparation, scheduling and cache addressing with the computation
-  runtime and add native restoration across workspace openings.
+- [ ] Move input preparation, scheduling and cache addressing to the computation runtime, and add
+  native restoration across workspace openings.
 - [x] Evaluate visualizer computation references in background preparation without creating catalog
   entries. Share type-selected caching and input-revision checks for unindexed graph nodes.
 - [x] Return Recipes `read` callback values unchanged; resolve their registration during expansion.
@@ -797,7 +797,7 @@ payload they are given rather than learning special pipeline logic.
   collection-level result.
 - [ ] Show metadata added by analysis operations beside the corresponding data.
 - [ ] Reuse cached results and retain uncached intermediate values within explicit memory bounds.
-- [ ] Prototype scientific local-variable capture independently of pipeline-stage inspection. Expose
+- [ ] Prototype scientific local-variable capture independently of the inspection of the pipeline. Expose
   capture requests/results through the public API, identify invocation/input/code revisions, and
   never repeat acquisition merely to populate a debug window.
 - [ ] Move shared window controls into window menus: input, **Process**, following selection,

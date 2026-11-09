@@ -9,7 +9,9 @@ The external agent is rewriting the example; this filename is retained during co
 
 The source-loading section describes today's API. Later sections are superseded proposal material,
 not an approved or implemented analysis API. [Processing](processing.md#analysis-after-item-processing)
-owns the corrected scope; [coordination](../../work/doc-curation.md) gives the next example request.
+owns the corrected scope. The coordination note `work/doc-curation.md` gave the next example
+request; it left the repository in commit `99e6737`, and `git show 00f1e65:work/doc-curation.md`
+prints it.
 
 ## The data
 
@@ -158,12 +160,12 @@ unwrapped. Both can exist.
 
 ## What changes in Recipes today
 
-- `register_collection_analysis!` requires its `process` to return one output per input, and its
-  `analyze` gives metadata to the collection itself. `result` and `register_result!` remove both
-  limits: a result is a new value with its own id, members and data.
+- `register_collection!` requires its `process` to return new data for each item below the
+  collection, and its `analyze` gives metadata to each of those items. `result` and
+  `register_result!` remove both limits: a result is a new value with its own id, members and data.
 - `RegisteredDataItem`, the private carrier, stays private. A result needs a second private
   carrier, a group with data and metadata; the author never sees either.
-- Ids: today `stages.jl` builds item ids from the source item, the registration name and a key.
+- Ids: today `callbacks.jl` builds item ids from the source item, the registration kind and a key.
   Results need the analysis scope plus `key`; this depends on the stable-id design.
 - `analyze` on items is unchanged here. Whether it stays is the separate question in
   [processing.md](processing.md#metadata-comes-from-returned-values).

@@ -1,9 +1,13 @@
 # Source groups and source metadata
 
 Proposal by the external agent, 21 October 2026, for discussion with Davide and the reviewers.
-Partly built: the [Architecture](../ARCHITECTURE.md) page describes groups as built, and is right
-where the two differ. Points Davide decided in conversation are marked **Davide**; the rest is
-proposed.
+Partly built, in another form: the [Architecture](../ARCHITECTURE.md) page describes groups as
+built, and is right where the two differ. `members(source, item)` gives the members of a source
+item, and the `read` of a source item with members can give a group of the project's own type,
+whose members are ids. There is no group `read` with member values: a group `process` method
+receives them, and the workspace makes one `SourceGroup` for the whole source. `metadata(source, x)`
+and `metadata.txt` are not built. Points Davide decided in conversation are marked **Davide**; the
+rest is proposed.
 It answers two questions for any source, not only directories:
 
 1. How does a source say which items belong in which group?
@@ -92,7 +96,7 @@ third argument, as group `read` does. Core passes, for each member, its latest v
 and leaves out members that have none. A later member value of type `T` causes the method to be
 called again, with the same convergence rule. `members(group)` is unchanged: it still returns
 the values the group was made with.
-This is the shape of today's `process(project, collection, items)`.
+The workspace implements this as `process(project, group, members::AbstractVector{T})`.
 
 Core supplies a fallback for groups, so a source or project only writes `read` for a group type
 it wants to own. Its element type accepts any value, so it holds each member's latest value:
@@ -160,7 +164,7 @@ function items(s::DirectorySource)
     for (dir, subdirs, files) in walkdir(s.root_path)
         here = relpath(dir, s.root_path)
         directories = s.recursive ? SourceDirectory.(normpath.(joinpath.(here, subdirs))) : SourceDirectory[]
-        sourcefiles = [index_source_file(joinpath(dir, f), s.root_path) for f in files]   # today's SourceFile
+        sourcefiles = [index_source_file(joinpath(dir, f), s.root_path) for f in files]   # a SourceFile each
         s.contents[here] = [directories; sourcefiles]
         push!(found, SourceDirectory(here))
         append!(found, sourcefiles)
@@ -171,13 +175,13 @@ end
 
 members(s::DirectorySource, d::SourceDirectory) = s.contents[id(d)]
 
-metadata(s::DirectorySource, f::SourceFile) = metadata(f)          # today: filename, timestamp
+metadata(s::DirectorySource, f::SourceFile) = metadata(f)          # the filename
 metadata(s::DirectorySource, d::SourceDirectory) = Dict(:directory => basename(id(d)))
 ```
 
-Compared with today:
+Compared with the DirectorySource of 21 October:
 
-- `collection(file)` and `DirectoryCollection` are removed. `DirectoryCollection` used the
+- `collection(file)` and `DirectoryCollection` are removed; the code no longer has them. `DirectoryCollection` used the
   directory name as its id, so two `data/` directories at different depths shared an id;
   `SourceDirectory` uses the relative path.
 - `metadata(source, collections)`, `own_collection_metadata` and the `metadata.txt` parsing leave
@@ -189,12 +193,13 @@ Compared with today:
 
 `metadata.txt` becomes one implementation of `metadata(source, x)`, in a source that wraps
 DirectorySource. It could live in Recipes or in the RuO2 project. The matching rules stay those of
-today's `own_collection_metadata`, which moves here unchanged.
+the `own_collection_metadata` that DirectorySource had on 21 October, which moves here unchanged.
+DirectorySource no longer reads `metadata.txt`, and nothing else reads it yet.
 
 ```julia
 mutable struct AnnotatedDirectorySource <: AbstractDataSource
     directory::DirectorySource
-    entries::Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}    # today's parsed metadata.txt
+    entries::Dict{Tuple{Vararg{String}},Dict{Symbol,Any}}    # the parsed metadata.txt
 end
 AnnotatedDirectorySource(root) = AnnotatedDirectorySource(DirectorySource(root), Dict())
 
@@ -224,7 +229,8 @@ end
 ```
 
 **COST:** a change to `metadata.txt` changes `metadata(source, x)` for every source item below the
-changed rows, so Core reads all of them again. Today only the metadata index is rewritten.
+changed rows, so Core reads all of them again. On 21 October, only the metadata index was
+rewritten.
 
 ## How group metadata reaches later items
 

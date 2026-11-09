@@ -30,7 +30,7 @@ Two packages implement a provider surface and add functions of their own:
 | [DataBrowserRecipes](#Recipes)    | Type API    | Functions that describe a project with plain functions of data and metadata, without defining types |
 | [DataBrowserPlots](#Plots)        | Visualizers | A plot visualizer, and functions that define plots in AlgebraOfGraphics syntax, drawn with Makie |
 
-`using DataBrowser` loads every package and exports the names of every surface and of both packages.
+`using DataBrowser` loads every package of this page and exports the names that each of them exports.
 
 ## Provider surfaces
 
@@ -96,6 +96,8 @@ DataBrowserAPI.close_source!
 DataBrowserAPI.items
 DataBrowserAPI.members(::DataBrowserAPI.AbstractDataSource, ::DataBrowserAPI.AbstractDataSourceItem)
 DataBrowserAPI.watch_source
+DataBrowserAPI.SourceChanges
+DataBrowserAPI.SourceError
 DataBrowserAPI.fingerprint
 ```
 

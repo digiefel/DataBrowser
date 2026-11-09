@@ -3,7 +3,9 @@
 A complete toy project, used to reason about how a workspace starts, creates values and calls
 project functions when groups exist. Written before groups were built: the
 [Architecture](../ARCHITECTURE.md) page describes groups as built, and is right where the two differ.
-The source API it uses is proposed in [source-groups.md](source-groups.md). Places where the
+The source API it uses is proposed in [source-groups.md](source-groups.md). Its group `read` with
+member values, the `SourceGroup` of each directory and `AnnotatedDirectorySource` were not built:
+the workspace makes one `SourceGroup` for the whole source, and `members` gives ids. Places where the
 design is not settled are marked **OPEN**; places with a known cost are marked **COST**.
 
 ## The model in one paragraph

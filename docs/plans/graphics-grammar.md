@@ -50,9 +50,8 @@ Explicit positional mappings replace the inherited positional tuple. Omitted nam
 retains the corresponding group/facet identity. Pooling must explicitly resolve varying roles.
 Separate-panel composition remains deferred.
 
-The future general `fit(curve, starts; ...)` declaration is specified in [fitting](fitting.md).
-The `linear` example here describes the available declaration path; it is not proof that the
-future fitting package exists.
+The package no longer has the `linear` statistic of this example. `fit(curve, starts; ...)` is the
+declaration that fits a curve; [fitting](fitting.md) specifies it and says how much of it is built.
 
 ## Shared requirements
 
@@ -177,9 +176,8 @@ section above.
  ├─ result = aggregate(f, g)                    a statement, run when the plot is declared
  │    the header's mapping gives a table: x, y, roles, item ids
  │    the y scale's function applies to y; limits of x and y remove points
- │    split → apply f, g to each group's y values → one Group per row:
- │         metadata = x, role values, f and g under their names, count
- │         members  = the items whose points it took
+ │    split → apply f, g to each group's y values → one named tuple per row:
+ │         x, role values, f and g under their names, count
  │    → Result
  │
  ├─ mapping(y = result.mean) * visual(Lines)    a line that reads a result
@@ -219,7 +217,7 @@ drawn at 10⁻¹⁰; a column mapped as the half-length of `Errorbars` is a widt
 
 1. Complete the grammar coverage and extension contract: custom statistics, output schemas,
    cardinality, grouping/facets, coordinates, scales and guides. Do not infer a complete contract
-   from the named linear statistic alone.
+   from the `fit` and `aggregate` lines alone.
 2. Integrate declared computations with Core revisions, invalidation and retained results.
    Standalone use remains possible; workspace integration must not create a private fit cache.
 3. Define result naming and field collisions consistently with fitting. Decide how callers obtain
@@ -236,13 +234,15 @@ drawn at 10⁻¹⁰; a column mapped as the half-length of `Errorbars` is a widt
 
 ## Current implementation and evidence
 
-The current package exports `figure` and `@plot`. Its AlgebraOfGraphics extension and declaration
-implementation support the shared-header path and a named `linear` result. See the
+The current package exports `figure`, `@plot`, `@invisible` and `register_plot!`. Its
+AlgebraOfGraphics extension and declaration implementation support the shared-header path and
+named `fit` and `aggregate` results. See the
 [package docstring](../../lib/DataBrowserPlots/src/DataBrowserPlots.jl),
 [declaration implementation](../../lib/DataBrowserPlots/src/declaration.jl) and
 [roadmap](../roadmap.md#0110--core-visualizers).
 
-The [scratch prototype](../../work/gui-editing/fit-capture-probe.jl) explored named dependencies,
+The scratch prototype `work/gui-editing/fit-capture-probe.jl`, which left the repository in commit
+`99e6737` (`git show 00f1e65:work/gui-editing/fit-capture-probe.jl` prints it), explored named dependencies,
 endpoint text, facets and pooling. It is evidence for selected mechanics, not verification of the
 complete GUI editor, numerical fitting, grammar schemas or live workspace integration. The old
 [review](archive/2026-10-21-discussion/graphics-grammar-review.md) also contains self-review and

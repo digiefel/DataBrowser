@@ -168,8 +168,8 @@ produce many items; one item may contain a large array or table. Its scientific 
 to the project. The system need not understand every value fully, but it should identify it, track
 it in the index, summarize it, and expose actions.
 A **Core-supported data shape** is a type the toolkit understands out of the box: caching, summaries,
-and default visualizers work with no user code (tables today; vectors, arrays, and image-like values
-later). The shape *is* the payload's Julia type — there is no separate detection or declaration step,
+and default visualizers work with no user code (tables and vectors of numbers today; arrays and
+image-like values later). The shape *is* the payload's Julia type — there is no separate detection or declaration step,
 and shapes are not exclusive: every visualizer whose `prepare!` methods accept the payload is
 offered, so the same matrix opens as a grid, an image, or a heatmap depending on which visualizer the
 user opens.
@@ -270,22 +270,22 @@ talks to; the engine packages implement it; the frontends call it.**
 DataBrowserAPI     the shared surface every interface calls and every extension implements:
                    command declarations (open_workspace, scan, load, select, reconstruct, plot,
                    export, query, …), the extension definitions (what a source / loader /
-                   visualizer / command is), the typed pipeline stage contract, and the
+                   visualizer / command is), the pipeline contract (`read` and `process`), and the
                    `AbstractProject` contract. Payload-agnostic; tiny deps.
 DataBrowserProfiling  instrumentation / traces (leaf: traces don't reference item identity)
-DataBrowserAnnotations → API : tags / notes / spatial-layout model, attached to item identities
+DataBrowserAnnotations : tags / notes / spatial-layout model, attached to item identities
 DataBrowserSources → API : file discovery, loading, metadata extraction, data summaries
-DataBrowserRecipes → API : the callback dialect (define_project, register_*) implemented
-                   as a client of the typed stage contract, plus premade recipes (CSV first)
+DataBrowserRecipes → API, Sources, Cache : the callback dialect (define_project, register_*) implemented
+                   as a client of the pipeline contract, plus premade recipes (CSV first)
 DataBrowserCache   → API : persistence (DuckDB where it fits); keyed by PROJECT, not workspace
-DataBrowserCore    → API, Sources, Cache : the workspace, the index, background work,
+DataBrowserCore    → API, Annotations, Sources, Cache : the workspace, the index, background work,
                    command execution, project save/load, provenance, REPL, and the runtime that
                    drives a project's callbacks through read → process; base support
                    for common data shapes such as tables, vectors, arrays, and image-like data; shapes
                    needing heavy dependencies (audio, say) live in extension packages
-DataBrowserGUI     → API, Core (+ CImGui/GLFW) : the host shell, panels, browser, shared widgets,
+DataBrowserGUI     → API, Cache, Core (+ CImGui/GLFW) : the host shell, panels, browser, shared widgets,
                    the window registry, and lightweight visualizers for Core-supported data shapes
-DataBrowserPlots   → API, Core : plot registration and high-level plot APIs. Registering a
+DataBrowserPlots   → API, Core, Fitting : plot registration and high-level plot APIs. Registering a
                    plot needs no backend; its setup function returns a Makie figure. Two package
                    extensions: `figure` draws AlgebraOfGraphics declarations, loaded with AoG; the
                    plot windows and the plot builder (Makie embedding), loaded with DataBrowserGUI
@@ -317,7 +317,7 @@ phasing.
 ## 7. Registration and Callback Model
 
 The registration API defines named or default pipelines over ordinary Julia data. It ships as
-`DataBrowserRecipes`, an ordinary package implemented purely as a client of the typed stage
+`DataBrowserRecipes`, an ordinary package implemented purely as a client of the pipeline
 contract; the engine never learns it exists. `read` obtains the content of one source item.
 Its result is one data item. Deferred `process` and `analyze` callbacks receive data and effective
 metadata. A registration name provides stable replacement and associates extension operations. It
@@ -325,8 +325,8 @@ is not a property of the user's data.
 
 The type API models `AbstractDataSource`, `AbstractDataSourceItem`, and `AbstractDataItem` values
 directly. Concrete item types survive materialization, processing, and visualization. Their behavior
-comes from multiple dispatch, and item methods have defaults for source-derived identity, labels,
-empty metadata, identity processing, and source-backed storage.
+comes from multiple dispatch. Each item type defines `id` and `data`; `label` defaults to the id,
+`metadata` to an empty dictionary, and `storage` to a store in memory.
 
 Project code stays close to natural scripts: identify data, load it, compute results, and define
 domain views. The workspace owns cache files, UI state, background jobs, and package lifecycle.
@@ -341,7 +341,7 @@ signature or declared capability, input data, parameters, outputs, logs, errors,
 package version.
 
 Registration remains simple: one reader is a complete pipeline. Additional callbacks express only
-the stages the data requires. Packages can instead expose their own constructors and project APIs over
+the processing the data requires. Packages can instead expose their own constructors and project APIs over
 the type layer, including domain-specific configuration and concrete item types.
 
 Python callbacks are supported where realistic, especially for loading and processing. Python
@@ -391,7 +391,7 @@ A workflow records the whole session surface: if three visualizer windows are op
 selection and state, replaying the workflow reopens all three.
 Restoring this surface restores definitions and retained results. It does not repeat instrument
 commands or other external effects. Local-variable capture for scientific debugging needs an
-explicit execution/capture mechanism in addition to pipeline-stage inspection; source lookup alone
+explicit execution/capture mechanism in addition to inspection of the pipeline; source lookup alone
 does not recover values from completed calls.
 
 Open design questions: whether a self-contained figure stores a data snapshot, only rendered marks, or
@@ -459,7 +459,7 @@ keeping trust high.
 Each derived result is valid for particular input references, relevant code/environment revisions,
 and parameters. This lets results survive closing and reopening and lets GUI, REPL, Python, and agent
 interfaces share work. A code edit invalidates affected derived results, not the identity or only
-recorded copy of their source input. Conservative invalidation within a known stage boundary is a
+recorded copy of their source input. Conservative invalidation of every computation that a change can reach is a
 valid first implementation; selective reuse is the target.
 
 **Storage follows project policy.** Results are memoized without built-in “disposable” versus
