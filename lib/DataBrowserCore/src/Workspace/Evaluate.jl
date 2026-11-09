@@ -894,11 +894,13 @@ end
 # a local folder (`Pkg.develop`); for every other package, the Julia version and the Manifest count
 # instead.
 #
-# The revision of each row includes the code revision of its signature. Twice a second, the
-# workspace asks Revise to load saved edits, including files tracked with `includet`, even when the
-# REPL is idle. After a method definition, or when the roots differ, the workspace computes the code
-# revision again; `evaluate`, `select(workspace, ids)` and `materialize_items` do the same check
-# first when a method was defined since the last check. When the code revision changed, the rows of that signature become stale, and with them
+# The revision of each row includes the code revision of its signature. The workspace looks 50
+# times a second for saved files that Revise tracks, including files tracked with `includet`, and
+# asks Revise to load them, even when the REPL is idle. It checks the code right after a load, and
+# twice a second otherwise. In a check, the workspace computes the code revision again after a
+# method definition, or when the roots differ; `evaluate`, `select(workspace, ids)` and
+# `materialize_items` do the same check first when a method was defined since the last check. When
+# the code revision changed, the rows of that signature become stale, and with them
 # every row that reads them: source items are read again, as if the source had changed them, and
 # items are processed again when a window shows them or a script reads them, or in the background
 # with `background_processing=true`. The same code defined again, as when a script runs again,
