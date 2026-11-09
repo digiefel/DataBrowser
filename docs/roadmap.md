@@ -5,7 +5,7 @@ Checked items already exist on `main`; completed work links to the pull request 
 introduced it.
 
 The product direction and its engineering review are recorded in
-[Scientific workspace: analysis and acquisition](plans/scientific-workspace.md). Acquisition,
+[Scientific workspace: analysis and acquisition](plans/archive/scientific-workspace.md). Acquisition,
 automatic live analysis, native visualization, and agent/API use share the existing package family.
 Streaming implementations can arrive later; recovery, retention, and source-independent data-access
 rules must guide the work already under way.
@@ -194,7 +194,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [x] Evaluate the work graph against cancellation, invalidation, priority, streaming, and
   collection edge cases. The outcome is a redesign: the workspace runs on one catalog of source
   items, items and collections that also holds stage status and the job queue
-  ([plans/workspace-graph](plans/workspace-graph/workspace-graph.md)).
+  ([plans/workspace-graph](plans/archive/workspace-graph/workspace-graph.md)).
 - [x] Collections become groups: a group is an item of a subtype of `AbstractGroup`, and
   `members(g)` gives the ids of its members. Each `read` and `process` is a row of the catalog, and
   each row has one integer key in the catalog, the cache and the stores. Users hold only ids. A

@@ -131,6 +131,40 @@ User-authored tags, notes and saved analysis definitions still need an explicit 
 query index must not accidentally become their only authoritative copy. The new item store
 proposal does not by itself specify every annotation/layout persistence mechanism.
 
+## Sources that cannot be read again
+
+Engineering review of 13 October, moved here from the archived
+[scientific workspace](archive/scientific-workspace.md) review. `AbstractDataSource` stays the
+extension point for acquisition: `open_source`, `items`, `watch_source`, `read`, `close_source!`,
+stable ids and fingerprints. A streaming source and the workspace own the incoming data, its
+retention and its recovery; analysis and visualization code never test for them.
+
+Before production streaming is added, these requirements need to hold with the existing source and
+item boundaries. Names and signatures are open.
+
+1. A source result names one observation and one revision. Asking for that result never means
+   "make a new observation now".
+2. The workspace knows whether a missing result can be recovered, and from where. Removing a result
+   from a store is separate from making it stale. Recovery can load a recorded result or a durable
+   source handle; it never repeats an irreversible operation without telling the user.
+3. What is recorded decides what later edits can compute again. Keeping the values that `read`
+   gave supports a changed `process` method, but not a changed `read`. A source that promises to
+   read its input again in another way has to record that input, and not every source can.
+4. Retention follows the store of each type, as for any result: a project may choose not to store
+   stream input. Missing input may prevent a computation; it never starts a new acquisition.
+5. Arrival and processing are separate. A source gives bounded records or chunks; the workspace
+   shows the lag and slows the producer when it can. A producer that cannot be slowed needs an
+   explicit rule for overflow, never an unbounded queue or a silent loss.
+6. A group `process` method can run again as input arrives. Each call uses a known set of members,
+   and later arrivals ask for another call.
+7. Several sources keep the origin of their items through ids, the cache and the routing of
+   changes. Ids local to each source can collide, so ids are either for the whole project or
+   qualified by their source. A label never decides identity.
+
+The first proof should use a source whose producer cannot be read again, with limited memory and
+recorded input: removing results from a store, editing a `process` method, restoring results and
+reopening the workspace must never consume another observation.
+
 ## Backend evidence and remaining work
 
 Mapped numeric arrays/tables are an optional backend candidate, not a mandatory Core model or a

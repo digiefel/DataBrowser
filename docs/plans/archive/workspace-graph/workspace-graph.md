@@ -1,12 +1,14 @@
 # Workspace graph
 
+*Archived on 10 November 2026. This is a historical record: the code and the [active plans](../../README.md) have moved on, and are right where they differ.*
+
 Scope clarified on 21 October 2026: this is the catalog-cutover design/implementation record.
 Its state distinctions remain useful. Fixed item/collection stages, tree placement and payload
 storage locations below describe that engine, not the newer target contracts. See the
-[active plans](../README.md), especially [processing](../processing.md) and [storage](../storage.md).
+[active plans](../../README.md), especially [processing](../../processing.md) and [storage](../../storage.md).
 The completed catalog cutover is not reopened by those proposals. The workspace has since replaced
 the fixed stages and the collections: its catalog has one row for each function call, and
-[Architecture](../../ARCHITECTURE.md) describes it.
+[Architecture](../../../ARCHITECTURE.md) describes it.
 
 Replace `WorkspaceIndex` and the live work-graph nodes with one in-memory
 catalog in Core, a job pool, and Cache as persistence. There is no

@@ -59,8 +59,8 @@ case. This scope decision does not settle the composition of multiple member dat
 
 Proposal by the external agent with Davide, 21 October. Partly built: groups from sources and
 from `process` methods exist, groups from the user or the GUI do not, and [Architecture](../ARCHITECTURE.md)
-describes what is built. The source API is in [source-groups.md](source-groups.md); the
-[toy example](groups-toy.md) works it through.
+describes what is built. The earlier [source-group proposal](archive/source-groups.md) and its
+[toy example](archive/groups-toy.md) are archived.
 
 A group is an `AbstractDataItem` that contains items or groups and defines `members`. Whoever
 creates a group gives it its members. There are three creators:
@@ -106,17 +106,113 @@ The external proposal derives default navigation from the group a result was spl
 from. It also records the group's direct members. These relations differ in the table-bin example:
 the selection produces a bin, while the bin's members are the selected scientific items.
 
-Groups can contain processed groups, and the same group can relate to several parents. The
-walkthrough's [groups of groups](groups-toy.md#groups-of-groups) section shows a comparison of two
-mean signals whose groups share one item, with production and membership listed separately. The view must not clone a scientific group for each displayed occurrence or silently
-change inputs with the displayed path. Publication/production links and direct membership must
-remain distinguishable; arbitrary extra hierarchy machinery is not assumed.
+Groups can contain processed groups, and the same group can relate to several parents. The view
+must not clone a scientific group for each displayed occurrence or silently change inputs with the
+displayed path. Publication/production links and direct membership must remain distinguishable;
+arbitrary extra hierarchy machinery is not assumed.
+
+#### Groups of groups
+
+Take a source with a root directory `.`, two sample directories `S1` and `S2` and their
+measurements `a_1`, `a_2` and `a_3`. A `process` method on each sample gives its mean signal, and
+one `process` method on the root gives two groups: `HotGroup`, the samples above a temperature, and
+`HighPeakGroup`, the measurements with a high peak. The workspace then holds, shown by members:
+
+```
+.  (SourceGroup)
+├─ S1   ─ a_1, a_2
+└─ S2   ─ a_3
+HotGroup        ─ S2                  S2 is shown under ., HotGroup and MeanSignal(S2)
+HighPeakGroup   ─ a_2, a_3            a_3 is shown under S2 and HighPeakGroup
+MeanSignal(S1)  ─ S1
+MeanSignal(S2)  ─ S2
+```
+
+Each value has two relations, and they differ:
+
+| Value | Produced by | Members (`members(value)`) |
+|---|---|---|
+| `S1` | `read(project, source, S1)` | a_1, a_2 |
+| `MeanSignal(S1)` | `process(project, S1, members)` | S1 |
+| `HotGroup` | `process(project, ., members)` | S2 |
+| `HighPeakGroup` | the same call | a_2, a_3 |
+
+- **Members** are what a value contains. A place where the tree shows a value is a path to it,
+  not a copy: `a_3` under `S2` and `a_3` under `HighPeakGroup` are the same value with the same id.
+- **Produced by** is the call that made the value, and from which input. It drives recomputation
+  and can be shown as a second view ("where did this come from"). `HotGroup` is produced from the
+  root, but contains only `S2`.
+- Nothing is flattened: `HotGroup` contains `S2`, not `a_3`.
+
+A group of results can also be made on the fly: the user selects `MeanSignal(S1)` and
+`MeanSignal(S2)` and compares them. The comparison is produced from the selection, and its members
+are the two mean signals.
+
+## Source metadata
+
+Proposal of 21 October, not built. Metadata that belongs to a group reaches the items read later in
+one of two ways:
+
+| Kind | Known | How it reaches an item |
+|---|---|---|
+| source metadata | when the source is scanned, before any project code runs | `read` copies it from `metadata(source, item)` into the value |
+| data metadata | only after project code reads some data | a member `process` method, `process(project, member, group)` |
+
+The member `process` method is built. For example, a sample directory holds a `sample.toml` with
+its temperature; a `process` method on the sample reads it, and a member `process` method gives each
+measurement a later version with that temperature.
+
+Source metadata would come from one more method of a source:
+
+```julia
+metadata(source::AbstractDataSource, item::AbstractDataSourceItem) -> Dict{Symbol,Any}
+```
+
+It gives what the source knows about `item`, completely: if a file should carry the metadata of its
+directory, the method includes it, and Core combines nothing. The `read` of the item copies it into
+the value, so values stay self-contained. A source reports a change of `metadata(source, item)` as
+it reports any other change of a source item: its `fingerprint` changes, and `watch_source` lists
+it among the `SourceChanges`, so the workspace reads it again.
+
+A file `metadata.txt` at the root of a directory would become one implementation of
+`metadata(source, item)`, in a source that wraps `DirectorySource`, in DBRecipes or in a project.
+Each line of `metadata.txt` names a directory and gives its metadata, as in a table:
+
+```
+path,temperature
+S1,350
+S2,410
+```
+
+A source item gets the entries of every directory that contains it, from the outermost to the
+innermost, and `metadata.txt` itself is left out of the source items. No source reads
+`metadata.txt` today.
+
+**COST:** an edit of `metadata.txt` changes the metadata of every source item below the changed
+lines, so the workspace reads all of them again.
+
+**COST:** every item type copies such a value explicitly: `read` into the item, `process` into the
+processed item. This is the price of self-contained values. DBRecipes can do the copying for its own
+item types.
+
+One point is parked (Davide, 21 October): an explicit
+`AbstractDataSourceGroup <: AbstractDataSourceItem`, so that signatures say "group" by type. Today a
+source item has members when `members(source, item)` gives any; the default gives none. A source
+that uses one type for both records and groups should use two types.
+
+## Stable ids
+
+Values that `process` methods give need ids that stay the same across runs and restarts, such as
+`HotGroup`, `MeanSignal(S1)` or one bin of a fit. Saved selections, later results and the browser
+depend on them. Davide, 21 October: the project gives each value its id by defining `id` for its
+type, as in `id(::HotGroup) = "hot"` and `id(m::MeanSignal) = "mean " * m.sample`. Core does not
+compose ids. DBRecipes is a project too, so it gives ids to the values it makes. A value with the
+id of the value that its call took is a later version of that value.
 
 ## API review focus
 
-Stable ids, Davide, 21 October: the project gives each produced value its id by defining `id` for
-its type; Core does not compose ids. See [the toy example](groups-toy.md#stable-ids). The earlier
-review recommendations below are superseded where they differ:
+The earlier review recommendations on ids below are superseded where they differ from
+[stable ids](#stable-ids):
 
 - Preserve the current native `id(value)` contract unless a different coherent contract is
   explicitly chosen. Framework-owned constructors/adapters can generate IDs before publication;

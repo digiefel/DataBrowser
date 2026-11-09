@@ -1,12 +1,14 @@
 # Node states
 
+*Archived on 10 November 2026. This is a historical record: the code and the [active plans](../../README.md) have moved on, and are right where they differ.*
+
 Scope clarified on 21 October 2026: this is the catalog-cutover design/implementation record.
 Its state distinctions remain useful. Fixed item/collection stages, tree placement and payload
 storage locations below describe that engine, not the newer target contracts. See the
-[active plans](../README.md), especially [processing](../processing.md) and [storage](../storage.md).
+[active plans](../../README.md), especially [processing](../../processing.md) and [storage](../../storage.md).
 The completed catalog cutover is not reopened by those proposals. The workspace has since replaced
 the fixed stages: its catalog has one row for each function call, with the states that
-[Architecture](../../ARCHITECTURE.md) describes.
+[Architecture](../../../ARCHITECTURE.md) describes.
 
 This document defines the state of one pipeline stage on one catalog row. Job
 queues and payload storage use this state; they do not replace it.

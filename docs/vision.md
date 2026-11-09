@@ -27,9 +27,9 @@ infrastructure, including reliable communication and source lifecycle, backgroun
 and interaction. Acquisition is part of the product direction; its complete source and
 communication contracts are not implemented yet.
 
-The engineering review [Scientific workspace: analysis and acquisition](plans/scientific-workspace.md)
-records the requirements, contradictions, current-code evidence, and proposed implementation order.
-It separates product requirements from open API and implementation choices.
+The requirements of sources that cannot be read again are in
+[storage](plans/storage.md#sources-that-cannot-be-read-again), and the rules for side effects in
+live code are in [processing](plans/processing.md#live-code-and-side-effects).
 
 ## 2. Product Vision
 

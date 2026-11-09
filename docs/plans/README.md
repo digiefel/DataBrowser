@@ -40,9 +40,9 @@ The [discussion archive](archive/2026-10-21-discussion/README.md) preserves the 
 | Plan | Owns | Main unresolved work |
 | --- | --- | --- |
 | [Groups](groupings.md) | Group behavior, formation, identity and hierarchy | Source-group input binding, hierarchy, source metadata and produced IDs |
-| [Source groups and metadata](source-groups.md) | Source membership and source-provided metadata | Source-provided metadata; explicit source-group subtype parked |
+| [Source groups and metadata](archive/source-groups.md) | Source membership and source-provided metadata | Source-provided metadata; explicit source-group subtype parked |
 | [Processing and Recipes](processing.md) | Item/group steps, invocation, reconstruction and authoring | Invocation/completion, bound members and runtime analysis integration |
-| [Analysis walkthrough (being rewritten)](recipes-walkthrough.md) | Combining processed items, exploration and reproducible analysis | Replace the incorrect Recipes framing with the shared analysis API |
+| [Analysis walkthrough (being rewritten)](archive/recipes-walkthrough.md) | Combining processed items, exploration and reproducible analysis | Replace the incorrect Recipes framing with the shared analysis API |
 | [Storage](storage.md) | Payload retention, internal index and domain extensions | Native restoration and result lifetime |
 | [Catalog](catalog.md) | What the cache file and memory keep of the catalog, and how a workspace opens | Delayed; source items by id, methods changed while closed |
 | [Data model](data-model.md) | How code and the GUI reach the values of selected items | The members of a selected group; paths into data of a project's own type |
@@ -54,9 +54,9 @@ The [discussion archive](archive/2026-10-21-discussion/README.md) preserves the 
 | [Code editor](code-editor.md) | The code editor of the web client: structure while typing, types and values in the code, dragging code | The parser for Julia; the Julia language server, and whether LSP carries everything |
 | [Client API](client-api.md) | The functions that scripts, the browser and other clients call on a workspace | The form of a `select` condition across the protocol; the result that a store lacks, read without the catalog lock |
 | [Visualizers](visualizers.md) | Native values, view inputs and linked interaction | Input targeting, provenance and linked interaction behavior |
-| [Scientific workspace](scientific-workspace.md) | Shared source, analysis and acquisition requirements | Source/acquisition integration with the newer processing model |
+| [Scientific workspace](archive/scientific-workspace.md) | Shared source, analysis and acquisition requirements | Source/acquisition integration with the newer processing model |
 
-The [workspace-graph plan](workspace-graph/workspace-graph.md) records the catalog cutover. Its
+The [workspace-graph plan](archive/workspace-graph/workspace-graph.md) records the catalog cutover. Its
 fixed stages, collection tree and storage layout are not requirements for the newer target, and
 the workspace has since replaced them: its catalog has one row for each function call.
 The [product review checklist](archive/2026-10-21-discussion/product-review.md) covers all five audiences;
@@ -64,11 +64,11 @@ it does not own another copy of the decisions.
 
 ## Open design work
 
-The current external proposal is in [the group walkthrough](groups-toy.md), summarized in
+The current external proposal is in [the group walkthrough](archive/groups-toy.md), summarized in
 [groups](groupings.md). Latest direction relayed by the external agent on 21 October: groups come
 from sources, explicit user/GUI actions, or steps on groups. Set steps over an implicit group of
 all values of a type are withdrawn; select everything explicitly when that is the intended input.
-The rewritten walkthrough uses the new [source-group proposal](source-groups.md): sources declare
+The rewritten walkthrough uses the new [source-group proposal](archive/source-groups.md): sources declare
 membership between source items and metadata per source item; typed group reads receive chosen
 member values. The workspace built part of this contract in another form. A source states
 membership with `members(source, item)`, and the `read` of a source item with members can give a
@@ -83,7 +83,7 @@ scalar or fitted model. A member method may return a later version of the member
 recording both inputs. Projects supply each native value's `id`; Core does not compose IDs.
 DBRecipes supplies identity for its own processed values. The current review is ordinary analysis
 after items have been processed: combining data, inspecting it in several ways, building figures
-and saving reproducible code. The [worked draft](recipes-walkthrough.md) is being rewritten because
+and saving reproducible code. The [worked draft](archive/recipes-walkthrough.md) is being rewritten because
 it incorrectly assigned this work to DBRecipes. The shared analysis API is independent of its macro.
 
 Several parents and publishing standalone items from processed groups were approved on 21 October.

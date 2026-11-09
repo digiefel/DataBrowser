@@ -16,8 +16,7 @@ A workspace is the analysis runtime, not the GUI; one process runs one workspace
 
 Proposal developed with Davide on 21 October and reviewed by PM and the senior reviewer; not
 decided except where marked. Groups come from the source, from the user or GUI on the fly, or from
-`process` methods on groups; [source-groups.md](source-groups.md) gives the source API and the
-[toy example](groups-toy.md) works it through.
+`process` methods on groups; [groups](groupings.md) owns how they form.
 
 ```julia
 process(project::AbstractProject, x::AbstractDataItem)
@@ -54,7 +53,7 @@ before a `process` method runs; Core learns them from returned values and then f
 them.
 
 Stable ids: the project gives each produced value its id through `id` (Davide, 21 October); see
-the [toy example](groups-toy.md#stable-ids).
+[groups](groupings.md#stable-ids).
 
 ## Metadata comes from returned values
 
@@ -136,7 +135,7 @@ metadata keys do not prove readiness after a code change.
 Group selection must not be reevaluated indiscriminately on every intermediate item version.
 A group `process` method is called with the member values of the type that its signature states,
 and again only when a member gets a later value of that type. The group `read` of
-[source-groups.md](source-groups.md) was not built.
+[source-groups.md](archive/source-groups.md) was not built.
 
 The existing catalog remains the common dependency/status model. The new design must extend that
 model rather than introduce a private graph for plots or Recipes. The fixed stages are gone: every
@@ -159,6 +158,24 @@ version of a value gets the calls of `process` that a method takes. These contra
   compares mutable fields such as vectors by object identity, and `missing == missing` is `missing`. Type API
   projects may use this; Recipes does not offer it. Linked UI selections are a separate
   interaction problem.
+
+## Live code and side effects
+
+Engineering review of 13 October, moved here from the archived
+[scientific workspace](archive/scientific-workspace.md) review. The workspace refreshes processing,
+analysis and visualizers automatically, so it may call `read` and `process` again at any time: a
+project's methods have to give the same result when called again. The workspace follows the code
+revisions and the inputs of each call; what the function does inside stays the project's own.
+
+Instrument commands, acquisition procedures, exports and other external effects run only through
+public functions, called by the user or by a configured trigger. An analysis edit, a new visualizer
+or an undo of the layout never calls them again. An effect inside `read` or `process` breaks their
+contract; the workspace cannot prove Julia code free of effects, so this is a documented rule, not
+a sandbox.
+
+An edit makes the affected calls and the calls that depend on them stale. The calls that a window
+or a script requests run again; the others wait until something asks for them. An edit that only
+changes a display never makes a read or an unrelated `process` call stale.
 
 ## Consistent construction
 
@@ -197,7 +214,7 @@ regardless of whether the items came from DBRecipes, a type-API project or a dom
 Combining data, trying calculations, comparing results, composing figures and saving reproducible
 analysis belong here. Saving such work does not require a DBRecipes recipe or registration.
 
-The worked grid/gradient/comparison example in [the existing draft](recipes-walkthrough.md) was
+The worked grid/gradient/comparison example in [the existing draft](archive/recipes-walkthrough.md) was
 incorrectly framed as a Recipes API example. Its initial source-loading section can use DBRecipes;
 the later analysis must be rewritten against the shared API. The draft's result/register_result!
 functions and later DBRecipes macro framing are not approved shared analysis APIs.
@@ -509,7 +526,7 @@ record the rows it read; other data is understood only as far as its type allows
 ## Evidence and limits
 
 The current implementation has chains of `process` calls and live code invalidation. Its catalog cutover is
-recorded in [workspace-graph](workspace-graph/workspace-graph.md). That work is not proof of the
+recorded in [workspace-graph](archive/workspace-graph/workspace-graph.md). That work is not proof of the
 new invocation, group reconstruction or Recipes contracts. The earlier engineering and product
 reviews are preserved in the [group discussion archive](archive/2026-10-21-discussion/groupings.md).
 

@@ -1,5 +1,7 @@
 # Analysis walkthrough: interpolate, gradient, compare
 
+*Archived on 10 November 2026. This is a historical record: the code and the [active plans](../README.md) have moved on, and are right where they differ.*
+
 **Scope correction, Davide, 21 October:** DBRecipes reads common sources and produces processed
 items without requiring the type API. Only the source-loading section below belongs to DBRecipes.
 The later combination, exploration, plotting and reproducible analysis are shared by all users.
@@ -8,7 +10,7 @@ forms and proposed replacement by a DBRecipes macro are withdrawn as general ana
 The external agent is rewriting the example; this filename is retained during coordination.
 
 The source-loading section describes today's API. Later sections are superseded proposal material,
-not an approved or implemented analysis API. [Processing](processing.md#analysis-after-item-processing)
+not an approved or implemented analysis API. [Processing](../processing.md#analysis-after-item-processing)
 owns the corrected scope. The coordination note `work/doc-curation.md` gave the next example
 request; it left the repository in commit `99e6737`, and `git show 00f1e65:work/doc-curation.md`
 prints it.
@@ -168,4 +170,4 @@ unwrapped. Both can exist.
 - Ids: today `callbacks.jl` builds item ids from the source item, the registration kind and a key.
   Results need the analysis scope plus `key`; this depends on the stable-id design.
 - `analyze` on items is unchanged here. Whether it stays is the separate question in
-  [processing.md](processing.md#metadata-comes-from-returned-values).
+  [processing.md](../processing.md#metadata-comes-from-returned-values).

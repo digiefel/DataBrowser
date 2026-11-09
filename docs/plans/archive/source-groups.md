@@ -1,7 +1,9 @@
 # Source groups and source metadata
 
+*Archived on 10 November 2026. This is a historical record: the code and the [active plans](../README.md) have moved on, and are right where they differ.*
+
 Proposal by the external agent, 21 October 2026, for discussion with Davide and the reviewers.
-Partly built, in another form: the [Architecture](../ARCHITECTURE.md) page describes groups as
+Partly built, in another form: the [Architecture](../../ARCHITECTURE.md) page describes groups as
 built, and is right where the two differ. `members(source, item)` gives the members of a source
 item, and the `read` of a source item with members can give a group of the project's own type,
 whose members are ids. There is no group `read` with member values: a group `process` method
