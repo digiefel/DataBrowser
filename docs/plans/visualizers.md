@@ -136,6 +136,11 @@ to the same instance or shows its error. Graphics attachment and cleanup stay on
 UI callbacks request another preparation with `ctx.prepare()` instead of doing expensive work
 during drawing.
 
+[Runtime and clients](runtime-and-clients.md) splits this work between two processes. The transform
+and `prepare!` run in the *Julia host*, the process that loads and runs project code, and drawing
+belongs to the client. What then crosses from the host to the client is open:
+[data, a description of the figure, or a picture](runtime-and-clients.md#what-crosses-for-a-visualizer).
+
 ## Source independence and extensions
 
 Ordinary data visualizers depend on requested values and revisions, not source type. Instrument
@@ -166,7 +171,8 @@ must not silently rewrite a group definition or imply a universal exclusion poli
 ## Open work
 
 1. Selection targeting: an input that follows the own selection of a tab. What a client shows
-   for a visualizer that it cannot draw.
+   for a visualizer that it cannot draw, which depends on
+   [what crosses for a visualizer](runtime-and-clients.md#what-crosses-for-a-visualizer).
 2. Dispatch/discovery and settings for generic and domain visualizers, including properties,
    multiple values and arrangement capabilities.
 3. Element provenance and aggregate input access, including what custom transforms must supply.

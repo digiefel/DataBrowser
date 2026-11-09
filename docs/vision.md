@@ -515,7 +515,9 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
   commands, data handles, buffers, errors, and metadata — not arbitrary Julia internals.
 - **Client-server.** Realistic once the command model is stable. The server owns the Julia workspace;
   clients could be the desktop GUI, a browser GUI, Python, MATLAB, scripts, agents, or multiplayer
-  frontends.
+  frontends. The working direction since 9 November 2026 splits the server in two: DBCore keeps the
+  workspace as data, and a Julia host loads and runs project code. See
+  [runtime and clients](plans/runtime-and-clients.md).
 - **Browser frontend.** A browser client served by a local runtime first, a remote one later. It uses
   the command model and should not require rewriting the scientific core.
 - **Plots in every client.** The runtime builds every plot as a Makie figure. Makie is the figure

@@ -38,6 +38,13 @@ repeat acquisition or instrument commands, or block the GUI thread. Capture duri
 execution needs a separate experiment. Multiple selected items and source edits need explicit
 behavior rather than a promise that an unrecorded local is always available.
 
+Davide, 9 November 2026: from a value the user reaches the code, and the code shows the values
+that this computation had inside when it produced the value. The value that the user came from
+therefore identifies the relevant run. [The code editor plan](code-editor.md#values-in-the-code)
+owns how the code shows these values. It also has a measurement for the capture: running only the
+one function in an interpreter, with everything that it calls compiled, takes about as long as a
+normal run.
+
 ### Reuse the helper
 
 A second analysis file calls the successful helper in its normal processing/analysis functions.
@@ -111,7 +118,9 @@ Payload/index ownership and durable state are tracked in [storage](storage.md).
 2. File loading and reuse: recognize definitions and changes without replaying unrelated effects;
    preserve window ownership under ordinary code loading.
 3. Debug capture: relevant run, retained locals, selected-item scope, renamed variables and
-   non-repeatable execution. Decide what unavailable locals look like.
+   non-repeatable execution. Decide what unavailable locals look like. The
+   [code editor plan](code-editor.md#values-in-the-code) has the latest statement and its open
+   points.
 4. Selected trials versus default analysis: compare alternatives, retain results and promote the
    chosen definition without unintentionally changing the whole project.
 5. Saved layout and undo: what source edits, presentation state and debug markers retain across

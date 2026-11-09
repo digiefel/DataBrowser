@@ -2,9 +2,10 @@
 
 Target design, started on 8 November 2026. This plan owns the functions that a client calls on a
 workspace. A *client* is code that calls the runtime: a script, the browser, or a client in another
-language. [Runtime and clients](runtime-and-clients.md) owns the split between the runtime and its
-clients and the protocol between them; [the API page](../api.md) lists the public functions as they
-are today.
+language. [Runtime and clients](runtime-and-clients.md) owns the pieces of the runtime and the
+messages between them. In its split, *DBCore*, the piece that keeps the workspace, implements the
+functions of this plan, and the protocol between a client and DBCore is these calls sent as
+messages. [The API page](../api.md) lists the public functions as they are today.
 
 Clients come in two kinds, with the same model. A script is written by a person: it gives ids, and
 it may wait for the items that it asks for. The browser and a client in another language draw the
@@ -44,6 +45,10 @@ flowchart LR
     workers -- "results" --> catalog
     task -- "publishes" --> table
 ```
+
+In the split of [runtime and clients](runtime-and-clients.md), the workers run in the *Julia
+host*, the process that loads and runs project code, and DBCore changes the catalog when a result
+arrives. The rules below hold there too.
 
 Four rules follow:
 
@@ -168,7 +173,9 @@ items on the screen, also with a million items in the workspace. Besides the cal
   groups above the selected items. `select(workspace, ids)` waits instead.
 - **A change number for each item**, so that a window prepares again only when its own items
   changed.
-- **Change events**, so that a client learns about a new generation without asking.
+- **Change events**, so that a client learns about a new generation without asking. Proposal of
+  [runtime and clients](runtime-and-clients.md#proposals): a client says which ids it shows. The
+  calls for those ids then run first, and DBCore sends that client only the changes to those ids.
 - **The members of a group in order**, without going through every item for each group that the
   user expands.
 - **Conditions and orders as data**, for a client in another language, which cannot send a Julia
@@ -193,13 +200,13 @@ draw_tree(tree)              # reads the readiness of each drawn item
 select!(workspace, [clicked])
 ```
 
-A client in another language sends the same calls as messages. The runtime answers each with the
+A client in another language sends the same calls as messages. DBCore answers each with the
 generation that shows its change, and sends an event at each new generation:
 
 ```mermaid
 sequenceDiagram
     participant P as a client in another language
-    participant R as the runtime
+    participant R as DBCore
     P->>R: select, ids a/1 and a/2
     R-->>P: two rows, at generation 412
     P->>R: tag!, ids a/1 and a/2, tag check
@@ -222,7 +229,9 @@ sequenceDiagram
 ## Open questions
 
 - What form do conditions and orders take across the protocol? Every read by condition takes a
-  Julia function today; `SortKeys` is already an order as data.
+  Julia function today; `SortKeys` is already an order as data. In the split, DBCore holds data
+  only, so a Julia function given to `select` or `sort!` runs elsewhere: in the client, over the
+  items that DBCore sends, or in the Julia host.
 - How does a client read, without the lock of the catalog, the result of a row that its store
   lacks? Today the workspace computes it again in the caller, under the lock. The row could read
   its inputs from a published version of the table instead; or the publishing task could give the
