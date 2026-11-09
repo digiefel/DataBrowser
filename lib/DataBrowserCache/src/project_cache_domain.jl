@@ -55,7 +55,7 @@ end
 
 """
 An item that a row gave, as the cache saves it: its id, its depth in the pipeline (see
-DataBrowserCore), its label and type, the ids of its members when it is a group, and its metadata.
+DataBrowserCore), its label and type, and the ids of its members when it is a group.
 """
 const SavedOutput = @NamedTuple{
     id::String,
@@ -63,7 +63,6 @@ const SavedOutput = @NamedTuple{
     label::String,
     type::Type,
     members::Union{Nothing,Vector{String}},
-    metadata::Dict{Symbol,Any},
 }
 
 """
@@ -74,9 +73,12 @@ result `isequal` to it; `item_revision`, the revision of the code that describes
 the type of its result; `failure`, its message when it failed, else empty; and `items`, the items
 that it gave, in their order.
 
-`cache[key] = record` saves the record whole, in place of the record that the cache had for `key`,
-or throws and changes nothing when the cache cannot hold one of its metadata values.
-`get(cache, key, nothing)` gives the record, and `delete!(cache, key)` removes it.
+`cache[key] = (; record..., metadata)` saves the record whole, with `metadata`, a vector that holds
+the metadata of each item of the record in its order, in place of the record that the cache had for
+`key`. It throws and changes nothing when the cache cannot hold one of the metadata values. The
+cache keeps the metadata in its file only: `read(cache.output_metadata)` gives the metadata of every
+item, under the key of the item (see [`output_key!`](@ref)). `get(cache, key, nothing)` gives the
+record, and `delete!(cache, key)` removes it with the metadata of its items.
 """
 const Record = @NamedTuple{
     call::String,
@@ -157,7 +159,9 @@ end
 
 """
 An open cache, in a DuckDB file or in memory. It keeps the [`Record`](@ref) of each row in
-memory, and saves it to three tables, each with a store that writes its rows in the background.
+memory, and saves it to three tables, each with a store that writes its rows in the background:
+the fields `outputs`, `output_metadata` and `computation_revision_rows`. The records in memory
+leave out the metadata of the items, which only `output_metadata` holds.
 Use `cache[key] = record`, `get(cache, key, nothing)`, `delete!(cache, key)` and `keys(cache)`.
 """
 mutable struct CacheDB
@@ -167,9 +171,8 @@ mutable struct CacheDB
     outputs::RowStore{Int64,OutputRow}
     output_metadata::WideRowStore{Int64}
     computation_revision_rows::RowStore{Int64,ComputationRevisionRow}
-    ## The records of the three tables above, read at opening, so that a lookup does not read them.
-    ## TODO: this holds the metadata of every item a second time, beside the table `items` of the
-    ## workspace.
+    ## The records of the tables `outputs` and `computation_revisions`, read at opening, so that a
+    ## lookup does not read them.
     records::Dict{Int64,Record}
     ## The key of each call of the records at opening, until a row of this session takes it.
     kept_keys::Dict{String,Int64}
@@ -273,14 +276,12 @@ function open_cache_db(
         records = Dict{Int64,Record}(key => (; row.call, row.revision, row.result_revision, row.item_revision,
             type=type(row.type_hex), row.failure, items=SavedOutput[]) for (key, row) in read(computation_revision_rows))
         output_keys = Dict{Tuple{Int64,String},Int64}()
-        metadata = read(output_metadata)
         ## TODO: the cache writes the items of a row and its record apart, so after a crash, a row can
         ## come back with fewer items than it gave.
         for row in sort!(collect(values(read(outputs))); by=row -> row.position)
             output_keys[(row.computation, row.id)] = row.output_key
             haskey(records, row.computation) && push!(records[row.computation].items, (; row.id, row.depth,
-                row.label, type=type(row.type_hex), members=_deserialize_hex(row.members_hex),
-                metadata=get(metadata, row.output_key, Dict{Symbol,Any}())))
+                row.label, type=type(row.type_hex), members=_deserialize_hex(row.members_hex)))
         end
         used = union!(Set{Int64}(keys(records)), values(output_keys), (key for (key, _) in keys(output_keys)))
         next_key = maximum(used; init=Int64(0)) + 1
@@ -370,10 +371,12 @@ end
 # metadata of each item.
 
 function Base.setindex!(cache::CacheDB, record::NamedTuple, key::Integer)::Record
-    record, key, started = convert(Record, record), Int64(key), time_ns()
+    metadata = record.metadata::Vector{Dict{Symbol,Any}}
+    record, key, started = convert(Record, Base.structdiff(record, NamedTuple{(:metadata,)})), Int64(key), time_ns()
+    length(metadata) == length(record.items) || throw(ArgumentError("one metadata dictionary is needed for each item"))
     item_keys = [output_key!(cache, key, item.id) for item in record.items]
     ## The metadata goes first: it is the only part that the cache may refuse.
-    edit!(cache.output_metadata, [x => item.metadata for (x, item) in zip(item_keys, record.items)])
+    edit!(cache.output_metadata, [x => values for (x, values) in zip(item_keys, metadata)])
     record_cache_phase!(cache.metrics.metadata_write_ns, cache.metrics.metadata_writes, started)
     started = time_ns()
     before = @lock cache.key_lock get(cache.records, key, nothing)
