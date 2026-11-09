@@ -6,13 +6,13 @@ retention. [The plan index](README.md) distinguishes the target from the impleme
 
 ## Current direction and open decisions
 
-Groups generalize collections. The tree of the groups that reads give, such as one group for each
-folder in a DBRecipes project, remains the default organization; other groupings must compose with
-it. A group is an item whose inputs are other items. It has its own data and metadata and can be
-used in later calculations. A processed group remains a group.
-
-`AbstractGroup` has replaced `AbstractCollection`, and each group gives its own members, so no item
-names its one collection. Group construction, identity and hierarchy do not yet form a complete approved API.
+A group is an item with members, of a subtype of `AbstractGroup`, and `members(group)` gives the ids
+of its members. Members are links between items, so an item can be in several groups, and a group
+can hold groups. A group has its own data and metadata and can be used in later calculations; a
+processed group remains a group. The tree of the groups that reads give, such as one group for each
+directory in a DBRecipes project, remains the default organization, and other groupings must
+compose with it. How groups are made by the user, their ids and their hierarchy do not yet form a
+complete approved API.
 
 ## Settled behavior
 
@@ -41,19 +41,22 @@ result/input distinction. The plot builder is one consumer of these values, not 
 
 ### Group and member computations
 
-A group's own processing produces the group's result. A member's own `process` methods may use a processed
-group and produce a later member value with the metadata needed by subsequent work. Group
-processing never overwrites members and does not return data for each member. The earlier separate
-`analyze` callback shape is now under review; removing it is a proposal in
-[processing](processing.md#metadata-comes-from-returned-values), not a reversal of the reusable-result behavior.
+A group's own `process` gives the group's result. A member's own `process` methods may use a
+processed group and give a later version of the member, with the metadata needed by later work.
+A group `process` never overwrites members and does not return data for each member. Core has no
+`analyze`: the metadata of a value is `metadata(value)`
+([processing](processing.md#metadata-comes-from-returned-values)).
 
-`members(group)` returns the bound input representation used to create that group, never
-silently substituted later processed versions. The exact version binding, construction and lifetime contract is in
-[processing](processing.md#member-inputs-and-versions).
+`members(group)` gives the ids of the members that the code which made the group gave it. A group
+`process` takes, for each member, its latest version of the type that its method states, and keeps
+it when a member `process` later gives a newer version. The rest of the binding and lifetime
+contract is in [processing](processing.md#member-inputs-and-versions).
 
-Two groups adding the same metadata name to the same member is explicitly unsupported and
-undefined. Do not add conflict detection, reporting or qualified metadata namespaces for this
-case. This scope decision does not settle the composition of multiple member data operations.
+Two groups can each have a member `process` that gives a later version of the same member. When
+both give a version of one id at the same depth, the two calls conflict: neither version counts,
+each call keeps its result, and the status panel of the browser shows the conflict next to both
+calls. The conflict ends when one of them no longer gives the id. How several member operations
+on one member compose otherwise, such as one after the other, is not settled.
 
 ## Working proposal: groups from sources, users and `process` methods
 
@@ -71,13 +74,13 @@ creates a group gives it its members. There are three creators:
   `SourceGroup` of the whole source. A group `process` method states the member values that it
   needs by the element type of its third argument. The proposal's group `read`, which received
   the member values, was not built.
-- **The user or the GUI.** A selection, the bins of a plot, a canvas node that splits items.
+- **The user or the GUI.** A selection, the bins of a plot, a window that splits items.
 - **`process` methods on groups.** A `process` method on a group returns results, which may be groups themselves, for
   example the samples above a temperature or one fit per bin.
 
 ```julia
 abstract type AbstractGroup <: AbstractDataItem end
-members(group::AbstractGroup) -> AbstractVector{<:AbstractDataItem}   # as built: Vector{String}, the ids
+members(group::AbstractGroup) -> Vector{String}   # the ids of the members
 ```
 
 A `process` method can return a single item or a vector of items. The general multiple-output contract
@@ -95,8 +98,8 @@ Inputs may themselves be groups; retain their relationship without automatically
 all the way to original measurements. A later operation on just one such group still retains that
 provenance. A member operation that also uses a group result has multiple inputs too. Davide decided on
 21 October that it may return either a later version of the member or a new value that keeps both
-inputs; Core records both inputs either way. The toy's aggregate
-`FitResult` should retain this group/provenance behavior. Ordinary scientific helpers can remain plain Julia functions; adapting their
+inputs; Core records both inputs either way. A fit through several items should retain this
+group/provenance behavior. Ordinary scientific helpers can remain plain Julia functions; adapting their
 results at framework-owned boundaries is the PM recommendation, not another required wrapper in
 user helper code.
 
@@ -225,17 +228,18 @@ The earlier review recommendations on ids below are superseded where they differ
   custom constructors. The producer scope must actually be available at that construction
   boundary. The exact helper/API and automatic Recipes adaptation are not designed yet.
 
-Other concrete checks against the same model. The external agent has updated the walkthrough
-for all four; they await review:
+Other concrete checks against the same model, made on the archived
+[toy example](archive/groups-toy.md):
 
-1. The literal `Vector` signatures and member fields in the toy force native materialization.
-   The engineer recommends permitting `AbstractVector`/indexed member views as the normal path,
-   with cheap metadata/identity access on that same collection. An explicitly eager `Vector`
+1. Literal `Vector` signatures and member fields force native materialization. The engineer
+   recommends permitting `AbstractVector`/indexed member views as the normal path, with cheap
+   metadata/identity access on that same vector. An explicitly eager `Vector`
    method can still be valid. No `Lazy` payload fields or new query language are required.
 2. Clarify that multiple item outputs are distinct from an ordinary vector-valued scientific
    payload. A signal or array returned by a helper must not accidentally become many catalog items.
 3. Demonstrate groups of processed groups and several parents using this same API, preserving
-   both direct membership and production provenance.
+   both direct membership and production provenance; [groups of groups](#groups-of-groups) shows
+   it.
 4. Describe startup discovery accurately: method signatures identify eligible input methods;
    arbitrary output types are learned from returned values, not guaranteed as a complete static
    return-type graph before execution. This does not reopen the agreed completion policy.

@@ -30,15 +30,13 @@ process(project::AbstractProject, group::AbstractGroup, members::AbstractVector{
 - `process(project, x)` receives one item or one group (`AbstractGroup <: AbstractDataItem`).
 - `process(project, member, group)` is a member `process` method, called for each member of a group.
   Davide, 21 October: it returns a later version of the member (same id) or a new value, for
-  example a group that keeps both inputs. Core records both inputs either way. Whether the group
-  is read again depends only on whether the output is a later value of the member type the group
-  states.
+  example a group that keeps both inputs. Core records both inputs either way.
 - `process(project, group, members)` is a `process` method on a group with its member values.
-  Davide, 21 October: a `process` method on a group can state the member values it needs as a
-  third argument, as group `read` does. Core passes, for each member, its latest value of type `T`,
-  and leaves out members that have none. A later member value of type `T` causes the method to be
-  called again, with the same convergence rule. `members(group)` is unchanged: it still returns
-  the values the group was made with.
+  The element type `T` of its third argument states the member values it needs: Core passes, for
+  each member, its latest version of type `T`, and leaves out members that have none. A later
+  member version of type `T` causes the method to be called again, unless a member `process` of
+  the same group gave it: the group `process` keeps the version that it took. `members(group)` is
+  unchanged: it gives the ids of the members.
 
 Results of `process`: one `AbstractDataItem` or an `AbstractVector` of them. A vector is several outputs;
 this replaces source `expand`. An empty vector is no output. Plain data (a signal, a table) is
@@ -57,7 +55,7 @@ Stable ids: the project gives each produced value its id through `id` (Davide, 2
 
 ## Metadata comes from returned values
 
-Davide, 21 October: Core drops `analyze`. Every `process` method returns a value, and
+Core has no `analyze` (Davide, 21 October). Every `process` method returns a value, and
 `metadata(value)` gives its metadata. A method that only computes a few numbers returns a later
 version of its input with those numbers in its metadata. Recipes keeps an `analyze` callback for
 its authors and implements it with `process`.
@@ -84,9 +82,11 @@ The storage direction requires native values to expose complete metadata through
 member's `process` method.
 The accessor of an item's data is `data`.
 
-Two groups writing the same metadata name to one member is unsupported and undefined; Davide
-explicitly requested no detection/reporting code. Do not use that decision to imply that every
-ordering or branching question about contextual data operations is settled.
+Two calls that give versions of one id at the same depth conflict, for example the member
+`process` methods of two groups on the same member, or `process(project, v)` and
+`process(project, v, group)` on the same `v`. Neither version counts, each call keeps its result,
+and the status panel of the browser shows the conflict next to both calls. This does not settle
+every ordering or branching question about contextual data operations.
 
 `process(project, group)` can be called without a workspace when its arguments provide what it
 needs. Processing need not access members at all. Direct calls must remain ordinary Julia calls.
@@ -98,8 +98,8 @@ resource can be serialized. Numerical work must be reusable outside its original
 
 ## Member inputs and versions
 
-Settled: `members(group)` returns the bound input representation used to create the group, never
-silently substituted later member values. Groups are constructed with
+Settled: `members(group)` gives the ids of the members that the code which made the group gave
+it, and a group `process` keeps the member versions that it took. Groups are constructed with
 those members already chosen; the earlier query/prototype-binding proposal is withdrawn. Exact
 version binding and lifetime remain part of the implementation contract.
 
@@ -113,8 +113,8 @@ The design must resolve:
 - The member snapshot used to form and process a group, and how it differs from a later member
   value produced using that group's result. Do not introduce a dependency on the group's own
   downstream output by silently asking for the latest member.
-- Metadata availability to the next member `process` method, whether through separate analysis or a newly
-  returned value. Same-type changes can be real work, not evidence that processing ended.
+- Metadata availability to the next member `process` method, through the value that a call
+  returns. Same-type changes can be real work, not evidence that processing ended.
 - How several applicable member data operations compose or branch. This is separate from the
   unsupported same-name metadata collision.
 - Nested groups, missing inputs and a retained REPL value after inputs are refreshed or removed.
@@ -134,8 +134,7 @@ metadata keys do not prove readiness after a code change.
 
 Group selection must not be reevaluated indiscriminately on every intermediate item version.
 A group `process` method is called with the member values of the type that its signature states,
-and again only when a member gets a later value of that type. The group `read` of
-[source-groups.md](archive/source-groups.md) was not built.
+and again only when a member gets a later value of that type.
 
 The existing catalog remains the common dependency/status model. The new design must extend that
 model rather than introduce a private graph for plots or Recipes. The fixed stages are gone: every
@@ -240,8 +239,9 @@ reused.
 The project's calls now form chains of any length, without fixed stages. The store of each result
 type (`storage(project, T)`), the record of each execution (`last_execution`) and the Code
 visualizer are built. The examples below describe the broader target, not the
-completed interface. The implemented type is named `Computation`, rather than the earlier
-illustrative `Computed`.
+completed interface. The implemented type is `Computation <: AbstractDataItem`, rather than the
+earlier illustrative `Computed <: AbstractGroup`: `inputs(computation)` gives the computations
+among its inputs, and it has no `members`.
 
 A computation is a function that Core applies to values: a `fit` or `aggregate` line of `@plot`, an
 operation built in the GUI, or the same written in code. Today `fit` and `aggregate` return a
