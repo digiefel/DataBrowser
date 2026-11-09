@@ -365,26 +365,44 @@ function publish_source_event!(workspace::Workspace, error::SourceError)::Nothin
     return nothing
 end
 
+## The number of times that a workspace of this process loaded saved edits of code. After each
+## load, every open workspace checks its code at once.
+const CODE_LOADS = Threads.Atomic{Int}(0)
+
 """
-Load pending edits through Revise and check the project's code twice a second until the workspace
-stops, while automatic updates are active: see [`check_code!`](@ref).
+Load the edits of code that the user saves, and check the project's code for changes, until the
+workspace stops, while automatic updates are active: see [`check_code!`](@ref). The task looks for
+saved files 50 times a second. It checks the code at once after a load, and twice a second
+otherwise, for code that changes without a save, such as a method defined in the REPL.
 """
 function watch_code(workspace::Workspace)::Task
     token = get_token(workspace.cancel_source)
     return Threads.@spawn try
+        loads, checked = -1, -Inf
         while true
             try
                 if @atomic workspace.code_updates_active
-                    ## File watchers queue edits; load them even when the REPL is idle. Revise
-                    ## serializes concurrent callers, including other workspaces and the REPL.
-                    Base.invokelatest(Revise.revise)
-                    ## The latest world, so the check sees methods defined after the workspace opened.
-                    Base.invokelatest(check_code!, workspace)
+                    ## Revise's file watchers add each saved file to this queue. The task reads the
+                    ## queue because `Revise.revision_event` wakes only one of the tasks that wait
+                    ## for it, and other tools wait for it too.
+                    if !isempty(Revise.revision_queue)
+                        world = Base.get_world_counter()
+                        ## Load the edits even when the REPL is idle. Revise serializes concurrent
+                        ## callers, including other workspaces and the REPL.
+                        Base.invokelatest(Revise.revise)
+                        ## A load that defines nothing keeps the world counter.
+                        world == Base.get_world_counter() || Threads.atomic_add!(CODE_LOADS, 1)
+                    end
+                    if CODE_LOADS[] != loads || time() - checked >= 0.5
+                        loads, checked = CODE_LOADS[], time()
+                        ## The latest world, so the check sees methods defined after the workspace opened.
+                        Base.invokelatest(check_code!, workspace)
+                    end
                 end
             catch error
                 @error "Could not check the project code for changes" exception=(error, catch_backtrace()) maxlog=1
             end
-            sleep(0.5, token)
+            sleep(0.02, token)
         end
     catch error
         error isa OperationCanceledException || rethrow()
