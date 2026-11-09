@@ -892,10 +892,6 @@ end
 # with `background_processing=true`. The same code defined again, as when a script runs again,
 # changes nothing.
 #
-# While a browser is open, the keyboard focus of its main window controls these checks: an inactive
-# window pauses them, and gaining focus resumes them. Without a browser, including after closing
-# one, the workspace keeps checking.
-#
 # The code revision does not see a mutable value changed in place, nor a change to a macro: the
 # functions that use a macro keep their old expansion until they are defined again. The workspace
 # warns about code that it cannot follow: a non-constant global, a call through `eval`,

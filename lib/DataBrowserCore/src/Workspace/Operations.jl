@@ -68,7 +68,7 @@ function modify_workspace!(
             ## generation. The table `items` comes last, with its catalog: a frame that finds it open
             ## reads the other fields of the rebuilt workspace.
             for field in fieldnames(typeof(workspace))
-                field in (:lifecycle_lock, :shared, :shared_lock, :generation, :code_updates_active, :status, :work, :items) ||
+                field in (:lifecycle_lock, :shared, :shared_lock, :generation, :status, :work, :items) ||
                     setfield!(workspace, field, getfield(fresh, field))
             end
             workspace.items = fresh.items
@@ -371,9 +371,9 @@ const CODE_LOADS = Threads.Atomic{Int}(0)
 
 """
 Load the edits of code that the user saves, and check the project's code for changes, until the
-workspace stops, while automatic updates are active: see [`check_code!`](@ref). The task looks for
-saved files 50 times a second. It checks the code at once after a load, and twice a second
-otherwise, for code that changes without a save, such as a method defined in the REPL.
+workspace stops: see [`check_code!`](@ref). The task looks for saved files 50 times a second. It
+checks the code at once after a load, and twice a second otherwise, for code that changes without
+a save, such as a method defined in the REPL.
 """
 function watch_code(workspace::Workspace)::Task
     token = get_token(workspace.cancel_source)
@@ -381,23 +381,23 @@ function watch_code(workspace::Workspace)::Task
         loads, checked = -1, -Inf
         while true
             try
-                if @atomic workspace.code_updates_active
-                    ## Revise's file watchers add each saved file to this queue. The task reads the
-                    ## queue because `Revise.revision_event` wakes only one of the tasks that wait
-                    ## for it, and other tools wait for it too.
-                    if !isempty(Revise.revision_queue)
-                        world = Base.get_world_counter()
-                        ## Load the edits even when the REPL is idle. Revise serializes concurrent
-                        ## callers, including other workspaces and the REPL.
-                        Base.invokelatest(Revise.revise)
-                        ## A load that defines nothing keeps the world counter.
-                        world == Base.get_world_counter() || Threads.atomic_add!(CODE_LOADS, 1)
-                    end
-                    if CODE_LOADS[] != loads || time() - checked >= 0.5
-                        loads, checked = CODE_LOADS[], time()
-                        ## The latest world, so the check sees methods defined after the workspace opened.
-                        Base.invokelatest(check_code!, workspace)
-                    end
+                ## Revise's file watchers add each saved file to this queue. The task reads the
+                ## queue because `Revise.revision_event` wakes only one of the tasks that wait for
+                ## it, and other tools wait for it too.
+                if !isempty(Revise.revision_queue)
+                    world = Base.get_world_counter()
+                    ## Load the edits even when the REPL is idle. Revise serializes concurrent
+                    ## callers, including other workspaces and the REPL. A file saved in several
+                    ## steps is loaded at each step, so a call that needs a method of the missing
+                    ## part fails until the last step.
+                    Base.invokelatest(Revise.revise)
+                    ## A load that defines nothing keeps the world counter.
+                    world == Base.get_world_counter() || Threads.atomic_add!(CODE_LOADS, 1)
+                end
+                if CODE_LOADS[] != loads || time() - checked >= 0.5
+                    loads, checked = CODE_LOADS[], time()
+                    ## The latest world, so the check sees methods defined after the workspace opened.
+                    Base.invokelatest(check_code!, workspace)
                 end
             catch error
                 @error "Could not check the project code for changes" exception=(error, catch_backtrace()) maxlog=1
