@@ -30,7 +30,7 @@ function _render_readiness_mark!(readiness::Workspace.Readiness)::Nothing
     end
     if ig.IsItemHovered()
         readiness == Workspace.WORKING && ig.SetTooltip("Processing")
-        readiness == Workspace.FAILED && ig.SetTooltip("A stage failed")
+        readiness == Workspace.FAILED && ig.SetTooltip("A computation failed")
     end
     return nothing
 end

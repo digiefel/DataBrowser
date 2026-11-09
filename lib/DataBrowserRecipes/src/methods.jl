@@ -20,16 +20,12 @@ forget(f, types::Type...) = foreach(Base.delete_method,
 
 """
 Define the methods of one item registration, and delete those it no longer has: the `process` of
-its items, which runs its `process` and `analyze` callbacks; the `process` of what its `read` gives,
-when it has `expand`; and the `label` of its items.
+what its `read` gives, when it has `expand`, `process` or `analyze`, and the `label` of its items.
 """
 function define!(project::Project{N}, r::ItemRecipe) where {N}
     P, R, D = Project{N}, RegisteredDataItem{r.kind}, ReadData{r.kind}
-    r.process === r.analyze === nothing ? forget(process, P, R) : define(r.mod, r.registered,
-        :process, [:(::$P), :(item::$R)], :($_processed_item(item, $(r.process), $(r.analyze))))
-    r.expand === nothing ? forget(process, P, D) : define(r.mod, r.registered, :process,
-        [:(::$P), :(value::$D)],
-        :($_expanded(value, $(r.expand), $(r.id), $(r.process), $(r.analyze))))
+    r.expand === r.process === r.analyze === nothing ? forget(process, P, D) : define(r.mod, r.registered,
+        :process, [:(::$P), :(value::$D)], :($_items(value, $(r.expand), $(r.id), $(r.process), $(r.analyze))))
     r.label === nothing ? forget(label, P, R) : define(r.mod, r.registered, :label,
         [:(::$P), :(item::$R)], :(String($(r.label)(item.data, item.metadata))))
     return nothing
@@ -38,25 +34,28 @@ end
 """
 Define the methods of the whole project: its `read`, which makes a [`SourceItemGroup`](@ref) of a
 source item with members and asks the `detect` callback of each item registration, in the order of
-registration, for any other source item; and the `process` of the [`SourceGroup`](@ref) of the
-source, which makes the collections and runs their callbacks. A project without collections has no
-such `process`.
+registration, for any other source item; the `process` of the [`SourceGroup`](@ref) of the source,
+which makes the collections; and the group `process` of a collection, which runs the callbacks of
+its level. A project without collections has neither `process`.
 """
 function define!(project::Project{N}, mod::Module, line::LineNumberNode) where {N}
-    P, V = Project{N}, AbstractVector{RegisteredDataItem}
+    P, C, V = Project{N}, NamedCollection{<:Any,:made}, AbstractVector{RegisteredDataItem{<:Any,:made}}
+    ## What `read` gives is the item, unless the item needs one of its callbacks.
     asks = [Expr(:block, r.registered, :($(r.detect)(item)::Bool && return $_read(
-        $(r.expand === nothing ? RegisteredDataItem{r.kind} : ReadData{r.kind}), $(r.read), item)))
-        for r in project.recipes]
+        $(r.expand === r.process === r.analyze === nothing ? RegisteredDataItem{r.kind,:made} : ReadData{r.kind}),
+        $(r.read), item))) for r in project.recipes]
     group = :(isempty($members(source, item)) ||
         return $SourceItemGroup(item, map($id, $members(source, item))))
     define(mod, line, :read, [:(::$P), :(source::$AbstractDataSource), :(item::$AbstractDataSourceItem)],
         Expr(:block, group, asks..., :(return $AbstractDataItem[])))
     paths = [:($(QuoteNode(r.kind)) => $(r.collection))
         for r in project.recipes if r.collection !== nothing]
+    waiting = Tuple(unique(c.level for c in project.collections if c.process !== nothing || c.analyze !== nothing))
     levels = [:(($(QuoteNode(c.level)), $(QuoteNode(c.members)), $(c.process), $(c.analyze)))
         for c in project.collections]
-    isempty(paths) && isempty(levels) ? forget(process, P, SourceGroup, V) : define(mod, line,
-        :process, [:(::$P), :(::$SourceGroup), :(items::$V)],
-        :($_collections(items, ($(paths...),), ($(levels...),))))
+    isempty(paths) ? forget(process, P, SourceGroup, V) : define(mod, line, :process,
+        [:(::$P), :(::$SourceGroup), :(items::$V)], :($_collections(items, ($(paths...),), $waiting)))
+    isempty(waiting) ? forget(process, P, C, V) : define(mod, line, :process,
+        [:(::$P), :(collection::$C), :(items::$V)], :($_processed(collection, items, ($(levels...),))))
     return nothing
 end

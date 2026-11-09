@@ -14,8 +14,8 @@
 # | group process  | `process(project, group, members)`     |
 # | member process | `process(project, member, group)`      |
 #
-# Windows show the *latest version* of a value: the value of that id that the last of these rows
-# gives.
+# Windows show the *latest version* of a value: the value of that id at the end of the longest chain
+# of these rows.
 #
 # Scripts ask for results with these functions:
 #
@@ -195,7 +195,7 @@ function run!(workspace::Workspace, job::Job)::Nothing
     ## Until `finish!` ends the job, every error fails the row, so that no row stays running without
     ## a job. The cache saves only the errors of the project's code, under the revision of the row:
     ## after any other error, the next session runs the row again.
-    value, stage, at, record, current, previous = try
+    value, depth, at, record, current, previous = try
         @timed_dbg "job.revision" @lock catalog.lock @timed_dbg "job.revision.held" begin
             at = revision(workspace, row)
             record = get(workspace.cache.db, row.index, nothing)
@@ -207,17 +207,19 @@ function run!(workspace::Workspace, job::Job)::Nothing
                 # the cache saves the failure without the revision of that result: when the session
                 # ends before the row has a result again, the store keeps that result for good.
                 if previous.revision == 0 && isempty(record.failure)
-                    workspace.items.rows.stage[row] === nothing && forget!(workspace, record.type, record.result_revision)
+                    workspace.items.rows.depth[row] === nothing && forget!(workspace, record.type, record.result_revision)
                     foreach(x -> forget!(workspace, x.type, value_revision(x.id, record.result_revision)), record.items)
                 end
                 record = nothing
             end
-            catalog[row], workspace.items.rows.stage[row], at, record, record !== nothing && described(workspace, row, record), previous
+            catalog[row], workspace.items.rows.depth[row], at, record, record !== nothing && described(workspace, row, record), previous
         end
     catch error
         return failed!(workspace, job, nothing, error, catch_backtrace())
     end
-    pipeline = stage !== nothing
+    pipeline = depth !== nothing
+    pipeline && depth > MAX_VERSIONS && return failed!(workspace, job, nothing,
+        ErrorException("$(version_of(value)) did not converge: its versions keep changing after $MAX_VERSIONS calls"), backtrace())
     if current
         @timed_dbg "job.restore" @lock catalog.lock begin
             finish!(catalog, job; failed=!isempty(record.failure), revision=record.result_revision, type=record.type) &&
@@ -239,11 +241,22 @@ function run!(workspace::Workspace, job::Job)::Nothing
     given = output isa AbstractVector ? output : [output]
     pipeline && !all(x -> x isa AbstractDataItem, given) && return failed!(workspace, job, at,
         ErrorException("$(function_name(value.f)) returned a $(typeof(output)), not an item or a vector of items"), backtrace())
+    ## A value `isequal` to the version that a call of `process` takes is no new version: the chain
+    ## of versions of its id ends there.
+    if pipeline && !reuse && value.f === process && any(x -> id(x) == value.args[2].id, given)
+        taken = try
+            resolved(workspace, value.args[2])
+        catch error
+            return failed!(workspace, job, nothing, error, catch_backtrace())
+        end
+        new = filter(x -> !(id(x) == id(taken) && Base.invokelatest(isequal, x, taken)), given)
+        length(new) == length(given) || (output = given = new)
+    end
     ## The ids, labels, members and metadata of the values are the project's code too: when it
     ## throws, the cache saves the failure with the types of the values, whose code describes them.
     items = SavedOutput[]
     try
-        pipeline && append!(items, (; id=id(x), stage=Int8(stage), label=label(workspace.project, x), type=typeof(x),
+        pipeline && append!(items, (; id=id(x), depth, label=label(workspace.project, x), type=typeof(x),
             members=x isa AbstractGroup ? members(x) : nothing, metadata=metadata_dict(metadata(x))) for x in given)
         allunique(x.id for x in items) ||
             error("it gives the id \"$(first(x.id for x in items if count(y -> y.id == x.id, items) > 1))\" twice")
@@ -319,9 +332,9 @@ gives no values.
 function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, error, backtrace, types=())::Nothing
     catalog, row = workspace.catalog, job.row
     context = @lock catalog.lock begin
-        stage, f = workspace.items.rows.stage[row], catalog[row].f
-        about = stage == SOURCE_READ ? "Source item: $(subject(workspace, row))" :
-            stage !== nothing ? "Function: $(function_name(f))\n  Item: $(subject(workspace, row))" :
+        depth, f = workspace.items.rows.depth[row], catalog[row].f
+        about = depth == 0 ? "Source item: $(subject(workspace, row))" :
+            depth !== nothing ? "Function: $(function_name(f))\n  Item: $(subject(workspace, row))" :
             "Computation: $(subject(workspace, row))"
         "A computation failed\n  $about\n  Source: $(DataBrowserAPI.source_description(workspace.source))"
     end
@@ -333,7 +346,7 @@ function failed!(workspace::Workspace, job::Job, at::Union{Nothing,UInt64}, erro
         at === nothing ? delete!(workspace.cache.db, row.index) : (workspace.cache.db[row.index] = (; call=id(catalog[row]),
             revision=at, result_revision=UInt64(0), item_revision=revision(workspace, row, types), type=Tuple{types...},
             failure=message, items=SavedOutput[]))
-        workspace.items.rows.stage[row] === nothing || finished!(workspace, row, nothing)
+        workspace.items.rows.depth[row] === nothing || finished!(workspace, row, nothing)
         publish!(workspace)
     end
     DataBrowserAPI.report_error(context, error, backtrace)
@@ -567,30 +580,25 @@ end
     code_roots(project, signature, f) -> Vector
 
 The functions, methods and types whose code runs when a function is called with the argument
-types of `signature`. For a stage of the pipeline, these are the type it runs for and the methods
-of the stage that can apply to it. For the signature `Tuple{typeof(label),P,T}`, which describes
-the values of type `T` (see [`revision`](@ref)), these are `T` and its `label`, `id`, `members` and
-`metadata` methods. Else the root is the function. A callable object that is not a function, such
-as a fit, runs the methods that make its type callable, whose parameters include the types of the
-functions it holds. A type, such as `SourceGroup`, runs its constructors.
+types of `signature`. For `read` and `process`, these are the types of the arguments after the
+project, and the methods of the project that can apply to them; the values of the members of a
+group count as their type. For the signature `Tuple{typeof(label),P,T}`, which describes the values
+of type `T` (see [`revision`](@ref)), these are `T` and its `label`, `id`, `members` and `metadata`
+methods. Else the root is the function. A callable object that is not a function, such as a fit,
+runs the methods that make its type callable, whose parameters include the types of the functions
+it holds. A type, such as `SourceGroup`, runs its constructors.
 """
 function code_roots(project::AbstractProject, signature::Type, f)::Vector
-    found = stage(signature)
-    found === nothing && return f isa Function ? Any[f] : Any[f isa Type ? f : typeof(f); collect(methods(f))]
-    at, T = found
-    signatures = DataBrowserAPI.stage_signatures(typeof(project), at, T)
-    return Any[T; [method for (g, types) in signatures for method in methods(g, types)]]
+    if f === read || f === process
+        types = Any[T <: Members ? eltype(T) : T for T in fieldtypes(signature)[3:end]]
+        return Any[types; collect(methods(f, Tuple{fieldtypes(signature)[2:end]...}))]
+    end
+    return f isa Function ? Any[f] : Any[f isa Type ? f : typeof(f); collect(methods(f))]
 end
 function code_roots(project::AbstractProject, ::Type{<:Tuple{typeof(label),Any,T}}, f)::Vector where {T}
     signatures = [(label, Tuple{typeof(project),T}), (label, Tuple{T}), (id, Tuple{T}), (members, Tuple{T}), (metadata, Tuple{T})]
     return Any[T; [method for (g, types) in signatures for method in methods(g, types)]]
 end
-
-stage(::Type{<:Tuple{typeof(read),Any,Any,S}}) where {S} = (SOURCE_READ, S)
-stage(::Type{<:Tuple{typeof(process),Any,I}}) where {I} = (ITEM_PROCESS, I)
-stage(::Type{<:Tuple{typeof(process),Any,G,AbstractVector}}) where {G} = (GROUP_PROCESS, G)
-stage(::Type{<:Tuple{typeof(process),Any,M,G}}) where {M,G} = (MEMBER_PROCESS, G)
-stage(_) = nothing
 
 """
     restore!(workspace, row) -> Bool
@@ -624,7 +632,7 @@ function restored!(workspace::Workspace, row::Row, record)::Bool
     failed = !isempty(record.failure)
     failed && (workspace.errors = Base.PersistentDict(workspace.errors,
         row => subject(workspace, row) => "$(function_name(workspace.catalog[row].f)) failed: " * record.failure))
-    workspace.items.rows.stage[row] === nothing && return true
+    workspace.items.rows.depth[row] === nothing && return true
     outputs = @timed_dbg "restored.outputs" Output[Output(x.id, x.type, x.label, x.members,
         output_key!(workspace.cache.db, row.index, x.id), value_revision(x.id, record.result_revision)) for x in record.items]
     try
@@ -738,9 +746,9 @@ function forget!(workspace::Workspace, type::Type, at::UInt64)::Nothing
 end
 
 # The type and the revision under which the stores keep the result of a row, or for a row of the
-# pipeline, each value that it gives, from its stage, the values that it gave, and `stored`, the type
+# pipeline, each value that it gives, from its depth, the values that it gave, and `stored`, the type
 # and the revision of its result.
-store_keys(stage, outputs, stored::Tuple{Type,UInt64})::Vector{Tuple{Type,UInt64}} = stage !== nothing ?
+store_keys(depth, outputs, stored::Tuple{Type,UInt64})::Vector{Tuple{Type,UInt64}} = depth !== nothing ?
     Tuple{Type,UInt64}[(output.type, output.revision) for output in something(outputs, Output[])] : [stored]
 
 """
@@ -764,19 +772,19 @@ failed. The results of `view` and `pick`, which `keep!` does not save, are alway
 """
 function kept(workspace::Workspace, rows::Vector{Row})::Vector{Union{Nothing,Some}}
     catalog = workspace.catalog
-    return kept(workspace, @lock catalog.lock [(catalog[row].f, workspace.items.rows.stage[row], workspace.items.rows.outputs[row],
+    return kept(workspace, @lock catalog.lock [(catalog[row].f, workspace.items.rows.depth[row], workspace.items.rows.outputs[row],
         (Catalogs.result_type(catalog, row), Catalogs.revision(catalog, row))) for row in rows])
 end
 # The results of `rows`, which `version` shows current, from the cells of `version`: without the
 # catalog lock.
 kept(workspace::Workspace, version::Version, rows::Vector{Row})::Vector{Union{Nothing,Some}} = kept(workspace,
-    [(something(version.rows.computation[row]).f, version.rows.stage[row], version.rows.outputs[row], something(version.rows.stored[row]))
+    [(something(version.rows.computation[row]).f, version.rows.depth[row], version.rows.outputs[row], something(version.rows.stored[row]))
         for row in rows])
-# The results of rows, each given as its function, its stage, the values that it gave, and the type
+# The results of rows, each given as its function, its depth, the values that it gave, and the type
 # and the revision of its result.
 function kept(workspace::Workspace, facts::Vector)::Vector{Union{Nothing,Some}}
-    vectors = [stage !== nothing && first(stored) <: AbstractVector for (_, stage, _, stored) in facts]
-    found = kept(workspace, Vector{Tuple{Type,UInt64}}[store_keys(stage, outputs, stored) for (_, stage, outputs, stored) in facts])
+    vectors = [depth !== nothing && first(stored) <: AbstractVector for (_, depth, _, stored) in facts]
+    found = kept(workspace, Vector{Tuple{Type,UInt64}}[store_keys(depth, outputs, stored) for (_, depth, outputs, stored) in facts])
     ## Any other result has one part, or none when a row of the pipeline failed.
     return Union{Nothing,Some}[f in (view, pick) || vector && outputs === nothing || any(isnothing, values) ? nothing :
         vector ? Some(identity.(something.(values))) : get(values, 1, nothing) for ((f, _, outputs, _), values, vector) in zip(facts, found, vectors)]
@@ -826,7 +834,7 @@ function computed!(workspace::Workspace, row::Row)
     @lock one begin
         found = only(kept(workspace, [row]))
         found === nothing || return something(found)
-        value, pipeline, before, at = @lock catalog.lock (catalog[row], workspace.items.rows.stage[row] !== nothing,
+        value, pipeline, before, at = @lock catalog.lock (catalog[row], workspace.items.rows.depth[row] !== nothing,
             Catalogs.changes(catalog, row), Catalogs.revision(catalog, row))
         output = call(workspace, row, value)
         @lock catalog.lock Catalogs.changes(catalog, row) == before || return output
@@ -864,8 +872,8 @@ end
 #
 # Each signature of a row, its function and the types of its arguments, has a code revision: a
 # content hash of the code it can reach from its roots ([`CodeRevisions.jl`](../CodeRevisions.md)).
-# The roots of a row of the pipeline are the type it runs for and the methods of the stage that can
-# apply to it. A Recipes project defines these methods from its registrations, with the callbacks in
+# The roots of a row of the pipeline are the types of its arguments and the methods of the project
+# that can apply to them. A Recipes project defines these methods from its registrations, with the callbacks in
 # them, so a changed callback is changed code too. The values that the row gives add a signature for
 # each of their types, whose roots are the type and its `label`, `id`, `members` and `metadata`
 # methods: when only these change, the row computes the labels, ids, members and metadata of its
@@ -919,11 +927,13 @@ function check_code!(workspace::Workspace)::Nothing
     answers = Dict{Tuple,Any}(question => first(question)(Base.tail(question)...) for question in keys(asked))
     @lock catalog.lock begin
         workspace.closed && return nothing
-        ## Every value and group is checked again when a method applies now that did not, or the
-        ## other way around.
+        ## The calls of every version are made again when a method applies now that did not, or
+        ## the other way around.
         if !isequal(answers, asked)
             workspace.methods = answers
-            refresh!(workspace, collect(keys(workspace.versions)))
+            for x in collect(keys(workspace.versions)), row in copy(get(workspace.versions, x, Row[]))
+                calls!(workspace, x, row)
+            end
         end
         changed = Set{Type}(signature for (signature, code) in current
             if code.revision.hash != workspace.code[signature].revision.hash)
@@ -1108,7 +1118,7 @@ function cache_info(workspace::Workspace, value::Computation)
     found = row(workspace, version, value)
     version.rows.readiness[found] == CURRENT || return (cached=false, bytes=nothing)
     bytes = 0
-    for (type, key) in store_keys(version.rows.stage[found], version.rows.outputs[found], something(version.rows.stored[found]))
+    for (type, key) in store_keys(version.rows.depth[found], version.rows.outputs[found], something(version.rows.stored[found]))
         place = store(workspace, type)
         (place !== nothing && haskey(place, type, key)) || return (cached=false, bytes=nothing)
         bytes += DataBrowserAPI.stored_size(place, type, key)
@@ -1141,7 +1151,8 @@ id(value::Computation) = string(function_name(value.f), "(",
     ")")
 # TODO: the id of a computation repeats the ids of its inputs.
 argument_id(x::Input) = id(x.computation)
-argument_id(x::Part) = x.id
+# A value is named with the call that gives it, so that each version of an id has its own name.
+argument_id(x::Part) = "$(x.id) of $(argument_id(x.of))"
 argument_id(x::AbstractDataItem) = id(x)
 argument_id(x::AbstractProject) = project_name(x)
 argument_id(x::Union{AbstractDataSource,AbstractDataSourceItem}) = id(x)

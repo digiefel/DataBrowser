@@ -30,7 +30,7 @@ function toy_project(name::AbstractString, counters::ToyCounters)
             Threads.atomic_add!(counters.expand, 1)
             values = Float64.(source["values"])
             return [(
-                # Keep the native item type stable across stages so this fixture exercises
+                # Keep the native item type stable across the calls so this fixture exercises
                 # restoration by the persistent table cache.
                 data=(x=Float64.(eachindex(values)), y=values .+ (index - 1)),
                 metadata=Dict{Symbol,Any}(

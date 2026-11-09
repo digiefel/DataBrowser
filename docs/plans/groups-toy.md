@@ -239,7 +239,7 @@ read(source, ., [S1, S2, b_1])   SourceGroup . ─process─▶ HotGroup [S2], H
   `ProcessedItemB`. So S1 waits for a_1 and a_2 to be processed, and the root waits for S1 and S2.
 - `MeanSignal(S1)` has another id, so it is not a later value of S1 and is not passed to the root.
 - If a member later gets another value of the stated type, Core reads the group again, until it
-  converges (see [source-groups.md](source-groups.md#member-values-core-reads-the-signature-states-the-stage)).
+  converges (see [source-groups.md](source-groups.md#member-values-core-reads-the-signature-states-the-version)).
 - After each `read` and `process`, Core writes the value to its type's store and copies
   `metadata(value)` into its index. The browser can show each value as soon as it exists.
 

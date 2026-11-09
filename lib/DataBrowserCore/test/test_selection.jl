@@ -16,21 +16,24 @@ DataBrowserAPI.items(::ChipsSource; kwargs...) = [ChipsFile()]
 DataBrowserAPI.id(::ChipsFile) = "file"
 DataBrowserAPI.fingerprint(::ChipsFile) = 1
 
-struct Sweep <: AbstractDataItem
+# `S` is `:read` for what `read` gives, and `:processed` for what `process` gives, so that `process`
+# takes only what `read` gives.
+struct Sweep{S} <: AbstractDataItem
     name::String
     data::Any
     meta::Dict
 end
+Sweep(name, data, meta) = Sweep{:read}(name, data, meta)
 DataBrowserAPI.id(sweep::Sweep) = sweep.name
 DataBrowserAPI.label(sweep::Sweep) = sweep.name
 DataBrowserAPI.data(sweep::Sweep) = sweep.data
 DataBrowserAPI.metadata(sweep::Sweep) = sweep.meta
-DataBrowserAPI.reconstruct(::Type{Sweep}, name::AbstractString, data, meta::Dict) = Sweep(name, data, meta)
+DataBrowserAPI.reconstruct(::Type{T}, name::AbstractString, data, meta::Dict) where {T<:Sweep} = T(name, data, meta)
 DataBrowserAPI.read(::ChipsProject, ::ChipsSource, ::ChipsFile) = Sweep("file", nothing, Dict())
 # The file holds two sweeps.
-DataBrowserAPI.process(::ChipsProject, ::Sweep) = [
-    Sweep("IV_A", (V=[0.0, 1.0],), Dict(:device => "D2", :gap => 5.0)),
-    Sweep("IV_B", (V=[0.0, 2.0],), Dict(:device => "D3")),
+DataBrowserAPI.process(::ChipsProject, ::Sweep{:read}) = [
+    Sweep{:processed}("IV_A", (V=[0.0, 1.0],), Dict(:device => "D2", :gap => 5.0)),
+    Sweep{:processed}("IV_B", (V=[0.0, 2.0],), Dict(:device => "D3")),
 ]
 
 @testset "select gives the items as a table" begin

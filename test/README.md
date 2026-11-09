@@ -51,7 +51,7 @@ julia --project=bench --threads=auto test/runtests.jl precompile --force
 | --- | --- |
 | `Annotations` | `test_annotations.jl`: tag/note files, persistence and inheritance. |
 | `Sources` | `test_directory.jl`: discovery, exclusions, recursion and change fingerprints. |
-| `Recipes` | `test_stages.jl`: registration through typed stages, CSV loading, and collection callbacks that give the items of a workspace new data and metadata. |
+| `Recipes` | `test_recipes.jl`: registration as methods of `read` and `process`, CSV loading, and collection callbacks that give the items of a workspace new data and metadata. |
 | `Cache` | `test_persistence.jl`: the records of rows and the metadata of their items across reopening and deletion; a record saved whole or not at all; caches in memory; one opening of a cache file at a time. `test_native_storage.jl`: typed native reads, eviction, cached `nothing`, payload capability and retention independent of completion. |
 | `Core` | `test_computations.jl`: input traversal, native-value evaluation, per-item storage policy, computation caching, complete native fields, strict store types, a store that refuses a result until the next opening, copied cache results and uncached materialization across reopening, and execution information for successful and failed calls, and pipeline calls reused as computation inputs. `test_workspace.jl`: reconstruction, reopening, code changes, an edited or failing `label` method, failure recovery, tags and status during on-demand processing. `test_groups.jl`: folders as groups, group and member `process` results that follow file changes, a failing member and its repair, reopening without running, and a code change that makes group results stale. `test_selection.jl`: selection, filtering, table access, and the items that pass a function, which follow changes and the order of `sort!`. `test_source_updates.jl`: actual directory-file edits, removal/recreation, and recovery from reader/processor failures. `test_visualizers.jl`: the value of a visualizer of the workspace, without a browser, from fixed items, the selection, a function and another visualizer; a changed setting, a refused cycle, and a closed input visualizer. |
 | `GUI` | `test_tables.jl`: prepared table values, columns and provenance. `test_code_file.jl`: editing, saving and noticing changes by another editor. `test_code_view.jl`: selecting earlier calls, the results of a visualizer that takes the output of a window, cache reuse without replay, and no catalog insertion. `test_windows.jl`: a window's function as one computed value for each item, the rows a table passes on, and exclusive background preparation of the instance of a window, with settings changed meanwhile and failure recovery. `test_vector_view.jl`: vector and signal plots without a graphics backend; density, FFT amplitude, PSD power and autocorrelation normalization. None of them exercises GUI controls. |
@@ -142,8 +142,8 @@ is proportional to its square. Fixed costs weigh more at small sizes, so exponen
 common. The workload fails when an exponent is above 1.3. This limit leaves room for timing noise
 and for n log n growth, about 1.1 at these sizes.
 
-The browser smoke project has three items. It exercises directory discovery, registered item
-stages, workspace selection, saved-cache reuse, source
+The browser smoke project has three items. It exercises directory discovery, the callbacks of a
+registration, workspace selection, saved-cache reuse, source
 updates and live addition/removal. Expected values and callback counts check correctness. It opens
 actual windows and requires a working graphics session; unavailable graphics or renderer errors
 fail the workload. It uses public browser lifecycle operations, without creating or configuring

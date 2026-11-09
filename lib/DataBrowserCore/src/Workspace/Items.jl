@@ -106,9 +106,8 @@ function keep!(items::Items, workspace::Workspace)::Nothing
             ## started: a timer wakes it then, and a reader that comes earlier wakes it at once.
             ## Once the work ends, its last changes follow at once.
             requested, readers = @lock items.lock (collect(items.requested), copy(items.readers))
-            ## Code defined since the last check makes its results stale before a computation given
-            ## to `evaluate` is read.
-            any(reader -> reader isa Base.RefValue && reader[] isa Computation, readers) &&
+            ## Code defined since the last check applies before a reader reads.
+            !isempty(readers) &&
                 @lock(catalog.lock, any(code -> code.world != Base.get_world_counter(), values(workspace.code))) &&
                 Base.invokelatest(check_code!, workspace)
             ## Each computation given to `evaluate` gets its row, which the workspace keeps until it
@@ -167,7 +166,7 @@ function keep!(items::Items, workspace::Workspace)::Nothing
                     end
                     if isempty(catalog.touched) && (items.changed || workspace.errors !== (@atomic items.version).errors)
                         ## The counts change only together with cells.
-                        counts = WorkspaceStageCounts(length(workspace.sources),
+                        counts = WorkspaceCounts(length(workspace.sources),
                             count(catalog, typeof(read), Catalogs.CURRENT) + count(catalog, typeof(read), Catalogs.FAILED),
                             length(workspace.versions), count(catalog, typeof(process), Catalogs.CURRENT))
                         ## `answer!` takes a version together with the items whose cells shown by

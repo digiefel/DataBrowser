@@ -20,11 +20,14 @@ struct EngineSourceItem <: AbstractDataSourceItem
     version::Int
     fail::Bool
 end
-struct EngineItem <: AbstractDataItem
+# `S` is `:read` for what `read` gives, and `:processed` for what `process` gives, so that `process`
+# takes only what `read` gives.
+struct EngineItem{S} <: AbstractDataItem
     key::String
     data::Any
     meta::Dict
 end
+EngineItem(key, data, meta) = EngineItem{:read}(key, data, meta)
 DataBrowserAPI.id(s::EngineSource) = s.name
 DataBrowserAPI.label(s::EngineSource) = s.name
 DataBrowserAPI.items(s::EngineSource; kwargs...) =
@@ -35,8 +38,8 @@ DataBrowserAPI.fingerprint(s::EngineSourceItem) = (s.version, s.fail)
 DataBrowserAPI.id(i::EngineItem) = i.key
 DataBrowserAPI.data(i::EngineItem) = i.data
 DataBrowserAPI.metadata(i::EngineItem) = i.meta
-DataBrowserAPI.reconstruct(::Type{EngineItem}, key::AbstractString, data, meta::Dict) = EngineItem(key, data, meta)
-DataBrowserAPI.storage(p::EngineProject, ::Type{EngineItem}) =
+DataBrowserAPI.reconstruct(::Type{T}, key::AbstractString, data, meta::Dict) where {T<:EngineItem} = T(key, data, meta)
+DataBrowserAPI.storage(p::EngineProject, ::Type{<:EngineItem}) =
     p.values === nothing ? MemoryStore() : DuckDBStore(p.values)
 function DataBrowserAPI.read(p::EngineProject, ::EngineSource, s::EngineSourceItem)
     p.reads += 1
@@ -44,8 +47,8 @@ function DataBrowserAPI.read(p::EngineProject, ::EngineSource, s::EngineSourceIt
     return EngineItem("source", (x=[s.version],), Dict(:input => s.version))
 end
 # The source item holds one item for each number up to its version.
-DataBrowserAPI.process(::EngineProject, i::EngineItem) =
-    [EngineItem(string(n), (x=i.data.x .* 2,), merge(i.meta, Dict(:total => sum(i.data.x .* 2)))) for n in 1:only(i.data.x)]
+DataBrowserAPI.process(::EngineProject, i::EngineItem{:read}) =
+    [EngineItem{:processed}(string(n), (x=i.data.x .* 2,), merge(i.meta, Dict(:total => sum(i.data.x .* 2)))) for n in 1:only(i.data.x)]
 
 mutable struct ControlledSource <: AbstractDataSource
     release::Channel{Nothing}
@@ -65,7 +68,7 @@ struct TypedProject <: AbstractProject end
 DataBrowserAPI.project_name(::TypedProject) = "typed"
 DataBrowserAPI.read(::TypedProject, ::EngineSource, s::EngineSourceItem) =
     EngineItem("only", (x=[s.version],), Dict(:input => s.version))
-DataBrowserAPI.process(::TypedProject, i::EngineItem) = EngineItem(i.key, i.data, merge(i.meta, Dict(:total => sum(i.data.x))))
+DataBrowserAPI.process(::TypedProject, i::EngineItem{:read}) = EngineItem{:processed}(i.key, i.data, merge(i.meta, Dict(:total => sum(i.data.x))))
 DataBrowserAPI.label(::TypedProject, i::EngineItem) =
     "$(id(i)) · total $(get(metadata(i), :total, "?"))"
 
@@ -75,14 +78,14 @@ end
 DataBrowserAPI.project_name(::ObservedProject) = "observed"
 DataBrowserAPI.read(::ObservedProject, source::EngineSource, item::EngineSourceItem) =
     DataBrowserAPI.read(TypedProject(), source, item)
-function DataBrowserAPI.process(project::ObservedProject, item::EngineItem)
+function DataBrowserAPI.process(project::ObservedProject, item::EngineItem{:read})
     project.on_process()
     return item
 end
 
 struct TagProject <: AbstractProject end
 DataBrowserAPI.project_name(::TagProject) = "tag"
-DataBrowserAPI.process(::TagProject, i::EngineItem) = [EngineItem(key, i.data, Dict()) for key in ("a", "b")]
+DataBrowserAPI.process(::TagProject, i::EngineItem{:read}) = [EngineItem{:processed}(key, i.data, Dict()) for key in ("a", "b")]
 
 DataBrowserAPI.read(::TagProject, ::EngineSource, s::EngineSourceItem) = EngineItem("source", (x=[s.version],), Dict())
 
@@ -196,7 +199,7 @@ end
 DataBrowserAPI.project_name(::RetypedProject) = "retyped"
 DataBrowserAPI.read(p::RetypedProject, ::EngineSource, ::EngineSourceItem) =
     EngineItem("source", (x=[1],), Dict(:input => p.input))
-DataBrowserAPI.process(::RetypedProject, i::EngineItem) = [i, EngineItem("other", i.data, Dict(:input => 1))]
+DataBrowserAPI.process(::RetypedProject, i::EngineItem{:read}) = [i, EngineItem{:processed}("other", i.data, Dict(:input => 1))]
 
 @testset "metadata of another type is reported, also after reopening, until a rebuild of the cache" begin
     mktempdir() do depot
@@ -233,11 +236,11 @@ DataBrowserAPI.read(::LateProject, source::EngineSource, item::EngineSourceItem)
     processed() = data(only(W.materialize_items(ws, ["only"]))).x
     try
         settled(ws)
-        @eval DataBrowserAPI.process(::LateProject, i::EngineItem) =
-            EngineItem(id(i), (x=i.data.x .* 10,), metadata(i))
+        @eval DataBrowserAPI.process(::LateProject, i::EngineItem{:read}) =
+            EngineItem{:processed}(id(i), (x=i.data.x .* 10,), metadata(i))
         @test processed() == [10]
-        @eval DataBrowserAPI.process(::LateProject, i::EngineItem) =
-            EngineItem(id(i), (x=i.data.x .* 100,), metadata(i))
+        @eval DataBrowserAPI.process(::LateProject, i::EngineItem{:read}) =
+            EngineItem{:processed}(id(i), (x=i.data.x .* 100,), metadata(i))
         @test timedwait(() -> processed() == [100], 10) === :ok
     finally
         W.close_workspace!(ws)
@@ -251,7 +254,7 @@ end
     try
         settled(ws)
         @test calls[] == 1
-        @eval DataBrowserAPI.process(::LateProject, i::EngineItem) = i
+        @eval DataBrowserAPI.process(::LateProject, i::EngineItem{:read}) = i
         # The workspace checks the code twice a second.
         sleep(1.5)
         settled(ws)
@@ -267,10 +270,10 @@ DataBrowserAPI.read(::HelperProject, source::EngineSource, item::EngineSourceIte
     DataBrowserAPI.read(TypedProject(), source, item)
 helper_scale() = 2
 const HELPER_CALLS = Threads.Atomic{Int}(0)
-DataBrowserAPI.process(::HelperProject, i::EngineItem) = EngineItem(id(i),
+DataBrowserAPI.process(::HelperProject, i::EngineItem{:read}) = EngineItem{:processed}(id(i),
     (x=i.data.x .* helper_scale(),), metadata(i))
 
-@testset "a function that a stage calls, changed after the workspace opens, replaces its results" begin
+@testset "a function that a `process` calls, changed after the workspace opens, replaces its results" begin
     ws = W.open_workspace(HelperProject(), EngineSource("engine", 1, false); cache=false, background_processing=false)
     processed() = data(only(W.materialize_items(ws, ["only"]))).x
     try
@@ -287,10 +290,10 @@ DataBrowserAPI.process(::HelperProject, i::EngineItem) = EngineItem(id(i),
 end
 
 keyword_helper(x; k=1) = x * k
-keyword_stage(x) = keyword_helper(x; k=2)
+keyword_caller(x) = keyword_helper(x; k=2)
 
-@testset "only the keyword functions that a stage calls are part of its code" begin
-    revision() = DataBrowserCore.CodeRevisions.code_revision(collect(methods(keyword_stage))).hash
+@testset "only the keyword functions that a function calls are part of its code" begin
+    revision() = DataBrowserCore.CodeRevisions.code_revision(collect(methods(keyword_caller))).hash
     before = revision()
     @eval unrelated_keywords(; a=1) = a
     @test revision() == before
@@ -308,7 +311,7 @@ end
     end
 end
 
-@testset "labels include metadata from later stages, also after reopening" begin
+@testset "labels include metadata from a later `process`, also after reopening" begin
     mktempdir() do depot
         pushfirst!(DEPOT_PATH, depot)
         try
@@ -334,7 +337,7 @@ mutable struct LabeledProject <: AbstractProject
     reads::Int
 end
 DataBrowserAPI.project_name(::LabeledProject) = "labeled"
-DataBrowserAPI.storage(p::LabeledProject, ::Type{EngineItem}) = p.stored ? MemoryStore() : nothing
+DataBrowserAPI.storage(p::LabeledProject, ::Type{<:EngineItem}) = p.stored ? MemoryStore() : nothing
 function DataBrowserAPI.read(p::LabeledProject, ::EngineSource, ::EngineSourceItem)
     p.reads += 1
     return EngineItem("source", (x=[1],), Dict())
@@ -383,9 +386,9 @@ struct SharedNameProject <: AbstractProject end
 DataBrowserAPI.project_name(::SharedNameProject) = "shared name"
 DataBrowserAPI.read(::SharedNameProject, source::EngineSource, item::EngineSourceItem) =
     DataBrowserAPI.read(TypedProject(), source, item)
-DataBrowserAPI.process(::SharedNameProject, i::EngineItem) = EngineItem(id(i), (x=shared_scale(i.data.x),), metadata(i))
+DataBrowserAPI.process(::SharedNameProject, i::EngineItem{:read}) = EngineItem{:processed}(id(i), (x=shared_scale(i.data.x),), metadata(i))
 
-@testset "a stage may call a name that two modules export" begin
+@testset "a `process` may call a name that two modules export" begin
     ws = W.open_workspace(SharedNameProject(), EngineSource("engine", 1, false); cache=false, background_processing=false)
     try
         settled(ws)
@@ -404,9 +407,9 @@ function DataBrowserAPI.read(::ClosedProject, ::EngineSource, ::EngineSourceItem
     Threads.atomic_add!(CLOSED_READS, 1)
     return EngineItem("source", (x=[closed_count()],), Dict())
 end
-DataBrowserAPI.storage(::ClosedProject, ::Type{EngineItem}) = DuckDBStore(joinpath(first(DEPOT_PATH), "values.duckdb"))
-DataBrowserAPI.process(::ClosedProject, i::EngineItem) =
-    [EngineItem(string(n), (x=[n * closed_scale()],), Dict()) for n in 1:only(i.data.x)]
+DataBrowserAPI.storage(::ClosedProject, ::Type{<:EngineItem}) = DuckDBStore(joinpath(first(DEPOT_PATH), "values.duckdb"))
+DataBrowserAPI.process(::ClosedProject, i::EngineItem{:read}) =
+    [EngineItem{:processed}(string(n), (x=[n * closed_scale()],), Dict()) for n in 1:only(i.data.x)]
 
 @testset "code changed while the workspace is closed replaces the saved results" begin
     mktempdir() do depot

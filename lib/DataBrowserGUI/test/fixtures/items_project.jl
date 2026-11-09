@@ -7,11 +7,14 @@ struct ItemsSource <: DataBrowserAPI.AbstractDataSource
     entries::Vector
 end
 struct ItemsFile <: DataBrowserAPI.AbstractDataSourceItem end
-struct Entry <: DataBrowserAPI.AbstractDataItem
+# `S` is `:read` for the file that `read` gives, and `:processed` for the entries that `process`
+# gives, so that `process` takes only the file.
+struct Entry{S} <: DataBrowserAPI.AbstractDataItem
     name::String
     data::Any
     metadata::Dict{Symbol,Any}
 end
+Entry(name, data, metadata) = Entry{:processed}(name, data, metadata)
 DataBrowserAPI.project_name(::ItemsProject) = "items"
 DataBrowserAPI.id(::ItemsSource) = "items"
 DataBrowserAPI.label(::ItemsSource) = "items"
@@ -20,12 +23,12 @@ DataBrowserAPI.id(::ItemsFile) = "file"
 DataBrowserAPI.label(::ItemsFile) = "file"
 DataBrowserAPI.fingerprint(::ItemsFile) = 1
 # The file holds the entries.
-DataBrowserAPI.read(::ItemsProject, source::ItemsSource, ::ItemsFile) = Entry("file", source.entries, Dict{Symbol,Any}())
-DataBrowserAPI.process(::ItemsProject, file::Entry) = file.data
+DataBrowserAPI.read(::ItemsProject, source::ItemsSource, ::ItemsFile) = Entry{:read}("file", source.entries, Dict{Symbol,Any}())
+DataBrowserAPI.process(::ItemsProject, file::Entry{:read}) = file.data
 DataBrowserAPI.id(entry::Entry) = entry.name
 DataBrowserAPI.metadata(entry::Entry) = entry.metadata
 DataBrowserAPI.data(entry::Entry) = entry.data
-DataBrowserAPI.reconstruct(::Type{Entry}, name::AbstractString, data, metadata::Dict) = Entry(name, data, metadata)
+DataBrowserAPI.reconstruct(::Type{T}, name::AbstractString, data, metadata::Dict) where {T<:Entry} = T(name, data, metadata)
 
 # The workspaces that `selection_of` opened, closed at the end of the file that includes this one.
 const OPENED = Workspace.Workspace[]

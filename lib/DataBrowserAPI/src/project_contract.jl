@@ -1,8 +1,8 @@
 """
 Supertype of every DataBrowser project.
 
-A project answers the declarations in this file and implements the pipeline stages in
-`stage_contract.jl`. It carries no package-owned state: caches, jobs, indexes, and browser state
+A project answers the declarations in this file and implements `read` and `process` in
+`pipeline_contract.jl`. It carries no package-owned state: caches, jobs, indexes, and browser state
 belong to the workspace. The registration dialect's recipe-holding project is one implementation
 of this contract, not the contract itself.
 """

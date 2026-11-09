@@ -20,13 +20,7 @@ using CancellationTokens:
 using ..Catalogs
 using ..Catalogs: Catalog, Row, Part, Job, add!, hold!, release!, want!, request!, finish!, keepable, lost!, queued
 using ..CodeRevisions: CodeRevision, code_revision
-using DataBrowserAPI:
-    PipelineStage,
-    SOURCE_READ,
-    ITEM_PROCESS,
-    GROUP_PROCESS,
-    MEMBER_PROCESS,
-    metadata_dict
+using DataBrowserAPI: metadata_dict
 
 using DataBrowserCache:
     CacheDB,
@@ -121,14 +115,14 @@ end
 The counts that status watchers show: source items found and read, items, and the results of
 `process` that are current.
 """
-struct WorkspaceStageCounts
+struct WorkspaceCounts
     sources::Int
     read::Int
     items::Int
     processed::Int
 end
 
-WorkspaceStageCounts()::WorkspaceStageCounts = WorkspaceStageCounts(0, 0, 0, 0)
+WorkspaceCounts()::WorkspaceCounts = WorkspaceCounts(0, 0, 0, 0)
 
 """
 A single snapshot of everything a watcher needs to show about a workspace's background work.
@@ -155,14 +149,14 @@ struct WorkspaceStatus
     detail::String
     busy::Bool
     progress::Union{Nothing,Float32}
-    counts::WorkspaceStageCounts
+    counts::WorkspaceCounts
     errors::Vector{Pair{String,String}}
 end
 
 WorkspaceStatus() =
     WorkspaceStatus(
         :none, "Opening", "Opening the source…", true, nothing,
-        WorkspaceStageCounts(), Pair{String,String}[])
+        WorkspaceCounts(), Pair{String,String}[])
 
 """
 The code that the rows of one signature run: the function, the roots that [`code_roots`](@ref)
@@ -272,7 +266,7 @@ const COLUMNS = (id = (String, ""), version = (Row, Catalogs.NOWHERE), label = (
 
 # The type and the default cell of each column of the rows of the catalog.
 const ROWS = (readiness = (Readiness, UNPROCESSED), failure = (String, ""), changes = (UInt32, UInt32(0)),
-    stage = (Union{Nothing,PipelineStage}, nothing), outputs = (Union{Nothing,Vector{Output}}, nothing),
+    depth = (Union{Nothing,Int}, nothing), outputs = (Union{Nothing,Vector{Output}}, nothing),
     stored = (Union{Nothing,Tuple{Type,UInt64}}, nothing), execution = (Union{Nothing,ComputationExecution}, nothing),
     computation = (Union{Nothing,Computation}, nothing), signature = (Union{Nothing,Type}, nothing),
     members = (Vector{Row}, Row[]))
@@ -290,7 +284,7 @@ struct Version
     rows::NamedTuple{keys(ROWS),Tuple{(Cells{T} for (T, _) in ROWS)...}}
     metadata::Dict{Symbol,Cells}
     errors::Base.PersistentDict{Row,Pair{String,String}}
-    counts::WorkspaceStageCounts
+    counts::WorkspaceCounts
     generation::Int
     catalog::Catalog
 end
@@ -304,8 +298,8 @@ the id of the source item that it comes from. When an item leaves the
 workspace, its version in the draft is `Catalogs.NOWHERE`, and the next new item takes its number.
 
 Each row of the catalog keeps cells in `rows`, at its position: its [`Readiness`](@ref), the message
-of its failure, its number of changes (see `Catalogs.changes`), for a row of the pipeline its stage
-and the values that it gave when it last ran, for a current row the type and the revision of its
+of its failure, its number of changes (see `Catalogs.changes`), for a row of the pipeline its depth
+(see [`Pipeline.jl`](Workspace/Pipeline.md)) and the values that it gave when it last ran, for a current row the type and the revision of its
 result, under which the store of that type keeps the result of a row outside the pipeline, the last
 execution of its function, its computation as the catalog keeps it, the signature of its call, and
 for the row of a group the rows of the member values that it took when it last ran. An item reads
@@ -369,7 +363,7 @@ function Items(catalog::Catalog)
     rows = map(((T, default),) -> Column{T}(default), ROWS)
     return Items(1, 0, Int32[], index, columns, rows, Dict{Symbol,Column}(), Set{Int32}(), false, Base.Event(true),
         Version(index, map(column -> Cells(column, 0), columns), map(column -> Cells(column, 0), rows), Dict{Symbol,Cells}(),
-            Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceStageCounts(), 0, catalog),
+            Base.PersistentDict{Row,Pair{String,String}}(), WorkspaceCounts(), 0, catalog),
         Union{AbstractVector{<:AbstractString},Base.RefValue{Any}}[], lock, Threads.Condition(lock), Set{String}(),
         Dict{Any,@NamedTuple{selection::Any, generation::Int, asked::Float64}}(), Set{Int32}(), Base.Event(true), 0, 0, false)
 end
@@ -406,11 +400,12 @@ mutable struct Workspace
     # `tags.txt` and the browser's `databrowser.toml`.
     folder::String
     catalog::Catalog
-    # The row that reads each source item, by its id, and the rows of `process`, by
-    # "process:x", "group process:g" or "member process:m in g" for a value x, a group g, a member m.
+    # The row that reads each source item, by its id, and the rows of the calls of `process`, by
+    # their keys, such as "process:x@3" for the `process` of the version of x that row 3 gives (see
+    # `calls!`).
     sources::Dict{String,Row}
     rows::Dict{String,Row}
-    # The rows that give a version of each value, by its id, in the order of their stages: the last
+    # The rows that give a version of each value, by its id, in the order of their depth: the last
     # one gives its latest version. A row that did not run yet counts for the value it is expected
     # to give.
     versions::Dict{String,Vector{Row}}
@@ -538,8 +533,7 @@ function Workspace(
     catalog = Catalog(value -> key!(cache_db, id(value)))
     return Workspace(
         project, source, folder, catalog,
-        Dict{String,Row}(), Dict{String,Row}(),
-        Dict{String,Vector{Row}}(),
+        Dict{String,Row}(), Dict{String,Row}(), Dict{String,Vector{Row}}(),
         Dict{String,Vector{String}}(), Dict{String,Vector{String}}(), Dict{String,Vector{String}}(),
         Dict{Row,Taken}(), Dict{String,Vector{Row}}(),
         Dict{Tuple,Any}(),

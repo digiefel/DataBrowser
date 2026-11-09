@@ -1,19 +1,19 @@
 """
     Call
 
-One call of the code that made items: a stage of the project, such as `process(::Sweep)`, or the
-function of another computation. Items that went through the same code share their calls.
+One call of the code that made items: a `read` or `process` of the project, such as
+`process(::Sweep)`, or the function of another computation. Items that went through the same code share their calls.
 
-- `title`: the function's name, with the type of the values a stage of the project ran for;
-- `code`: the method, or the place in a file, that [`which`](@ref) gives; `nothing` when it is not
-  known;
+- `title`: the function's name, with the type of the values that a `read` or `process` ran for;
+- `code`: the method that Julia calls, or the place in a file that [`which`](@ref) gives; `nothing`
+  when it is not known;
 - `items`: the label of each item it ran for, by id: the source items for `read`, the items for
   `process`, the computations for a function;
 - `failed`: the first line of the error of each item it failed for, by id;
 - `result`: the type of the values a function gives, as Julia infers it before running it;
-  `nothing` when Julia cannot tell, and for a stage of the project;
+  `nothing` when Julia cannot tell, and for a `read` or `process`;
 - `computations`: the actual computation for each item, by the same id as `items`;
-- `inputs`: the calls whose results it read. A call of a stage reads the call before it.
+- `inputs`: the calls whose results it read. A `process` reads the call that gave its value.
 """
 mutable struct Call
     title::String
@@ -41,7 +41,7 @@ calls(workspace::Workspace, selection::Selection) =
 
 """How computations were made, without computing them or adding them to the workspace."""
 function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})::Vector{Call}
-    ## The rows of the computations, their stages, errors and members, as the latest version of the
+    ## The rows of the computations, their depths, errors and members, as the latest version of the
     ## table `items` shows them.
     version = @atomic workspace.items.version
     # The calls made so far, by their code and inputs; the same code on the same inputs is one call.
@@ -53,11 +53,11 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         given = value
         value.f === pick && (value = value.args[1])
         row = something(findfirst(isequal(value), version.catalog), Catalogs.NOWHERE)
-        at = version.rows.stage[row]
+        depth = version.rows.depth[row]
         ## The source item that a read reads, or the value that a `process` takes, or the
         ## computation.
-        ran_for = at == SOURCE_READ ? read_of(value) :
-            at !== nothing ? (value.args[2].id, label(workspace, value.args[2].id)) : (id(value), id(value))
+        ran_for = depth == 0 ? read_of(value) :
+            depth !== nothing ? (value.args[2].id, label(workspace, value.args[2].id)) : (id(value), id(value))
         given === value || (ran_for = (given.args[2], label(workspace, given.args[2])))
         failure = last(get(version.errors, row, nothing => nothing))
         stored = version.rows.readiness[row] == CURRENT ? version.rows.stored[row] : nothing
@@ -66,7 +66,7 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
         members = Computation[version.rows.computation[member] for member in version.rows.members[row]
             if version.rows.computation[member] !== nothing]
         preceding = unique!(reduce(vcat, map(calls_of, [inputs(value); members]); init=Call[]))
-        found = stage(version.rows.signature[row])
+        signature = version.rows.signature[row]
         # The call of `value`, with the calls it reads, kept with each call of the same code on the same inputs.
         function call!(title, code, result)::Call
             entry = get!(() -> Call(title, code, Dict(), Dict(), nothing, Dict(), preceding), known, (title, code, map(objectid, preceding)))
@@ -75,15 +75,13 @@ function calls(workspace::Workspace, definitions::AbstractVector{<:Computation})
             result === nothing || result === Any || (entry.result = entry.result === nothing ? result : typejoin(entry.result, result))
             return entry
         end
-        entry = if found === nothing
-            call!(function_name(value.f), which(value), stored === nothing ? Base.infer_return_type(value.f, argument_types(value)) : first(stored))
-        elseif found[1] == SOURCE_READ
-            call!("read(::$(nameof(found[2])))", which(workspace.project, SOURCE_READ, found[2]), nothing)
+        entry = if (value.f === read || value.f === process) && signature !== nothing
+            ## A read is named after the type of its source item, and a `process` after the type of
+            ## the value that it takes.
+            types = fieldtypes(signature)[2:end]
+            call!(value.f === read ? "read(::$(nameof(types[3])))" : "process(::$(label(types[2])))", which(value.f, Tuple{types...}), nothing)
         else
-            code = which(workspace.project, found...)
-            # A stage the project does not define passes on what it receives.
-            code === nothing && return (visited[given] = preceding)
-            call!("process(::" * string(label(found[2])) * ")", code, nothing)
+            call!(function_name(value.f), which(value), stored === nothing ? Base.infer_return_type(value.f, argument_types(value)) : first(stored))
         end
         failure === nothing || (entry.failed[first(ran_for)] = first(split(failure, '\n')))
         return (visited[given] = Call[entry])

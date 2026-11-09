@@ -7,22 +7,25 @@ items_of(ws) = setdiff(query_items(ws), [API.id(ws.source)])
 struct FileProject <: API.AbstractProject end
 API.project_name(::FileProject) = "file updates"
 
-struct FileReading <: API.AbstractDataItem
+# `S` is `:read` for what `read` gives, and `:processed` for what `process` gives, so that `process`
+# takes only what `read` gives.
+struct FileReading{S} <: API.AbstractDataItem
     name::String
     data::NamedTuple{(:value,),Tuple{Vector{Float64}}}
     metadata::Dict
 end
+FileReading(name, data, metadata) = FileReading{:read}(name, data, metadata)
 API.id(item::FileReading) = item.name
 API.data(item::FileReading) = item.data
 API.metadata(item::FileReading) = item.metadata
-API.reconstruct(::Type{FileReading}, name::AbstractString, data, metadata::Dict) =
-    FileReading(String(name), data, metadata)
+API.reconstruct(::Type{T}, name::AbstractString, data, metadata::Dict) where {T<:FileReading} =
+    T(String(name), data, metadata)
 
 function API.read(::FileProject, ::DirectorySource, file::SourceFile)
     fields = split(read(file.filepath, String))
     return FileReading(String(first(fields)), (value=parse.(Float64, fields[2:end]),), Dict())
 end
-API.process(::FileProject, item::FileReading) = FileReading(API.id(item),
+API.process(::FileProject, item::FileReading{:read}) = FileReading{:processed}(API.id(item),
     (value=sqrt.(API.data(item).value),), API.metadata(item))
 
 function reading_is(ws, name, value)
