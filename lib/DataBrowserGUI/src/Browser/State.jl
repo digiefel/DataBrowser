@@ -40,6 +40,10 @@ Base.@kwdef struct PersistedProjectView
     selected::Vector{String} = String[]
     expanded::Vector{String} = String[]
     filter::String = ""
+    # The filter bar: each tag that is "hidden" or "only", and each condition as its metadata key,
+    # "hidden" or "only", and the texts of the fields of its filter.
+    tags::Dict{String,String} = Dict{String,String}()
+    conditions::Vector{Vector{String}} = Vector{String}[]
     sort::Vector{Vector{String}} = Vector{String}[]
     extensions::Dict{String,Dict{String,Any}} = Dict{String,Dict{String,Any}}()
     windows::Vector{PersistedWindow} = PersistedWindow[]
@@ -323,12 +327,12 @@ Base.@kwdef mutable struct BrowserState
     # The ids of the groups that show their members in the tree, and of the groups closed by the
     # user while the filters open them, with a hash of the filters that opened them.
     expanded::Set{String} = Set{String}()
+    collapsed::Set{String} = Set{String}()
+    collapsed_for::UInt = zero(UInt)
     tree_filter::String = ""
     tree_filter_widget::Union{Nothing,Ptr{ig.lib.ImGuiTextFilter}} = nothing
     # The selection of the workspace that the browser last revealed or made itself, and the id of
     # the row to scroll the tree to.
-    collapsed::Set{String} = Set{String}()
-    collapsed_for::UInt = zero(UInt)
     selection::Vector{String} = String[]
     scroll_to_item_id::Union{Nothing,String} = nothing
     # How the tags that are not simply shown filter the rows: `:hidden` hides the rows of the tag,
@@ -336,7 +340,6 @@ Base.@kwdef mutable struct BrowserState
     tag_visibility::Dict{String,Symbol} = Dict{String,Symbol}()
     # The conditions on metadata in the filter bar, each with its visibility, as for the tags, and
     # the index of the condition whose editor opens in the next frame, or 0.
-    # TODO: save the conditions and `tag_visibility` with the view of the project.
     conditions::Vector{Pair{MetadataCondition,Symbol}} = Pair{MetadataCondition,Symbol}[]
     open_condition::Int = 0
     # The typed text and the highlight of the list of keys in the "+ Filter" menu.

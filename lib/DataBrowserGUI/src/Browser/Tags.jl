@@ -45,6 +45,25 @@ end
 Base.in(value, filter::Between{T}) where {T} = filter.readable && value isa T &&
     (filter.low === nothing || filter.low <= value) && (filter.high === nothing || value <= filter.high)
 
+"""
+    SavedFilter(texts)
+
+The filter of a condition read from `databrowser.toml`, with the texts of its fields, until the filter
+bar knows the type of the values of its key. It passes every value. The filter bar then replaces it
+with the filter of that type, with the same texts.
+"""
+struct SavedFilter <: MetadataFilter
+    texts::Tuple{Vararg{String}}
+end
+
+Base.in(_, ::SavedFilter)::Bool = true
+
+"""The texts of the fields of a filter, which `databrowser.toml` saves."""
+_filter_texts(::Nothing)::Tuple{Vararg{String}} = ()
+_filter_texts(filter::SavedFilter)::Tuple{Vararg{String}} = filter.texts
+_filter_texts(filter::Contains)::Tuple{Vararg{String}} = (filter.text,)
+_filter_texts(filter::Between)::Tuple{Vararg{String}} = (filter.from, filter.to)
+
 MetadataFilter(T::Type) = hasmethod(tryparse, Tuple{Type{T},String}) ? Between{T}("", "") : Contains("")
 
 """

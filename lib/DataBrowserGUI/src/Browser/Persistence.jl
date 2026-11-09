@@ -112,6 +112,9 @@ function _project_view_from_browser(
         selected=copy((@atomic workspace.shared).selection),
         expanded=sort!(collect(state.expanded)),
         filter=state.tree_filter,
+        tags=Dict(name => String(visibility) for (name, visibility) in state.tag_visibility),
+        conditions=[[String(condition.key), String(visibility), _filter_texts(condition.filter)...]
+            for (condition, visibility) in state.conditions],
         sort=by isa Workspace.SortKeys ? [[String(key), reverse ? "descending" : "ascending"] for (key, reverse) in by.keys] :
             state.saved_project_view.sort,
         extensions=_persisted_extensions(state),
@@ -235,6 +238,10 @@ function _apply_project_view!(
     state.selection = collect(String, view.selected)
     Workspace.share!(_ -> (; selection=state.selection), workspace)
     state.tree_filter = view.filter
+    state.tag_visibility = Dict(name => Symbol(visibility) for (name, visibility) in view.tags)
+    state.conditions = [MetadataCondition(Symbol(entry[1]),
+            length(entry) > 2 ? SavedFilter(Tuple(entry[3:end])) : nothing) => Symbol(entry[2])
+        for entry in view.conditions if length(entry) >= 2]
     ## The order of the Sort menu, unless code set an order with `sort!`.
     if !isempty(view.sort) && Workspace.order(workspace) isa Workspace.SortKeys
         order = Workspace.SortKeys([Symbol(key) => direction == "descending" for (key, direction) in view.sort])

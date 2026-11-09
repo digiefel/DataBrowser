@@ -152,6 +152,14 @@ function _render_filter_bar!(state::BrowserState)::Nothing
     end
     removed = 0
     for (index, (condition, visibility)) in enumerate(state.conditions)
+        ## A saved condition gets the filter of the type of its key's values once that is known.
+        type = condition.filter isa SavedFilter ? _value_type(workspace, condition.key) : nothing
+        if type !== nothing
+            empty, texts = MetadataFilter(type), condition.filter.texts
+            filter = length(texts) == length(_filter_texts(empty)) ? typeof(empty)(texts...) : empty
+            condition = MetadataCondition(condition.key, filter)
+            state.conditions[index] = condition => visibility
+        end
         ig.PushID(index)
         next = _render_filter_button!(_condition_text(condition.key, condition.filter),
             (0.5f0, 0.5f0, 0.5f0), visibility, "Items that match", "Right-click to change the condition.")
@@ -191,11 +199,11 @@ function _render_condition_editor!(state::BrowserState, index::Int)::Bool
     condition, visibility = state.conditions[index]
     ig.TextUnformatted(String(condition.key))
     filter = condition.filter
-    if filter === nothing
+    if filter isa Union{Nothing,SavedFilter}
         type = _value_type(state.workspace, condition.key)
         type === nothing ? ig.TextDisabled("Loading") : (filter = MetadataFilter(type))
     end
-    filter === nothing || (filter = _render_filter(filter))
+    filter isa Union{Nothing,SavedFilter} || (filter = _render_filter(filter))
     filter === condition.filter ||
         (state.conditions[index] = MetadataCondition(condition.key, filter) => visibility)
     return ig.Button("Remove")
