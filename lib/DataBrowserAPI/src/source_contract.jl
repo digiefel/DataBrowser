@@ -21,8 +21,8 @@ item of that value.
 
 A metadata value may have any type that `StructUtils.lower` saves and `StructUtils.make` builds
 again: numbers, strings, symbols, dates, vectors of them, and structs of those, field by field. A
-type whose fields do not describe it defines `StructUtils.lower` and `StructUtils.lift`. All values
-under one name have one type: the workspace reports a value of another type and does not save it.
+type whose fields do not describe it defines `StructUtils.lower` and `StructUtils.lift`. The values
+under one name may have several types, such as an `Int` for one item and a `Float64` for another.
 """
 function metadata end
 

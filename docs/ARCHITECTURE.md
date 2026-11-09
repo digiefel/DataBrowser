@@ -409,7 +409,7 @@ browser change the same object: `v.name = value` changes a setting in every clie
 `v`, and closing the window leaves `v` in the workspace until `close(v)`.
 
 The input of a visualizer is the selection of the workspace (`LiveSelection()`), fixed items
-(`FixedItems(ids)`), the items for which a function of their row returns `true`, or another
+(`FixedItems(ids)`), the items for which a function returns `true`, or another
 visualizer. A client draws the value of a visualizer with an instance of the visualizer type, which
 it owns, and can publish the output of that instance, such as the rows selected in a table, for the
 visualizers that take their input from it:
