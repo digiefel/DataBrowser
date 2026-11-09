@@ -2,8 +2,8 @@
 
 These plans describe the target design of DataBrowser: what is decided, what is proposed and what is
 open. [Architecture](../ARCHITECTURE.md) describes the running system, and is right where a plan
-differs from it about what is built. [The roadmap](../roadmap.md) lists what is built and what is
-planned.
+differs from it about what is built. [The roadmap](../roadmap.md) lists what is planned, and
+[the changelog](../changelog.md) what was built.
 
 Each topic has one plan that owns it. Discussion belongs in a coordination note until it changes a
 decision, a proposal or an open question of that plan; review transcripts are not appended to
