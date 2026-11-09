@@ -81,12 +81,10 @@
 # labels, and its revision; a row whose revision is the saved one is current without running. The
 # results themselves come from the stores ([`Evaluate.jl`](Evaluate.md)).
 #
-# All the values under one metadata name have one type in the whole workspace, because the cache
-# keeps each name in a column of one type: the type of the first value saved under the name. When
-# `a/1` gives `temperature = 300`, an `Int`, and `a/2` then gives `temperature = 300.5`, a
-# `Float64`, the row that gives `a/2` fails, the status panel of the browser shows the error next to
-# `a/2`, and the cache saves the failure. To change the type of a name, change the project so that
-# every value has the new type, and open the workspace with `rebuild=true`.
+# The values under one metadata name can have several types. When `a/1` gives `temperature = 300`,
+# an `Int`, and `a/2` gives `temperature = 300.5`, a `Float64`, the column `temperature` of the
+# table `items` holds both, with the element type `Union{Missing,Int,Float64}`, whatever the order
+# in which the two calls finish.
 #
 # Changes reach the pipeline from three places:
 #
@@ -377,13 +375,22 @@ end
     store!(items, output, values)
 
 Replace the metadata of the value `output` in the draft of `items` with `values`, keeping a copy of
-each vector value. The first value stored under a metadata key fixes the type of its column; the
-cache admits only values of that type, and saves them first. The caller holds the catalog lock.
+each vector value. The column of a metadata name holds the types of all its values: a value of
+another type gives the column a wider element type, such as `Union{Missing,Int,Float64}`. The
+caller holds the catalog lock.
 """
 function store!(items::Items, output::Output, values::AbstractDict{Symbol})::Nothing
     for (name, value) in values
-        value === missing || haskey(items.metadata, name) ||
-            (items.metadata[name] = Column{Union{Missing,typeof(value)}}(missing))
+        value === missing && continue
+        column = get(items.metadata, name, nothing)
+        if column === nothing
+            items.metadata[name] = Column{Union{Missing,typeof(value)}}(missing)
+        elseif !(value isa eltype(column.empty.cells))
+            ## A copy of each block, so that the published versions keep theirs.
+            T = Union{eltype(column.empty.cells),typeof(value)}
+            items.metadata[name] = Column{T}([Block{T}(items.draft, block.cells) for block in column.blocks],
+                items.draft, Block{T}(0, column.empty.cells))
+        end
     end
     shown = false
     for (name, column) in items.metadata

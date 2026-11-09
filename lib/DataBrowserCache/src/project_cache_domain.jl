@@ -1,4 +1,4 @@
-const PROJECT_CACHE_SCHEMA_VERSION = 48
+const PROJECT_CACHE_SCHEMA_VERSION = 49
 
 """
 The limit, in MiB, of the memory in which DuckDB keeps the pages it read from a cache file or from
@@ -179,9 +179,9 @@ mutable struct CacheDB
     free_keys::Vector{Int64}
     next_key::Int64
     key_lock::ReentrantLock
-    ## The signature of the output_metadata columns backing the query view; the view is
-    ## recreated only when it changes.
-    query_view_signature::Vector{Symbol}
+    ## The columns of output_metadata, with their DuckDB types, by metadata name, that the query
+    ## view reads; the view is created again only when they change.
+    query_view_signature::Vector{Pair{String,Vector{Tuple{String,String}}}}
 end
 
 # The cache files open in this process, with their database, or `nothing` while it opens. DuckDB's
@@ -298,7 +298,7 @@ function open_cache_db(
             reverse!(setdiff(Int64(1):next_key - 1, used)),
             next_key,
             ReentrantLock(),
-            Symbol[],
+            Pair{String,Vector{Tuple{String,String}}}[],
         )
         ## The cache forgets a record with a type that no longer exists: its row runs again.
         foreach(key -> delete!(cache, key), [key for (key, record) in records
@@ -356,6 +356,7 @@ function ensure_schema!(connection)::Nothing
         CREATE TABLE IF NOT EXISTS wide_columns(
             table_name TEXT,
             column_name TEXT,
+            metadata_name TEXT,
             julia_type TEXT,
             sql_type TEXT,
             PRIMARY KEY (table_name, column_name))
@@ -567,24 +568,46 @@ function query_items(cache::CacheDB, predicate::AbstractString)::Vector{String}
     end
 end
 
-"""Create again the view that `query_items` reads, when `output_metadata` has other columns."""
+"""
+Create again the view that `query_items` reads, when `output_metadata` has other columns. The view
+has one column for each metadata name: the column of its one type, or the first value among the
+columns of its types, in a DuckDB type that holds all of them, such as `DOUBLE` for an `Int` and a
+`Float64`, or else as text.
+"""
 function _ensure_items_view!(cache::CacheDB)::Nothing
     connection = DBInterface.connect(cache.db)
     try
-        signature = Symbol[]
+        ## The registry gets each column in the transaction that adds it to the table.
+        columns = Dict{String,Vector{Tuple{String,String}}}()
         for row in _execute_on_duckdb_threads(connection, """
-            SELECT column_name FROM information_schema.columns
-            WHERE table_schema = 'main' AND table_name = 'output_metadata'
-            ORDER BY ordinal_position
+            SELECT column_name, metadata_name, sql_type FROM wide_columns
+            WHERE table_name = 'output_metadata' ORDER BY column_name
         """)
-            push!(signature, Symbol(String(row.column_name)))
+            push!(get!(columns, String(row.metadata_name), Tuple{String,String}[]),
+                (String(row.column_name), String(row.sql_type)))
         end
+        signature = sort!(collect(columns); by=first)
         ## The view is replaced in one statement, so a query on another task always finds it.
         lock(cache.key_lock) do
             signature == cache.query_view_signature && return nothing
+            selected = map(signature) do (name, typed)
+                quoted = [_quote_identifier(column) for (column, _) in typed]
+                length(typed) == 1 && return "$(only(quoted)) AS $(_quote_identifier(name))"
+                ## DuckDB refuses a `COALESCE` of types without a common type, such as BIGINT and
+                ## VARCHAR.
+                common = try
+                    _run(connection, "SELECT COALESCE(" * join(["NULL::$sql" for (_, sql) in typed], ", ") * ")")
+                    true
+                catch
+                    false
+                end
+                parts = common ? quoted : ["CAST($column AS VARCHAR)" for column in quoted]
+                return "COALESCE(" * join(parts, ", ") * ") AS $(_quote_identifier(name))"
+            end
             _run(connection, """
                 CREATE OR REPLACE VIEW mb_item_query AS
-                SELECT * EXCLUDE (output_key, computation, depth, position, members_hex)
+                SELECT outputs.* EXCLUDE (output_key, computation, depth, position, members_hex)
+                    $(join([", " * column for column in selected]))
                 FROM outputs LEFT JOIN output_metadata USING (output_key)
                 QUALIFY row_number() OVER (PARTITION BY id ORDER BY depth DESC) = 1
             """)

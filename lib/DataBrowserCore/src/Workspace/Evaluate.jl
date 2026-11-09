@@ -93,19 +93,18 @@
 # the row may give ([`Pipeline.jl`](Pipeline.md)); any other result fails the row. When a function
 # throws, the row fails: the error is logged, the status panel of the browser shows the error next
 # to its value, and the cache saves it. The `id`, `label`, `members` and `metadata` methods of the
-# values count too, and so does a metadata value that the cache cannot hold, as one of another type
-# than the earlier values of its name. When reading a source item fails, its values leave the
+# values count too, and so does a metadata value that the cache cannot hold, as a value of a type
+# that DuckDB has no column type for. When reading a source item fails, its values leave the
 # workspace until a later read succeeds. A `process` that fails gives no values, and the value it
 # was given keeps the failed row as its latest version, until the row runs again. A failed row does
 # not run again, even in a later session, until its revision changes: its code, an input or an
 # argument changed. To run failed rows again without a change, open the workspace with
 # `rebuild=true`, which empties its cache.
 #
-# When the store refuses a result, as a `DuckDBStore` refuses metadata of another type than the
-# values it holds under that name, the row fails in the same way, but the cache does not save the
-# error: the next session runs the row again. The cache does not save the failure of a row that
-# gives the id of an item of another row either. Also, a row whose saved values have such an id runs
-# instead of taking them from the cache.
+# When the store refuses a result, as a `DuckDBStore` refuses metadata that it cannot save, the row
+# fails in the same way, but the cache does not save the error: the next session runs the row again.
+# The cache does not save the failure of a row that gives the id of an item of another row either.
+# Also, a row whose saved values have such an id runs instead of taking them from the cache.
 #
 # TODO: a way to run one failed row again, as after a file was locked for a moment, or after the
 # row that gave the same id is gone.

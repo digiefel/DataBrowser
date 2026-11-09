@@ -59,7 +59,7 @@ const OPEN_STORES = (lock=ReentrantLock(), paths=Dict{String,DuckDBStore}())
 
 # The layout of the tables of a store file. Raise it with each change of the layout that the code of
 # the previous one cannot read: files written before are then refused.
-const DUCKDB_STORE_VERSION = 1
+const DUCKDB_STORE_VERSION = 2
 
 function DuckDBStore(path::AbstractString; max_bytes::Integer=64 * 1024^2)
     path = abspath(path)
@@ -98,7 +98,7 @@ function open_duckdb_store(path::String, max_bytes::Integer)
     _run(serialized, create_table_sql(StoredShell, "stored_item_types", (:id,)))
     _run(serialized, "CREATE TABLE IF NOT EXISTS stored_item_metadata (id VARCHAR PRIMARY KEY)")
     _run(serialized, "CREATE TABLE IF NOT EXISTS wide_columns(table_name TEXT, column_name TEXT, " *
-        "julia_type TEXT, sql_type TEXT, PRIMARY KEY (table_name, column_name))")
+        "metadata_name TEXT, julia_type TEXT, sql_type TEXT, PRIMARY KEY (table_name, column_name))")
     shell_rows = RowStore{String,StoredShell}(database, "stored_item_types", ("id",))
     metadata_rows = WideRowStore{String}(database, "stored_item_metadata", "id")
     serialized_ids = Set{String}(String(row.id)
