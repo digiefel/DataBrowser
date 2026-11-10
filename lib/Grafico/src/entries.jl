@@ -1,3 +1,6 @@
+using Makie: Makie, Axis, Axis3, Figure, plot!
+import FileIO
+
 """
     Entry(plottype::PlotType, positional::Arguments, named::NamedArguments)
 

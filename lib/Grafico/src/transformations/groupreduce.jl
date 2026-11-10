@@ -1,3 +1,7 @@
+using Base: front
+using Makie: Makie
+using StructArrays: GroupPerm, StructArray, uniquesorted
+
 # Potentially add shim to support OnlineStats
 function _groupreduce(agg, summaries::Tuple, values::Tuple)
     init, op, value = agg.init, agg.op, agg.value

@@ -1,3 +1,8 @@
+using Dictionaries: Dictionary, dictionary, set!
+using Makie: Makie, BarPlot, BoxPlot, Contour, Contourf, CrossBar, Heatmap, Plot, Stem, Surface, Violin, Waterfall, plot, rich, to_value
+using StructArrays: uniquesorted
+using Tables: columns
+
 """
     AbstractDrawable
 

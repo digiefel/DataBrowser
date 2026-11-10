@@ -1,3 +1,7 @@
+using Makie: Makie, Contourf, Point2f, automatic
+import Isoband
+import PolygonOps
+
 Base.@kwdef struct FilledContoursAnalysis
     bands::Union{Nothing, Int}
     levels::Union{Nothing, Vector{Float64}}

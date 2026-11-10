@@ -1,3 +1,13 @@
+using Base: tail
+using Dates: Date, DateTime, Millisecond, Period, Time, TimeType
+using Dictionaries: Dictionary
+using GeometryBasics: AbstractGeometry
+using GeoInterface: isgeometry
+using Makie: Makie, Automatic, Point, RGBAf, WilkinsonTicks, automatic, cgrad
+using PlotUtils: AbstractColorList
+import Accessors
+import NaturalSort
+
 ## Aesthetics
 
 abstract type Aesthetic end

@@ -1,3 +1,8 @@
+using Dictionaries: dictionary
+using Makie: Band, Lines, automatic
+using StatsBase: StatsBase
+import GLM
+
 Base.@kwdef struct LinearAnalysis{I}
     npoints::Int = 200
     dropcollinear::Bool = false

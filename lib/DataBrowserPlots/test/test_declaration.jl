@@ -96,3 +96,68 @@ end
     items_obs[] = (device=["D1", "D2"], data=(V=[[0.0, 1.0], [0.0, 2.0]], I=[[0.0, 2.0], [0.0, 4.0]]))
     @test length(plotted(drawn, Lines)) == 2
 end
+
+@testset "non-macro syntax, figure composition, graphic marks, and @manipulate" begin
+    rows = [(V=v, I=c == "a" ? v : 2v, Chip=c) for c in ("a", "b") for v in (1.0, 2.0)]
+
+    # Non-macro algebraic composition with scales, coord, legend, plot_theme
+    alg = data(rows) * mapping(:V, :I; color=:Chip) * (visual(Scatter) + visual(Lines)) +
+          scales(color=(; palette=[:red, :blue])) +
+          coord(y=(; scale=log10)) +
+          legend(merge=true) +
+          plot_theme(:light; Axis=(; xgridvisible=false))
+    drawn_alg = figure(alg)
+    @test length(plotted(drawn_alg, Scatter)) == 2
+    @test length(plotted(drawn_alg, Lines)) == 2
+    @test only(filter(c -> c isa Axis, drawn_alg.content)).yscale[] === log10
+
+    # Non-macro callable header syntax
+    hdr = (data(rows) * mapping(:V, :I; color=:Chip))(
+        visual(Scatter),
+        visual(Lines),
+        coord(x=(; label="Voltage")),
+        legend(merge=true),
+    )
+    drawn_hdr = figure(hdr)
+    @test length(plotted(drawn_hdr, Scatter)) == 2
+    @test only(filter(c -> c isa Axis, drawn_hdr.content)).xlabel[] == "Voltage"
+
+    # Automatic Makie attribute aesthetics on LineSegments
+    seg_plot = data(rows) * mapping(:V, :I; color=:Chip) * visual(LineSegments)
+    @test length(plotted(figure(seg_plot), LineSegments)) == 2
+    io = IOBuffer()
+    show_aesthetics(io, LineSegments)
+    @test occursin("LineSegments", String(take!(io)))
+
+    # Multi-panel figure composition with | and /
+    p1 = data(rows) * mapping(:V, :I) * visual(Scatter)
+    p2 = data(rows) * mapping(:V, :I) * visual(Lines)
+    composed = (p1 | p2) / p1
+    @test composed isa ComposedFigure
+    @test spec(composed) isa Makie.GridLayoutSpec
+    fig_comp = figure(composed)
+    @test count(c -> c isa Axis, fig_comp.content) == 3
+
+    # Vizagrams-inspired graphic marks (standalone, overlay, and per-row mark)
+    badge = T(1.5, 2.0) * U(0.5) * R(π / 4) * Style(color=:crimson) * CircleMark(r=0.2) +
+            T(1.5, 2.0) * RectMark(w=0.4, h=0.2) +
+            Segment((1.0, 1.0), (2.0, 3.0)) +
+            TextMark("peak"; x=1.5, y=2.5)
+    @test spec(badge) isa Makie.GridLayoutSpec
+    @test count(c -> c isa Axis, figure(badge).content) == 1
+    @test count(c -> c isa Axis, figure(p1 + badge).content) == 1
+
+    glyph_plot = data(rows) * mapping(:V, :I) * mark((x, y) -> T(x, y) * Style(color=:teal) * CircleMark(r=0.1))
+    @test count(c -> c isa Axis, figure(glyph_plot).content) == 1
+
+    # @manipulate reactive controls
+    mfig = @manipulate for scale_factor in 1.0:1.0:3.0, show_pts in (true, false), kind in [:a, :b]
+        pts = [(x=x, y=scale_factor * x) for x in (1.0, 2.0)]
+        base = data(pts) * mapping(:x, :y) * visual(Lines)
+        show_pts ? base + data(pts) * mapping(:x, :y) * visual(Scatter) : base
+    end
+    @test mfig isa Figure
+    @test any(c -> c isa Slider, mfig.content)
+    @test any(c -> c isa Toggle, mfig.content)
+    @test any(c -> c isa Menu, mfig.content)
+end

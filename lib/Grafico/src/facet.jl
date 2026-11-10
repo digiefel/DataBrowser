@@ -1,3 +1,7 @@
+using GridLayoutBase: Protrusion, protrusionsobservable
+using Makie: Makie, Axis, Axis3, Bottom, Label, Left, Mixed, Right, Top, automatic, lift, resize_to_layout!, to_value
+import Makie: hidedecorations!, hidexdecorations!, hideydecorations!, linkaxes!, linkxaxes!, linkyaxes!
+
 ## Options preprocessing
 
 function normalize_link(link, var, consistent, directionally_consistent)

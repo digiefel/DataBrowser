@@ -1,5 +1,7 @@
 # A poly recipe that takes data in long format, used for the filled_contours analysis
 
+using Makie: Makie, poly!, @recipe
+
 @recipe LongPoly (x, y, id, subid) begin
     color = @inherit patchcolor
     strokecolor = @inherit patchstrokecolor

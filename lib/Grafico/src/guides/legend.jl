@@ -1,3 +1,6 @@
+using Dictionaries: Dictionary
+using Makie: Makie, ABLines, Annotation, Arrows2D, Band, BarPlot, BoxPlot, Contour, CrossBar, Density, ECDFPlot, Errorbars, Heatmap, Hist, HLines, HSpan, Legend, LegendElement, LineElement, Lines, LineSegments, MarkerElement, Point2, Point2f, Poly, PolyElement, QQNorm, QQPlot, RainClouds, Rangebars, Scatter, ScatterLines, Stairs, Stem, Violin, VLines, VSpan, Wireframe, to_value
+
 function legend!(
         fg::FigureGrid; position = :right,
         orientation = default_orientation(position), kwargs...

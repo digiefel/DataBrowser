@@ -1,3 +1,6 @@
+using Dictionaries: dictionary
+using Makie: Contour
+
 Base.@kwdef struct ContoursAnalysis
     levels::Union{Int, Vector{Float64}}
     kwargs::Dict{Symbol, Any}

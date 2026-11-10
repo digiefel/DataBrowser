@@ -1,4 +1,6 @@
+using Makie: Makie, Axis, Axis3, Figure, Legend, Lines, Scatter
 import Makie.SpecApi as S
+using Tables: Tables
 
 # The package draws the legend itself, so that roles share a section when one determines the others
 # (plans/graphics-grammar.md). `texts` are the texts of the entries in the section of a role.
