@@ -12,9 +12,9 @@ import DataBrowserAPI, DataBrowserSources, DataBrowserRecipes, DataBrowserCore, 
 include("codemap.jl")
 const GENERATED = joinpath(@__DIR__, "generated")
 # The folders whose Julia files become pages, in the order of the sidebar.
-const FOLDERS = ["src", "ext", "lib", "scripts", "test", "examples"]
+const FOLDERS = ["src", "ext", "lib", "scripts", "test"]
 # The folders whose subfolders each get their own section of the sidebar.
-const GROUPED_FOLDERS = ["lib", "examples"]
+const GROUPED_FOLDERS = ["lib"]
 
 rm(GENERATED; recursive=true, force=true)
 mkpath(GENERATED)

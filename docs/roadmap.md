@@ -267,8 +267,6 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] Recipes: find the `collection` callback of an item by dispatch instead of a linear scan of the
   registrations.
 - [ ] Strengthen internal module boundaries and import hygiene across the package family.
-- [ ] Run every example entirely through the documented public APIs and remove any remaining public
-  callback dependency on cache, index, scheduler, or browser values.
 
 ### 0.2.5 GUI as one caller of the API
 

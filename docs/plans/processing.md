@@ -512,6 +512,14 @@ record the rows it read; other data is understood only as far as its type allows
    outputs cannot appear in the tree before.
 10. `read` as the first value of each chain: a non-repeatable read must keep its result in the
     cache, never be computed again.
+11. How a group `process` method reaches values produced from its members. A mean of each sample
+    has an id of its own, so it is not a later version of the sample, and a `process` method on the
+    group of all samples does not receive the means. A comparison of every sample mean, including
+    samples added later, needs a way to name those produced values.
+12. How a user sees the exact versions of the inputs that a call used, when a group `process`
+    method received later versions of its members than `members(group)` lists.
+13. When a result whose data is a vector, such as one difference trace for each repeat, becomes
+    several items, each with an id of its own.
 
 ## Evidence and limits
 
