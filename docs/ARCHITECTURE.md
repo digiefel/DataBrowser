@@ -56,11 +56,11 @@ flowchart TB
     db --> engine
     db --> fitting
     db --> contracts
-    gui -->|"open_workspace<br/>modify_workspace!<br/>select!<br/>select<br/>materialize_items<br/>workspace_status"| core
+    gui -->|"select<br/>select!<br/>sort!<br/>visualize!<br/>modify_workspace!<br/>rebuild_cache!<br/>workspace_status"| core
     gui --> cache
     gui --> api
-    plots -->|"DataBrowserPlotsGUIExt:<br/>ItemTable<br/>merge_item_tables"| gui
-    plots -->|"materialize_items"| core
+    plots -->|"DataBrowserPlotsGUIExt:<br/>GuiExtension<br/>register_gui_extension!<br/>CodeFile"| gui
+    plots -->|"Selection<br/>Computation<br/>evaluate"| core
     plots --> fitting
     plots --> api
     core --> src
@@ -129,6 +129,12 @@ windows, and a script opens a workspace from the REPL:
                                    the project: read and process
 ```
 
+`open_workspace(project, source)` opens a workspace, and `open_workspace(project, path)` makes a
+`DirectorySource` for the folder at `path`. `close_workspace!` closes it, and Julia closes a
+workspace that is still open when it exits. `modify_workspace!` rebuilds an open workspace with
+another source or other options, and `rebuild_cache!` empties its cache and scans the source again;
+both keep the selection, the tags and the order set by `sort!`.
+
 ### Items and groups
 
 An *item* is one value of the project, such as one measurement: a value of a type that the project
@@ -140,6 +146,10 @@ source item gives. The `read` of a source item that holds other source items, su
 holds its measurements, can give a group of a type of the project, whose members are those source
 items. Besides, the workspace makes one `SourceGroup` for the whole source, whose members are all
 its source items.
+
+A source item can have metadata of its own, `metadata(source_item)`, such as the file name of a
+`SourceFile`. The metadata of an item holds only what `metadata(item)` gives; DataBrowserRecipes
+copies the metadata of the source item into the items that it makes.
 
 The project defines these methods, which the [API](api.md) page describes:
 
@@ -154,7 +164,10 @@ None of them has a default: the workspace makes a function call only when a meth
 takes its arguments. It makes these calls for every item that a call gives, so a chain of calls
 ends at an item that no method takes. A method that returns the type that it takes runs again on
 its result, as a loop, and the chain ends when the result is `isequal` to the item that the call
-took.
+took. DataBrowserAPI defines `isequal` and `hash` for every `AbstractDataItem` from its type, `data`
+and `metadata`, and for a group also from its `members`; a project defines its own methods for
+another rule, such as a tolerance. After `MAX_VERSIONS`, 100, versions of one id in a chain, the
+next call fails, and so does a row that gives one id twice.
 
 The workspace keeps each function call in a row of its *catalog*, a table with one row for each
 *computation*, a function call before it runs. The rows whose results a row takes are its *inputs*.
@@ -175,13 +188,13 @@ runs every row, the catalog has these rows:
     6    process(project, g, [a, b])        group process    5, 2, 4  fit, a new item
     7    process(project, a, g)             member process   2, 5     a later version of a
     8    process(project, b, g)             member process   4, 5     a later version of b
-    9    SourceGroup(source, [a, b, g])     read                      the source group
+    9    SourceGroup(id, label, [a, b, g])  read                      the source group
 
     Each item has the id of its source item. [a, b] is the items of the members a and b.
 ```
 
-The workspace adds a read row when the source lists a source item, and a `process` row when the item
-that it takes exists. A row runs after its inputs: row 2 calls `process` with the item that row 1
+The workspace adds a read row when the source lists a source item, and a `process` row once the
+version that it takes has a result. A row runs after its inputs: row 2 calls `process` with the item that row 1
 gives. A row that takes an item and gives an item with the same id gives a later *version* of it:
 rows 1, 2 and 7 give three versions of `a`. The *depth* of a version is the number of `process`
 calls between it and the read: 0 for row 1, 1 for row 2 and 2 for row 7. Windows show the *latest
@@ -189,14 +202,18 @@ version* of each item, the deepest one: here `a` from row 7, `b` from row 8, `g`
 `fit` from row 6, a new item. A call takes the other items that it needs at their latest version
 that does not come from its own result. So the group process takes, for each member, its latest
 version of the type that its method takes: here from rows 2 and 4, since rows 7 and 8 give another
-type. `background_processing` is off by default: the workspace adds every row, runs the
-reads, and runs a `process` row only when a window shows its item or a script asks for it. A group
-process then takes, for each member, the latest version of that type among those that have a
-result or will run.
+type. A member with no version of that type is left out, and a member
+that is a group with no such version gives the versions of its own members, so a method on the
+group at the top reaches every item below it. When the latest version of a member failed, the group
+process takes the version before it. `background_processing` is off by default: the workspace runs
+the reads, and runs a `process` row only when a window shows its item or a script asks for it, so
+rows 7 and 8 appear only after rows 2 and 4 ran. A group process then takes, for each member, the
+latest version of that type among those that have a result or will run.
 
 The values do not depend on the order in which rows finish. When two rows give versions of one item
 at the same depth, or two rows that take no version of an item both give it, neither result counts
-as a version of that item, and the status panel shows the conflict next to both rows. Also, when a
+as a version of that item, and the status panel shows the conflict next to both rows. When one of the two rows no longer gives
+the id, the other gives its version again, without running. Also, when a
 group process takes a version of a member that a member process of the same group gave, each would
 give a later version of the other without end, so the group process fails: if row 7 gave a
 `ProcessedItem`, row 6 would take it and fail. The
@@ -204,13 +221,17 @@ give a later version of the other without end, so the group process fails: if ro
 
 ### Keys and revisions
 
-The *cache* is a DuckDB file that DataBrowser keeps for each project in the Julia depot. It gives
+The *cache* is a DuckDB file that DataBrowser keeps for each project,
+`databrowser/<project_name>/cache.duckdb` in the first Julia depot. It saves the id of its source,
+so opening the project on another source fails until the cache is rebuilt. It gives
 each row a *key*, a number, and keeps it under the *id of the computation* of the row: the name of
 its function and the ids of its arguments, such as `process(myproject, a)` for a project named
 `myproject`. So the same computation gets the same key in the next session, and the catalog puts
 the row at the position of its key. A `process` can give several items, so the cache also gives
 each item that a row of the project gives a key of its own, from the same counter. Under these
-keys the cache keeps what the next session needs to know.
+keys the cache keeps what the next session needs to know. Its table `output_metadata` keeps the
+metadata of each item under the key of the item, and an opening workspace fills its table `items`
+from it, so an item that the cache restored shows its metadata before its result is read.
 
 A *store* keeps the results. It keeps each result under its *revision*, a hash that identifies the
 result (see "When a row runs"), and each item that a row of the project gives under a revision of
@@ -240,13 +261,27 @@ result leaves the store. `storage(project, T)` chooses the store for results of 
 | a `MemoryStore`, the default store | the memory of Julia | lost: the rows run again when something needs their results |
 | a `DuckDBStore`, the store of a project made with DataBrowserRecipes | the file `values.duckdb` in the folder of the Julia environment, which all such projects of the environment share | kept |
 
+Each result type has its own `MemoryStore` of 64 MiB by default, which removes the least recently
+used results above that, so rows can also run again within a session. When `storage` returns
+`nothing`, the workspace keeps no results of that type; when `storage` throws, it warns and uses a
+`MemoryStore`. The workspace writes a copy of each result to its store, and a store gives back
+copies. A result that its store cannot read counts as lost, and its row runs again. A `DuckDBStore`
+saves an item as its data and metadata and makes it again with `reconstruct(T, id, data,
+metadata)`; when `reconstruct` gives `nothing`, as for a `SourceGroup`, it saves the whole item as
+one serialized value. `view(item, selection)` and `item[selection]` use `reconstruct` too, to make
+an item with part of its data.
+
 ### When a row runs
 
 A row is *missing* until it first runs. It is then *current*, with a result, or *failed*, with the
 error that its function threw. A failure is a result of the code and the inputs, as a value is: a
 failed row runs again only when it becomes *stale*. A row becomes stale when the code of its
 function changes, when one of its inputs becomes stale, or when a source item that it reads
-changes:
+changes. A `read` or a `process` that returns something other than an item or a vector of items
+fails its row, and so does a metadata value that the cache cannot hold. When a `read` fails, its
+values leave the workspace until a later read succeeds; a failed `process` stays the latest version
+of the item that it took. When a store refuses a result, the row fails, but the cache does not save
+the error, so the next session runs the row again.
 
 ```text
     missing ──┐                    ┌──▶ current ──┐
@@ -305,6 +340,13 @@ revision changed, as after an edit of a `label` method, the row takes its items 
 without calling its function, and computes their labels, ids, members and metadata again. A row
 whose store lost one of these items calls its function.
 
+While a workspace is open, a task loads the saved edits that Revise notices, looking 50 times a
+second, and then checks the code revisions of the project. The workspace follows code only in
+`Main` and in packages added with `Pkg.develop`; for other packages, the Julia version and the
+Manifest count instead. It warns about code that it cannot follow, such as a value changed in
+place. A row that becomes stale while its function runs lets the call finish, drops its result and
+runs again.
+
 These pages of DataBrowserCore give the details:
 
 | Page | What it explains |
@@ -329,8 +371,8 @@ changes a published one, so a reader needs no lock.
   every 0.05 s. It also adds to the catalog the rows of the new computations that `evaluate` gets.
 - The *shared state*: the selection of the workspace, its tags, the order of its items and its
   visualizers. `select!`, `tag!`, `untag!`, `sort!` and `visualize!` replace it whole, one at a
-  time, and `tag!` saves the tags
-  in `tags.txt` before the new state replaces the old one. Every window and script sees the same
+  time. `tag!` saves the tags in `tags.txt`, in the folder of the active Julia environment, with
+  sections for each project, before the new state replaces the old one. Every window and script sees the same
   shared state: a script that selects items selects them in the browser too.
 
 ```mermaid
@@ -373,14 +415,27 @@ sequenceDiagram
     A-->>C: the items with the tag
 ```
 
+The workspace keeps the answer for `f` until 10 s after the last call with `f`. `sort!(workspace;
+by, lt, rev)` sets the order of every answer and of the tree; the default order is by label, with
+the numbers in a label compared by their value.
+
+A `Selection` is a Tables.jl table with the columns `id`, `label`, `groups` and `tags`, and one
+column for each metadata key. `selection.data` reads the data of an item only when code uses it,
+and a property follows a path into the data: `selection.data.V` is the column `V` of a table, or
+the field `V` of other data. `unnest(device = selection.device, V = selection.data.V)` puts the
+values of several items in one table, and a value of one item repeats on each row of its data.
+`selection(workspace)` gives the shared selection, which `select!(workspace, ids)` sets.
+
 `select(workspace, ids)`, `evaluate` and `wait_workspace_idle!` wait for work. The first two wait
 until the items or the result that they ask for are computed, which run ahead of background work;
 `wait_workspace_idle!` waits until no scan and no job is left. Each call waits in its own task for
 a version of the table that shows what it waits for, so many calls can wait at once.
 
 The browser draws each frame from the latest version of the table and from the shared state. It
-builds its tree in a background task from answers of `select(workspace, f)`, such as the items
-that no group holds, and builds it again when one of those answers changes. Also, when
+builds its tree in a background task from one answer of `select(workspace, f)`, with every item in
+the order set by `sort!`, and builds it again when that answer changes. An item that several groups
+hold appears under each of them. A click on a group selects the group itself, and its context menu
+selects its members. Also, when
 `modify_workspace!` rebuilds the workspace, it replaces its catalog and its table together, so a
 frame never sees one without the other.
 
@@ -432,8 +487,22 @@ flowchart LR
     script -- "v.name = value" --> plot
 ```
 
-The workspace computes the value of a visualizer in a task of its own, once for every client that
-shows it, and only while some client asks for it with `refresh!`, as a window of the browser does
+A transform receives each item of the input, or the whole `Selection` when it has a method only for
+a selection. When the input holds several items, a window shows them in a *Stack*, one at a time; a
+*Grid*, one instance for each item; or an *Overlay*, one instance for the whole selection. The
+visualizer prepares its value with `prepare!` in the background, with sole access to its instance,
+while the window keeps showing the last value. Export in the header of a window offers the MIME
+types that the instance can `show`, and otherwise saves a picture of what `draw!` draws.
+`close(v)` also closes the windows that show `v`, and the visualizers that took their input from
+`v` follow the selection again. DataBrowserGUI has the visualizer types TableView, CodeView,
+ValueView, VectorView, LinePlotView, HistogramView and BarChartView.
+
+The browser saves its windows, with their visualizers, inputs, settings and arrangements, in
+`databrowser.toml`, in the folder of the active Julia environment, with one table for each project.
+It writes the file while it is open, so it replaces edits that another program made to the file.
+
+The workspace computes the value of a visualizer in a task of its own, once for all the clients that
+show it, and only while some client asks for it with `refresh!`, as a window of the browser does
 at each frame. It computes the value again when the items of the input get later versions, when
 the input gives other items, or when the code of the transform changes.
 
@@ -455,14 +524,19 @@ row of its latest version, so the next `evaluate` of the computation runs it aga
 changed. Visualizers evaluate their transforms this way.
 `computation(workspace, id)` gives the computation of the latest version of an item, and
 `inputs(c)` the computations among the arguments of `c`. Neither loads a result nor runs project
-code.
+code. `last_execution(workspace, c)` gives the duration and end time of the call that gave the
+current result of `c` in this session, or `nothing` when that result came from the cache, and
+`cache_info` whether its store keeps the result, with its size. `evaluate(c)` without a workspace
+calls the function.
 
 ### The code view
 
 The *code view*, a window of the browser, shows the computations of the selected items as function
 calls, in the order they ran: the `read` of their source items first, then each `process`. Items
 that went through the same code share a call. The computations of the call that you select are the
-output of the window: another window can take them as its input and show their results.
+output of the window: another window can take them as its input and show their results. Below the
+list, the window shows whether the store keeps the result of the selected call, with its size, and
+how long its last run took and when.
 
 ## Subpackages
 
@@ -475,7 +549,21 @@ each build of these pages, and each type links to its code.
 DataBrowserSources gives `DirectorySource`, a source that lists the files of a folder as
 `SourceFile`s and the folders below it as `SourceDirectory`s, and watches the folder for changes. A
 `SourceDirectory` has members, so the `read` of a project can give a group for it. The
-`FileFingerprint` of a file, its size and modification time, is its fingerprint.
+`FileFingerprint` of a file, its path, size and modification time, is its fingerprint.
 DataBrowserSources adds methods to functions of DataBrowserAPI, such as `id` and `label` of a
 `SourceFile`: DataBrowserCache, DataBrowserGUI and DataBrowserPlots call them through
 DataBrowserAPI, without depending on DataBrowserSources.
+
+### DataBrowserRecipes
+
+DataBrowserRecipes describes a project with callbacks instead of types: `define_project`,
+`register_item!`, `register_collection!` and `register_csv!` define the `read` and `process` methods
+of the project. The name of a project, `project_name`, names its cache, its section of `tags.txt`
+and its table of `databrowser.toml`; its default is the name of the type.
+
+### DataBrowserGUI
+
+`open_browser(workspace)` opens the browser and returns a `BrowserSession`; it needs Julia started
+with `--threads=auto,1`, so that thread 1 runs the UI. Closing the window leaves the workspace open,
+and `close_browser!` closes it from code. A package adds to the browser with a subtype of
+`GuiExtension` and `register_gui_extension!`.
