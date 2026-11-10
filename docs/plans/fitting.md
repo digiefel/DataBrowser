@@ -69,7 +69,7 @@ must be distinguishable from solving the point estimate.
 
 A fit of one item's data and a fit over several items use the common item/group model. Generic
 groups are now the chosen concept. A fit is a lazy computed value, one per part, as described in
-[computations and their outputs](processing.md#computations-and-their-outputs); the
+[computations over parts of the rows](processing.md#computations-over-parts-of-the-rows); the
 declaration-to-workspace execution API remains open.
 Large native models, sample sets and grids need retained payloads; do not require every result to
 be a scalar metadata column. Queryable summaries and native results must remain connected.
