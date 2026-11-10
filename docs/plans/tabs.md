@@ -6,8 +6,7 @@ and presentation; [processing](processing.md) owns execution.
 
 ## Agreed workflow
 
-Davide agreed the following development workflow on 13 October, then independent tab selections
-on 20 October. These are target interactions, not a complete implemented loading API.
+These are target interactions, not a complete implemented loading API.
 
 ### Develop a helper on selected data
 
@@ -37,7 +36,7 @@ repeat acquisition or instrument commands, or block the GUI thread. Capture duri
 execution needs a separate experiment. Multiple selected items and source edits need explicit
 behavior rather than a promise that an unrecorded local is always available.
 
-Davide, 9 November 2026: from a value the user reaches the code, and the code shows the values
+From a value the user reaches the code, and the code shows the values
 that this computation had inside when it produced the value. The value that the user came from
 therefore identifies the relevant run. [The code editor plan](code-editor.md#values-in-the-code)
 owns how the code shows these values. It also has a measurement for the capture: running only the
@@ -56,7 +55,7 @@ or explicitly insert new ones. Inline controls change literal values only; see
 [plot editor](../plot-editor.md#editing).
 
 A comparison created interactively from groups in different samples appears in the current
-analysis's results by default, with expandable inputs (Davide, 21 October). Its native result is
+analysis's results by default, with expandable inputs. Its native result is
 still available from code; this placement does not make a display window own the computation.
 
 ## Selection
@@ -70,10 +69,10 @@ Its exact form, and how a view switches between fixed input and a followed selec
 
 DBRecipes reads common sources and produces processed items without requiring the type API.
 After that, combining data, exploring it, making figures and saving reproducible analysis use the
-same tools for everyone (Davide, 21 October). A tab's analysis code is not a recipe and does not
+same tools for everyone. A tab's analysis code is not a recipe and does not
 require DBRecipes declarations. A recipe means something specifically defined by DBRecipes.
 
-Davide's direction, 21 October: stable plot and analysis definitions should use clear
+Stable plot and analysis definitions should use clear
 macros, following the role of `@plot`. Names such as `@process` or `@analyze` are illustrative;
 the grammar is not chosen. Ordinary one-off REPL calls and queries do not require a declaration.
 A query can instead be part of a saved definition when it describes that analysis's input.
@@ -89,7 +88,7 @@ controls in `databrowser.toml`, in the folder of the workspace, which is the fol
 Julia environment. The browser writes that file while it is open, so it overwrites an edit made by
 another program.
 
-Direction agreed with Davide on 7 November, not built: a tab is a live Julia file, and a `@layout`
+Direction, not built: a tab is a live Julia file, and a `@layout`
 macro in it declares its windows. The macro defines a method, so Revise runs only the layout again
 when it changes, and deleting it closes the tab. The layout holds the geometry too, with
 `Split(direction, ratio, first, second)` and `Window(name, visualizer; input)`, which replaces the
@@ -159,5 +158,4 @@ Payload/index ownership and durable state are tracked in [storage](storage.md).
 The browser has visualizer windows with headers, selection/linked inputs, registered plots,
 tables and a plot builder. The public workspace has queries, tags and item selection. Independent
 tab selections, the file/window loading contract and debug capture described here are not thereby
-implemented. Use the [roadmap](../roadmap.md) for implementation status and the
-[archive](archive/2026-10-21-discussion/tabs.md) for the full earlier examples.
+implemented. Use the [roadmap](../roadmap.md) for implementation status.

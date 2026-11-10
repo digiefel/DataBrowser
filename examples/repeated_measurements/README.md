@@ -11,7 +11,7 @@ and produced results is deliberate. G2 and G3 concern omissions in the external 
 These observations have not established an overall verdict on the current design.
 
 The group contracts
-come from the [external proposal](../../docs/plans/archive/groups-toy.md). Neither is an implementation claim.
+come from the external proposal. Neither is an implementation claim.
 Canvas editing is outside this example.
 
 ## The task and data
@@ -181,10 +181,10 @@ complete answer.
 
 The senior reviewer independently found these composition problems in the external proposal:
 
-- In [source metadata case 2](../../docs/plans/archive/source-groups.md), the directory reader requests
+- In source metadata case 2, the directory reader requests
   `Union{SampleInfo, ItemA}` for every directory. Root members are sample groups, so they are
   filtered out. The root becomes empty and the hot-sample group cannot contain the hot samples.
-- In the [group toy](../../docs/plans/archive/groups-toy.md#on-the-fly-the-plot-builder), adding a two-argument
+- In the group toy, adding a two-argument
   sample `process` method does not replace its existing three-argument method. Both signatures
   remain. The example does not say which runs or prevent duplicate mean producers.
 - Source metadata case 2 permits `ItemA.temperature = missing`, then calls the original process

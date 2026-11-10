@@ -5,8 +5,7 @@ on 8 November 2026. This plan owns values presented by visualizers, input bindin
 interaction. [Tabs](tabs.md) owns analysis files and window ownership.
 
 The implemented extension contract is documented in
-[visualizer_contract.jl](../../lib/DataBrowserAPI/src/visualizer_contract.jl). Method sketches in
-the archived plan are not a replacement public API.
+[visualizer_contract.jl](../../lib/DataBrowserAPI/src/visualizer_contract.jl).
 
 ## Values and views
 
@@ -188,6 +187,4 @@ must not silently rewrite a group definition or imply a universal exclusion poli
 
 Common visualizer windows, tables, registered plots and selection/linked-input headers exist.
 The [roadmap](../roadmap.md#0110--core-visualizers) tracks their individual implementation items.
-The full group, tab, provenance and linked-interaction target is not complete. The
-[archive](archive/2026-10-21-discussion/visualizers.md) preserves the obsolete canvas and earlier
-implementation sketches for reference only.
+The full group, tab, provenance and linked-interaction target is not complete.

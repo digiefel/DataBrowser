@@ -14,8 +14,7 @@ A workspace is the analysis runtime, not the GUI; one process runs one workspace
 
 ## `process` signatures
 
-Proposal developed with Davide on 21 October and reviewed by PM and the senior reviewer; not
-decided except where marked. Groups come from the source, from the user or GUI on the fly, or from
+Proposal, not decided except where marked. Groups come from the source, from the user or GUI on the fly, or from
 `process` methods on groups; [groups](groupings.md) owns how they form.
 
 ```julia
@@ -29,7 +28,7 @@ process(project::AbstractProject, group::AbstractGroup, members::AbstractVector{
 
 - `process(project, x)` receives one item or one group (`AbstractGroup <: AbstractDataItem`).
 - `process(project, member, group)` is a member `process` method, called for each member of a group.
-  Davide, 21 October: it returns a later version of the member (same id) or a new value, for
+  It returns a later version of the member (same id) or a new value, for
   example a group that keeps both inputs. Core records both inputs either way.
 - `process(project, group, members)` is a `process` method on a group with its member values.
   The element type `T` of its third argument states the member values it needs: Core passes, for
@@ -50,12 +49,12 @@ Discovery: method signatures tell Core which inputs a `process` method accepts. 
 before a `process` method runs; Core learns them from returned values and then finds the `process` methods that accept
 them.
 
-Stable ids: the project gives each produced value its id through `id` (Davide, 21 October); see
+Stable ids: the project gives each produced value its id through `id`; see
 [groups](groupings.md#stable-ids).
 
 ## Metadata comes from returned values
 
-Core has no `analyze` (Davide, 21 October). Every `process` method returns a value, and
+Core has no `analyze`. Every `process` method returns a value, and
 `metadata(value)` gives its metadata. A method that only computes a few numbers returns a later
 version of its input with those numbers in its metadata. Recipes keeps an `analyze` callback for
 its authors and implements it with `process`.
@@ -71,8 +70,8 @@ process(project, member, processed_group) -> next_member
 ```
 
 A group's own computation produces its own result. Member-aware methods belong to the member:
-they may read a processed group's data and metadata and produce a later member value. Under
-Davide's decision of 21 October, a member `process` method may return a later version of the member or a new
+they may read a processed group's data and metadata and produce a later member value. A
+member `process` method may return a later version of the member or a new
 value that keeps both inputs; Core records both inputs either way. Later member `process` methods must be
 able to use metadata computed in that work. A group does not overwrite member data
 or directly produce data for each member.
@@ -147,12 +146,12 @@ version of a value gets the calls of `process` that a method takes. These contra
   metadata contributions that no longer exist.
 - Publication of results only for the revision that actually completed, with earlier completed
   results available while affected active results recompute.
-- Computational cycles and repeated work. Davide's decision, 21 October: Core repeats `process` calls until
+- Computational cycles and repeated work. Core repeats `process` calls until
   a chain converges, meaning a `process` call returns a value equal in content to its input (equal ids are
   not enough, since a same-id value with new content is a replacement). Core halts with an error
   after a maximum number of rounds. So a `process` method that returns its input type means "repeat until unchanged".
-  Equality is `isequal` (Davide, 21 October). The API supplies `isequal` and `hash` for
-  `AbstractDataItem` that compare `data` and `metadata` (Davide, 4 November), so project types converge
+  Equality is `isequal`. The API supplies `isequal` and `hash` for
+  `AbstractDataItem` that compare `data` and `metadata`, so project types converge
   without extra code; a project defines its own `isequal` for anything else, for example a tolerance. Julia's default `==` would not work: it
   compares mutable fields such as vectors by object identity, and `missing == missing` is `missing`. Type API
   projects may use this; Recipes does not offer it. Linked UI selections are a separate
@@ -160,8 +159,7 @@ version of a value gets the calls of `process` that a method takes. These contra
 
 ## Live code and side effects
 
-Engineering review of 13 October, moved here from the archived
-[scientific workspace](archive/scientific-workspace.md) review. The workspace refreshes processing,
+The workspace refreshes processing,
 analysis and visualizers automatically, so it may call `read` and `process` again at any time: a
 project's methods have to give the same result when called again. The workspace follows the code
 revisions and the inputs of each call; what the function does inside stays the project's own.
@@ -178,7 +176,7 @@ changes a display never makes a read or an unrelated `process` call stale.
 
 ## Consistent construction
 
-Davide, 21 October: `reconstruct` is to be deleted. DataBrowserAPI still has it: `DuckDBStore`
+`reconstruct` is to be deleted. DataBrowserAPI still has it: `DuckDBStore`
 and `view` of an item call it. A typed store read returns the complete native value;
 [storage](storage.md#the-store-contract) owns that interface.
 This plan owns initial construction, group formation and binding members to a native group.
@@ -197,7 +195,7 @@ instrument actions are non-repeatable. Recomputing analysis must not repeat acqu
 ## Recipes authoring
 
 DBRecipes provides a way to read common sources and produce processed items without implementing
-the type API (Davide, 21 October). Its purpose ends once those items are processed. A recipe means
+the type API. Its purpose ends once those items are processed. A recipe means
 something defined by DBRecipes; it is not the name for a general calculation or analysis file.
 
 Its source-reading and processing callbacks use ordinary project data. DBRecipes supplies the
@@ -213,21 +211,13 @@ regardless of whether the items came from DBRecipes, a type-API project or a dom
 Combining data, trying calculations, comparing results, composing figures and saving reproducible
 analysis belong here. Saving such work does not require a DBRecipes recipe or registration.
 
-The worked grid/gradient/comparison example in [the existing draft](archive/recipes-walkthrough.md) was
-incorrectly framed as a Recipes API example. Its initial source-loading section can use DBRecipes;
-the later analysis must be rewritten against the shared API. The draft's result/register_result!
-functions and later DBRecipes macro framing are not approved shared analysis APIs.
-
 The next example must show ordinary helper code, how selected inputs reach it, what each call
 returns, how values are inspected and reused, how several views use the same calculation, and
 what code is saved/reexecuted. Fixed inputs and followed selections remain explicit. A missing
 session-only function after restart must be distinguished from an available retained value.
-The shared execution/input/view operations still need a concrete proposal; canvas/compute/view
-names used in PM's chat sketch were illustrative only.
+The shared execution/input/view operations still need a concrete proposal.
 
 ## Computations and their outputs
-
-Direction agreed with Davide on 25 October 2026, refined on 28 October.
 
 The first Core implementation provides `Computation(f, args...; settings...)`, `inputs`,
 `computation(workspace, item)` and `evaluate(workspace, computation)`. Project calls and interactive
@@ -475,13 +465,13 @@ record the rows it read; other data is understood only as far as its type allows
 3. Members and inputs of a computation whose result is part of its inputs, such as a filter.
 4. Values that cannot be memoized: a mutable value changed in place, code the revision does not
    follow.
-5. Whether a selection kept from the GUI becomes a computed value. Davide, 2026-10-25: yes, and so
+5. A selection kept from the GUI becomes a computed value, and so
    does a window's output. Example: the Table window keeps the points of
    an IV sweep where |V| > threshold, and passes them to the Plot Builder. The Table's output is a
    computed value whose computation is the filter, with the rows and columns selected in it, if
    any. The Table built this in part: its output is one computation `view(item, selection)` for
    each item, with the rows and columns selected in it, as the docstring of `output` describes.
-   Direction agreed (Davide, 2026-10-25), in place of storing row numbers:
+   Direction, in place of storing row numbers:
    - Every visualizer has a transform and a selection. Its output is the selection applied to what
      the transform gave.
    - The transform may change values. It is a computed value, and can be cached.
@@ -491,12 +481,12 @@ record the rows it read; other data is understood only as far as its type allows
    - The items keep their id and metadata; only their data is restricted, so the Plot Builder
      reads them by paths such as `:data.V`.
    - Each unchanged step is reused whenever the graph changes.
-   - Davide, 2026-10-25: the transform becomes the window's `process`, which gives one or more
+   - The transform becomes the window's `process`, which gives one or more
      `Computed` values, as the Plot Builder's fits do. The selection is a `Computed` value too,
      kept in memory and never cached; its definition is part of the ids of what reads it. Which
      values are cached is decided with the type API, so caching waits for this.
    - Keeping or dropping a selection made by hand when the data changes is the visualizer's job.
-   - View or copy (Davide, 2026-10-25). For each type of data it shows, the visualizer gives two
+   - View or copy. For each type of data it shows, the visualizer gives two
      forms of its restriction: a view, such as `view(V, mask)`, `view(A, rows, cols)` or
      `view(df, rows, cols)`, and a copy, such as `V[mask]`. A project item is restricted through its
      data and rebuilt with `reconstruct(T, id, restricted data, metadata)`. A reader gets the view
@@ -525,10 +515,8 @@ record the rows it read; other data is understood only as far as its type allows
 
 ## Evidence and limits
 
-The current implementation has chains of `process` calls and live code invalidation. Its catalog cutover is
-recorded in [workspace-graph](archive/workspace-graph/workspace-graph.md). That work is not proof of the
-new invocation, group reconstruction or Recipes contracts. The earlier engineering and product
-reviews are preserved in the [group discussion archive](archive/2026-10-21-discussion/groupings.md).
+The current implementation has chains of `process` calls and live code invalidation. That work is not proof of the
+new invocation, group reconstruction or Recipes contracts.
 
 The probes in `work/computation-graph` were run outside the workspace, on Julia 1.13.2 and
 Revise 3.17.3. The folder left the repository in commit `99e6737`; `git show 00f1e65:work/computation-graph/lazy-computed.jl`

@@ -1,6 +1,6 @@
 # The catalog in memory and in the cache file
 
-Proposal of 5 November 2026, delayed: Davide asked for the plan, and the change waits.
+Proposal of 5 November 2026, delayed.
 [Architecture](../ARCHITECTURE.md) describes the running system. The roadmap entry "Open a
 workspace with no work per item" in [0.2.3](../roadmap.md) tracks the change.
 

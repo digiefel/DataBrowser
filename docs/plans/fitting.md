@@ -20,8 +20,6 @@ appropriate starts, constraints or model knowledge.
 
 ## Agreed behavior
 
-Davide agreed the following in the fitting discussion:
-
 - The package is `DataBrowserFitting`, connected to Core. Plain-vector fitting also works without
   the browser. A plot-defined fit must not require a second unrelated `process`/`analyze`
   definition to make its result useful elsewhere.
@@ -98,10 +96,6 @@ These remain proposals, not settled API:
 
 ## Numerical questions that remain open
 
-The separate numerical review is consolidated here. The
-[original review](archive/2026-10-21-discussion/fitting-review.md) preserves its counterexamples,
-references and probe details.
-
 ### Model, objective and uncertainty
 
 Specify known measurement errors versus an estimated common noise scale, weighting, objective,
@@ -162,8 +156,7 @@ All consumers must see one consistent result revision, including background inte
 Levenberg–Marquardt, and ForwardDiff for the Jacobian of the standard errors. DataBrowserPlots
 loads it on the first fit of a session. Weighted and bounded solves, fixed parameters and status
 beyond convergence are not built; CurveFit remains a candidate for them. Load time is not the main
-decision criterion. The archived source review records caveats
-for the versions inspected; verify them against the chosen version before implementation.
+decision criterion.
 
 Validation needs real SuperGaN and RuO2 analyses with the curve, selected rows, noise model and
 known limits recorded. Do not make data-quality or fit claims from unconfirmed status flags.
@@ -171,6 +164,3 @@ NIST StRD is a proposed reference corpus; confirm the available files before cla
 Use small constructed cases for known failures and interval coverage, not as the whole test set.
 The existing contract probe demonstrates selected counterexamples; it is not a solver benchmark
 or verification of a complete real-data workflow.
-
-The older proposal and coordination are preserved in the
-[archive](archive/2026-10-21-discussion/fitting.md).

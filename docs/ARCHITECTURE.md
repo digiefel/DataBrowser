@@ -1,7 +1,7 @@
 # DataBrowser Architecture
 
 This page describes how DataBrowser works today. The direction of the project is in
-`docs/vision.md`, and the proposals for its next steps are in `docs/plans/README.md`.
+`docs/vision.md`, and the proposals for its next steps are in `docs/plans/`.
 
 ## What DataBrowser does
 

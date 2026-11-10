@@ -2,7 +2,7 @@
 
 Target design, curated on 21 October 2026. This plan owns group behavior, formation, identity and
 hierarchy. [Processing](processing.md) owns execution and member `process` methods; [storage](storage.md) owns
-retention. [The plan index](README.md) distinguishes the target from the implementation.
+retention.
 
 ## Current direction and open decisions
 
@@ -16,8 +16,7 @@ complete approved API.
 
 ## Settled behavior
 
-These decisions were made by Davide in the PM discussion or relayed by the external agent. They
-are target behavior. Core implements groups as [Architecture](../ARCHITECTURE.md) describes, but
+These decisions are target behavior. Core implements groups as [Architecture](../ARCHITECTURE.md) describes, but
 not every behavior below.
 
 ### Selection and browsing
@@ -60,10 +59,9 @@ on one member compose otherwise, such as one after the other, is not settled.
 
 ## Working proposal: groups from sources, users and `process` methods
 
-Proposal by the external agent with Davide, 21 October. Partly built: groups from sources and
+Partly built: groups from sources and
 from `process` methods exist, groups from the user or the GUI do not, and [Architecture](../ARCHITECTURE.md)
-describes what is built. The earlier [source-group proposal](archive/source-groups.md) and its
-[toy example](archive/groups-toy.md) are archived.
+describes what is built.
 
 A group is an `AbstractDataItem` that contains items or groups and defines `members`. Whoever
 creates a group gives it its members. There are three creators:
@@ -89,23 +87,21 @@ group.
 
 ### Multi-input results are groups
 
-Davide's direction, 21 October: internally a value derived from multiple tracked inputs should
+Internally, a value derived from multiple tracked inputs should
 be an `AbstractGroup`, or have the analogous provenance behavior, rather than lose that relation
 as a plain leaf item. The result may be one image, scalar, table or fitted model. Group status
 is not a requirement that the result data itself be a list or that it have many direct children.
 
 Inputs may themselves be groups; retain their relationship without automatically flattening
 all the way to original measurements. A later operation on just one such group still retains that
-provenance. A member operation that also uses a group result has multiple inputs too. Davide decided on
-21 October that it may return either a later version of the member or a new value that keeps both
+provenance. A member operation that also uses a group result has multiple inputs too. It may return either a later version of the member or a new value that keeps both
 inputs; Core records both inputs either way. A fit through several items should retain this
-group/provenance behavior. Ordinary scientific helpers can remain plain Julia functions; adapting their
-results at framework-owned boundaries is the PM recommendation, not another required wrapper in
-user helper code.
+group/provenance behavior. Ordinary scientific helpers can remain plain Julia functions; the workspace adapts their
+results at its own boundaries, so user helper code needs no wrapper.
 
 ### Dynamic hierarchy
 
-The external proposal derives default navigation from the group a result was split/produced
+Default navigation comes from the group that a result was split or produced
 from. It also records the group's direct members. These relations differ in the table-bin example:
 the selection produces a bin, while the bin's members are the selected scientific items.
 
@@ -198,7 +194,7 @@ lines, so the workspace reads all of them again.
 processed item. This is the price of self-contained values. DBRecipes can do the copying for its own
 item types.
 
-One point is parked (Davide, 21 October): an explicit
+One point is parked: an explicit
 `AbstractDataSourceGroup <: AbstractDataSourceItem`, so that signatures say "group" by type. Today a
 source item has members when `members(source, item)` gives any; the default gives none. A source
 that uses one type for both records and groups should use two types.
@@ -207,7 +203,7 @@ that uses one type for both records and groups should use two types.
 
 Values that `process` methods give need ids that stay the same across runs and restarts, such as
 `HotGroup`, `MeanSignal(S1)` or one bin of a fit. Saved selections, later results and the browser
-depend on them. Davide, 21 October: the project gives each value its id by defining `id` for its
+depend on them. The project gives each value its id by defining `id` for its
 type, as in `id(::HotGroup) = "hot"` and `id(m::MeanSignal) = "mean " * m.sample`. Core does not
 compose ids. DBRecipes is a project too, so it gives ids to the values it makes. A value with the
 id of the value that its call took is a later version of that value.
@@ -228,8 +224,7 @@ The earlier review recommendations on ids below are superseded where they differ
   custom constructors. The producer scope must actually be available at that construction
   boundary. The exact helper/API and automatic Recipes adaptation are not designed yet.
 
-Other concrete checks against the same model, made on the archived
-[toy example](archive/groups-toy.md):
+Other concrete checks against the same model:
 
 1. Literal `Vector` signatures and member fields force native materialization. The engineer
    recommends permitting `AbstractVector`/indexed member views as the normal path, with cheap
@@ -267,6 +262,3 @@ Before treating the API as complete, show one workflow through each client: form
 inspect a group's result, inspect an original member, reuse the group result, and run a member's
 own group-aware `process` method. Include a group with a non-curve result. The same public operations must
 work without a GUI, and Recipes must not require users to construct internal carriers.
-
-The [archived discussion](archive/2026-10-21-discussion/groupings.md) contains the original
-alternatives, user answers and reviews. It is evidence, not an additional active specification.

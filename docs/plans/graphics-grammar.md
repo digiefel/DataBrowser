@@ -1,8 +1,6 @@
 # Graphics grammar and plot builder
 
-Target design, curated on 21 October 2026. Use AlgebraOfGraphics first. The older custom
-`Layer`/`LinearFit` grammar and the chronological reviews are preserved in the
-[archive](archive/2026-10-21-discussion/graphics-grammar.md); they are not the active API.
+Target design, curated on 21 October 2026. Use AlgebraOfGraphics first.
 
 The accepted panel and source-editing interactions live in [plot editor](../plot-editor.md).
 [Fitting](fitting.md) owns numerical behavior. [Processing](processing.md) owns shared execution;
@@ -55,7 +53,7 @@ Separate-panel composition remains deferred.
 ## Shared requirements
 
 Use a useful inferred grouping default with an explicit override: users should not routinely
-need to write `group`. Davide requested overriding it with `nothing` or a series value. The exact
+need to write `group`. It can be overridden with `nothing` or a series value. The exact
 inference algorithm is open. Keeping statistical groups distinct from aesthetics does not mean
 requiring a separate grouping declaration for every plot. Pooling within facets explicitly uses
 `group=nothing` and resolves varying inherited aesthetics; clearing color alone is insufficient.
@@ -85,7 +83,7 @@ them still need proposals and verification.
 
 ## Scales and legends
 
-Agreed with Davide on 22 October 2026. Implemented as `scales(...)` and `legend(...)` lines of
+Implemented as `scales(...)` and `legend(...)` lines of
 `@plot`; see its docstring.
 
 A scale belongs to one role. It gives each value a look, such as a color, and gives the value its
@@ -115,7 +113,7 @@ Continuous roles get a colorbar. Facet roles are not in the legend.
 
 ## Aggregates
 
-Agreed with Davide on 25 October 2026 and implemented; see the `@plot` docstring. Before, the
+Implemented; see the `@plot` docstring. Before, the
 first function was always drawn as y and the second as the half-length of `Errorbars`. That fixed
 meaning broke for functions with other names, such as `mycoolstd`, and for functions that return
 several values, such as `extrema`.
@@ -193,7 +191,7 @@ stay those of the model.
 
 ### Values on a scaled axis
 
-Agreed with Davide on 25 October 2026. With `scale = log10`, the functions receive `log10` of the
+With `scale = log10`, the functions receive `log10` of the
 y values, and a result holds exactly what they return: `mean` gives a value in decades, such as
 -10, and a standard deviation a width in decades, such as 1. A legend text or other code that reads
 a result gets these values: `$(result.mean)`, where `result` is the name the plot gives to
@@ -247,6 +245,4 @@ named `fit` and `aggregate` results. See the
 The scratch prototype `work/gui-editing/fit-capture-probe.jl`, which left the repository in commit
 `99e6737` (`git show 00f1e65:work/gui-editing/fit-capture-probe.jl` prints it), explored named dependencies,
 endpoint text, facets and pooling. It is evidence for selected mechanics, not verification of the
-complete GUI editor, numerical fitting, grammar schemas or live workspace integration. The old
-[review](archive/2026-10-21-discussion/graphics-grammar-review.md) also contains self-review and
-limited probes; its statements of agreement do not approve the superseded custom API.
+complete GUI editor, numerical fitting, grammar schemas or live workspace integration.

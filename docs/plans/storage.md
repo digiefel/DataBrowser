@@ -6,8 +6,6 @@ binding. [Architecture](../ARCHITECTURE.md) describes the running implementation
 
 ## Settled direction
 
-Davide's latest answers, relayed by the external agent, refine the earlier payload/index proposal:
-
 - Type API projects can declare storage per item type; undeclared types get the supplied default.
   Recipes chooses suitable storage automatically. Recipes users do not select/configure stores
   or discover their capabilities; they work with ordinary values, helpers and data operations.
@@ -34,8 +32,7 @@ does not itself authorize another acquisition; source commands remain explicit o
 
 ## The store contract
 
-Built. On 28 October, Davide settled the rule for computation results: authors choose caching per
-type. Cached results are copied when used. For uncached results, authors are responsible for their
+Built. Authors choose caching per type. Cached results are copied when used. For uncached results, authors are responsible for their
 use, and Core runs their computations again when a value is requested. This needs neither
 operating-system copy-on-write nor wrappers around native project values.
 
@@ -65,7 +62,7 @@ DataBrowserCache supplies `MemoryStore` and `DuckDBStore`; the final set is not 
 stores could also cover tables and files, configurable by ordinary constructors. A file reference
 inside a value can be handled by a file store; it does not need a separate universal value model.
 
-Typed store reads restore the complete native value. Davide, 21 October: the `reconstruct` hook
+Typed store reads restore the complete native value. The `reconstruct` hook
 is to be deleted. DataBrowserAPI still has it, and `DuckDBStore` calls it to save an item as its
 data and metadata. Group formation still needs a public construction and member-binding contract
 in [processing](processing.md).
@@ -76,7 +73,7 @@ A value returned directly by a helper, a value restored from storage, and a valu
 the GUI must expose consistent metadata. Core's query copy should describe that value, not contain
 additional scientific results inaccessible through `metadata(value)`.
 
-Core has no `analyze` (Davide, 21 October). Every `process` method returns a value and
+Core has no `analyze`. Every `process` method returns a value and
 `metadata(value)` supplies its metadata. DBRecipes keeps an `analyze` callback and implements it
 with `process`.
 
@@ -85,7 +82,7 @@ workspace keeps its own copy of the metadata of each item, for queries and the b
 file saves it in its table `output_metadata`, under the key of each item, and only there; when the
 workspace opens, it fills its table `items` in memory from that table, so a restored item shows its
 metadata at once. When the cache file is lost, the calls run again and give the metadata anew. A
-separate `metadata(store, id)` hook is not proposed for now (Davide, 21 October).
+separate `metadata(store, id)` hook is not proposed for now.
 
 ## Data queries across items: candidate capability
 
@@ -122,8 +119,7 @@ proposal does not by itself specify every annotation/layout persistence mechanis
 
 ## Sources that cannot be read again
 
-Engineering review of 13 October, moved here from the archived
-[scientific workspace](archive/scientific-workspace.md) review. `AbstractDataSource` stays the
+`AbstractDataSource` stays the
 extension point for acquisition: `open_source`, `items`, `watch_source`, `read`, `close_source!`,
 stable ids and fingerprints. A streaming source and the workspace own the incoming data, its
 retention and its recovery; analysis and visualization code never test for them.
@@ -157,10 +153,7 @@ reopening the workspace must never consume another observation.
 ## Backend evidence and remaining work
 
 Mapped numeric arrays/tables are an optional backend candidate, not a mandatory Core model or a
-measured performance baseline. Native constructors may copy restored values. The
-[archived engineering review](archive/2026-10-21-discussion/groupings.md) records platform,
-read-only access, mapping-lifetime and eager table-materialization constraints for the versions
-examined. No end-to-end speedup is established.
+measured performance baseline. Native constructors may copy restored values. No end-to-end speedup is established.
 
 Open work:
 
@@ -171,7 +164,3 @@ Open work:
 3. Core/store interaction for replacement, invalidation, missing values, errors and interrupted work.
 4. Lifetime/mutation of values held by callers; member access after replacement or close.
 5. Supported default value shapes and measured behavior on actual tables, arrays and domain values.
-
-The external discussion of 21 October was coordinated in the curation note `work/doc-curation.md`,
-which left the repository in commit `99e6737`; `git show 00f1e65:work/doc-curation.md` prints it.
-Earlier alternatives remain in the archive; they are not simultaneous requirements.

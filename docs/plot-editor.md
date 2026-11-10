@@ -87,5 +87,4 @@ single-panel form: a shared header, one layer per statement, explicit `*` within
 results usable by dependent lines, such as `contacts = fit(resistance, (Rc=1.0, Rsh=1.0))`.
 Separate-panel composition remains deferred. The HTML mockups of the panels and the prototype
 `fit-capture-probe.jl` left the repository in commit `99e6737`;
-`git show 00f1e65:work/gui-editing/fit-capture-probe.jl` prints the prototype. The
-[archive](plans/archive/2026-10-21-discussion/plot-editor.md) preserves the original document.
+`git show 00f1e65:work/gui-editing/fit-capture-probe.jl` prints the prototype.

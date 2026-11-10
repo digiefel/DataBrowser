@@ -8,30 +8,27 @@ and the window that shows a local value.
 
 ## Goals
 
-Davide's reference is [Hazel](https://hazel.org), a live programming environment that runs in a
-web browser: "Their editor is exactly what I want to have eventually." Five goals follow from it.
+The reference is [Hazel](https://hazel.org), a live programming environment that runs in a
+web browser. Five goals follow from it.
 
 1. **The editor never hangs.** This is requirement 13 of
    [runtime and clients](runtime-and-clients.md#requirements).
 2. **A saved change shows at once.** This is also requirement 13, and
    [runtime and clients](runtime-and-clients.md#from-a-save-to-the-redraw) follows the save
    message by message.
-3. **Types and errors appear while the user types.** Hazel calls this *live typing*. Davide:
-   "Whatever the means are, it's a goal."
+3. **Types and errors appear while the user types.** Hazel calls this *live typing*.
 4. **The code shows its values.** From a value the user reaches the code, and the code shows the
    values that the computation had inside when it produced that value. This is requirement 7.
 5. **The user drags code as structure**, as
    [the Hazel clip](https://declarative-dragging.github.io/clips/hazel-refactoring.mp4) of the
    paper [Declarative Dragging](https://declarative-dragging.github.io/D2.pdf) shows (Horowitz,
-   Blinn and Heer, UIST 2026). Davide: "it's _exactly_ what I want to have".
+   Blinn and Heer, UIST 2026).
 
 The editor serves the code of a DataBrowser project and of its analysis. The workspace has run
-this code and knows its values. Davide: "for the most part we don't care about users writing
-arbitrary code. We are trying to make an environment for DataBrowser." Goals 3 to 5 depend on
-Julia, so the pieces that deliver them are made for Julia.
+this code and knows its values. Goals 3 to 5 depend on Julia, so the pieces that deliver them are made for Julia.
 
 Other programs learn about a change when the file is saved. Whether the editor also evaluates
-text before the save follows from what gives the best experience (Davide).
+text before the save follows from what gives the best experience.
 
 ## The pieces
 
@@ -60,18 +57,16 @@ The editor has three needs, and each has one owner:
 | The *meaning* of the code: scopes, types, side effects, and the places that call a function | The Julia language server, in the Julia host | It needs the loaded code of the project and Julia's compiler |
 | Values | DBCore and the Julia host, through the client API | Values are data of the workspace |
 
-The code editor is the beginning of the full web client, which later shows visualizers too
-(Davide, 9 November 2026). It is also the second client beside the browser, so it tests that the
-client API serves a client in another process. Davide's first idea was an editor inside the ImGui
-browser, with dragging written for Dear ImGui. Hazel's editor and Dragology, the dragging library
+The code editor is the beginning of the full web client, which later shows visualizers too. It is
+also the second client beside the browser, so it tests that the client API serves a client in
+another process. Hazel's editor and Dragology, the dragging library
 of the paper, both run in a web browser, so a web client can build on them.
 
 ## Structure while typing
 
 Hazel's parser gives a complete syntax tree for any text. Where something is missing, the parser
 puts a *hole*, a placeholder that the rest of the editor treats as an expression. Typing therefore
-never leaves the editor without structure. Davide: "I think we'll have to implement a Hazel-like
-parser for Julia."
+never leaves the editor without structure. DataBrowser needs a Hazel-like parser for Julia.
 
 This parser exists once, in the editor. The language server reads code with Julia's own parser, as
 Julia does when it loads a file.
@@ -104,8 +99,8 @@ interpolation, and none of these is plain operator precedence.
 ## Meaning: the Julia language server
 
 Features for writing code go through LSP, and the server that answers them runs in the Julia host.
-The same server answers the code editor and VS Code. Davide, 9 November 2026: "We could fork
-JETLS. A (very) hard fork. I still don't understand if what we need is really a LSP. Maybe it is."
+The same server answers the code editor and VS Code. A hard fork of JETLS is
+one way to build it; whether LSP carries everything the editor needs is open.
 
 The editor needs three things from the server that the Julia language servers of today lack. All
 three are proposals.
@@ -132,32 +127,32 @@ Checked on 9 November 2026:
 
 ## Dragging code
 
-Davide described the behaviors of the clip on 9 November 2026:
+The clip shows these behaviors:
 
-> 1. Grabbing expressions directly. The user clicks and drags a piece of code without first
->    selecting a range of text. The editor recognizes the expression as a structural unit, rather
->    than treating it as an arbitrary sequence of characters.
-> 2. Moving code across structural boundaries. The user drags expressions from inside one
->    construct to outside it, crossing parentheses, function bodies, and local scopes. These
->    boundaries do not prevent movement.
-> 3. Context-sensitive drop targets. As the cursor moves, the editor identifies meaningful
->    destinations. The destination is not simply a character position: it corresponds to a
->    location in the program's structure.
-> 4. Previewing transformations before committing. While dragging, the editor shows how the
->    program would change if the code were released at the current location. The user can explore
->    possible outcomes without immediately modifying the program.
-> 5. Rearranging code by spatial gestures. Moving one element across another can exchange their
->    positions. The editor updates related parts of the program as necessary, rather than
->    performing a literal cut-and-paste.
-> 6. Automatically restructuring surrounding code. Some movements require changes beyond the
->    dragged expression itself. The editor can introduce bindings, adjust scopes, modify
->    conditions, or reorganize enclosing constructs to accommodate the movement.
-> 7. Using the same gesture for different operations. There is no separate interaction mode for
->    each refactoring. The meaning emerges from what is grabbed, where it is moved, and the
->    structure of the surrounding code.
->
-> The distinguishing idea is that the user specifies a desired structural change through movement,
-> while the editor determines the corresponding program transformation.
+1. Grabbing expressions directly. The user clicks and drags a piece of code without first
+   selecting a range of text. The editor recognizes the expression as a structural unit, rather
+   than treating it as an arbitrary sequence of characters.
+2. Moving code across structural boundaries. The user drags expressions from inside one
+   construct to outside it, crossing parentheses, function bodies, and local scopes. These
+   boundaries do not prevent movement.
+3. Context-sensitive drop targets. As the cursor moves, the editor identifies meaningful
+   destinations. The destination is not simply a character position: it corresponds to a
+   location in the program's structure.
+4. Previewing transformations before committing. While dragging, the editor shows how the
+   program would change if the code were released at the current location. The user can explore
+   possible outcomes without immediately modifying the program.
+5. Rearranging code by spatial gestures. Moving one element across another can exchange their
+   positions. The editor updates related parts of the program as necessary, rather than
+   performing a literal cut-and-paste.
+6. Automatically restructuring surrounding code. Some movements require changes beyond the
+   dragged expression itself. The editor can introduce bindings, adjust scopes, modify
+   conditions, or reorganize enclosing constructs to accommodate the movement.
+7. Using the same gesture for different operations. There is no separate interaction mode for
+   each refactoring. The meaning emerges from what is grabbed, where it is moved, and the
+   structure of the surrounding code.
+
+The distinguishing idea is that the user specifies a desired structural change through movement,
+while the editor determines the corresponding program transformation.
 
 The clip shows five operations, and the editor offers the possible ones near the cursor while the
 user drags:
@@ -175,20 +170,17 @@ Three points change when the language is Julia:
 - **The editor offers only proven drags.** Hazel's language has no side effects, so an expression
   gives the same value wherever it runs and however often. In Julia, an expression moved out of a
   loop runs once, and the program can then do something else. The editor therefore offers a drag
-  only when the language server proves that the program keeps its meaning. Davide: "I'd say only
-  proven ones."
+  only when the language server proves that the program keeps its meaning.
 - **Swap params changes every place that calls the method.** In Julia, the method that a call
   reaches depends on the types at run time. The editor finds the places from the calls that ran
-  and from inference, and lists the uncertain ones for the user to confirm (Davide's choice between
-  the two options offered).
+  and from inference, and lists the uncertain ones for the user to confirm.
 - **A macro can give the same text another meaning.** Proposal: the editor leaves the arguments of
   a macro alone unless the macro states how it uses them, as DataBrowser's own macros, such as
-  `@plot`, can. Davide had no view on this yet.
+  `@plot`, can.
 
 The dragging itself uses Dragology: TypeScript, drawing with SVG, for React 18 or 19, MIT license,
 version 0.2.0 of 6 November 2026 on npm, without documentation so far. Hazel's own drag refactorings (branch `refactorings`, file `RefactorDrag.re`) implement the
-ideas of the paper without the library. Davide on using it: "That code layout is ours anyway, so?
-Wouldn't dragology help with that anyway?"
+ideas of the paper without the library. The layout of the code is DataBrowser's own, so Dragology can serve it.
 
 The editor is new work. CodeMirror 6 and Monaco have no dragging of structure, and the editors
 that have it (Droplet, codemirror-blocks, Strype, MakeCode) show code as blocks or frames in place
@@ -214,8 +206,8 @@ The host captures these values, and three facts bound how:
   the worker when a program runs longer than 20 s. The Julia host has the same role, and DBCore
   stops and replaces it.
 
-The values reach the editor through the client API, as data. Davide wants them in other editors
-too ("I think our protocol should design for it too"); in VS Code the language server can show
+The values reach the editor through the client API, as data. The protocol serves them to other
+editors too; in VS Code the language server can show
 them as inlay hints.
 
 ## Open points

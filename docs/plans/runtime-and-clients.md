@@ -1,7 +1,7 @@
 # Runtime and clients
 
-Target design, started on 30 October 2026. On 9 November 2026 Davide chose the split below, with a
-Julia host, as the working direction. This plan owns the pieces of DataBrowser, the two contracts
+Target design, started on 30 October 2026. The split below, with a Julia host, is the
+working direction. This plan owns the pieces of DataBrowser, the two contracts
 between them and the messages that cross. [The client API](client-api.md) owns the functions that
 clients call, and [the code editor](code-editor.md) owns the editor that the split makes possible.
 [Visualizers](visualizers.md) owns what a visualizer does inside a window; [graphics](graphics-grammar.md)
@@ -61,7 +61,7 @@ language server does.
 
 1. **Julia project code runs in a full Julia process.** The Julia host needs the whole of Julia,
    compiler included, by construction. DBCore is Julia today. The split lets its language be chosen
-   later, and Davide set that choice aside on 9 November 2026.
+   later.
 2. **Every other component can be written in any language.** GUI, visualizers, sources, stores and
    the recipes API. The test: each could be built as a language-independent binding, and the GUI
    could be a client written in any language.
@@ -76,7 +76,7 @@ language server does.
    arbitrary plots, without requiring its users to learn Julia or Makie.
 7. **Everything is inspectable.** From any visual a user reaches the computation, its code, its
    input items and the values in between. The code then shows the values that this computation had
-   inside when it produced the visual (Davide, 9 November 2026). This is how scientists can trust
+   inside when it produced the visual. This is how scientists can trust
    code an agent wrote.
 8. **Code-driven work stays first-class.** Pipelines and analyses are plain files under version
    control; GUI actions and code describe the same work.
@@ -96,12 +96,10 @@ language server does.
 12. **A notebook is one possible client, not the model.** Exploratory analysis is not always a
     linear sequence of cells. A linear document is still useful for sharing, so the contract must
     make it possible to build a notebook-like client.
-13. **Nothing hangs, and a saved change shows at once.** Davide, 9 November 2026: "async,
-    high-throughput, low-latency computation with zero UI hangs and as low overhead as possible is
-    a given everywhere. After a change to process, which gets picked up instantly with interactive
-    latency, work starts being scheduled according to a properly chosen priority (visible first -
-    decided by the client and/or Core -, then based on the computation graph and membership graph,
-    cleverly chosen)". Julia stops all the threads of a process to collect garbage, and a loop in
+13. **Nothing hangs, and a saved change shows at once.** Computation is asynchronous, with
+    high throughput, low latency and low overhead, and the UI never hangs. A saved change to a
+    `process` method is picked up at once, and its work is scheduled by priority: what is visible
+    first, as decided by the client or Core, then by the graph of computations and of members. Julia stops all the threads of a process to collect garbage, and a loop in
     project code that allocates nothing keeps every other thread waiting for that stop. A client
     therefore runs in another process than project code.
 
@@ -376,8 +374,8 @@ between them. It can take three forms:
 | A picture: PNG or SVG, drawn by CairoMakie in the host | Any client, an agent, an export | Each change needs a new picture |
 
 Proposal: a Julia plot crosses as a description where the client has Makie, and as a picture
-everywhere else. Davide, 9 November 2026: for figures in the browser, drawing them in ImGui is
-simplest. He left open whether Makie becomes the form offered to every client that supports it, or
+everywhere else. For figures in the browser, drawing them in ImGui is
+simplest. It is open whether Makie becomes the form offered to every client that supports it, or
 whether "client-rendered visualizer" and "server-rendered visualizer" become formal kinds.
 
 Two points limit the description. First, nobody has checked that a SpecApi description survives
@@ -474,7 +472,7 @@ These are not yet agreed.
 - How does Python code provide sources, `process` methods and visualizers: in a Python host of its
   own, or as providers of the Julia host, which calls Python through PythonCall? A host for another
   language is a large piece of work, as the left column of
-  [what a host does](#what-a-host-does) shows. Davide set this question aside on 9 November 2026.
+  [what a host does](#what-a-host-does) shows.
 - Does the project ship a notebook-like client, the tools to build one, or both?
 - How must a provider written in another language perform? Calls per item cross a process or
   language boundary.
