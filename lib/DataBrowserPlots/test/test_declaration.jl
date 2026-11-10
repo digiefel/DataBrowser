@@ -1,4 +1,4 @@
-using Test, DataBrowserPlots, GLMakie, AlgebraOfGraphics
+using Test, DataBrowserPlots, GLMakie
 
 plotted(drawn, type) = [p for p in only(filter(c -> c isa Axis, drawn.content)).scene.plots if p isa type]
 
@@ -85,4 +85,14 @@ end
         theme(:light; Axis = (; xgridvisible = false))
     end)
     @test !only(filter(c -> c isa Axis, themed.content)).xgridvisible[]
+end
+
+@testset "spec and Observable inputs update the figure in place" begin
+    items_obs = Observable((device=["D1"], data=(V=[[0.0, 1.0]], I=[[0.0, 2.0]])))
+    curves = @plot mapping(:data.V, :data.I; color=:device) * visual(Lines)
+    @test spec(curves, items_obs[]) isa Makie.GridLayoutSpec
+    drawn = figure(curves, items_obs)
+    @test length(plotted(drawn, Lines)) == 1
+    items_obs[] = (device=["D1", "D2"], data=(V=[[0.0, 1.0], [0.0, 2.0]], I=[[0.0, 2.0], [0.0, 4.0]]))
+    @test length(plotted(drawn, Lines)) == 2
 end

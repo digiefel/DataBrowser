@@ -1,4 +1,4 @@
-using Test, DataBrowserPlots, GLMakie, AlgebraOfGraphics
+using Test, DataBrowserPlots, GLMakie
 
 # Each section of the figure's legend: its title and its entries' texts.
 function sections(drawn)

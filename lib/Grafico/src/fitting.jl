@@ -1,17 +1,63 @@
-# TODO: move fitting to DataBrowserFitting, with a REPL API (plans/fitting.md). The workspace keeps
-# the results of a plot's fits already: one computation for each group.
+"""
+    unnest(; name = values, ...) -> NamedTuple of vectors
 
-# The least-squares estimates of the parameters named in `starts`, each a `Measurement` with one
-# standard error.
-# TODO: StructUtils saves a `Measurement` as its text, such as "1520.0 ± 83.0", so a query cannot
-# compare `Rc < 10` yet; save the estimate and the error as numbers (plans/fitting.md).
-# The residuals are measured after `scale`, the function of the y axis, such as `log10`.
-# The solver loads on the first fit of a session: a session without fits then does not load
-# NonlinearSolve and ForwardDiff, about 115 packages and 2.5 s.
-# TODO: known errors, weights, bounds and fixed parameters (plans/fitting.md).
+Put the data of several items together in one table, with one column for each keyword. Each value
+has one entry for each item, such as `items.device` or `items.data.V`. The entries of one item
+broadcast together, as in a Julia expression: a column of the data of the item gives one row for
+each of its entries, and a single value, such as the device of the item, repeats on each of those
+rows.
+"""
+function unnest(; columns...)
+    names = keys(columns)
+    values = Tuple(Base.values(columns))
+    isempty(values) && return NamedTuple()
+    count = length(first(values))
+    all(value -> length(value) == count, values) ||
+        error("unnest: each value needs one entry per item; the lengths are $(map(length, values))")
+    collected = [Any[] for _ in names]
+    for index in 1:count
+        rows = broadcast(tuple, (value[index] for value in values)...)
+        for row in (rows isa Tuple ? (rows,) : rows), (column, entry) in zip(collected, row)
+            push!(column, entry)
+        end
+    end
+    return NamedTuple{Tuple(names)}(Tuple(identity.(column) for column in collected))
+end
+
+# The column of a layer's table that holds the place of each row's item in its input.
+const ITEM = Symbol("#item")
+
+"""
+    unnest_items(items; columns...) -> NamedTuple of vectors
+
+Build the table for a layer over `items`. Packages such as DataBrowserPlots specialize this hook to
+attach item indices for workspace computations.
+"""
+unnest_items(_; columns...) = unnest(; columns...)
+
+"""
+    least_squares(curve, x, y, starts; scale=identity) -> (estimates, errors)
+
+Fit `curve`, a function of x with its parameters as keywords, to the points `x`, `y`. `starts`
+gives a starting value for each parameter. Returns the least-squares estimate of each parameter,
+in the order of `starts`, and one standard error for each, from the covariance scaled by the
+residuals. The residuals are measured after `scale`, the function of the y axis, such as `log10`.
+"""
+function least_squares(curve, x::Vector{Float64}, y::Vector{Float64}, starts::NamedTuple; scale=identity)
+    names = keys(starts)
+    residual(p, _) = scale.(curve.(x; NamedTuple{names}(Tuple(p))...)) .- scale.(y)
+    problem = NonlinearLeastSquaresProblem(residual, collect(Float64, values(starts)))
+    solution = solve(problem, LevenbergMarquardt())
+    SciMLBase.successful_retcode(solution) || error("the fit did not converge ($(solution.retcode))")
+    free = length(x) - length(names)
+    free > 0 || error("$(length(x)) points cannot fit $(length(names)) parameters")
+    J = ForwardDiff.jacobian(p -> residual(p, nothing), solution.u)
+    covariance = inv(J' * J) * sum(abs2, solution.resid) / free
+    return solution.u, sqrt.(max.(diag(covariance), 0.0))
+end
+
 function solve_fit(curve, x::Vector{Float64}, y::Vector{Float64}, starts::NamedTuple; scale=identity)::NamedTuple
-    fitting = Base.require(@__MODULE__, :DataBrowserFitting)
-    estimates, errors = Base.invokelatest(fitting.least_squares, curve, x, y, starts; scale)
+    estimates, errors = least_squares(curve, x, y, starts; scale)
     return NamedTuple{keys(starts)}(Tuple(measurement.(estimates, errors)))
 end
 
@@ -71,8 +117,6 @@ Base.getindex(result::Result, index::Int) = getfield(result, :groups)[index]
 Base.getproperty(result::Result, name::Symbol) = [group[name] for group in getfield(result, :groups)]
 Base.propertynames(result::Result) = unique(reduce(vcat, [collect(keys(group)) for group in getfield(result, :groups)]; init=Symbol[]))
 
-# The curve's type is part of the type of its fit, so the workspace computes a fit again when the
-# code of the curve changes (`DataBrowserCore.CodeRevisions`).
 """
 A curve to fit to the points of a layer, as `fit(curve, starts; options...)` in [`@plot`](@ref)
 writes it. The fit is done when the layer has its points, and gives a [`Result`](@ref).
@@ -83,14 +127,6 @@ struct Fit{C}
     options::NamedTuple
 end
 Fit(curve, starts::NamedTuple; options...) = Fit(curve, starts, NamedTuple(options))
-
-# The column of a layer's table that holds the place of each row's item in its selection. Ids can
-# repeat in a selection, such as for parts of one item.
-const ITEM = Symbol("#item")
-
-# The `ITEM` column of the tables of the items of a selection, as keywords of `unnest`.
-item_places(selection::Selection) = NamedTuple{(ITEM,)}((collect(eachindex(selection)),))
-item_places(_) = (;)
 
 # The fit's result over the points of a layer: `table`, whose columns `positional` and `named`
 # map. `scale` is the function of the y axis, after which the residuals are measured.
@@ -115,8 +151,6 @@ category(value, raw) = !(value isa Pair) ? raw :
 
 # The roles of `named` that divide the points of `columns` into groups: the categorical ones. A role
 # of numbers, such as a continuous color, does not divide the points.
-# TODO: a role given as a formula, such as `color=chip(:folder)`, keeps its group's value under the
-# formula's text, so a label reads it as `:var"chip(:folder)"`.
 grouping(named::Vector, columns) =
     Pair{Symbol,Any}[role => value for (role, value) in named if !all(v -> v isa Number || ismissing(v), columns[column(value)])]
 

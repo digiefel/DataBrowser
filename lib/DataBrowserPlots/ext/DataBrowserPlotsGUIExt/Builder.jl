@@ -15,9 +15,6 @@ using ..DataBrowserPlotsGUIExt: DARK, FigureView
 import ..DataBrowserPlotsGUIExt: theme_button
 import ..DataBrowserPlotsGUIExt: build!
 
-# The plot code uses AlgebraOfGraphics. It loads with the first plot the builder runs.
-const ALGEBRA_OF_GRAPHICS = Base.PkgId(Base.UUID("cbdf2221-f076-402e-a563-3d30da359d67"), "AlgebraOfGraphics")
-
 # Icons of the Lucide font that DataBrowserGUI loads with the interface font.
 const ICON_EYE = "\ue0ba"
 const ICON_EYE_OFF = "\ue0bb"

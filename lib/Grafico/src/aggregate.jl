@@ -1,5 +1,3 @@
-# The types of the functions are part of the type of the aggregate, so the workspace computes it
-# again when their code changes (`DataBrowserCore.CodeRevisions`).
 """
 The functions to apply to the y values of a layer's points that share x and their groups, as
 `aggregate(mean, std)` in [`@plot`](@ref) writes them. The aggregate is done when the layer has its
@@ -11,7 +9,6 @@ struct Aggregate{F<:Tuple}
 end
 
 # The name of a function's value in a group's metadata, such as `:mean`.
-# TODO: an anonymous function, such as `v -> std(v) / sqrt(length(v))`, is named `#1`.
 function_name(f) = Symbol(nameof(f))
 
 # The aggregate over the points of `table`, whose columns `positional` maps to x and y: one group for

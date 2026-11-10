@@ -1,4 +1,4 @@
-using Test, DataBrowserAPI, DataBrowserCore, DataBrowserPlots, GLMakie, AlgebraOfGraphics
+using Test, DataBrowserAPI, DataBrowserCore, DataBrowserPlots, GLMakie
 using Measurements: value
 
 resistance(gap; Rc, Rsh) = 2Rc + Rsh * gap

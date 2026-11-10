@@ -2,7 +2,7 @@
 
 julia_version = "1.13.3"
 manifest_format = "2.1"
-project_hash = "2f3308d540d678d0fd70b01b5232589dfb63cb7b"
+project_hash = "b8242a7e0c870916b4280ac80f48abccbf126162"
 
 [[deps.ADTypes]]
 deps = ["PrecompileTools"]
@@ -106,21 +106,6 @@ git-tree-sha1 = "7e651ea8d262d2d74ce75fdf47c4d63c07dba7a6"
 registries = "General"
 uuid = "35492f91-a3bd-45ad-95db-fcad7dcfedb7"
 version = "1.2.0"
-
-[[deps.AlgebraOfGraphics]]
-deps = ["Accessors", "Colors", "DataAPI", "Dates", "Dictionaries", "FileIO", "GLM", "GeoInterface", "GeometryBasics", "GridLayoutBase", "Isoband", "KernelDensity", "Loess", "Makie", "NaturalSort", "PlotUtils", "PolygonOps", "PooledArrays", "PrecompileTools", "RelocatableFolders", "StatsBase", "StructArrays", "Tables"]
-git-tree-sha1 = "88b1f363a4c69268ab705bcb5a049768a367bed9"
-registries = "General"
-uuid = "cbdf2221-f076-402e-a563-3d30da359d67"
-version = "0.13.2"
-
-    [deps.AlgebraOfGraphics.extensions]
-    AlgebraOfGraphicsDynamicQuantitiesExt = "DynamicQuantities"
-    AlgebraOfGraphicsUnitfulExt = "Unitful"
-
-    [deps.AlgebraOfGraphics.weakdeps]
-    DynamicQuantities = "06fc5a27-2a28-4c7c-a15d-362465fb6821"
-    Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [[deps.AliasTables]]
 deps = ["PtrArrays", "Random"]
@@ -536,7 +521,7 @@ uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.16.0"
 
 [[deps.DataBrowser]]
-deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserFitting", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "PrecompileTools", "Reexport"]
+deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserAnnotations", "DataBrowserCache", "DataBrowserCore", "DataBrowserGUI", "DataBrowserPlots", "DataBrowserRecipes", "DataBrowserSources", "DataFrames", "Grafico", "PrecompileTools", "Reexport"]
 path = ".."
 uuid = "a11ddd67-7e33-4db9-a4a8-4453f6eb9e68"
 version = "0.1.0-alpha.1"
@@ -568,12 +553,6 @@ path = "../lib/DataBrowserCore"
 uuid = "d1e2f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f6a"
 version = "0.1.0"
 
-[[deps.DataBrowserFitting]]
-deps = ["ForwardDiff", "LinearAlgebra", "NonlinearSolve"]
-path = "../lib/DataBrowserFitting"
-uuid = "ffed4914-3e78-4db9-85fa-c0de1962d06e"
-version = "0.1.0"
-
 [[deps.DataBrowserGUI]]
 deps = ["CImGui", "CSV", "DataBrowserAPI", "DataBrowserCache", "DataBrowserCore", "FFTA", "GLFW", "JuliaSyntax", "ModernGL", "NativeFileDialog", "Printf", "Statistics", "TOML", "Tables", "TimerOutputs", "Zlib_jll"]
 path = "../lib/DataBrowserGUI"
@@ -581,14 +560,13 @@ uuid = "f3a4b5c6-d7e8-9f0a-1b2c-3d4e5f6a7b8c"
 version = "0.1.0"
 
 [[deps.DataBrowserPlots]]
-deps = ["DataBrowserAPI", "DataBrowserCore", "DataBrowserFitting", "Measurements", "PrecompileTools", "Tables"]
+deps = ["DataBrowserAPI", "DataBrowserCore", "Grafico", "PrecompileTools", "Reexport", "Tables"]
 path = "../lib/DataBrowserPlots"
 uuid = "e2f3a4b5-c6d7-8e9f-0a1b-2c3d4e5f6a7b"
 version = "0.1.0"
-weakdeps = ["AlgebraOfGraphics", "CImGui", "DataBrowserGUI", "GLFW", "GLMakie", "ModernGL"]
+weakdeps = ["CImGui", "DataBrowserGUI", "GLFW", "GLMakie", "ModernGL"]
 
     [deps.DataBrowserPlots.extensions]
-    DataBrowserPlotsAlgebraOfGraphicsExt = "AlgebraOfGraphics"
     DataBrowserPlotsGUIExt = ["DataBrowserGUI", "GLMakie", "CImGui", "GLFW", "ModernGL"]
 
 [[deps.DataBrowserProfiling]]
@@ -1200,6 +1178,12 @@ git-tree-sha1 = "ea9f1fb37ff10597353b56f3ba0ebd525acef6e0"
 registries = "General"
 uuid = "7746bdde-850d-59dc-9ae8-88ece973131d"
 version = "2.90.1+0"
+
+[[deps.Grafico]]
+deps = ["Accessors", "Colors", "DataAPI", "Dates", "Dictionaries", "FileIO", "ForwardDiff", "GLM", "GeoInterface", "GeometryBasics", "GridLayoutBase", "Isoband", "KernelDensity", "LinearAlgebra", "Loess", "Makie", "Measurements", "NaturalSort", "NonlinearSolve", "PlotUtils", "PolygonOps", "PooledArrays", "PrecompileTools", "Statistics", "StatsBase", "StructArrays", "Tables"]
+path = "../lib/Grafico"
+uuid = "8a9b0c1d-2e3f-4a5b-8c9d-0e1f2a3b4c5d"
+version = "0.1.0"
 
 [[deps.Graphics]]
 deps = ["Colors", "LinearAlgebra", "NaNMath"]

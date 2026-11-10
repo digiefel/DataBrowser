@@ -2,7 +2,7 @@
 # a table of the input's items, and each line becomes a layer of the header, as a function of the
 # input.
 
-# Preserve the yN identities before positions_named packs their values into one AoG position.
+# Preserve the yN identities before positions_named packs their values into one position.
 function y_roles(expression)
     call = find_call(expression, :mapping)
     call === nothing && return nothing
@@ -78,9 +78,6 @@ end
 # infers it from the types of the values its paths read, without running it; `Any` when it is not
 # known. An item's vector gives one value to each of its points. A title after `=>` stays out, and
 # a function after it applies to each value.
-# TODO: a path into the items' data, such as `:data.I`, is of type `Any` until an item's data is
-# read, as `selection.data` holds the data of any item. Core could know the type of the data of each
-# kind of item, for example by inferring it from the project's `read` and `process`.
 function per_item_type(value, input::Symbol)
     if Meta.isexpr(value, :call) && value.args[1] === :(=>)
         inner, after = per_item_type(value.args[2], input), value.args[3]
@@ -95,8 +92,7 @@ function per_item_type(value, input::Symbol)
 end
 point_type(T::Type) = T <: AbstractVector ? eltype(T) : T
 
-# The layers of a declaration, each a product without `+`: `h * (a + b)` is `h * a` and `h * b`, as
-# AlgebraOfGraphics multiplies it out.
+# The layers of a declaration, each a product without `+`: `h * (a + b)` is `h * a` and `h * b`.
 function layers(expression)
     Meta.isexpr(expression, :call) || return [expression]
     operator, arguments = expression.args[1], expression.args[2:end]
@@ -106,10 +102,14 @@ function layers(expression)
         init=layers(arguments[1]))
 end
 
+# Whether `data(value)` is a collection of items whose paths can be unnested, rather than an
+# ordinary table. Packages such as DataBrowserPlots specialize this for `Selection`.
+is_item_source(_) = false
+
 # The table of the values that the `mapping` of `layer` names, and the layer with each value
 # replaced by the name of its column, or `nothing` if no value is chosen. `column(value)` is the
 # value's entries, one for each item.
-function tabulate(layer, column; chosen=value -> !isempty(paths(value)))
+function tabulate(layer, column; chosen=value -> !isempty(paths(value)), items=nothing)
     values = Dict{String,Any}()
     order = String[]
     map_mapped(layer; chosen) do value
@@ -124,7 +124,9 @@ function tabulate(layer, column; chosen=value -> !isempty(paths(value)))
         for t in order)
     columns = [Expr(:kw, names[t], column(values[t])) for t in order]
     rewritten = map_mapped(value -> QuoteNode(names[source_text(value)]), layer; chosen)
-    return Expr(:call, Workspace.unnest, Expr(:parameters, columns...)), rewritten, names
+    table = items === nothing ? Expr(:call, unnest, Expr(:parameters, columns...)) :
+        Expr(:call, unnest_items, Expr(:parameters, columns...), items)
+    return table, rewritten, names
 end
 
 # The `Points` of a layer, as an expression of the input, or `nothing` without a fit or an aggregate.
@@ -138,26 +140,24 @@ end
 
 # One layer as a function of the input: each value its `mapping` names becomes a column of `unnest`
 # over the input, and the mapping names that column. With `data(value)`, the paths read `value`
-# when it is a selection, and the layer is left as it is for any other value. A fit in the
+# when it is an item source, and the layer is left as it is for any other value. A fit in the
 # layer is done over its points (`resolve`), which know their items by the `ITEM` column.
 function declare_layer(layer, input::Symbol)
-    with_items(table, items) = Expr(table.head, table.args[1], Expr(:parameters, table.args[2].args..., :($item_places($items)...)))
     own = find_call(layer, :data)
     if own === nothing
-        tabulated = tabulate(layer, value -> per_item(value, input))
+        tabulated = tabulate(layer, value -> per_item(value, input); items=input)
         tabulated === nothing && return :($resolve($layer, nothing, $AXES))
         table, rewritten, names = tabulated
-        table = with_items(table, input)
         return :($resolve(data($table) * $rewritten, $input, $AXES, $(points(layer, table, names, input))))
     end
     value, items = gensym("data"), gensym("items")
-    tabulated = tabulate(layer, v -> per_item(v, items))
+    tabulated = tabulate(layer, v -> per_item(v, items); items)
     tabulated === nothing && return :($resolve($layer, nothing, $AXES))
     plain = replace_call(layer, own, :(data($value)))
     table, rewritten, _ = tabulated
-    of_items = replace_call(rewritten, find_call(rewritten, :data), :(data($(with_items(table, items)))))
+    of_items = replace_call(rewritten, find_call(rewritten, :data), :(data($table)))
     return :(let $value = $(own.args[2])
-        $value isa $Selection ?
+        $is_item_source($value) ?
             (let $items = $value; $resolve($of_items, $items, $AXES) end) :
             $resolve($plain, nothing, $AXES)
     end)
@@ -212,7 +212,6 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
     end
     for line in filter(line -> line.args[1] === :coord, settings)
         positional, named = call_arguments(line)
-        ## TODO: `polar` and a tilt of the drawn axes; the plan is at `figure(plot::Scaled)` in the AlgebraOfGraphics extension.
         length(positional) <= 1 || error("coord takes one function of the points, such as `coord((x, y) -> (y, x))`")
         points = [Expr(:kw, :points, f) for f in positional]
         push!(coords, Expr(:tuple, Expr(:parameters, points..., (Expr(:kw, k, v) for (k, v) in named)...)))
@@ -294,11 +293,10 @@ function call_arguments(call)
 end
 
 # The expression with each `mapping` that names its positions, such as `mapping(; x=:gap, y=:R)`,
-# written with positions, `mapping(:gap, :R)`, as AlgebraOfGraphics takes them. A `y` without `x`
-# keeps `nothing` as its `x`: a line takes the header's `x` there, and drawing reads it as `y` alone.
-# `y2`, `y3` and so on add values to `y`, which `y1` also names: the position is then their list,
-# `[y, y2]`, and `ydims()` maps which of them a point comes from, as AlgebraOfGraphics' `dims(1)`.
-# TODO: several values of `x`, paired with those of `y` or with each of them.
+# written with positions, `mapping(:gap, :R)`. A `y` without `x` keeps `nothing` as its `x`: a line
+# takes the header's `x` there, and drawing reads it as `y` alone. `y2`, `y3` and so on add values
+# to `y`, which `y1` also names: the position is then their list, `[y, y2]`, and `ydims()` maps
+# which of them a point comes from, as `dims(1)`.
 function positions_named(expression)
     expression isa Expr || return expression
     expression = Expr(expression.head, map(positions_named, expression.args)...)
