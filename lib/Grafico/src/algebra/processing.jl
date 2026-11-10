@@ -1,0 +1,215 @@
+## Grouping machinery
+
+fast_hashed(v::AbstractVector) = isbitstype(eltype(v)) ? PooledArray(v) : v
+
+function permutation_ranges(cols)
+    isempty(cols) && return nothing, [:]
+    grouping_sa = StructArray(map(fast_hashed, cols))
+    gp = GroupPerm(grouping_sa)
+    return sortperm(gp), collect(gp)
+end
+
+shape(pl::ProcessedLayer) = Broadcast.combine_axes(pl.primary..., pl.positional..., pl.named...)
+
+function shape(l::Layer)
+    containers = (l.positional, l.named)
+    wrap(x::AbstractArray) = x
+    wrap(x) = fill(x)
+    extract(x) = x
+    extract(x::Pair) = x[1]
+
+    wrappedvars = (wrap(extract(v)) for vs in containers for v in vs)
+
+    return Broadcast.combine_axes(wrappedvars...)
+end
+
+function assert_equal(a, b)
+    if !isequal(a, b)
+        msg = "$a and $b must be equal"
+        throw(ArgumentError(msg))
+    end
+    return a
+end
+
+getuniquevalue(v) = reduce(assert_equal, v)
+
+function getnewindex(u, c)
+    v = Broadcast.broadcastable(u)
+    return v[Broadcast.newindex(v, c)]
+end
+
+function subgroups(vs, perm, rgs, axs)
+    return map(Iterators.product(rgs, CartesianIndices(axs))) do (rg, c)
+        v = getnewindex(vs, c)
+        return ndims(v) == 0 || rg === (:) ? v : view(v, perm[rg])
+    end
+end
+
+function shiftdims(v)
+    w = Broadcast.broadcastable(v)
+    return ndims(w) == 0 ? w[] : reshape(w, 1, axes(w)...)
+end
+
+function group(processedlayer::ProcessedLayer)
+    grouping = Tuple(only(v) for v in values(processedlayer.primary) if ndims(v) == 0)
+    perm, rgs = permutation_ranges(grouping)
+    axs = shape(processedlayer)
+
+    primary = map(vs -> subgroups(vs, perm, rgs, axs), processedlayer.primary)
+    positional = map(vs -> subgroups(vs, perm, rgs, axs), processedlayer.positional)
+    named = map(vs -> subgroups(vs, perm, rgs, axs), processedlayer.named)
+
+    labels = map(shiftdims, processedlayer.labels)
+    return ProcessedLayer(processedlayer; primary, positional, named, labels)
+end
+
+function getlabeledarray(layer::Layer, s)
+    data, axs = layer.data, shape(layer)
+    isdims = s isa DimsSelector || s isa Pair && first(s) isa DimsSelector
+    if isdims
+        vs, (f, (label, scaleid)) = select(data, s)
+        if length(vs) != 1
+            throw(ArgumentError("Multiple dims selectors in the same mapping are disallowed"))
+        end
+        d = only(vs)
+        sz = ntuple(length(axs)) do n
+            return n in d.dims ? length(axs[n]) : 1
+        end
+        # Apply the DimsSelector to each CartesianIndex to create DimsIndex values
+        arr = map(ci -> fill(f(d(ci))), CartesianIndices(sz))
+    elseif data === Pregrouped()
+        vs, (f, (label, scaleid)) = select(data, s)
+        isprim = any(iscategoricalcontainer, vs)
+        arr = isprim ? map(fill ∘ f, vs...) : map(x -> map(f, x...), zip(vs...))
+    elseif data === nothing
+        vs, (f, (label, scaleid)) = select(data, axs, s)
+        arr = fill(map(f, vs...))
+        label = fill(label)
+        scaleid = fill(scaleid)
+    else
+        selector = s isa AbstractArray ? s : fill(s)
+        labeled_arr = map(selector) do s
+            local vs, (f, (label, scaleid)) = select(data, s)
+            # TODO: the map(f, ...) thing here can turn a vector of all missings
+            # but with a Float64 Union type into just Missing, which makes it
+            # categorical, but this cannot really be avoided in Julia without
+            # return_type or promote_op shenanigans. It should at least be a relatively
+            # rare edge case
+            return label, scaleid, map(f, vs...)
+        end
+        label = map(first, labeled_arr)
+        scaleid = map(x -> x[2], labeled_arr)
+        arr = map(last, labeled_arr)
+    end
+
+    arr = with_presorted_indices(arr)
+
+    return label, scaleid, arr
+end
+
+with_presorted_indices(arr) = arr
+function with_presorted_indices(arr::AbstractArray{<:AbstractArray{<:Presorted}})
+    s = Dict{Any, UInt16}() # TODO: how to get parametric type in Union{T,Missing} case? where T throws UndefVarError then
+    with_indices = map(arr) do subarr
+        map(subarr) do el
+            i = get!(s, el.x) do
+                UInt16(length(s) + 1)
+            end
+            Presorted(el.x, i)
+        end
+    end
+    return with_indices
+end
+
+function extract_values!(pairs, labels)
+    merge!(labels, Dictionary(map(first, pairs)))
+    return map(last, pairs)
+end
+
+function process_mappings(layer::Layer)
+    # the labels extracted here are directly related to their positional or named arguments
+    # but some may later be remapped using `positional_mapping`
+    labels = MixedArguments()
+
+    label_scaleid_positional = map(v -> getlabeledarray(layer, v), layer.positional)
+    pos_labels = map(first, label_scaleid_positional)
+    pos_scaleids = map(x -> x[2], label_scaleid_positional)
+    positional = map(last, label_scaleid_positional)
+
+    label_scaleid_named = map(v -> getlabeledarray(layer, v), layer.named)
+    nam_labels = map(first, label_scaleid_named)
+    nam_scaleids = map(x -> x[2], label_scaleid_named)
+    named = map(last, label_scaleid_named)
+
+    labels = merge(Dictionary(pos_labels), nam_labels)
+    scaleids = merge(Dictionary(pos_scaleids), nam_scaleids)
+
+    # not sure if this logic should work in all cases, maybe multiple scales per
+    # mapping entry could be possible with wide data
+    uniqueelement(x) = x
+    function uniqueelement(a::AbstractArray)
+        u = unique(a)
+        if length(u) != 1
+            error("Found a collection of scale ids that does not contain a single unique value: $a")
+        end
+        return only(u)
+    end
+
+    unique_scales = map(uniqueelement, scaleids)
+    unique_scales_without_nothings = filter(x -> x isa ScaleID, unique_scales)
+    scale_mapping = map(scaleid -> scaleid.id, unique_scales_without_nothings)
+
+    # we know that the hardcoded mappings are categorical, so we can just always sort
+    # those into primary even if users pass something like integers, which is very common
+    primary, named = separate_by_key_value((k, v) -> hardcoded_mapping(k) !== nothing || iscategoricalcontainer(v), named)
+
+    return ProcessedLayer(; primary, positional, named, labels, scale_mapping)
+end
+
+analysis_typename(f::ComposedFunction) = analysis_typename(f.inner)
+analysis_typename(f) = nameof(typeof(f))
+
+function process(layer::Layer, axis_transforms = Dictionary{Type{<:Aesthetic}, Base.Callable}())
+    processedlayer = process_mappings(layer)
+    grouped_entry = if layer.data === Pregrouped()
+        # For pregrouped data, apply shiftdims to match the structure of grouped data
+        # This adds a leading dimension to both data and labels
+        # TODO: determine if this is all really needed or if shiftdims can be removed completely at some point
+        primary = map(shiftdims, processedlayer.primary)
+        positional = map(shiftdims, processedlayer.positional)
+        named = map(shiftdims, processedlayer.named)
+        labels = map(shiftdims, processedlayer.labels)
+        ProcessedLayer(processedlayer; primary, positional, named, labels)
+    else
+        group(processedlayer)
+    end
+    primary = map(vs -> map(getuniquevalue, vs), grouped_entry.primary)
+    transformed = try
+        layer.transformation(ProcessedLayer(grouped_entry; primary, axis_transforms))
+    catch e
+        (e isa ScaleDomainError && e.analysis === nothing) ? e : rethrow()
+    end
+    if transformed isa ScaleDomainError
+        throw(ScaleDomainError(transformed.forward, transformed.value, analysis_typename(layer.transformation), transformed.aes))
+    end
+    transformed_processlayers = ProcessedLayers(transformed)
+    return ProcessedLayers(
+        map(transformed_processlayers.layers) do transformed_processlayer
+            attributes = merge(mandatory_attributes(transformed_processlayer.plottype), transformed_processlayer.attributes)
+            possibly_without_visual = ProcessedLayer(transformed_processlayer; attributes)
+            return reroute_generic_dodge(set_missing_visual(possibly_without_visual))
+        end
+    )
+end
+
+function set_missing_visual(p::ProcessedLayer)
+    return if p.plottype !== Plot{plot}
+        p
+    else
+        plottype = Makie.plottype(p.plottype, p.positional...)
+        if plottype === Plot{plot}
+            error("Failed to determine default plot type for positional arguments of type $(typeof(p.positional))")
+        end
+        ProcessedLayer(p; plottype)
+    end
+end

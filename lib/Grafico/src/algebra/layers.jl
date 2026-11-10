@@ -1,0 +1,1063 @@
+"""
+    Layers(layers::Vector{Layer})
+
+Algebraic object encoding a list of `Layer` objects.
+`Layers` objects can be added or multiplied, yielding a novel `Layers` object.
+"""
+struct Layers <: AbstractAlgebraic
+    layers::Vector{Layer}
+end
+
+Base.convert(::Type{Layers}, l::Layer) = Layers([l])
+
+Base.getindex(layers::Layers, i::Int) = layers.layers[i]
+Base.length(layers::Layers) = length(layers.layers)
+Base.eltype(::Type{Layers}) = Layer
+Base.iterate(layers::Layers, args...) = iterate(layers.layers, args...)
+
+function Base.:+(a::AbstractAlgebraic, a′::AbstractAlgebraic)
+    layers::Layers, layers′::Layers = a, a′
+    return Layers(vcat(layers.layers, layers′.layers))
+end
+
+function Base.:*(a::AbstractAlgebraic, a′::AbstractAlgebraic)
+    layers::Layers, layers′::Layers = a, a′
+    return Layers([layer * layer′ for layer in layers for layer′ in layers′])
+end
+
+"""
+    zerolayer()
+
+Returns a `Layers` with an empty layer list which can act as a zero
+in the layer algebra.
+
+```julia
+layer * zerolayer() ~ zerolayer()
+layer + zerolayer() ~ layer
+```
+"""
+zerolayer() = Layers(Layer[])
+
+"""
+    ProcessedLayers(layers::Vector{ProcessedLayer})
+
+Object encoding a list of `ProcessedLayer` objects.
+`ProcessedLayers` objects are the output of the processing pipeline and can be
+drawn without further processing.
+"""
+struct ProcessedLayers <: AbstractDrawable
+    layers::Vector{ProcessedLayer}
+end
+
+function ProcessedLayers(a::AbstractAlgebraic, axis_transforms = Dictionary{Type{<:Aesthetic}, Base.Callable}())
+    layers::Layers = a
+    processedlayers_array = map(layer -> process(layer, axis_transforms), layers)
+    return ProcessedLayers(reduce(vcat, [processedlayer.layers for processedlayer in processedlayers_array]))
+end
+
+"""
+    ProcessedLayers(layer::Layer)
+
+Output of processing a `layer`. Each `ProcessedLayer` encodes
+- plot type,
+- grouping arguments,
+- positional and named arguments for the plot,
+- labeling information,
+- visual attributes.
+"""
+ProcessedLayers(layer::Layer) = process(layer)
+
+ProcessedLayers(p::ProcessedLayer) = ProcessedLayers([p])
+ProcessedLayers(p::ProcessedLayers) = p
+
+ProcessedLayers(p::ProcessedLayer, ::Any) = ProcessedLayers([p])
+ProcessedLayers(p::ProcessedLayers, ::Any) = p
+
+function compute_processedlayers_grid(processedlayers, categoricalscales)
+    gridpositions = compute_grid_positions(categoricalscales)
+    indices = CartesianIndices((maximum(first, gridpositions), maximum(last, gridpositions)))
+    pls_grid = map(_ -> ProcessedLayer[], indices)
+    for processedlayer in processedlayers
+        append_processedlayers!(pls_grid, processedlayer, categoricalscales)
+    end
+    return pls_grid
+end
+
+function compute_entries_continuousscales(pls_grid, categoricalscales, scale_props)
+    # Here processed layers in `pls_grid` are "sliced",
+    # the categorical scales have been applied, but not
+    # the continuous scales
+
+    rescaled_pls_grid = map(_ -> ProcessedLayer[], pls_grid)
+    continuousscales_grid = map(_ -> MultiAesScaleDict{ContinuousScale}(), pls_grid)
+
+    for idx in eachindex(pls_grid), pl in pls_grid[idx]
+        check_scale_aesthetics(pl)
+        # Apply continuous transformations
+        positional = map(contextfree_rescale, pl.positional)
+        named = map(contextfree_rescale, pl.named)
+        aes_mapping = aesthetic_mapping(pl)
+
+        continuousscales = Grafico.continuousscales(pl, scale_props)
+
+        for (key, scale) in pairs(continuousscales)
+            aes = aes_mapping[key]
+            scaledict = continuousscales_grid[idx]
+            if !haskey(scaledict, aes)
+                insert!(scaledict, aes, eltype(scaledict)())
+            end
+            dict = scaledict[aes]
+            scale_id = get(pl.scale_mapping, key, nothing)
+            if !haskey(dict, scale_id)
+                insert!(dict, scale_id, scale)
+            else
+                err = try
+                    dict[scale_id] = mergescales(dict[scale_id], scale)
+                    nothing
+                catch err
+                    if err isa ExtendExtremaError
+                        err
+                    else
+                        rethrow(err)
+                    end
+                end
+                if err !== nothing
+                    error("Merging the extrema of two subscales of the continuous scale $(scale_setting_name(scale_id, aes)) failed. This usually happens if two layers are combined which use data of different types for the same scale.\nThe incompatible extrema of the two scales were $(err.e1) and $(err.e2).\nThe error was: $(err.msg)")
+                end
+            end
+        end
+
+        # Compute `ProcessedLayer` with rescaled columns
+        push!(rescaled_pls_grid[idx], ProcessedLayer(pl; positional, named))
+    end
+
+    # there are some scales that must match in unit or the plot will be incorrect,
+    # in all of these pairings there is one scale that is the "lead" and one which is the "follow"
+    # scale. For example, AesX is lead and AesDeltaX is follow. If those two appear together in a facet,
+    # we force AesDeltaX to take the unit of AesX.
+    for i in eachindex(continuousscales_grid)
+        scales = continuousscales_grid[i]
+        for (aes_lead, aes_follow) in [(AesX, AesDeltaX), (AesY, AesDeltaY), (AesZ, AesDeltaZ), (AesY, AesABIntercept)]
+            lead = extract_single(aes_lead, scales)
+            follow = extract_single(aes_follow, scales)
+            if lead !== nothing && follow !== nothing
+                local err
+                follow_aligned = try
+                    align_scale_unit(lead, follow)
+                catch e
+                    if e isa DimensionMismatch
+                        err = e
+                        nothing
+                    else
+                        rethrow(e)
+                    end
+                end
+                if follow_aligned === nothing
+                    error("While aligning the units of continuous scales, found units with incompatible dimensions for $(nameof(aes_lead)) and $(nameof(aes_follow)) scales. $(nameof(aes_lead)) had unit \"$(err.x1)\" and $(nameof(aes_follow)) had unit \"$(err.x2)\". Such an alignment error could happen if, for example, an errorbar layer had incompatible units for the errorbar position (AesY) and error size (AesDeltaY).")
+                end
+                dict = scales[aes_follow]
+                key = only(keys(dict))
+                dict[key] = follow_aligned
+            end
+        end
+
+        # an ABLines slope is a ratio of the y and x aesthetics, so its unit must equal
+        # unit(AesY) / unit(AesX). align it to that derived unit when all three scales exist.
+        yscale = extract_single(AesY, scales)
+        xscale = extract_single(AesX, scales)
+        slopescale = extract_single(AesABSlope, scales)
+        if yscale !== nothing && xscale !== nothing && slopescale !== nothing
+            local err
+            slope_aligned = try
+                align_ratio_unit(yscale, xscale, slopescale)
+            catch e
+                if e isa DimensionMismatch
+                    err = e
+                    nothing
+                else
+                    rethrow(e)
+                end
+            end
+            if slope_aligned === nothing
+                error("While aligning the units of continuous scales, found an ABLines slope whose unit is not dimensionally compatible with unit(AesY) / unit(AesX). The expected slope unit was \"$(err.x1)\" but the slope had unit \"$(err.x2)\".")
+            end
+            dict = scales[AesABSlope]
+            key = only(keys(dict))
+            dict[key] = slope_aligned
+        end
+    end
+
+
+    # Compute merged continuous scales, as it may be needed to use global extrema
+    merged_continuousscales = MultiAesScaleDict{ContinuousScale}()
+    for multiaesscaledict in continuousscales_grid
+        for (aes, scaledict) in pairs(multiaesscaledict)
+            existing = if !haskey(merged_continuousscales, aes)
+                d = Dictionary{Union{Nothing, Symbol}, ContinuousScale}()
+                insert!(merged_continuousscales, aes, d)
+                d
+            else
+                merged_continuousscales[aes]
+            end
+            for (scale_id, scale) in pairs(scaledict)
+                if !haskey(existing, scale_id)
+                    insert!(existing, scale_id, scale)
+                else
+                    existing[scale_id] = mergescales(existing[scale_id], scale)
+                end
+            end
+        end
+    end
+
+    entries_grid = map(rescaled_pls_grid, CartesianIndices(rescaled_pls_grid)) do processedlayers, idx
+        map(processedlayers) do processedlayer
+            to_entry(processedlayer, categoricalscales, merged_continuousscales)
+        end
+    end
+
+    return entries_grid, continuousscales_grid, merged_continuousscales
+end
+
+function axis_transforms_from_scales(scales::Scales)
+    transforms = Dictionary{Type{<:Aesthetic}, Base.Callable}()
+    for (sym, aes) in ((:X, AesX), (:Y, AesY), (:Z, AesZ))
+        haskey(scales.dict, sym) || continue
+        sub = scales.dict[sym]
+        haskey(sub, :scale) || continue
+        forward = sub[:scale]
+        forward === identity && continue
+        Makie.inverse_transform(forward) === nothing && error("Scale function `$forward` set for aesthetic `$sym` has no inverse registered with `Makie.inverse_transform`, so analyses cannot back-transform their fit into data space. Use a scale with a known inverse (e.g. `log10`, `log2`, `log`, `sqrt`).")
+        insert!(transforms, aes, forward)
+    end
+    return transforms
+end
+
+positional_transform(transforms, ::Nothing) = nothing
+positional_transform(transforms, aes::DataType) = haskey(transforms, aes) ? (aes => transforms[aes]) : nothing
+
+# The positional-index => aesthetic mapping a layer resolves to, via the same `aesthetic_mapping` the final
+# scale resolution uses. Computed with continuous scitypes of the given arity, which is what determines the
+# position aesthetics; empty if the plot type has no mapping for that arity. This is the single source for
+# both picking a scale space and checking that the resolved layer still agrees with it.
+function position_aesthetics(plottype, attributes, arity::Int)
+    scitypes = ScientificType[Continuous() for _ in 1:arity]
+    am = aesthetic_mapping(plottype, merge(mandatory_attributes(plottype), attributes), scitypes)
+    out = Dictionary{Int, Type{<:Aesthetic}}()
+    for (k, v) in pairs(am)
+        k isa Int && v isa Type{<:Aesthetic} && insert!(out, k, v)
+    end
+    return out
+end
+
+output_aesthetic(plottype, attributes, arity::Int, idx::Int) =
+    get(position_aesthetics(plottype, attributes, arity), idx, nothing)
+
+position_transform(transforms, plottype, attributes, arity::Int, idx::Int) =
+    isempty(transforms) ? nothing : positional_transform(transforms, output_aesthetic(plottype, attributes, arity, idx))
+
+tag_scale_aesthetics(pl::ProcessedLayer, fit::Bool) =
+    fit ? ProcessedLayer(pl; scale_assumed_aes = position_aesthetics(pl.plottype, pl.attributes, length(pl.positional))) : pl
+tag_scale_aesthetics(pls::ProcessedLayers, fit::Bool) =
+    fit ? ProcessedLayers(map(pl -> tag_scale_aesthetics(pl, true), pls.layers)) : pls
+
+# A downstream transformation (a `visual` switching plot type or orientation) can resolve a positional to a
+# different aesthetic than the analysis assumed when it chose its scale space. Compare the assumed mapping to
+# the resolved one and error if a positional moved on or off a scaled aesthetic, since the fit and the display
+# would then disagree. Aesthetic-preserving changes (color, marker, a plot type with the same position mapping)
+# don't trip it.
+function check_scale_aesthetics(pl::ProcessedLayer)
+    isempty(pl.scale_assumed_aes) && return
+    resolved = position_aesthetics(pl.plottype, pl.attributes, length(pl.positional))
+    scaled = keys(pl.axis_transforms)
+    for (idx, assumed) in pairs(pl.scale_assumed_aes)
+        actual = get(resolved, idx, nothing)
+        if actual !== assumed && (assumed in scaled || (actual !== nothing && actual in scaled))
+            error(
+                "A downstream transformation (e.g. a `visual` changing plot type or orientation) altered the aesthetic mapping of an analysis layer that was fit in a transformed scale space: positional $idx was fit assuming aesthetic `$(nameof(assumed))` but the layer resolves it to `$(actual === nothing ? "none" : nameof(actual))`, so the fit no longer matches the display. Set the plot type and orientation on the analysis itself instead of via a downstream `visual`."
+            )
+        end
+    end
+    return
+end
+
+function aesthetic_for_symbol(s::Symbol)
+    aessym = Symbol("Aes", s)
+    t = isdefined(Grafico, aessym) ? getproperty(Grafico, aessym) : nothing
+    if !(t isa Type{<:Aesthetic})
+        return nothing
+    else
+        t
+    end
+end
+
+
+function compute_scale_properties(processedlayers::Vector{ProcessedLayer}, scales::Scales)
+
+    # allow specifying named scales just by symbol, we can find out what aesthetic that maps
+    # to by checking the processed layers
+    named_scales = Dictionary{Union{Symbol, Int}, Type{<:Aesthetic}}()
+    unnamed_aes = Set{Type{<:Aesthetic}}()
+
+    for processedlayer in processedlayers
+        aes_mapping = aesthetic_mapping(processedlayer)
+
+        function p!((key, value))
+            # verbatim doesn't need an aesthetic because verbatim values are always
+            # passed through and never rescaled
+            if value isa AbstractArray{<:AbstractArray{<:Verbatim}}
+                return
+            end
+            return if haskey(processedlayer.scale_mapping, key)
+                symbol = processedlayer.scale_mapping[key]
+                existing_aes = get(named_scales, symbol, nothing)
+                aes = aes_mapping[key]
+                if existing_aes !== nothing && existing_aes !== aes
+                    error("Found two different aesthetics for scale key $key, $aes and $existing_aes")
+                end
+                if existing_aes === nothing
+                    insert!(named_scales, symbol, aes)
+                end
+            else
+                aes = hardcoded_or_mapped_aes(processedlayer, key, aes_mapping)
+                push!(unnamed_aes, aes)
+            end
+        end
+        foreach(p!, pairs(processedlayer.positional))
+        foreach(p!, pairs(processedlayer.primary))
+        foreach(p!, pairs(processedlayer.named))
+    end
+
+    dict = MultiAesScaleDict{Any}()
+
+    fn(value::Pair{<:Type, <:Any}) = nothing, value[1], value[2]
+    fn(value::Pair{<:Tuple{<:Type, Symbol}, <:Any}) = value[1][2], value[1][1], value[2]
+    fn(value::Pair{Symbol, <:Any}) = value[1], named_scales[value[1]], value[2]
+
+    for (sym, value) in pairs(scales.dict)
+        aes = aesthetic_for_symbol(sym)
+        if aes === nothing
+            if !haskey(named_scales, sym)
+                error("Got scale $(repr(sym)) in scale properties but this key is neither the default name of a scale nor does it reference a named scale. The named scales are $(keys(named_scales))")
+            end
+            aes = named_scales[sym]
+            scale_id = sym
+        else
+            if aes ∉ unnamed_aes
+                error("Got scale properties for $(repr(sym)) but no scale of this kind is mapped.")
+            end
+            scale_id = nothing
+        end
+
+        if !haskey(dict, aes)
+            insert!(dict, aes, Dictionary{Union{Nothing, Symbol}, Any}())
+        end
+        subdict = dict[aes]
+        if haskey(subdict, scale_id)
+            error("Found more than one scale for aesthetic $aes and scale id $scale_id")
+        end
+        insert!(subdict, scale_id, value)
+    end
+
+    # layout = Dictionary((layout=wrap,))
+    # theme_palettes = map(to_value, Dictionary(Makie.current_default_theme()[:palette]))
+    # user_palettes = Dictionary(palettes)
+    # return foldl(merge!, (layout, theme_palettes, user_palettes), init=NamedArguments())
+
+    return dict
+end
+
+function compute_axes_grid(
+        fig, d::AbstractDrawable, scales::Scales = scales();
+        axis = NamedTuple(), facet = NamedTuple()
+    )
+
+    axes_grid = compute_axes_grid(d, scales; axis, facet)
+    sz = size(axes_grid)
+    if sz != (1, 1) && fig isa Axis
+        msg = "You can only pass an `Axis` to `draw!` if the calculated layout only contains one element. Elements: $(sz)"
+        throw(ArgumentError(msg))
+    end
+
+    return map(ae -> AxisEntries(ae, fig), axes_grid)
+end
+
+hardcoded_mapping(_::Int) = nothing
+function hardcoded_mapping(key::Symbol)
+    return key === :layout ? AesLayout :
+        key === :row ? AesRow :
+        key === :col ? AesCol :
+        key === :group ? AesGroup :
+        key === :dodge_x ? AesDodgeX :
+        key === :dodge_y ? AesDodgeY :
+        nothing
+end
+
+function hardcoded_or_mapped_aes(processedlayer, key::Union{Int, Symbol}, aes_mapping::AestheticMapping)
+    hardcoded = hardcoded_mapping(key)
+    hardcoded !== nothing && return hardcoded
+    if !haskey(aes_mapping, key)
+        sym = Makie.plotsym(processedlayer.plottype)
+        throw(ArgumentError("ProcessedLayer with plot type `$sym` contains mapped attribute `$key` which is not part of the aesthetic mapping for `$sym`. Run `show_aesthetics($sym)` to check which aesthetic mappings it supports.\n\nNote: If a plot attribute is not part of the aesthetic mapping for a given plot type, Grafico does not know how to handle this attribute in its scale system, therefore that attribute cannot be used in `mapping`, only in `visual`. The exception is if you bypass the scale system using the `=> verbatim` helper. `verbatim` allows you to use array-valued attributes in `mapping` which are also sliced according to each layer's grouping structure (unlike `visual` which passes attributes to each group unmodified)."))
+    end
+    return aes_mapping[key]
+end
+
+# Resolve any *deferred* (linear-index) Layout scale positions into proper `(row, col)`
+# tuples using the given `aspect`. Replaces the Layout entry in `categoricalscales` with
+# fresh `CategoricalScale`s whose `plot` field holds tuples.
+function _resolve_lazy_layout!(categoricalscales::MultiAesScaleDict{CategoricalScale}, aspect::Real)
+    haskey(categoricalscales, AesLayout) || return
+    scaledict = categoricalscales[AesLayout]
+    for (key, scale) in pairs(scaledict)
+        plot = scale.plot
+        eltype(plot) <: Integer || continue  # already resolved
+        new_plot = resolve_lazy_wrap(plot, length(plot), aspect)
+        scaledict[key] = CategoricalScale(scale.data, new_plot, scale.label, scale.props, scale.aes)
+    end
+    return
+end
+
+# Apply `facet_size` to populate `axis_dict[:width]` / `axis_dict[:height]`.
+# User-supplied `width`/`height` already in `axis_dict` take precedence.
+function _apply_facet_size!(axis_dict, facet_size::FacetSize, n_rows::Int, n_cols::Int)
+    user_w = get(axis_dict, :width, nothing)
+    user_h = get(axis_dict, :height, nothing)
+    aspect = facet_size.aspect
+    if user_w isa Number && user_h isa Number
+        return  # both supplied, nothing to do
+    elseif user_w isa Number
+        insert!(axis_dict, :height, round(Int, user_w / aspect))
+    elseif user_h isa Number
+        insert!(axis_dict, :width, round(Int, user_h * aspect))
+    else
+        h = facet_size.height(n_rows, n_cols)
+        insert!(axis_dict, :height, h)
+        insert!(axis_dict, :width, round(Int, h * aspect))
+    end
+    return
+end
+
+function compute_axes_grid(d::AbstractDrawable, scales::Scales = scales(); axis = NamedTuple(), facet = NamedTuple())
+
+    # Extract optional `facet_size::FacetSize`. User-supplied `width`/`height` in `axis` take precedence.
+    axis_dict::NamedArguments = axis isa NamedArguments ? copy(axis) : dictionary(pairs(axis))
+    facet_size = get(facet, :size, nothing)
+
+    processedlayers = ProcessedLayers(d, axis_transforms_from_scales(scales)).layers
+
+    scale_props = compute_scale_properties(processedlayers, scales)
+
+    categoricalscales = MultiAesScaleDict{CategoricalScale}()
+
+    for processedlayer in processedlayers
+        aes_mapping = aesthetic_mapping(processedlayer)
+        catscales = Grafico.categoricalscales(processedlayer, scale_props, aes_mapping)
+
+        for (key, scale) in pairs(catscales)
+            scale_id = get(processedlayer.scale_mapping, key, nothing)
+            aes = hardcoded_or_mapped_aes(processedlayer, key, aes_mapping)
+            if !haskey(categoricalscales, aes)
+                insert!(categoricalscales, aes, eltype(categoricalscales)())
+            end
+            scaledict = categoricalscales[aes]
+            if !haskey(scaledict, scale_id)
+                insert!(scaledict, scale_id, scale)
+            else
+                scaledict[scale_id] = mergescales(scaledict[scale_id], scale)
+            end
+        end
+    end
+    # fit categorical scales (compute plot values using all data values)
+    for scaledict in values(categoricalscales)
+        map!(fitscale, scaledict, scaledict)
+    end
+
+    # Resolve any deferred (linear-index) Layout positions to (row, col) using the effective aspect:
+    #   1. User-supplied `width` and `height` in `axis` (both required)
+    #   2. `FacetSize.aspect` if `facet_size` is a `FacetSize`
+    #   3. `1.0` (matches the prior squareish wrap)
+    layout_aspect = let
+        user_w = get(axis_dict, :width, nothing)
+        user_h = get(axis_dict, :height, nothing)
+        if user_w isa Number && user_h isa Number
+            user_w / user_h
+        elseif facet_size isa FacetSize
+            facet_size.aspect
+        else
+            1.0
+        end
+    end
+    _resolve_lazy_layout!(categoricalscales, layout_aspect)
+
+    set_dodge_width_default!(categoricalscales, processedlayers)
+    compute_plot_dependent_attributes!(processedlayers)
+
+    pls_grid = compute_processedlayers_grid(processedlayers, categoricalscales)
+    entries_grid, continuousscales_grid, merged_continuousscales =
+        compute_entries_continuousscales(pls_grid, categoricalscales, scale_props)
+
+    # Apply `facet_size` now that we know the grid dimensions
+    if facet_size !== nothing
+        n_rows, n_cols = size(pls_grid)
+        _apply_facet_size!(axis_dict, facet_size, n_rows, n_cols)
+    end
+    final_axis = axis_dict
+
+    indices = CartesianIndices(pls_grid)
+    axes_grid = map(indices) do c
+
+        # for the subsequent logic, the x,y,z scales are kept per-facet, while
+        # for all other scales the merged versions are picked (for example to keep
+        # colorbars synchronized in pagination)
+        mixed_continuousscales = copy(merged_continuousscales)
+        for aes in (AesX, AesY, AesZ)
+            if haskey(continuousscales_grid[c], aes)
+                mixed_continuousscales[aes] = continuousscales_grid[c][aes]
+            end
+        end
+
+        return AxisSpecEntries(
+            AxisSpec(c, final_axis),
+            entries_grid[c],
+            categoricalscales,
+            mixed_continuousscales,
+            pls_grid[c],
+        )
+    end
+
+    # Axis labels and ticks
+    for ae in axes_grid
+        ndims = isaxis2d(ae) ? 2 : 3
+        aesthetics = [AesX, AesY, AesZ]
+        hide_empty_axis = false
+        for (aes, var) in zip(aesthetics[1:ndims], (:x, :y, :z)[1:ndims])
+            # Determine which scales of type AesX, AesY, AesZ have actually been
+            # used by the processed layers in the current AxisSpecEntries.
+            # We can allow the usage of multiple of these scales in a facetted figure
+            # as long as each facet only uses one kind. That makes it possible to
+            # create facet plots in which adjacent facets don't share X and Y scales at all,
+            # like completely disjoint categories or categorical next to continuous data.
+            used_scale_ids = get_used_scale_ids(ae, aes)
+
+            if isempty(used_scale_ids)
+                # Empty facets still need ticks from merged scales so that linked
+                # datetime axes don't fall back to raw float labels (#471).
+                cont_scales = values(get(merged_continuousscales, aes, Dictionary()))
+                cat_scales = values(get(categoricalscales, aes, Dictionary()))
+                all_scales = merge(cont_scales, cat_scales)
+
+                if length(all_scales) == 1
+                    only_scale = only(all_scales)
+                    _ticks = ticks(only_scale)
+                    if _ticks !== automatic
+                        get!(ae.axis.attributes, Symbol(var, "ticks"), _ticks)
+                        if only_scale isa ContinuousScale
+                            get!(ae.axis.attributes, Symbol(var, "tickformat"), only_scale.props.aesprops.tickformat)
+                        end
+                    end
+                elseif length(all_scales) > 1
+                    # Multiple candidate scales exist but we can't determine which
+                    # one's ticks to display. Mark the axis for hiding so the empty
+                    # facet appears as a blank cell. This is especially important when
+                    # the empty axis sits at the bottom row (for x) or the leftmost
+                    # column (for y), where its ticks would remain visible after
+                    # hideinnerdecorations! and could be misleading for neighboring axes.
+                    hide_empty_axis = true
+                end
+                continue
+            end
+            if length(used_scale_ids) > 1
+                error("Found more than two scales of type $aes used in one AxesSpecGrid, this is currently not supported. Scales were: $used_scale_ids")
+            end
+            used_scale_id = only(used_scale_ids)
+            if haskey(ae.categoricalscales, aes) && haskey(ae.categoricalscales[aes], used_scale_id)
+                catscales = ae.categoricalscales[aes]
+                scale = catscales[used_scale_id]
+            elseif haskey(ae.continuousscales, aes)
+                conscales = ae.continuousscales[aes]
+                scale = conscales[used_scale_id]
+            else
+                continue
+            end
+            if scale isa CategoricalScale
+                label = getlabel(scale)
+                # Makie might cut off parts of a categorical scale if no data is plotted there, so we plot
+                # that data ourselves in the form of invisible scatters
+                categorical_limits_pseudo_entry!(ae, aes, scale)
+            else
+                # the units are equalized in the merged scales, but the labels are in each separate scale
+                # so we have to assemble the label out of each component separately
+                label = getlabel_with_merged_unit(scale, merged_continuousscales[aes][used_scale_id])
+            end
+            # Use global scales for ticks for now
+            # TODO: requires a nicer mechanism that takes into account axis linking
+            (scale isa ContinuousScale) && (scale = merged_continuousscales[aes][used_scale_id])
+            if scale isa ContinuousScale
+                # Only set attribute if it was not present beforehand
+                ndims == 2 && get!(ae.axis.attributes, Symbol(var, "scale"), scale.props.aesprops.scale) # TODO: remove ndims == 2 when Axis3 supports scales
+                get!(ae.axis.attributes, Symbol(var, "tickformat"), scale.props.aesprops.tickformat)
+            end
+            for (k, v) in pairs((label = label, ticks = ticks(scale)))
+                keyword = Symbol(var, k)
+                # Only set attribute if it was not present beforehand
+                get!(ae.axis.attributes, keyword, v)
+            end
+        end
+
+        if hide_empty_axis
+            # When an empty facet has multiple candidate scales for at least one axis
+            # dimension (e.g., different X scales in different columns of a row/col layout),
+            # it's not possible to determine which scale's ticks to display. Hide all axis
+            # decorations so the cell appears blank, similar to unfilled cells in wrapped layouts.
+            for var in (:x, :y, :z)[1:ndims]
+                for attr in (:ticksvisible, :ticklabelsvisible, :labelvisible, :gridvisible, :minorgridvisible)
+                    set!(ae.axis.attributes, Symbol(var, attr), false)
+                end
+            end
+            if isaxis2d(ae)
+                for attr in (:topspinevisible, :bottomspinevisible, :leftspinevisible, :rightspinevisible)
+                    set!(ae.axis.attributes, attr, false)
+                end
+            end
+        end
+    end
+
+    return axes_grid
+end
+
+function categorical_limits_pseudo_entry!(ae::AxisSpecEntries, aes, scale::CategoricalScale)
+    lims = extrema(plotvalues(scale)) .+ (-0.5, 0.5)
+    # currently we don't have a VLines or HLines for z but giving NaN to the other dimensions in
+    # let's say Scatter causes the dimensions we care about to be ignored as well by Makie, which
+    # was my first implementation attempt
+    aes === AesZ && return
+    positional = Any[collect(lims)]
+    named = NamedArguments((; color = :transparent))
+    ptype(::Type{AesX}) = VLines
+    ptype(::Type{AesY}) = HLines
+    return push!(ae.entries, Entry(ptype(aes), positional, named))
+end
+
+function get_used_scale_ids(ae::AxisSpecEntries, aestype)
+    scale_ids = Set{Union{Nothing, Symbol}}()
+    for p in ae.processedlayers
+        aes_map = aesthetic_mapping(p)
+        for (key, value) in pairs(aes_map)
+            if value === aestype
+                scale_id = get(p.scale_mapping, key, nothing)
+                push!(scale_ids, scale_id)
+            end
+        end
+    end
+    return scale_ids
+end
+
+function to_entry(p::ProcessedLayer, categoricalscales::Dictionary, continuousscales::Dictionary)
+    entry = to_entry(p.plottype, p, categoricalscales, continuousscales)
+    insert!(entry.named, :cycle, nothing)
+    for key in (:group, :layout, :row, :col, :dodge_x, :dodge_y, :legend)
+        if haskey(entry.named, key)
+            delete!(entry.named, key)
+        end
+    end
+    return entry
+end
+
+function to_entry(P, p::ProcessedLayer, categoricalscales::Dictionary, continuousscales::Dictionary)
+    aes_mapping = aesthetic_mapping(p)
+    scale_mapping = p.scale_mapping
+
+    positional = map(eachindex(p.positional)) do i
+        full_rescale(p.positional[i], i, aes_mapping, scale_mapping, categoricalscales, continuousscales)
+    end
+    named = map(pairs(p.named)) do (key, value)
+        full_rescale(value, key, aes_mapping, scale_mapping, categoricalscales, continuousscales)
+    end
+    primary = map(pairs(p.primary)) do (key, values)
+        if key in (:group, :layout, :col, :row, :dodge_x, :dodge_y)
+            return values
+        end
+        # seems that there can be vectors here for concatenated layers, but for unconcatenated these should
+        # be scalars
+        if values isa AbstractVector
+            full_rescale(values, key, aes_mapping, scale_mapping, categoricalscales, continuousscales)
+        else
+            values = [values]
+            rescaled = full_rescale(values, key, aes_mapping, scale_mapping, categoricalscales, continuousscales)
+            rescaled[]
+        end
+    end
+
+    for dodge in (:dodge_x, :dodge_y)
+        dodge_aes = dodge === :dodge_x ? AesDodgeX : AesDodgeY
+        axis_aes = dodge === :dodge_x ? AesX : AesY
+        if haskey(primary, dodge)
+            positional = map(eachindex(positional)) do i
+                aes_mapping[i] == axis_aes || return positional[i]
+                return compute_dodge(positional[i], dodge, primary[dodge], scale_mapping, categoricalscales, dodge_aes)
+            end
+            named = map(pairs(named)) do (key, values)
+                aes_mapping[key] == axis_aes || return values
+                return compute_dodge(values, dodge, primary[dodge], scale_mapping, categoricalscales, dodge_aes)
+            end
+        end
+    end
+
+    return Entry(P, positional, merge(p.attributes, named, primary))
+end
+
+function get_scale(key, aes, scale_mapping, categoricalscales, continuousscales)
+    scale_id = get(scale_mapping, key, nothing)
+    scale = if haskey(categoricalscales, aes) && haskey(categoricalscales[aes], scale_id)
+        categoricalscales[aes][scale_id]
+    elseif haskey(continuousscales, aes) && haskey(continuousscales[aes], scale_id)
+        continuousscales[aes][scale_id]
+    else
+        # this should mean that the data were passed `verbatim` so there is no scale
+        nothing
+    end
+    return scale
+end
+
+strip_units(scale, data) = scale, data
+
+function full_rescale(data, key, aes_mapping, scale_mapping, categoricalscales, continuousscales)
+    is_verbatim(data) && return data
+    hc_aes = hardcoded_mapping(key)
+    aes = hc_aes === nothing ? get(aes_mapping, key, nothing) : hc_aes
+    if aes === nothing
+        error("Found no aesthetic for key $(repr(key)), only verbatim data may use a key that is not part of a plot type's aesthetic mapping and that is handled above.")
+    end
+    scale = get_scale(key, aes, scale_mapping, categoricalscales, continuousscales)
+    scale === nothing && return data
+    if scale isa ContinuousScale
+        scale, data = strip_units(scale, data)
+    end
+    return full_rescale(data, aes, scale)
+end
+
+function default_colormap()
+    return Makie.current_default_theme().colormap[]
+end
+
+full_rescale(data, aes, scale::CategoricalScale) = rescale(data, scale)
+
+function nonsingular_colorrange(scale::ContinuousScale)
+    props = scale.props.aesprops::AesColorContinuousProps
+    cr = @something(props.colorrange, scale.extrema)
+    return nonsingular_limits(cr)
+end
+
+# expand singular limits to (0, v) or (v, 0) if singular value v is nonzero
+# or to (0, 1) if it is, which should be easier to read than choosing a middle
+# value like it's done in Makie with axis limits
+function nonsingular_limits(r)
+    if r[1] == r[2]
+        if r[1] == 0
+            return (r[1], oneunit(r[1]))
+        else
+            if r[1] < 0
+                return (r[1], false * r[1])
+            else
+                return (false * r[1], r[1])
+            end
+        end
+    else
+        return r
+    end
+end
+
+function full_rescale(data, aes::Type{AesColor}, scale::ContinuousScale)
+    props = scale.props.aesprops::AesColorContinuousProps
+    colormap = Makie.to_colormap(@something(props.colormap, default_colormap()))
+    colorrange = Makie.Vec2(nonsingular_colorrange(scale))
+    colorscale = props.scale
+    lowclip = Makie.to_color(@something(props.lowclip, first(colormap)))
+    highclip = Makie.to_color(@something(props.highclip, last(colormap)))
+    nan_color = Makie.to_color(@something(props.nan_color, RGBAf(0, 0, 0, 0)))
+    interpolate = true
+    return Makie.numbers_to_colors(
+        Makie.convert_single_argument(collect(data)),
+        colormap,
+        colorscale,
+        colorrange,
+        lowclip,
+        highclip,
+        nan_color,
+        interpolate,
+    )
+end
+
+function full_rescale(data, ::Type{AesMarkerSize}, scale::ContinuousScale)
+    props = scale.props.aesprops::AesMarkerSizeContinuousProps
+    return values_to_markersizes(data, props.sizerange, nonsingular_limits(scale.extrema))
+end
+
+function full_rescale(data, ::Type{AesLineWidth}, scale::ContinuousScale)
+    props = scale.props.aesprops::AesLineWidthContinuousProps
+    return values_to_linewidth(data, props.sizerange, nonsingular_limits(scale.extrema))
+end
+
+function values_to_linewidth(data, sizerange, extrema)
+    # we scale the width linearly with the values
+    widthmin, widthmax = sizerange
+    widthspan = widthmax - widthmin
+    scalemin, scalemax = extrema
+    scalewidth = scalemax - scalemin
+    return map(data) do value
+        fraction = ((value - scalemin) / scalewidth)
+        linewidth = widthmin + fraction * widthspan
+        return linewidth
+    end
+end
+
+full_rescale(data, aes::Type{<:Union{AesContourColor, AesABIntercept, AesABSlope}}, scale::ContinuousScale) = data # passthrough, this aes is a mock one anyway
+
+function values_to_markersizes(data, sizerange, extrema)
+    # we scale the area linearly with the values
+    areamin, areamax = sizerange .^ 2
+    areawidth = areamax - areamin
+    scalemin, scalemax = extrema
+    scalewidth = scalemax - scalemin
+    return map(data) do value
+        fraction = ((value - scalemin) / scalewidth)
+        markerarea = areamin + fraction * areawidth
+        markersize = sqrt(markerarea)
+        return markersize
+    end
+end
+
+function full_rescale(data, aes::Type{<:Union{AesX, AesY, AesZ, AesDeltaX, AesDeltaY, AesDeltaZ, AesAnnotationOffsetX, AesAnnotationOffsetY}}, scale::ContinuousScale)
+    return data
+end
+
+function numerical_rescale(values, key, aes_mapping, scale_mapping, categoricalscales, continuousscales)
+    if is_verbatim(values)
+        error("Cannot do numerical rescale on verbatim data for $(repr(key))")
+    end
+    aes = aes_mapping[key]
+    scale = get_scale(key, aes, scale_mapping, categoricalscales, continuousscales)
+
+    if scale isa ContinuousScale
+        return values, scale
+    elseif scale === nothing
+        error("Cannot do numerical rescale on verbatim data for $(repr(key))")
+    end
+    indices = Int.(indexin(values, datavalues(scale)))
+    return indices, scale
+end
+
+function to_entry(P::Type{Heatmap}, p::ProcessedLayer, categoricalscales::Dictionary, continuousscales::Dictionary)
+    aes_mapping = aesthetic_mapping(p)
+    scale_mapping = p.scale_mapping
+
+    z_indices, scale = numerical_rescale(p.positional[3], 3, aes_mapping, scale_mapping, categoricalscales, continuousscales)
+
+    if scale isa CategoricalScale
+        colormap = plotvalues(scale)
+        color_attributes = dictionary(
+            [
+                :colormap => colormap,
+                :colorrange => (1, length(colormap)),
+                :nan_color => :transparent,
+            ]
+        )
+    else
+        color_attributes = dictionary(
+            [
+                :colormap => @something(scale.props.aesprops.colormap, default_colormap()),
+                :colorrange => nonsingular_colorrange(scale),
+                :colorscale => @something(scale.props.aesprops.scale, identity),
+                :nan_color => @something(scale.props.aesprops.nan_color, :transparent),
+                :lowclip => @something(scale.props.aesprops.lowclip, Makie.automatic),
+                :highclip => @something(scale.props.aesprops.highclip, Makie.automatic),
+            ]
+        )
+    end
+
+    positional = Any[
+        full_rescale(p.positional[1], 1, aes_mapping, scale_mapping, categoricalscales, continuousscales),
+        full_rescale(p.positional[2], 2, aes_mapping, scale_mapping, categoricalscales, continuousscales),
+        z_indices,
+    ]
+
+    return Entry(P, positional, merge(p.named, p.primary, p.attributes, color_attributes))
+end
+
+function Base.show(io::IO, layers::Layers; indent = 0)
+    ind = "  "^indent
+    printstyled(io, ind, "Layers", bold = true)
+    println(io, " with $(length(layers.layers)) elements:")
+    for (i, layer) in enumerate(layers)
+        show(io, layer; indent = indent + 1, index = i)
+    end
+    return
+end
+
+scale_setting_name(scale_id, aes::Type{<:Aesthetic}) = scale_id !== nothing ? scale_id : string(nameof(aes))[4:end]
+
+# If the user wrote the generic `dodge_x` / `dodge_y` on a plot that also has its own
+# `:dodge` attribute mapping to the matching `AesDodgeX` / `AesDodgeY`, rename the key
+# to `:dodge` so the plot's native dodge mechanism (e.g. BarPlot's width narrowing) is
+# used. Layers where the plot has no matching `:dodge` (e.g. Scatter), or whose `:dodge`
+# maps to the other axis, keep the generic key and use the manual-offset fallback path.
+function reroute_generic_dodge(p::ProcessedLayer)
+    (haskey(p.primary, :dodge_x) || haskey(p.primary, :dodge_y)) || return p
+
+    aes_map = aesthetic_mapping(p)
+    haskey(aes_map, :dodge) || return p
+    native_dodge_aes = aes_map[:dodge]::Type{<:Aesthetic}
+    native_dodge_aes in (AesDodgeX, AesDodgeY) || return p
+
+    has_native_dodge = haskey(p.primary, :dodge) || haskey(p.named, :dodge)
+
+    primary = copy(p.primary)
+    scale_mapping = copy(p.scale_mapping)
+    labels = copy(p.labels)
+
+    for (key, aes) in ((:dodge_x, AesDodgeX), (:dodge_y, AesDodgeY))
+        haskey(primary, key) || continue
+        aes === native_dodge_aes || continue
+
+        if has_native_dodge
+            error("Layer with plot type `$(Makie.plotsym(p.plottype))` received both `$key` and `dodge` mappings, which both target the $(aesname(aes)) aesthetic. Use only one.")
+        end
+
+        insert!(primary, :dodge, primary[key])
+        delete!(primary, key)
+        if haskey(scale_mapping, key)
+            insert!(scale_mapping, :dodge, scale_mapping[key])
+            delete!(scale_mapping, key)
+        end
+        if haskey(labels, key)
+            insert!(labels, :dodge, labels[key])
+            delete!(labels, key)
+        end
+    end
+
+    return ProcessedLayer(p; primary, scale_mapping, labels)
+end
+
+function compute_dodge(data, key::Symbol, dodgevalues, scale_mapping, categoricalscales, dodge_aes)
+    scale_id = get(scale_mapping, key, nothing)
+    scale = categoricalscales[dodge_aes][scale_id]
+
+    indices = rescale(dodgevalues isa AbstractArray ? dodgevalues : [dodgevalues], scale)
+
+    props = scale.props.aesprops
+    n = length(datavalues(scale))
+    n == 1 && return data
+    width = if props.width !== nothing
+        props.width
+    else
+        error("Tried to compute dodging offsets but the `width` attribute of the dodging scale was `nothing`. This happens if only plots participate in the dodge that do not have an inherent width. For example, a scatter plot has no width but a barplot does. You can pass a width manually like `draw(..., scales($(scale_setting_name(scale_id, dodge_aes)) = (; width = 0.6))`.")
+    end
+    # scale to 0-1, center around 0, shrink to width (like centers of bins that added together result in width)
+    offsets = ((indices .- 1) ./ (n - 1) .- 0.5) .* width * (n - 1) / n
+    return data .+ offsets
+end
+
+function set_dodge_width_default!(categoricalscales, processedlayers)
+    for dodgetype in (AesDodgeX, AesDodgeY)
+        haskey(categoricalscales, dodgetype) || continue
+        scales = categoricalscales[dodgetype]
+        for (scale_id, scale) in pairs(scales)
+            props = scale.props.aesprops
+            props.width === nothing || continue
+            n_dodge = length(datavalues(scale))
+            width::Union{Float64, Nothing} = nothing
+            for p in processedlayers
+                _width = determine_dodge_width(p, dodgetype, n_dodge)
+                if width === nothing
+                    width = _width
+                elseif _width !== nothing
+                    width == _width || error("Determined at least two different auto-widths for the `$(scale_setting_name(scale_id, dodgetype))` scale, $width and $_width. Grafico tried to determine dodge with because you specified that a width-less plot type such as Scatter or Errorbars should be dodged. Some plot types like Barplot may have an inherent width for dodging which can often be auto-determined, so Grafico looked for such widths in all other plot types in this plot. Because multiple such widths were detected, Grafico gives up and you have to specify the dodge width for your width-less plots manually, like `draw(..., scales($(scale_setting_name(scale_id, dodgetype)) = (; width = 0.5))`")
+                end
+            end
+            if width !== nothing
+                scales[scale_id] = update_width(scale, width)
+            end
+        end
+    end
+    return
+end
+
+function update_width(scale::CategoricalScale, width)
+    return Accessors.@set scale.props.aesprops.width = width
+end
+
+function determine_dodge_width(p::ProcessedLayer, dodgetype, n_dodge)::Union{Float64, Nothing}
+    aes_mapping = aesthetic_mapping(p)
+    for key in keys(p.primary)
+        aes = hardcoded_or_mapped_aes(p, key, aes_mapping)
+        # check that processedlayer participates in this dodge
+        aes == dodgetype || continue
+        return determine_dodge_width(p.plottype, p, aes_mapping, dodgetype, n_dodge)
+    end
+    return nothing
+end
+
+determine_dodge_width(anyplot, p::ProcessedLayer, aes_mapping, dodgetype, n_dodge) = nothing
+
+attribute_or_plot_default(plottype, attributes, key) = get(attributes, key) do
+    to_value(Makie.default_theme(nothing, plottype)[key])
+end
+
+function determine_dodge_width(T::Type{<:Union{BarPlot, BoxPlot, CrossBar, Violin}}, p::ProcessedLayer, aes_mapping, dodgetype, n_dodge)
+    width = attribute_or_plot_default(T, p.attributes, :width)
+    gap = attribute_or_plot_default(T, p.attributes, :gap)
+    dodge_gap = attribute_or_plot_default(T, p.attributes, :dodge_gap)
+    dodge_width = Makie.scale_width(dodge_gap, n_dodge)
+    if width === Makie.automatic
+        corresponding_aes(::Type{AesDodgeX}) = AesX
+        corresponding_aes(::Type{AesDodgeY}) = AesY
+        if length(p.positional) == 1 # Makie goes 1:n automatically if only one arg is given
+            w = 1
+        end
+        for key in eachindex(p.positional)
+            if aes_mapping[key] === corresponding_aes(dodgetype)
+                w = resolution(p.positional[key])
+            end
+        end
+    elseif width isa Real
+        w = width
+    end
+    w_with_gap = w * (1 - gap)
+    return n_dodge * w_with_gap * (dodge_width + dodge_gap)
+end
+
+function resolution(vec_of_vecs)::Float64
+    iscategoricalcontainer(vec_of_vecs) && return 1.0
+    s = unique(sort(reduce(vcat, vec_of_vecs)))
+    return minimum((b - a for (a, b) in @views zip((s[begin:(end - 1)]), s[(begin + 1):end])))
+end
+
+compute_plot_dependent_attributes!(::Type, ::ProcessedLayer) = nothing
+
+function compute_plot_dependent_attributes!(::Type{T}, pl::ProcessedLayer) where {T <: Union{BarPlot, BoxPlot, CrossBar, Violin}}
+    haskey(pl.attributes, :width) && return
+    isempty(pl.positional) && return
+
+    xdata = pl.positional[1]
+    iscategoricalcontainer(xdata) && return
+
+    flat = reduce(vcat, xdata)
+    isempty(flat) && return
+    rescaled = unwrap_verbatim(contextfree_rescale(flat))
+    s = unique!(sort(rescaled))
+
+    width = if length(s) <= 1
+        1
+    else
+        minimum(s[i + 1] - s[i] for i in 1:(length(s) - 1))
+    end
+
+    return insert!(pl.attributes, :width, width)
+end
+
+function compute_plot_dependent_attributes!(processedlayers::AbstractVector{ProcessedLayer})
+    for pl in processedlayers
+        compute_plot_dependent_attributes!(pl.plottype, pl)
+    end
+    return
+end

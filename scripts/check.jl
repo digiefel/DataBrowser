@@ -138,8 +138,8 @@ function check(args=ARGS)
         prepare = """
             using Pkg
             Pkg.precompile(; strict=true)
-            using DataBrowser, DataBrowserPlots, GLMakie, AlgebraOfGraphics
-            for extension in (:DataBrowserPlotsGUIExt, :DataBrowserPlotsAlgebraOfGraphicsExt)
+            using DataBrowser, DataBrowserPlots, GLMakie
+            for extension in (:DataBrowserPlotsGUIExt,)
                 Base.get_extension(DataBrowserPlots, extension) === nothing && error("Extension failed to load: \$extension")
             end
             """

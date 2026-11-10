@@ -1,4 +1,4 @@
-using Test, DataBrowserPlots, DataBrowserGUI, GLMakie, AlgebraOfGraphics
+using Test, DataBrowserPlots, DataBrowserGUI, GLMakie
 # The code edits of the plot builder.
 const Builder = Base.get_extension(DataBrowserPlots, :DataBrowserPlotsGUIExt).Builder
 using .Builder: add_layer!, set_analysis!
@@ -16,7 +16,7 @@ using .Builder: add_layer!, set_analysis!
         @test occursin("mapping(:t, :v)", code.text)
         occursin("# keep this comment", source) && @test occursin("visual(Lines; color=:blue) # keep this comment", code.text)
         mod = Module(:AddedLayer)
-        Core.eval(mod, :(using DataBrowserPlots, GLMakie, AlgebraOfGraphics))
+        Core.eval(mod, :(using DataBrowserPlots, GLMakie))
         Core.eval(mod, :(rows = $rows))
         f = figure(Base.include_string(mod, code.text))
         plots = only(filter(c -> c isa Axis, f.content)).scene.plots
@@ -38,7 +38,7 @@ end
         """)
     function drawn_trace(code)
         mod = Module(:AnalysisLayer)
-        Core.eval(mod, :(using DataBrowserPlots, GLMakie, AlgebraOfGraphics))
+        Core.eval(mod, :(using DataBrowserPlots, GLMakie))
         Core.eval(mod, :(rows = $rows))
         f = figure(Base.include_string(mod, code.text))
         right = only(filter(c -> c isa Axis && c.yaxisposition[] == :right, f.content))

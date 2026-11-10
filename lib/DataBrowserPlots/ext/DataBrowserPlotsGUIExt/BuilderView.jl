@@ -219,12 +219,6 @@ function build!(view::BuilderView, ctx)::Nothing
         view.error_details = ""
         return nothing
     end
-    if Base.locate_package(ALGEBRA_OF_GRAPHICS) === nothing
-        view.figure = nothing
-        view.message = "Add AlgebraOfGraphics to the environment."
-        view.error_details = ""
-        return nothing
-    end
     try
         ## The names defined in Main, such as the project's functions, are reached by name.
         defined = [name for name in names(Main; all=true) if isdefinedglobal(Main, name) &&
@@ -243,10 +237,9 @@ function build!(view::BuilderView, ctx)::Nothing
             ## A new module for each run, so that nothing from an earlier run of the file is left.
             ## TODO: modules are never freed; reuse one module per window if this grows.
             mod = Module(Symbol("plot_$(ctx.id)"))
-            Core.eval(mod, :(const AlgebraOfGraphics = $(Base.require(ALGEBRA_OF_GRAPHICS))))
             Core.eval(mod, :(const Makie = $Makie))
             Core.eval(mod, :(const DataBrowserPlots = $DataBrowserPlots))
-            Core.eval(mod, :(using .AlgebraOfGraphics, .Makie, .DataBrowserPlots))
+            Core.eval(mod, :(using .Makie, .DataBrowserPlots))
             ## The names of Main come through `using`, so a name that the file defines itself takes
             ## their place.
             ## TODO: a sandbox for plot code, for example the project's code in a module of its own.

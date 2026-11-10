@@ -1,4 +1,4 @@
-using Test, DataBrowserPlots, GLMakie, AlgebraOfGraphics
+using Test, DataBrowserPlots, GLMakie
 
 @testset "y2 scale controls its axis, with shared x" begin
     p = @plot data((t=[0.,1.,2.], V=[0.,5.,0.], I=[0.,1e-6,0.])) * mapping(; x=:t, y=:V, y2=:I, color=ydims()) begin
