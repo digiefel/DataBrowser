@@ -1,3 +1,7 @@
+using Dictionaries: dictionary
+using Makie: Makie, Automatic, BarPlot, Heatmap, Plot, Stairs, Volume, automatic, plot
+using StatsBase: StatsBase, Histogram, histrange, normalize, sturges
+
 const categoricalplottypes = [BarPlot, Heatmap, Volume]
 
 function compute_edges(intervals::Tuple, bins, closed)

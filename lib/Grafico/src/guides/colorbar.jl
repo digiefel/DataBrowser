@@ -1,3 +1,6 @@
+using Dictionaries: Dictionary
+using Makie: Makie, Colorbar, RGBAf, cgrad
+
 function colorbar!(
         fg::FigureGrid; position = :right,
         vertical = default_isvertical(position), kwargs...

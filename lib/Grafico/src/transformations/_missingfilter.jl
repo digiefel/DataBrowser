@@ -1,3 +1,5 @@
+using Dictionaries: AbstractDictionary
+
 _is_missing_or_nan(::Missing) = true
 _is_missing_or_nan(v::Number) = isnan(v)
 _is_missing_or_nan(_) = false

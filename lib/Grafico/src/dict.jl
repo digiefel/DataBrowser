@@ -1,3 +1,6 @@
+using Dictionaries: AbstractDictionary, Dictionary, getindices
+using Makie: automatic
+
 const KeyType = Union{Symbol, Int}
 
 const Arguments = Vector{Any}

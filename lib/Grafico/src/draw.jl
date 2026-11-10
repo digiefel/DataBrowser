@@ -1,3 +1,8 @@
+using Dictionaries: Dictionary, dictionary
+using GridLayoutBase: Protrusion, update!
+using Makie: Makie, Axis, Axis3, Block, Figure, Fixed, GridLayout, GridPosition, GridSubposition, Label, Mixed, Right, Top, plot!, resize_to_layout!
+import Accessors
+
 get_layout(gl::GridLayout) = gl
 get_layout(f::Union{Figure, GridPosition}) = f.layout
 get_layout(l::Union{Block, GridSubposition}) = get_layout(l.parent)

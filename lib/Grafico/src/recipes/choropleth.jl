@@ -1,3 +1,8 @@
+using GeometryBasics: MultiPolygon, Polygon
+using GeoInterface: MultiPolygonTrait, PolygonTrait, coordinates, geomtrait, isgeometry
+using Makie: Makie, Attributes, Point2f, Poly, poly!, @recipe
+using Tables: columnnames, columns, getcolumn
+
 struct TrivialTransformation end
 
 const trivialtransformation = TrivialTransformation()

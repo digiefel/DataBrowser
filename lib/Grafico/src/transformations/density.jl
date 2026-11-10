@@ -1,3 +1,7 @@
+using Dictionaries: dictionary
+using KernelDensity: kde, pdf
+using Makie: Makie, Band, Heatmap, Lines, Volume, automatic
+
 Base.@kwdef struct DensityAnalysis{D, K, B}
     datalimits::D = automatic
     npoints::Int = 200

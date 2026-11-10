@@ -1,3 +1,5 @@
+using Tables: Tables
+
 # How `@plot` turns its declaration into code: each value that a `mapping` names becomes a column of
 # a table of the input's items, and each line becomes a layer of the header, as a function of the
 # input.
@@ -206,7 +208,7 @@ end
 function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol)
     isempty(settings) && return nothing
     scales, templates, legend, theme, coords = Expr[], Pair{Symbol,Any}[], Expr[], nothing, Expr[]
-    for line in filter(line -> line.args[1] === :theme, settings)
+    for line in filter(line -> line.args[1] in (:theme, :plot_theme), settings)
         base, named = call_arguments(line)
         theme = :($PlotTheme($(isempty(base) ? nothing : only(base)), $(Expr(:tuple, Expr(:parameters, (Expr(:kw, k, v) for (k, v) in named)...)))))
     end
@@ -216,7 +218,7 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
         points = [Expr(:kw, :points, f) for f in positional]
         push!(coords, Expr(:tuple, Expr(:parameters, points..., (Expr(:kw, k, v) for (k, v) in named)...)))
     end
-    for line in filter(line -> !(line.args[1] in (:theme, :coord)), settings), (key, value) in last(call_arguments(line))
+    for line in filter(line -> !(line.args[1] in (:theme, :plot_theme, :coord)), settings), (key, value) in last(call_arguments(line))
         line.args[1] === :scales ? push!(scales, :($(QuoteNode(key)) => $value)) :
         key in LEGEND_ROLES ? push!(templates, key => value) : push!(legend, Expr(:kw, key, value))
     end

@@ -1,3 +1,7 @@
+using Dictionaries: Dictionary, dictionary, set!
+using Makie: Makie, Axis, BarPlot, BoxPlot, CrossBar, Heatmap, HLines, RGBAf, Violin, VLines, automatic, to_value
+import Accessors
+
 """
     Layers(layers::Vector{Layer})
 

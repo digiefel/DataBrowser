@@ -1,3 +1,5 @@
+using Makie: Makie
+
 const Mean = let
     init() = (0, 0.0)
     op((n, sum), val) = n + 1, sum + val

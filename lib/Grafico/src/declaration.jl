@@ -189,7 +189,7 @@ macro plot(header, block)
     lines = [hidden ? last(line.args) : line for (line, hidden) in zip(lines, invisible)]
     statements = filter(line -> Meta.isexpr(line, :(=)), lines)
     names = Symbol[first(statement.args) for statement in statements]
-    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme, :coord), lines)
+    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme, :plot_theme, :coord), lines)
     input = gensym("input")
     ## Each line, named or drawn, is a layer of the header; a name holds its line's value.
     statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))

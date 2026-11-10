@@ -1,3 +1,9 @@
+using ForwardDiff: ForwardDiff
+using LinearAlgebra: diag, inv
+using Measurements: Measurements, Measurement, measurement
+using NonlinearSolve: LevenbergMarquardt, NonlinearLeastSquaresProblem, SciMLBase, solve
+using Tables: Tables
+
 """
     unnest(; name = values, ...) -> NamedTuple of vectors
 

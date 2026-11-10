@@ -1,3 +1,6 @@
+using Dictionaries: Dictionary
+import Accessors
+
 # Dispatcher type for `draw` usage.
 struct Pagination
     each::Vector{Matrix{AxisSpecEntries}}

@@ -1,3 +1,7 @@
+using Dictionaries: dictionary
+using Makie: Makie, Band, Lines
+import Loess
+
 Base.@kwdef struct SmoothAnalysis
     npoints::Int = 200
     span::Float64 = 0.75

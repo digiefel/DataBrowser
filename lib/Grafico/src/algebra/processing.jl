@@ -1,3 +1,8 @@
+using Dictionaries: Dictionary
+using Makie: Makie, Plot, plot
+using PooledArrays: PooledArray
+using StructArrays: GroupPerm, StructArray
+
 ## Grouping machinery
 
 fast_hashed(v::AbstractVector) = isbitstype(eltype(v)) ? PooledArray(v) : v

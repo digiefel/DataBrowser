@@ -1,3 +1,7 @@
+using Makie: Makie
+using Tables: columnnames, getcolumn, rows
+import DataAPI
+
 struct DimsSelector{N}
     dims::NTuple{N, Int}
 end

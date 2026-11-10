@@ -1,3 +1,5 @@
+using Makie: Makie, Plot, plot
+
 struct Visual
     plottype::PlotType
     attributes::NamedArguments

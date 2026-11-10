@@ -1,3 +1,5 @@
+using Tables: Tables
+
 """
 The functions to apply to the y values of a layer's points that share x and their groups, as
 `aggregate(mean, std)` in [`@plot`](@ref) writes them. The aggregate is done when the layer has its
