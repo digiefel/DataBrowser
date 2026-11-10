@@ -25,11 +25,8 @@ Projects and domain packages define the science: file interpretation, instrument
 measurement procedures, calculations, and useful views. The toolkit supplies the shared
 infrastructure, including reliable communication and source lifecycle, background work, storage,
 and interaction. Acquisition is part of the product direction; its complete source and
-communication contracts are not implemented yet.
-
-The requirements of sources that cannot be read again are in
-[storage](plans/storage.md#sources-that-cannot-be-read-again), and the rules for side effects in
-live code are in [processing](plans/processing.md#live-code-and-side-effects).
+communication contracts are not implemented yet; §12 gives the requirements of sources that cannot
+be read again.
 
 ## 2. Product Vision
 
@@ -117,6 +114,14 @@ Julia-centered foundation that leaves those directions open.
 - **Source-independent data views.** Tables, plots, and inspectors consume requested values and
   revisions through shared data access. Source setup, recording controls, and communication
   status expose source capabilities; individual data visualizers do not implement acquisition.
+- **Nothing hangs.** Project code runs in another process than every client, because Julia stops
+  every thread of a process to collect garbage, and project code can loop without returning. A
+  saved change to a `process` method shows at once, and its work runs in order of what the clients
+  show.
+- **Scale with what is visible.** Opening a workspace takes the same time for any number of items,
+  and memory stays bounded at millions of items. The work of each frame and of each question grows
+  with what is shown, and the work of the workspace for each row stays small next to the cheapest
+  `read` or `process`.
 - **Responsive default views.** Common scientific values should be fast to explore without custom
   acceleration code. Built-ins own bounded loading, reusable preparation, and appropriate rendering
   reduction. Cold loading, warm presentation, and interaction latency are measured separately.
@@ -184,9 +189,16 @@ that view — the user can then register their own support. Shapes whose support
 dependencies (audio codecs, for example) belong in extension packages even when generic, on the same
 host/extension pattern as the GUI itself.
 
-**Group.** An item whose inputs are other items. Its own result is reusable independently of its
-members; selecting the group and selecting its members are separate actions. Formation and
-hierarchy APIs remain under design in [groups](plans/groupings.md).
+**Group.** An item whose members are other items. Its own result is reusable independently of its
+members; selecting the group and selecting its members are separate actions. Members are links: an
+item can be in several groups, a group can hold groups, and the tree shows the same item under each
+group that holds it. A value keeps two relations apart: its members, and the call and inputs that
+produced it. The groups that `read` gives are the default organization of the tree; other groupings
+compose with it, and hierarchy is never inferred from metadata fields. A result made from several
+inputs, such as a curve, a heatmap or a fitted model, keeps its inputs reachable, and its own result
+is usable in later calculations. A comparison that the user makes from selected items, such as the
+results of groups in different samples, is a value of the workspace: it appears among the results of
+the current analysis with its inputs expandable, and code can reach it.
 
 **Selection.** A concrete list of items, or a *rule* that resolves to items as the project changes.
 Concrete selections reproduce exactly; live rules keep views attached as items are added, removed, or
@@ -199,7 +211,9 @@ predictable effects, and is inspectable so an agent can discover what is possibl
 
 **Visualizer, Figure, Workflow, Annotation.** A **visualizer** renders or interacts with a kind of
 data (generic built-ins or package-supplied), optionally exposing declarative state. At runtime a
-visualizer presents as zero-or-more windows the user can spawn, toggle, minimize, and close; the
+visualizer presents as zero-or-more windows the user can spawn, toggle, minimize, and close; each
+client shows the same visualizers of the workspace in its own way, such as a window of the browser,
+or a picture or text of its current state in the REPL; the
 table and the plot are the first two visualizers. Registered plot APIs like `register_plot!` add a
 plot that the plot visualizer offers for one type of item; they are a convenience, not the contract
 every visualizer follows. A **figure** is
@@ -207,7 +221,11 @@ a composed visual artifact: visualizer outputs, layout, styling, annotations, an
 data. A **workflow** is the persisted graph of views: selections, transforms, visualizers, fits,
 annotations, and export definitions — intent, not pixels, saved as ordinary Julia code in workspace
 or tab files. Opening saved work restores definitions and available results; it does not replay
-physical effects. Tabs organize source code and windows; they do not own a separate analysis engine.
+physical effects. Tabs organize source code and windows; they do not own a separate analysis engine. A tab is a live
+Julia file: a `@layout` block in it declares its windows with `Window(name, visualizer; input)` and
+`Split(direction, ratio, first, second)`, with their geometry, and the output of another visualizer
+is an input given as `VisualizerOutput(name)`. Core holds one visualizer for each name, which exists
+when the file loads, with or without a browser.
 An **annotation** is user-authored metadata on an item
 (tags, notes, coordinates, spatial position); a **figure annotation** is a visual mark on a figure
 (arrow, region, fit label, text). A tag describes an item; an arrow describes a figure. These are
@@ -332,6 +350,11 @@ directly. Concrete item types survive materialization, processing, and visualiza
 comes from multiple dispatch. Each item type defines `id` and `data`; `label` defaults to the id,
 `metadata` to an empty dictionary, and `storage` to a store in memory.
 
+DataBrowserRecipes reads common sources and makes processed items without the type API, and its
+role ends once the items are processed. Later analysis, comparisons and figures use the same public
+tools for every project, and saving that work needs no recipe or registration. A `process` method
+stays an ordinary Julia function: a script can call it without a workspace.
+
 Project code stays close to natural scripts: identify data, load it, compute results, and define
 domain views. The workspace owns cache files, UI state, background jobs, and package lifecycle.
 
@@ -374,6 +397,13 @@ visualizers; domain-specific data gets specialized visualizers; packaged modules
 highest-quality experience. Project-specific visualizers look like extensions of the same system —
 they declare what data they need and draw into a figure or panel, and the package owns selection,
 composition, persistence, and background work.
+
+Visualizers come from two origins. *Runtime visualizers*, such as Makie plots, run in the host and
+appear in every client that can show their output. *Client visualizers* use the technology of one
+client and appear only there. The runtime holds the settings, output and links of both, so they
+combine in one client. A value reaches a client visualizer as one of its *representations*, such as
+a picture, a table, its fields or text; the client visualizer names the representations that it
+accepts, and large values stay in the runtime, which sends slices.
 
 **Editable state.** A visualizer exposes editable state — selected x/y data, visible traces,
 normalization, offsets, filters, colormaps, axis scales, labels, annotations, linked selections,
@@ -479,7 +509,33 @@ native values and their metadata; Core keeps a rebuildable metadata copy for que
 Core requests reads, writes and removals as sources/code change; stores implement them under project
 policy. The declaration/provider protocol and supplied backends remain open in
 [the storage plan](plans/storage.md).
-This supersedes the earlier assumption that additional backends must remain internal extensions.
+
+**Sources that cannot be read again.** `AbstractDataSource` stays the extension point for
+acquisition, and a streaming source and the workspace own the incoming data, its retention and its
+recovery; analysis and visualization code never test for them. Before production streaming is
+added, these requirements hold with the existing source and item boundaries:
+
+1. A source result names one observation and one revision. Asking for that result never makes a new
+   observation.
+2. The workspace knows whether a missing result can be recovered, and from where. Removing a result
+   from a store is separate from making it stale, and recovery never repeats an irreversible
+   operation without telling the user.
+3. What is recorded decides what later edits can compute again. Keeping the values that `read`
+   gave supports a changed `process` method, but not a changed `read`.
+4. Retention follows the store of each type: a project may choose not to store stream input.
+   Missing input may prevent a computation; it never starts a new acquisition.
+5. Arrival and processing are separate. A source gives bounded records or chunks; the workspace
+   shows the lag and slows the producer when it can. A producer that cannot be slowed needs an
+   explicit rule for overflow, never an unbounded queue or a silent loss.
+6. A group `process` method can run again as input arrives. Each call uses a known set of members,
+   and later arrivals ask for another call.
+7. Several sources keep the origin of their items through ids, the cache and the routing of
+   changes. Ids are either for the whole project or qualified by their source; a label never
+   decides identity.
+
+The first proof uses a source whose producer cannot be read again, with limited memory and recorded
+input: removing results from a store, editing a `process` method, restoring results and reopening
+the workspace never consume another observation.
 
 **State ownership.** A clear owner for each kind of state is what makes workflows and a non-blocking
 REPL work. `ui_state` is a GUI rendering detail; it must not become the durable owner of workspace
@@ -517,15 +573,27 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
 
 - **Internal protocol / ABI.** Later, but internal and command-oriented: it exposes workspaces,
   commands, data handles, buffers, errors, and metadata — not arbitrary Julia internals.
-- **Client-server.** Realistic once the command model is stable. The server owns the Julia workspace;
-  clients could be the desktop GUI, a browser GUI, Python, MATLAB, scripts, agents, or multiplayer
-  frontends. The working direction since 9 November 2026 splits the server in two: DBCore keeps the
-  workspace as data, and a Julia host loads and runs project code. See
-  [runtime and clients](plans/runtime-and-clients.md).
+- **Client-server.** The runtime splits in two. *DBCore* keeps the workspace as data: the function
+  calls, their states and revisions, the items, the shared state and the visualizers. A *host*, the
+  Julia host for now, loads the *providers*, which are the project code, sources, stores and
+  visualizer code, and runs them when DBCore asks. A store runs in the host that made its values.
+  Clients call DBCore through the client API, and a client that edits code also talks to the Julia
+  language server in the host through LSP. Each piece has one role: DBCore, a host with its
+  providers, a client, or a contract. The client API and the provider contract hold declarations
+  only, and the server that carries client calls as messages adds no behavior. Drawing belongs to
+  clients, so `draw!`, `draw_header!` and `initial_size` belong to the contract of the browser.
+  Every kind of client works on one runtime at once: the browser, a web UI in which an agent can
+  build visualizers, a terminal UI, agents, and packages for other languages; a notebook is one
+  possible client. Built-in components use only the contracts that a third party could use.
 - **Browser frontend.** A browser client served by a local runtime first, a remote one later. It uses
   the [client API](plans/client-api.md), starts with a structural [code editor](plans/code-editor.md)
   that shows live types and runtime values inside the project's code, and should not require
-  rewriting the scientific core.
+  rewriting the scientific core. The code editor follows Hazel, a live programming environment: it
+  never hangs, shows types and errors while the user types, shows the values that each local
+  variable had in the computation that the user came from, and lets the user drag code as
+  structure. A parser in the editor keeps the structure of incomplete code, the Julia language
+  server in the host gives its meaning, and values come through the client API. The editor offers
+  only drags that the language server proves keep the meaning of the program.
 - **Plots in every client.** The runtime builds every plot as a Makie figure. Makie is the figure
   model; a backend draws the figure, chosen per client. GLMakie draws with OpenGL in the process
   that holds the figure. WGLMakie sends the figure to a browser, which draws it with WebGL.
