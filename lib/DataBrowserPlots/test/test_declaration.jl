@@ -147,6 +147,29 @@ end
     @test count(c -> c isa Axis, figure(badge).content) == 1
     @test count(c -> c isa Axis, figure(p1 + badge).content) == 1
 
+    # SectorMark / Wedge (polar rose petal, Nightingale diagrams)
+    petal = SectorMark(1.5, 0.0, π / 4; color=:orange)
+    @test spec(petal) isa Makie.GridLayoutSpec
+    @test count(c -> c isa Axis, figure(petal).content) == 1
+
+    # RibbonMark (variable-width path ribbon, Minard flow maps)
+    flow = RibbonMark([(0.0, 0.0), (1.0, 1.0), (2.0, 1.0)], [0.2, 0.5, 0.1]; color=:gold)
+    @test spec(flow) isa Makie.GridLayoutSpec
+    @test count(c -> c isa Axis, figure(flow).content) == 1
+
+    # Rose diagram composite
+    rose = rose_diagram(["A", "B", "C", "D"], [1.0, 2.0, 3.0, 1.5]; colors=[:red, :green, :blue, :yellow])
+    @test spec(rose) isa Makie.GridLayoutSpec
+    @test count(c -> c isa Axis, figure(rose).content) == 1
+
+    # 37-degree tilted histogram composite along an axis
+    tilted_hist = T(1.5, 2.0) * R(deg2rad(37.0)) * histogram_diagram(randn(50); bins=5, labels=true, color=(:steelblue, 0.6))
+    @test spec(tilted_hist) isa Makie.GridLayoutSpec
+    @test count(c -> c isa Axis, figure(tilted_hist).content) == 1
+    # Adding tilted histogram directly to a scatter plot
+    tilted_composed = p1 + tilted_hist
+    @test count(c -> c isa Axis, figure(tilted_composed).content) == 1
+
     glyph_plot = data(rows) * mapping(:V, :I) * mark((x, y) -> T(x, y) * Style(color=:teal) * CircleMark(r=0.1))
     @test count(c -> c isa Axis, figure(glyph_plot).content) == 1
 

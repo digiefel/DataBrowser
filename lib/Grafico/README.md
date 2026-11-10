@@ -157,7 +157,8 @@ The limits and scale in `scales(x = ..., y = ...)` filter points and transform `
 
 For custom diagrams, annotations, and data-driven glyphs, `Grafico` provides *graphic marks*, geometric primitives that combine with 2D transforms and styles using `*` and `+` (inspired by `Vizagrams.jl`):
 
-- Primitives: `CircleMark(; r, center)`, `RectMark(; w, h, center)`, `PolygonMark(points)`, `LineMark(points)`, `Segment(p1, p2)`, and `TextMark(text; x, y, fontsize, align, rotation)`
+- Primitives: `CircleMark(; r, x, y)`, `RectMark(; w, h, x, y)`, `PolygonMark(points)`, `LineMark(points)`, `Segment(p1, p2)`, `TextMark(text; x, y)`, `SectorMark(r, θ1, θ2; r_inner)` (or `Wedge`), and `RibbonMark(points, widths)`
+- Composite diagrams: `histogram_diagram(values; bins, scale_h, baseline, ticks, labels)` and `rose_diagram(categories, values; colors)`
 - Transforms: `T(dx, dy)` (translation), `U(sx, sy)` or `U(s)` (scaling), and `R(θ)` (counterclockwise rotation in radians)
 - Styling: `Style(; color, strokecolor, strokewidth, linestyle, linewidth, alpha)`
 
@@ -171,6 +172,25 @@ badge = T(1.5, 2.0) * (
 )
 
 figure(badge)
+```
+
+Because composite diagrams are marks, you can rotate and translate them to build tilted statistical plots, such as a marginal histogram aligned along an eigenvector:
+
+```julia
+scatter_layer = data(rows) * mapping(:V, :I) * visual(Scatter)
+tilted_hist = T(1.5, 2.0) * R(deg2rad(37.0)) * histogram_diagram(rows.I; bins = 5, labels = true, color = (:steelblue, 0.6))
+
+figure(scatter_layer + tilted_hist)
+```
+
+Similarly, `rose_diagram` builds circular coxcomb diagrams for Nightingale or polar rose charts:
+
+```julia
+topics = ["Safety", "Income", "Jobs", "Health", "Education"]
+scores = [6.5, 7.2, 5.8, 8.1, 7.0]
+rose = rose_diagram(topics, scores; colors = [:red, :orange, :green, :blue, :purple])
+
+figure(rose)
 ```
 
 You can also add a mark directly onto any plot with `plt + badge`, or map a function `(x, y, ...) -> mark` over the rows of a layer with `mark(f)`:
