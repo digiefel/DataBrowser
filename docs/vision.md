@@ -403,7 +403,10 @@ appear in every client that can show their output. *Client visualizers* use the 
 client and appear only there. The runtime holds the settings, output and links of both, so they
 combine in one client. A value reaches a client visualizer as one of its *representations*, such as
 a picture, a table, its fields or text; the client visualizer names the representations that it
-accepts, and large values stay in the runtime, which sends slices.
+accepts, and large values stay in the runtime, which sends slices. Anyone can define a
+representation for a type, as with `show(io, MIME, x)` or Makie's `convert_arguments`. Every value
+has at least its generic fields, text, and the pictures that runtime visualizers draw, so every type
+can be shown.
 
 **Editable state.** A visualizer exposes editable state — selected x/y data, visible traces,
 normalization, offsets, filters, colormaps, axis scales, labels, annotations, linked selections,
@@ -440,7 +443,13 @@ abstraction is the command model.
 Every important user action has a command form declared in `DataBrowserAPI`. The GUI calls commands
 internally; the REPL (in `DataBrowserCore`) exposes them as Julia functions; the CLI exposes them as
 shell commands; an MCP server exposes them as agent tools. Because they are all the same commands,
-the interfaces stay consistent by construction.
+the interfaces stay consistent by construction. Every client shows the same visualizers in its own
+way: the browser in a window that can close while the visualizer stays, the REPL as a picture or
+text of its current value, and an MCP server by its id, with a picture for the agent.
+
+Code drives the browser while it shows, through the functions that the browser's controls call,
+such as `select!(workspace, ids)`, `visualize!(browser, v)` and `close(w)`. Automatic checks of the
+browser's behavior and performance call these functions unattended.
 
 Commands should exist for opening projects, scanning files, loading data, listing data, inspecting
 summaries, running processors, creating visualizers, modifying visualizer state, exporting figures,
@@ -521,7 +530,8 @@ added, these requirements hold with the existing source and item boundaries:
    from a store is separate from making it stale, and recovery never repeats an irreversible
    operation without telling the user.
 3. What is recorded decides what later edits can compute again. Keeping the values that `read`
-   gave supports a changed `process` method, but not a changed `read`.
+   gave supports a changed `process` method, but not a changed `read`. A source that promises to
+   read its input again in another way has to record that input, and not every source can.
 4. Retention follows the store of each type: a project may choose not to store stream input.
    Missing input may prevent a computation; it never starts a new acquisition.
 5. Arrival and processing are separate. A source gives bounded records or chunks; the workspace
@@ -530,8 +540,8 @@ added, these requirements hold with the existing source and item boundaries:
 6. A group `process` method can run again as input arrives. Each call uses a known set of members,
    and later arrivals ask for another call.
 7. Several sources keep the origin of their items through ids, the cache and the routing of
-   changes. Ids are either for the whole project or qualified by their source; a label never
-   decides identity.
+   changes. Ids local to each source can collide, so ids are either for the whole project or
+   qualified by their source; a label never decides identity.
 
 The first proof uses a source whose producer cannot be read again, with limited memory and recorded
 input: removing results from a store, editing a `process` method, restoring results and reopening
@@ -585,6 +595,14 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
   Every kind of client works on one runtime at once: the browser, a web UI in which an agent can
   build visualizers, a terminal UI, agents, and packages for other languages; a notebook is one
   possible client. Built-in components use only the contracts that a third party could use.
+  Project code runs in a full Julia process, compiler included; every other piece, from the GUI to
+  visualizers, sources and stores, could be written in another language.
+- **Lessons from Jupyter.** Each kind of client has one contract, owned by this project and checked
+  by tests: a client draws a visualizer or shows its declared fallback, and never a partly broken
+  one. Settings, output and selection are synchronized state at the base of the protocol, versioned
+  with it. The client gives every visualizer one theme. Each shown result says which code and
+  inputs produced it, because results follow from the dependency graph. Work is plain source files,
+  and results are stored apart from code.
 - **Browser frontend.** A browser client served by a local runtime first, a remote one later. It uses
   the [client API](plans/client-api.md), starts with a structural [code editor](plans/code-editor.md)
   that shows live types and runtime values inside the project's code, and should not require
@@ -593,7 +611,9 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
   variable had in the computation that the user came from, and lets the user drag code as
   structure. A parser in the editor keeps the structure of incomplete code, the Julia language
   server in the host gives its meaning, and values come through the client API. The editor offers
-  only drags that the language server proves keep the meaning of the program.
+  only drags that the language server proves keep the meaning of the program. As the second
+  client beside the browser, the code editor also tests that the client API serves a client in
+  another process.
 - **Plots in every client.** The runtime builds every plot as a Makie figure. Makie is the figure
   model; a backend draws the figure, chosen per client. GLMakie draws with OpenGL in the process
   that holds the figure. WGLMakie sends the figure to a browser, which draws it with WebGL.

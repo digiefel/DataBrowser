@@ -6,7 +6,7 @@ are gone; [Architecture](ARCHITECTURE.md) describes the code today.
 
 Acquisition, automatic live analysis, native visualization, and agent/API use share the existing
 package family. Streaming implementations can arrive later; the requirements of sources that cannot
-be read again, in [storage](plans/storage.md#sources-that-cannot-be-read-again), guide the work
+be read again, in the [vision](vision.md#12-caching-and-persistence), guide the work
 already under way.
 
 The proposed dependency order for current work is: expose shared headless analysis/view
@@ -316,7 +316,7 @@ workloads, completed disk writes, cache reads and process memory measurements.
   of source arrival mode; the exact API is open. Prove the contract with a non-repeatable producer
   before production streaming. A process-code edit and a missing result must not consume another
   observation; what is recorded decides whether a `read` edit can be computed again
-  ([storage](plans/storage.md#sources-that-cannot-be-read-again)).
+  ([vision](vision.md#12-caching-and-persistence)).
   Retained data stays readable without any Julia type: plain values that other tools can read. A
   Julia type is stored at most as a name, a hint for rebuilding the value, so a Julia upgrade or a
   renamed type never makes an observation unreadable.
@@ -627,8 +627,8 @@ the table as a first-class view.
   another window. Names for windows, so that the input menu can tell two tables apart.
 - [ ] Save the theme of the plots and the plot chosen for each type of item.
 - [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
-- [ ] Resolve the newer [group](plans/groupings.md), [processing/Recipes](plans/processing.md) and
-  [storage](plans/storage.md) contracts before treating their candidate APIs as implemented.
+- [ ] Decide the open questions of the [group](plans/groupings.md),
+  [processing](plans/processing.md) and [storage](plans/storage.md) plans.
 - [ ] Tabs: a Julia file together with its windows, which the user, the browser and an agent all
   work on ([plans/tabs.md](plans/tabs.md)). The plan is written; nothing of it is built.
 - [ ] Resolve tab loading and external editing without rerunning arbitrary top-level effects.
