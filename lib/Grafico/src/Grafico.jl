@@ -9,6 +9,7 @@ using PrecompileTools: @compile_workload, @setup_workload
 export @plot, @invisible, @manipulate, manipulate, figure, spec, ydims, fit, aggregate
 export coord, legend, plot_theme, ComposedFigure
 export AbstractMark, CircleMark, RectMark, PolygonMark, LineMark, Segment, TextMark, T, U, R, Style, mark, graphic_mark
+export SectorMark, Wedge, RibbonMark, histogram_diagram, rose_diagram
 export hideinnerdecorations!, deleteemptyaxes!
 export Layer, Layers, ProcessedLayer, ProcessedLayers, zerolayer
 export Entry, AxisEntries, FigureGrid
