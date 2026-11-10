@@ -169,9 +169,8 @@ item, on a group with the values of its members, and on a member with its group)
 sources, stores, and the `settings` and `prepare!` of a visualizer. Every value gives its `id`,
 `label`, `metadata`, `data` and `members`.
 
-Two things leave this contract. `draw!`, `draw_header!` and `initial_size` draw with ImGui, so they
-belong to the contract of the browser. `reconstruct` is to be deleted, as [storage](storage.md)
-says.
+`draw!`, `draw_header!` and `initial_size` leave this contract: they draw with ImGui, so they
+belong to the contract of the browser.
 
 ### The provider protocol
 

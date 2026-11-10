@@ -62,10 +62,8 @@ DataBrowserCache supplies `MemoryStore` and `DuckDBStore`; the final set is not 
 stores could also cover tables and files, configurable by ordinary constructors. A file reference
 inside a value can be handled by a file store; it does not need a separate universal value model.
 
-Typed store reads restore the complete native value. The `reconstruct` hook
-is to be deleted. DataBrowserAPI still has it, and `DuckDBStore` calls it to save an item as its
-data and metadata. Group formation still needs a public construction and member-binding contract
-in [processing](processing.md).
+Group formation still needs a public construction and member-binding contract in
+[processing](processing.md).
 
 ## Metadata and completeness
 
