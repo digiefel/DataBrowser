@@ -225,7 +225,10 @@ physical effects. Tabs organize source code and windows; they do not own a separ
 Julia file: a `@layout` block in it declares its windows with `Window(name, visualizer; input)` and
 `Split(direction, ratio, first, second)`, with their geometry, and the output of another visualizer
 is an input given as `VisualizerOutput(name)`. Core holds one visualizer for each name, which exists
-when the file loads, with or without a browser.
+when the file loads, with or without a browser. The `@layout` block defines a method, so Revise
+runs only the layout again when it changes, and deleting the block closes the tab. The browser
+cannot move or resize a window that `@layout` places; a drag may later write the change into the
+file.
 An **annotation** is user-authored metadata on an item
 (tags, notes, coordinates, spatial position); a **figure annotation** is a visual mark on a figure
 (arrow, region, fit label, text). A tag describes an item; an arrow describes a figure. These are

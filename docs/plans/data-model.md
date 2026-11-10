@@ -1,53 +1,16 @@
 # Data model: reaching the values of selected items
 
-Proposal, 22 October 2026. Partly built: `selection.data`, paths such as `:data.V` in `@plot`, and
-`unnest`. A selected group's members one level down, and the names of group levels as metadata, are
-not built.
+What is still open about the values of selected items: how code and plots reach the members of a
+selected group, and whether the levels of groups are metadata. [Architecture](../ARCHITECTURE.md)
+describes the `Selection` that is built, its paths into data and `unnest`, and the
+[vision](../vision.md) the settled direction.
 
-This plan owns how code and the GUI reach the values of selected items: names, levels, positions
-and how values of different levels combine. Every consumer uses the same rules: plots, the table
-window, fits, analysis code and the REPL. How groups are formed belongs to [groups](groupings.md);
-how values are stored belongs to [storage](storage.md); plot syntax belongs to the
-[graphics grammar](graphics-grammar.md), which uses this model.
-
-## The problem
-
-On 22 October, a selection was one table with one row per item. Its columns were `id`, `label`, one
-column per level of the collection tree, the metadata keys, and `data`, which held each item's whole
-data. The problems below are those of that table.
-
-- `data` appears next to the metadata as if it held one value per item. AlgebraOfGraphics offers
-  it as a column, and `data.VoltageLow_V` fails.
-- The columns of an item's data (a sweep's `VoltageLow_V`) cannot be plotted without first writing
-  code that stacks the items' tables and copies metadata onto each row.
-- Tree-level columns are named after the collection type, so all folder levels share the column
-  `DirectoryCollection` and only the deepest folder survives.
-
-An item's data is whatever the project's `read` or `process` returned: a table, a matrix, a number
-or a value of the project's own type. The model must work for all of them without asking the
-project to rename or restructure its data.
-
-## Levels and paths
-
-A selection is nested, like a Matlab struct array. Each name sits at one level:
-
-```
-selection                         one entry per item
-├── label, Device, Chip, …        metadata: one value per item
-└── data                          the item's data, as the project returned it
-    ├── VoltageLow_V, …           if the data is a table: one value per row
-    └── (the matrix itself)       if the data is a matrix: one value per entry
-```
-
-A **path** names a value by following this nesting: `:Device`, `:data.VoltageLow_V`, `:data`. The
-path says where the value lives. Nothing else is named: a matrix is reached as `:data`, and its
-rows and columns are reached by position.
+## Levels of groups as metadata
 
 The tree of the browser shows groups, such as the directories of a `DirectorySource` or the levels
-of a DBRecipes project. Today a selection names them only by id, in its `groups` column. In this
-proposal, their levels would also be metadata with real names: one `folder` value with the
-relative path, such as `"72b/L/bigTLM"`, and the names a recipe gives its levels, such as `wafer`
-and `device`.
+of a DBRecipes project. Today a selection names them only by id, in its `groups` column. A proposal
+gives their levels names as metadata: one `folder` value with the relative path, such as
+`"72b/L/bigTLM"`, and the names a recipe gives its levels, such as `wafer` and `device`.
 
 ## The rules
 
@@ -177,43 +140,12 @@ vector per device. The TLM plot of two chips:
 @plot mapping(:devices.gap_um, :devices.R; color=:Chip) * visual(Scatter)
 ```
 
-Today a selection holds a group as one item, without its members one level down; see
-[groups](groupings.md#selection-and-browsing).
+Today a selection holds a group as one item, without its members one level down;
+[groups](groupings.md#selecting-a-group-or-its-members) holds how code selects the members.
 
-## In code outside plots
+## Columns in `@plot`
 
-`selection` follows the same nesting, and nothing is read until it is used.
-
-```julia
-selection.Device                 # one value per item
-selection.data                   # a view of the items' data; reads nothing
-selection.data.VoltageLow_V      # a view of that column in each item's data
-selection.data.Device            # error: Device is not in the data; it is selection.Device
-DataFrame(selection.data)        # error: name the values you want
-```
-
-A flat table is made only when values are named together, with `unnest`. It repeats the item
-values on each row, as `unnest` does in R's tidyr and `flatten` does in DataFrames for a column of
-vectors. The name `unnest` is decided; it clashes with no common Julia package.
-
-```julia
-unnest(Device = selection.Device, VoltageLow_V = selection.data.VoltageLow_V)
-```
-
-Each keyword names a column, and each value has one entry per item. Within an item, the entries
-broadcast together, so a formula is an ordinary Julia broadcast over the items:
-
-```julia
-unnest(gap_um = selection.gap_um,
-    R = resistance.(selection.data.VoltageHigh_V, selection.data.CurrentHigh_A))
-```
-
-```
-Device     VoltageLow_V
-C2_50um    0.0            ┐
-C2_50um    8e-05          ┘ rows of file 1
-C1_2um     0.0            ] rows of file 2
-```
+`unnest` makes a flat table that repeats the values of each item on each of its rows.
 
 In `@plot`, a column is named after the last part of its path. When two columns would share a name,
 such as `:filename` and `:data.filename`, both are named by their whole path.
@@ -230,18 +162,6 @@ mapping. Only the values a mapping names are read.
 
 ## Open questions
 
-1. How a selected group's members are reached when groups are selectable.
-2. `id` and `label` stay item-level values. Whether the levels of groups, such as a `folder`
-   value, are metadata or a separate kind of value is not decided.
-
-Data of a project's own type was open question 2, and is answered by `follow`, which reads each
-path: a name is a column when the data is a table, and otherwise a property, through
-`getproperty`. So the fields of a type are paths (`:data.spectrum`) with no method to write.
-
-## Relation to the current code
-
-The current [`Selection`](../../lib/DataBrowserCore/src/Workspace/Selection.jl) follows this model
-at the item level. Its columns are `id`, `label`, `groups`, `tags` and one for each metadata key;
-`selection.data` reads the data of each item when code uses it, and `unnest` makes a flat table.
-`@plot` reads values through paths. The tree levels have no metadata names: the `groups` column
-holds the ids of the groups that hold each item.
+1. How code and plots reach the members of a selected group.
+2. `id` and `label` stay values of each item. Whether the levels of groups, such as a `folder`
+   value, are metadata or a separate kind of value is open.

@@ -626,6 +626,7 @@ the table as a first-class view.
 - [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
   another window. Names for windows, so that the input menu can tell two tables apart.
 - [ ] Save the theme of the plots and the plot chosen for each type of item.
+- [ ] Label the control that chooses the transform of a window **Process** instead of "through".
 - [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
 - [ ] Decide the open questions of the [group](plans/groupings.md),
   [processing](plans/processing.md) and [storage](plans/storage.md) plans.
