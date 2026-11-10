@@ -508,9 +508,9 @@ end
     sort!(workspace) -> workspace
 
 Set the order of the items in every answer of `select(workspace, f)`, with the keywords `by`, `lt`
-and `rev`, as in `sort`. The tree of the browser shows its items in this order too. `by` takes the
-row of an item, as [`select`](@ref) gives it to `f`: `row.id`, `row.label`, `row.groups`,
-`row.tags`, and one field for each metadata key of the workspace, `missing` where the item does
+and `rev`, as in `sort`. The tree of the browser shows its items in this order too. `by` takes
+each item, as [`select`](@ref) gives it to `f`: `item.id`, `item.label`, `item.groups`,
+`item.tags`, and one field for each metadata key of the workspace, `missing` where the item does
 not have the key.
 
 Before the first call to `sort!`, and again after `sort!(workspace)` without `by`, the items sort
@@ -520,8 +520,8 @@ own compares with `isless`, which puts `a10` before `a2`, and puts `missing` las
 
 ```julia
 using NaturalSort
-sort!(workspace; by=row -> row.label, lt=natural)    # a2 before a10
-sort!(workspace; by=row -> row.timestamp, rev=true)  # no timestamp first, then the latest
+sort!(workspace; by=item -> item.label, lt=natural)    # a2 before a10
+sort!(workspace; by=item -> item.timestamp, rev=true)  # no timestamp first, then the latest
 ```
 
 `sort!` returns immediately, and the workspace sorts the answers afterwards. When `by` or `lt`

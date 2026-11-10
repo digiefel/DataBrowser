@@ -10,7 +10,6 @@ automatically while the workspace is open. The workspace then reads the affected
 again, in the background. It processes the affected items again when a window shows them or a
 script reads them, or in the background with `background_processing=true`, and computes a
 computation given to `evaluate` again at its next call.
-An open browser pauses these automatic updates while its main window is inactive.
 """
 function open_workspace(
     project::AbstractProject,

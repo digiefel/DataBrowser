@@ -1,14 +1,13 @@
 # DataBrowser Roadmap
 
-This roadmap / changelog follows releases of the main `DataBrowser` package.
-Checked items already exist on `main`; completed work links to the pull request or commit that
-introduced it.
+This roadmap lists the work of each release of the `DataBrowser` package. A checked item is built,
+and an unchecked item is open. A checked item describes the code of its time, so some of its names
+are gone; [Architecture](ARCHITECTURE.md) describes the code today.
 
-The product direction and its engineering review are recorded in
-[Scientific workspace: analysis and acquisition](plans/scientific-workspace.md). Acquisition,
-automatic live analysis, native visualization, and agent/API use share the existing package family.
-Streaming implementations can arrive later; recovery, retention, and source-independent data-access
-rules must guide the work already under way.
+Acquisition, automatic live analysis, native visualization, and agent/API use share the existing
+package family. Streaming implementations can arrive later; the requirements of sources that cannot
+be read again, in the [vision](vision.md#12-caching-and-persistence), guide the work
+already under way.
 
 The proposed dependency order for current work is: expose shared headless analysis/view
 definitions, and build tabs/debugging and responsive visualizers. Streaming-source recovery and acquisition controls
@@ -99,7 +98,7 @@ GUI state that mirrors workspace state. Phases are ordered by dependency. Each p
 green test suite; engine phases also end with a benchmark run compared against the committed
 baseline.
 
-Decisions taken during the audit:
+Decisions taken during the audit of September 2026:
 
 - The memory-only cache backend (`MemoryCacheDB`, `AbstractCacheDB`) is removed. `cache=false`
   opens an in-memory DuckDB through the one remaining code path. Granular caching (per computation,
@@ -159,16 +158,9 @@ Decisions taken during the audit:
   clearing results preserves identity; closing flushes stores and checkpoints the database.
 - [x] Use one DuckDB cache backend: `cache=false` opens a private `":memory:"` database. Persistent
   and in-memory caches share stage results, metadata, queries, payload storage and invalidation.
-- [ ] Give the outputs of each row exact publication references and preserve metadata by producing row.
-  Separate recorded outcome from payload availability. Reuse valid downstream results after
-  upstream eviction; reconstruct resident and restored values with the same metadata.
-- [ ] Check two guarantees: a row counts as done only after its data and metadata are stored, and
-  a result left half-stored by a crash is computed again on reopening. Views may show a mix of
-  older and newer versions, marked as not final; storing all rows in one step is not needed.
 - [x] Replace one source's output through one Cache operation, `replace_source_output!`. Core
   supplies the earlier item ids and the new items; Cache deletes the earlier items with their
   results, stores the new ones and records the expand stage.
-- [ ] Test source replacement with moved members and with groups that two source items share.
 - [x] Keep the selection when the source changes: items that still exist stay selected, with a
   disk cache and with a memory cache. Selected ids without an item are left out when the
   selection is read.
@@ -189,33 +181,35 @@ The order is lifecycle cleanup, one backend, output references, then source repl
 to Sources; code fingerprinting belongs to cache identity. Validate storage changes with fixed
 workloads, completed disk writes, cache reads and process memory measurements.
 
+- [ ] Check that a row keeps its current result when the result of its input leaves a store, and
+  that a value read from a store and the same value in memory have the same metadata.
+- [ ] Check two guarantees: a row counts as done only after its data and metadata are stored, and
+  a result left half-stored by a crash is computed again on reopening. Views may show a mix of
+  older and newer versions, marked as not final; storing all rows in one step is not needed.
+- [ ] Test a source change that moves members, and groups that two source items share.
+
 ### 0.2.3 One index, one status
 
 - [x] Evaluate the work graph against cancellation, invalidation, priority, streaming, and
   collection edge cases. The outcome is a redesign: the workspace runs on one catalog of source
-  items, items and collections that also holds stage status and the job queue
-  ([plans/workspace-graph](plans/workspace-graph/workspace-graph.md)).
+  items, items and collections that also holds stage status and the job queue.
 - [x] Collections become groups: a group is an item of a subtype of `AbstractGroup`, and
   `members(g)` gives the ids of its members. Each `read` and `process` is a row of the catalog, and
   each row has one integer key in the catalog, the cache and the stores. Users hold only ids. A
   later item with an id that the workspace has is a new version of that id; when the new version
   is `isequal` to the earlier one, the rows that take it do not run again
   ([Architecture](ARCHITECTURE.md)).
-- [ ] Open a workspace with no work per item: the tree, the selection and the values come from the
-  cache when they are shown. The check for source items and code that changed while the workspace
-  was closed runs after the open, in the background, and only the rows that take them run again.
-  Delayed; the [catalog plan](plans/catalog.md) has the steps.
 - [x] Keep one live workspace index. Derive source-check status from scan completion and rebuild
   availability from workspace lifecycle. `SourceScan` remains the Cache load result only.
 - [x] Name item metadata layers after the pipeline stages, so each item's own, process and analyze
   layers live in one place: the catalog.
-- [ ] One status model. `scan.state` (7 symbols), `cache_state` (8), `cache.operation` (4), and the
-  `status.label in ("Fresh", "Loaded", "Errors")` check in `workspace_status` collapse into one
-  enum and one `busy` derivation; `source_scan_running` and `cache_work_running` become one
-  function.
-- [ ] The scan's `current::Dict{String,Any}` fingerprint map gets a type.
-- [ ] Use compact integer item keys in SQL tables and other measured hot paths while retaining
-  stable logical item identities at the project boundary.
+
+- [ ] Open a workspace with no work per item: the tree, the selection and the values come from the
+  cache when they are shown. The check for source items and code that changed while the workspace
+  was closed runs after the open, in the background, and only the rows that take them run again.
+  Delayed; the [catalog plan](plans/catalog.md) has the steps.
+- [ ] One status model: `scan.state`, `cache_state` and `cache.operation` collapse into one enum and
+  one `busy` derivation, and `source_scan_running` and `cache_work_running` become one function.
 
 ### 0.2.4 Public API tiers
 
@@ -247,87 +241,82 @@ workloads, completed disk writes, cache reads and process memory measurements.
   DataBrowserCache. Remove `metadata_value`, `MetadataValue` and `MetadataDict` from DataBrowserAPI,
   and stop catching errors in Core to find values that cannot be metadata. Each value is saved in a
   column of the DuckDB type of its saved form, which queries read.
-- [ ] StructUtils saves a `Measurement` as its text, such as `"1520.0 ± 83.0"`, so a query cannot
-  compare `Rc < 10`. Save the estimate and the error as numbers.
-- [ ] Store the results of item and member `process` in the store that `storage(project, T)`
-  chooses, as other computations are, instead of Core's own cache. A Recipes store can then keep
-  one copy of data that a member `process` returned unchanged.
-- [ ] A `DuckDBStore <: AbstractStore` replaces the cache's payload tables and becomes the default
-  store. The rest of the cache becomes the workspace file next to the project: items, groups,
-  metadata and result states, no results. Its `source_reads` and `unprocessed` buffers go away.
-- [ ] Let a store hand out a kept value without copying it, for callers that do not change it.
 - [x] Stop exporting names that neither project authors nor extension authors use: the concrete
   `Project` of Recipes, `gui_timings`, `reset_timings!` and `registered_plots`. Export
   `GuiExtension` and `register_gui_extension!` for GUI extension authors. `SourceFile` stays
   exported: a type API project dispatches its `read` on it. `NamedCollection` stays internal to
   Recipes, whose users never name a collection type.
-- [ ] Generate the umbrella's `using`/`export` lists from one table instead of two hand-kept blocks.
-- [ ] One selector concept — `ItemKey`, id, or current selection — implemented once and shared by
-  `select_items!`, `materialize_items`, `read_item_data`; delete the runtime-typed
-  `select_items!(::AbstractVector)` fallback. The Cache-side `read_payload` name is handled by
-  the payload contract work in 0.2.2.
-  `query_items(ws)` becomes `item_ids(ws)`; `query_items(ws, sql)` becomes internal.
 - [x] Read the item tree through workspace accessors instead of `workspace.index`: `items`, `item`,
   `collections`, `collection`, `children`, `ancestors`, `metadata` and `metadata_keys`, with
   `RootCollection()` for the top of the tree.
 - [x] Replace the single-reader `status_dirty` flag with `generation(ws)`, a counter every watcher
   can compare, and let `workspace_status(ws)` recompute only when it moved.
-- [ ] Add the remaining workspace accessors: `selection(ws)` and `errors(ws)`.
+- [x] Each result of `read` and `process` goes to the store that `storage(project, T)` chooses for
+  its type, as other computations do. The default is a `MemoryStore`, and a DBRecipes project keeps
+  its results in one `DuckDBStore`. The cache file keeps the records of the calls and the metadata
+  of their items in its table `output_metadata`, and no results.
+- [x] `selection(workspace)` reads the shared selection, which `select!(workspace, ids)` sets.
+
+- [ ] StructUtils saves a `Measurement` as its text, such as `"1520.0 ± 83.0"`, so a query cannot
+  compare `Rc < 10`. Save the estimate and the error as numbers.
+- [ ] Move the cache file from the Julia depot to the workspace file next to the project.
+- [ ] Let a store hand out a kept value without copying it, for callers that do not change it.
+- [ ] Generate the umbrella's `using`/`export` lists from one table instead of two hand-kept blocks.
+- [ ] Make `query_items(workspace, sql)` internal: `select(workspace, f)` finds items by a condition.
+- [ ] Add `errors(workspace)`, the failures of the workspace.
 - [ ] Recipes: find the `collection` callback of an item by dispatch instead of a linear scan of the
   registrations.
 - [ ] Strengthen internal module boundaries and import hygiene across the package family.
-- [ ] Run every example entirely through the documented public APIs and remove any remaining public
-  callback dependency on cache, index, scheduler, or browser values.
 
 ### 0.2.5 GUI as one caller of the API
 
-- [ ] Move the 58 `workspace.<field>` reads across ten GUI and Plots files onto the Phase 3
-  functions. This is the first concrete step toward the shared command layer of 0.6.0.
 - [x] Share table preparation between the inspector and X/Y plot. GUI owns `ItemTable`,
   table merging, and selected-item table materialization; Core provides processed items.
 - [x] Build the rows of the tree only when the workspace, the filter, the open groups or the tags
   change, and draw only the visible rows at each frame.
-- [ ] Remove duplicated GUI state: filters held both as Julia strings and ImGui pointers and synced
-  every frame; `PROJECT_PLOT_RECIPES` with no removal path; `PlotsExtension.reset!` not clearing
-  `MAKIE_CONTEXT`.
+- [x] Create the dedicated I/O thread once per process, with `Base.OncePerProcess`.
+
+- [ ] Move the reads of Core internals by DataBrowserGUI and DataBrowserPlots onto public functions.
+  On 30 October they used 61 names that Core does not export, at 267 places; the
+  [boundary inventory](../work/runtime-boundary/inventory.md) lists them. This is the first step
+  toward the shared command layer of 0.6.0.
+- [ ] Remove duplicated GUI state, such as filters held both as Julia strings and ImGui pointers and
+  synced every frame.
 - [ ] Tighten the extension boundary: reduce the eleven-hook protocol to what the one extension
   uses. Since the plots and the plot builder are visualizers, the extension uses `init!`,
   `is_ready`, `warmup!` and `item_context_menu!` only.
-- [x] Create the dedicated I/O thread once per process, with `Base.OncePerProcess`.
-- [ ] Split `BrowserState` (40 fields) into selection/filter, windows, diagnostics, persistence,
+- [ ] Split `BrowserState` into selection/filter, windows, diagnostics, persistence,
   and lifecycle state. Last, because the items above shrink it first.
 
 ### 0.2.6 Cache internals
 
-- [ ] One `MetaVType` registry replacing the six parallel type maps (`_meta_vtype`,
-  `_vtype_julia`, `_meta_vtype_sql`, `_encode_wide_value`, `_decode_wide_value`,
-  `_duckdb_sql_type_maybe`).
-- [ ] A `with_connection(db) do … end` helper replacing thirteen hand-written connect/try/finally
-  sites.
 - [x] Wait for the payload writer tasks with `waitall(tasks; failfast=false)`: every writer
   finishes before payload locations are published.
-- [ ] Group `CacheDB` (25 fields) into index stores, metadata stores, payload store, and runtime
-  state. Inline `load_cache_index_body` and `_report_loaded_cache_index`.
 - [x] Use one `PipelineStage` for scheduling and cache results, ordered from source read through
   collection process. Source read and interpretation have independent outcomes.
-- [ ] Settle on one of `cache`/`cachedb`/`cache_db` during the interface changes.
 - [x] Track code/environment revisions in derived-result validity. Each stage records a code
   revision per type, also in the cache; a changed revision invalidates only that stage's results,
   while the workspace is open and on reopening (`docs/ARCHITECTURE.md`).
 - [x] Load saved edits through Revise before checking code revisions, so tracked process and
   analysis edits update affected results while the REPL is idle, also while an open browser is in
   the background.
+
+- [ ] A `with_connection(db) do … end` helper in place of the hand-written connect/try/finally
+  blocks.
+- [ ] Group the fields of `CacheDB` by what they hold: the records, the metadata and the runtime
+  state.
+- [ ] Settle on one of `cache`/`cachedb`/`cache_db` during the interface changes.
 - [ ] Notice code that code revisions cannot follow: values changed in place, non-constant globals,
   `eval`/`invokelatest`. Show the "not tracked" warning in the browser, and check the walk against
   a tracing run (`research_notes/code-change-detection/design.md`, step 7).
-- [ ] Define and test persistence at every expensive pipeline boundary (discovery, read, expand,
-  item and collection process). A valid persisted stage satisfies downstream work without
-  rerunning earlier user code.
+- [ ] Define and test persistence at every expensive step: the scan, `read` and each `process` call.
+  A current saved result serves later calls without running earlier project code again.
 - [ ] Support expensive or non-repeatable sources (simulations, compressed inputs, streams) through
   durable handles or retained upstream output. Specify recovery, recording, and eviction independently
   of source arrival mode; the exact API is open. Prove the contract with a non-repeatable producer
-  before production streaming. A process-code edit and a cache miss must not consume another
-  observation; retained boundaries determine whether read/expand edits can be recomputed.
+  before production streaming. A process-code edit and a missing result must not consume another
+  observation; what is recorded decides whether a `read` edit can be computed again
+  ([vision](vision.md#12-caching-and-persistence)).
   Retained data stays readable without any Julia type: plain values that other tools can read. A
   Julia type is stored at most as a name, a hint for rebuilding the value, so a Julia upgrade or a
   renamed type never makes an observation unreadable.
@@ -336,24 +325,25 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 ### 0.2.7 Sources, Annotations, Recipes
 
-- [ ] Audit source fingerprinting and document exactly what each change token invalidates across
-  live updates and workspace reopen.
-- [ ] Specify source identity and origin ownership for multiple sources, finite discovery versus
-  ongoing arrival, recoverability, and optional command capabilities. Keep ordinary data access
-  independent of source type; production transport and instrument implementations follow separately.
 - [x] Replace `default_collection_path(source, source_item)` with `collection(source_item)`, and
   `annotate_collection_path` with `metadata(source, collections)`, where `collections` are one
   collection's values from the top down. Core owns composition and invalidation. A collection's own
   metadata and the source's are stored separately, and the source's part is replaced on item
   publication, refresh and reopen, so removed keys reveal the collection's own values beneath them.
+- [x] The GUI no longer reads `tags.txt` from the cache folder under `DEPOT_PATH`. The file lives
+  beside `values.duckdb` (see 0.15.0).
+- [x] Profiling: sampling profiler API and `process_rss_bytes` removed; TimerOutputs is the profiler.
+
+- [ ] Audit source fingerprinting and document exactly what each change token invalidates across
+  live updates and workspace reopen.
+- [ ] Specify source identity and origin ownership for multiple sources, finite discovery versus
+  ongoing arrival, recoverability, and optional command capabilities. Keep ordinary data access
+  independent of source type; production transport and instrument implementations follow separately.
 - [ ] The `DirectorySource` watcher rescans the whole tree and fingerprints every file on each
   event; `readdir` order is not sorted; two concurrent `watch_source` calls race and a crashed
   watcher task is reported as "already watching".
-- [x] The GUI no longer reads `tags.txt` from the cache folder under `DEPOT_PATH`. The file lives
-  beside `values.duckdb` (see 0.15.0).
 - [ ] One parse-error type for the files of tags and notes, which have `TagsParseError` and
   `NotesParseError` today.
-- [x] Profiling: sampling profiler API and `process_rss_bytes` removed; TimerOutputs is the profiler.
 
 ### 0.2.8 Tests
 
@@ -372,19 +362,20 @@ workloads, completed disk writes, cache reads and process memory measurements.
 
 ### 0.2.10 Documentation
 
+- [x] Remove the links in `vision.md` to documents that do not exist, and point its roadmap links
+  to `roadmap.md`.
+
 - [ ] Review the remaining public docstrings: explain observable behavior, link shared types,
   retain generic worked examples, and remove implementation details callers do not need.
 
 - [ ] `ARCHITECTURE.md` promises two diagrams per package and has them for Sources only. Add Core
   and Cache after Phases 1–2, GUI after Phase 4.
 - [ ] `docs/api.md`: the two tiers from Phase 3, one line per name.
-- [x] Remove the links in `vision.md` to documents that do not exist, and point its roadmap links
-  to `roadmap.md`.
 - [ ] `AGENTS.md`: require a bench smoke before committing engine changes.
 
 ## 0.3.0 — Tags
 
-Make tags a dependable, machine-interpretable way to classify items and collections. Start by
+Make tags a dependable, machine-interpretable way to classify items and groups. Start by
 checking the current `tags.txt` loading path and the state of existing files, then complete the API
 and GUI around arbitrary tags. The existing `bad` behavior becomes one ordinary use of the same tag
 system.
@@ -396,31 +387,33 @@ Every change keeps `tags.txt` human-readable and recoverable independently of th
   collections: `Tag`, `tags`, `tag!` and `untag!`.
 - [x] Find the items with or without a tag: `items(workspace, Tag("bad"))` and
   `items(workspace, !Tag("bad"))`.
-- [ ] A tag can leave its items out of group `process`.
 - [x] Provide GUI controls to assign and unassign tags, including multi-selection: the context
   menu of items and collections lists the tags, and a click toggles one. A field in the menu
   defines a new tag.
 - [x] Set the visibility of each tag with a button above the collection tree: shown, hidden, or
   only, marked on the button with nothing, a cross, or a check mark.
+
+- [ ] A tag can leave its items out of group `process`.
 - [ ] Edit the colour and the priority of a tag, and remove a tag, in the GUI.
 - [ ] Open question: what the GUI may define. It can write only to its own files, such as
   `tags.txt`, while a project is defined in Julia. Find a rule that feels obvious before adding
   more GUI editing.
-- [ ] Save the visibility of each tag with the view. With `only`, hide the collections that hold
-  no item with the tag.
+- [ ] Save the visibility of each tag with the view. With `only`, hide the groups that hold no
+  item with the tag.
 - [ ] Apply tags consistently to colours, visibility, and the selected item set.
 
 ## 0.4.0 — Notes
 
 Make notes a complete human-facing memory and context feature, separate from tags and plotting.
-Notes belong to items and collections, remain readable as plain text, and are edited primarily
+Notes belong to items and groups, remain readable as plain text, and are edited primarily
 through the API and GUI.
 
 - [x] Implement the current plain-text note sections and their read/write API.
   ([#2](https://github.com/digiefel/MeasurementBrowser/pull/2))
-- [ ] Settle how notes attach to current items and collections.
+
+- [ ] Settle how notes attach to current items and groups.
 - [ ] Add API operations for reading, creating, editing, and removing notes.
-- [ ] Add GUI views for reading and editing notes in the context of the current item or collection.
+- [ ] Add GUI views for reading and editing notes in the context of the current item or group.
 - [ ] Preserve notes across workspace reopen and source refresh.
 
 ## 0.5.0 — Find, filter, and view items
@@ -432,6 +425,12 @@ selection model.
 
 - [x] Query committed effective metadata through DuckDB.
   ([#4](https://github.com/digiefel/MeasurementBrowser/pull/4))
+- [x] Sort the rows of the tree, at each depth, with any Julia function:
+  `sort!(workspace; by, lt, rev)`.
+- [x] Set the order of the tree in the GUI, with the Sort menu beside the filter: keys of a row,
+  each with its direction.
+- [x] Save the order of the Sort menu with the view of the browser.
+
 - [ ] Define one query model over metadata and tags, with concrete results for Julia callers and live
   results for GUI views. Its conditions include which groups hold an item and which `process` gave
   it. `select(workspace, f)` keeps the answer of one function current; the browser still reads the
@@ -439,14 +438,9 @@ selection model.
 - [ ] Add a visual filter builder to the GUI.
 - [ ] Add a flat item table with selectable metadata columns alongside the hierarchy view.
 - [ ] Support flattening, grouping, sorting, and filtering without copying item state into the GUI.
-- [x] Sort the rows of the tree, at each depth, with any Julia function:
-  `sort!(workspace; by, lt, rev)`.
-- [x] Set the order of the tree in the GUI, with the Sort menu beside the filter: keys of a row,
-  each with its direction.
-- [x] Save the order of the Sort menu with the view of the browser.
-- [ ] Group across a collection level, for example "group across wafer": collections whose values
-  are equal once that level is left out form one group, and collection analysis runs on each group.
-  The Recipes `collection` callback names the levels, `(wafer = …, device = …)`.
+- [ ] Group across a level of groups, for example "group across wafer": the groups whose values are
+  equal once that level is left out form one group, and the group `process` runs on each. The
+  DBRecipes `collection` callback names the levels, `(wafer = …, device = …)`.
 - [ ] Show when computed statistics used by a filter are still being populated.
 - [ ] Persist useful item-view and filter state with the project.
 
@@ -460,19 +454,24 @@ The measure of success: a user who cannot read the source of the package or of t
 from the REPL everything the GUI allows. They find out what exists by asking the workspace, and act
 on it with a few verbs.
 
+- [x] Draw registered plots without the GUI. `DataBrowserPlots` does not depend on `DataBrowserGUI`:
+  the plot windows are an extension of `DataBrowserPlots` that loads with `DataBrowserGUI` and
+  GLMakie. A script can draw a registered plot to a file with any backend, and
+  `DataBrowserRecipes` can depend on `DataBrowserPlots`.
+- [x] `select(workspace, ids)` gives the items as a `Selection`, a Tables.jl table, and changes
+  nothing. `select!(workspace, ids)` changes the one shared selection of the workspace, and
+  `selection(workspace)` reads it.
+
 - [ ] Define the public operations needed to drive a workspace from Julia without browser state.
 - [ ] Let the workspace list what it holds: the item types, the metadata fields of an item
-  type, the collections, the tags, and the plots registered for a set of items. Each prints readably in the
+  type, the groups, the tags, and the plots registered for a set of items. Each prints readably in the
   REPL.
 - [ ] Find items with one call that filters by item type, metadata, and tag, and sorts by a metadata
   field.
 - [ ] Draw a registered plot with one call that takes its label and the items and returns the
   figure the GUI shows.
-- [ ] `select(workspace, ids)` gives the items as a table, as described in
-  [plans/visualizers.md](plans/visualizers.md#the-value-of-a-selection), and changes nothing.
-  `select!(workspace, ids)` changes the workspace's one shared selection, and `selection(workspace)`
-  reads it. Views may explicitly follow this shared selection; tab selections remain independent.
-  The public API for targeting tab selections still needs design ([plans/tabs.md](plans/tabs.md)).
+- [ ] Target the selection of a tab from the public API. Views may follow the shared selection, and
+  tab selections stay independent ([plans/tabs.md](plans/tabs.md)).
 - [ ] Move GUI actions onto those operations and keep GUI-only state limited to rendering and local
   interaction.
 - [ ] Make repeated project setup, workspace operations, and view changes idempotent where users
@@ -486,10 +485,6 @@ on it with a few verbs.
 - [ ] Expose progress, failures, cancellation, and results in forms usable by both interactive and
   programmatic callers.
 - [ ] Keep the REPL usable while workspaces and GUI windows remain open.
-- [x] Draw registered plots without the GUI. `DataBrowserPlots` does not depend on `DataBrowserGUI`:
-  the plot windows are an extension of `DataBrowserPlots` that loads with `DataBrowserGUI` and
-  GLMakie. A script can draw a registered plot to a file with any backend, and
-  `DataBrowserRecipes` can depend on `DataBrowserPlots`.
 - [ ] Build the info window from sections, each drawn by a method of one generic function for the
   type of the selected value. A GUI method for `SourceFile` then shows the link that opens the file.
 
@@ -577,62 +572,16 @@ the table as a first-class view.
 - [x] The table exports its rows as CSV, with the columns it shows.
 - [x] A figure exports as PNG and JPEG with GLMakie, and as PDF, SVG and EPS when CairoMakie is
   installed. CairoMakie loads with the first file it saves.
-- [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
-  another window. Names for windows, so that the input menu can tell two tables apart.
 - [x] Save the windows with the view in `databrowser.toml`: their visualizer, input, transform
   and settings. The browser opens them again with the workspace; a window whose visualizer is not
   loaded stays in the file until it is.
-- [ ] Save the theme of the plots and the plot chosen for each type of item.
-- [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
-- [x] Curate [plans/visualizers.md](plans/visualizers.md) for windows, tabs and inputs; archive the
-  superseded canvas model. The [active plan index](plans/README.md) separates decisions and open work.
-- [ ] Resolve the newer [group](plans/groupings.md), [processing/Recipes](plans/processing.md) and
-  [storage](plans/storage.md) contracts before treating their candidate APIs as implemented.
-- [ ] Tabs: a Julia file together with its windows, which the user, the browser and an agent all
-  work on ([plans/tabs.md](plans/tabs.md)). The plan is written; nothing of it is built.
-- [ ] Resolve tab loading and external editing without rerunning arbitrary top-level effects.
-  Processing, analysis, and visualization edits still refresh affected active results automatically.
-- [ ] Move waiting I/O and expensive CPU preparation off the GUI frame path. Graphics-resource
-  updates stay on the required thread; pending work leaves unrelated windows usable.
-- [ ] Measure responsiveness on representative scientific projects through the existing benchmarks.
-  Separate loading, warm presentation, interaction, copies, and work repeated after display-only
-  edits. Choose workloads from actual use; illustrative dataset sizes are not product requirements.
+- [x] Curate [plans/visualizers.md](plans/visualizers.md) for windows, tabs and inputs; drop the
+  superseded canvas model.
 - [x] Accept AlgebraOfGraphics declarations through `DataBrowserPlots.figure` as an optional
   integration. Preserving category identity in computed guide labels and GUI/code editing remain
   open.
 - [x] `@plot header begin ... end` declares one panel: a header that every layer shares, and one
   layer per line. Named layers, whose results later lines use, remain open.
-- [ ] Review the standalone graphics grammar, statistical results, shared attribute schemas, and
-  GUI/code editing proposal in [Graphics grammar and plot builder](plans/graphics-grammar.md).
-- [ ] Plot builder: a window that draws a plot written as code, for the selection. The user names
-  the plot in the header, and its code is the file `plots/<name>.jl`, shown under the figure and
-  edited there or in any other editor. It runs with `selection` set to the selected items, and its
-  last value is an AlgebraOfGraphics declaration, such as one written with `@plot`, or a Makie
-  figure. A new plot starts with code that draws the selection's columns. The browser offers the
-  builder when AlgebraOfGraphics is loaded.
-  - [x] Edit and save the code in the window; a saved file draws the plot again, and a change
-    from another editor is shown when the window has no unsaved code.
-  - [x] The file runs in a module of its own that uses AlgebraOfGraphics, Makie and
-    DataBrowserPlots; other packages are loaded with `using` in the file.
-  - [x] Names in `mapping` are paths into the selected items, such as `:device` and `:data.V`,
-    and formulas of them run once per item; `@plot` needs no `data(...)`. `unnest` puts values
-    of several items together in one table.
-  - [x] `fit(curve, starts) * visual(Lines)` fits a curve to the header's
-    points, once for each group of its categorical roles, and draws it on the header's axes and
-    roles. `fit` gives one `Group` per group, with the
-    parameters as metadata, the curve as data and the fitted items as members; `name = fit(...)`
-    keeps them for later lines. The workspace does not keep them yet.
-  - [x] `scales(color = ...)` and `legend(color = "$(:Chip): Rc = $(contacts.Rc) Ω")` lines in
-    `@plot`. The legend has a section per role; roles share a section when one determines the
-    others; `legend(merge = (:color, :linestyle))` or `merge = true` merges them on request. A text
-    reads any value the entry determines, mapped or not; `legend(position = :bottom)` and Makie's
-    `Legend` settings go in the same line.
-  - [ ] The plot file's own grammar: `mapping`, `data`, `visual` and the statistics as our names,
-    without AlgebraOfGraphics in the plot file. Each statistic gives a value, drawn with `visual`,
-    such as `histogram(bins=20) * visual(Stairs)`.
-  - [ ] Inline controls on literal values, an inspector of the declaration, and fit results
-    ([plot-editor.md](plot-editor.md)).
-  - [ ] A draggable border between the figure and the code.
 - [x] Let a window pass its value through a function of the project, chosen by name in the
   header after "through". The function receives each item of the window's value, and the
   workspace computes each result in the background, and again when the item or the function's code
@@ -646,16 +595,12 @@ the table as a first-class view.
 - [x] Plots drawn with ImPlot, which draw at once and compile nothing: "Line plot" of a vector, or
   of `x => y` or `(x, y)`; "Histogram" of a vector; "Bar chart" of named numbers. Each visualizer
   takes only the values of its own shape; a transform turns other values into that shape.
-- [ ] More ImPlot plots: scatter, a 2D histogram of two vectors, a heatmap of a matrix.
 - [x] A "Code" visualizer shows how a window's items, or its computed values after "through", were
   made, as a timeline: each function that ran, from `read` at the top to the last at the bottom,
   with the file and line of its code, the item it ran for (or how many, listed when hovered), how
   many failed, and the type a function gives. Items made by the same code share a row. Lines join
   each function to the functions that read its results. ↗ opens the code in the editor, and the
   name shows the method's docstring when hovered.
-- [ ] Failures in the Code visualizer: a window leaves out its failed items, so the visualizer never
-  receives them and its rows show no failures.
-- [ ] Show the line of code that called each function, under its row.
 - [x] A single "Vector" visualizer combines an index plot, a sideways histogram, a color strip
   and an ECDF. Index and value ranges are linked across the relevant panels. Histogram controls
   choose an explicit bin count and count or density, with an optional Gaussian density estimate.
@@ -677,6 +622,57 @@ the table as a first-class view.
   the spectra. Log amplitude applies to FFT and PSD; autocorrelation retains a linear value axis.
   A Markers checkbox is available in both modes. Log frequency omits the zero-frequency bin.
   Nonfinite samples are rejected in this mode because removing them would change sample timing.
+
+- [ ] More outputs, for example the marks the user brushed in a plot. "Live" for an input from
+  another window. Names for windows, so that the input menu can tell two tables apart.
+- [ ] Save the theme of the plots and the plot chosen for each type of item.
+- [ ] Label the control that chooses the transform of a window **Process** instead of "through".
+- [ ] Open and change windows from Julia with the functions the menus call (see 0.6.0).
+- [ ] Decide the open questions of the [group](plans/groupings.md),
+  [processing](plans/processing.md) and [storage](plans/storage.md) plans.
+- [ ] Tabs: a Julia file together with its windows, which the user, the browser and an agent all
+  work on ([plans/tabs.md](plans/tabs.md)). The plan is written; nothing of it is built.
+- [ ] Resolve tab loading and external editing without rerunning arbitrary top-level effects.
+  Processing, analysis, and visualization edits still refresh affected active results automatically.
+- [ ] Move waiting I/O and expensive CPU preparation off the GUI frame path. Graphics-resource
+  updates stay on the required thread; pending work leaves unrelated windows usable.
+- [ ] Measure responsiveness on representative scientific projects through the existing benchmarks.
+  Separate loading, warm presentation, interaction, copies, and work repeated after display-only
+  edits. Choose workloads from actual use; illustrative dataset sizes are not product requirements.
+- [ ] Review the standalone graphics grammar, statistical results, shared attribute schemas, and
+  GUI/code editing proposal in [Graphics grammar and plot builder](plans/graphics-grammar.md).
+- [ ] Plot builder: a window that draws a plot written as code, for the selection. The user names
+  the plot in the header, and its code is the file `plots/<name>.jl`, shown under the figure and
+  edited there or in any other editor. It runs with `selection` set to the selected items, and its
+  last value is an AlgebraOfGraphics declaration, such as one written with `@plot`, or a Makie
+  figure. A new plot starts with code that draws the selection's columns. The browser offers the
+  builder when AlgebraOfGraphics is loaded.
+  - [x] Edit and save the code in the window; a saved file draws the plot again, and a change
+    from another editor is shown when the window has no unsaved code.
+  - [x] The file runs in a module of its own that uses AlgebraOfGraphics, Makie and
+    DataBrowserPlots; other packages are loaded with `using` in the file.
+  - [x] Names in `mapping` are paths into the selected items, such as `:device` and `:data.V`,
+    and formulas of them run once per item; `@plot` needs no `data(...)`. `unnest` puts values
+    of several items together in one table.
+  - [x] `fit(curve, starts) * visual(Lines)` fits a curve to the header's points, once for each
+    group of its categorical roles, and draws it on the header's axes and roles. Each group is a
+    `Computation` of the workspace, which computes it again when one of its items changes;
+    `name = fit(...)` keeps the results for later lines.
+  - [x] `scales(color = ...)` and `legend(color = "$(:Chip): Rc = $(contacts.Rc) Ω")` lines in
+    `@plot`. The legend has a section per role; roles share a section when one determines the
+    others; `legend(merge = (:color, :linestyle))` or `merge = true` merges them on request. A text
+    reads any value the entry determines, mapped or not; `legend(position = :bottom)` and Makie's
+    `Legend` settings go in the same line.
+  - [ ] The plot file's own grammar: `mapping`, `data`, `visual` and the statistics as our names,
+    without AlgebraOfGraphics in the plot file. Each statistic gives a value, drawn with `visual`,
+    such as `histogram(bins=20) * visual(Stairs)`.
+  - [ ] Inline controls on literal values, an inspector of the declaration, and fit results
+    ([plot-editor.md](plot-editor.md)).
+  - [ ] A draggable border between the figure and the code.
+- [ ] More ImPlot plots: scatter, a 2D histogram of two vectors, a heatmap of a matrix.
+- [ ] Failures in the Code visualizer: a window leaves out its failed items, so the visualizer never
+  receives them and its rows show no failures.
+- [ ] Show the line of code that called each function, under its row.
 - [ ] A great table:
   - [x] Numbers right-aligned, with the decimal points lined up in each column; one format per
     column chosen from its values; in a column with very small or very large numbers, each number
@@ -748,7 +744,7 @@ presentation.
 
 - [ ] Add two-dimensional array and image visualizers.
 - [ ] Persist supported dense N-dimensional array payloads and verify warm delivery without rereading
-  or expanding their source items again.
+  or reading their source items again.
 - [ ] Add heatmaps for gridded arrays and suitable tables.
 - [ ] Add dimension and slice controls for higher-dimensional arrays.
 - [ ] Add editable colour limits, scales, colormaps, and image display settings.
@@ -782,19 +778,20 @@ payload they are given rather than learning special pipeline logic.
   stores. Replay uncached values without rescanning the source.
 - [x] Record execution duration, completion date and success for each computation revision,
   independently of retained data. Expose these records without evaluating or loading results.
-- [ ] Move input preparation, scheduling and cache addressing to the computation runtime, and add
-  native restoration across workspace openings.
 - [x] Evaluate visualizer computation references in background preparation without creating catalog
   entries. Share type-selected caching and input-revision checks for unindexed graph nodes.
 - [x] Return Recipes `read` callback values unchanged; resolve their registration during expansion.
 - [x] Make Code selection output the selected computation through normal visualizer composition.
   Show step information below the list, including `Last execution: duration (date)` and cache usage.
-
 - [x] Expose the results of `read`, `expand`, `process`, `analyze`, collection `process`, and
   collection `analyze` through the shared application API.
+
+- [ ] Move input preparation, scheduling and cache addressing to the computation runtime, and add
+  native restoration across workspace openings.
+
 - [ ] Use the public API vocabulary for the GUI control and skip operations absent from a project.
-- [ ] Coalesce sibling items when moving to a source-level result and group items when moving to a
-  collection-level result.
+- [ ] Coalesce sibling items when moving to a source-level result, and the members of a group when
+  moving to a group-level result.
 - [ ] Show metadata added by analysis operations beside the corresponding data.
 - [ ] Reuse cached results and retain uncached intermediate values within explicit memory bounds.
 - [ ] Prototype scientific local-variable capture independently of the inspection of the pipeline. Expose
@@ -812,6 +809,11 @@ opens the workspace. Reopening means rerunning the same entry code.
 - [x] Persist tree, item, filter, and plot-view state in the current `databrowser.toml`.
   ([#2](https://github.com/digiefel/MeasurementBrowser/pull/2),
   [#7](https://github.com/digiefel/MeasurementBrowser/pull/7))
+- [x] `tags.txt` and `databrowser.toml` live beside `values.duckdb`, in the folder of the Julia
+  environment that is active when the workspace opens. The projects of that environment share one
+  file of each kind, with one section per project. The directory scan no longer skips their names.
+  The notes file is not connected to items yet; when it is, it goes in the same folder.
+
 - [ ] Define the TOML schema for sources, cache settings, extension state, and reopening analysis
   tabs. Analysis definitions belong in ordinary tab files; browser layout is separate presentation
   state. The exact loading/persistence contract is open ([plans/tabs.md](plans/tabs.md)).
@@ -819,10 +821,6 @@ opens the workspace. Reopening means rerunning the same entry code.
   code or in the file, never in both, so rerunning entry code never undoes browser changes.
 - [ ] Load or create the config from Julia and Python entry code.
 - [ ] Edit project settings through the API and GUI and write them back predictably.
-- [x] `tags.txt` and `databrowser.toml` live beside `values.duckdb`, in the folder of the Julia
-  environment that is active when the workspace opens. The projects of that environment share one
-  file of each kind, with one section per project. The directory scan no longer skips their names.
-  The notes file is not connected to items yet; when it is, it goes in the same folder.
 - [ ] Reopen the saved analysis tabs and layout when the same entry code reopens the project.
 - [ ] Keep cache reuse and source changes correct across repeated openings.
 
@@ -884,6 +882,8 @@ and the command line.
 
 ## Longer-term goals
 
+
+
 ### Packaged application and shareable project bundles
 
 Provide a packaged application that can open a reproducible project bundle containing its Julia
@@ -902,8 +902,8 @@ through both code and menus. See [plans/tabs.md](plans/tabs.md) and
 ### Production streaming and acquisition
 
 Build on the recovery/retention and source-capability contracts established during engine work.
-Implement bounded recording and arrival queues, lag/overflow reporting, snapshot/window collection
-semantics, multiple-source routing, and shared communication infrastructure for source packages.
+Implement bounded recording and arrival queues, lag/overflow reporting, the members that a group `process` takes
+from a stream, as a snapshot or a window, multiple-source routing, and shared communication infrastructure for source packages.
 Separate per-connection ordering, timeout/cancellation, and observable failure handling from
 instrument-specific protocols and scientific measurement procedures. Acquisition controls use the
 same public operations as scripts and agents; ordinary data visualizers remain source-independent.

@@ -1,3 +1,0 @@
-path,temperature_K
-S1,280
-S2,410

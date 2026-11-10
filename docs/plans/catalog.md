@@ -1,8 +1,9 @@
 # The catalog in memory and in the cache file
 
-Proposal of 5 November 2026, delayed: Davide asked for the plan, and the change waits.
-[Architecture](../ARCHITECTURE.md) describes the running system. The roadmap entry "Open a
-workspace with no work per item" in [0.2.3](../roadmap.md) tracks the change.
+What is still open about the catalog: how a workspace opens with no work per item, how the cache
+file holds the whole catalog, and how rows run in batches. [Architecture](../ARCHITECTURE.md)
+describes the catalog and the cache that are built. The roadmap entry "Open a workspace with no
+work per item" in [0.2.3](../roadmap.md) tracks the change.
 
 ## Goal
 
@@ -24,34 +25,9 @@ workspace with no work per item" in [0.2.3](../roadmap.md) tracks the change.
 
 ## Today
 
-Measured on 5 November 2026 with the bench project of `bench/workloads.jl`: items of one table row,
-10 Julia threads, an M1 Pro.
-
-The cache saves results, and not the catalog. So each open runs the pipeline again for every
-source item:
-
-```text
-    second open                     40,000 items   400,000 items
-      read 3 cache tables whole         0.4 s          5.7 s
-      run the pipeline again            1.0 s         14   s    for each source item: add its rows,
-                                                                compute their revisions, find the
-                                                                saved results, rebuild the tables
-                                                                by id
-      total                             1.6 s         20.8 s
-```
-
-The engine's tables take about 4.5 KB of memory per item, without the project's own objects, at
-40,000 items with 3 rows each:
-
-```text
-    rows of the catalog                   930 B per item
-    computation id → key, as text         880
-    computation → row                     660
-    cache: saved records                  610
-    values that rows gave                 490
-    cache: keys of values                 200
-    10 other tables                       720
-```
+The cache saves results, and the catalog stays in memory only. So each open runs the pipeline
+again for every source item: it adds the rows of the item, computes their revisions, finds the
+saved results and rebuilds the tables by id.
 
 The cache file lacks these parts of the catalog:
 
@@ -65,24 +41,12 @@ The cache file lacks these parts of the catalog:
 - the members of each group as ids: the file saves them as serialized Julia values.
 
 The first open runs the project's functions, and the engine's own work costs far more than the
-calls. With `background_processing=true`, a `read` and a `process` that return prepared values, and
-40,000 items:
-
-```text
-    a threaded loop that calls read and process      0.14 µs per item
-    the workspace                                    163   µs per item, about 1,200 times the loop
-      of which the catalog lock is held               97   µs per item, by one worker at a time
-```
-
-Each job takes the catalog lock four times and holds it for 48 µs in all. Only one worker holds it
-at a time, so the workspace runs at most about 20,000 jobs per second, for any number of threads.
-Inside the lock, a finished row spends 23 µs on the tables by id (`finished!`) and 10 µs on the
-records of the cache.
+calls. Each job takes the lock of the catalog four times, and only one worker holds it at a time,
+so the number of jobs per second has a limit that does not grow with the number of threads.
 
 DuckDB keeps the pages of the file that it read in memory, up to `memory_limit`, which the cache sets
-to 1 GiB. A query from Julia still costs at least 55 µs, also when its pages are in memory. One row
-by key takes 200 µs, 100 rows by key 2 ms, and one column of 400,000 numbers 13 ms. Only the keys
-have indexes, so one query by id takes 1 to 6 ms.
+to 1 GiB. A query from Julia still costs at least 55 µs, also when its pages are in memory. Only
+the keys have indexes, so a query by id is slower than a query by key.
 
 ## Proposal
 
@@ -170,12 +134,12 @@ Each step ends with a measured change.
 
 1. The cache file saves the whole catalog, and the open builds the catalog from the file instead
    of running the pipeline again. Then code and fingerprints are checked in the background.
-   Measured: the second open, 40 µs per item today.
+   Measured: the time of the second open per item.
 2. The catalog keeps numbers only: rows as columns of numbers, and each computation rebuilt from the
-   file when its row runs. Measured: memory per item, 4.5 KB today.
+   file when its row runs. Measured: memory per item.
 3. Rows run in batches of one function. Measured: the first open per item against the loop that
-   calls the same functions, 163 µs against 0.14 µs today, at 10 threads and at 1. The benchmark
-   gains that loop, so that each run shows both.
+   calls the same functions, at 10 threads and at 1. The benchmark gains that loop, so that each
+   run shows both.
 4. The open loads the catalog in the background, the rows that the last session showed first.
    Measured: the time to the first frame, which then does not grow with the number of items.
 5. Ids, labels, metadata and errors leave memory, except for the caches of rows in use. The tree,
