@@ -2,6 +2,7 @@ using Dictionaries: dictionary
 using GeometryBasics: Point2f, Polygon
 using Makie: Makie, DataAspect, Figure, Lines, Poly
 import Base: mark
+import Makie: boundingbox
 import Makie.SpecApi as S
 
 # Graphic mark algebra inspired by Vizagrams: geometric primitives, 2D affine transforms
@@ -265,97 +266,90 @@ function figure(m::AbstractMark; figure_kw=(;), options...)
 end
 
 """
-    histogram_diagram(values; bins=10, scale_h=1.0, baseline=true, ticks=true, tick_len=0.1, labels=false, label_offset=0.15, style...)
+    boundingbox(mark::AbstractMark)
 
-Construct a composite diagram ([`AbstractMark`](@ref)) of a histogram.
-Contains bar polygons, baseline segments, tick marks, and optional count labels.
-Because the result is an [`AbstractMark`](@ref), it can be rotated by `R(θ)` and translated by `T(x, y)`
-to place a tilted histogram anywhere on a figure (such as along a principal component axis).
+Calculate the axis-aligned bounding box `(xmin, xmax, ymin, ymax)` of a mark in its current transformed coordinate space.
 """
-function histogram_diagram(values; bins=10, scale_h=1.0, baseline=true, ticks=true, tick_len=0.1, labels=false, label_offset=0.15, style...)
-    v = Float64.(collect(values))
-    isempty(v) && return CompositeMark(PrimitiveMark[])
-    vmin, vmax = extrema(v)
-    vmin == vmax && (vmin -= 0.5; vmax += 0.5)
-    nbins = bins isa Integer ? bins : length(bins) - 1
-    edges = bins isa AbstractVector ? Float64.(bins) : collect(range(vmin, vmax; length=nbins + 1))
+function boundingbox(p::PrimitiveMark)
+    pts = [apply_point(p.transform, x, y) for (x, y) in p.points]
+    isempty(pts) && return (xmin=0.0, xmax=0.0, ymin=0.0, ymax=0.0)
+    xs = (pt[1] for pt in pts)
+    ys = (pt[2] for pt in pts)
+    return (xmin=minimum(xs), xmax=maximum(xs), ymin=minimum(ys), ymax=maximum(ys))
+end
 
-    counts = zeros(Int, length(edges) - 1)
-    for x in v
-        for i in 1:length(counts)
-            if edges[i] <= x < edges[i+1] || (i == length(counts) && x == edges[end])
-                counts[i] += 1
-                break
-            end
-        end
-    end
-
-    marks = PrimitiveMark[]
-    h_scale = Float64(scale_h)
-
-    # Bars
-    for i in 1:length(counts)
-        h = counts[i] * h_scale
-        if h > 0
-            x1, x2 = edges[i], edges[i+1]
-            pts = [(x1, 0.0), (x2, 0.0), (x2, h), (x1, h)]
-            push!(marks, PrimitiveMark(:poly, pts, "", Style(; style...)))
-        end
-    end
-
-    # Baseline
-    if baseline
-        push!(marks, PrimitiveMark(:lines, [(first(edges), 0.0), (last(edges), 0.0)], "", Style(color=:black, linewidth=1.5)))
-    end
-
-    # Ticks
-    if ticks
-        tlen = Float64(tick_len)
-        for edge in edges
-            push!(marks, PrimitiveMark(:lines, [(edge, 0.0), (edge, -tlen)], "", Style(color=:black, linewidth=1.0)))
-        end
-    end
-
-    # Labels
-    if labels
-        for i in 1:length(counts)
-            if counts[i] > 0
-                mid_x = (edges[i] + edges[i+1]) / 2.0
-                top_y = counts[i] * h_scale + Float64(label_offset)
-                push!(marks, PrimitiveMark(:text, [(mid_x, top_y)], string(counts[i]), Style(fontsize=10, align=(:center, :bottom))))
-            end
-        end
-    end
-
-    return CompositeMark(marks)
+function boundingbox(m::CompositeMark)
+    ps = primitives(m)
+    isempty(ps) && return (xmin=0.0, xmax=0.0, ymin=0.0, ymax=0.0)
+    bbs = [boundingbox(p) for p in ps]
+    return (
+        xmin=minimum(bb.xmin for bb in bbs),
+        xmax=maximum(bb.xmax for bb in bbs),
+        ymin=minimum(bb.ymin for bb in bbs),
+        ymax=maximum(bb.ymax for bb in bbs),
+    )
 end
 
 """
-    rose_diagram(categories, values; r_max=nothing, colors=nothing, style...)
+    anchor(mark, position=:center)
 
-Construct a composite rose (coxcomb) diagram where each category is a circular wedge petal
-with radius proportional to its value.
+Translate `mark` so that the specified anchor `position` lies at `(0, 0)`.
+Supported positions:
+- `:center` (default)
+- `:bottom`, `:top`, `:left`, `:right`
+- `:bottom_left`, `:bottom_right`, `:top_left`, `:top_right`
 """
-function rose_diagram(categories, values; r_max=nothing, colors=nothing, style...)
-    cats = collect(categories)
-    vals = Float64.(collect(values))
-    n = length(cats)
-    n > 0 || return CompositeMark(PrimitiveMark[])
-    max_val = isnothing(r_max) ? maximum(vals) : Float64(r_max)
-    max_val <= 0 && (max_val = 1.0)
-
-    dθ = 2π / n
-    marks = PrimitiveMark[]
-    for (i, (cat, val)) in enumerate(zip(cats, vals))
-        θ1 = (i - 1) * dθ
-        θ2 = i * dθ
-        r = (val / max_val)
-        petal_style = isnothing(colors) ? style : (; style..., color=colors[mod1(i, length(colors))])
-        w = SectorMark(r, θ1, θ2; petal_style...)
-        append!(marks, primitives(w))
+function anchor(m::AbstractMark, pos::Symbol=:center)
+    bb = boundingbox(m)
+    ax = if pos in (:left, :bottom_left, :top_left)
+        bb.xmin
+    elseif pos in (:right, :bottom_right, :top_right)
+        bb.xmax
+    else
+        (bb.xmin + bb.xmax) / 2.0
     end
-    return CompositeMark(marks)
+
+    ay = if pos in (:bottom, :bottom_left, :bottom_right)
+        bb.ymin
+    elseif pos in (:top, :top_left, :top_right)
+        bb.ymax
+    else
+        (bb.ymin + bb.ymax) / 2.0
+    end
+
+    return T(-ax, -ay) * m
 end
+
+"""
+    beside(a, b; spacing=0.0)
+
+Place mark `b` immediately to the right of mark `a`, with optional horizontal `spacing`.
+"""
+function beside(a::AbstractMark, b::AbstractMark; spacing::Real=0.0)
+    bba = boundingbox(a)
+    bbb = boundingbox(b)
+    dx = bba.xmax - bbb.xmin + Float64(spacing)
+    return a + T(dx, 0.0) * b
+end
+
+"""
+    above(a, b; spacing=0.0)
+
+Place mark `a` immediately above mark `b`, with optional vertical `spacing`.
+"""
+function above(a::AbstractMark, b::AbstractMark; spacing::Real=0.0)
+    bba = boundingbox(a)
+    bbb = boundingbox(b)
+    dy = bbb.ymax - bba.ymin + Float64(spacing)
+    return T(0.0, dy) * a + b
+end
+
+"""
+    atop(a, b)
+
+Superimpose mark `a` on top of mark `b` (`b + a`).
+"""
+atop(a::AbstractMark, b::AbstractMark) = b + a
 
 struct MarkTransformation
     f::Function
