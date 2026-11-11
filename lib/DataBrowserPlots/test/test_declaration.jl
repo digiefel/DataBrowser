@@ -157,17 +157,23 @@ end
     @test spec(flow) isa Makie.GridLayoutSpec
     @test count(c -> c isa Axis, figure(flow).content) == 1
 
-    # Rose diagram composite
-    rose = rose_diagram(["A", "B", "C", "D"], [1.0, 2.0, 3.0, 1.5]; colors=[:red, :green, :blue, :yellow])
-    @test spec(rose) isa Makie.GridLayoutSpec
-    @test count(c -> c isa Axis, figure(rose).content) == 1
+    # Diagram algebra: boundingbox, anchor, beside, above, and atop
+    box = RectMark(w=2.0, h=4.0)
+    bb = boundingbox(box)
+    @test bb.xmin ≈ -1.0 && bb.xmax ≈ 1.0 && bb.ymin ≈ -2.0 && bb.ymax ≈ 2.0
+    anchored = anchor(box, :bottom)
+    @test boundingbox(anchored).ymin ≈ 0.0
+    adjacent = beside(RectMark(w=1.0, h=1.0), RectMark(w=1.0, h=1.0); spacing=0.5)
+    @test boundingbox(adjacent).xmax ≈ 2.0
+    stacked = above(TextMark("12"), anchor(RectMark(w=0.4, h=2.0), :bottom); spacing=0.2)
+    @test boundingbox(stacked).ymax > 2.0
 
-    # 37-degree tilted histogram composite along an axis
-    tilted_hist = T(1.5, 2.0) * R(deg2rad(37.0)) * histogram_diagram(randn(50); bins=5, labels=true, color=(:steelblue, 0.6))
-    @test spec(tilted_hist) isa Makie.GridLayoutSpec
-    @test count(c -> c isa Axis, figure(tilted_hist).content) == 1
-    # Adding tilted histogram directly to a scatter plot
-    tilted_composed = p1 + tilted_hist
+    # User-defined tilted diagram composed using spatial algebra (R * anchor)
+    tilted_diagram = T(1.5, 2.0) * R(deg2rad(37.0)) * stacked
+    @test spec(tilted_diagram) isa Makie.GridLayoutSpec
+    @test count(c -> c isa Axis, figure(tilted_diagram).content) == 1
+    # Adding tilted diagram directly to a scatter plot
+    tilted_composed = p1 + tilted_diagram
     @test count(c -> c isa Axis, figure(tilted_composed).content) == 1
 
     glyph_plot = data(rows) * mapping(:V, :I) * mark((x, y) -> T(x, y) * Style(color=:teal) * CircleMark(r=0.1))

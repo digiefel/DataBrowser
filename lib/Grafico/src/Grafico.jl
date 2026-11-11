@@ -3,13 +3,14 @@ Declarative grammar of graphics built on `Makie` and `Makie.SpecApi`.
 """
 module Grafico
 
-using Makie: Lines, Scatter
+using Makie: Lines, Scatter, boundingbox
 using PrecompileTools: @compile_workload, @setup_workload
 
 export @plot, @invisible, @manipulate, manipulate, figure, spec, ydims, fit, aggregate
 export coord, legend, plot_theme, ComposedFigure
 export AbstractMark, CircleMark, RectMark, PolygonMark, LineMark, Segment, TextMark, T, U, R, Style, mark, graphic_mark
-export SectorMark, Wedge, RibbonMark, histogram_diagram, rose_diagram
+export SectorMark, Wedge, RibbonMark
+export boundingbox, anchor, beside, above, atop
 export hideinnerdecorations!, deleteemptyaxes!
 export Layer, Layers, ProcessedLayer, ProcessedLayers, zerolayer
 export Entry, AxisEntries, FigureGrid
