@@ -209,27 +209,27 @@ end
 
 # ## The answers of `select(workspace, f)`
 #
-# `select(workspace, f)` gives the items for which `f(row)` returns `true`, such as the items with a
+# `select(workspace, f)` gives the items for which `f(item)` returns `true`, such as the items with a
 # tag, in the order set by `sort!` ([`Selection.jl`](Selection.md)). Its *answer* is a `Selection`,
 # a table with one row for each of these items, as in a spreadsheet. The answer comes from a task of
 # the workspace, which runs `f` again only on the items that change. For example, with
 #
 # ```julia
-# checked(row) = "check" in row.tags
+# checked(item) = "check" in item.tags
 # ```
 #
 # a first call of `select(workspace, checked)` runs `checked` on every item. When a script then adds
 # the tag `check` to the item `a2`, `tag!` publishes the shared state at the next generation, say
 # 413, before it returns. The next call of `select(workspace, checked)` waits for an answer of
-# generation 413 or later, which the task makes by running `checked` on the row of `a2` alone, and
+# generation 413 or later, which the task makes by running `checked` on `a2` alone, and
 # so the answer holds `a2`. Each call of `select(workspace, f)` waits in this way for an answer that
 # shows every change published before the call. A new result counts once `keep!` publishes it.
 #
 # The task recognizes a function of an earlier call when the two are `===`, and runs a new function
 # on every item. After that, an item changes when it is added or removed, when it gets a new result,
 # or when its label, groups, metadata or tags change. So a function that reads anything other than
-# the row, such as the readiness of the item or a global variable, can give an answer that is out of
-# date.
+# the fields of the item, such as the readiness of the item or a global variable, can give an
+# answer that is out of date.
 
 """
     answer!(items, workspace)
@@ -241,7 +241,7 @@ the table, the shared state changes, or a call of `select` finds its answer out 
 
 1. finds the items that changed since it last woke: the items that `keep!` gave it, and the items
    whose tags changed;
-2. runs each function on the rows of these items, and merges the items for which the function
+2. runs each function on these items, and merges the items for which the function
    returns `true` into its answer, in the order set by `sort!`. A function that is new to the task,
    with no earlier function `===` to it, runs on every item, and a new order sorts every item again;
 3. gives each answer the generation that it shows: the higher of two generations, that of the
@@ -294,10 +294,10 @@ function answer!(items::Items, workspace::Workspace)::Nothing
             ## The answers stay as they are when no item that `select` shows changed.
             remade = Any[]
             if !isempty(changed) || any(f -> !haskey(passed, f), functions)
-                ## The rows as `select` gives them, with `missing` for each metadata key that an
+                ## The items as `select` gives them, with `missing` for each metadata key that an
                 ## item does not have: of the changed items, or of every item when a function is
                 ## new.
-                ## TODO(scale): a new function runs on the row of every item.
+                ## TODO(scale): a new function runs on every item.
                 asked = any(f -> !haskey(passed, f), functions) ? filter(present, Int32(1):Int32(length(version.columns.id))) :
                     filter(present, collect(changed))
                 table = Selection(workspace, version, shared, asked; every=true)
@@ -477,14 +477,14 @@ last by their ids. Text sorts with the numbers in it by their value (see `natura
 that lacks a key sorts after the items that have it, whether the order of the key is ascending or
 descending. With `SortKeys([:gap => true])`, the items with a metadata key `gap` come first, the
 largest gap first, and the items without one follow. Before the first call to `sort!`, the workspace
-sorts by `SortKeys([:label => false])`. A `SortKeys` serves as both `by`, which turns the row of an
-item into a tuple, and `lt`, which compares two such tuples.
+sorts by `SortKeys([:label => false])`. A `SortKeys` serves as both `by`, which turns an item into a
+tuple, and `lt`, which compares two such tuples.
 """
 struct SortKeys
     keys::Vector{Pair{Symbol,Bool}}
 end
 
-# Called with a row, as `by`, a `SortKeys` gives a tuple: the field of each of its keys in the row,
+# Called with an item, as `by`, a `SortKeys` gives a tuple: the field of each of its keys in the item,
 # with text as its `natural_key`, then the `natural_key` of the id together with the id. A key that
 # the workspace does not have, such as one in a view that the browser saved, gives `missing`.
 (order::SortKeys)(row) = (Tuple(
@@ -508,9 +508,9 @@ end
     sort!(workspace) -> workspace
 
 Set the order of the items in every answer of `select(workspace, f)`, with the keywords `by`, `lt`
-and `rev`, as in `sort`. The tree of the browser shows its items in this order too. `by` takes the
-row of an item, as [`select`](@ref) gives it to `f`: `row.id`, `row.label`, `row.groups`,
-`row.tags`, and one field for each metadata key of the workspace, `missing` where the item does
+and `rev`, as in `sort`. The tree of the browser shows its items in this order too. `by` takes an
+item, as [`select`](@ref) gives it to `f`: `item.id`, `item.label`, `item.groups`,
+`item.tags`, and one field for each metadata key of the workspace, `missing` where the item does
 not have the key.
 
 Before the first call to `sort!`, and again after `sort!(workspace)` without `by`, the items sort
@@ -520,8 +520,8 @@ own compares with `isless`, which puts `a10` before `a2`, and puts `missing` las
 
 ```julia
 using NaturalSort
-sort!(workspace; by=row -> row.label, lt=natural)    # a2 before a10
-sort!(workspace; by=row -> row.timestamp, rev=true)  # no timestamp first, then the latest
+sort!(workspace; by=item -> item.label, lt=natural)    # a2 before a10
+sort!(workspace; by=item -> item.timestamp, rev=true)  # no timestamp first, then the latest
 ```
 
 `sort!` returns immediately, and the workspace sorts the answers afterwards. When `by` or `lt`

@@ -416,6 +416,13 @@ the description is therefore WGLMakie's own traffic between the host and the pag
   of it as it is now; an MCP server by its id, with a picture for the agent.
   `visualize!(workspace, visualizer)` adds one to the workspace, and
   `visualize!(browser, visualizer)` also shows it in a window.
+- Each client arranges the visualizers in a layout of its own, and the runtime keeps no layout.
+  Clients can therefore look nothing alike, such as a terminal UI and a desktop client that show the
+  same visualizers. The links between visualizers, such as an input that is the output of another
+  visualizer, belong to the visualizers, and every client sees them.
+- A host reports its start as a change from nothing: its first `code changed` lists every function,
+  and its first `source changed` every source item. A host that DBCore starts again after stopping
+  it takes the same path, so the protocol has no message for loading a project.
 - Code drives the browser while it shows through the functions that the browser's controls call:
   `select!(workspace, ids)`, `visualize!(browser, v)`, `close(w)`, or a setting such as
   `v.inspect = true`. Automatic checks of the browser's behavior and of its performance call these

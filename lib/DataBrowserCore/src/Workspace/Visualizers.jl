@@ -94,7 +94,7 @@ the workspace. The input is one of:
 
 - `LiveSelection()`, the selection of the workspace, which `v` follows as it changes;
 - `FixedItems(ids)`, the items with the ids `ids`;
-- a function of the row of an item, which gives the items for which it returns `true`, as
+- a function of an item, which gives the items for which it returns `true`, as
   [`select(workspace, f)`](@ref select) gives them, and follows them as they change;
 - another visualizer of the workspace, whose output `v` takes: for example the rows that the user
   selected in a table, or else the value of that visualizer.
