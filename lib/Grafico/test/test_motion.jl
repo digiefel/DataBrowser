@@ -169,3 +169,30 @@ end
     Grafico.seek!(planned, 0)
     @test points[1][] ≈ source
 end
+
+@testset "Coupled motion publishes one consistent set of source values" begin
+    x, y = Observable(0.0), Observable(0.0)
+    planned = Grafico.plan(to(x => 1.0, y => 2.0; duration = 1, ease = identity))
+    observed = Tuple{Float64,Float64,Float64}[]
+    listeners = [on(source) do _
+        push!(observed, (x[], y[], planned.time[]))
+    end for source in (x, y, planned.time)]
+    Grafico.seek!(planned, 0.25)
+    @test observed == fill((0.25, 0.5, 0.25), 3)
+    empty!(observed)
+    Grafico.seek!(planned, 0)
+    @test observed == fill((0.0, 0.0, 0.0), 3)
+    foreach(off, listeners)
+
+    # Changing both column lengths must never expose a mismatched table.
+    horizontal = Observable([0.0, 1.0])
+    vertical = Observable([1.0, 2.0])
+    fig = figure(data((x = horizontal, y = vertical)) * mapping(:x, :y) * visual(Lines))
+    line = only(plots_of(fig, Lines))
+    lengths = Grafico.plan(to(horizontal => [0.0, 1.0, 2.0], vertical => [3.0, 4.0, 5.0]))
+    Grafico.seek!(lengths, Grafico.duration(lengths))
+    @test only(plots_of(fig, Lines)) === line
+    @test line[1][] == Point2d[(0, 3), (1, 4), (2, 5)]
+    Grafico.seek!(lengths, 0)
+    @test line[1][] == Point2d[(0, 1), (1, 2)]
+end

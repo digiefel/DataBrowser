@@ -18,21 +18,36 @@ The motion exporter reads Grafico's actual `MotionPlan`. It compiles each easing
 function, custom trajectory and numeric interpolation function; JavaScript only
 interprets the captured timing and passes values to the renderer.
 
+The computation exporter follows the functions and inputs retained by ordinary
+`lift` and `map` calls. `author.jl` now uses those calls for the point coordinates,
+an interval tuple, and integration of a measured trace. `compile.jl` discovers
+the computation functions automatically. The compiler's typed value bridge moves
+arrays, tuples and named tuples between JavaScript and WebAssembly. The browser
+batches input changes and evaluates affected nodes once in dependency order;
+unrelated inputs retain their computed results.
+
 The tests compare native Julia with Wasm at off-grid control combinations and
 animation times. They also exercise real range inputs, playback, reverse seeking
-and pointer dragging in a fresh browser with networking disabled. Chromium was tested; Safari and Firefox were not. They check the
-native WGL position buffer, changed and restored pixels, retained canvas identity,
+and pointer dragging in a fresh browser with networking disabled. Chromium was
+tested; Safari and Firefox were not. Source arrays grow and shrink through
+0, 3, 127 and 257 points; buffer values and painted point instances are checked.
+The checks also cover changed and restored pixels, retained canvas identity,
 and the absence of HTTP requests, WebSockets and JavaScript errors. Bounds errors
 are preserved in the compiled numerical functions.
 
 This is an exporter experiment, not a public export API. Its motion value ABI
 currently accepts Float64 channels. Its renderer adapter explicitly binds one
-Scatter buffer with fixed linear axes and bounded coordinates. The data kernels
-are registered explicitly in `compile.jl`; automatic discovery and compilation
-of the complete Observable-to-Makie dependency graph is not implemented. Dynamic
-ticks, layout, picking, arbitrary recipes and general geometry changes still need
-adapters or portable computation. Unsupported value types fail during lowering.
-The checks do not establish general Makie portability or large-data performance.
+Scatter buffer with fixed linear axes and bounded coordinates. Computations
+must be pure, have concrete Observable value types and express their dependencies
+as `lift`/`map` arguments. Cycles, multiple writers, captured Observables, opaque
+`on`/`onany` effects and invalid control bindings fail during export. Unsupported
+compiler diagnostics also stop the build. The graph adapter currently reads
+Observables' retained `MapCallback` metadata through Makie.
+
+Automatic binding of the computed values to arbitrary Grafico/Makie plots remains
+work. Dynamic ticks, layout, picking and other recipes need adapters or portable
+computation. The checks do not establish general Makie portability or large-data
+performance.
 
 ## Reproducing it
 
@@ -60,6 +75,7 @@ npx playwright install chromium
 npm test
 ```
 
+`check-authoring.jl` separately checks dependency contracts and export-time diagnostics.
 The browser tests run from this directory. Open `output/offline.html` directly
 from disk. Drag horizontally over the plot to rotate it, or use the controls.
 `output/final.svg` is the selected print state. All outputs are generated and

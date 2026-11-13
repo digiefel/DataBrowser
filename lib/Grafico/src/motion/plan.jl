@@ -141,17 +141,25 @@ end
 Evaluate a planned motion directly and publish its values to the existing
 Observables. Finite times are clamped to the plan's interval. All channel values
 are computed before publication, so evaluation does not read an earlier frame.
-Observable notifications are then delivered in channel order. The plan's `time`
-Observable records the evaluated time. Returns the plan.
+The sampled values and the plan's `time` are installed before notifications,
+so a listener sees a consistent set of source values. Notifications are then
+delivered in channel order, followed by the clock. Returns the plan.
 """
 function seek!(planned::MotionPlan, seconds::Real)
     isfinite(seconds) || throw(ArgumentError("Time must be finite."))
     time = clamp(Float64(seconds), 0.0, planned.seconds)
     values = [_motion_value(channel, time) for channel in planned.channels]
+    changed = Makie.Observable[]
     for (channel, value) in zip(planned.channels, values)
         observable = channel.observable
-        isequal(observable[], value) || (observable[] = value)
+        isequal(observable[], value) && continue
+        Makie.Observables.setexcludinghandlers!(observable, value)
+        push!(changed, observable)
     end
-    isequal(planned.time[], time) || (planned.time[] = time)
+    if !isequal(planned.time[], time)
+        Makie.Observables.setexcludinghandlers!(planned.time, time)
+        push!(changed, planned.time)
+    end
+    foreach(notify, changed)
     planned
 end

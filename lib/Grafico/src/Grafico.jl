@@ -65,6 +65,7 @@ include("reactive.jl")
 include("motion/values.jl")
 include("motion/definitions.jl")
 include("motion/plan.jl")
+include("portable/observables.jl")
 
 @setup_workload begin
     rows = [(x=x, y=2x + offset, chip=chip)
