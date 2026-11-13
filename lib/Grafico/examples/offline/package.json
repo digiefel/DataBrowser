@@ -1,0 +1,11 @@
+{
+  "name": "grafico-offline-probe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node check-kernels.mjs && node check-browser.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.0"
+  }
+}

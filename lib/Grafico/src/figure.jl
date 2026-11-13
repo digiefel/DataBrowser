@@ -14,6 +14,7 @@ function figure(
     groups::Vector{Dict{Symbol,Any}}=Dict{Symbol,Any}[],
     options...,
 )
+    _hasobs(specification) && return _reactive_figure(specification,args...;legend,texts,groups,options...)
     drawn = draw(drawable(specification), args...; legend=(; show=false), options...)
     label_inspector!(drawn.grid)
     get(legend, :show, true) || return drawn.figure
@@ -32,7 +33,9 @@ end
     spec(plot, [input]; options...) -> Makie.GridLayoutSpec
 
 Compile `plot` (and `input` when `plot` is a [`Declaration`](@ref)) into a declarative
-`Makie.SpecApi.GridLayout` without creating a `Figure` or `Scene`.
+`Makie.SpecApi.GridLayout` without creating a `Figure` or `Scene`. Observable data and mappings
+are read at their current values; visual and axis settings keep their live connections. Use
+`figure(plot)` to connect future data and mapping updates.
 """
 function spec(
     specification::Union{Layer, Layers, ProcessedLayer, ProcessedLayers},
@@ -49,10 +52,8 @@ function spec(
         axis=_kwdict(axis, :axis), facet=_kwdict(facet, :facet))
     cells = Pair{Tuple{Int,Int},Any}[]
     for ase in ae
-        plots = Makie.PlotSpec[Makie.PlotSpec(entry.plottype, entry.positional...; pairs(entry.named)...) for entry in ase.entries]
-        ax_spec = ase.axis.type === Axis3 ?
-            S.Axis3(; plots, pairs(ase.axis.attributes)...) :
-            S.Axis(; plots, pairs(ase.axis.attributes)...)
+        plots = Makie.PlotSpec[_entry_spec(entry) for entry in ase.entries]
+        ax_spec = _axis_spec(ase.axis,plots)
         push!(cells, ase.axis.position => ax_spec)
     end
     if get(legend, :show, true)
@@ -139,6 +140,7 @@ function processed_lines(plot::PlotLines, settings::Scales=scales())::Vector{Vec
 end
 
 function figure(plot::PlotLines, args...; yscales=Dict{Symbol,Any}(), options...)
+    _hasobs(plot) && return _reactive_figure(plot,args...;yscales,options...)
     any(line -> line.drawn && line.layers isa YScaleLayers, plot.lines) &&
         return scaled_y_figure(plot, yscales, args...; options...)
     settings = !isempty(args) && first(args) isa Scales ? first(args) : scales()
@@ -150,6 +152,7 @@ function figure(plot::PlotLines, args...; yscales=Dict{Symbol,Any}(), options...
 end
 
 function spec(plot::PlotLines, args...; yscales=Dict{Symbol,Any}(), options...)
+    _hasobs(plot) && return spec(_snapshot(plot),args...;yscales,options...)
     any(line -> line.drawn && line.layers isa YScaleLayers, plot.lines) &&
         return scaled_y_spec(plot, yscales, args...; options...)
     settings = !isempty(args) && first(args) isa Scales ? first(args) : scales()
@@ -581,22 +584,20 @@ function prepare_scaled(plot::Scaled; options...)
     push!(axis, :yaxisposition => get(primary, :position, :left))
     zoom = Any[nothing, nothing]
     functions, scaled = Any[], false
+    foreach(_validate_coord, plot.coords)
     for step in plot.coords, (key, value) in pairs(step)
         if key === :points
             scaled && error("A coord line with a function of the points comes before those that set a scale or reversed")
             push!(functions, value)
         elseif key in (:x, :y)
-            extra = setdiff(keys(value), (:label, :scale, :limits, :reversed))
-            isempty(extra) || error("coord sets the label, scale, limits and reversed of $key, not $(join(extra, ", "))")
             scaled |= haskey(value, :scale) || haskey(value, :reversed)
-            haskey(value, :label) && push!(axis, Symbol(key, :label) => value.label)
             haskey(value, :scale) && push!(axis, Symbol(key, :scale) => value.scale)
             haskey(value, :reversed) && push!(axis, Symbol(key, :reversed) => value.reversed)
             haskey(value, :limits) && (zoom[key === :x ? 1 : 2] = value.limits)
         elseif key === :aspect
             push!(axis, :aspect => value)
         else
-            error("coord sets x, y and aspect, not $key")
+            throw(ArgumentError("coord accepts x/y coordinates and aspect."))
         end
     end
     shown = [z === nothing ? l : z for (z, l) in zip(zoom, limits)]
@@ -610,11 +611,14 @@ function prepare_scaled(plot::Scaled; options...)
     end
     isempty(functions) || (layers = retransformed(layers, t -> MovedPoints(functions) ∘ t))
     legend = (; plot.legend..., get(options, :legend, (;))...)
-    axis_kw = (; axis..., get(options, :axis, (;))...)
+    axis_theme = plot.theme === nothing ? (; ) :
+        (; pairs(get(makie_theme(plot.theme), :Axis, Makie.Attributes()))...)
+    axis_kw = (; axis_theme..., axis..., get(options, :axis, (;))...)
     return layers, settings, axis_kw, legend, yscales
 end
 
 function figure(plot::Scaled, args...; options...)
+    (_hasobs(plot) || _axis_reactive(plot)) && return _reactive_figure(plot,args...;options...)
     layers, settings, axis_kw, legend, yscales = prepare_scaled(plot; options...)
     draw_fig() = figure(layers, settings, args...; options..., axis=axis_kw,
         texts=plot.texts, legend, (layers isa PlotLines ? (; yscales) : (;))...)
@@ -622,6 +626,7 @@ function figure(plot::Scaled, args...; options...)
 end
 
 function spec(plot::Scaled, args...; options...)
+    _hasobs(plot) && return spec(_snapshot(plot),args...;options...)
     layers, settings, axis_kw, legend, yscales = prepare_scaled(plot; options...)
     build_spec() = spec(layers, settings, args...; options..., axis=axis_kw,
         texts=plot.texts, legend, (layers isa PlotLines ? (; yscales) : (;))...)
@@ -630,10 +635,7 @@ end
 
 # The latest world: code that the browser runs defines the declaration after the caller started.
 function figure(declaration::Declaration, input::Makie.Observable, args...; options...)
-    spec_obs = Makie.lift(x -> spec(declaration, x, args...; options...), input)
-    fig = Figure()
-    Makie.plot(fig[1, 1], spec_obs)
-    return fig
+    return _reactive_figure(declaration,input,args...;options...)
 end
 
 figure(declaration::Declaration, input, args...; options...) =
@@ -643,14 +645,7 @@ spec(declaration::Declaration, input, args...; options...) =
     spec(Base.invokelatest(declaration.layers, input), args...; options...)
 
 function figure(plot::Makie.Observable, args...; options...)
-    spec_obs = if !isempty(args) && first(args) isa Makie.Observable
-        Makie.lift((p, a) -> spec(p, a, Base.tail(args)...; options...), plot, first(args))
-    else
-        Makie.lift(p -> spec(p, args...; options...), plot)
-    end
-    fig = Figure()
-    Makie.plot(fig[1, 1], spec_obs)
-    return fig
+    return _reactive_figure(plot,args...;options...)
 end
 
 # A theme from elsewhere, such as Makie's own, can also change what the plot shows, such as the bins

@@ -33,9 +33,9 @@ function _histogram(
     intervals = applydatalimits(datalimits, vs)
     edges = compute_edges(intervals, bins, closed)
     h = if weights === automatic
-        StatsBase.fit(Histogram, vs, edges)
+        StatsBase.fit(Histogram, vs, edges; closed)
     else
-        StatsBase.fit(Histogram, vs, StatsBase.weights(weights), edges)
+        StatsBase.fit(Histogram, vs, StatsBase.weights(weights), edges; closed)
     end
     return normalize(h, mode = normalization)
 end

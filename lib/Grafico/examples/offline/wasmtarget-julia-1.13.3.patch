@@ -1,0 +1,24 @@
+--- a/src/codegen/trimcollect.jl
++++ b/src/codegen/trimcollect.jl
+@@ -539,8 +539,8 @@
+     codeinfos = Any[]
+     workqueue = CC.CompilationQueue(; interp)
+     append!(workqueue, entries)
+-    CC.compile!(codeinfos, workqueue; invokelatest_queue)
+-    CC.compile!(codeinfos, invokelatest_queue; invokelatest_queue)
++    CC.compile!(codeinfos, workqueue; invokelatest_queue, external_linkage=false)
++    CC.compile!(codeinfos, invokelatest_queue; invokelatest_queue, external_linkage=false)
+     # Imports are typed call-graph leaves. Julia inference may inspect their
+     # native fallback bodies, but those bodies and their dependencies do not
+     # belong to the Wasm component. Cut them before invoke completion and
+@@ -597,8 +597,8 @@
+             root_mi in _DYNAMIC_ROOT_MIS[] && push!(_DYNAMIC_ROOT_MIS[], resolved_mi)
+             push!(fresh_wq, resolved_mi)
+         end
+-        CC.compile!(fresh_ci, fresh_wq; invokelatest_queue=fresh_ilq)
+-        CC.compile!(fresh_ci, fresh_ilq; invokelatest_queue=fresh_ilq)
++        CC.compile!(fresh_ci, fresh_wq; invokelatest_queue=fresh_ilq, external_linkage=false)
++        CC.compile!(fresh_ci, fresh_ilq; invokelatest_queue=fresh_ilq, external_linkage=false)
+         for k in 1:2:length(fresh_ci)
+             (fresh_ci[k] isa Core.CodeInstance &&
+              fresh_ci[k + 1] isa Core.CodeInfo) || continue

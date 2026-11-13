@@ -37,7 +37,9 @@ transformation(f) = Layer(transformation = f)
 """
     data(table)
 
-Create a [`Layer`](@ref) with its data field set to a table-like object.
+Create a [`Layer`](@ref) with its data field set to a table-like object. An Observable table,
+or a named tuple with Observable columns, gives an Observable of layers. Drawing it with
+`figure` connects future data updates.
 
 There are no type restrictions on this object, as long as it respects the Tables interface.
 In particular, any one of [these formats](https://github.com/JuliaData/Tables.jl/blob/main/INTEGRATIONS.md)
@@ -49,13 +51,14 @@ To create a fully specified layer, the layer created with `data` needs to be mul
 spec = data(...) * mapping(...)
 ```
 """
-data(df) = Layer(data = Columns(columns(df)))
+data(df) = _hasobs(df) ? _lift_call(data,df) : Layer(data = Columns(columns(df)))
 data(p::Pregrouped) = Layer(data = p)
 
 """
     mapping(positional...; named...)
 
-Create a [`Layer`](@ref) with `positional` and `named` selectors.
+Create a [`Layer`](@ref) with `positional` and `named` selectors. Observable selectors and
+functions after `=>` update their mappings when drawn with `figure`.
 These selectors will be translated into input data for the Makie plotting function or
 Grafico analysis that is chosen to visualize the `Layer`.
 
@@ -116,7 +119,8 @@ pregrouped(
 )
 ```
 """
-mapping(args...; kwargs...) = Layer(positional = collect(Any, args), named = NamedArguments(kwargs))
+mapping(args...; kwargs...) = _hasobs((args,(;kwargs...))) ? _lift_call(mapping,args...;kwargs...) :
+    Layer(positional = collect(Any,args),named = NamedArguments(kwargs))
 
 ⨟(f, g) = f === identity ? g : g === identity ? f : g ∘ f
 
