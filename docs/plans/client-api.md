@@ -21,9 +21,9 @@ workers change the catalog while they run project code, under the lock of the ca
 reads two other things, which the workspace *publishes*: it replaces them whole, and never changes
 a published one, so a client reads them without a lock.
 
-- The *table `items`*, which holds each item, groups included, with the columns listed in
-  [the columns of the table `items`](#the-columns-of-the-table-items). Its publishing task makes a new
-  version of it from the catalog when items change: at once while a client waits for it, and
+- The *table `items`*, which holds each item, groups included, with its metadata and the
+  information listed in [the function given to `select`](#the-function-given-to-select). Its
+  publishing task makes a new version of it from the catalog when items change: at once while a client waits for it, and
   otherwise at most every 0.05 s while work runs.
 - The *shared state*: the workspace's selection, its tags and the order of its items. Clients set
   it, and every client sees it: a script that selects items selects them in the browser too.
@@ -71,31 +71,45 @@ Four rules follow:
 sequenceDiagram
     participant C as a script
     participant S as the shared state
-    participant A as the answers of select
     C->>S: tag!(workspace, ids, "check")
     Note over S: replaced whole,<br/>generation 413
     S-->>C: tag! returns
-    C->>A: select(workspace, x -> "check" in x.tags)
-    Note over A: the answer for generation 413,<br/>made from the items that changed
-    A-->>C: the items with the tag
+    C->>S: items(workspace, Tag("check"))
+    S-->>C: the ids with the tag, at generation 413
 ```
 
-## The columns of the table `items`
+## The function given to `select`
 
-`select` and `sort!` call a function once for each item, with its value in each column below, but
-without its data, so that a filter never waits for processing. Every column is therefore a
-condition that a client can filter and sort by:
+`select(workspace, f)` calls `f(id, metadata)` once for each item. `id` is the id of the item, and
+`metadata` reads as the `Dict` that the project's `metadata` method gave for the latest version of
+the item: `metadata[:device]`, `get(metadata, :gap, 0)` and `haskey(metadata, :gap)` work as on
+that `Dict`. The workspace keeps metadata in one column for each key, and `metadata` reads the
+cells of one item from these columns, so `select` allocates nothing for each item. `f` never sees
+the data of the item, so a filter never waits for processing. An item without a result yet has
+no metadata.
 
-| Column | What it holds | Today |
+```julia
+select(workspace, (id, m) -> startswith(id, "IV") && get(m, :device, nothing) == "D2")
+```
+
+Today `f` gets one value with the id, label, groups and tags of the item and a field for each
+metadata key, so the workspace drops any metadata key called `id`, `label`, `groups`, `tags` or
+`data`.
+
+Besides its metadata, the workspace knows the following about an item. None of it is metadata, so
+each has calls of its own:
+
+| Information | What it holds | Today |
 | --- | --- | --- |
-| `id` | the id of the item | a column |
-| `label` | its label | a column |
+| `label` | its label | in what `select` gives `f` |
 | `type` | the type of its latest version, `Any` before it has one | `valuetype(workspace, id)`, internal |
 | `readiness` | `CURRENT`, `WORKING`, `FAILED` or `UNPROCESSED` | `readiness(workspace, id)`, internal |
 | `source` | the id of the source item that it comes from | `source_item_id(workspace, id)`, internal |
-| `groups` | the ids of the groups that hold it | a column |
-| `tags` | the names of its tags, from the shared state | a column |
-| one per metadata key | its metadata, `missing` where it has none | columns |
+| `groups` | the ids of the groups that hold it | in what `select` gives `f` |
+| `tags` | the names of its tags, from the shared state | `items(workspace, tag)` gives the ids with a tag |
+
+TODO: design the calls that give the items with a readiness, the items at the top, and the members
+of a group in order; and what `by` of `sort!` takes, now that `f` takes two arguments.
 
 The data of an item is a column of the `Selection` that `select(workspace, ids)` gives, and loads
 when read.
@@ -119,9 +133,8 @@ wait_workspace_idle!(workspace)        # throws when the time runs out; today it
 ```julia
 items(workspace)                       # the ids of all items; today also `query_items(workspace)`
 haskey(workspace, id)
-select(workspace, x -> isempty(x.groups))            # the items at the top, in order
-select(workspace, x -> x.readiness == FAILED)        # the items that failed
-select(workspace, x -> "check" in x.tags)            # today also `items(workspace, tag)`
+select(workspace, (id, m) -> get(m, :device, nothing) == "D2")   # the items of the device D2
+items(workspace, Tag("check"))         # the ids of the items with the tag `check`
 tags(workspace)                        # the tags defined in the workspace, with their colors
 ```
 
@@ -143,7 +156,8 @@ select!(workspace, ids)                # the selection; ids of items that come l
 tag!(workspace, Tag("check"; color="ffaa00"))
 tag!(workspace, ids, "check")
 untag!(workspace, ids, "check")
-sort!(workspace; by=x -> x.label)      # the order of the answers of `select(workspace, f)`
+sort!(workspace; by)                   # the order of the answers of `select(workspace, f)`;
+                                       # TODO: what `by` takes
 ```
 
 **The code of an item**
@@ -155,15 +169,15 @@ last_execution(workspace, computation) # when it last ran, and how long it took
 cache_info(workspace, computation)     # where its result is kept
 ```
 
-A script finds the items that failed, tags them, and reads its change at once:
+A script tags the items of one device, and reads its change at once:
 
 ```julia
 workspace = open_workspace(project, source)
 wait_workspace_idle!(workspace)
-failed = select(workspace, x -> x.readiness == FAILED)
+d2 = select(workspace, (id, m) -> get(m, :device, nothing) == "D2")
 tag!(workspace, Tag("check"))
-tag!(workspace, failed.id, "check")
-@assert select(workspace, x -> "check" in x.tags).id == failed.id
+tag!(workspace, d2.id, "check")
+@assert sort(items(workspace, Tag("check"))) == sort(d2.id)
 ```
 
 ## What the browser and other clients need
@@ -171,7 +185,7 @@ tag!(workspace, failed.id, "check")
 The browser draws in every frame, so each of its reads must answer at once and cost as much as the
 items on the screen, also with a million items in the workspace. Besides the calls above, it needs:
 
-- **The current columns of given items, at once**, while it asks for them ahead of background work:
+- **The current label, readiness and groups of given items, at once**, while it asks for them ahead of background work:
   the label of a window's items for its title, the readiness of the items drawn in the tree, the
   groups above the selected items. `select(workspace, ids)` waits instead.
 - **A change number for each item**, so that a window prepares again only when its own items
@@ -224,7 +238,6 @@ sequenceDiagram
 | `query_items(workspace)` | `sort!(items(workspace))` |
 | `query_items(workspace, sql)` | `select(workspace, f)` |
 | `materialize_items(workspace, ids)` | `items(select(workspace, ids))` |
-| `items(workspace, tag)` and `items(workspace, !tag)` | `select(workspace, f)` with the column `tags` |
 | `close_workspace!` | `close` and `isopen` |
 | `workspace_status(workspace)` | `status(workspace)` |
 | `generation(workspace)`, internal | `generation(workspace)`, public |
@@ -250,7 +263,7 @@ catalog. [Architecture](../ARCHITECTURE.md) describes them. Only the result of a
 lacks still takes that lock, as the open question above says.
 
 The parts that change public functions wait on a branch of their own until they are approved: the
-new columns of the table `items`, `generation` with a public docstring, `isopen`, `close`, `Readiness` with
+`f(id, metadata)` for `select`, `generation` with a public docstring, `isopen`, `close`, `Readiness` with
 its values, the fields of `status`, the documented `workspace.project` and
 `workspace.source`, `select!` keeping ids of items that come later, the error of
 `wait_workspace_idle!` when the time runs out, and the removals in the table above.
