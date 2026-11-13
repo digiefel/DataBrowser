@@ -1,23 +1,16 @@
-module GraficoOfflineCompilerProbe
+module GraficoObservableCompilerProbe
 
 using WasmTarget
 import JSON
 using Grafico
 include("author.jl")
 include("lower-motion.jl")
+include("lower-observables.jl")
 
 output = joinpath(@__DIR__, "output")
 mkpath(output)
 K = GraficoPortableKernels
-roots = [
-    (K.cloud_x, (Float64, Float64, Float64, Float64), "cloud_x"),
-    (K.cloud_y, (Float64, Float64, Float64, Float64), "cloud_y"),
-    (K.swing, (Float64, Float64), "swing"),
-    (K.vector_new, (Int32,), "vector_new"),
-    (K.vector_get, (Vector{Float64}, Int32), "vector_get"),
-    (K.vector_set!, (Vector{Float64}, Int32, Float64), "vector_set"),
-    (K.interval_integral, (Vector{Float64}, Vector{Float64}, Float64, Float64), "interval_integral"),
-]
+roots = Any[]
 root_bindings = Dict{String,WasmTarget.RootBindings}()
 function add_kernel!(f, signature)
     existing = findfirst(root -> root[1] === f && root[2] == signature, roots)
@@ -32,6 +25,12 @@ function add_kernel!(f, signature)
     name
 end
 motion_wire = lower_motion(playback, IdDict(angle => "angle", stretch => "stretch"), add_kernel!)
+input_names = IdDict(angle => "angle", stretch => "stretch", source => "source",
+                     lower => "lower", upper => "upper", time => "time", signal => "signal")
+graph_wire = lower_observables((; rows, area), input_names, roots, root_bindings)
+write(joinpath(output, "bridge-runtime.js"),
+    "function createCompilerBridge(ex) {" * WasmTarget.Bridge.WALK_JS *
+    WasmTarget.Bridge.BUILD_JS * "return {walk, build};}")
 motion_cases = map((0.0, 0.137, 1.27, 2.41, 3.0, 3.137, 4.131, 5.413, 6.807, 7.0, 7.73, 9.0)) do time
     Grafico.seek!(playback, time)
     (; time, angle = angle[], stretch = stretch[])
@@ -42,12 +41,13 @@ diagnostics = WasmTarget.WasmDiagnostic[]
 # This collects every dependency instead of linking to native Julia image code.
 elapsed = @elapsed bytes = WasmTarget.compile_multi(roots;
     diagnostics_sink = diagnostics, root_bindings = root_bindings)
+isempty(diagnostics) || throw(ErrorException("Export could not compile every computation: " * join(string.(diagnostics), "; ")))
 write(joinpath(output, "kernels.wasm"), bytes)
 
 points = [(x = 0.7 * cos(t) + 0.15 * cos(3t), y = 0.5 * sin(t))
           for t in range(0, 2π; length = 81)[1:end-1]]
-time = collect(range(0.0, 1.0; length = 1025))
-signal = @. sin(6π * time) + 0.3 * time + 0.1 * cos(31π * time)
+fixture_time = collect(range(0.0, 1.0; length = 1025))
+fixture_signal = @. sin(6π * fixture_time) + 0.3 * fixture_time + 0.1 * cos(31π * fixture_time)
 
 cloud_cases = [
     (angle = angle, stretch = stretch,
@@ -56,13 +56,23 @@ cloud_cases = [
     for angle in (0.13, 0.87, 2.41, 5.91), stretch in (0.55, 1.13, 1.77)
 ]
 integral_cases = [
-    (lower = lower, upper = upper, value = K.interval_integral(time, signal, lower, upper))
+    (lower = lower, upper = upper, value = K.interval_integral(fixture_time, fixture_signal, lower, upper))
     for (lower, upper) in ((0.031, 0.413), (0.173, 0.867), (0.003, 0.997),
                            (0.723, 0.723), (0.81, 0.23), (-0.12, 1.13))
 ]
 swing_cases = [(start = 0.37, progress = u, value = K.swing(0.37, u))
                for u in (0.0, 0.031, 0.17, 0.413, 0.807, 1.0)]
-fixture = (; points, time, signal, cloud_cases, integral_cases, swing_cases, motion_wire, motion_cases,
+# Changing a data source is an ordinary Observable update, including its length.
+source_cases = map((0, 3, 127, 257)) do count
+    values = [(x = -0.9 + 0.09mod(i - 1, 21), y = -0.9 + 0.09div(i - 1, 21)) for i in 1:count]
+    source[] = values
+    angle[], stretch[] = 0.371, 0.913
+    (; points = values, angle = angle[], stretch = stretch[], x = copy(rows[].x), y = copy(rows[].y))
+end
+source[] = points
+Grafico.seek!(playback, 0)
+
+fixture = (; source_cases, points, time = fixture_time, signal = fixture_signal, graph_wire, cloud_cases, integral_cases, swing_cases, motion_wire, motion_cases,
             compiler_seconds = elapsed, module_bytes = length(bytes),
             diagnostic_count = length(diagnostics),
             compiler_version = string(Base.pkgversion(WasmTarget)), compiler_discovery = "trim",

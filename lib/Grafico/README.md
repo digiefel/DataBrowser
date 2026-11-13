@@ -298,11 +298,14 @@ Makie figures keep their identity. A clock and a mouse can call the same runner.
 Native animations can drive any existing Observable value. Numeric values,
 colours, tuples, compatible numeric arrays and rectangles interpolate. Other
 values switch at the end of a `to` clip. `along` can return any accepted value.
-Notifications are delivered in channel order after all values are sampled.
+All sampled source values and the playback time are installed before notifications,
+so coupled values remain consistent. Notifications then follow channel order.
 
 [`examples/offline`](examples/offline/README.md) demonstrates compiling numerical
 motion curves and reactive computations to WebAssembly, together with WGLMakie's
 browser renderer. The exported HTML runs without Julia. Its private exporter
-currently supports Float64 motion channels and a fixed Scatter buffer; full
-Observable graph and recipe export remain work. The compiler dependency is
+currently supports Float64 motion channels and a Scatter buffer with fixed axes.
+It discovers pure `lift`/`map` computations automatically and transports their
+arrays, tuples and named tuples through the compiler's value bridge. Binding that
+graph to arbitrary plots, layouts and recipes remains work. The compiler dependency is
 confined to that example. Tanim consumes prepared HTML and vector print assets.

@@ -1,4 +1,4 @@
-module GraficoOfflineWGLProbe
+module GraficoObservableWGLProbe
 
 using WGLMakie, Grafico, Base64
 using Bonito: Bonito, App, DOM, @js_str
@@ -18,7 +18,7 @@ end
 axis = only(filter(block -> block isa Axis, fig.content))
 native_scatter = only(reduce(vcat, scatter_plots.(axis.scene.plots); init = Any[]))
 wasm_base64 = base64encode(read(joinpath(output, "kernels.wasm")))
-implementation = "(() => {" * read(joinpath(@__DIR__, "motion-runtime.js"), String) * "return " * read(joinpath(@__DIR__, "offline.js"), String) * ";})()"
+implementation = "(() => {" * (read(joinpath(output, "bridge-runtime.js"), String) * read(joinpath(@__DIR__, "observable-runtime.js"), String) * read(joinpath(@__DIR__, "motion-runtime.js"), String)) * "return " * read(joinpath(@__DIR__, "offline.js"), String) * ";})()"
 
 app = App(; title = "Grafico: offline WGL and compiled Julia") do session
     root = DOM.main(
