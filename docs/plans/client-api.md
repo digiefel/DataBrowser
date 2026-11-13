@@ -21,8 +21,8 @@ workers change the catalog while they run project code, under the lock of the ca
 reads two other things, which the workspace *publishes*: it replaces them whole, and never changes
 a published one, so a client reads them without a lock.
 
-- The *table `items`*, which holds each item, groups included, with the fields listed in
-  [the fields of an item](#the-fields-of-an-item). Its publishing task makes a new
+- The *table `items`*, which holds each item, groups included, with the columns listed in
+  [the columns of the table `items`](#the-columns-of-the-table-items). Its publishing task makes a new
   version of it from the catalog when items change: at once while a client waits for it, and
   otherwise at most every 0.05 s while work runs.
 - The *shared state*: the workspace's selection, its tags and the order of its items. Clients set
@@ -75,29 +75,30 @@ sequenceDiagram
     C->>S: tag!(workspace, ids, "check")
     Note over S: replaced whole,<br/>generation 413
     S-->>C: tag! returns
-    C->>A: select(workspace, item -> "check" in item.tags)
+    C->>A: select(workspace, x -> "check" in x.tags)
     Note over A: the answer for generation 413,<br/>made from the items that changed
     A-->>C: the items with the tag
 ```
 
-## The fields of an item
+## The columns of the table `items`
 
-A function given to `select` or to `sort!` takes each item of the table `items`, with the fields
-below. Every field is therefore a condition that a client can filter and sort by:
+`select` and `sort!` call a function once for each item, with its value in each column below, but
+without its data, so that a filter never waits for processing. Every column is therefore a
+condition that a client can filter and sort by:
 
-| Field | What it holds | Today |
+| Column | What it holds | Today |
 | --- | --- | --- |
-| `id` | the id of the item | a field |
-| `label` | its label | a field |
+| `id` | the id of the item | a column |
+| `label` | its label | a column |
 | `type` | the type of its latest version, `Any` before it has one | `valuetype(workspace, id)`, internal |
 | `readiness` | `CURRENT`, `WORKING`, `FAILED` or `UNPROCESSED` | `readiness(workspace, id)`, internal |
 | `source` | the id of the source item that it comes from | `source_item_id(workspace, id)`, internal |
-| `groups` | the ids of the groups that hold it | a field |
-| `tags` | the names of its tags, from the shared state | a field |
-| one per metadata key | its metadata, `missing` where it has none | fields |
+| `groups` | the ids of the groups that hold it | a column |
+| `tags` | the names of its tags, from the shared state | a column |
+| one per metadata key | its metadata, `missing` where it has none | columns |
 
 The data of an item is a column of the `Selection` that `select(workspace, ids)` gives, and loads
-when read. An item given to such a function has no data, so that a filter never waits for processing.
+when read.
 
 ## The calls of a script
 
@@ -118,9 +119,9 @@ wait_workspace_idle!(workspace)        # throws when the time runs out; today it
 ```julia
 items(workspace)                       # the ids of all items; today also `query_items(workspace)`
 haskey(workspace, id)
-select(workspace, item -> isempty(item.groups))            # the items at the top, in order
-select(workspace, item -> item.readiness == FAILED)        # the items that failed
-select(workspace, item -> "check" in item.tags)            # today also `items(workspace, tag)`
+select(workspace, x -> isempty(x.groups))            # the items at the top, in order
+select(workspace, x -> x.readiness == FAILED)        # the items that failed
+select(workspace, x -> "check" in x.tags)            # today also `items(workspace, tag)`
 tags(workspace)                        # the tags defined in the workspace, with their colors
 ```
 
@@ -142,7 +143,7 @@ select!(workspace, ids)                # the selection; ids of items that come l
 tag!(workspace, Tag("check"; color="ffaa00"))
 tag!(workspace, ids, "check")
 untag!(workspace, ids, "check")
-sort!(workspace; by=item -> item.label) # the order of the answers of `select(workspace, f)`
+sort!(workspace; by=x -> x.label)      # the order of the answers of `select(workspace, f)`
 ```
 
 **The code of an item**
@@ -159,10 +160,10 @@ A script finds the items that failed, tags them, and reads its change at once:
 ```julia
 workspace = open_workspace(project, source)
 wait_workspace_idle!(workspace)
-failed = select(workspace, item -> item.readiness == FAILED)
+failed = select(workspace, x -> x.readiness == FAILED)
 tag!(workspace, Tag("check"))
 tag!(workspace, failed.id, "check")
-@assert select(workspace, item -> "check" in item.tags).id == failed.id
+@assert select(workspace, x -> "check" in x.tags).id == failed.id
 ```
 
 ## What the browser and other clients need
@@ -170,7 +171,7 @@ tag!(workspace, failed.id, "check")
 The browser draws in every frame, so each of its reads must answer at once and cost as much as the
 items on the screen, also with a million items in the workspace. Besides the calls above, it needs:
 
-- **The current fields of given items, at once**, while it asks for them ahead of background work:
+- **The current columns of given items, at once**, while it asks for them ahead of background work:
   the label of a window's items for its title, the readiness of the items drawn in the tree, the
   groups above the selected items. `select(workspace, ids)` waits instead.
 - **A change number for each item**, so that a window prepares again only when its own items
@@ -223,7 +224,7 @@ sequenceDiagram
 | `query_items(workspace)` | `sort!(items(workspace))` |
 | `query_items(workspace, sql)` | `select(workspace, f)` |
 | `materialize_items(workspace, ids)` | `items(select(workspace, ids))` |
-| `items(workspace, tag)` and `items(workspace, !tag)` | `select(workspace, f)` with `item.tags` |
+| `items(workspace, tag)` and `items(workspace, !tag)` | `select(workspace, f)` with the column `tags` |
 | `close_workspace!` | `close` and `isopen` |
 | `workspace_status(workspace)` | `status(workspace)` |
 | `generation(workspace)`, internal | `generation(workspace)`, public |
@@ -249,7 +250,7 @@ catalog. [Architecture](../ARCHITECTURE.md) describes them. Only the result of a
 lacks still takes that lock, as the open question above says.
 
 The parts that change public functions wait on a branch of their own until they are approved: the
-new fields of an item, `generation` with a public docstring, `isopen`, `close`, `Readiness` with
+new columns of the table `items`, `generation` with a public docstring, `isopen`, `close`, `Readiness` with
 its values, the fields of `status`, the documented `workspace.project` and
 `workspace.source`, `select!` keeping ids of items that come later, the error of
 `wait_workspace_idle!` when the time runs out, and the removals in the table above.

@@ -368,7 +368,7 @@ sequenceDiagram
     C->>S: tag!(workspace, ids, "check")
     Note over S: replaced whole,<br/>generation 413
     S-->>C: tag! returns
-    C->>A: select(workspace, item -> "check" in item.tags)
+    C->>A: select(workspace, x -> "check" in x.tags)
     Note over A: the answer for generation 413,<br/>from the items whose tags changed
     A-->>C: the items with the tag
 ```
