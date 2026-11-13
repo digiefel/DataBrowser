@@ -326,8 +326,7 @@ function positions_named(expression)
     end
     gap = findfirst(isnothing, slots[2:end])
     gap === nothing || error("`mapping` has z without y")
-    ydims(e) = Meta.isexpr(e, :call) && e.args == [:ydims] ? :(dims(1)) : e isa Expr ? Expr(e.head, map(ydims, e.args)...) : e
-    rest = [Expr(:kw, name, ydims(value)) for (name, value) in named if position(name) === nothing]
+    rest = [Expr(:kw, name, dimension_selector(value)) for (name, value) in named if position(name) === nothing]
     return Expr(:call, :mapping, Expr(:parameters, rest...), slots...)
 end
 
@@ -337,3 +336,51 @@ replace_call(expression, call, new) = expression === call ? new :
 
 uses(expression, name::Symbol) = expression === name ||
     expression isa Expr && any(e -> uses(e, name), expression.args)
+
+# Resolve the grammar's y-series selector before lifting runtime inputs. The
+# marker also occurs inside labels and transformed mappings.
+dimension_selector(e) = Meta.isexpr(e, :call) && e.args == [:ydims] ? :(dims(1)) :
+    e isa Expr ? Expr(e.head, map(dimension_selector, e.args)...) : e
+
+# Evaluate the structural inputs of a complete @plot block together. Named
+# analysis results remain ordinary Results inside each reactive evaluation.
+function bind_plot_inputs(expressions,names=Symbol[])
+    sources=Any[]
+    arguments=Symbol[]
+    function bind(source)
+        index=findfirst(x -> isequal(x,source),sources)
+        if index === nothing
+            push!(sources,source)
+            push!(arguments,gensym("input"))
+            index=length(sources)
+        end
+        arguments[index]
+    end
+    reads_result(e)=any(name -> uses(e,name),names)
+    function selector(e)
+        reads_result(e) && return e
+        e = dimension_selector(e)
+        if (e isa Symbol || e isa Expr) && isempty(paths(e))
+            return bind(e)
+        elseif Meta.isexpr(e,:call)
+            return Expr(:call,e.args[1],map(selector,e.args[2:end])...)
+        end
+        e
+    end
+    function rewrite(e)
+        e isa Expr || return e
+        e.head in (:quote,:function,:->) && return e
+        if Meta.isexpr(e,:call,2) && e.args[1] === :data && !reads_result(e.args[2])
+            return Expr(:call,:data,bind(e.args[2]))
+        elseif any(has_data,expressions) && Meta.isexpr(e,:call) && e.args[1] === :mapping
+            argument(a)=Meta.isexpr(a,:kw) ? Expr(:kw,a.args[1],selector(a.args[2])) :
+                Meta.isexpr(a,:parameters) ? Expr(:parameters,map(argument,a.args)...) : selector(a)
+            return Expr(:call,:mapping,map(argument,e.args[2:end])...)
+        end
+        Expr(e.head,map(rewrite,e.args)...)
+    end
+    rewritten=map(rewrite,expressions)
+    wrap(body)=isempty(sources) ? body :
+        Expr(:call,_lift_call,Expr(:->,Expr(:tuple,arguments...),body),sources...)
+    rewritten,wrap
+end

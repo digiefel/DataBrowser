@@ -40,7 +40,7 @@ header = data(rows) * mapping(:V, :I; color = :Chip)
 figure(header(
     visual(Scatter; markersize = 8),
     mapping(; linestyle = :Site) * visual(Lines),
-    coord(x = (; label = "Voltage (V)"), y = (; label = "Current (mA)")),
+    scales(x = (; label = "Voltage (V)"), y = (; label = "Current (mA)")),
     legend(merge = true),
 ))
 ```
@@ -114,7 +114,7 @@ Giving `y2` its own entry in `scales` or `coord` draws `y2` against a right-hand
 ```julia
 dual_axis = @plot data(rows) * mapping(; x = :V, y = :I, y2 = :I => x -> 100x) begin
     visual(Lines)
-    coord(y = (; label = "I (mA)"), y2 = (; scale = log10, label = "100 × I (log)"))
+    scales(y = (; label = "I (mA)"), y2 = (; scale = log10, label = "100 × I (log)"))
 end
 
 figure(dual_axis)
@@ -235,3 +235,74 @@ For quick interactive exploration, `@manipulate` builds a `Makie.Figure` with sl
     show_scatter ? base + data(curve_rows) * mapping(:x, :y; color = :group) * visual(Scatter) : base
 end
 ```
+
+
+## Observable inputs and panel composition
+
+`data` accepts an `Observable` table or a named tuple with Observable columns.
+Mappings may contain Observable selectors or transformations. Plot attributes
+such as `visual(Lines; color=colour)` keep their Observable connections through
+SpecApi compilation. Coordinate settings such as
+`coord(x=(limits=window,))` update the axes without rerunning analyses.
+
+```julia
+rows = Observable((t=[0.0,1.0,2.0], I=[1.0,2.0,1.5]))
+colour = Observable(:navy)
+window = Observable((0.0,2.0))
+curve = data(rows) * mapping(:t,:I) * visual(Lines; color=colour)
+curve = curve + coord(x=(limits=window,))
+comparison = Observable{Any}(curve)
+fig = figure([curve comparison; nothing curve])
+rows[] = (t=[0.0,1.0,2.0], I=[2.0,4.0,3.0])
+colour[] = :crimson
+window[] = (0.5,1.5)
+```
+
+Each panel compiles its own data-dependent description. Updating one child
+does not reevaluate the analyses of static sibling panels. `nothing` reserves
+an empty cell and creates no axis. Observable children can be replaced by new
+declarations, including declarations with their own Observable inputs. An
+Observable that changes between different declaration types or `nothing` needs
+an appropriate element type, such as `Observable{Any}`, as in ordinary Makie use.
+
+`spec` still returns a `Makie.GridLayoutSpec`: it snapshots data and mappings at
+their current values while preserving live visual and axis settings. `figure`
+connects future data and mapping updates and still returns a `Makie.Figure`.
+
+## Composed motion
+
+Motion descriptions target the ordinary Observables already used by a plot.
+`to` changes one or more values with a smooth default transition. `along` gives
+an explicit trajectory as a pure function of the captured start and local
+progress. `sequence`, `together` and `stagger` compose motions; `retime` changes
+a composition's duration, and `hold` leaves an interval without changes.
+
+```julia
+angle = Observable(0.0)
+stretch = Observable(1.0)
+
+motion = sequence(
+    together(to(angle => π / 2), to(stretch => 1.5)),
+    along(angle, (start, u) -> start + 0.25sinpi(8u); duration = 4),
+    to(angle => 0.0, stretch => 1.0),
+)
+playback = Grafico.plan(motion)
+Grafico.seek!(playback, 2.13)
+```
+
+`plan` captures starts and destinations once, resolves consecutive endpoints,
+and rejects conflicting writes. `seek!` samples any time directly, including
+backward seeks. It updates the existing Observables, so existing Grafico and
+Makie figures keep their identity. A clock and a mouse can call the same runner.
+`playback.time` reports the last sampled time; call `seek!` to change playback.
+Native animations can drive any existing Observable value. Numeric values,
+colours, tuples, compatible numeric arrays and rectangles interpolate. Other
+values switch at the end of a `to` clip. `along` can return any accepted value.
+Notifications are delivered in channel order after all values are sampled.
+
+[`examples/offline`](examples/offline/README.md) demonstrates compiling numerical
+motion curves and reactive computations to WebAssembly, together with WGLMakie's
+browser renderer. The exported HTML runs without Julia. Its private exporter
+currently supports Float64 motion channels and a fixed Scatter buffer; full
+Observable graph and recipe export remain work. The compiler dependency is
+confined to that example. Tanim consumes prepared HTML and vector print assets.

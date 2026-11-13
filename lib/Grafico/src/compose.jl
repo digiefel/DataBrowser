@@ -6,8 +6,12 @@ import Makie.SpecApi as S
 """
     coord([f]; x=(;), y=(;), aspect=nothing)
 
-Coordinate settings and point transformation for a plot. Can be used inside [`@plot`](@ref), passed
+Coordinate settings and point transformation for a plot. `x` and `y` accept `scale`,
+`limits`, and `reversed`. Labels belong in `mapping` or `scales`; appearance belongs in
+`plot_theme`. Can be used inside [`@plot`](@ref), passed
 to a callable header `header(layers..., coord(...))`, or added to a plot with `+`.
+Observable axis settings update the display without repeating analyses. An Observable point
+transformation updates the plotted coordinates after the analyses.
 """
 struct CoordSpec
     step::NamedTuple
@@ -15,7 +19,23 @@ end
 
 function coord(points=nothing; kwargs...)
     step = points === nothing ? NamedTuple(kwargs) : (; points, kwargs...)
+    _validate_coord(step)
     return CoordSpec(step)
+end
+
+function _validate_coord(step)
+    for (key, value) in pairs(step)
+        if key in (:x, :y)
+            for setting in keys(value)
+                setting in (:scale, :limits, :reversed) && continue
+                owner = setting === :label ? "mapping or scales" : "plot_theme"
+                throw(ArgumentError("coord does not set $key.$setting; use $owner."))
+            end
+        elseif key ∉ (:points, :aspect)
+            throw(ArgumentError("coord accepts point transforms, x/y coordinates, and aspect; use mapping or scales for labels and plot_theme for appearance."))
+        end
+    end
+    nothing
 end
 
 """
@@ -162,18 +182,11 @@ child_spec(child::Declaration, input, args...; options...) = spec(child, input, 
 child_spec(child::ComposedFigure, args...; options...) = spec(child, args...; options...)
 child_spec(child, _...; options...) = spec(child; options...)
 
-function spec(composed::ComposedFigure, args...; options...)
-    return S.GridLayout([pos => child_spec(child, args...; options...) for (pos, child) in composed.cells])
+function spec(composed::ComposedFigure, args...; layout=(;), options...)
+    grid = S.GridLayout([pos => child_spec(child, args...; options...) for (pos, child) in composed.cells])
+    return _layout_spec(grid, layout)
 end
 
 function figure(composed::ComposedFigure, args...; figure_kw=(;), options...)
-    if !isempty(args) && first(args) isa Makie.Observable
-        spec_obs = Makie.lift(x -> spec(composed, x, Base.tail(args)...; options...), first(args))
-        fig = Figure(; figure_kw...)
-        Makie.plot(fig[1, 1], spec_obs)
-        return fig
-    end
-    fig = Figure(; figure_kw...)
-    Makie.plot(fig[1, 1], spec(composed, args...; options...))
-    return fig
+    return _reactive_figure(composed,args...;figure_kw,options...)
 end

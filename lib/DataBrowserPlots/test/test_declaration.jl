@@ -55,7 +55,7 @@ end
     end)
 end
 
-@testset "the limits of a scale remove the values outside them before the analyses run" begin
+@testset "scale limits filter the values before analyses and coordinate limits change the display" begin
     rows = (x=[1.0, 1, 2, 2], y=[1.0, 10, 2, 20])
     # The positions by name, as the plot builder writes them.
     plot = @plot data(rows) * mapping(; x=:x, y=:y) begin
@@ -73,7 +73,8 @@ end
     # A function of the points moves the drawn values, after the analyses.
     swapped = figure(@plot data(rows) * mapping(:x, :y) begin
         expectation() * visual(Lines)
-        coord((x, y) -> (y, x); x = (; label = "mean"))
+        coord((x, y) -> (y, x))
+        scales(x = (; label = "mean"))
     end)
     @test Tuple.(only(plotted(swapped, Lines))[1][]) == [(5.5, 1.0), (11.0, 2.0)]
     @test only(filter(c -> c isa Axis, swapped.content)).xlabel[] == "mean"
@@ -115,7 +116,7 @@ end
     hdr = (data(rows) * mapping(:V, :I; color=:Chip))(
         visual(Scatter),
         visual(Lines),
-        coord(x=(; label="Voltage")),
+        scales(x=(; label="Voltage")),
         legend(merge=true),
     )
     drawn_hdr = figure(hdr)

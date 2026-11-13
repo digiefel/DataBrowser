@@ -12,6 +12,8 @@ export AbstractMark, CircleMark, RectMark, PolygonMark, LineMark, Segment, TextM
 export SectorMark, Wedge, RibbonMark
 export boundingbox, anchor, beside, above, atop
 export hideinnerdecorations!, deleteemptyaxes!
+export Motion, MotionPlan, to, along, sequence, together, stagger, retime, hold
+public plan, seek!, duration
 export Layer, Layers, ProcessedLayer, ProcessedLayers, zerolayer
 export Entry, AxisEntries, FigureGrid
 export renamer, sorter, nonnumeric, verbatim, presorted, cols
@@ -56,8 +58,13 @@ include("declaration.jl")
 include("expansion.jl")
 include("figure.jl")
 include("compose.jl")
+include("layout.jl")
 include("marks.jl")
 include("manipulate.jl")
+include("reactive.jl")
+include("motion/values.jl")
+include("motion/definitions.jl")
+include("motion/plan.jl")
 
 @setup_workload begin
     rows = [(x=x, y=2x + offset, chip=chip)

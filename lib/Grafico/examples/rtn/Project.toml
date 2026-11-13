@@ -1,0 +1,20 @@
+[deps]
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+Bonito = "824d6782-a2ef-11e9-3a09-e5662e0c26f8"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Grafico = "8a9b0c1d-2e3f-4a5b-8c9d-0e1f2a3b4c5d"
+Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
+
+[sources]
+Grafico = {path = "../.."}
+
+[compat]
+Bonito = "4, 5"
+CairoMakie = "=0.15.16"
+Makie = "=0.24.16"
+WGLMakie = "0.13"
+julia = "1.13"

@@ -180,6 +180,8 @@ drawn in order. A line that evaluates to `nothing` or `false` is left out.
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
+    assigned=Symbol[first(line.args) for line in block.args if Meta.isexpr(line,:(=))]
+    (header,block),wrap_data=bind_plot_inputs((header,block),assigned)
     header_roles_y = y_roles(header)
     raw_lines = filter(line -> !(line isa LineNumberNode), block.args)
     roles_y = [something(y_roles(line), header_roles_y, [:y]) for line in raw_lines]
@@ -221,7 +223,7 @@ macro plot(header, block)
         for line in lines if !Meta.isexpr(line, :(=)) && !(line in settings) && !has_data(line) && !any(name -> uses(line, name), names)
         for (role, value) in merge(Dict(named), Dict(find_call(line, :mapping) === nothing ? [] : last(call_arguments(find_call(line, :mapping)))))
         if value !== :nothing]
-    return esc(declare(declared, statements; input, settings=declare_settings(settings, header, names, input), types))
+    return esc(wrap_data(declare(declared, statements; input, settings=declare_settings(settings, header, names, input), types)))
 end
 
 """
@@ -236,7 +238,8 @@ end
 
 macro plot(declaration)
     input = gensym("input")
-    return esc(declare(declare_layers(positions_named(declaration), input), [:($AXES = (;))]; input))
+    (declaration,),wrap_data=bind_plot_inputs((declaration,))
+    return esc(wrap_data(declare(declare_layers(positions_named(declaration), input), [:($AXES = (;))]; input)))
 end
 
 is_y_scale(name::Symbol) = name === :y || occursin(r"^y[1-9]\d*$", String(name))
