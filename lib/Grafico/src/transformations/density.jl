@@ -16,6 +16,11 @@ _kde(data::Tuple; kwargs...) = kde(data; kwargs...)
 
 defaultdatalimits(positional) = map(nested_extrema_finite, Tuple(positional))
 
+_transformation_datalimits(positional, transforms) = _transformation_datalimits(positional, transforms,
+    Val(any(columns -> any(_tracked_array, columns), positional)))
+_transformation_datalimits(positional, transforms, ::Val{false}) =
+    defaultdatalimits(ntuple(i -> to_transformed_nested(transforms[i], positional[i]), length(transforms)))
+
 applydatalimits(f::Function, d) = map(f, d)
 applydatalimits(limits::Tuple{Real, Real}, d) = map(_ -> limits, d)
 applydatalimits(limits::Tuple, _) = limits

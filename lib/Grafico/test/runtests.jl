@@ -253,3 +253,5 @@ include("test_motion.jl")
     @test plots_of(fig, Lines) == lines
     @test [last.(line[1][]) for line in lines] == [[3., 6., 9.], [2., 4., 8.]]
 end
+
+include("test_portable.jl")

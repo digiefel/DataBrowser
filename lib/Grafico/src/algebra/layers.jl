@@ -1052,18 +1052,16 @@ function compute_plot_dependent_attributes!(::Type{T}, pl::ProcessedLayer) where
     xdata = pl.positional[1]
     iscategoricalcontainer(xdata) && return
 
-    flat = reduce(vcat, xdata)
+    flat = _concat_data(vec(xdata))
     isempty(flat) && return
-    rescaled = unwrap_verbatim(contextfree_rescale(flat))
-    s = unique!(sort(rescaled))
+    return insert!(pl.attributes, :width, _data_width(flat))
+end
 
-    width = if length(s) <= 1
-        1
-    else
-        minimum(s[i + 1] - s[i] for i in 1:(length(s) - 1))
-    end
-
-    return insert!(pl.attributes, :width, width)
+function _data_width(values)
+    rescaled = unwrap_verbatim(contextfree_rescale(values))
+    positions = unique!(sort(rescaled))
+    length(positions) <= 1 && return one(eltype(positions))
+    minimum(positions[i + 1] - positions[i] for i in 1:(length(positions) - 1))
 end
 
 function compute_plot_dependent_attributes!(processedlayers::AbstractVector{ProcessedLayer})

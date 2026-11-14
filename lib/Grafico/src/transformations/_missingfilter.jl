@@ -65,3 +65,21 @@ function _drop_missing_nan_rows(positional, named::AbstractDictionary)
     end
     return new_positional, new_named
 end
+
+# Tuple inputs preserve column types at the numerical compilation boundary.
+function _drop_missing_nan_rows(positional::Tuple, named::NamedTuple)
+    isempty(positional) && return positional, named
+    nrows = length(first(positional))
+    keep = trues(nrows)
+    foreach(col -> _accumulate_keep!(keep, col), positional)
+    for col in values(named)
+        _row_aligned(col, nrows) && _accumulate_keep!(keep, col)
+    end
+    filtered_positional = map(positional) do col
+        _filter_and_check(col, keep, "positional column")
+    end
+    filtered_named = map(named) do col
+        _row_aligned(col, nrows) ? _filter_and_check(col, keep, "named column") : col
+    end
+    filtered_positional, filtered_named
+end

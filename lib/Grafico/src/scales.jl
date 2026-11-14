@@ -903,6 +903,12 @@ end
 
 nested_extrema_finite(iter) = mapreduce(extrema_finite, extend_extrema, iter)
 
+# A fixed tuple keeps its column types through the reduction. This also avoids
+# an erased foldl accumulator when compiling a staged numerical analysis.
+nested_extrema_finite(iter::Tuple{Any}) = extrema_finite(first(iter))
+nested_extrema_finite(iter::Tuple{Any,Any,Vararg{Any}}) =
+    extend_extrema(extrema_finite(first(iter)), nested_extrema_finite(Base.tail(iter)))
+
 push_different!(v, val) = !isempty(v) && isequal(last(v), val) || push!(v, val)
 
 natural_lt(x, y) = isless(x, y)

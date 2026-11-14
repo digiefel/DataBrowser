@@ -1,6 +1,6 @@
 using Dictionaries: dictionary
 using Makie: Makie, Automatic, BarPlot, Heatmap, Plot, Stairs, Volume, automatic, plot
-using StatsBase: StatsBase, Histogram, histrange, normalize, sturges
+using StatsBase: StatsBase, Histogram, histrange, normalize!, sturges
 
 const categoricalplottypes = [BarPlot, Heatmap, Volume]
 
@@ -37,7 +37,8 @@ function _histogram(
     else
         StatsBase.fit(Histogram, vs, StatsBase.weights(weights), edges; closed)
     end
-    return normalize(h, mode = normalization)
+    # This histogram was just fitted, so its weights are private to the analysis.
+    return normalize!(float(h); mode = normalization)
 end
 
 struct HistogramAnalysis{plottype <: Plot, D, B}
@@ -83,25 +84,25 @@ function (h::HistogramAnalysis{_plottype})(input::ProcessedLayer) where {_plotty
 
     dimtransforms = ntuple(i -> position_transform(input.axis_transforms, plottype, binning_attributes, N + 1, i), N)
     datalimits = if h.datalimits === automatic
-        defaultdatalimits(ntuple(i -> to_transformed_nested(dimtransforms[i], input.positional[i]), N))
+        _transformation_datalimits(input.positional, dimtransforms)
     else
         forward_datalimits(_strip_datalimits_units(h.datalimits), dimtransforms)
     end
-    options = valid_options(; datalimits, h.bins, h.closed, h.normalization)
+    options = valid_options(; h.bins, h.closed, h.normalization)
 
-    output = map(input) do p, n
+    output = _map_processed(input, datalimits) do p, n, limits
         p, n = _drop_missing_nan_rows(p, n)
         pn = ntuple(i -> to_transformed_numerical(p[i], dimtransforms[i]), length(p))
-        hist = _histogram(Tuple(pn); pairs(n)..., pairs(options)...)
+        hist = _histogram(Tuple(pn); pairs(n)..., pairs(options)..., datalimits = limits)
         weights = hist.weights
         edges = ntuple(length(hist.edges)) do i
             t = dimtransforms[i]
             t === nothing ? hist.edges[i] : apply_scale_inverse(t, collect(hist.edges[i]))
         end
         named = histogram_preprocess_named(plottype, edges, weights, p)
-        positional = histogram_preprocess_positional(plottype, edges, weights)
-        positional = ntuple(length(positional)) do i
-            i <= length(p) ? from_unitless_numerical(collect(positional[i]), p[i]) : positional[i]
+        binned_positions = histogram_preprocess_positional(plottype, edges, weights)
+        positional = ntuple(length(binned_positions)) do i
+            i <= length(p) ? from_unitless_numerical(collect(binned_positions[i]), p[i]) : binned_positions[i]
         end
         return positional, named
     end

@@ -35,13 +35,46 @@ function _sources!(out,x::Scaled)
 end
 _sources(x) = _sources!(Makie.Observable[], x)
 
+# Keep the operation and its operands, rather than closing over Observable
+# containers and reading them again in the callback. Besides avoiding hidden
+# reads, this lets exporters stage the existing grammar without a second AST.
+struct _ReactiveReference
+    index::Int
+end
+
+_reactive_template(x, sources) = x
+_reactive_template(x::Makie.Observable, sources) =
+    _ReactiveReference(only(findall(source -> source === x, sources)))
+_reactive_template(x::Union{Tuple,NamedTuple}, sources) =
+    map(value -> _reactive_template(value, sources), x)
+_reactive_template(x::Pair, sources) =
+    _reactive_template(first(x), sources) => _reactive_template(last(x), sources)
+
+_reactive_value(x, values) = x
+_reactive_value(x::_ReactiveReference, values) = values[x.index]
+_reactive_value(x::Union{Tuple,NamedTuple}, values) =
+    map(value -> _reactive_value(value, values), x)
+_reactive_value(x::Pair, values) =
+    _reactive_value(first(x), values) => _reactive_value(last(x), values)
+
+struct _ReactiveCall{F,A,K}
+    operation::F
+    positional::A
+    named::K
+end
+
+function (call::_ReactiveCall)(values...)
+    call.operation(_reactive_value(call.positional, values)...;
+                   _reactive_value(call.named, values)...)
+end
+
 function _lift_call(f, args...; kwargs...)
     named = (; kwargs...)
-    sources = _sources((args,named))
+    sources = _sources((args, named))
     isempty(sources) && return f(args...; kwargs...)
-    Makie.lift(sources...) do _...
-        f(_unobserve(args)...; _unobserve(named)...)
-    end
+    call = _ReactiveCall(f, _reactive_template(args, sources),
+                        _reactive_template(named, sources))
+    Makie.lift(call, sources...)
 end
 
 data(x::Makie.Observable) = Makie.lift(data,x)
@@ -53,16 +86,16 @@ const ReactiveOperand = Union{PlotSpecObject,PlotModifier,Fit,Aggregate}
 for op in (:+, :*)
     @eval begin
         Base.$op(a::ObservablePlot,b::ObservablePlot) = Makie.lift(Base.$op,a,b)
-        Base.$op(a::ObservablePlot,b::ReactiveOperand) = Makie.lift(x -> Base.$op(x,b),a)
-        Base.$op(a::ReactiveOperand,b::ObservablePlot) = Makie.lift(x -> Base.$op(a,x),b)
+        Base.$op(a::ObservablePlot,b::ReactiveOperand) = _lift_call(Base.$op,a,b)
+        Base.$op(a::ReactiveOperand,b::ObservablePlot) = _lift_call(Base.$op,a,b)
     end
 end
 
 resolve(x::ObservablePlot,items,axes,points=nothing) =
-    Makie.lift(value -> resolve(value,items,axes,points),x)
+    _lift_call(resolve,x,items,axes,points)
 inherit(a::ObservablePlot,b::ObservablePlot) = Makie.lift(inherit,a,b)
-inherit(a::ObservablePlot,b) = Makie.lift(x -> inherit(x,b),a)
-inherit(a::Layer,b::ObservablePlot) = Makie.lift(x -> inherit(a,x),b)
+inherit(a::ObservablePlot,b) = _lift_call(inherit,a,b)
+inherit(a::Layer,b::ObservablePlot) = _lift_call(inherit,a,b)
 
 _snapshot(x) = x
 _snapshot(x::Makie.Observable) = _snapshot(x[])
@@ -123,7 +156,11 @@ function Makie.plot!(wrapper::LiveEntry)
     wrapper
 end
 
+_entry_argument(value) = value
+
 function _entry_spec(entry)
+    entry = Entry(entry.plottype, map(_entry_argument, entry.positional),
+                  map(_entry_argument, entry.named))
     if any(value -> value isa Makie.Observable,values(entry.named))
         Makie.PlotSpec(LiveEntry,entry)
     else
@@ -131,17 +168,26 @@ function _entry_spec(entry)
     end
 end
 
+# Keep the source of each axis connection inspectable. SpecApi owns observer
+# replacement and cleanup; exporters can identify axis effects explicitly.
+struct _AxisBinding{O} <: Function
+    key::Symbol
+    source::O
+end
+function (binding::_AxisBinding)(axis)
+    Makie.on(binding.source; update = true) do value
+        setproperty!(axis, binding.key, value)
+    end
+end
+
 # Coordinate display settings may contain Observables inside a tuple of limits.
-# Bind them to the axis, with SpecApi owning observer replacement and cleanup.
 function _axis_spec(axis,plots)
     attributes = (;pairs(axis.attributes)...)
     block = axis.type === Axis3 ? S.Axis3(;plots,_unobserve(attributes)...) :
                                  S.Axis(;plots,_unobserve(attributes)...)
-    live = [(key,value,_sources(value)) for (key,value) in pairs(attributes) if _hasobs(value)]
-    for (key,value,sources) in live, source in sources
-        block.then(ax -> Makie.on(source;update=true) do _
-            setproperty!(ax,key,_unobserve(value))
-        end)
+    for (key, value) in pairs(attributes)
+        _hasobs(value) || continue
+        block.then(_AxisBinding(key, _lift_call(identity, value)))
     end
     block
 end

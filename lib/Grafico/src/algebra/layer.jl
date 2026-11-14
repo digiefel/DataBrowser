@@ -198,10 +198,17 @@ function slice(processedlayer::ProcessedLayer, c)
     return ProcessedLayer(processedlayer; labels, primary, positional, named)
 end
 
-function Base.map(f, processedlayer::ProcessedLayer)
+_tracked_numeric(value) = _tracked_array(value)
+_map_numeric(f, positional, named, context) = _map_numeric(f, positional, named, context,
+    Val(any(_tracked_numeric, positional) || any(_tracked_numeric, values(named)) ||
+        any(_tracked_numeric, context)))
+_map_numeric(f, positional, named, context, ::Val{false}) = f(positional, named, context...)
+
+Base.map(f, processedlayer::ProcessedLayer) = _map_processed(f, processedlayer)
+function _map_processed(f, processedlayer::ProcessedLayer, context...)
     axs = shape(processedlayer)
     outputs = map(CartesianIndices(axs)) do c
-        return f(slice(processedlayer.positional, c), slice(processedlayer.named, c))
+        return _map_numeric(f, slice(processedlayer.positional, c), slice(processedlayer.named, c), context)
     end
     positional, named = unnest_arrays(map(first, outputs)), unnest_dictionaries(map(last, outputs))
     return ProcessedLayer(processedlayer; positional, named)
@@ -585,14 +592,18 @@ mergeable(::Type{<:BoxPlot}, primary) = haskey(primary, :dodge)
 mergeable(::Type{<:Union{Stem}}, primary) = true
 
 
+_tracked_array(value) = false
+_concat_data(arrays) = _concat_data(arrays, Val(any(_tracked_array, arrays)))
+_concat_data(arrays, ::Val{false}) = reduce(vcat, arrays)
+
 # This method works on a list of "sliced" `ProcessedLayer`s
 function concatenate(pls::AbstractVector{ProcessedLayer})
     pl = first(pls)
     ns = [mapreduce(length, assert_equal, Iterators.flatten([pl.positional, pl.named])) for pl in pls]
 
     primary = map(key -> reduce(vcat, [fill(pl.primary[key], n) for (pl, n) in zip(pls, ns)]), keys(pl.primary))
-    positional = map(key -> reduce(vcat, [pl.positional[key] for pl in pls]), keys(pl.positional))
-    named = map(key -> reduce(vcat, [pl.named[key] for pl in pls]), keys(pl.named))
+    positional = map(key -> _concat_data([pl.positional[key] for pl in pls]), keys(pl.positional))
+    named = map(key -> _concat_data([pl.named[key] for pl in pls]), keys(pl.named))
 
     return ProcessedLayer(pl; primary, positional, named)
 end
