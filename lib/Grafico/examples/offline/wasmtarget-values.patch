@@ -1,0 +1,214 @@
+--- a/src/codegen/calls.jl
++++ b/src/codegen/calls.jl
+@@ -959,6 +959,57 @@
+ Extracted handler for :(===) identity comparison (the post-arg-push branch).
+ Modifies `bytes` in-place.
+ """
++# Fixed tuple identity follows Julia's field identity, not the allocation of
++# the WasmGC tuple container. Keep mutable fields (notably arrays) as refs.
++function _has_fixed_tuple_egal(T)
++    T isa DataType && T <: Tuple && isconcretetype(T) || return false
++    all(fieldtypes(T)) do F
++        F <: Tuple ? _has_fixed_tuple_egal(F) :
++            (isprimitivetype(F) && sizeof(F) <= 8) || (isconcretetype(F) && ismutabletype(F) && F !== String)
++    end
++end
++
++function _emit_float_egal!(bld, ctx, wt)
++    temporary = allocate_local!(ctx, wt)
++    local_set!(bld, temporary)
++    reinterpret = wt === F64 ? Opcode.I64_REINTERPRET_F64 : Opcode.I32_REINTERPRET_F32
++    num!(bld, reinterpret)
++    local_get!(bld, temporary)
++    num!(bld, reinterpret)
++    num!(bld, wt === F64 ? Opcode.I64_EQ : Opcode.I32_EQ)
++    return nothing
++end
++
++function _emit_fixed_tuple_egal!(bld, ctx, T)
++    info = ctx.type_registry.structs[T]
++    wt = ConcreteRef(info.wasm_type_idx, true)
++    second = allocate_local!(ctx, wt)
++    first = allocate_local!(ctx, wt)
++    local_set!(bld, second)
++    local_set!(bld, first)
++    for (index, F) in enumerate(fieldtypes(T))
++        fwt = get_concrete_wasm_type(F, ctx.mod, ctx.type_registry)
++        local_get!(bld, first)
++        struct_get!(bld, info.wasm_type_idx, wasm_field_idx(info, index), fwt)
++        local_get!(bld, second)
++        struct_get!(bld, info.wasm_type_idx, wasm_field_idx(info, index), fwt)
++        if F <: Tuple
++            _emit_fixed_tuple_egal!(bld, ctx, F)
++        elseif fwt === F64 || fwt === F32
++            _emit_float_egal!(bld, ctx, fwt)
++        elseif fwt === I64
++            num!(bld, Opcode.I64_EQ)
++        elseif fwt === I32
++            num!(bld, Opcode.I32_EQ)
++        else
++            num!(bld, Opcode.REF_EQ)
++        end
++        index > 1 && num!(bld, Opcode.I32_AND)
++    end
++    fieldcount(T) == 0 && i32_const!(bld, 1)
++    return nothing
++end
++
+ function _compile_call_egaleq(args, fb::InstrBuilder, ctx::AbstractCompilationContext, is_128bit::Bool, is_32bit::Bool, arg_type)::Nothing
+     bld = _ctx_builder(ctx, "_compile_call_egaleq")
+     # march17: the two operands are already on fb — declare them (the width by arm)
+@@ -972,10 +1023,8 @@
+         local _i128sr = _int128_structref(ctx, arg_type)
+         seed_input!(bld, WasmValType[_i128sr, _i128sr])
+         emit_int128_eq!(bld, ctx, arg_type)
+-    elseif arg_type === Float64
+-        num!(bld, Opcode.F64_EQ)
+-    elseif arg_type === Float32
+-        num!(bld, Opcode.F32_EQ)
++    elseif arg_type === Float64 || arg_type === Float32
++        _emit_float_egal!(bld, ctx, arg_type === Float64 ? F64 : F32)
+     else
+         local arg2_type = length(args) >= 2 ? infer_value_type(args[2], ctx) : Int64
+         local arg1_is_ref = is_ref_type_or_union(arg_type) && arg_type !== Nothing
+@@ -1143,6 +1192,11 @@
+             end
+         end
+         if arg1_wasm_is_ref && arg2_wasm_is_ref
++            if arg_type === arg2_type && _has_fixed_tuple_egal(arg_type)
++                _emit_fixed_tuple_egal!(bld, ctx, arg_type)
++                append_builder!(fb, bld)
++                return nothing
++            end
+             # PURE-324: For immutable structs, === means VALUE equality (field-by-field),
+             # not identity. WasmGC ref.eq is identity comparison, so we must emit
+             # struct.get for each field and compare with the appropriate opcode.
+@@ -4919,17 +4973,41 @@
+     elseif is_func(func, :ge_float)
+         _op1!(arg_type === Float32 ? Opcode.F32_GE : Opcode.F64_GE)
+ 
++    # Julia 1.13's floating isequal intrinsic: NaNs compare equal and signed
++    # zeros compare distinct. Bit equality covers every non-NaN value.
++    elseif is_builtin_func(func, :fpiseq)
++        (arg_type === Float64 || arg_type === Float32) ||
++            record_unsupported!(ctx, :unsupported_type, "fpiseq requires Float32 or Float64"; idx=idx)
++        local wt = arg_type === Float64 ? F64 : F32
++        local right = allocate_local!(ctx, wt)
++        local left = allocate_local!(ctx, wt)
++        local_set!(fb, right)
++        local_set!(fb, left)
++        local_get!(fb, left); local_get!(fb, left)
++        num!(fb, wt === F64 ? Opcode.F64_NE : Opcode.F32_NE)
++        local_get!(fb, right); local_get!(fb, right)
++        num!(fb, wt === F64 ? Opcode.F64_NE : Opcode.F32_NE)
++        num!(fb, Opcode.I32_AND)
++        local_get!(fb, left)
++        num!(fb, wt === F64 ? Opcode.I64_REINTERPRET_F64 : Opcode.I32_REINTERPRET_F32)
++        local_get!(fb, right)
++        num!(fb, wt === F64 ? Opcode.I64_REINTERPRET_F64 : Opcode.I32_REINTERPRET_F32)
++        num!(fb, wt === F64 ? Opcode.I64_EQ : Opcode.I32_EQ)
++        num!(fb, Opcode.I32_OR)
++
+     # Identity comparison (=== for integers is same as ==, for floats use float eq)
+     elseif is_func(func, :(===))
+         _compile_call_egaleq(args, fb, ctx, is_128bit, is_32bit, arg_type)
+ 
+     elseif is_func(func, :(!==))
+-        if is_128bit
++        if length(args) >= 2 && arg_type === infer_value_type(args[2], ctx) && _has_fixed_tuple_egal(arg_type)
++            _compile_call_egaleq(args, fb, ctx, is_128bit, is_32bit, arg_type)
++            num!(fb, Opcode.I32_EQZ)
++        elseif is_128bit
+             emit_int128_ne!(fb, ctx, arg_type)
+-        elseif arg_type === Float64
+-            num!(fb, Opcode.F64_NE)
+-        elseif arg_type === Float32
+-            num!(fb, Opcode.F32_NE)
++        elseif arg_type === Float64 || arg_type === Float32
++            _compile_call_egaleq(args, fb, ctx, is_128bit, is_32bit, arg_type)
++            num!(fb, Opcode.I32_EQZ)
+         else
+             local arg2_type_ne = length(args) >= 2 ? infer_value_type(args[2], ctx) : Int64
+             local arg1_is_ref_ne = is_ref_type_or_union(arg_type) && arg_type !== Nothing
+--- a/src/codegen/trimcollect.jl
++++ b/src/codegen/trimcollect.jl
+@@ -21,6 +21,23 @@
+ # TRIM_SAFE verifier is materially stronger on 1.13 (1.12 inference leaves
+ # dead empty-reduce branches dynamic); collection itself (TRIM_UNSAFE
+ # semantics — what this function does) works on both.
++
++# A method's static parameters come from dispatch intersection. Manufacturing
++# a MethodInstance with an empty environment corrupts parametric callees during
++# inlining, even when its printed argument signature looks correct.
++function _specialize_bound_method(method, signature)
++    table = CC.OverlayMethodTable(Base.get_world_counter(), WASM_METHOD_TABLE)
++    matches = CC.findall(signature, table; limit = -1)
++    (matches === nothing || isempty(matches)) && error("No closed-world method match for $signature")
++    selected = first(matches)
++    for match in matches
++        if match.method === method
++            selected = match
++            break
++        end
++    end
++    CC.specialize_method(selected)
++end
+ 
+ # Julia 1.13 deliberately reports `isconcretetype(Type{T}) == false`, even
+ # though a closed-world call-site value of that type has exactly one possible
+@@ -132,7 +149,7 @@
+                             # return a fresh MethodInstance object for the same
+                             # overlay method/signature, which would make the joint
+                             # reachability worklist manufacture work forever.
+-                            if mi.specTypes != ftype || mi.def !== match.method
++                            if mi.specTypes != ftype || mi.def !== match.method || mi.sparam_vals != match.sparams
+                                 mi = CC.specialize_method(match)
+                             end
+                         end
+@@ -167,8 +184,8 @@
+                 if valid
+                     ats = Tuple(arg_types)
+                     m = hasmethod(f, ats) ? which(f, ats) : nothing
+-                    m === nothing || (mi = CC.specialize_method(
+-                        m, Tuple{Core.Typeof(f), arg_types...}, Core.svec()))
++                    m === nothing || (mi = _specialize_bound_method(
++                        m, Tuple{Core.Typeof(f), arg_types...}))
+                 end
+             else
+                 continue
+@@ -414,7 +431,7 @@
+                 local m = which(g, concrete_args)
+                 local ssig = Tuple{Core.Typeof(g), atypes...}
+                 ssig <: m.sig || continue
+-                local cmi = CC.specialize_method(m, ssig, Core.svec())
++                local cmi = _specialize_bound_method(m, ssig)
+                 if !(cmi in seen)
+                     push!(seen, cmi)
+                     push!(out, cmi)
+@@ -441,7 +458,7 @@
+                 m = which(g, concrete_args)
+                 ssig = Tuple{Core.Typeof(g), spec...}
+                 ssig <: m.sig || continue
+-                cmi = CC.specialize_method(m, ssig, Core.svec())
++                cmi = _specialize_bound_method(m, ssig)
+                 cmi in seen && continue
+                 push!(seen, cmi)
+                 push!(out, cmi)
+@@ -468,7 +485,7 @@
+             local ssig = Tuple{_T, ds...}
+             # the observed args must be admissible for the method
+             (ssig <: m.sig) || continue
+-            local cmi = CC.specialize_method(m, ssig, Core.svec())
++            local cmi = _specialize_bound_method(m, ssig)
+             cmi === nothing && continue
+             cmi in seen && continue
+             push!(seen, cmi)
+@@ -681,7 +698,7 @@
+ function entry_method_instance(f, arg_types::Tuple)
+     tt = Tuple{Core.Typeof(f), arg_types...}
+     m = which(f, arg_types)
+-    return CC.specialize_method(m, tt, Core.svec())
++    return _specialize_bound_method(m, tt)
+ end
+ 
+ 

@@ -20,7 +20,7 @@ interprets the captured timing and passes values to the renderer.
 
 The computation exporter follows the functions and inputs retained by ordinary
 `lift` and `map` calls. `author.jl` now uses those calls for the point coordinates,
-an interval tuple, and integration of a measured trace. `compile.jl` discovers
+an interval tuple, and integration of a trace. `compile.jl` discovers
 the computation functions automatically. The compiler's typed value bridge moves
 arrays, tuples and named tuples between JavaScript and WebAssembly. The browser
 batches input changes and evaluates affected nodes once in dependency order;
@@ -35,19 +35,32 @@ The checks also cover changed and restored pixels, retained canvas identity,
 and the absence of HTTP requests, WebSockets and JavaScript errors. Bounds errors
 are preserved in the compiled numerical functions.
 
-This is an exporter experiment, not a public export API. Its motion value ABI
-currently accepts Float64 channels. Its renderer adapter explicitly binds one
-Scatter buffer with fixed linear axes and bounded coordinates. Computations
-must be pure, have concrete Observable value types and express their dependencies
-as `lift`/`map` arguments. Cycles, multiple writers, captured Observables, opaque
-`on`/`onany` effects and invalid control bindings fail during export. Unsupported
-compiler diagnostics also stop the build. The graph adapter currently reads
-Observables' retained `MapCallback` metadata through Makie.
+The renderer binding is derived from the native scene. The same declaration
+layers Lines and Scatter; it contains no shader names, position buffers or plot
+callbacks. The exporter retains Grafico's numerical mappings, follows Makie's
+recipe computations, and connects their changing inputs to the existing WGL
+objects. Numeric GPU transport uses typed accessors generated from the native
+value types. General values continue to use the compiler's typed bridge.
 
-Automatic binding of the computed values to arbitrary Grafico/Makie plots remains
-work. Dynamic ticks, layout, picking and other recipes need adapters or portable
-computation. The checks do not establish general Makie portability or large-data
-performance.
+Motion checks cover Float64 and Float32, integer counts, booleans, colors,
+tuples, vectors, rectangles, and nested named tuples. They compare forward and
+reverse seeking against Julia. Compiler regressions separately cover tuple
+identity, floating-point `isequal`, and parametric function specialization.
+
+This remains an exporter experiment without a public export API. Computations
+must be pure, use concrete Observable value types, and express dependencies as
+`lift`/`map` arguments. Cycles, multiple writers, captured Observables, opaque
+`on`/`onany` effects, and invalid control bindings fail during export. Unsupported
+compiler diagnostics stop the build. The capture reads Observables' retained
+`MapCallback` metadata and Makie's native compute graph.
+
+Changing axis settings is explicitly rejected until cameras, ticks, and layout
+can be exported together. Other recipes, dynamic layout, picking, categorical
+group changes, and general morph matching remain unfinished. Histogram calculations, including weights, normalization, and automatic edges,
+are compared with native Grafico under changing data. That does not establish
+offline bar rendering, which remains blocked by compiler dependency discovery. The current browser proof
+establishes Lines and Scatter, with fixed axes. It does not establish general
+Makie portability or large-data rendering performance.
 
 ## Reproducing it
 
@@ -56,18 +69,23 @@ existing session when working interactively. The example project uses Grafico
 from this checkout and WasmTarget 0.5.3 at
 `a509b5f8b10ab46b47fe38296e807c762cba893c`.
 
-That compiler revision needs the included `wasmtarget-julia-1.13.3.patch` for
-Julia 1.13.3. Apply it to an isolated compiler checkout and develop that checkout
-into this example environment. The patch supplies the newly required
-`external_linkage=false` argument at four compiler collection calls. Keep this
-patch separate from a shared Julia depot. If WasmTarget was already loaded,
-`Revise.revise(WasmTarget; force=true)` reloads its methods.
+That compiler revision needs both included patches, applied in order to an
+isolated checkout or depot:
 
-After instantiating the example environment and applying the patch:
+1. `wasmtarget-julia-1.13.3.patch` supplies the newly required
+   `external_linkage=false` argument at four collection calls.
+2. `wasmtarget-values.patch` preserves dispatch-bound static parameters,
+   implements fixed tuple field identity, and lowers Julia 1.13's floating
+   `isequal` intrinsic, including signed zero and NaN behavior.
+
+Keep these changes separate from a shared Julia depot. Start a clean Julia
+session after patching the compiler; do not depend on temporary method overrides.
+
+After instantiating the example environment and applying both patches:
 
 ```sh
 jmux --project /absolute/path/to/Grafico/examples/offline --timeout 600 \
-  'include("/absolute/path/to/Grafico/examples/offline/compile.jl")'
+  'include("/absolute/path/to/Grafico/examples/offline/compile.jl"); include("/absolute/path/to/Grafico/examples/offline/check-compiler.jl"); include("/absolute/path/to/Grafico/examples/offline/check-motion.jl"); include("/absolute/path/to/Grafico/examples/offline/check-statistics.jl")'
 jmux --project /absolute/path/to/Grafico/examples/offline \
   'include("/absolute/path/to/Grafico/examples/offline/export.jl"); include("/absolute/path/to/Grafico/examples/offline/print.jl")'
 npm install
@@ -75,11 +93,16 @@ npx playwright install chromium
 npm test
 ```
 
-`check-authoring.jl` separately checks dependency contracts and export-time diagnostics.
+`check-authoring.jl` separately checks dependency contracts and export-time
+diagnostics.
 The browser tests run from this directory. Open `output/offline.html` directly
 from disk. Drag horizontally over the plot to rotate it, or use the controls.
 `output/final.svg` is the selected print state. All outputs are generated and
 ignored by Git.
+
+`node benchmark.mjs` measures compiled computation and numeric transport for
+80–16,384 points. It writes `output/performance.json`. This is CPU timing in
+Node, excluding GPU drawing; it is not a frame-rate guarantee.
 
 ## Ownership
 
@@ -92,8 +115,7 @@ See the [WGLMakie documentation](https://docs.makie.org/stable/explanations/back
 for static export and JavaScript callbacks, and
 [WasmTarget](https://github.com/GroupTherapyOrg/WasmTarget.jl) for the compiler.
 
-The checks were run through the existing DataBrowser bench Julia session with
-example environments on `LOAD_PATH` and a temporary compiler depot. They are
-focused functional checks, not a clean-process package or DataBrowser certification.
-The new example environments also resolve successfully; their entire resolved
-dependency sets have not been verified in a fresh process.
+The native Grafico package checks and the complete DataBrowser verification
+passed on the committed core changes. The offline build is additionally checked
+from a clean jmux session against the saved compiler patches. The browser checks
+exercise the generated artifact; they do not certify unsupported recipes.

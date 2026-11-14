@@ -24,8 +24,10 @@ rows = lift(angle, stretch, source) do a, s, points
     (; x = [cloud_x(a, s, p.x, p.y) for p in points],
        y = [cloud_y(a, s, p.x, p.y) for p in points])
 end
-cloud = data(rows) * mapping(:x, :y) * visual(Scatter; color = Cycled(1)) +
-        coord(x = (limits = (-2, 2),), y = (limits = (-2, 2),))
+cloud = (data(rows) * mapping(:x, :y))(
+    visual(Lines; color = Cycled(1)),
+    visual(Scatter; color = Cycled(1)),
+) + coord(x = (limits = (-2, 2),), y = (limits = (-2, 2),))
 
 motion = sequence(
     together(to(angle => π / 2; duration = 2), to(stretch => 1.5; duration = 3)),

@@ -2,32 +2,26 @@ module GraficoObservableCompilerProbe
 
 using WasmTarget
 import JSON
-using Grafico
+using Grafico, WGLMakie
 include("author.jl")
 include("lower-motion.jl")
 include("lower-observables.jl")
+include("lower-scene.jl")
 
 output = joinpath(@__DIR__, "output")
 mkpath(output)
 K = GraficoPortableKernels
 roots = Any[]
 root_bindings = Dict{String,WasmTarget.RootBindings}()
-function add_kernel!(f, signature)
-    existing = findfirst(root -> root[1] === f && root[2] == signature, roots)
-    existing === nothing || return roots[existing][3]
-    name = "motion_$(length(roots) + 1)"
-    push!(roots, (f, signature, name))
-    if fieldcount(typeof(f)) > 0
-        constants = Dict(key => getfield(f, key) for key in fieldnames(typeof(f)))
-        root_bindings[name] = WasmTarget.RootBindings(;
-            captured_constants = constants, elide_closure_context = true)
-    end
-    name
-end
-motion_wire = lower_motion(playback, IdDict(angle => "angle", stretch => "stretch"), add_kernel!)
+motion_wire = lower_motion(playback, IdDict(angle => "angle", stretch => "stretch"), roots, root_bindings)
 input_names = IdDict(angle => "angle", stretch => "stretch", source => "source",
                      lower => "lower", upper => "upper", time => "time", signal => "signal")
-graph_wire = lower_observables((; rows, area), input_names, roots, root_bindings)
+WGLMakie.activate!()
+prepared = prepare_scene(cloud; outputs = (; rows, area), figure_kw = (size = (800, 600),))
+gpu_outputs = Set(binding.output for binding in prepared.bindings if binding.format != "scalar")
+graph_wire = lower_observable_graph(prepared.graph, prepared.outputs, input_names, roots, root_bindings;
+    opaque_outputs = gpu_outputs)
+renderer_bindings = lower_renderer_bindings(prepared, roots, root_bindings)
 write(joinpath(output, "bridge-runtime.js"),
     "function createCompilerBridge(ex) {" * WasmTarget.Bridge.WALK_JS *
     WasmTarget.Bridge.BUILD_JS * "return {walk, build};}")
@@ -39,8 +33,12 @@ Grafico.seek!(playback, 0)
 diagnostics = WasmTarget.WasmDiagnostic[]
 # The temporary compiler copy passes external_linkage=false to Julia's collector.
 # This collects every dependency instead of linking to native Julia image code.
+function verify_roots(module_value, indices, registry)
+    missing = setdiff([root[3] for root in roots], keys(indices))
+    isempty(missing) || throw(ErrorException("The compiler omitted requested functions: " * join(missing, ", ")))
+end
 elapsed = @elapsed bytes = WasmTarget.compile_multi(roots;
-    diagnostics_sink = diagnostics, root_bindings = root_bindings)
+    diagnostics_sink = diagnostics, root_bindings = root_bindings, link_roots = verify_roots)
 isempty(diagnostics) || throw(ErrorException("Export could not compile every computation: " * join(string.(diagnostics), "; ")))
 write(joinpath(output, "kernels.wasm"), bytes)
 
@@ -72,11 +70,11 @@ end
 source[] = points
 Grafico.seek!(playback, 0)
 
-fixture = (; source_cases, points, time = fixture_time, signal = fixture_signal, graph_wire, cloud_cases, integral_cases, swing_cases, motion_wire, motion_cases,
+fixture = (; bindings = renderer_bindings, source_cases, points, time = fixture_time, signal = fixture_signal, graph_wire, cloud_cases, integral_cases, swing_cases, motion_wire, motion_cases,
             compiler_seconds = elapsed, module_bytes = length(bytes),
             diagnostic_count = length(diagnostics),
             compiler_version = string(Base.pkgversion(WasmTarget)), compiler_discovery = "trim",
-            compiler_patch = "wasmtarget-julia-1.13.3.patch",
+            compiler_patch = ("wasmtarget-julia-1.13.3.patch", "wasmtarget-values.patch"),
             julia_version = string(VERSION))
 write(joinpath(output, "native-reference.json"), JSON.json(fixture))
 println("GRAFICO_WASM_KERNEL_READY bytes=", length(bytes), " diagnostics=", length(diagnostics),

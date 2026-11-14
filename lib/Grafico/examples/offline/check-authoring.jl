@@ -2,6 +2,7 @@ module GraficoPortableAuthoringChecks
 
 using Test, Grafico, Makie, WasmTarget
 include("lower-observables.jl")
+include("lower-scene.jl")
 
 function prepare(outputs, inputs = IdDict{Any,String}())
     roots = Any[]
@@ -61,6 +62,20 @@ end
     @test_throws ArgumentError prepare((; combined), IdDict(combined => "derived"))
     unrelated = Observable(3.0)
     @test_throws ArgumentError prepare((; combined), IdDict(unrelated => "unused"))
+end
+
+@testset "Live axes cannot silently freeze during export" begin
+    window = Observable((0.0, 1.0))
+    declaration = data((x = [0.0, 1.0], y = [0.0, 1.0])) *
+        mapping(:x, :y) * visual(Lines) + coord(x = (limits = window,))
+    error = try
+        prepare_scene(declaration)
+        nothing
+    catch exception
+        exception
+    end
+    @test error isa ArgumentError
+    @test occursin("camera, ticks, and layout", sprint(showerror, error))
 end
 
 end
