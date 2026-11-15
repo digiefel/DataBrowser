@@ -276,6 +276,7 @@ function _compile_plot(source::Makie.Observable,args...;kwargs...)
         current.children = [replacement]
         current.forwarding = [forward(replacement)]
         current.specification[] = replacement.specification[]
+        _render_compilation!(replacement)
     end)
     node
 end
@@ -301,12 +302,36 @@ function _compile_plot(composed::ComposedFigure,args...;layout=(;),kwargs...)
     node
 end
 
+# SpecAPI retains unused grids for reuse. Detach those owned grids before it
+# shrinks their parent; stale column spans otherwise break reverse layout seeks.
+function _update_native_layout!(layout, specification, reusable, current)
+    for (_, (child, _)) in reusable
+        child isa Makie.GridLayout || continue
+        content = child.layoutobservables.gridcontent[]
+        (content === nothing || content.parent === nothing) && continue
+        content.parent.block_updates = true
+        Makie.GridLayoutBase.remove_from_gridlayout!(content)
+    end
+    Makie.update_gridlayout!(layout, specification, reusable, current)
+end
+
+function _connect_native_layout!(figure, specification)
+    entries = Pair{Makie.LayoutableKey,Tuple{Makie.Layoutable,Makie.Observable{Vector{Makie.PlotSpec}}}}[]
+    current = copy(entries)
+    layout = Makie.get_layout!(figure[1, 1])
+    Makie.on(figure.scene, specification; update = true) do value
+        _update_native_layout!(layout, value, entries, current)
+    end
+    nothing
+end
+
 function _reactive_figure(plot,args...;figure_kw=(;),kwargs...)
     compiled = _compile_plot(plot,args...;kwargs...)
     fig = Figure(;figure_kw...)
     fig.attributes[:_grafico_compilation] = compiled
     _set_figure!(compiled, fig)
-    Makie.plot(fig[1,1],compiled.specification)
+    _connect_native_layout!(fig, compiled.specification)
+    _render_compilation!(compiled)
     # Keep the compilation with its output; input observers hold only WeakRefs.
     # Dropping the figure then allows the entire graph and its observers to die.
     Makie.on(compiled.specification) do _

@@ -69,7 +69,7 @@ function Makie.initialize_block!(frame::_GraficoPlotFrame)
     Makie.on(frame.blockscene, frame.specification; update = true) do specification
         _check_chart_axes(specification)
         wrapped = S.GridLayout([(1, 1) => specification]; alignmode = Makie.Outside())
-        Makie.update_gridlayout!(frame.grid, wrapped, frame.layouts...)
+        _update_native_layout!(frame.grid, wrapped, frame.layouts...)
     end
     return
 end

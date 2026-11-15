@@ -5,7 +5,8 @@
   "scripts": {
     "test": "node check-browser.mjs",
     "test:composition": "node check-browser.mjs output/composition.html",
-    "test:derivation": "node check-browser.mjs output/derivation.html"
+    "test:derivation": "node check-browser.mjs output/derivation.html",
+    "test:morph": "node check-browser.mjs output/morph.html"
   },
   "devDependencies": {
     "playwright": "1.62.1",

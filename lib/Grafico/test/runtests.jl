@@ -240,6 +240,7 @@ end
 
 include("test_motion.jl")
 include("test_derive.jl")
+include("test_morph.jl")
 include("test_record.jl")
 include("test_recording_values.jl")
 

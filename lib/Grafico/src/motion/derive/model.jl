@@ -227,6 +227,10 @@ end
 function _capture_derivations!(planned::MotionPlan)
     for channel in planned.channels, segment in channel.segments
         curve = segment.curve
+        if curve isa _ChartCurve
+            _capture_chart!(curve, planned, segment)
+            continue
+        end
         curve isa _DeriveCurve || continue
         cache = IdDict{Any,Any}(source.observable => _motion_value(source, segment.start)
                                for source in planned.channels)

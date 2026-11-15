@@ -107,14 +107,19 @@ function plan(motion::Motion)
                 throw(ArgumentError("Concurrent motions write the same Observable."))
         end
         start_value = previous === nothing ? channel.initial : previous.target
-        if leaf.curve === nothing
+        curve, ease = leaf.curve, leaf.ease
+        if curve === nothing
             target = _motion_typed_value(observable, leaf.target)
+            if leaf.stop > leaf.start && _can_morph_charts(start_value, target)
+                curve = _chart_curve(observable, start_value, target, ease)
+                ease = identity
+            end
         else
             _motion_typed_value(observable, leaf.curve(start_value, 0.0))
             target = _motion_typed_value(observable, leaf.curve(start_value, 1.0))
         end
         push!(channel.segments, _MotionSegment(leaf.start, leaf.stop, start_value, target,
-                                              leaf.curve, leaf.ease, leaf.path))
+                                              curve, ease, leaf.path))
     end
     _capture_derivations!(MotionPlan(channels, duration(motion), Makie.Observable(0.0)))
 end

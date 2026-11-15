@@ -25,8 +25,8 @@ them.
 This exports the authored timeline. Free mathematical controls require their
 functions compiled as well; the separate `../offline` experiment demonstrates
 that computation path. Timeline sampling does not export arbitrary Julia event
-callbacks, infer correspondences between unrelated data, or supply general morph
-matching. These remain separate unfinished parts of Grafico's authoring model.
+callbacks or infer correspondences between unrelated observations. Complete-chart
+morphs match native panels and layers by position; incompatible states crossfade.
 
 Use the Julia environment in this directory, or another environment containing
 Grafico, WGLMakie and CairoMakie. From a persistent Julia session:
@@ -59,3 +59,9 @@ seeking, and playback without network access.
 counts them on arrival. Ordinary array views supply the two readings of a second
 plot; `duration = 16` gives that explanation more time. Run the file in Julia,
 then `npm run test:derivation` to check the offline output.
+
+
+`morph.jl` changes an ordinary GoG curve's data, colour, and line width with
+`to(view => next_plot)`, then introduces a second panel with the same call.
+Run `npm run test:morph` after recording to check offline playback and backward
+seeking. Makie's default fonts, palette, grid, and axis styling remain in use.

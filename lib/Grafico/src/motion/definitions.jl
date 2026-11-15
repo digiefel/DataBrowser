@@ -17,6 +17,16 @@ and acceleration at each endpoint. Numerical values, tuples, compatible arrays,
 colours and rectangles interpolate; other values change at the end of the clip.
 The call constructs a motion without writing to its Observables.
 
+A plot-valued `Observable{Any}` morphs between complete charts. Corresponding
+panels keep their native axes; compatible data, colours, widths, and limits
+interpolate. Makie resolves omitted defaults and palette indices in the figure's
+theme. Plot kinds or incompatible data shapes crossfade. Changes to panel
+structure or non-interpolable axis settings crossfade complete native charts,
+including their decorations. `nothing` fades a chart in or out. Matching uses
+panel positions and layer order. For an explicitly authored correspondence or
+trajectory, animate the plot's ordinary data or attribute Observables with `to`
+or `along`.
+
 With `from`, construct a plot from observations in a displayed source plot. `view`
 is an `Observable{Any}` used in the same figure. The source and destination reuse
 input columns or ordinary array views, so Grafico can follow each observation.

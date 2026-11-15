@@ -27,6 +27,7 @@ end
 function _set_figure!(node, figure)
     node.figure = WeakRef(figure)
     foreach(child -> _set_figure!(child, figure), node.children)
+    _activate_compiled_state!(node, node.state)
     nothing
 end
 
@@ -109,5 +110,19 @@ function _refresh_derivations!(figure)
     for node in _compiled_nodes(_figure_compilation(figure))
         node.state === nothing || _refresh_derived!(node.state)
     end
+    nothing
+end
+
+_activate_compiled_state!(node, state) = nothing
+
+_current_plot(plot::ComposedFigure, cache = IdDict{Any,Any}()) = ComposedFigure([
+    position => _current_plot(child, cache) for (position, child) in plot.cells])
+_map_derivation_data(f, plot::ComposedFigure) = ComposedFigure([
+    position => _map_derivation_data(f, child) for (position, child) in plot.cells])
+
+_render_compiled_state!(node, state) = nothing
+function _render_compilation!(node)
+    foreach(_render_compilation!, node.children)
+    _render_compiled_state!(node, node.state)
     nothing
 end

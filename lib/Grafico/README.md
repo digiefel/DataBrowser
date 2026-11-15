@@ -342,6 +342,38 @@ values switch at the end of a `to` clip. `along` can return any accepted value.
 All sampled source values and the playback time are installed before notifications,
 so coupled values remain consistent. Notifications then follow channel order.
 
+## Morphing complete charts
+
+The same `to` accepts a view containing an ordinary Grafico plot:
+
+```julia
+first_plot = data((; x, y = sin.(x))) * mapping(:x, :y) * visual(Lines)
+next_plot = data((; x, y = cos.(x))) * mapping(:x, :y) *
+    visual(Lines; color = Cycled(4), linewidth = 5)
+view = Observable{Any}(first_plot)
+fig = figure(view)
+playback = Grafico.plan(to(view => next_plot; duration = 2))
+```
+
+Grafico interpolates corresponding layers' compatible data and attributes,
+along with the axis limits. Makie resolves palette indices and omitted style
+defaults in the figure's own theme. The axis and temporary native plot stay in
+place during the morph. At the endpoint the view contains the ordinary target
+plot again, with its reactive bindings.
+
+Layers match by their order within panels at the same layout positions.
+Different plot kinds or incompatible data shapes crossfade. A changed panel
+layout or non-interpolable axis setting crossfades the complete charts,
+including ticks, labels, and grids. `to(view => nothing)` fades out; a view
+starting at `nothing` fades in. Intermediate geometry is discarded when the
+view leaves the transition, so repeated backward seeks do not accumulate plots.
+
+`duration` and `ease` customize these defaults. When a story needs a specific
+data correspondence or path, animate its ordinary data or attribute Observables
+with `to` or `along`. The executable [morph example](examples/recording/morph.jl)
+changes a curve's data and appearance, then introduces a second panel using the
+same authoring calls and offline recorder.
+
 ## Showing how one plot is derived from another
 
 `from` lets a plot introduce another plot made from the same observations:
@@ -411,6 +443,7 @@ need their computation exported as well. [`examples/offline`](examples/offline/R
 separately demonstrates compiled Julia motion and numerical dependencies,
 including typed Observable values, Lines and Scatter renderer bindings, changing
 data sizes, and pointer dragging. Its experimental compiler does not yet export
-every Makie recipe, camera computation or event callback. General morph matching
-also remains unfinished. Grafico owns both export paths; Tanim embeds the prepared
+every Makie recipe, camera computation or event callback. Chart morphs match
+panels and layers by position; correspondence between unrelated observations
+needs an authored rule. Grafico owns both export paths; Tanim embeds the prepared
 HTML and vector still and contains no Julia code.
