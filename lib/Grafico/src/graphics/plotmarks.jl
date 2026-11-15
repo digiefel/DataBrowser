@@ -141,7 +141,7 @@ function _compile_graphic(m, args...; depth = 0, reference = nothing, fit = true
         push!(frames, _frame_spec(child.specification, placement, depth + i;
                                  backdrop, reference, compilation = child))
     end
-    node = _CompiledPlot(S.GridLayout([(1, 1) => frame for frame in frames]))
+    node = _CompiledPlot(S.GridLayout([(1, 1) => frame for frame in frames]); declaration = m)
     node.children = children
     node
 end
@@ -165,7 +165,7 @@ function _compile_plot(overlay::_PlotOverlay, args...; options...)
     reference = Makie.Observable{Any}(nothing)
     graphic = _compile_graphic(overlay.graphic, args...; reference, fit = false, options...)
     assemble() = _overlay_grid(_host_spec(base.specification[], reference), graphic.specification[])
-    node = _CompiledPlot(assemble())
+    node = _CompiledPlot(assemble(); declaration = overlay)
     node.children = [base, graphic]
     weak = WeakRef(node)
     push!(node.forwarding, Makie.on(base.specification) do _

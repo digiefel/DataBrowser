@@ -342,6 +342,51 @@ values switch at the end of a `to` clip. `along` can return any accepted value.
 All sampled source values and the playback time are installed before notifications,
 so coupled values remain consistent. Notifications then follow channel order.
 
+## Showing how one plot is derived from another
+
+`from` lets a plot introduce another plot made from the same observations:
+
+```julia
+readings = data((; time, current))
+signal = readings * mapping(:time, :current) * visual(Lines)
+distribution = readings * mapping(:current) * Grafico.histogram(direction = :x)
+view = Observable{Any}(nothing)
+fig = figure([view signal])
+
+playback = Grafico.plan(to(view => distribution; from = signal))
+```
+
+The plan captures the observations at the clip's logical start. Temporary copies
+leave the displayed signal and disappear when they arrive.
+The histogram includes each observation only after arrival. Its bin edges and
+axis limits stay fixed during the explanation. Counts and weights use Grafico's
+ordinary histogram calculation. For a large dataset, the default explains the
+first four observations individually before accelerating the rest.
+
+Ordinary array views retain which readings supply a new plot. For example:
+
+```julia
+pairs = data((now = @view(current[1:end-1]), later = @view(current[2:end]))) *
+    mapping(:now, :later) * visual(Scatter)
+lag_view = Observable{Any}(nothing)
+fig = figure([signal lag_view])
+playback = Grafico.plan(to(lag_view => pairs; from = signal, duration = 16))
+```
+
+Here, two readings supply each dot's coordinates. The default highlights both
+readings, moves copies to the respective axes, and joins them at the intersection.
+`duration` controls the pace; `path = (a, b, u) -> (1-u)*a + u*b` gives straight
+routes. Route points use the full figure's unit-square frame. Changes to the
+layout or source camera update their projected positions.
+
+Both examples use the same `to`, `sequence`, `together`, `retime`, and seekable
+plan as ordinary attribute animation. Observation derivation currently supports
+2D row positions and 1D count or weighted histograms. Source columns must be
+reused directly or through array views; equal copies of an array do not identify
+the same observations. Other statistics need an observation-membership rule. The executable
+[derivation example](examples/recording/derivation.jl) produces both explanations
+from a separate synthetic dataset.
+
 ## Recording a motion for an offline document
 
 Makie's `record` accepts a Grafico `MotionPlan`:

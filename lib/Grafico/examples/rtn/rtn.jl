@@ -5,12 +5,9 @@ using CairoMakie, Grafico, Random, Statistics
 include("data.jl")
 trace = synthetic_trace()
 
-sample_count = length(trace.t)
 current_limits = (2.615, 2.725)
 
 # Playback and mouse controls write to these same Observables.
-samples_shown = Observable(1.0)
-pairs_shown = Observable(0.0)
 subtraction = Observable(0.0)
 model_opacity = Observable(0.0)
 time_window = Observable(extrema(trace.t))
@@ -21,19 +18,10 @@ lag = Observable(1)
 residual = lift(subtraction) do fraction
     trace.raw .- fraction .* (trace.rtn .- trace.μ)
 end
-samples = lift(samples_shown) do shown
-    count = clamp(floor(Int, shown), 1, sample_count)
-    (current = trace.raw[1:count],)
-end
-
-# Each lag-plot dot takes its x and y from two samples of the same signal.
-function lag_pairs(signal, shown, delay)
-    lift(signal, shown, delay) do current, shown, delay
-        count = clamp(floor(Int, shown), 0, length(current) - delay)
-        (
-            now = current[1:count],
-            later = current[1 + delay:count + delay],
-        )
+# Ordinary views retain which two readings supply each lag-plot dot.
+function lag_pairs(signal, delay)
+    lift(signal, delay) do current, delay
+        (now = @view(current[1:end-delay]), later = @view(current[1+delay:end]))
     end
 end
 
@@ -58,7 +46,7 @@ raw_panel = overview + detail_placement * detail
 residual_panel = data((time = trace.t, current = residual)) *
     time_current * visual(Lines; color = Cycled(4)) + trace_coordinates
 
-histogram_panel = data(samples) * mapping(:current => "Current / µA") *
+histogram_panel = data((current = trace.raw,)) * mapping(:current => "Current / µA") *
     Grafico.histogram(
         bins = range(current_limits...; length = 43),
         direction = :x,
@@ -75,9 +63,9 @@ lag_coordinates = coord(
     y = (limits = current_limits,),
     aspect = 1,
 )
-raw_lag_panel = data(lag_pairs(Observable(trace.raw), pairs_shown, lag)) *
+raw_lag_panel = data(lag_pairs(Observable(trace.raw), lag)) *
     lag_marks + lag_coordinates
-residual_lag_panel = data(lag_pairs(residual, pairs_shown, lag)) *
+residual_lag_panel = data(lag_pairs(residual, lag)) *
     lag_marks + lag_coordinates
 
 # An empty slot reserves space. The story fills it with an ordinary GoG plot.
@@ -107,16 +95,17 @@ motion = sequence(
     hold(),
     to(detail_placement => T(0.57, 0.60) * U(0.40, 0.36); duration = 1.4),
 
-    to(histogram_view => histogram_panel; duration = 0),
-    to(samples_shown => sample_count; duration = 6, ease = identity),
+    to(histogram_view => histogram_panel; from = overview, duration = 6),
     hold(),
 
     to(residual_view => residual_panel; duration = 0),
     to(subtraction => 1.0; duration = 2.5),
     hold(),
 
-    to(raw_lag_view => raw_lag_panel, residual_lag_view => residual_lag_panel; duration = 0),
-    to(pairs_shown => sample_count - 1; duration = 6, ease = identity),
+    together(
+        to(raw_lag_view => raw_lag_panel; from = overview, duration = 16),
+        to(residual_lag_view => residual_lag_panel; from = residual_view, duration = 16),
+    ),
     hold(),
 )
 playback = Grafico.plan(motion)

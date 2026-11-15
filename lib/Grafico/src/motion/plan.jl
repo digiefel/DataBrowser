@@ -116,7 +116,7 @@ function plan(motion::Motion)
         push!(channel.segments, _MotionSegment(leaf.start, leaf.stop, start_value, target,
                                               leaf.curve, leaf.ease, leaf.path))
     end
-    MotionPlan(channels, duration(motion), Makie.Observable(0.0))
+    _capture_derivations!(MotionPlan(channels, duration(motion), Makie.Observable(0.0)))
 end
 
 function _motion_value(channel::_MotionChannel, time)

@@ -26,8 +26,35 @@ function same_value(a, b)
     isequal(a, b)
 end
 
+# Base hashes large arrays by sampling a few elements. Renderer buffers often
+# change only in a small region, so sampled hashes put thousands of distinct
+# frames in one bucket. Hash every element and retain the equality check for
+# actual collisions. Dictionary order does not affect the result.
+content_hash(value, seed::UInt = zero(UInt)) = hash(value, seed)
+function content_hash(value::AbstractArray, seed::UInt = zero(UInt))
+    result = hash(axes(value), hash(typeof(value), seed))
+    for item in value
+        result = content_hash(item, result)
+    end
+    result
+end
+function content_hash(value::AbstractDict, seed::UInt = zero(UInt))
+    result = zero(UInt)
+    for (key, item) in value
+        result ⊻= content_hash(item, hash(key, zero(UInt)))
+    end
+    hash(result, hash(length(value), hash(typeof(value), seed)))
+end
+function content_hash(value::Union{Tuple,NamedTuple}, seed::UInt = zero(UInt))
+    result = hash(typeof(value), seed)
+    for item in value
+        result = content_hash(item, result)
+    end
+    result
+end
+
 function retain!(pool, value)
-    key = hash((typeof(value), value))
+    key = content_hash(value)
     bucket = get!(Vector{Int}, pool.indices, key)
     for index in bucket
         same_value(pool.values[index], value) && return index

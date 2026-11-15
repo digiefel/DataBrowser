@@ -53,3 +53,9 @@ selected vector still with the ordinary `interactive` attachment.
 inset through `mark(plot)` and an Observable placement. Run it in Julia, then run
 `npm run test:composition` to check the retained canvas, forward and backward
 seeking, and playback without network access.
+
+`derivation.jl` is a 32-line authoring example using a separate synthetic dataset.
+`to(histogram_view => distribution; from = signal)` transfers observations and
+counts them on arrival. Ordinary array views supply the two readings of a second
+plot; `duration = 16` gives that explanation more time. Run the file in Julia,
+then `npm run test:derivation` to check the offline output.

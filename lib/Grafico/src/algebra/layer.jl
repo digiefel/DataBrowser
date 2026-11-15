@@ -593,7 +593,8 @@ mergeable(::Type{<:Union{Stem}}, primary) = true
 
 
 _tracked_array(value) = false
-_concat_data(arrays) = _concat_data(arrays, Val(any(_tracked_array, arrays)))
+_concat_data(arrays) = _concat_data_from(first(arrays), arrays)
+_concat_data_from(first, arrays) = _concat_data(arrays, Val(any(_tracked_array, arrays)))
 _concat_data(arrays, ::Val{false}) = reduce(vcat, arrays)
 
 # This method works on a list of "sliced" `ProcessedLayer`s

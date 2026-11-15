@@ -45,6 +45,7 @@ function spec(
     groups::Vector{Dict{Symbol,Any}}=Dict{Symbol,Any}[],
     axis=(;),
     facet=(;),
+    _trace=nothing,
     options...,
 )
     settings = !isempty(args) && first(args) isa Scales ? first(args) : scales()
@@ -52,6 +53,7 @@ function spec(
         axis=_kwdict(axis, :axis), facet=_kwdict(facet, :facet))
     cells = Pair{Tuple{Int,Int},Any}[]
     for ase in ae
+        _trace === nothing || push!(_trace, ase)
         plots = Makie.PlotSpec[_entry_spec(entry) for entry in ase.entries]
         ax_spec = _axis_spec(ase.axis,plots)
         push!(cells, ase.axis.position => ax_spec)

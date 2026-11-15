@@ -210,16 +210,25 @@ mutable struct _CompiledPlot
     observers::Vector{Makie.ObserverFunction}
     children::Vector{_CompiledPlot}
     forwarding::Vector{Makie.ObserverFunction}
+    declaration::Any
+    axes::Vector{WeakRef}
+    figure::WeakRef
+    state::Any
 end
 
-function _CompiledPlot(specification)
+function _CompiledPlot(specification; declaration = nothing, state = nothing)
     node = _CompiledPlot(Makie.Observable{Makie.GridLayoutSpec}(specification),
-                         Makie.ObserverFunction[],_CompiledPlot[],Makie.ObserverFunction[])
+        Makie.ObserverFunction[], _CompiledPlot[], Makie.ObserverFunction[],
+        declaration, WeakRef[], WeakRef(nothing), state)
     finalizer(_dispose!,node)
     node
 end
 
+_dispose_state!(::Nothing) = nothing
+
 function _dispose!(node::_CompiledPlot)
+    _dispose_state!(node.state)
+    node.state = nothing
     foreach(Makie.off,node.observers)
     foreach(Makie.off,node.forwarding)
     foreach(_dispose!,node.children)
@@ -230,13 +239,15 @@ end
 _compile_plot(plot,args...;kwargs...) = _compile_plain_plot(plot,args...;kwargs...)
 
 function _compile_plain_plot(plot,args...;kwargs...)
-    node = _CompiledPlot(_restore_blocks!(spec(_snapshot(plot),_unobserve(args)...;kwargs...)))
+    node = _CompiledPlot(_restore_blocks!(spec(_snapshot(plot),_unobserve(args)...;kwargs...)); declaration = plot)
+    _remember_axes!(node, node.specification[])
     weak = WeakRef(node)
     for source in _sources(plot isa Declaration ? (plot,args) : plot)
         push!(node.observers,Makie.on(source) do _
             current=weak.value
             current === nothing && return
-            current.specification[] = _restore_blocks!(spec(_snapshot(plot),_unobserve(args)...;kwargs...))
+            current.specification[] = _remember_axes!(current,
+                _restore_blocks!(spec(_snapshot(plot),_unobserve(args)...;kwargs...)))
         end)
     end
     node
@@ -244,7 +255,7 @@ end
 
 function _compile_plot(source::Makie.Observable,args...;kwargs...)
     child = _compile_plot(source[],args...;kwargs...)
-    node = _CompiledPlot(child.specification[])
+    node = _CompiledPlot(child.specification[]; declaration = source)
     weak = WeakRef(node)
     push!(node.children,child)
     forward(child) = Makie.on(child.specification) do value
@@ -255,9 +266,13 @@ function _compile_plot(source::Makie.Observable,args...;kwargs...)
     push!(node.observers,Makie.on(source) do value
         current=weak.value
         current === nothing && return
+        if length(current.children) == 1 && _update_compiled_state!(only(current.children), value)
+            return
+        end
         foreach(Makie.off,current.forwarding)
         foreach(_dispose!,current.children)
         replacement = _compile_plot(value,args...;kwargs...)
+        _set_figure!(replacement, current.figure.value)
         current.children = [replacement]
         current.forwarding = [forward(replacement)]
         current.specification[] = replacement.specification[]
@@ -268,7 +283,7 @@ end
 function _compile_plot(composed::ComposedFigure,args...;layout=(;),kwargs...)
     children = [_compile_plot(child,args...;kwargs...) for (_,child) in composed.cells]
     assemble(nodes) = _layout_spec(S.GridLayout([position => child.specification[] for ((position,_),child) in zip(composed.cells,nodes)]), layout)
-    node = _CompiledPlot(assemble(children))
+    node = _CompiledPlot(assemble(children); declaration = composed)
     node.children=children
     weak=WeakRef(node)
     for source in _sources(layout)
@@ -289,6 +304,8 @@ end
 function _reactive_figure(plot,args...;figure_kw=(;),kwargs...)
     compiled = _compile_plot(plot,args...;kwargs...)
     fig = Figure(;figure_kw...)
+    fig.attributes[:_grafico_compilation] = compiled
+    _set_figure!(compiled, fig)
     Makie.plot(fig[1,1],compiled.specification)
     # Keep the compilation with its output; input observers hold only WeakRefs.
     # Dropping the figure then allows the entire graph and its observers to die.

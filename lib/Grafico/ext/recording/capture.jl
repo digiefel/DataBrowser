@@ -41,6 +41,32 @@ function release_metadata!(owned)
     end
 end
 
+function renderer_fields(template)
+    accepted = Set((:visible, :faces, :glyph_data))
+    for group in (:uniforms, :attributes, :vertexarrays, :instance_attributes)
+        union!(accepted, keys(get(template, group, Dict())))
+    end
+    accepted
+end
+
+function watch_actor(plot, template, pool)
+    accepted = renderer_fields(template)
+    inputs = filter(input -> input.name in accepted, plot.attributes[:wgl_renderobject].parent.inputs)
+    names = Tuple(input.name for input in inputs)
+    arguments = NamedTuple{names}(Tuple(input[] for input in inputs))
+    updates = WGLMakie.plot_updates(arguments, map(_ -> true, arguments))
+    properties = Dict(string(key) => retain!(pool, value) for (key, value) in updates)
+    updater = plot.attributes[:wgl_update_obs][]
+    observer = Makie.on(updater) do changes
+        values = changes isa Bonito.LargeUpdate ? changes.data : changes
+        for (key, value) in values
+            key in accepted || continue
+            properties[string(key)] = retain!(pool, value)
+        end
+    end
+    properties, observer
+end
+
 function capture(figure, planned; fps = 60)
     pool = ValuePool()
     scenes = Makie.Scene[]
@@ -102,19 +128,17 @@ function capture(figure, planned; fps = 60)
                         template[:uuid] = uuid
                         template[:updater] = Any[]
                         template = freeze(template)
-                        push!(actors, (; plot, scene, uuid, template))
+                        properties, observer = watch_actor(plot, template, pool)
+                        push!(actors, (; plot, scene, uuid, template, properties, observer))
                         length(actors)
                     end
-                    template = actors[id].template
-                    accepted = Set((:visible, :faces, :glyph_data))
-                    for group in (:uniforms, :attributes, :vertexarrays, :instance_attributes)
-                        union!(accepted, keys(get(template, group, Dict())))
-                    end
-                    inputs = filter(input -> input.name in accepted, plot.attributes[:wgl_renderobject].parent.inputs)
-                    names = Tuple(input.name for input in inputs)
-                    arguments = NamedTuple{names}(Tuple(input[] for input in inputs))
-                    updates = WGLMakie.plot_updates(arguments, map(_ -> true, arguments))
-                    properties = Dict(string(key) => retain!(pool, value) for (key, value) in updates)
+                    # Pull the native renderer edge just as WGLMakie's display
+                    # loop does. Its updater reports only changed inputs; the
+                    # stored IDs still describe a complete independently seekable
+                    # frame. Freeze updates as they arrive because native arrays
+                    # can be mutated again before the next captured frame.
+                    plot.attributes[:wgl_renderobject][]
+                    properties = copy(actors[id].properties)
                     properties["visible"] = retain!(pool, plot.visible[])
                     properties["__render_state"] = retain!(pool,
                         (Makie.zvalue2d(plot), plot.overdraw[], plot.transparency[]))
@@ -124,6 +148,7 @@ function capture(figure, planned; fps = 60)
             end
         end
     finally
+        foreach(actor -> Makie.off(actor.observer), actors)
         release_metadata!(metadata_observers)
     end
 

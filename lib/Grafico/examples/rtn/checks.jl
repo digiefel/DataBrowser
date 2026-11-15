@@ -17,7 +17,6 @@ end
     original = copy(trace.raw)
     Grafico.seek!(playback, 0)
     @test count(block -> block isa Axis, fig.content) == 1
-    @test samples_shown[] == 1
     @test subtraction[] == 0
     @test model_opacity[] == 0
     @test residual[] == trace.raw
@@ -25,9 +24,10 @@ end
 
     Grafico.seek!(playback, Grafico.duration(playback))
     @test count(block -> block isa Axis, fig.content) == 5
-    @test samples_shown[] == length(trace.t)
     @test residual[] ≈ trace.corrected
-    @test length(samples[].current) == length(trace.t)
+    @test histogram_view[] === histogram_panel
+    @test raw_lag_view[] === raw_lag_panel
+    @test residual_lag_view[] === residual_lag_panel
     final = copy(colorbuffer(fig))
     @test start != final
 

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "node check-browser.mjs",
-    "test:composition": "node check-browser.mjs output/composition.html"
+    "test:composition": "node check-browser.mjs output/composition.html",
+    "test:derivation": "node check-browser.mjs output/derivation.html"
   },
   "devDependencies": {
     "playwright": "1.62.1",

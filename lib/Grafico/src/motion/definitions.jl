@@ -9,14 +9,36 @@ end
 
 """
     to(observable => destination, ...; duration=0.9, ease)
+    to(view => plot; from, duration=6, ease, path=nothing)
 
 Describe concurrent changes to ordinary Makie Observables. Starts and destinations
 are captured when `Grafico.plan` is called. The default easing has zero velocity
 and acceleration at each endpoint. Numerical values, tuples, compatible arrays,
 colours and rectangles interpolate; other values change at the end of the clip.
 The call constructs a motion without writing to its Observables.
+
+With `from`, construct a plot from observations in a displayed source plot. `view`
+is an `Observable{Any}` used in the same figure. The source and destination reuse
+input columns or ordinary array views, so Grafico can follow each observation.
+Observations are captured at the clip's logical start when the plan is made.
+Temporary copies move between the plots and disappear on arrival. The destination
+then includes the arrived rows; histograms accumulate their counts or weights.
+When two source readings supply separate coordinates, the copies first reach the
+respective axes and then meet at the destination point.
+
+The default explains the first observations before accelerating a large dataset.
+`duration` changes the pace. `path(start, finish, u)` customizes each route; points
+use the figure's unit-square frame and `u` ranges from zero to one. Ordinary
+`along` trajectories and all motion compositions work with the same plan.
+
+Observation derivation currently supports two-dimensional row positions and
+one-dimensional count or weighted histograms. Other statistics need a rule that
+relates their output to input observations. Ordinary attribute animation remains
+available for every native Makie plot.
 """
-function to(changes::Pair...; duration = 0.9, ease = _motion_ease)
+function to(changes::Pair...; from = nothing, path = nothing,
+            duration = from === nothing ? 0.9 : 6.0,
+            ease = from === nothing ? _motion_ease : identity)
     isempty(changes) && throw(ArgumentError("to needs at least one Observable => destination pair."))
     seen = IdDict{Any,Nothing}()
     for (observable, _) in changes
@@ -24,6 +46,10 @@ function to(changes::Pair...; duration = 0.9, ease = _motion_ease)
         haskey(seen, observable) && throw(ArgumentError("to writes the same Observable twice."))
         seen[observable] = nothing
     end
+    if from !== nothing
+        return _derive_motion(changes, from, _motion_seconds(duration), ease, path)
+    end
+    path === nothing || throw(ArgumentError("path customizes a plot derivation with from; use along for other trajectories."))
     _ToMotion(changes, _motion_seconds(duration), ease)
 end
 
