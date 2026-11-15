@@ -126,7 +126,7 @@ function _normalize_chart_pair(a::Makie.GridLayoutSpec, b::Makie.GridLayoutSpec,
 end
 
 function _prepare_chart!(transition, figure, args...; options...)
-    context = figure === nothing ? Makie.current_default_theme() : figure.scene
+    context = figure === nothing ? getfield(Makie.current_default_theme(), :attributes) : figure.scene
     get!(transition.prepared, context) do
         previous = Makie.current_figure()
         endpoints = Any[]

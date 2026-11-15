@@ -164,4 +164,19 @@ end
         @test view[] === b
     end
 end
+@testset "Intermediate SpecAPI snapshots without a figure" begin
+    source = data((x=[1.,2.,3.], y=[1.,3.,2.])) * mapping(:x,:y) * visual(Lines)
+    target = data((x=[1.,2.,3.], y=[2.,1.,4.])) * mapping(:x,:y) * visual(Lines)
+    view = Observable{Any}(source)
+    plan = Grafico.plan(to(view => target; duration=2, ease=identity))
+    Grafico.seek!(plan,1)
+    specification = spec(view)
+    @test specification isa Makie.GridLayoutSpec
+    fig = Figure()
+    Makie.plot(fig[1,1],specification)
+    axis = only(filter(block -> block isa Axis,fig.content))
+    @test last.(only(visible_plots(axis,Lines))[1][]) ≈ [1.5,2.,3.]
+    @test size(colorbuffer(fig),1) > 0
+end
+
 end # module GraficoMorphChecks
