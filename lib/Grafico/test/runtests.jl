@@ -239,6 +239,7 @@ end
 end
 
 include("test_motion.jl")
+include("test_record.jl")
 
 @testset "Y-series selectors survive reactive macro inputs" begin
     rows = Observable((x = [0., 1., 2.], a = [1., 2., 3.], b = [4., 5., 6.]))

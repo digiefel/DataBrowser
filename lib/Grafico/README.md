@@ -301,11 +301,30 @@ values switch at the end of a `to` clip. `along` can return any accepted value.
 All sampled source values and the playback time are installed before notifications,
 so coupled values remain consistent. Notifications then follow channel order.
 
-[`examples/offline`](examples/offline/README.md) demonstrates compiling numerical
-motion curves and reactive computations to WebAssembly, together with WGLMakie's
-browser renderer. The exported HTML runs without Julia. Its private exporter
-currently supports Float64 motion channels and a Scatter buffer with fixed axes.
-It discovers pure `lift`/`map` computations automatically and transports their
-arrays, tuples and named tuples through the compiler's value bridge. Binding that
-graph to arbitrary plots, layouts and recipes remains work. The compiler dependency is
-confined to that example. Tanim consumes prepared HTML and vector print assets.
+## Recording a motion for an offline document
+
+Makie's `record` accepts a Grafico `MotionPlan`:
+
+```julia
+using Grafico, WGLMakie, CairoMakie
+
+# fig and playback are the existing Makie figure and Grafico plan.
+record(fig, "story.html", playback; still = "final.svg")
+```
+
+The HTML contains WGLMakie and the recorded renderer state. It provides playback
+and seeking in a retained WebGL canvas without a Julia process or network
+connection. Recording includes camera and tick changes, layout, native recipe
+geometry, and panels that appear later. `framerate=60` controls temporal sampling.
+The selected still defaults to the end; `still_at` chooses another time.
+CairoMakie writes the still as vector artwork. Export restores the figure's
+previous Observable values. Other filename extensions use Makie's movie recorder.
+
+Recorded playback reproduces the authored timeline. Free mathematical controls
+need their computation exported as well. [`examples/offline`](examples/offline/README.md)
+separately demonstrates compiled Julia motion and numerical dependencies,
+including typed Observable values, Lines and Scatter renderer bindings, changing
+data sizes, and pointer dragging. Its experimental compiler does not yet export
+every Makie recipe, camera computation or event callback. General morph matching
+also remains unfinished. Grafico owns both export paths; Tanim embeds the prepared
+HTML and vector still and contains no Julia code.
