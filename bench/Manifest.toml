@@ -1180,7 +1180,7 @@ uuid = "7746bdde-850d-59dc-9ae8-88ece973131d"
 version = "2.90.1+0"
 
 [[deps.Grafico]]
-deps = ["Accessors", "Colors", "DataAPI", "Dates", "Dictionaries", "FileIO", "ForwardDiff", "GLM", "GeoInterface", "GeometryBasics", "GridLayoutBase", "Isoband", "KernelDensity", "LinearAlgebra", "Loess", "Makie", "Measurements", "NaturalSort", "NonlinearSolve", "PlotUtils", "PolygonOps", "PooledArrays", "PrecompileTools", "Statistics", "StatsBase", "StructArrays", "Tables"]
+deps = ["Accessors", "Colors", "DataAPI", "Dates", "Dictionaries", "FileIO", "ForwardDiff", "GLM", "GeoInterface", "GeometryBasics", "GridLayoutBase", "Isoband", "KernelDensity", "LinearAlgebra", "Loess", "Logging", "Makie", "Measurements", "NaturalSort", "NonlinearSolve", "PlotUtils", "PolygonOps", "PooledArrays", "PrecompileTools", "Statistics", "StatsBase", "StructArrays", "Tables"]
 path = "../lib/Grafico"
 uuid = "8a9b0c1d-2e3f-4a5b-8c9d-0e1f2a3b4c5d"
 version = "0.1.0"

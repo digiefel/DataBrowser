@@ -237,6 +237,47 @@ end
 ```
 
 
+## Complete charts in graphic compositions
+
+`mark(plot)` makes a complete chart, including its axes and guides, available to
+the graphic algebra. `a + b` still combines GoG layers in one chart;
+`mark(a) + T(0.55, 0.55) * U(0.4) * mark(b)` places a smaller independent chart
+over the first. Coordinates describe the chart's outer rectangle in its parent
+frame: `(0, 0)` is the lower left and `(1, 1)` the upper right.
+
+Placement can be an ordinary Observable:
+
+```julia
+window = Observable((0.0, 10.0))
+placement = Observable(T(0, 0) * U(1))
+detail = mark(signal + coord(x = (limits = window,)))
+fig = figure(signal + placement * detail)
+
+story = Grafico.plan(sequence(
+    to(window => (2.0, 3.0)),
+    to(placement => T(0.55, 0.55) * U(0.4); duration = 1.4),
+))
+```
+
+The zoom remains in the detail as it shrinks into the inset. Moving and resizing
+retain the native Makie axes and plots without repeating the scientific analyses.
+Makie measures the decorations and lays out the chart at its new size, keeping its
+theme and text size. An ordinary host remains part of its parent's axis linking
+and guide hiding; the placed chart keeps its independent coordinates.
+
+`beside(mark(a), mark(b))` and `above(mark(a), mark(b))` also compose complete
+charts. A diagram expands its initial frame to enclose charts beyond the unit
+square, then keeps that frame fixed during playback. An overlay uses its host's
+measured outer bounds, including the native decorations.
+
+The current chart placement backend supports positive rectangular translation and
+resizing of 2D layouts. It reports an error for whole-chart rotation, reflection,
+or 3D layout placement. Ordinary Makie 3D plots remain recordable, and primitive
+marks retain their affine transforms.
+
+The executable [composition example](examples/recording/composition.jl) exports
+native offline HTML and a vector still with the same `record` call as other figures.
+
 ## Observable inputs and panel composition
 
 `data` accepts an `Observable` table or a named tuple with Observable columns.

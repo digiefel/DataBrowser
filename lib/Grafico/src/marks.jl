@@ -8,7 +8,7 @@ import Makie.SpecApi as S
 # Graphic mark algebra inspired by Vizagrams: geometric primitives, 2D affine transforms
 # (`T`, `U`, `R`), styling (`Style`), superposition (`+`), and data-driven marks (`mark`).
 
-abstract type AbstractMark end
+_contains_plot(::AbstractMark) = false
 
 # 2D affine transformation matrix [a b tx; c d ty; 0 0 1] and style attributes.
 struct MarkTransform
@@ -199,11 +199,24 @@ TextMark(text::AbstractString; x::Real=0.0, y::Real=0.0, style...) =
     PrimitiveMark(:text, [(Float64(x), Float64(y))], String(text), Style(; style...))
 
 struct CompositeMark <: AbstractMark
-    marks::Vector{PrimitiveMark}
+    marks::Vector{AbstractMark}
 end
 
 primitives(m::PrimitiveMark) = PrimitiveMark[m]
-primitives(m::CompositeMark) = m.marks
+function primitives(m::CompositeMark)
+    result = PrimitiveMark[]
+    pending = reverse(copy(m.marks))
+    while !isempty(pending)
+        child = pop!(pending)
+        if child isa CompositeMark
+            append!(pending, Iterators.reverse(child.marks))
+        else
+            append!(result, primitives(child))
+        end
+    end
+    result
+end
+_contains_plot(m::CompositeMark) = any(_contains_plot, m.marks)
 
 function Base.:*(t::MarkTransform, m::PrimitiveMark)
     return PrimitiveMark(m.kind, m.points, m.text, t * m.transform)
@@ -213,7 +226,7 @@ function Base.:*(t::MarkTransform, m::CompositeMark)
     return CompositeMark([t * p for p in m.marks])
 end
 
-Base.:+(a::AbstractMark, b::AbstractMark) = CompositeMark([primitives(a); primitives(b)])
+Base.:+(a::AbstractMark, b::AbstractMark) = CompositeMark(AbstractMark[a, b])
 
 function mark_plotspecs(m::AbstractMark)::Vector{Makie.PlotSpec}
     specs = Makie.PlotSpec[]
@@ -249,17 +262,26 @@ function mark_layers(m::AbstractMark)::Layers
     return Layers(layers_vec)
 end
 
-Base.:+(plot::AbstractAlgebraic, m::AbstractMark) = plot + mark_layers(m)
-Base.:+(m::AbstractMark, plot::AbstractAlgebraic) = mark_layers(m) + plot
-Base.:+(plot::Union{PlotLines, Scaled}, m::AbstractMark) =
+Base.:+(plot::AbstractAlgebraic, m::AbstractMark) =
+    _contains_plot(m) ? _PlotOverlay(plot, m) : plot + mark_layers(m)
+Base.:+(m::AbstractMark, plot::AbstractAlgebraic) =
+    _contains_plot(m) ? m + mark(plot) : mark_layers(m) + plot
+function Base.:+(plot::Union{PlotLines, Scaled}, m::AbstractMark)
+    _contains_plot(m) && return _PlotOverlay(plot, m)
     plot isa PlotLines ? PlotLines([plot.lines; PlotLine(mark_layers(m), Symbol[], true)]) :
-    Scaled(plot.layers + m, plot.scales, plot.texts, plot.legend, plot.theme, plot.coords)
-
-function spec(m::AbstractMark; axis=(; aspect=DataAspect()), options...)
-    return S.GridLayout([(1, 1) => S.Axis(; plots=mark_plotspecs(m), pairs(axis)...)])
+        Scaled(plot.layers + m, plot.scales, plot.texts, plot.legend, plot.theme, plot.coords)
 end
 
-function figure(m::AbstractMark; figure_kw=(;), options...)
+function spec(m::AbstractMark, args...; axis=nothing, options...)
+    _contains_plot(m) && return _spatial_spec(m, args...; axis=something(axis, (;)), options...)
+    isempty(args) || throw(ArgumentError("Bind input data to a chart or use mark(f) for data-driven glyphs."))
+    settings = something(axis, (; aspect = DataAspect()))
+    return S.GridLayout([(1, 1) => S.Axis(; plots=mark_plotspecs(m), pairs(settings)...)])
+end
+
+function figure(m::AbstractMark, args...; figure_kw=(;), options...)
+    (_contains_plot(m) || _hasobs(m)) && return _reactive_figure(m, args...; figure_kw, options...)
+    isempty(args) || throw(ArgumentError("Bind input data to a chart or use mark(f) for data-driven glyphs."))
     fig = Figure(; figure_kw...)
     Makie.plot(fig[1, 1], spec(m; options...))
     return fig
@@ -279,7 +301,7 @@ function boundingbox(p::PrimitiveMark)
 end
 
 function boundingbox(m::CompositeMark)
-    ps = primitives(m)
+    ps = m.marks
     isempty(ps) && return (xmin=0.0, xmax=0.0, ymin=0.0, ymax=0.0)
     bbs = [boundingbox(p) for p in ps]
     return (
@@ -370,7 +392,7 @@ function (mt::MarkTransformation)(input::ProcessedLayer)
             args = [col[row] for col in pos_group]
             kwargs = NamedTuple(k => (col isa AbstractVector ? col[row] : col) for (k, col) in pairs(named_group))
             m = isempty(kwargs) ? mt.f(args...) : mt.f(args...; kwargs...)
-            m isa AbstractMark && (combined = combined + m)
+            m isa AbstractMark && push!(combined.marks, m)
         end
         for p in primitives(combined)
             pts = [apply_point(p.transform, x, y) for (x, y) in p.points]

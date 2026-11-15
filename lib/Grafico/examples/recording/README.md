@@ -48,3 +48,8 @@ establish every Makie recipe or rendering throughput on other browsers.
 The scientific RTN authoring example remains `../rtn/rtn.jl`; `../rtn/export.jl`
 uses the same recording method. Tanim's `examples/rtn.typ` consumes its HTML and
 selected vector still with the ordinary `interactive` attachment.
+
+`composition.jl` uses the same environment for a chart that zooms and becomes an
+inset through `mark(plot)` and an Observable placement. Run it in Julia, then run
+`npm run test:composition` to check the retained canvas, forward and backward
+seeking, and playback without network access.

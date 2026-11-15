@@ -14,6 +14,7 @@ pairs_shown = Observable(0.0)
 subtraction = Observable(0.0)
 model_opacity = Observable(0.0)
 time_window = Observable(extrema(trace.t))
+detail_placement = Observable(T(0, 0) * U(1))
 lag = Observable(1)
 
 # Subtract a fraction of the known switching contribution, retaining the mean.
@@ -46,10 +47,14 @@ switching_trace = data((time = trace.t, current = trace.rtn)) *
 
 # coord changes the displayed window, without filtering data used by analyses.
 trace_coordinates = coord(
-    x = (limits = time_window,),
+    x = (limits = extrema(trace.t),),
     y = (limits = current_limits,),
 )
-raw_panel = raw_trace + switching_trace + trace_coordinates
+overview = raw_trace + switching_trace + trace_coordinates
+detail = mark(raw_trace + switching_trace + coord(
+    x = (limits = time_window,), y = (limits = current_limits,),
+))
+raw_panel = overview + detail_placement * detail
 residual_panel = data((time = trace.t, current = residual)) *
     time_current * visual(Lines; color = Cycled(4)) + trace_coordinates
 
@@ -100,7 +105,7 @@ motion = sequence(
     to(time_window => trace.zoom; duration = 1.4),
     to(model_opacity => 1.0),
     hold(),
-    to(time_window => extrema(trace.t); duration = 1.4),
+    to(detail_placement => T(0.57, 0.60) * U(0.40, 0.36); duration = 1.4),
 
     to(histogram_view => histogram_panel; duration = 0),
     to(samples_shown => sample_count; duration = 6, ease = identity),

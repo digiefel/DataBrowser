@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node check-browser.mjs"
+    "test": "node check-browser.mjs",
+    "test:composition": "node check-browser.mjs output/composition.html"
   },
   "devDependencies": {
     "playwright": "1.62.1",

@@ -256,3 +256,5 @@ include("test_record.jl")
 end
 
 include("test_portable.jl")
+
+include("test_plotmarks.jl")

@@ -1,23 +1,23 @@
 # Julia 1.13.3; 10 threads; apple-m1; Darwin/aarch64
-# precompile: 2026-11-15T00:27:51.677; inputs 04dca9a16a6a03968de5cad32fff3408e7b4a0a9c1b42f03e87355395a9fa86c
-precompile_s                        78.7690
-# engine: 2026-11-15T00:31:26.731; inputs e430045c676cb4dae818816ddc547bbeae660680b518929be7d23ccc35fa60f8
-cached_materialize_ms                2.1522
-concurrent_materialize_ms            9.2726
-peak_rss_mib                      3024.7656
-read_mib_s                        1728.3711
-reopen_exponent                      0.9745
-reopen_ms                           72.7712
-reopen_us_per_item                  58.0792
-scan_exponent                        0.9136
-scan_us_per_item                   106.4574
-write_mib_s                        104.5501
-# browser: 2026-11-15T00:32:14.319; inputs cfd4b8835f3e0c979bdba9a8cd85be5c361d7cd18a534c4e7ce7fb1dee642723
-browser_open_s                      13.8657
-browser_reopen_s                    13.4123
-frame_gap_ms                      1091.0079
-frame_ui_ms                          0.0240
-import_s                             9.5883
-browser_peak_rss_mib              2099.7656
-plot_windows_open_s                 14.8032
-plot_windows_reopen_s               13.9611
+# precompile: 2026-11-15T10:45:15.725; inputs 526ce99503e5544183c7ef0846c40180242d6daf44a42ac10a41cf24fc5f4370
+precompile_s                        96.3767
+# engine: 2026-11-15T10:48:22.572; inputs 2fcdeb62f92ad2dc73d66fae3c91b6e65e11cfa9bbb56510eca8c2991686d8b1
+cached_materialize_ms                1.9375
+concurrent_materialize_ms            8.4183
+peak_rss_mib                      3065.2344
+read_mib_s                         812.4207
+reopen_exponent                      1.0015
+reopen_ms                           62.1116
+reopen_us_per_item                  52.7245
+scan_exponent                        0.9501
+scan_us_per_item                   102.6036
+write_mib_s                        119.8265
+# browser: 2026-11-15T10:49:05.236; inputs a354cb978cf5156a4bd8daf30d8488991c53bf74a0fd6bc8d8d8c876f6b847bc
+browser_open_s                      12.7310
+browser_reopen_s                    11.8780
+frame_gap_ms                      1088.0332
+frame_ui_ms                          0.0225
+import_s                             8.6323
+browser_peak_rss_mib              2104.1719
+plot_windows_open_s                 13.1760
+plot_windows_reopen_s               12.3499

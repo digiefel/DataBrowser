@@ -227,7 +227,9 @@ function _dispose!(node::_CompiledPlot)
     nothing
 end
 
-function _compile_plot(plot,args...;kwargs...)
+_compile_plot(plot,args...;kwargs...) = _compile_plain_plot(plot,args...;kwargs...)
+
+function _compile_plain_plot(plot,args...;kwargs...)
     node = _CompiledPlot(_restore_blocks!(spec(_snapshot(plot),_unobserve(args)...;kwargs...)))
     weak = WeakRef(node)
     for source in _sources(plot isa Declaration ? (plot,args) : plot)

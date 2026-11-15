@@ -152,7 +152,10 @@ struct ComposedFigure
     cells::Vector{Pair{Tuple{Int,Int},Any}}
 end
 
-const ComposablePlot = Union{AbstractAlgebraic, Result, PlotLines, Scaled, Declaration, ComposedFigure, Makie.GridLayoutSpec}
+abstract type AbstractMark end
+abstract type _SpatialPlot end
+
+const ComposablePlot = Union{AbstractMark, _SpatialPlot, AbstractAlgebraic, Result, PlotLines, Scaled, Declaration, ComposedFigure, Makie.GridLayoutSpec}
 
 function Base.hcat(plots::ComposablePlot...)
     return ComposedFigure([(1, j) => p for (j, p) in enumerate(plots)])
