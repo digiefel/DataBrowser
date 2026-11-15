@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node check-compiler.mjs && node check-motion.mjs && node check-statistics.mjs && node check-kernels.mjs && node check-browser.mjs"
+    "test": "node check-array-copy.mjs && node check-compiler.mjs && node check-motion.mjs && node check-statistics.mjs && node check-kernels.mjs && node check-browser.mjs"
   },
   "devDependencies": {
     "playwright": "1.62.1",

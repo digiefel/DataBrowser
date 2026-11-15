@@ -1,0 +1,62 @@
+--- a/src/codegen/statements.jl
++++ b/src/codegen/statements.jl
+@@ -120,6 +120,26 @@
+         end
+     end
+     return true
++end
++
++# Native arrays of immutable structs have an element stride too. WasmGC
++# stores each immutable value in one typed array slot, so copying complete
++# elements uses array.copy after scaling native byte offsets by that stride.
++function _memmove_storage_eltypes(ctx::AbstractCompilationContext)
++    elements = Set{DataType}((Int8,UInt8,Int16,UInt16,Int32,UInt32,Int64,UInt64,Float32,Float64))
++    for T in Iterators.flatten((values(ctx.ssa_types), ctx.code_info.slottypes))
++        T isa DataType || continue
++        element = if T.name.name in (:GenericMemory, :GenericMemoryRef) && length(T.parameters) >= 2
++            T.parameters[2]
++        elseif T <: AbstractArray
++            eltype(T)
++        else
++            nothing
++        end
++        element isa DataType && isbitstype(element) && sizeof(element) > 0 || continue
++        push!(elements, element)
++    end
++    elements
+ end
+ 
+ function _trace_memmove_ptr(arg, ctx::AbstractCompilationContext;
+@@ -1824,7 +1844,7 @@
+         # width 4/8 → array.copy with byte offsets/count scaled to elements.
+         # (Byte vectors keep the established paths below; array.copy is
+         # overlap-safe per the WasmGC spec, matching memmove semantics.)
+-        local _MMV_PRIMS = (Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64, Float32, Float64)
++        local _MMV_PRIMS = _memmove_storage_eltypes(ctx)
+         local _mmv_d = _trace_memmove_ptr(dest_ptr_arg, ctx; eltypes = _MMV_PRIMS)
+         local _mmv_s = _mmv_d !== nothing ? _trace_memmove_ptr(src_ptr_arg, ctx; eltypes = _MMV_PRIMS) : nothing
+         if _mmv_d !== nothing && _mmv_s !== nothing
+@@ -1833,9 +1853,9 @@
+                 T === String || T === Symbol ? UInt8 : eltype(T)
+             end
+             local _mmv_te = _mmv_eltype(_mmv_d)
+-            if _mmv_te === _mmv_eltype(_mmv_s) && sizeof(_mmv_te) in (1, 4, 8)
++            if _mmv_te === _mmv_eltype(_mmv_s) && isbitstype(_mmv_te) && sizeof(_mmv_te) > 0
+                 local _mmv_arr = get_array_type!(ctx.mod, ctx.type_registry, _mmv_te)
+-                local _mmv_sh = trailing_zeros(sizeof(_mmv_te))
++                local _mmv_stride = Base.aligned_sizeof(_mmv_te)
+                 local _mmv_emit_arr = vec -> begin
+                     _emit_backing_array!(b, vec, ctx, _mmv_arr)
+                 end
+@@ -1846,9 +1866,9 @@
+                         i64_const!(b, 1)
+                         num!(b, Opcode.I64_SUB)
+                     end
++                    i64_const!(b, Int64(_mmv_stride))
++                    num!(b, Opcode.I64_DIV_U)
+                     num!(b, Opcode.I32_WRAP_I64)
+-                    i32_const!(b, Int64(_mmv_sh))
+-                    num!(b, Opcode.I32_SHR_U)
+                 end
+                 _mmv_emit_arr(_mmv_d)
+                 _mmv_emit_off(dest_ptr_arg, _mmv_d)

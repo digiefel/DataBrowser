@@ -69,7 +69,7 @@ existing session when working interactively. The example project uses Grafico
 from this checkout and WasmTarget 0.5.3 at
 `a509b5f8b10ab46b47fe38296e807c762cba893c`.
 
-That compiler revision needs both included patches, applied in order to an
+That compiler revision needs the three included patches, applied in order to an
 isolated checkout or depot:
 
 1. `wasmtarget-julia-1.13.3.patch` supplies the newly required
@@ -78,6 +78,10 @@ isolated checkout or depot:
    implements fixed tuple field identity, and lowers Julia 1.13's floating
    `isequal` intrinsic, including signed zero and NaN behavior.
 
+3. `wasmtarget-struct-array-copy.patch` lowers copies of immutable struct arrays
+   through WasmGC's typed array copy. It uses each Julia element's aligned stride,
+   including non-power-of-two sizes, and preserves overlapping-copy semantics.
+
 Keep these changes separate from a shared Julia depot. Start a clean Julia
 session after patching the compiler; do not depend on temporary method overrides.
 
@@ -85,7 +89,7 @@ After instantiating the example environment and applying both patches:
 
 ```sh
 jmux --project /absolute/path/to/Grafico/examples/offline --timeout 600 \
-  'include("/absolute/path/to/Grafico/examples/offline/compile.jl"); include("/absolute/path/to/Grafico/examples/offline/check-compiler.jl"); include("/absolute/path/to/Grafico/examples/offline/check-motion.jl"); include("/absolute/path/to/Grafico/examples/offline/check-statistics.jl")'
+  'include("/absolute/path/to/Grafico/examples/offline/compile.jl"); include("/absolute/path/to/Grafico/examples/offline/check-compiler.jl"); include("/absolute/path/to/Grafico/examples/offline/check-motion.jl"); include("/absolute/path/to/Grafico/examples/offline/check-statistics.jl"); include("/absolute/path/to/Grafico/examples/offline/check-array-copy.jl")'
 jmux --project /absolute/path/to/Grafico/examples/offline \
   'include("/absolute/path/to/Grafico/examples/offline/export.jl"); include("/absolute/path/to/Grafico/examples/offline/print.jl")'
 npm install
@@ -94,7 +98,9 @@ npm test
 ```
 
 `check-authoring.jl` separately checks dependency contracts and export-time
-diagnostics.
+diagnostics. `check-array-copy.jl` and `node check-array-copy.mjs` compare the
+compiler's copies with native Julia for separate arrays, both directions of
+overlap, padded structs, floating-point values, and 16-bit integers.
 The browser tests run from this directory. Open `output/offline.html` directly
 from disk. Drag horizontally over the plot to rotate it, or use the controls.
 `output/final.svg` is the selected print state. All outputs are generated and

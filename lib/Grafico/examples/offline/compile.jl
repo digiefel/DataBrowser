@@ -74,7 +74,8 @@ fixture = (; bindings = renderer_bindings, source_cases, points, time = fixture_
             compiler_seconds = elapsed, module_bytes = length(bytes),
             diagnostic_count = length(diagnostics),
             compiler_version = string(Base.pkgversion(WasmTarget)), compiler_discovery = "trim",
-            compiler_patch = ("wasmtarget-julia-1.13.3.patch", "wasmtarget-values.patch"),
+            compiler_patch = ("wasmtarget-julia-1.13.3.patch", "wasmtarget-values.patch",
+                              "wasmtarget-struct-array-copy.patch"),
             julia_version = string(VERSION))
 write(joinpath(output, "native-reference.json"), JSON.json(fixture))
 println("GRAFICO_WASM_KERNEL_READY bytes=", length(bytes), " diagnostics=", length(diagnostics),
