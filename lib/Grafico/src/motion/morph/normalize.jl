@@ -36,13 +36,14 @@ function _chart_frozen(grid::Makie.GridLayoutSpec, copies, captured; keep_entry 
         xaxislinks = links(grid.xaxislinks), yaxislinks = links(grid.yaxislinks))
 end
 
-function _native_chart_endpoint(plot, captured, parent, args...; options...)
+function _native_chart_endpoint(plot, captured, parent, args...; _bounds = nothing, options...)
     arguments = _chart_frozen(args, captured)
     raw = plot === nothing ? S.GridLayout(Pair[]) : spec(plot, arguments...; options...)
     specification = _chart_frozen(raw, IdDict{Any,Any}(), captured)
     skeleton = _chart_frozen(raw, IdDict{Any,Any}(), captured; keep_entry = true)
     theme = parent === nothing ? Makie.current_default_theme() : parent.scene.theme
-    figure = Makie.with_theme(() -> Figure(), theme)
+    size = parent === nothing ? nothing : Tuple(Makie.widths(parent.scene.viewport[]))
+    figure = Makie.with_theme(() -> size === nothing ? Figure() : Figure(; size), theme)
     blocks = IdDict{Any,Any}()
     function remember(block::Makie.BlockSpec)
         block.then(native -> (blocks[block] = native; nothing))
@@ -52,7 +53,13 @@ function _native_chart_endpoint(plot, captured, parent, args...; options...)
     end
     remember(specification)
     try
-        Makie.plot(figure[1, 1], specification)
+        if _bounds === nothing
+            Makie.plot(figure[1, 1], specification)
+        else
+            layout = Makie.GridLayout(; bbox = _bounds, alignmode = Makie.Outside())
+            layout.parent = figure
+            Makie.plot(layout[1, 1], specification)
+        end
         Makie.update_state_before_display!(figure)
         (; figure, specification, skeleton, blocks)
     catch
@@ -125,27 +132,34 @@ function _normalize_chart_pair(a::Makie.GridLayoutSpec, b::Makie.GridLayoutSpec,
     make(a, 1, copies_a), make(b, 2, copies_b)
 end
 
-function _prepare_chart!(transition, figure, args...; options...)
-    context = figure === nothing ? getfield(Makie.current_default_theme(), :attributes) : figure.scene
+function _prepare_chart!(transition, figure, args...;
+                         _context = nothing, _bounds = nothing, options...)
+    context = _context === nothing ? (figure === nothing ?
+        getfield(Makie.current_default_theme(), :attributes) : figure.scene) : _context
     get!(transition.prepared, context) do
         previous = Makie.current_figure()
         endpoints = Any[]
         try
             source = _native_chart_endpoint(transition.source_snapshot, transition.start_values,
-                                            figure, args...; options...)
+                                            figure, args...; _bounds, options...)
             push!(endpoints, source)
             destination = _native_chart_endpoint(transition.destination_snapshot, transition.end_values,
-                                                 figure, args...; options...)
+                                                 figure, args...; _bounds, options...)
             push!(endpoints, destination)
-            if _chart_structure(source.specification, destination.specification)
+            matches = _chart_panel_matches(_chart_blocks(source.specification),
+                                            _chart_blocks(destination.specification))
+            positional = all(i == j for (i,j) in matches)
+            if positional && _chart_structure(source.specification, destination.specification)
                 left, right = _normalize_chart_pair(source.specification, destination.specification, source, destination)
                 if _chart_block_attributes(left, right)
-                    return (; source = left, destination = right, skeleton = source.skeleton, geometric = true)
+                    return (; source = left, destination = right, skeleton = source.skeleton, geometric = true, panels = nothing)
                 end
             end
+            panels = _prepare_chart_panels(source, destination)
+            panels === nothing || return panels
             left, right = source.skeleton, destination.skeleton
             (; source = left, destination = right,
-                skeleton = _chart_fade_layout(left, right, 0.), geometric = false)
+                skeleton = _chart_fade_layout(left, right, 0.), geometric = false, panels = nothing)
         finally
             for endpoint in endpoints
                 for block in values(endpoint.blocks)

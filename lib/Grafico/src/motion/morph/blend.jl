@@ -41,14 +41,14 @@ function _blend_chart_plot(a, b, u)
     if a.type == b.type && _chart_compatible(Tuple(a.args), Tuple(b.args)) &&
             keys(a.kwargs) == keys(b.kwargs) &&
             all(_chart_compatible(a.kwargs[key],b.kwargs[key]) for key in keys(a.kwargs))
-        kwargs = Dict(key => _motion_mix(a.kwargs[key], b.kwargs[key], u) for key in keys(a.kwargs))
+        kwargs = Dict{Symbol,Any}(key => _motion_mix(a.kwargs[key], b.kwargs[key], u) for key in keys(a.kwargs))
         return [Makie.PlotSpec(a.type, _chart_mix_geometry(Tuple(a.args), Tuple(b.args), u)...; kwargs...)]
     end
     [_fade_chart_plot(a, 1-u), _fade_chart_plot(b, u)]
 end
 
 function _blend_chart(a::Makie.BlockSpec, b::Makie.BlockSpec, u)
-    kwargs = Dict(key => _motion_mix(a.kwargs[key], b.kwargs[key], u) for key in keys(a.kwargs))
+    kwargs = Dict{Symbol,Any}(key => _motion_mix(a.kwargs[key], b.kwargs[key], u) for key in keys(a.kwargs))
     plots = Makie.PlotSpec[]
     for i in 1:max(length(a.plots), length(b.plots))
         if i > length(a.plots)

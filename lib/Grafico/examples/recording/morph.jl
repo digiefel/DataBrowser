@@ -10,16 +10,15 @@ next_plot = data((; x, y = .5cos.(5x))) * variables *
 points = data((; x, y = cos.(3x))) * variables *
     visual(Scatter; color = Cycled(2))
 
-view = Observable{Any}(first_plot)
-fig = figure(view; figure_kw = (size = (1100, 550),))
+fig = figure(first_plot; figure_kw = (size = (1100, 550),))
 
-# Change ordinary plots. The default morph resolves data, styling, and limits;
-# a changed panel layout fades complete charts, including their decorations.
+# Change ordinary plots. Existing panels morph and move into place;
+# new panels grow into the space opened by their neighbours.
 playback = Grafico.plan(sequence(
     hold(),
-    to(view => next_plot; duration = 2),
+    to(fig => next_plot; duration = 2),
     hold(),
-    to(view => next_plot | points; duration = 1.4),
+    to(fig => next_plot | points; duration = 1.4),
     hold(),
 ))
 

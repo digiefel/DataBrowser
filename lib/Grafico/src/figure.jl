@@ -6,6 +6,17 @@ using Tables: Tables
 # (plans/graphics-grammar.md). `texts` are the texts of the entries in the section of a role.
 # `groups` are the values of every group's roles, as `key => value`, also of the roles that its
 # layer cannot show.
+"""
+    figure(plot, [input]; figure_kw=(;), options...) -> Makie.Figure
+
+Display a Grafico plot and keep its Observable inputs connected. A `Declaration`
+uses `input` as its data. `figure_kw` forwards settings such as `size` to Makie's
+Figure constructor; the other options customize plot compilation.
+
+The returned Makie figure is also a motion target: `to(fig => next_plot)` describes
+an animation of its contents. Use an Observable child inside a composition to
+replace or animate that child independently.
+"""
 function figure(
     specification::Union{Layer, Layers, ProcessedLayer, ProcessedLayers},
     args...;
@@ -14,19 +25,7 @@ function figure(
     groups::Vector{Dict{Symbol,Any}}=Dict{Symbol,Any}[],
     options...,
 )
-    _hasobs(specification) && return _reactive_figure(specification,args...;legend,texts,groups,options...)
-    drawn = draw(drawable(specification), args...; legend=(; show=false), options...)
-    label_inspector!(drawn.grid)
-    get(legend, :show, true) || return drawn.figure
-    sections = legend_sections(drawn.grid, texts, get(legend, :merge, nothing), groups)
-    isempty(sections) && return drawn.figure
-    position = get(legend, :position, :right)
-    settings = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
-    shown = get(legend, :titlevisible, true)
-    titles = [shown && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
-    Legend(guides_position(drawn.figure, position), [s.samples for s in sections],
-        [s.texts for s in sections], titles; orientation=default_orientation(position), settings...)
-    return drawn.figure
+    _reactive_figure(specification, args...; legend, texts, groups, options...)
 end
 
 """
@@ -45,6 +44,7 @@ function spec(
     groups::Vector{Dict{Symbol,Any}}=Dict{Symbol,Any}[],
     axis=(;),
     facet=(;),
+    colorbar=(;),
     _trace=nothing,
     options...,
 )
@@ -56,6 +56,10 @@ function spec(
         _trace === nothing || push!(_trace, ase)
         plots = Makie.PlotSpec[_entry_spec(entry) for entry in ase.entries]
         ax_spec = _axis_spec(ase.axis,plots)
+        ax_spec.then() do axis
+            label_inspector!([AxisEntries(axis,ase.entries,ase.categoricalscales,
+                                           ase.continuousscales,ase.processedlayers)])
+        end
         push!(cells, ase.axis.position => ax_spec)
     end
     if get(legend, :show, true)
@@ -81,7 +85,23 @@ function spec(
             end
         end
     end
-    return S.GridLayout(cells)
+    grid = S.GridLayout(cells)
+    if get(colorbar,:show,true)
+        guides = compute_colorbars(ae)
+        if !isempty(guides)
+            position = get(colorbar,:position,:right)
+            vertical = get(colorbar,:vertical,default_isvertical(position))
+            options = (;(key=>value for (key,value) in pairs(colorbar)
+                          if key ∉ (:show,:position,:vertical))...)
+            bars = S.GridLayout([(vertical ? (1,i) : (i,1)) =>
+                S.Colorbar(;guide...,vertical,options...) for (i,guide) in enumerate(guides)])
+            grid = position === :left ? S.GridLayout([(1,1)=>bars,(1,2)=>grid]) :
+                   position === :top ? S.GridLayout([(1,1)=>bars,(2,1)=>grid]) :
+                   position === :bottom ? S.GridLayout([(1,1)=>grid,(2,1)=>bars]) :
+                   S.GridLayout([(1,1)=>grid,(1,2)=>bars])
+        end
+    end
+    return grid
 end
 
 # The text the inspector shows for a point: its x and y under the labels of the axes, then the value
@@ -142,15 +162,7 @@ function processed_lines(plot::PlotLines, settings::Scales=scales())::Vector{Vec
 end
 
 function figure(plot::PlotLines, args...; yscales=Dict{Symbol,Any}(), options...)
-    _hasobs(plot) && return _reactive_figure(plot,args...;yscales,options...)
-    any(line -> line.drawn && line.layers isa YScaleLayers, plot.lines) &&
-        return scaled_y_figure(plot, yscales, args...; options...)
-    settings = !isempty(args) && first(args) isa Scales ? first(args) : scales()
-    drawn = reduce(vcat, [layers for (line, layers) in zip(plot.lines, processed_lines(plot, settings)) if line.drawn];
-        init=Pair{ProcessedLayer,Any}[])
-    groups = [Dict{Symbol,Any}(key => values[i] for (key, values) in pairs(primary))
-        for (_, primary) in drawn if !isempty(primary) for i in eachindex(first(values(primary)))]
-    return figure(ProcessedLayers(first.(drawn)), args...; options..., groups)
+    _reactive_figure(plot, args...; yscales, options...)
 end
 
 function spec(plot::PlotLines, args...; yscales=Dict{Symbol,Any}(), options...)
@@ -620,11 +632,8 @@ function prepare_scaled(plot::Scaled; options...)
 end
 
 function figure(plot::Scaled, args...; options...)
-    (_hasobs(plot) || _axis_reactive(plot)) && return _reactive_figure(plot,args...;options...)
-    layers, settings, axis_kw, legend, yscales = prepare_scaled(plot; options...)
-    draw_fig() = figure(layers, settings, args...; options..., axis=axis_kw,
-        texts=plot.texts, legend, (layers isa PlotLines ? (; yscales) : (;))...)
-    return plot.theme === nothing ? draw_fig() : Makie.with_theme(draw_fig, makie_theme(plot.theme))
+    draw_fig() = _reactive_figure(plot, args...; options...)
+    plot.theme === nothing ? draw_fig() : Makie.with_theme(draw_fig, makie_theme(plot.theme))
 end
 
 function spec(plot::Scaled, args...; options...)
@@ -641,7 +650,7 @@ function figure(declaration::Declaration, input::Makie.Observable, args...; opti
 end
 
 figure(declaration::Declaration, input, args...; options...) =
-    figure(Base.invokelatest(declaration.layers, input), args...; options...)
+    _reactive_figure(declaration, input, args...; options...)
 
 spec(declaration::Declaration, input, args...; options...) =
     spec(Base.invokelatest(declaration.layers, input), args...; options...)

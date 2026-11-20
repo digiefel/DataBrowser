@@ -26,7 +26,7 @@ This exports the authored timeline. Free mathematical controls require their
 functions compiled as well; the separate `../offline` experiment demonstrates
 that computation path. Timeline sampling does not export arbitrary Julia event
 callbacks or infer correspondences between unrelated observations. Complete-chart
-morphs match native panels and layers by position; incompatible states crossfade.
+morphs match native panels by their contents and layers by order; incompatible states crossfade.
 
 Use the Julia environment in this directory, or another environment containing
 Grafico, WGLMakie and CairoMakie. From a persistent Julia session:
@@ -62,6 +62,8 @@ then `npm run test:derivation` to check the offline output.
 
 
 `morph.jl` changes an ordinary GoG curve's data, colour, and line width with
-`to(view => next_plot)`, then introduces a second panel with the same call.
+`to(fig => next_plot)`, then introduces a second panel with the same call. The
+curve stays fully visible while its panel narrows; the new panel grows into the
+space being opened. Both keep Makie’s default text sizes and layout.
 Run `npm run test:morph` after recording to check offline playback and backward
 seeking. Makie's default fonts, palette, grid, and axis styling remain in use.

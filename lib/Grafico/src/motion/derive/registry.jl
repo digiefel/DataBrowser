@@ -14,8 +14,24 @@ function (remember::_RememberAxis)(axis)
     nothing
 end
 
+struct _RememberBlock <: Function
+    node::WeakRef
+    index::Int
+end
+function (remember::_RememberBlock)(block)
+    node = remember.node.value
+    node === nothing || (node.blocks[remember.index] = WeakRef(block))
+    nothing
+end
+
 function _remember_axes!(node, specification)
-    axes = _layout_axes(specification)
+    blocks = _chart_blocks(specification)
+    resize!(node.blocks,length(blocks))
+    for (index,block) in enumerate(blocks)
+        isassigned(node.blocks,index) || (node.blocks[index] = WeakRef(nothing))
+        block.then(_RememberBlock(WeakRef(node),index))
+    end
+    axes = filter(block -> block.type in (:Axis, :Axis3),blocks)
     resize!(node.axes, length(axes))
     for (index, axis) in enumerate(axes)
         isassigned(node.axes, index) || (node.axes[index] = WeakRef(nothing))
@@ -55,6 +71,11 @@ end
 function _node_axes(node)
     axes = [reference.value for reference in node.axes if reference.value !== nothing]
     isempty(axes) ? reduce(vcat, (_node_axes(child) for child in node.children); init = Any[]) : axes
+end
+
+function _node_blocks(node)
+    blocks = [reference.value for reference in node.blocks if reference.value !== nothing]
+    isempty(blocks) ? reduce(vcat,(_node_blocks(child) for child in node.children);init=Any[]) : blocks
 end
 
 # Derived data may still await its ordinary lift notification while the source

@@ -62,6 +62,9 @@ mutable struct _ChartMorphState
     bindings::Vector{Any}
     originals::Vector{Any}
     owned::Vector{Any}
+    context::Any
+    placements::Vector{Any}
+    fades::Vector{Any}
     initialized::Bool
     disposed::Bool
 end
@@ -79,7 +82,7 @@ end
 
 function _compile_plot(value::_MorphedPlot, args...; options...)
     state = _ChartMorphState(value.transition, value.progress, args, (; options...),
-        WeakRef(nothing), nothing, WeakRef[], Any[], Any[], Any[], false, false)
+        WeakRef(nothing), nothing, WeakRef[], Any[], Any[], Any[], nothing, Any[], Any[], false, false)
     node = _CompiledPlot(S.GridLayout(Pair[]); declaration = value, state)
     state.node = WeakRef(node)
     node
@@ -89,7 +92,9 @@ function _activate_compiled_state!(node, state::_ChartMorphState)
     figure = node.figure.value
     figure === nothing && return
     state.prepared === nothing || return
-    prepared = _prepare_chart!(state.transition, figure, state.arguments...; state.options...)
+    bounds = state.context === nothing ? nothing : state.context.bounds
+    prepared = _prepare_chart!(state.transition, figure, state.arguments...;
+                               _context = node, _bounds = bounds, state.options...)
     state.prepared = prepared
     skeleton = _copy_layout(prepared.skeleton, IdDict{Any,Any}())
     function remember(block::Makie.BlockSpec)
@@ -100,6 +105,15 @@ function _activate_compiled_state!(node, state::_ChartMorphState)
         foreach(pair -> remember(last(pair)), grid.content)
     end
     remember(skeleton)
+    if prepared.panels !== nothing
+        weak = WeakRef(node)
+        push!(node.observers, Makie.on(figure.scene.viewport; priority=-100) do _
+            current = weak.value
+            current === nothing && return
+            _resize_chart_layout!(state)
+            _render_compiled_state!(current, state)
+        end)
+    end
     node.specification[] = _remember_axes!(node, skeleton)
     nothing
 end
@@ -114,8 +128,7 @@ end
 
 function spec(value::_MorphedPlot, args...; options...)
     prepared = _prepare_chart!(value.transition, nothing, args...; options...)
-    prepared.geometric ? _blend_chart(prepared.source, prepared.destination, value.progress) :
-        _chart_fade_layout(prepared.source, prepared.destination, value.progress)
+    _chart_specification(prepared,value.progress)
 end
 figure(value::_MorphedPlot, args...; figure_kw = (;), options...) =
     _reactive_figure(value, args...; figure_kw, options...)

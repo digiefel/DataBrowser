@@ -9,6 +9,7 @@ end
 
 """
     to(observable => destination, ...; duration=0.9, ease)
+    to(figure => plot; duration=0.9, ease)
     to(view => plot; from, duration=6, ease, path=nothing)
 
 Describe concurrent changes to ordinary Makie Observables. Starts and destinations
@@ -17,13 +18,15 @@ and acceleration at each endpoint. Numerical values, tuples, compatible arrays,
 colours and rectangles interpolate; other values change at the end of the clip.
 The call constructs a motion without writing to its Observables.
 
-A plot-valued `Observable{Any}` morphs between complete charts. Corresponding
-panels keep their native axes; compatible data, colours, widths, and limits
+A Makie figure returned by `figure(plot)` can be the target: `to(fig => next_plot)`
+morphs its contents. Plot-valued Observables target individual composed children.
+Corresponding panels keep their native axes; compatible data, colours, widths, and limits
 interpolate. Makie resolves omitted defaults and palette indices in the figure's
-theme. Plot kinds or incompatible data shapes crossfade. Changes to panel
-structure or non-interpolable axis settings crossfade complete native charts,
-including their decorations. `nothing` fades a chart in or out. Matching uses
-panel positions and layer order. For an explicitly authored correspondence or
+theme. Panels match by plot kinds, data and attributes, with layout order breaking
+ties. Matched panels move and resize; new panels grow and fade in, and removed
+panels shrink and fade out. Layers match by order. Incompatible layers or panels
+crossfade, including panel decorations. Charts with no matching panels crossfade
+completely. `nothing` fades a chart in or out. For an explicitly authored correspondence or
 trajectory, animate the plot's ordinary data or attribute Observables with `to`
 or `along`.
 
@@ -50,6 +53,10 @@ function to(changes::Pair...; from = nothing, path = nothing,
             duration = from === nothing ? 0.9 : 6.0,
             ease = from === nothing ? _motion_ease : identity)
     isempty(changes) && throw(ArgumentError("to needs at least one Observable => destination pair."))
+    changes = map(changes) do change
+        target, value = change
+        _motion_target(target) => value
+    end
     seen = IdDict{Any,Nothing}()
     for (observable, _) in changes
         observable isa Makie.Observable || throw(ArgumentError("to targets ordinary Observables."))
@@ -62,6 +69,14 @@ function to(changes::Pair...; from = nothing, path = nothing,
     path === nothing || throw(ArgumentError("path customizes a plot derivation with from; use along for other trajectories."))
     _ToMotion(changes, _motion_seconds(duration), ease)
 end
+
+_motion_target(observable::Makie.Observable) = observable
+function _motion_target(figure::Makie.Figure)
+    haskey(figure.attributes, :_grafico_compilation) || throw(ArgumentError(
+        "to(fig => plot) needs a figure returned by Grafico.figure(plot)."))
+    _figure_compilation(figure).declaration
+end
+_motion_target(value) = throw(ArgumentError("to targets ordinary Observables or a figure returned by Grafico.figure."))
 
 struct _AlongMotion{F} <: Motion
     observable::Makie.Observable

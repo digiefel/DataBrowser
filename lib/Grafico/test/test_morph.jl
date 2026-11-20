@@ -146,7 +146,7 @@ end
     @test Makie.GeometryBasics.faces(mesh[1][]) == faces
 end
 
-@testset "Default fades for empty views and changed panel layouts" begin
+@testset "Empty views and changed panel layouts remain reversible" begin
     source = data((x=[1.,2.,3.],y=[2.,3.,4.])) * mapping(:x,:y) * visual(Lines)
     points = data((x=[1.,2.,3.],y=[4.,2.,3.])) * mapping(:x,:y) * visual(Scatter)
     for (a,b) in ((nothing,source),(source,nothing),(source,source | points))
@@ -177,6 +177,127 @@ end
     axis = only(filter(block -> block isa Axis,fig.content))
     @test last.(only(visible_plots(axis,Lines))[1][]) ≈ [1.5,2.,3.]
     @test size(colorbuffer(fig),1) > 0
+end
+
+@testset "Returned figures are whole-chart motion targets" begin
+    rows = Observable((x=[1.,2.,3.],y=[2.,4.,3.]))
+    source = data(rows) * mapping(:x,:y) * visual(Lines)
+    target = data((x=[1.,2.,3.],y=[3.,2.,4.])) * mapping(:x,:y) * visual(Lines)
+    fig = figure(source)
+    @test fig isa Figure
+    axis = only(filter(block -> block isa Axis,fig.content))
+    rows[] = (x=[1.,2.,3.],y=[4.,8.,6.])
+    @test last.(only(visible_plots(axis,Lines))[1][]) ≈ [4.,8.,6.]
+    plan = Grafico.plan(sequence(to(fig => target; duration=2,ease=identity),
+                                to(fig => source; duration=2,ease=identity)))
+    Grafico.seek!(plan,1)
+    @test last.(only(visible_plots(axis,Lines))[1][]) ≈ [3.5,5.,5.]
+    Grafico.seek!(plan,4)
+    @test last.(only(visible_plots(axis,Lines))[1][]) ≈ [4.,8.,6.]
+    @test_throws ArgumentError to(Figure() => target)
+    @test_throws ArgumentError to(fig => target,fig => source)
+end
+
+@testset "Panel additions, removals and reordered layouts retain geometry" begin
+    x = collect(range(-2,2;length=31))
+    curve = data((;x,y=sin.(3x))) * mapping(:x,:y) * visual(Lines;color=Cycled(1))
+    dots = data((;x,y=cos.(3x))) * mapping(:x,:y) * visual(Scatter;color=Cycled(2))
+    for (source,target) in ((curve,curve | dots),(curve,curve / dots),
+                             (curve | dots,dots | curve),(curve | dots,curve))
+        fig = figure(source;figure_kw=(size=(960,540),))
+        axes = filter(block -> block isa Axis,fig.content)
+        curve_axis = only(filter(axis -> !isempty(visible_plots(axis,Lines)),axes))
+        start = curve_axis.layoutobservables.computedbbox[]
+        fontsize = curve_axis.xlabelsize[]
+        plan = Grafico.plan(to(fig => target;duration=2,ease=identity))
+        Grafico.seek!(plan,.5)
+        line = only(visible_plots(curve_axis,Lines))
+        @test line.alpha[] == 1
+        @test curve_axis.xlabelsize[] == fontsize
+        Grafico.seek!(plan,1)
+        midpoint = curve_axis.layoutobservables.computedbbox[]
+        @test midpoint != start
+        @test only(visible_plots(curve_axis,Lines)) === line
+        snapshot = copy(colorbuffer(fig))
+        for time in (1.8,2.,0.,.3,1.)
+            Grafico.seek!(plan,time)
+        end
+        @test colorbuffer(fig) == snapshot
+        Grafico.seek!(plan,2)
+        @test length(filter(block -> block isa Axis,fig.content)) == (target === curve ? 1 : 2)
+    end
+end
+
+@testset "A composed child morph survives a reactive neighbour update" begin
+    x = collect(1.:7.)
+    curve = data((; x, y = sin.(x))) * mapping(:x, :y) * visual(Lines)
+    dots = data((; x, y = cos.(x))) * mapping(:x, :y) * visual(Scatter)
+    rows = Observable((; x, y = cos.(x)))
+    neighbour_plot = data(rows) * mapping(:x, :y) * visual(Scatter)
+    child = Observable{Any}(curve)
+    fig = figure(child | neighbour_plot; figure_kw = (size = (1100,550),))
+    curve_axis, neighbour = filter(block -> block isa Axis, fig.content)
+    neighbour_box = neighbour.layoutobservables.computedbbox[]
+
+    plan = Grafico.plan(to(child => curve / dots; duration = 2, ease = identity))
+    Grafico.seek!(plan, 1)
+    @test neighbour.layoutobservables.computedbbox[] == neighbour_box
+    @test length(filter(block -> block isa Axis, fig.content)) == 3
+    curve_box = curve_axis.layoutobservables.computedbbox[]
+    line = only(visible_plots(curve_axis, Lines))
+
+    rows[] = (; x, y = reverse(cos.(x)))
+    @test last.(only(visible_plots(neighbour, Scatter))[1][]) ≈ rows[].y
+    @test neighbour.layoutobservables.computedbbox[] == neighbour_box
+    @test curve_axis.layoutobservables.computedbbox[] == curve_box
+    @test only(visible_plots(curve_axis, Lines)) === line
+
+    snapshot = copy(colorbuffer(fig))
+    Grafico.seek!(plan, 1.8)
+    Grafico.seek!(plan, 1)
+    @test colorbuffer(fig) == snapshot
+    Grafico.seek!(plan, 2)
+    Grafico.seek!(plan, 1)
+    @test colorbuffer(fig) == snapshot
+end
+
+@testset "Native resize and 3D layout snapshots" begin
+    x,y = collect(1.:4.),collect(1.:5.)
+    values = [sin(a)*cos(b) for a in x,b in y]
+    source = S.GridLayout([(1,1)=>S.Axis3(plots=[S.Surface(x,y,values)])])
+    target = S.GridLayout([(1,1)=>S.Axis3(plots=[S.Surface(x,y,values)]),
+                           (1,2)=>S.Axis3(plots=[S.Surface(x,y,-values)])])
+    fig = figure(source;figure_kw=(size=(1000,500),))
+    axis = only(filter(block -> block isa Axis3,fig.content))
+    initial_width = axis.layoutobservables.computedbbox[].widths[1]
+    plan = Grafico.plan(to(fig => target;duration=2,ease=identity))
+    Grafico.seek!(plan,1)
+    @test axis in fig.content
+    @test axis.layoutobservables.computedbbox[].widths[1] < initial_width
+    before = axis.layoutobservables.computedbbox[]
+    resize!(fig,1280,640)
+    @test axis.layoutobservables.computedbbox[].widths[1] > before.widths[1]
+    image = copy(colorbuffer(fig))
+    Grafico.seek!(plan,2)
+    Grafico.seek!(plan,1)
+    @test colorbuffer(fig) == image
+
+    view = Observable{Any}(source)
+    snapshot_plan = Grafico.plan(to(view => target;duration=2,ease=identity))
+    Grafico.seek!(snapshot_plan,1)
+    snapshot = Figure()
+    Makie.plot(snapshot[1,1],spec(view))
+    @test any(color -> minimum(Tuple(RGBf(color))) < .9,colorbuffer(snapshot))
+end
+
+@testset "Unified figure compilation retains guides and native options" begin
+    graph = data((x=[1.,2.,3.],y=[2.,4.,3.],c=[1.,3.,2.])) *
+        mapping(:x,:y;color=:c) * visual(Scatter)
+    fig = figure(graph;figure=(size=(900,500),))
+    @test length(filter(block -> block isa Makie.Colorbar,fig.content)) == 1
+    @test Tuple(Makie.widths(fig.scene.viewport[])) == (900,500)
+    hidden = figure(graph;colorbar=(show=false,))
+    @test isempty(filter(block -> block isa Makie.Colorbar,hidden.content))
 end
 
 end # module GraficoMorphChecks

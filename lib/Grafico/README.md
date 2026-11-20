@@ -344,29 +344,49 @@ so coupled values remain consistent. Notifications then follow channel order.
 
 ## Morphing complete charts
 
-The same `to` accepts a view containing an ordinary Grafico plot:
+The returned Makie figure is the target when replacing a complete chart:
 
 ```julia
 first_plot = data((; x, y = sin.(x))) * mapping(:x, :y) * visual(Lines)
 next_plot = data((; x, y = cos.(x))) * mapping(:x, :y) *
     visual(Lines; color = Cycled(4), linewidth = 5)
-view = Observable{Any}(first_plot)
-fig = figure(view)
-playback = Grafico.plan(to(view => next_plot; duration = 2))
+fig = figure(first_plot)
+playback = Grafico.plan(to(fig => next_plot; duration = 2))
 ```
 
 Grafico interpolates corresponding layers' compatible data and attributes,
 along with the axis limits. Makie resolves palette indices and omitted style
-defaults in the figure's own theme. The axis and temporary native plot stay in
-place during the morph. At the endpoint the view contains the ordinary target
-plot again, with its reactive bindings.
+defaults in the figure's own theme. A matched panel keeps its native axis and
+temporary plot while its data and appearance change. At the endpoint the figure displays the ordinary target plot
+with its reactive bindings.
 
-Layers match by their order within panels at the same layout positions.
-Different plot kinds or incompatible data shapes crossfade. A changed panel
-layout or non-interpolable axis setting crossfades the complete charts,
-including ticks, labels, and grids. `to(view => nothing)` fades out; a view
-starting at `nothing` fades in. Intermediate geometry is discarded when the
-view leaves the transition, so repeated backward seeks do not accumulate plots.
+When a composition changes, Grafico matches panels by their plot kinds, data and
+attributes using Makie's SpecAPI comparison. Layout order breaks ties between
+indistinguishable panels. Matched panels move and resize into their destination
+rectangles. New panels grow into the space opened by their neighbours and fade
+in; removed panels shrink and fade out. Makie lays out the text and ticks at each
+size, keeping font sizes in points.
+
+Layers within a matched panel follow their declared order. Different plot kinds
+or incompatible data shapes crossfade within that panel. Panels with incompatible
+axis settings crossfade individually when other panels can be matched. Charts
+with no matching panels crossfade completely. `to(fig => nothing)` fades out;
+a figure starting at `nothing` fades in. Intermediate geometry is discarded when
+a transition ends, so backward seeking does not accumulate plots.
+
+An Observable child identifies a separately replaceable part of a composition:
+
+```julia
+child = Observable{Any}(first_plot)
+fig = figure(child | comparison)
+playback = Grafico.plan(to(child => next_plot))
+```
+
+Here `child` holds a whole plot declaration, while Observables in `data`, `mapping`,
+`visual` and coordinate settings keep controlling their ordinary values. `Any`
+lets a child hold different declaration types and temporary transition states.
+Whole-figure authoring uses `figure(first_plot)` directly; Grafico keeps that
+replaceable value internally.
 
 `duration` and `ease` customize these defaults. When a story needs a specific
 data correspondence or path, animate its ordinary data or attribute Observables
@@ -444,6 +464,6 @@ separately demonstrates compiled Julia motion and numerical dependencies,
 including typed Observable values, Lines and Scatter renderer bindings, changing
 data sizes, and pointer dragging. Its experimental compiler does not yet export
 every Makie recipe, camera computation or event callback. Chart morphs match
-panels and layers by position; correspondence between unrelated observations
+panels by their contents and layers by order; correspondence between unrelated observations
 needs an authored rule. Grafico owns both export paths; Tanim embeds the prepared
 HTML and vector still and contains no Julia code.

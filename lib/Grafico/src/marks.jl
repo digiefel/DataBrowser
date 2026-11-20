@@ -280,11 +280,7 @@ function spec(m::AbstractMark, args...; axis=nothing, options...)
 end
 
 function figure(m::AbstractMark, args...; figure_kw=(;), options...)
-    (_contains_plot(m) || _hasobs(m)) && return _reactive_figure(m, args...; figure_kw, options...)
-    isempty(args) || throw(ArgumentError("Bind input data to a chart or use mark(f) for data-driven glyphs."))
-    fig = Figure(; figure_kw...)
-    Makie.plot(fig[1, 1], spec(m; options...))
-    return fig
+    _reactive_figure(m, args...; figure_kw, options...)
 end
 
 """

@@ -212,6 +212,7 @@ mutable struct _CompiledPlot
     forwarding::Vector{Makie.ObserverFunction}
     declaration::Any
     axes::Vector{WeakRef}
+    blocks::Vector{WeakRef}
     figure::WeakRef
     state::Any
 end
@@ -219,12 +220,22 @@ end
 function _CompiledPlot(specification; declaration = nothing, state = nothing)
     node = _CompiledPlot(Makie.Observable{Makie.GridLayoutSpec}(specification),
         Makie.ObserverFunction[], _CompiledPlot[], Makie.ObserverFunction[],
-        declaration, WeakRef[], WeakRef(nothing), state)
-    finalizer(_dispose!,node)
+        declaration, WeakRef[], WeakRef[], WeakRef(nothing), state)
+    finalizer(_finalize_compilation!,node)
     node
 end
 
 _dispose_state!(::Nothing) = nothing
+
+# Scene mutation belongs to explicit replacement while the figure is alive.
+# Native Makie scenes release their own resources. In particular, a finalizer
+# must not relayout text after FreeType has finalized its fonts at process exit.
+function _finalize_compilation!(node::_CompiledPlot)
+    foreach(Makie.off,node.observers)
+    foreach(Makie.off,node.forwarding)
+    empty!(node.observers); empty!(node.forwarding)
+    nothing
+end
 
 function _dispose!(node::_CompiledPlot)
     _dispose_state!(node.state)
@@ -235,6 +246,8 @@ function _dispose!(node::_CompiledPlot)
     empty!(node.observers); empty!(node.forwarding); empty!(node.children)
     nothing
 end
+
+_inherit_compiled_state!(replacement, current) = nothing
 
 _compile_plot(plot,args...;kwargs...) = _compile_plain_plot(plot,args...;kwargs...)
 
@@ -269,9 +282,10 @@ function _compile_plot(source::Makie.Observable,args...;kwargs...)
         if length(current.children) == 1 && _update_compiled_state!(only(current.children), value)
             return
         end
+        replacement = _compile_plot(value,args...;kwargs...)
+        _inherit_compiled_state!(replacement, current)
         foreach(Makie.off,current.forwarding)
         foreach(_dispose!,current.children)
-        replacement = _compile_plot(value,args...;kwargs...)
         _set_figure!(replacement, current.figure.value)
         current.children = [replacement]
         current.forwarding = [forward(replacement)]
@@ -283,7 +297,15 @@ end
 
 function _compile_plot(composed::ComposedFigure,args...;layout=(;),kwargs...)
     children = [_compile_plot(child,args...;kwargs...) for (_,child) in composed.cells]
-    assemble(nodes) = _layout_spec(S.GridLayout([position => child.specification[] for ((position,_),child) in zip(composed.cells,nodes)]), layout)
+    function assemble(nodes, changed = nothing)
+        # Reserve unchanged native panels before SpecAPI matches a changing
+        # child's new panels. Otherwise an identical new plot can take a sibling's
+        # axis from the shared reuse cache.
+        order = changed === nothing ? collect(eachindex(nodes)) :
+            [filter(i -> i != changed,collect(eachindex(nodes))); changed]
+        _layout_spec(S.GridLayout([first(composed.cells[i]) => nodes[i].specification[]
+                                  for i in order]),layout)
+    end
     node = _CompiledPlot(assemble(children); declaration = composed)
     node.children=children
     weak=WeakRef(node)
@@ -293,10 +315,10 @@ function _compile_plot(composed::ComposedFigure,args...;layout=(;),kwargs...)
             current === nothing || (current.specification[] = assemble(current.children))
         end)
     end
-    for child in children
+    for (index,child) in enumerate(children)
         push!(node.forwarding,Makie.on(child.specification) do _
             current=weak.value
-            current === nothing || (current.specification[]=assemble(current.children))
+            current === nothing || (current.specification[]=assemble(current.children,index))
         end)
     end
     node
@@ -305,14 +327,16 @@ end
 # SpecAPI retains unused grids for reuse. Detach those owned grids before it
 # shrinks their parent; stale column spans otherwise break reverse layout seeks.
 function _update_native_layout!(layout, specification, reusable, current)
-    for (_, (child, _)) in reusable
-        child isa Makie.GridLayout || continue
-        content = child.layoutobservables.gridcontent[]
-        (content === nothing || content.parent === nothing) && continue
-        content.parent.block_updates = true
-        Makie.GridLayoutBase.remove_from_gridlayout!(content)
+    _with_chart_layouts(reusable) do
+        for (_, (child, _)) in reusable
+            child isa Makie.GridLayout || continue
+            content = child.layoutobservables.gridcontent[]
+            (content === nothing || content.parent === nothing) && continue
+            content.parent.block_updates = true
+            Makie.GridLayoutBase.remove_from_gridlayout!(content)
+        end
+        Makie.update_gridlayout!(layout, specification, reusable, current)
     end
-    Makie.update_gridlayout!(layout, specification, reusable, current)
 end
 
 function _connect_native_layout!(figure, specification)
@@ -325,9 +349,10 @@ function _connect_native_layout!(figure, specification)
     nothing
 end
 
-function _reactive_figure(plot,args...;figure_kw=(;),kwargs...)
-    compiled = _compile_plot(plot,args...;kwargs...)
-    fig = Figure(;figure_kw...)
+function _reactive_figure(plot,args...;figure_kw=(;),figure=(;),kwargs...)
+    contents = Makie.Observable{Any}(plot)
+    compiled = _compile_plot(contents,args...;kwargs...)
+    fig = Figure(;figure...,figure_kw...)
     fig.attributes[:_grafico_compilation] = compiled
     _set_figure!(compiled, fig)
     _connect_native_layout!(fig, compiled.specification)
@@ -374,3 +399,7 @@ spec(::Nothing,args...;kwargs...) = child_spec(nothing)
 spec(matrix::AbstractMatrix,args...;kwargs...) = spec(_grid(matrix),args...;kwargs...)
 figure(matrix::AbstractMatrix,args...;kwargs...) = _reactive_figure(_grid(matrix),args...;kwargs...)
 _compile_plot(matrix::AbstractMatrix,args...;kwargs...) = _compile_plot(_grid(matrix),args...;kwargs...)
+
+figure(plot::Makie.GridLayoutSpec, args...; options...) = _reactive_figure(plot, args...; options...)
+
+figure(plot::Nothing, args...; options...) = _reactive_figure(plot, args...; options...)

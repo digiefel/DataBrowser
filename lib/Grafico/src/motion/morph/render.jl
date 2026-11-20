@@ -31,6 +31,7 @@ function _attach_chart!(state)
     all(reference -> reference.value !== nothing, state.blocks) || return false
     left = _chart_blocks(state.prepared.source)
     right = _chart_blocks(state.prepared.destination)
+    panels = state.prepared.panels
     for (index,(a,b)) in enumerate(zip(left,right))
         block = state.blocks[index].value
         names = union(keys(a.kwargs), keys(b.kwargs))
@@ -39,7 +40,8 @@ function _attach_chart!(state)
             if hasproperty(block,key))
         baseline = Dict(key => original_values[key] for key in names if haskey(original_values,key))
         push!(state.originals,(kind=:block, object=block, values=baseline))
-        source_plots = isempty(a.plots) ? Any[] : last(block.scene.plots,length(a.plots))
+        entering = panels !== nothing && first(panels[index].opacity) == 0
+        source_plots = entering || isempty(a.plots) ? Any[] : last(block.scene.plots,length(a.plots))
         for plot in source_plots
             push!(state.originals,(kind=:plot,object=plot,values=(visible=plot.visible[],)))
             Makie.update!(plot; visible=false)
@@ -60,6 +62,7 @@ function _attach_chart!(state)
             isequal(_chart_native_value(block,key),value) || (baseline[key] = value)
         end
     end
+    _attach_chart_layout!(state)
     true
 end
 
@@ -91,12 +94,19 @@ function _render_compiled_state!(node,state::_ChartMorphState)
             Makie.update!(plot,sample.args...;sample.kwargs...)
         end
     end
+    _render_chart_layout!(state)
     nothing
 end
 
 function _dispose_state!(state::_ChartMorphState)
     state.disposed && return
     state.disposed = true
+    _release_chart_rendering!(state)
+end
+
+function _release_chart_rendering!(state)
+    _restore_chart_layout!(state)
+    state.initialized = false
     for plot in state.owned
         scene = Makie.parent_scene(plot)
         scene.isclosed || Makie.delete!(scene,plot)
