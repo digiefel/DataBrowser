@@ -1,15 +1,13 @@
 # Tabs and analysis files
 
-What is still open about tabs: how a tab file declares analysis and reuses other files, which tab
-owns a window, how a tab targets its own selection, how a debug window captures local values, and
-what a tab saves. [Architecture](../ARCHITECTURE.md#visualizers) describes the windows that are
-built, and the [vision](../vision.md) the settled direction, with tabs as live Julia files whose
-`@layout` declares their windows.
+[Architecture](../ARCHITECTURE.md#visualizers) describes the windows built today, and the
+[vision](../vision.md) defines tabs as live Julia files whose `@layout` block declares their
+windows. How tab files declare analysis, reuse other files, own windows, target per-tab selections,
+capture local values for debugging, and persist state remains open.
 
 ## A workflow to support
 
-The user writes an ordinary Julia helper and an adapter for selected data in a tab file, for
-example:
+Suppose a user writes an ordinary Julia helper and an adapter for selected data in a tab file:
 
 ```julia
 function fitter(time, current)
@@ -19,83 +17,80 @@ end
 try_fitter(selection) = [fitter(x.data.time, x.data.current) for x in selection]
 ```
 
-A window runs the helper on the selection, without a trial call in the file, and the same helper
-stays usable directly from Julia. A second analysis file then calls the helper in its own analysis
-functions, and a third queries or tags the results, aggregates them and builds a figure. The values
-in between stay named and inspectable, and the user can compare another calculation and make it
-repeatable work without copying code. How a tab file declares such a helper for a window, and how
-another file reuses it, is open.
+A window runs that helper on the selection without requiring a trial call in the file, while the
+helper stays directly callable from Julia. A second analysis file then calls the helper in its own
+functions, and a third file queries or tags those results, aggregates them, and builds a figure.
+Intermediate values stay named and inspectable, so the user can compare an alternative calculation
+and promote repeatable work without copying code. How a tab file declares such a helper for a window
+and how other files reuse it remain open.
 
-Queries and aggregations are ordinary Julia code. GUI actions can write recognized declarations
-or explicitly insert new ones. Inline controls change literal values only; see
+Queries and aggregations are ordinary Julia code. GUI actions can write recognized declarations or
+insert new ones, while inline controls edit literal values only; see
 [plot editor](../plot-editor.md#editing).
 
 ## Inspecting a local value
 
-A click on a local variable offers "Show in a window". The debug window belongs to this tab and
-shows the value from the relevant run, without debug code in the user's function. Opening the
-source of the helper in another tab does not bring the debug windows of the first tab with it.
+Clicking a local variable offers "Show in a window". That debug window belongs to the current tab
+and shows the value from the relevant run, without inserting debug code into the user's function;
+opening the helper's source in another tab does not bring the first tab's debug windows along.
 
-The capture mechanism is open. A local cannot be recovered from a completed run unless it was
-retained. A debug request may run repeatable analysis again on retained input, but it never
-repeats acquisition or instrument commands, and it never blocks the GUI thread. Capture during
-execution that cannot be repeated needs a separate experiment. Several selected items and edits of
-the source also need a defined behavior.
+The capture mechanism remains open. A local variable cannot be recovered from a completed run unless
+it was retained; a debug request may rerun repeatable analysis on retained input, yet it must never
+repeat acquisition or instrument commands and never block the GUI thread. Capturing locals during
+non-repeatable execution needs a separate experiment, and multi-item selections or source edits also
+need defined behavior.
 
-From a value the user reaches the code, and the code shows the values that this computation had
-inside when it produced the value. The value that the user came from therefore identifies the
-relevant run. [The code editor plan](code-editor.md#values-in-the-code) holds how the code shows
-these values, with a measurement of the capture.
+From any displayed value, the user can open the code that produced it and see the local values held
+during that computation, so the starting value identifies the relevant run.
+[The code editor plan](code-editor.md#values-in-the-code) describes how the editor displays those
+values and gives a capture measurement.
 
 ## Selection
 
-A tab can have a selection of its own, which changes of the selection of the workspace leave alone.
-How code targets the selection of a tab is open.
+A tab can keep its own selection, independent of changes to the workspace selection. How code targets
+a tab's selection remains open.
 
 ## Declarations and windows
 
-Stable plot and analysis definitions should use clear
-macros, following the role of `@plot`. Names such as `@process` or `@analyze` are illustrative;
-the grammar is not chosen. Ordinary one-off REPL calls and queries do not require a declaration.
-A query can instead be part of a saved definition when it describes that analysis's input.
-The GUI writes and edits the same macro declaration that a person or agent can write.
+Stable plot and analysis definitions should use clear macros matching the role of `@plot` (names
+such as `@process` are illustrative; the grammar is not chosen). One-off REPL calls and queries need
+no declaration, while a query can form part of a saved definition when it specifies that analysis's
+input; the GUI writes and edits the same macro declaration that a person or agent writes.
 
-These details of windows are proposed:
+Four window rules are proposed:
 
 - A window belongs to the tab whose file or GUI action opened it.
-- Actions that open or change a window write recognized code into the file of that tab.
-- Debug markers live in the state of the browser, apart from analysis definitions.
-- A window may show a named value or run a helper on a chosen input; the declaration and the
-  functions that give the result are not designed.
+- GUI actions that open or update a window write recognized code into that tab's file.
+- Debug markers live in browser state, separate from analysis definitions.
+- A window can show either a named value or a helper run on a chosen input; the exact declaration
+  and lookup functions are not designed yet.
 
-Ordinary `include` evaluates the top-level expressions of a file each time, so it cannot load a
-file only once. The design must give reuse of files and ownership of windows on top of it. A module
-for each file was explored and not chosen.
+Because ordinary `include` evaluates every top-level expression in a file each time it runs, it
+cannot load a shared file once. The design must support file reuse and window ownership on top of
+it; putting each file in its own module was explored and rejected.
 
 ## Live code and saved work
 
-Edits to analysis code refresh the affected results, which does not mean evaluating every top-level
-expression of a file again. Loading definitions, following what they depend on, and recognizing
-declarations need one contract.
+Edits to analysis code refresh affected results without rerunning every top-level expression in a
+file. Loading definitions, tracking their dependencies, and recognizing declarations all need one
+coherent contract.
 
-Source definitions, the layout, lasting annotations by the user and retained results stay apart.
-Tags are shared state of the project, and a query whose result changes never behaves as tags that
-the user assigned. Whether every result and annotation shares one store is open;
-[storage](storage.md) holds who owns data, the index and lasting state.
+Source definitions, layouts, user annotations, and retained results stay separate. Tags belong to
+shared project state, so a query whose results change dynamically never overwrites user-assigned
+tags. Whether every result and annotation shares one store remains open; [storage](storage.md) owns
+data persistence, indexing, and durable state.
 
 ## Open work
 
-1. Declarations and discovery: create a tab or a window, bind a named result or helper, choose
-   inputs and target the selection of a tab or of the workspace, from Julia and from the GUI.
-2. Loading and reuse of files: recognize definitions and their changes without running unrelated
-   effects again, and keep the ownership of windows under ordinary code loading.
-3. Debug capture: the relevant run, retained locals, the scope of the selected items, renamed
-   variables and execution that cannot be repeated, and what a local that is not available looks
-   like. The [code editor plan](code-editor.md#values-in-the-code) has the latest statement and
-   its open points.
-4. Trials on selected items versus the default analysis: compare alternatives, keep their results
-   and make the chosen definition the default without changing the whole project by accident.
-5. Saving and undo: what edits of the source, the state of the browser and debug markers keep when
-   the tab opens again.
-6. Tags versus computed queries: who owns them, and what is removed when an automated definition
-   changes.
+1. Declarations and discovery: create a tab or window, bind a named result or helper, select inputs,
+   and target either a tab selection or the workspace selection from Julia and from the GUI.
+2. File loading and reuse: detect definitions and edits without re-running unrelated side effects,
+   and keep window ownership intact under ordinary code loading.
+3. Debug capture: identify the relevant run, retain locals, handle multi-item scopes, renamed
+   variables, and non-repeatable runs, and show unavailable locals clearly (see
+   [code editor](code-editor.md#values-in-the-code)).
+4. Trials on selected items vs. default analysis: compare alternatives, keep their results, and
+   promote a chosen definition to the default without accidentally altering the whole project.
+5. Saving and undo: decide what source edits, browser state, and debug markers preserve when a tab
+   reopens.
+6. Tags vs. computed queries: clarify ownership and what happens when an automated definition changes.

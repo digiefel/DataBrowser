@@ -1,131 +1,119 @@
 # Code editor
 
-What is still open about the code editor of the web client: the parser that keeps the structure of
-the code while the user types, the language server that gives its meaning, which drags of code
-Julia allows, and how the host captures the values shown in the code. Nothing here is built. The
-[vision](../vision.md) gives the goals of the editor, which follow Hazel, and the split of its work
-between a parser in the editor, the Julia language server in the host and the client API.
-[Runtime and clients](runtime-and-clients.md) follows a save to the redraw, and [tabs](tabs.md)
-covers analysis files and the window that shows a local value.
+The [vision](../vision.md) sets the goals for the web client's structural code editor (modeled on
+Hazel) and splits its work between an in-browser parser, a Julia language server in the host, and
+the client API; [Runtime and clients](runtime-and-clients.md) follows a file save to redrawing, and
+[tabs](tabs.md) covers analysis files and debug windows. Nothing here is built yet: the parser,
+language-server extensions, legal code drags, and runtime value capture remain open.
 
 ## Structure while typing
 
-Hazel's parser gives a complete syntax tree for any text. Where something is missing, the parser
-puts a *hole*, a placeholder that the rest of the editor treats as an expression, so typing never
-leaves the editor without structure. The editor needs such a parser for Julia, and it must answer
-each keystroke without a trip to another process. The language server reads code with Julia's own
-parser, as Julia does when it loads a file.
+Hazel's parser produces a complete syntax tree for any text by inserting a *hole* — a placeholder
+treated as an expression by the rest of the editor — wherever code is incomplete, so typing never
+leaves the editor without syntax structure. Our editor needs a similar parser for Julia that reacts
+to every keystroke without a round-trip to another process, while the language server still parses
+saved files with Julia's own parser.
 
-The candidates have these properties:
+Four parser candidates have these properties:
 
-- **tylr** is the parser of Hazel. For its latest form, the paper "Syntactic Completions with
-  Material Obligations" (OOPSLA 2025) proves that any sequence of tokens completes into a
-  well-formed term. tylr is a generator: it takes a grammar of precedence levels and extends
-  operator-precedence parsing. The paper states its limits: little optimization, responsive below
-  about 100 lines, and no incremental parsing. It is written in Reason and OCaml and compiled for
-  the web browser.
-- **JuliaSyntax.jl** is Julia's own parser. With `ignore_errors=true` it returns a tree with
-  `error` nodes. A stray `)` becomes one error node and the later statements stay intact; an
-  unclosed `(` takes in the next line; a missing `end` takes in the rest of the file. It has no
-  incremental parsing, and the compilers from Julia to WebAssembly that could run it in a web
-  browser are experimental.
-- **tree-sitter-julia** runs in a web browser as WebAssembly and parses incrementally. It has no
-  active maintainer, and it parses some valid Julia code wrongly.
-- **lezer-julia** is the grammar for CodeMirror 6 that Pluto uses. It always gives a tree and
-  parses incrementally, and it also parses some valid Julia code wrongly.
+- **tylr** is Hazel's parser. The paper "Syntactic Completions with Material Obligations" (OOPSLA
+  2025) proves its latest algorithm turns any token sequence into a well-formed term by extending
+  operator-precedence parsing over a precedence grammar. Its documented limits are minimal
+  optimization (staying responsive below roughly 100 lines), no incremental parsing, and an
+  OCaml/Reason implementation compiled to JavaScript for the browser.
+- **JuliaSyntax.jl** is Julia's built-in parser. With `ignore_errors=true`, it returns a tree
+  containing `error` nodes: a stray `)` becomes one error node leaving later statements intact,
+  whereas an unclosed `(` swallows the next line and a missing `end` swallows the rest of the file.
+  It lacks incremental parsing, and Julia-to-WebAssembly compilers able to run it in the browser
+  remain experimental.
+- **tree-sitter-julia** runs in a browser as WebAssembly and parses incrementally, yet lacks an
+  active maintainer and misparses some valid Julia syntax.
+- **lezer-julia** is the CodeMirror 6 grammar used by Pluto; it always returns a tree and parses
+  incrementally, yet also misparses some valid Julia syntax.
 
-How well the method of tylr fits Julia is unknown. Julia has newlines that end statements, spaces
-that matter inside brackets (`[a -b]`), juxtaposition (`2x`), macros and nested string
-interpolation, and none of these is plain operator precedence.
+How well tylr's approach fits Julia is untested, because Julia relies on newlines ending
+statements, significant whitespace inside brackets (`[a -b]`), juxtaposition (`2x`), macros, and
+nested string interpolation — none of which reduces cleanly to operator precedence.
 
 ## Meaning: the Julia language server
 
-Features for writing code go through LSP, and the same server answers the code editor and VS Code.
-A hard fork of JETLS is one way to build it. The editor needs three things from the server that
-the Julia language servers of today lack, and all three are proposals:
+Writing and refactoring code goes through LSP, so one server can serve both our code editor and VS
+Code; hard-forking JETLS is one option. The editor needs three capabilities missing from today's
+Julia language servers:
 
-- **Types from the calls that ran.** The workspace knows the argument types of every call that it
-  ran. The server infers each method with those types, so a method declared as `process(item)`
-  shows the types that it really works with.
-- **Proofs for drags:** the scope of each name and the side effects of each expression.
-- **The places that call a method**, from the calls that ran and from inference.
+- **Types from executed calls.** Because the workspace records the argument types of every call that
+  ran, the server can infer each method with those observed types so a generic signature like
+  `process(item)` displays the actual types it runs on.
+- **Proofs for drags:** lexical scope of every name and side effects of every expression.
+- **Actual call sites** for each method, combined from observed runs and type inference.
 
-The existing servers and the protocol have these properties:
+Existing servers and LSP offer this baseline:
 
-- **JETLS** calls itself experimental. Its full analysis runs when a file is opened or saved, and
-  infers each method from its declared signature; while the user types, it only parses and lowers
-  the code. It documents no way to give it the types seen at run time. It offers rename and find
-  references, matched by name and module, and it has no "extract" action.
-- **LanguageServer.jl** analyses code statically, with StaticLint on CSTParser trees. Its code
-  actions are small rewrites, and it has no "extract" action either.
-- **LSP 3.17** has `textDocument/inlayHint` for text shown inside the code, and
-  `textDocument/publishDiagnostics`, which a server sends at any time. Its
-  `textDocument/inlineValue` is designed for a debugger stopped at a line. A server can add
-  requests of its own, as rust-analyzer does.
+- **JETLS** describes itself as experimental. Its full analysis runs on open or save and infers each
+  method from its declared signature, while during typing it only parses and lowers code; it has no
+  documented hook for runtime argument types, offers only name-and-module rename and find-references,
+  and has no "extract" refactoring.
+- **LanguageServer.jl** analyzes code statically via StaticLint over CSTParser trees, offering small
+  code actions without an "extract" refactoring.
+- **LSP 3.17** provides `textDocument/inlayHint` for inline annotations and
+  `textDocument/publishDiagnostics` at any time (while `textDocument/inlineValue` assumes a paused
+  debugger), and servers can add custom requests as `rust-analyzer` does.
 
 ## Dragging code
 
-In [the Hazel clip](https://declarative-dragging.github.io/clips/hazel-refactoring.mp4) of the
-paper [Declarative Dragging](https://declarative-dragging.github.io/D2.pdf), the user grabs an
-expression without selecting text and moves it across brackets and scopes. While the user drags,
-the editor shows how the program would change at each place where the expression could land, and
-restructures the code around it as needed. One gesture serves every operation: its meaning follows
-from what is grabbed, where it goes, and the structure around it. The clip shows five operations:
+In [the Hazel clip](https://declarative-dragging.github.io/clips/hazel-refactoring.mp4) from
+[Declarative Dragging](https://declarative-dragging.github.io/D2.pdf), a user grabs an expression
+without selecting text and drags it across brackets and scopes. During the drag, the editor previews
+valid drop targets and restructures surrounding code automatically, unifying five refactorings under
+one gesture:
 
-| Operation | The drag | What the editor does |
+| Operation | Dragged syntax | Editor action |
 | --- | --- | --- |
-| Extract | An arithmetic expression | Gives the expression a name of its own |
-| Hoist with dependencies | An expression, out of its scope | Moves the expression together with the local variables that it uses |
-| Swap params | A parameter of a function, across another | Exchanges the parameters, and the arguments wherever the function is called |
-| Flip branches | A branch of an `if`, across the other | Exchanges the branches and negates the condition |
-| Hoist, or Join into tuple | A `let` binding, out of the expression around it | Moves the binding outward, or joins it with another binding |
+| Extract | an arithmetic expression | binds the expression to a new name |
+| Hoist with dependencies | an expression out of its scope | moves the expression together with the local variables it uses |
+| Swap params | a function parameter past another | swaps the parameters and updates arguments at every call site |
+| Flip branches | one branch of an `if` past the other | swaps the branches and negates the condition |
+| Hoist, or Join into tuple | a `let` binding out of its enclosing expression | moves the binding outward or merges it with another binding |
 
-Julia changes two of them. Hazel's language has no side effects, so an expression gives the same
-value wherever it runs and however often, while in Julia an expression moved out of a loop runs
-once. Also, the method that a Julia call reaches depends on the types at run time, so Swap params
-finds the places that call the method from the calls that ran and from inference, and lists the
-uncertain ones for the user to confirm.
+Julia complicates two of those operations. First, unlike Hazel's pure language, Julia allows side
+effects, so hoisting an expression out of a loop makes it run once instead of every iteration.
+Second, dispatch depends on runtime types, so Swap params must combine observed calls with inference
+and ask the user to confirm uncertain call sites. Macros add a third complication by rewriting their
+arguments arbitrarily; one proposal leaves macro arguments untouched unless the macro declares how
+it uses them, as DataBrowser's own macros (such as `@plot`) can.
 
-Macros raise a third problem: a macro can give the same text another meaning. A proposal: the
-editor leaves the arguments of a macro alone unless the macro states how it uses them, as
-DataBrowser's own macros, such as `@plot`, can.
-
-The dragging itself can use Dragology, the dragging library of the paper: TypeScript, drawing with
-SVG, for React, MIT license, without documentation so far. Hazel's own drag refactorings (branch
-`refactorings`, file `RefactorDrag.re`) implement the ideas of the paper without the library. The
-layout of the code is the editor's own, so Dragology can serve it. Existing editors offer no base:
-CodeMirror 6 and Monaco have no dragging of structure, and the editors that have it (Droplet,
-codemirror-blocks, Strype, MakeCode) show code as blocks or frames in place of plain text.
+For the UI gesture itself, the paper's Dragology library (TypeScript, SVG, React, MIT-licensed,
+undocumented) or Hazel's own `refactorings` branch (`RefactorDrag.re`) provides a starting point
+since the editor owns its text layout. Mainstream editors like CodeMirror 6 and Monaco lack
+structural dragging, whereas structural editors like Droplet, `codemirror-blocks`, Strype, and
+MakeCode replace plain text with visual blocks or frames.
 
 ## Values in the code
 
-From a value, such as the figure of a window, the user opens the code of the computation that
-produced it, and the editor shows beside each local variable the value that it had in that
-computation. The host captures these values, and three facts bound how:
+Opening the code behind a displayed figure or value shows, beside each local variable, the value
+it held during the computation that produced it. Three constraints govern how the Julia host
+captures those values:
 
-- The values inside a completed computation exist only if the host kept them while it ran. A
-  repeatable computation runs again to give them, while an acquisition or an instrument command is
-  never repeated.
-- Capturing the values of one call is cheap when only that one function runs in an interpreter and
-  everything that it calls runs compiled. With JuliaInterpreter on `sum(abs2, sort(x))`, this takes
-  about the time of a normal run, a few milliseconds, while interpreting everything takes about
-  65,000 times more.
-- Hazel never hangs because it evaluates in a worker of the web browser, which it stops and
-  replaces when a program runs longer than 20 s. The Julia host has the same role, and DBCore stops
-  and replaces it.
+- Values inside a completed computation exist only if the host recorded them while running; a
+  repeatable computation can rerun to produce them, whereas an acquisition or instrument command
+  never repeats.
+- Capturing locals inside a single call stays cheap when only that top function runs interpreted and
+  everything it calls runs compiled: with `JuliaInterpreter` on `sum(abs2, sort(x))`, that takes a
+  few milliseconds (comparable to a compiled run), whereas interpreting callees takes roughly 65,000
+  times longer.
+- Hazel never hangs because evaluation runs in a web worker killed and restarted after 20 s; the
+  Julia host plays that same role under DBCore.
 
-The values reach the editor through the client API, as data. The protocol serves them to other
-editors too; in VS Code the language server can show them as inlay hints.
+Captured values reach the editor through the client API as data, allowing other editors such as VS
+Code to display them as inlay hints via the language server.
 
 ## Open questions
 
-- Is LSP the right carrier for everything that the editor asks the language server? The programs
-  that each drop leads to have no request in LSP today.
-- Is the language server a hard fork of JETLS, or new work?
-- Is the parser the method of tylr applied to Julia, or a tolerant parser on an existing Julia
-  grammar? Either one must stay responsive on files of thousands of lines.
-- What does the editor show for a line that ran many times in one computation, such as a line
-  inside a loop?
-- Does the editor evaluate text before the save? Other programs learn about a change when the file
-  is saved, and the answer follows from what gives the best experience.
-- How does a macro state how it uses its arguments?
+- Does LSP fit every query the editor needs from the language server, given that LSP currently lacks
+  requests for candidate refactorings along a drag path?
+- Should the Julia language server start as a hard fork of JETLS or from scratch?
+- Should the tolerant in-browser parser adapt tylr's method to Julia or wrap an existing Julia
+  grammar, staying responsive on files of thousands of lines?
+- How should the editor display local values for lines executed repeatedly inside a loop?
+- Should the editor evaluate unsaved text before a file is saved, or only on save?
+- How should macros declare how they inspect and transform their arguments?

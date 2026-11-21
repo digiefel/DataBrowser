@@ -1,20 +1,19 @@
 # DataBrowser Roadmap
 
-This roadmap lists the work of each release of the `DataBrowser` package. A checked item is built,
-and an unchecked item is open. A checked item describes the code of its time, so some of its names
-are gone; [Architecture](ARCHITECTURE.md) describes the code today.
+Each release section below lists built work (`[x]`) and open work (`[ ]`). Checked entries use
+the terminology of their time, so some names have changed; [Architecture](ARCHITECTURE.md) describes
+the codebase today.
 
-Acquisition, automatic live analysis, native visualization, and agent/API use share the existing
-package family. Streaming implementations can arrive later; the requirements of sources that cannot
-be read again, in the [vision](vision.md#12-caching-and-persistence), guide the work
-already under way.
+Acquisition, live analysis, native visualization, and agent or script access all share the same
+package family. Streaming implementations can arrive later, while the requirements for sources that
+cannot be read again in [the vision](vision.md#12-caching-and-persistence) already guide engine
+storage and recovery work.
 
-The proposed dependency order for current work is: expose shared headless analysis/view
-definitions, and build tabs/debugging and responsive visualizers. Streaming-source recovery and acquisition controls
-are later work behind the same data-access boundary, not prerequisites for those visualizers.
-Visualization measurements and one serious domain-package proof belong alongside that work. Version headings
-below remain the existing release organization, not a strict dependency order. Detailed APIs and
-production streaming scope remain open.
+The proposed dependency order for open work is to expose shared headless analysis and view
+definitions first, then build tabs, local debugging, and responsive visualizers; streaming recovery
+and acquisition controls fit behind the same data-access boundary later. Performance measurements
+and a first substantial domain package run alongside that work. The version headings below group
+goals by release rather than strict dependency order.
 
 ## 0.1.0 — Public API foundation
 

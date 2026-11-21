@@ -1,80 +1,79 @@
 # Visualizers
 
-What is still open about visualizers: how a window chooses what to show, what the code view shows,
-how the browser shows the items that a group produced, linked interaction and provenance, and what
-crosses from the Julia host to a client. [Architecture](../ARCHITECTURE.md#visualizers) describes
-the visualizers that are built, and the [vision](../vision.md) the settled direction.
+[Architecture](../ARCHITECTURE.md#visualizers) describes the visualizers built today, and the
+[vision](../vision.md) sets out the settled direction. Window input selection, code-view details,
+items produced by a group, linked provenance, and host-to-client transport remain open.
 
 ## Choosing what a window shows
 
-Generic views cover common data without project-specific drawing code. Domain packages extend
-the available visualizers through the public contract. Project helpers can transform a value into
-another native value. The plot builder is one consumer of that shared work, not the owner of
+Generic views cover common data without project-specific drawing code, while domain packages add
+custom visualizers through the public contract. Project helpers can transform any value into another
+native value, and the plot builder is one consumer of that shared work rather than the owner of
 processing and analysis.
 
-How a user chooses a property or an analysis result of the input, and how code changes the
-arrangement of a window (Stack, Grid or Overlay), are open. So is how a visualizer type declares
-which values, settings and arrangements it takes, so that the browser and code can discover it.
-Composed figures and registered domain plots should use the same values and input contracts.
+How a user picks a property or analysis result from an input, and how code updates a window's
+arrangement (`Stack`, `Grid`, or `Overlay`), remain open. So does how a visualizer type declares
+which value types, settings, and arrangements it supports so both the browser and scripts can
+discover them. Composed figures and registered domain plots should share the same value and input
+contracts.
 
-An input that follows the own selection of a tab is open too; [tabs](tabs.md#selection) holds that
-question.
+Supporting inputs that follow a tab's own selection remains open as well; see
+[tabs](tabs.md#selection).
 
 ## The code view
 
-Besides whether its store keeps the result and its last run, the code view could show more about
-the selected call: its state, the number of its inputs, the type and shape of its result, and its
-failure. Which of these it shows is open.
+Beyond showing whether a result is stored and when it last ran, the code view could also show the
+selected call's state, input count, result type and shape, and error details; which of these appear
+remains open.
 
 ## Items that a group produced
 
-A `process` method on a group can give new items, such as a fit through its members. The browser
-has to keep these results apart from the members of the group and from the tree, which only
-organizes items. Opening the members of an item is a separate action from the `process` call that
-made new items. [Groups](groupings.md#members-and-the-call-that-produced-a-value) holds the
-question of how the browser shows where a value came from.
+A `process` method on a group can return new items, such as a fit across its members. The browser
+must keep those produced items distinct from the group's members and from the tree, which only
+organizes items; expanding a group's members is separate from inspecting the items created by a
+`process` call. [Groups](groupings.md#members-and-the-call-that-produced-a-value) holds the open
+question of how the browser displays where a value came from.
 
-A check for this: a group averages images, and a later `process` method splits the mean image into
-tiles. Selecting the group shows its mean image, and the original images stay reachable as its
-members. The tiles must also be easy to find, inspect and reuse, with a link to the call that made
-them, and they stay apart from the original images.
+As a test case, suppose a group averages images and a later `process` method splits the mean image
+into tiles. Selecting the group shows its mean image while the original images remain accessible as
+its members; the tiles must also be easy to locate, inspect, and reuse via the call that created
+them, without mixing them into the original member images.
 
-An item can be in several groups, and the path to it in the tree never changes the inputs of a
-calculation. The GUI and code need separate access to members, to the tree and to the items that a
-call produced, and none of them can depend on an open plot. The exact controls and functions are
-open.
+Because an item can belong to several groups, its tree path never alters calculation inputs. Both
+the GUI and Julia code need separate access to members, to the tree, and to call outputs without
+depending on an open plot; the exact controls and functions remain open.
 
 ## Linked interaction and provenance
 
-A window may offer a selection, a brush or a computed value for another window to follow. Code and
-agents need to inspect these links and their results as well. Moving or closing the window that a
-link starts from must never change the inputs of a computation without the user noticing.
+A window can expose a selection, brush, or computed value for another window to follow, and scripts
+and agents need to inspect those links and results too. Moving or closing a source window must never
+silently change a computation's inputs.
 
-*Provenance*, the link from a shown value to the inputs that it came from, must name the actual
-inputs. A transform that maps one value to one value can keep the identity of each element; an
-aggregate has a set of inputs. Arbitrary project code gives no mapping from a point to its inputs
-unless it returns one, and row position, drawing color or a path in the tree never stand in for it.
+*Provenance*, the link from a displayed value back to its inputs, must name actual inputs. While a
+one-to-one transform preserves element identity and an aggregate tracks a set of inputs, arbitrary
+project code provides no point-to-input map unless it returns one; row index, color, or tree path
+must never stand in for provenance.
 
-Hover, clicks and brushes should show the value under the pointer and its inputs. Tags are lasting
-annotations by the user, while live queries and filters compute a selection. Filtering a window
-never changes the definition of a group, and it never excludes data from other windows.
+Hovering, clicking, and brushing should show the value under the pointer along with its inputs.
+Tags are durable user annotations, whereas live queries and filters compute selections; filtering a
+window never changes a group's definition or excludes data from other windows.
 
 ## What crosses to a client
 
-[Runtime and clients](runtime-and-clients.md) splits this work between two processes. The transform
-and `prepare!` run in the *Julia host*, the process that loads and runs project code, and drawing
-belongs to the client. What then crosses from the host to the client is open:
-[data, a description of the figure, or a picture](runtime-and-clients.md#what-crosses-for-a-visualizer).
-That answer also decides what a client shows for a visualizer that it cannot draw.
+[Runtime and clients](runtime-and-clients.md) splits visualizer work across processes: transforms
+and `prepare!` run in the *Julia host*, the process that loads and executes project code, while
+drawing runs in the client. What crosses from host to client —
+[data, a figure description, or a picture](runtime-and-clients.md#what-crosses-for-a-visualizer) —
+remains open, and that choice also determines what a client displays when it cannot draw a
+visualizer natively.
 
 ## Open work
 
-1. Discovery and settings of generic and domain visualizers, including properties, several values
+1. Discovery and settings for generic and domain visualizers, including properties, multiple values,
    and arrangements.
-2. Provenance of elements and access to the inputs of an aggregate, including what a transform
-   must return for it.
-3. Linked selection and its feedback. A loop of interactions in the GUI differs from a cycle of
-   computations, and how linked selections stop updating each other is open.
-4. How a window presents errors and status, and how the user cancels work.
-5. Performance on real tables, arrays and images. Browsing metadata should avoid reading data;
-   building the selection, reading metadata, loading data and drawing each have a cost to measure.
+2. Element provenance and access to aggregate inputs, including what transforms must return.
+3. Linked selections and interaction feedback, including how linked views stop updating each other
+   without forming UI loops.
+4. How windows present errors, status, and cancellation controls.
+5. Performance on real tables, arrays, and images: metadata browsing must skip data loads, and
+   selection building, metadata reads, data loading, and drawing must each be measured separately.

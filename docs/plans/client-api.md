@@ -1,64 +1,62 @@
 # Client API
 
-What is still open about the functions that a client calls on a workspace: proposed changes to the
-public functions, what the browser and clients in other languages need beyond them, and two open
-questions. [Architecture](../ARCHITECTURE.md) describes how clients read and write the workspace
-today, and the [vision](../vision.md) gives the split into DBCore, the Julia host and clients.
+Clients interact with a workspace through public Julia functions and, from other languages, through
+a message protocol. [Architecture](../ARCHITECTURE.md) covers how clients read and write today, and
+the [vision](../vision.md) sets out the split into DBCore, the Julia host, and clients; the public
+API changes, extra browser reads, and protocol questions below remain open.
 
 ## Proposed changes to public functions
 
-These changes wait for approval.
+These changes await approval.
 
-**The function given to `select`.** `select(workspace, f)` calls `f(id, metadata)` once for each
-item. `id` is the id of the item, and `metadata` reads as the `Dict` that the project's `metadata`
-method returned for the latest version of the item: `metadata[:device]`, `get(metadata, :gap, 0)`
-and `haskey(metadata, :gap)` work as on that `Dict`. The workspace keeps metadata in one column
-for each key, and `metadata` reads the cells of one item from these columns, so `select`
-allocates nothing for each item. `f` never sees the data of the item, so a filter never waits for
-processing. An item without a result yet has no metadata.
+**The function passed to `select`.** `select(workspace, f)` calls `f(id, metadata)` once per item.
+Here `id` is the item's id, and `metadata` behaves like the `Dict` returned by the project's
+`metadata` method for the item's latest version, so `metadata[:device]`, `get(metadata, :gap, 0)`,
+and `haskey(metadata, :gap)` work as on that `Dict`. Because the workspace stores metadata in one
+column per key and `metadata` reads one item's cells from those columns, `select` allocates nothing
+per item. Also, `f` never receives item data, so filtering never waits for processing, and an item
+with no result yet has no metadata.
 
 ```julia
 select(workspace, (id, m) -> startswith(id, "IV") && get(m, :device, nothing) == "D2")
 ```
 
-Today `f` receives one value with the id, label, groups and tags of the item and a field for each
-metadata key, so the workspace drops any metadata key called `id`, `label`, `groups`, `tags` or
+Today, `f` receives a single value holding the item's id, label, groups, tags, and one field per
+metadata key, so the workspace drops any metadata key named `id`, `label`, `groups`, `tags`, or
 `data`.
 
-Besides its metadata, the workspace knows the following about an item. None of it is metadata, so
-each has calls of its own:
+Besides metadata, the workspace tracks the following fields per item, each with calls of its own:
 
 | Information | What it holds | Today |
 | --- | --- | --- |
-| `label` | its label | in what `select` gives `f` |
-| `type` | the type of its latest version, `Any` before it has one | `valuetype(workspace, id)`, internal |
-| `readiness` | `CURRENT`, `WORKING`, `FAILED` or `UNPROCESSED`, the values of `Readiness` | `readiness(workspace, id)`, internal |
-| `source` | the id of the source item that it comes from | `source_item_id(workspace, id)`, internal |
-| `groups` | the ids of the groups that hold it | in what `select` gives `f` |
-| `tags` | the names of its tags, from the shared state | `items(workspace, tag)` gives the ids with a tag |
+| `label` | the item's label | passed to `f` by `select` |
+| `type` | type of its latest version, or `Any` before it has one | `valuetype(workspace, id)`, internal |
+| `readiness` | `CURRENT`, `WORKING`, `FAILED`, or `UNPROCESSED` (`Readiness` values) | `readiness(workspace, id)`, internal |
+| `source` | id of its source item | `source_item_id(workspace, id)`, internal |
+| `groups` | ids of the groups that hold it | passed to `f` by `select` |
+| `tags` | names of its tags from shared state | `items(workspace, tag)` returns ids with a tag |
 
-TODO: design the calls that give the items with a readiness, the items at the top, and the members
-of a group in order; and what `by` of `sort!` takes, now that `f` takes two arguments.
+TODO: design the calls that return items by readiness, top-level items, and a group's members in
+order, as well as what `sort!`'s `by` argument receives once `select` passes two arguments.
 
 **The workspace.**
 
 ```julia
-workspace.project, workspace.source    # documented, as given to `open_workspace`
+workspace.project, workspace.source    # documented, as passed to `open_workspace`
 status(workspace)                      # documented fields: counts, errors, scan, cache, tags;
                                        # today `workspace_status(workspace)`
 isopen(workspace)                      # today the field `workspace.closed`
 close(workspace)                       # today `close_workspace!(workspace)`
-wait_workspace_idle!(workspace)        # throws when the time runs out; today it returns
+wait_workspace_idle!(workspace)        # throws on timeout; today returns quietly
 generation(workspace)                  # public, with a docstring; today internal
 ```
 
-**Items with their data.** `select(workspace, ids)` returns at once and reads nothing yet; the data
-of each item loads when code reads `chosen.data`, and only that read waits for the items. Today
-`select(workspace, ids)` waits for the items.
+**Items with their data.** `select(workspace, ids)` returns immediately without reading data; each
+item's data loads only when code accesses `chosen.data`, and only that access waits for the items.
+Today `select(workspace, ids)` waits eagerly.
 
-**The selection.** `select!(workspace, ids)` keeps the ids of items that the workspace does not
-have yet, so a selection made before a scan finishes holds the items that arrive later. Today it
-throws for such an id.
+**The selection.** `select!(workspace, ids)` retains ids of items that do not exist yet, so a
+selection set before a scan finishes keeps items that arrive later. Today it throws for missing ids.
 
 **Removals.**
 
@@ -70,9 +68,9 @@ throws for such an id.
 | `close_workspace!` | `close` and `isopen` |
 | `workspace_status(workspace)` | `status(workspace)` |
 | `generation(workspace)`, internal | `generation(workspace)`, public |
-| the fields that the browser reads: the catalog, the selection, the tags, the cache, the scan and the locks | the public functions, and the fields of `status(workspace)` |
+| internal browser-read fields (catalog, selection, tags, cache, scan, locks) | the public functions above and fields of `status(workspace)` |
 
-A script then tags the items of one device and reads its change at once:
+With these changes, a script can tag the items of one device and read back its update at once:
 
 ```julia
 workspace = open_workspace(project, source)
@@ -85,39 +83,38 @@ tag!(workspace, d2.id, "check")
 
 ## What the browser and other clients need
 
-The browser draws in every frame, so each of its reads must answer at once and cost as much as the
-items on the screen, also with a million items in the workspace. Besides the public functions, it
-needs:
+The browser draws every frame, so each read must answer at once and cost only as much as the items
+on screen, even with a million items in the workspace. Beyond the public functions, clients need:
 
-- **The current label, readiness and groups of given items, at once**, while it asks for them ahead of
-  background work: the label of a window's items for its title, the readiness of the items drawn in
-  the tree, the groups above the selected items. `select(workspace, ids)` waits instead.
-- **A change number for each item**, so that a window prepares again only when its own items
-  changed.
-- **Change events**, so that a client learns about a new generation without asking. A proposal of
-  [runtime and clients](runtime-and-clients.md): a client says which ids it shows. The calls for
-  those ids then run first, and DBCore sends that client only the changes to those ids.
-- **The members of a group in order**, without going through every item for each group that the
-  user expands.
-- **Conditions and orders as data**, for a client in another language, which cannot send a Julia
+- **The current label, readiness, and groups of given items at once**, while requesting them ahead
+  of background work: labels for window titles, readiness for visible tree items, and parent groups
+  for selected items. By contrast, `select(workspace, ids)` waits when data is accessed.
+- **A change number per item**, so a window prepares again only when its own items change.
+- **Change events**, so clients learn about a new generation without polling. As proposed in
+  [runtime and clients](runtime-and-clients.md), a client declares which ids it displays; DBCore
+  prioritizes work for those ids and sends changes only for them.
+- **The members of a group in order**, without scanning every item whenever the user expands a
+  group.
+- **Conditions and orders as data**, for clients in other languages that cannot send a Julia
   function.
-- **Status details**: the counts of jobs and of pending cache writes, and the memory used.
+- **Status details**: counts of queued jobs and pending cache writes, plus memory usage.
 
 Today the browser reads these through internal functions: `label`, `readiness`, `valuetype`,
-`groups`, `source_item_id` and `metadata` of `(workspace, id)`, `processed`, and
-`revision(workspace, ids)`. These stay internal until the protocol of
-[runtime and clients](runtime-and-clients.md) gives them their public form, likely by integer keys,
-as the stores take them. A client in another language sends the same calls as messages, and DBCore
-answers each one with the generation that shows its change.
+`groups`, `source_item_id`, and `metadata` on `(workspace, id)`, as well as `processed` and
+`revision(workspace, ids)`. They remain internal until the protocol of
+[runtime and clients](runtime-and-clients.md) exposes public equivalents, likely keyed by integers
+as stores do. A client in another language sends those calls as messages, and DBCore tags each
+reply with the generation it reflects.
 
 ## Open questions
 
-- What form do conditions and orders take across the protocol? Every filter takes a Julia function
-  today; `SortKeys` is already an order as data. Because DBCore holds data only, a condition on
-  metadata (comparisons and boolean combinations) can cross the protocol as a small expression tree
-  that DBCore evaluates on changed items, while an arbitrary Julia function given to `select` or
-  `sort!` runs in the client or in the Julia host.
-- How does a client read, without the lock of the catalog, the result of a call that its store
-  lacks? Today the workspace runs the call again in the caller, under the lock. The call could read
-  its inputs from a published version of the table instead, or DBCore could schedule the call on a
-  worker, so that other clients see the item working again until it finishes.
+- **Cross-protocol conditions and orders.** Today every filter takes a Julia function, while
+  `SortKeys` already expresses an order as data. Because DBCore stores only data, metadata
+  conditions (comparisons and boolean combinations) could cross the protocol as small expression
+  trees evaluated by DBCore on changed items, while arbitrary Julia functions passed to `select` or
+  `sort!` run either in the client or in the Julia host.
+- **Uncached reads without the catalog lock.** How does a client read a call's result without taking
+  the catalog lock when its store lacks that result? Today the caller takes the lock briefly to
+  read inputs and reruns the call in its own task. Instead, the call could read its inputs from a
+  published table version, or DBCore could dispatch the call to a worker so other clients see the
+  item as working until it finishes.

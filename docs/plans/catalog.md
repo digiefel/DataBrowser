@@ -1,57 +1,54 @@
 # The catalog in memory and in the cache file
 
-What is still open about the catalog: how a workspace opens with no work per item, how the cache
-file holds the whole catalog, and how rows run in batches. [Architecture](../ARCHITECTURE.md)
-describes the catalog and the cache that are built. The roadmap entry "Open a workspace with no
-work per item" in [0.2.3](../roadmap.md) tracks the change.
+[Architecture](../ARCHITECTURE.md) describes the catalog and cache built today, and the roadmap
+item "Open a workspace with no work per item" in [0.2.3](../roadmap.md) tracks the work ahead. How
+a workspace opens with no work per item, stores the whole catalog in the cache file, and runs rows
+in batches remains open.
 
 ## Goal
 
-- Opening a workspace takes the same time for any number of items: it does no work per item. The
-  browser shows the tree, the selection and the windows of the last session at once.
-- Once a row is in memory, a question about it costs no more than with today's catalog: a read of
-  a Julia vector, with no query and no lock that today's catalog does not take. Until the
-  background load ends, the question also checks whether its row is loaded.
-- Memory stays bounded. The catalog is small enough to stay whole in memory up to about 100 million
-  items; bounding the catalog too waits until a project needs a billion items. Ids, labels,
-  metadata and errors stay in memory while their rows are in use; a question about one that left
-  memory costs one query.
-- Each question to the workspace is at least as fast as with the whole catalog in memory.
-- Running the project's functions through the workspace costs little more than a loop, written by
-  hand, that calls them. The engine's own work for each row stays small next to the cheapest `read`
-  or `process`: a few hashes and writes, and no take of a shared lock for each row.
-- A failed row stays a result, as a value is. A row still becomes stale when its code, an input or
-  its source item changes, also when the change happened while the workspace was closed.
+- Opening a workspace takes constant time regardless of item count, doing no work per item, so the
+  browser displays the previous session's tree, selection, and windows at once.
+- Once a row is in memory, querying it costs no more than today: reading a Julia vector with no
+  DuckDB query and no extra lock (plus checking whether that row has finished loading while the
+  background load runs).
+- Memory stays bounded. The numeric catalog fits in memory up to roughly 100 million items (and
+  bounding it further waits until a project reaches a billion items); ids, labels, metadata, and
+  errors stay in memory while their rows are active, and reading an evicted entry costs one query.
+- Every workspace query runs at least as fast as when the entire catalog stayed in memory.
+- Running project functions through the workspace costs little more than calling them in a plain
+  loop: engine overhead per row stays small next to the cheapest `read` or `process`, requiring only
+  a few hashes and writes without acquiring a shared lock per row.
+- A failed row remains a cached result like any value, turning stale when its code, an input, or its
+  source item changes, including changes made while the workspace was closed.
 
 ## Today
 
-The cache saves results, and the catalog stays in memory only. So each open runs the pipeline
-again for every source item: it adds the rows of the item, computes their revisions, finds the
-saved results and rebuilds the tables by id.
+Today the cache file stores results while the catalog lives only in memory, so reopening a workspace
+reruns the pipeline for every source item: adding its rows, recomputing revisions, looking up cached
+results, and rebuilding id tables.
 
-The cache file lacks these parts of the catalog:
+Seven catalog pieces are missing from the cache file:
 
-- the inputs of each row;
-- the depth of a row that gave no value, such as a failed `process`: the number of calls before
-  it in its chain of calls;
-- the fingerprint of each source item, which only enters the revision of its read row;
-- the code revision of each function;
-- the rows that never ran, such as each `process` row without background processing;
-- the members of each source item, as `members(source, item)` gives them;
-- the members of each group as ids: the file saves them as serialized Julia values.
+- each row's inputs;
+- the depth of a row that returned no value (such as a failed `process`), meaning how many calls
+  preceded it in its chain;
+- each source item's fingerprint, which enters only its `read` row's revision;
+- each function's code revision;
+- rows that never ran, such as `process` rows when background processing is off;
+- each source item's members as returned by `members(source, item)`; and
+- each group's member ids, which the cache currently stores inside serialized Julia values.
 
-The first open runs the project's functions, and the engine's own work costs far more than the
-calls. Each job takes the lock of the catalog four times, and only one worker holds it at a time,
-so the number of jobs per second has a limit that does not grow with the number of threads.
-
-DuckDB keeps the pages of the file that it read in memory, up to `memory_limit`, which the cache sets
-to 1 GiB. A query from Julia still costs at least 55 µs, also when its pages are in memory. Only
-the keys have indexes, so a query by id is slower than a query by key.
+On the first opening, engine bookkeeping dominates the project's own functions: each job acquires
+the catalog lock four times sequentially, capping throughput regardless of thread count. Meanwhile,
+DuckDB buffers pages in memory up to `memory_limit` (1 GiB in the cache), yet every query from Julia
+still costs at least 55 µs even from memory, and only integer keys are indexed so id lookups run
+slower than key lookups.
 
 ## Proposal
 
-The cache file holds the whole catalog. Memory holds the numbers of each row, and caches of the
-rest for the rows in use:
+Store the complete catalog in the cache file while keeping compact per-row numbers in memory and
+bounded caches for active rows:
 
 ```text
                       in the cache file                         in memory
@@ -68,11 +65,11 @@ rest for the rows in use:
     ≈ 130 B per item (estimate): 130 MB at a million items, 13 GB at 100 million, 130 GB at a billion
 ```
 
-Each job reads the state, inputs and readers of rows many times, so these live in Julia vectors at
-the position of the row's key. A Julia vector answers in nanoseconds, and DuckDB in 55 µs or more.
-DuckDB answers the questions over many rows, such as a filter, a sort or a count, in one query each.
+Because each job reads row states, inputs, and downstream readers repeatedly, those numeric arrays
+live in Julia vectors indexed by row key, answering in nanoseconds instead of DuckDB's 55+ µs.
+DuckDB handles bulk queries across many rows — filters, sorts, and counts — in one query each.
 
-When a workspace opens:
+On startup, opening follows this sequence:
 
 ```text
     open the file                                    nothing per item
@@ -89,27 +86,27 @@ When a workspace opens:
                                                          missing one removes its rows
 ```
 
-A question about a row that is not loaded yet moves the row to the front of the load and waits for
-it: one query. Compared with loading the whole catalog before the workspace is usable:
+Any question touching a row that has not loaded yet pulls that row to the front of the background
+load and waits for one query. Compared with loading the full catalog up front:
 
 ```text
                                   whole catalog at open      this proposal
-    open                          ≈ 1 µs per item            nothing per item
-    first look at a row           0                          the rows shown load first: a few ms
-    later looks                   memory                     memory
-    work over many rows, such     memory, after the load     one scan, at the cost of that load
-    as a code change of `read`
+    startup                       ≈ 1 µs per item            constant time
+    first read of a row           0                          shown rows load first: a few ms
+    later reads                   memory                     memory
+    bulk work (e.g. editing       memory, after full load    one scan, matching that load cost
+      `read`)
     writes                        the same rows              the same rows
 ```
 
 ### Running rows
 
-A worker takes a batch of rows of one function, such as 1,000 rows of `process(project, x)` for
-items `x` of one type, in one take of the catalog lock:
+Instead of locking row by row, a worker claims a batch of rows sharing one function — such as 1,000
+calls to `process(project, x)` for items `x` of one type — in a single lock acquisition:
 
 ```text
     today, for each row                           proposed, for each batch of rows of one function
-      take the lock: count the end of the last      take the lock: take up to N rows
+      take the lock: count the end of the last      take the lock: claim up to N rows
         job, take the row
       take the lock: compute the revision           compute the N revisions, outside the lock
       call the function, one dynamic dispatch       call the function N times in one loop,
@@ -124,42 +121,39 @@ items `x` of one type, in one take of the catalog lock:
     target (estimate): under 1 µs of the engine's own work per row
 ```
 
-A function that throws fails its own row, and the other rows of the batch go on. A batch is
-smaller when a window or a script requests rows, so that a requested row does not wait behind a
-large batch.
+If one function call throws, its own row fails while the rest of the batch continues. Batches shrink
+when a window or script requests rows so interactive work never waits behind a large batch.
 
 ## Steps
 
-Each step ends with a measured change.
+Each step ends with a measured benchmark change:
 
-1. The cache file saves the whole catalog, and the open builds the catalog from the file instead
-   of running the pipeline again. Then code and fingerprints are checked in the background.
-   Measured: the time of the second open per item.
-2. The catalog keeps numbers only: rows as columns of numbers, and each computation rebuilt from the
-   file when its row runs. Measured: memory per item.
-3. Rows run in batches of one function. Measured: the first open per item against the loop that
-   calls the same functions, at 10 threads and at 1. The benchmark gains that loop, so that each
-   run shows both.
-4. The open loads the catalog in the background, the rows that the last session showed first.
-   Measured: the time to the first frame, which then does not grow with the number of items.
-5. Ids, labels, metadata and errors leave memory, except for the caches of rows in use. The tree,
-   the status line and selecting all items ask the file in batches. Today, each rebuild of the
-   tree sorts every item at the top by label, and the status line goes through every error.
-6. At a billion items: the catalog's numbers in memory are bounded too.
+1. Persist the full catalog in the cache file so reopening builds the catalog from DuckDB instead of
+   rerunning the pipeline, then check code revisions and fingerprints in the background. Measured:
+   second-opening time per item.
+2. Shrink the in-memory catalog to numeric columns, rebuilding each computation from the cache file
+   only when its row runs. Measured: memory per item.
+3. Execute rows in type-uniform batches per function. Measured: first-opening time per item against
+   a direct loop calling the same functions at 10 threads and at 1 (adding that loop to the
+   benchmark).
+4. Load the catalog in the background, prioritizing the rows shown in the previous session. Measured:
+   time to first frame, which must no longer grow with item count.
+5. Evict ids, labels, metadata, and errors outside active row caches, querying the cache file in
+   batches for the tree, status line, and full selection (today rebuilding the tree sorts every
+   top-level item by label, and the status line scans every error).
+6. At a billion items, bound the catalog's numeric columns in memory too.
 
 ## Open questions
 
-- A read row needs its source item to run, and before the walk the workspace has only the id of
-  the source item. Either the source gives a source item by its id, or a read row that must run
-  waits for the walk.
-- The methods that a project defines also decide which rows exist: without a method
-  `process(project, g, members)`, the catalog has no group process rows. A method added or removed
-  while the workspace was closed must add or remove those rows, so the file saves what the open
-  compares.
-- A table from id to key that keeps no ids: two of a billion ids have the same 64-bit hash with a
-  probability of about 3 %. Either each match is checked against the file, or the hash is longer.
-- The file is up to 2 s behind memory, the interval between two writes of the cache. After a crash,
-  the rows of those 2 s run again, as today.
-- The order of the tree by label, with millions of items at the top.
-- A store saves one item for each call of `write(store, key, item)` today. Keeping a batch in one
-  call changes the store contract.
+- Before the background source walk completes, the workspace holds only the id of each `read` row's
+  source item; either the source supports lookup by id, or a `read` row that needs to run waits for
+  the walk.
+- Project method definitions determine which rows exist (for example, `process(project, g, members)`
+  controls group-process rows), so the cache file must record enough method information for reopening
+  to detect added or removed methods while the workspace was closed.
+- In an id-to-key table storing only hashes, two out of a billion ids collide under a 64-bit hash
+  with ~3% probability; either matches must verify against the file, or the hash must be wider.
+- Because cache writes happen every 2 s, up to 2 s of rows rerun after a crash, as today.
+- Sorting top-level tree items by label when millions of items sit at the top remains open.
+- Because stores currently write one item at a time via `write(store, key, item)`, batch writes will
+  extend the store contract.
