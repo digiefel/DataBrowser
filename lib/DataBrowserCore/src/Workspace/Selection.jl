@@ -30,7 +30,7 @@
 # ```
 #
 # A `Selection` comes from one of three calls: `select(workspace, ids)` gives the items with the ids
-# `ids`, `select(workspace, f)` the items for which `f(item)` returns `true`, and
+# `ids`, `select(workspace, f)` the items for which `f` returns `true`, and
 # `selection(workspace)` the items selected in the browser or with `select!`. Also, `filter` and an
 # index, such as `measurements[2:5]`, give a smaller `Selection`. To read one item by its id
 # instead, use the functions of [`Items.jl`](Items.md), such as `label`, `metadata` and `readiness`,
@@ -184,10 +184,11 @@ version of an item only when code uses it. So the columns and the data can show 
 item: when its latest version has no result yet as the `Selection` is made, as
 `select(workspace, f)` allows, or when it gets a new result afterwards. Then `selection.data` gives
 the data of the new result, while the columns keep the label and metadata of the older one; call
-`select` again for those of the new result. `data` is a property of the `Selection` and of each row,
+`select` again for those of the new result. `data` is a property of the `Selection` and of each of its elements,
 and the columns leave it out: printing a `Selection` and `DataFrame(selection)` read no data.
 
-A `Selection` is a vector of rows: `for x in selection` goes through the items, with `x.label`,
+A `Selection` is a vector with one element for each item: `for x in selection` goes through the
+items, with `x.label`,
 and `x.data`, which reads the data of that item. Also, `filter` and `selection[2:5]` give a smaller
 `Selection`. Finally, a `Selection` is a Tables.jl table, so `DataFrame(selection)` copies its
 columns into a data frame.
@@ -265,33 +266,34 @@ end
 """
     select(workspace, f) -> Selection
 
-The items for which `f(item)` returns `true`, as a [`Selection`](@ref), in the order that
+The items for which `f` returns `true`, as a [`Selection`](@ref), in the order that
 `sort!(workspace; by)` sets, which is also the order of the tree of the browser. `select` calls `f`
-with each item, which has the fields `item.id`, `item.label`, `item.groups`, `item.tags`, and
-one field for each metadata key of the workspace, `missing` where the item does not have the key.
-Any value other than `true`, such as the `missing` that `item.gap > 1` gives for an item without
+once for each item, with its id, label, groups, tags and metadata, but without its data, so that
+`f` never waits for processing. A metadata key that the item does not have gives `missing`, and
+any value other than `true`, such as the `missing` that `x.gap > 1` gives for an item without
 `gap`, leaves the item out without a message. When `f` throws on an item, `select` also leaves the
 item out, and the workspace writes only the first error of `f` to the log. The `Selection` has a
 column only for the metadata keys that its items have.
 
 ```julia
-select(workspace, item -> "run1" in item.groups && !("bad" in item.tags))
+select(workspace, x -> "run1" in x.groups && !("bad" in x.tags))
 ```
 
 `f` sees each item as the workspace shows it, computed or not, with the label and metadata of its
-latest version that has a result. The `Selection` shows every change made visible to windows and
-scripts before the call: the script's own `tag!`, `untag!` and `sort!`, which take effect before
-they return, and the results of background work, which appear shortly after they finish and before
-a call of `select(workspace, ids)` that waits for them returns.
+latest version that has a result. The `Selection` shows every change that the workspace published
+before the call, that is, made visible to its windows and scripts. These changes include the
+script's own `tag!`, `untag!` and `sort!`, which the workspace publishes before they return, and the
+results of its work, which it publishes shortly after they come, and before a call of
+`select(workspace, ids)` that waits for them returns.
 
 The workspace keeps the `Selection` that it gives for `f`, its *answer*, until 10 seconds after the
 last call with `f`, so that repeated calls with the same `f`, such as those of the tree of the
 browser, are quick. In that time, a task of the workspace runs `f` again on each item
 that changes: an item that is added or removed, that gets a new result, or whose label, groups,
-metadata or tags change. So `f` should be quick and change nothing. Also, `f` should read only the
-item passed to it: an `f` that reads anything else, such as a global variable, can give an answer
-that is out of date. The workspace never changes a `Selection` that it gave: when the answer
-changes, the next call gives a new `Selection`.
+metadata or tags change. So `f` should be quick and change nothing. Also, `f` should read only what
+`select` gives it: an `f` that reads anything else, such as a global variable, can give an answer that is out of
+date. The workspace never changes a `Selection` that it gave: when the answer changes, the next call
+gives a new `Selection`.
 
 The first call with a new `f` waits until `f` has run on every item, and the next calls are quick. A
 later call finds the answer of an earlier `f` when the two are `===`. Two closures made by the same
@@ -301,8 +303,8 @@ that captures a new vector or dictionary is a new function at each call, which `
 every item, and so is a closure typed again in the REPL:
 
 ```julia
-select(workspace, item -> group in item.groups)              # finds its answer: `group` is a string
-select(workspace, item -> !isdisjoint(groups, item.groups))  # runs again: `groups` is a new vector
+select(workspace, x -> group in x.groups)              # finds its answer: `group` is a string
+select(workspace, x -> !isdisjoint(groups, x.groups))  # runs again: `groups` is a new vector
 ```
 """
 function select(workspace::Workspace, f::Function)::Selection
@@ -353,7 +355,7 @@ end
 # A `Selection` of the items at the positions `numbers` in the table `items` of `version`, with
 # their tags from the shared state `shared`. Its metadata columns are the keys that one of the
 # items has, in alphabetical order; with `every=true`, the metadata columns are all the metadata
-# keys of `version`, as in the rows that `select(workspace, f)` gives to `f`. The columns are copies
+# keys of `version`, as `select(workspace, f)` gives them to `f`. The columns are copies
 # of the cells, and of each vector in them, so that a change to the `Selection` leaves the version
 # as it is. The metadata of an item sits in each metadata column at its *cache key*, the column
 # `key` of the table `items`: the number under which the cache keeps its latest version that has a

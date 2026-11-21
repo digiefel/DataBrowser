@@ -35,6 +35,10 @@ outside is how the workspace survives a call that never returns. It also ends a 
 no longer wanted, when the host cannot end that call. A host that ignores `cancel` still works with
 DBCore, which drops such a result in any case.
 
+A host reports its start as a change from nothing: its first `code changed` lists every function,
+and its first `source changed` lists every source item. A host restarted by DBCore takes the same
+path, so the protocol needs no message for loading a project.
+
 ### What a host does
 
 A host of any language does the left column, and DBCore works with that alone. The right column
