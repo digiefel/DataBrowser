@@ -171,7 +171,7 @@ packages (§11) are the main example.
 visualize: arrays, tables, nested structures, domain-specific measurements, file references,
 database-backed results, Makie objects, image-like or signal-like data, or opaque user-defined
 values. A logical browsable entry discovered from sources is an **item** (e.g. a single measurement),
-with stable identity, parameters, stats, and access to its data. One file or acquisition chunk may
+with stable identity, metadata, and access to its data. One file or acquisition chunk may
 produce many items; one item may contain a large array or table. Its scientific granularity belongs
 to the project. The system need not understand every value fully, but it should identify it, track
 it in the index, summarize it, and expose actions.
@@ -209,30 +209,34 @@ and data only when code uses them.
 testing, and agent/MCP support. A command has a name, inputs, outputs, errors, help text, and
 predictable effects, and is inspectable so an agent can discover what is possible.
 
-**Visualizer, Figure, Workflow, Annotation.** A **visualizer** renders or interacts with a kind of
-data (generic built-ins or package-supplied), optionally exposing declarative state. At runtime a
-visualizer presents as zero-or-more windows the user can spawn, toggle, minimize, and close; each
-client shows the same visualizers of the workspace in its own way, such as a window of the browser,
-or a picture or text of its current state in the REPL; the
-table and the plot are the first two visualizers. Registered plot APIs like `register_plot!` add a
-plot that the plot visualizer offers for one type of item; they are a convenience, not the contract
-every visualizer follows. A **figure** is
-a composed visual artifact: visualizer outputs, layout, styling, annotations, and optional embedded
-data. A **workflow** is the persisted graph of views: selections, transforms, visualizers, fits,
-annotations, and export definitions — intent, not pixels, saved as ordinary Julia code in workspace
-or tab files. Opening saved work restores definitions and available results; it does not replay
-physical effects. Tabs organize source code and windows; they do not own a separate analysis engine. A tab is a live
-Julia file: a `@layout` block in it declares its windows with `Window(name, visualizer; input)` and
-`Split(direction, ratio, first, second)`, with their geometry, and the output of another visualizer
-is an input given as `VisualizerOutput(name)`. Core holds one visualizer for each name, which exists
-when the file loads, with or without a browser. The `@layout` block defines a method, so Revise
-runs only the layout again when it changes, and deleting the block closes the tab. The browser
-cannot move or resize a window that `@layout` places; a drag may later write the change into the
-file.
-An **annotation** is user-authored metadata on an item
-(tags, notes, coordinates, spatial position); a **figure annotation** is a visual mark on a figure
-(arrow, region, fit label, text). A tag describes an item; an arrow describes a figure. These are
-detailed in §8.
+**Visualizer.** A *visualizer* renders or interacts with a kind of data (generic built-ins or
+package-supplied), optionally exposing declarative state. At runtime, a visualizer appears as zero
+or more windows that the user can spawn, toggle, minimize, and close. Each client displays the
+workspace's visualizers in its own way, such as a browser window or a picture or text of its
+current state in the REPL; the table and the plot are the first two visualizers. Registered plot
+APIs such as `register_plot!` add plots that the plot visualizer offers for one type of item as a
+convenience over the visualizer contract.
+
+**Figure.** A *figure* is a composed visual artifact containing visualizer outputs, layout, styling,
+annotations, and optional embedded data.
+
+**Workflow and tabs.** A *workflow* is the persisted graph of views — selections, transforms,
+visualizers, fits, annotations, and export definitions — captured as ordinary Julia code in
+workspace or tab files. Opening saved work restores definitions and available results without
+replaying physical effects. Tabs organize source code and windows over the shared workspace
+engine. Each client arranges the visualizers in its own layout while `DataBrowserCore` holds only
+the named visualizers, their settings, and links between them. In the browser, a tab is a live
+Julia file whose `@layout` block declares windows with `Window(name, visualizer; input)` and
+`Split(direction, ratio, first, second)`, passing another visualizer's output as
+`VisualizerOutput(name)`. Core holds one visualizer for each name once the file loads, with or
+without a browser. Because `@layout` defines a method, Revise updates only the layout when that
+block changes, and deleting the block closes the tab. A window placed by `@layout` stays fixed
+until dragging later writes changes back into the file.
+
+**Annotation.** An *annotation* is user-authored metadata on an item (tags, notes, coordinates,
+spatial position), and a *figure annotation* is a visual mark on a figure (arrow, region, fit label,
+text). A tag describes an item, while an arrow describes a figure. Section 8 covers annotations in
+detail.
 
 A note on the registration API: `define_project` / `register_*` is one convenient way to describe a
 data pipeline with ordinary values and functions. Its reader is the only required callback; identity,
@@ -254,7 +258,7 @@ project   = define_project("ruo2.toml"; config)
 workspace = open_workspace(project)           # one live opening
 browser   = open_browser(workspace; wait=false)   # non-blocking; REPL stays free
 
-items = query_items(workspace, "polarity = 'up'")   # concrete list, or a live rule
+items = select(workspace, (id, m) -> get(m, :polarity, nothing) == "up")
 select!(workspace, items)                     # views explicitly following shared selection update
 
 fig = Figure(workspace)
@@ -272,9 +276,8 @@ Workspace actions, such as `select!(workspace, ids)`, operate on shared state an
 GUI. Views connected to the shared workspace selection follow changes from the REPL or GUI.
 Tab trees can keep independent selections; changing the shared selection does not reset them.
 Public operations must identify the selection being changed without relying on GUI focus.
-`select(workspace, ids)` changes nothing: it moves the items that are not processed yet ahead of
-other work, waits for them and returns them as a selection. When an item failed, it throws the error
-of that failure.
+`select(workspace, ids)` changes nothing and returns a selection at once; reading its `.data` moves
+any unprocessed items ahead of other work, waits for them, and throws if an item failed.
 Core has no GUI dependency. REPL code and GUI controls share the workspace rather than copying its state.
 
 A script that calls `define_project(project_file; config)` creates or reopens the project file, then
@@ -343,10 +346,9 @@ phasing.
 
 The registration API defines named or default pipelines over ordinary Julia data. It ships as
 `DataBrowserRecipes`, an ordinary package implemented purely as a client of the pipeline
-contract; the engine never learns it exists. `read` obtains the content of one source item.
-Its result is one data item. Deferred `process` and `analyze` callbacks receive data and effective
-metadata. A registration name provides stable replacement and associates extension operations. It
-is not a property of the user's data.
+`read` obtains the content of one source item and returns one data item. Deferred `process`
+callbacks receive data and metadata. A registration name provides stable replacement and associates
+extension operations, and belongs to the registration rather than the user's data.
 
 The type API models `AbstractDataSource`, `AbstractDataSourceItem`, and `AbstractDataItem` values
 directly. Concrete item types survive materialization, processing, and visualization. Their behavior
@@ -443,7 +445,8 @@ live in workflow files, figure files, or a shared store.
 The REPL and CLI are first-class interfaces to the same app, not separate utilities. The key
 abstraction is the command model.
 
-Every important user action has a command form declared in `DataBrowserAPI`. The GUI calls commands
+Every important user action has a command function in `DataBrowserCore`, with shared generic
+functions declared in `DataBrowserAPI`. The GUI calls commands
 internally; the REPL (in `DataBrowserCore`) exposes them as Julia functions; the CLI exposes them as
 shell commands; an MCP server exposes them as agent tools. Because they are all the same commands,
 the interfaces stay consistent by construction. Every client shows the same visualizers in its own
@@ -641,8 +644,8 @@ supports, since those components would depend only on `DataBrowserCore` (or lowe
 The concrete, current split is [roadmap.md](roadmap.md). The longer product arc:
 
 1. **Architectural cleanup.** Split the package into the functional family of §6; pin the workspace /
-   project / package / command vocabulary; establish `DataBrowserAPI` as the command-and-definitions
-   surface.
+   project / package / command vocabulary; establish `DataBrowserAPI` as the extension-contracts
+   surface and `DataBrowserCore` as the shared command surface.
 2. **Generic plotter.** Strong default visualizers for common data shapes so the app is useful without
    custom draw functions.
 3. **Command unification.** Move important GUI and REPL actions onto the shared command layer; add

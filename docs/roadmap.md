@@ -262,10 +262,10 @@ workloads, completed disk writes, cache reads and process memory measurements.
 - [ ] Move the cache file from the Julia depot to the workspace file next to the project.
 - [ ] Let a store hand out a kept value without copying it, for callers that do not change it.
 - [ ] Generate the umbrella's `using`/`export` lists from one table instead of two hand-kept blocks.
-- [ ] Make `query_items(workspace, sql)` internal: `select(workspace, f)` finds items by a condition.
+- [ ] Remove `query_items(workspace, sql)` once `select(workspace, f)` covers its remaining callers.
 - [ ] Add `errors(workspace)`, the failures of the workspace.
-- [ ] Recipes: find the `collection` callback of an item by dispatch instead of a linear scan of the
-  registrations.
+- [ ] DataBrowserRecipes: select the group callback of an item by dispatch instead of a linear scan
+  of registrations.
 - [ ] Strengthen internal module boundaries and import hygiene across the package family.
 
 ### 0.2.5 GUI as one caller of the API
@@ -440,7 +440,7 @@ selection model.
 - [ ] Support flattening, grouping, sorting, and filtering without copying item state into the GUI.
 - [ ] Group across a level of groups, for example "group across wafer": the groups whose values are
   equal once that level is left out form one group, and the group `process` runs on each. The
-  DBRecipes `collection` callback names the levels, `(wafer = …, device = …)`.
+  DataBrowserRecipes `collection` callback names the levels, `(wafer = …, device = …)`.
 - [ ] Show when computed statistics used by a filter are still being populated.
 - [ ] Persist useful item-view and filter state with the project.
 
@@ -490,11 +490,11 @@ on it with a few verbs.
 
 ## 0.7.0 — Figure composer
 
-Build the DBPlots figure composer before the interactive plot builder. Its first inputs are axes and
-figures created by project code. Users can arrange those existing components into larger figures and
-edit the composition through both Julia and the GUI.
+Build the `DataBrowserPlots` figure composer before the interactive plot builder. Its first inputs
+are axes and figures created by project code. Users can arrange those existing components into larger
+figures and edit the composition through both Julia and the GUI.
 
-- [ ] Define composable DBPlots objects for axes, panels, and complete figures.
+- [ ] Define composable `DataBrowserPlots` objects for axes, panels, and complete figures.
 - [ ] Accept project-created Makie axes and figures without taking ownership away from project code.
 - [ ] Add GUI operations for creating layouts, inserting components, moving them, resizing them, and
   removing them.
@@ -503,9 +503,10 @@ edit the composition through both Julia and the GUI.
 
 ## 0.8.0 — Plot builder
 
-Add the fast path from selected data to an individual axis. The plot builder is a DBPlots visualizer
-with a focused toolbar: choose data, map columns or dimensions, select a plot form, and adjust its
-presentation. Every axis it creates can be inserted into the figure composer.
+Add the fast path from selected data to an individual axis. The plot builder is a
+`DataBrowserPlots` visualizer with a focused toolbar: choose data, map columns or dimensions,
+select a plot form, and adjust its presentation. Every axis it creates can be inserted into the
+figure composer.
 
 - [ ] Build axes from the current item selection and from filtered item views.
 - [ ] Provide data mapping controls for common tabular X/Y plots.
@@ -527,15 +528,16 @@ through natural Python containers.
   with Python-facing types and errors.
 - [ ] Convert tabular and array data naturally to pandas and NumPy without unnecessary copies where
   the runtimes permit it.
-- [ ] Support Python readers, processors, and analyzers through explicit callback bridges.
+- [ ] Support Python readers and processors through explicit callback bridges.
 - [ ] Drive figure composition and the plot builder from Python.
 - [ ] Prototype the Python-native visualization path and settle the roles of Matplotlib, lightweight
-  ImPlot views, and Julia-owned DBPlots visualizers.
+  ImPlot views, and Julia-owned `DataBrowserPlots` visualizers.
 
 ## 0.10.0 — Figure annotations
 
-Add figure annotations as DBPlots-owned, editable objects inside composed figures. They describe a
-figure rather than an item: arrows, text, regions, fit labels, and other axis-relative additions.
+Add figure annotations as `DataBrowserPlots`-owned, editable objects inside composed figures. They
+describe a figure rather than an item: arrows, text, regions, fit labels, and other axis-relative
+additions.
 
 - [ ] Define figure-annotation objects and their coordinate systems.
 - [ ] Add, select, edit, move, style, and remove figure annotations through Julia and the GUI.
@@ -881,8 +883,6 @@ and the command line.
   normal use of the application.
 
 ## Longer-term goals
-
-
 
 ### Packaged application and shareable project bundles
 
