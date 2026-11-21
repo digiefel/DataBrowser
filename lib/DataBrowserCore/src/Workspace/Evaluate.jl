@@ -1137,7 +1137,8 @@ end
 # The name of the function of a computation: the start of its id, under which the cache keeps the
 # key of its row. A package whose computations call values of its own type gives them a name.
 # TODO: an anonymous function gets its generated name, such as `#3`, which changes from session to
-# session; make its name from the content of its code (docs/plans/processing.md).
+# session; make its name from the content of its code (docs/plans/processing.md, "Functions
+# identified by their code").
 function_name(f) = string(nameof(f))
 
 # The function, then the id of each argument, then the settings.

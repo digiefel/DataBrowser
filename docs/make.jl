@@ -12,9 +12,9 @@ import DataBrowserAPI, DataBrowserSources, DataBrowserRecipes, DataBrowserCore, 
 include("codemap.jl")
 const GENERATED = joinpath(@__DIR__, "generated")
 # The folders whose Julia files become pages, in the order of the sidebar.
-const FOLDERS = ["src", "ext", "lib", "scripts", "test", "examples"]
+const FOLDERS = ["src", "ext", "lib", "scripts", "test"]
 # The folders whose subfolders each get their own section of the sidebar.
-const GROUPED_FOLDERS = ["lib", "examples"]
+const GROUPED_FOLDERS = ["lib"]
 
 rm(GENERATED; recursive=true, force=true)
 mkpath(GENERATED)
@@ -62,8 +62,6 @@ makedocs(
     format=Documenter.HTML(prettyurls=false),
     doctest=false,
     checkdocs=:none,
-    # ARCHITECTURE.md links to roadmap.md, which is not a page of this site.
-    # TODO: an error again once the architecture lives in the code.
     # TODO: an error again once `AbstractDataItem` has a docstring and the public docstrings link
     # only to public names.
     warnonly=[:cross_references, :docs_block],

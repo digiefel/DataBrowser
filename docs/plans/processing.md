@@ -1,544 +1,220 @@
-# Processing and Recipes
+# Processing
 
-Target design, curated on 21 October 2026. This plan owns item/group computations, invocation,
-input versions and reconstruction. [Groups](groupings.md) owns formation and hierarchy;
-[storage](storage.md) owns retained payloads. The [architecture](../ARCHITECTURE.md) describes the
-current implementation, not this complete target.
+[Architecture](../ARCHITECTURE.md) describes `read` and `process` calls, versions, conflicts, and
+`Computation` as built today, and the [vision](../vision.md) sets out the settled direction. Group
+member access, consistent value construction, post-processing analysis workflows, and computation
+extensions remain open.
 
-## Settled direction
+## Ordering of operations that use a group
 
-Items continue through ordinary Julia dispatch. If processing returns a new type, that type's
-applicable `process` methods run next. A processed group remains a group. Whether analysis remains a
-separate callback is reopened by the newer proposal below.
-A workspace is the analysis runtime, not the GUI; one process runs one workspace at a time.
+When two calls return a version of the same id at the same depth, they conflict. How multiple member
+operations on the same member compose or branch when they do not conflict remains open.
 
-## `process` signatures
+## Members that a group receives
 
-Proposal developed with Davide on 21 October and reviewed by PM and the senior reviewer; not
-decided except where marked. Groups come from the source, from the user or GUI on the fly, or from
-`process` methods on groups; [source-groups.md](source-groups.md) gives the source API and the
-[toy example](groups-toy.md) works it through.
+A group could carry a view of its members bound to the versions it was built with, so a value
+carries everything its public operations need; deferred loading may back that view. Neither a
+lookup in the active workspace nor a wrapper type visible to project code is settled yet. The design
+must resolve:
 
-```julia
-process(project::AbstractProject, x::AbstractDataItem)
-    -> Union{AbstractDataItem, AbstractVector{<:AbstractDataItem}}
-process(project::AbstractProject, member::AbstractDataItem, group::AbstractGroup)
-    -> Union{AbstractDataItem, AbstractVector{<:AbstractDataItem}}
-process(project::AbstractProject, group::AbstractGroup, members::AbstractVector{T})
-    -> Union{AbstractDataItem, AbstractVector{<:AbstractDataItem}}
-```
-
-- `process(project, x)` receives one item or one group (`AbstractGroup <: AbstractDataItem`).
-- `process(project, member, group)` is a member `process` method, called for each member of a group.
-  Davide, 21 October: it returns a later version of the member (same id) or a new value, for
-  example a group that keeps both inputs. Core records both inputs either way. Whether the group
-  is read again depends only on whether the output is a later value of the member type the group
-  states.
-- `process(project, group, members)` is a `process` method on a group with its member values.
-  Davide, 21 October: a `process` method on a group can state the member values it needs as a
-  third argument, as group `read` does. Core passes, for each member, its latest value of type `T`,
-  and leaves out members that have none. A later member value of type `T` causes the method to be
-  called again, with the same convergence rule. `members(group)` is unchanged: it still returns
-  the values the group was made with.
-
-Results of `process`: one `AbstractDataItem` or an `AbstractVector` of them. A vector is several outputs;
-this replaces source `expand`. An empty vector is no output. Plain data (a signal, a table) is
-never a result of `process`, only the data of an item.
-
-A value made from several tracked inputs keeps them: Core records for every value what produced it
-(the `process` method and its inputs) and its members, and the two can differ, as for a group filtered out of another.
-Inputs that are groups are kept as they are, not flattened to their original items.
-
-Discovery: method signatures tell Core which inputs a `process` method accepts. Return types cannot be known
-before a `process` method runs; Core learns them from returned values and then finds the `process` methods that accept
-them.
-
-Stable ids: the project gives each produced value its id through `id` (Davide, 21 October); see
-the [toy example](groups-toy.md#stable-ids).
-
-## Metadata comes from returned values
-
-Davide, 21 October: Core drops `analyze`. Every `process` method returns a value, and
-`metadata(value)` gives its metadata. A method that only computes a few numbers returns a later
-version of its input with those numbers in its metadata. Recipes keeps an `analyze` callback for
-its authors and implements it with `process`.
-
-The earlier shape, kept for its behaviors (the `analyze` methods are removed):
-
-```julia
-process(project, group) -> processed_group
-analyze(project, processed_group) -> metadata
-
-analyze(project, member, processed_group) -> member_metadata
-process(project, member, processed_group) -> next_member
-```
-
-A group's own computation produces its own result. Member-aware methods belong to the member:
-they may read a processed group's data and metadata and produce a later member value. Under
-Davide's decision of 21 October, a member `process` method may return a later version of the member or a new
-value that keeps both inputs; Core records both inputs either way. Later member `process` methods must be
-able to use metadata computed in that work. A group does not overwrite member data
-or directly produce data for each member.
-
-The storage direction requires native values to expose complete metadata through
-`metadata(value)`, with a rebuildable internal query copy. Group-aware member work uses the
-member's `process` method.
-The accessor of an item's data is `data`.
-
-Two groups writing the same metadata name to one member is unsupported and undefined; Davide
-explicitly requested no detection/reporting code. Do not use that decision to imply that every
-ordering or branching question about contextual data operations is settled.
-
-`process(project, group)` can be called without a workspace when its arguments provide what it
-needs. Processing need not access members at all. Direct calls must remain ordinary Julia calls.
-How member access is supplied is still part of the reconstruction/lifetime design below.
-
-GUI-generated graph and plot operations are ordinary workspace computations. Tracked computed
-results are cached through the shared runtime; this does not promise that every arbitrary Julia
-resource can be serialized. Numerical work must be reusable outside its original plotting window.
-
-## Member inputs and versions
-
-Settled: `members(group)` returns the bound input representation used to create the group, never
-silently substituted later member values. Groups are constructed with
-those members already chosen; the earlier query/prototype-binding proposal is withdrawn. Exact
-version binding and lifetime remain part of the implementation contract.
-
-The working direction is that values carry what their public operations need. Core would construct
-native items and groups consistently, with a group carrying a bound member view. Deferred loading
-may implement that view. Neither an implicit lookup in the current workspace nor a required
-project-visible wrapper is an approved universal mechanism.
-
-The design must resolve:
-
-- The member snapshot used to form and process a group, and how it differs from a later member
-  value produced using that group's result. Do not introduce a dependency on the group's own
-  downstream output by silently asking for the latest member.
-- Metadata availability to the next member `process` method, whether through separate analysis or a newly
-  returned value. Same-type changes can be real work, not evidence that processing ended.
-- How several applicable member data operations compose or branch. This is separate from the
-  unsupported same-name metadata collision.
-- Nested groups, missing inputs and a retained REPL value after inputs are refreshed or removed.
-- Whether member access requires an open workspace, and what remains usable after close. This
-  must be consistent with the chosen native-value model, not inferred from a GUI lifetime.
-
-## Invocation, readiness and completion
-
-Dispatch continuing through new types is a direction, not a stopping algorithm. Visiting each type
-once is insufficient: work can depend on new metadata, a group result or a changed input revision
-without changing the member's type.
-
-The execution proposal must define applicable invocations and their bound inputs, when relevant
-producers have completed, and when an output set is final for that invocation. An input not yet
-produced is not the same as a completed producer with no matching output. Previously observed
-metadata keys do not prove readiness after a code change.
-
-Group selection must not be reevaluated indiscriminately on every intermediate item version.
-A group `process` method is called with the member values of the type that its signature states,
-and again only when a member gets a later value of that type. The group `read` of
-[source-groups.md](source-groups.md) was not built.
-
-The existing catalog remains the common dependency/status model. The new design must extend that
-model rather than introduce a private graph for plots or Recipes. The fixed stages are gone: every
-version of a value gets the calls of `process` that a method takes. These contracts remain open:
-
-- Invocation identity, input and code revisions, completion and replacement output sets.
-- Discovery of relevant project methods, including member/group-aware and set methods, from
-  input signatures; output types are known only after a `process` method runs.
-- Invalidation when code, metadata, inputs or applicable operations change, including removal of
-  metadata contributions that no longer exist.
-- Publication of results only for the revision that actually completed, with earlier completed
-  results available while affected active results recompute.
-- Computational cycles and repeated work. Davide's decision, 21 October: Core repeats `process` calls until
-  a chain converges, meaning a `process` call returns a value equal in content to its input (equal ids are
-  not enough, since a same-id value with new content is a replacement). Core halts with an error
-  after a maximum number of rounds. So a `process` method that returns its input type means "repeat until unchanged".
-  Equality is `isequal` (Davide, 21 October). The API supplies `isequal` and `hash` for
-  `AbstractDataItem` that compare `data` and `metadata` (Davide, 4 November), so project types converge
-  without extra code; a project defines its own `isequal` for anything else, for example a tolerance. Julia's default `==` would not work: it
-  compares mutable fields such as vectors by object identity, and `missing == missing` is `missing`. Type API
-  projects may use this; Recipes does not offer it. Linked UI selections are a separate
-  interaction problem.
+- how multiple member operations on one member compose or branch;
+- nested groups, missing inputs, and a group held in the REPL after its inputs are reread or removed;
+- whether member access requires an open workspace and what stays usable after the workspace closes.
 
 ## Consistent construction
 
-Davide, 21 October: `reconstruct` is to be deleted. DataBrowserAPI still has it: `DuckDBStore`
-and `view` of an item call it. A typed store read returns the complete native value;
-[storage](storage.md#current-store-proposal) owns that interface.
-This plan owns initial construction, group formation and binding members to a native group.
+Core constructs project values when reading source items, forming groups, and restoring values from
+stores. The public contract for building a group with its members remains open: the fields that
+identify a group must stay separate from its members and computed fields, with a default covering
+ordinary structs and an override for domain-specific types, without requiring `Lazy` fields on
+project types.
 
-The public contract needs to cover initial construction and group member binding, with restored
-values following the same native-value contract. Do not make metadata injection through
-reconstruction an assumed mechanism or replace native project types with internal records.
-Fields used to identify a group must be distinct from its members and computed fields. A default
-should cover ordinary values; an explicit override may be needed for domain-specific construction.
-Do not require `Lazy` fields in project types.
-
-Restoration cannot be assumed possible after arbitrary eviction. A value's retained payload,
-reconstruction information and replayable inputs must be distinguished. Some source reads and
-instrument actions are non-repeatable. Recomputing analysis must not repeat acquisition.
-
-## Recipes authoring
-
-DBRecipes provides a way to read common sources and produce processed items without implementing
-the type API (Davide, 21 October). Its purpose ends once those items are processed. A recipe means
-something defined by DBRecipes; it is not the name for a general calculation or analysis file.
-
-Its source-reading and processing callbacks use ordinary project data. DBRecipes supplies the
-native item types, identity, metadata adaptation and storage choice for this work. Its retained
-analyze callback can compute metadata while adapting those processed items to the Core contract.
-Authors should not implement carriers, storage or background work. The planned macro concerns
-this source-to-processed-item job, not later canvas or plot analyses.
+Restoring a value after store eviction is not always possible, so the contract must separate a
+value's stored data, what is needed to reconstruct it, and inputs that can be reread, because some
+source reads and instrument operations cannot repeat.
 
 ## Analysis after item processing
 
-All users work with the processed items through the same public analysis and visualization tools,
-regardless of whether the items came from DBRecipes, a type-API project or a domain package.
-Combining data, trying calculations, comparing results, composing figures and saving reproducible
-analysis belong here. Saving such work does not require a DBRecipes recipe or registration.
+The next worked example must show ordinary helper code, how selected items reach it, what each call
+returns, how values are inspected and reused, how multiple visualizers share one calculation, and
+what code is saved and rerun. Fixed inputs and live selections stay explicit, and after a restart, a
+missing function from a previous session must be distinguished from a stored result. Shared
+functions for running, inputs, and views still need a concrete design.
 
-The worked grid/gradient/comparison example in [the existing draft](recipes-walkthrough.md) was
-incorrectly framed as a Recipes API example. Its initial source-loading section can use DBRecipes;
-the later analysis must be rewritten against the shared API. The draft's result/register_result!
-functions and later DBRecipes macro framing are not approved shared analysis APIs.
+## Computations
 
-The next example must show ordinary helper code, how selected inputs reach it, what each call
-returns, how values are inspected and reused, how several views use the same calculation, and
-what code is saved/reexecuted. Fixed inputs and followed selections remain explicit. A missing
-session-only function after restart must be distinguished from an available retained value.
-The shared execution/input/view operations still need a concrete proposal; canvas/compute/view
-names used in PM's chat sketch were illustrative only.
+`Computation(f, args...; settings...)` already builds a type from the types of `f`, its inputs,
+and its settings, much like `Base.Broadcast.Broadcasted` does for `a .+ f.(b)`. Several extensions
+are proposed:
 
-## Computations and their outputs
+- Applying the same chain to another item of the same type produces the same `Computation` type, so a
+  computation built on selected items applies across items of that type like a `process` method.
+- A computation exists before running, has an id, and appears in the tree as uncomputed.
+- Its result type is inferred before reading data (in a probe, a fit's
+  `@NamedTuple{chip::String, Rc::Float64, Rsh_W::Float64}` type inferred across the whole chain).
+- A project `process` method can dispatch on a computation type, such as
+  `process(project, fit::Computation{typeof(tlm)})`.
+- `members` on a computation returns the items it read, traced back through its inputs, while the
+  workspace tracks the reverse map (which values read each item) beside its row.
+- A computation over many parts receives them as a vector so its type never grows with part count.
 
-Direction agreed with Davide on 25 October 2026, refined on 28 October.
+When Revise edits a function, its type stays unchanged so existing computations keep theirs; only its
+code revision changes, and types and ids identify which values read it. In a probe, editing one
+function marked 10 of 18 computed values to rerun.
 
-The first Core implementation provides `Computation(f, args...; settings...)`, `inputs`,
-`computation(workspace, item)` and `evaluate(workspace, computation)`. Project calls and interactive
-operations use the same definition type and invocation. Definitions retain preceding computations;
-project functions receive native values. Looking up definitions does not evaluate them. The
-results that the workspace keeps for the project's calls serve evaluation, and are copied when
-reused.
+### Functions identified by their code
 
-The project's calls now form chains of any length, without fixed stages. The store of each result
-type (`storage(project, T)`), the record of each execution (`last_execution`) and the Code
-visualizer are built. The examples below describe the broader target, not the
-completed interface. The implemented type is named `Computation`, rather than the earlier
-illustrative `Computed`.
+An anonymous function gets a generated name such as `#2#3`, which shifts when earlier functions are
+added; today a computation's id starts with that name. Instead, Core could record a hash of the
+function's lowered code and look up the matching function inside its module on reopen. In a probe,
+this matched an anonymous function across a rename from `#2#3` to `#5#6`. Lowered code alone is not
+enough:
 
-A computation is a function that Core applies to values: a `fit` or `aggregate` line of `@plot`, an
-operation built in the GUI, or the same written in code. Today `fit` and `aggregate` return a
-`Result` in DataBrowserPlots. This section replaces it with lazy computed values that the workspace
-keeps, so that a computation defined in a plot is reusable everywhere else.
+- Global names inside lowered code include their module (such as `Main.A.helper`), so identical
+  source text in two modules produces different hashes.
+- Two anonymous functions with identical bodies inside different enclosing functions produce one
+  hash and differ only in captured values; because captured values live as fields of the function
+  type, the id must include them and lookup must key on both module and enclosing function.
 
-### Where project types stop
+`Serialization` stores an anonymous function along with its code, yet loading it in a new session
+creates a fresh function type that existing methods do not match.
 
-Project types are used where project code runs: `read` and the `process` methods. Values that Core
-computes are never of a project type, because no project code made them. They follow the same
-interface as project values (`id`, `metadata`, `data`, `members`), so Core code and project
-code read them in the same way. Their data and metadata are what the computation produced from the
-project's data and metadata, unchanged.
+### Compilation cost
 
-### A computation is a lazy value
+A chain of computations compiles in roughly the same time as direct function calls — about 17 ms
+per new function in a probe up to 80 steps, with inference adding about 4.5 ms per step. Because
+types created dynamically during a run are not cached across sessions, each session pays this cost
+on first use.
 
-Core defines one type for computations; the name `Computed` is an example. A `Computed` value holds
-a function, its inputs and its settings, not its result. It works as `Base.Broadcast.Broadcasted`
-does for `a .+ f.(b)`: its type is the computation, built from the types of the function and of
-the inputs, so no `struct` is written or evaluated per computation.
+### Code revisions from the methods a call can select
 
-```julia
-struct Computed{F,Args<:Tuple,S<:NamedTuple} <: AbstractGroup
-    f::F
-    args::Args            # the inputs: items or other Computed values, never their results
-    settings::S           # the arguments that are not inputs
-end
+Core's code revisions (`DataBrowserCore.CodeRevisions`) hash all code reachable from a function by
+walking every method of every function name found in its lowered code. Julia's compiler also tracks
+which methods a compiled call actually invokes as *edges*, invalidating callers when any edge
+method changes. The two differ in four ways:
 
-x::Sweep
-r   = Computed(resistance, x)
-c   = Computed(corrected, r; offset = 0.5)
-fit = Computed(tlm, [c₁, c₂, c₃, c₄])     # one fit over a part: its inputs as a vector
+- Edges track argument types, listing only methods selected for those types, whereas code revisions
+  walk names and include every method of each called function.
+- When an argument type is unknown (for instance a value pulled from a `Dict{Symbol,Any}`), dispatch
+  happens at run time and the compiler records no edge; code revisions still catch the callee
+  because its name appears in the code.
+- Compiler edges reset every session, whereas code revisions are content hashes persisted in the
+  cache so edits made while Julia was closed still register.
+- Compiler edges rely on compiler internals that can change across Julia versions, as Revise handles
+  separately.
 
-typeof(c) == Computed{typeof(corrected), Tuple{Computed{typeof(resistance), Tuple{Sweep}, …}}, …}
-```
+Name-based code revisions already cover everything compiler edges cover across sessions, while
+edges avoid needless recomputation when a new or edited method never matches the project's data. In
+the RuO2 project, adding an unused method `analyze_pund(::Vector{Float64})` triggers reruns of
+`process` on 62,381 of its 65,197 items under code revisions, compared to zero under compiler edges.
 
-What the type gives:
+One proposed improvement computes code revisions from inferred code using observed argument types,
+counting only methods a call can actually dispatch to:
 
-- The same chain on another `Sweep` has the same type. A computation built on the selected items
-  applies to every item of that type, as a `process` method does.
-- The value exists before anything runs. It has an id and can appear in the tree as not computed;
-  `materialize` computes it, through the cache.
-- The result type is inferred from the type before any data is read. In the probe, the fit's
-  `@NamedTuple{chip::String, Rc::Float64, Rsh_W::Float64}` is inferred through the whole chain.
-- A project `process` method can take one computation by type, as
-  `process(project, fit::Computed{typeof(tlm)})`, and reading it tells what it receives.
-- The dependency graph is the nesting of the types and the inputs, read without running anything.
+- A call with inferred function and argument types hashes only the methods applicable to those types.
+- A call with unknown argument types or a function passed as a value (such as to `map`) hashes all
+  of its methods, as code revisions do today.
+- Because the revision remains a content hash of the counted methods, it still persists across
+  sessions and updates after every method definition.
 
-A `Computed` value follows the item interface. `id` is built from the function names and the
-inputs' ids, such as `tlm([corrected(resistance(s1)), …])`. `data` is the result, computed
-when it is used. `metadata` gives the named parts of the result, if it has any. `members` gives the
-items the computation read: it is derived from `args`, by following the inputs back to items, and
-not stored, so the two cannot disagree. `args` are the direct inputs and make the graph; `members`
-skip the steps between. The reverse, which values read an item, is an index the workspace keeps
-next to its record per id.
+This stays sound because inferred types cover every type observed at run time, so any dispatched
+method belongs to the hashed set. In a probe, adding `helper(::Vector{Int})` or editing
+`helper(::AbstractString)` leaves the revision unchanged for code calling `helper` on a `Float64`,
+adding `helper(::Float64)` updates it, and later editing `helper(::Real)` (now shadowed by
+`helper(::Float64)`) leaves it unchanged; calls taking values from a `Dict{Symbol,Any}` or passing
+functions to `map` still invalidate in every case.
 
-A function is identified across sessions by its code, not by its name. An anonymous function gets
-a generated name, such as `#2#3`, which changes when other functions are added before it. Core
-records the hash of its lowered code instead, and in a later session finds the function with the
-same hash among the module's functions. In the probe, an anonymous function is found again after
-its generated name changed from `#2#3` to `#5#6`. The code alone does not identify a function:
+Three limits remain untested on the RuO2 project: each distinct observed argument tuple needs its own
+walk, inference costs more than reading lowered code (not measured), and walking inferred code still
+depends on compiler internals.
 
-- Global names in lowered code carry their module, such as `Main.A.helper`, so the same text in two
-  modules gives two hashes.
-- Two anonymous functions with the same code in different enclosing functions give one hash, and
-  differ only in the values they capture. Captured values are fields of the function's type, so the
-  id must include them, and the lookup must use the enclosing function as well as the module.
+### Project chains known before running
 
-A computation over many parts takes them as a vector, so its type does not grow with the number of
-parts.
+Starting from source item types, inference could unroll a `process` chain before any data loads:
+each input type picks a method, and its inferred return type selects the next step (in a probe,
+`Raw → Clean → Fitted` unrolled statically). Unrolling stops whenever:
 
-Edits to a function reach the open workspace through Revise, as edits to project code do today.
-The function keeps its type, so the values keep theirs; its code revision changes, and the types
-and ids say which values read it. In the probe, editing `corrected` marked 10 of 18 computed values
-to compute again, and the two fits changed accordingly. When the function now returns something
-else, inference gives the new result type.
-
-Compilation: a chain of `Computed` values compiles in the same time as calling its functions
-directly, about 17 ms per new function in the probe, up to 80 steps. Inference adds about 4.5 ms per
-step. Types created while the program runs are not stored between sessions, so each session pays
-this when a computation is first used.
-
-### What Julia already records
-
-Some of this graph exists in Julia, for compiled code. The probe `compiler-structures.jl` shows:
-
-- Type inference gives the result type of a chain. Core uses it as is.
-- The compiled code of `evaluate` for a chain records which methods it calls, transitively, as
-  edges. Redefining a method two calls away ends that compiled code's validity in world ages. Core
-  already computes this dependency in its own way, as code revisions (see below).
-- `Serialization` stores an anonymous function together with its code. A later session gets a
-  working function of a new type, not the live function, so methods written for the live function
-  do not apply to it.
-
-Julia records nothing about data: which values were computed, from which input revisions, and
-where the results are. The `Computed` value, the record per id and the cache are Core's own.
-
-The split of [runtime and clients](runtime-and-clients.md) follows the same line. Its *Julia
-host*, the process that loads and runs project code, answers the questions about code: which
-methods take a value of a type, and the code revision of a function. *DBCore*, the piece that
-keeps the workspace, keeps the calls and their revisions.
-
-Core's code revisions (`DataBrowserCore.CodeRevisions`, described in
-[ARCHITECTURE](../ARCHITECTURE.md)) hash the code reachable from a function by following the names in
-lowered code, and every method of each function reached. The two records differ:
-
-- The compiler's edges follow types, so they list only the methods that the argument types select.
-  The code revisions follow names, so they list every method of a function that is called.
-- When a value's type is not known, as for a value read from a `Dict{Symbol,Any}` inside project
-  code, the call is decided while running and the compiler records no edge. In the probe
-  `compiler-edges-limits.jl`, redefining `helper` then did not mark the code stale. The code
-  revisions still see `helper`, because its name is in the code. Core passes metadata rebuilt as a
-  `NamedTuple` with the types of its values, and in the probe the edges are then recorded.
-- Adding a method that does not apply to the data changes the code revision of every function that
-  calls it, and the results are computed again. The edges ignore it when the types are known; when
-  only an abstract type such as `Real` is known, they are marked stale too, as in the probe.
-- World ages are counters of the running process and start again in each session. The code
-  revisions are content hashes stored in the cache, so they also cover edits made while Julia was
-  closed.
-- The edges and world ranges are internal to the compiler; the code that reads them may need
-  changes for a new Julia version, as Revise does.
-
-So the code revisions already cover what the edges cover, across sessions, and the edges would only
-avoid some needless recomputations. They differ only when a method is added or changed that the
-data's types never select. In the RuO2 project every function has one method, so editing one
-recomputes the same items under both. A new method such as `analyze_pund(::Vector{Float64})`,
-which no item calls, would recompute the `process` calls of 62,381 of its 65,197 items (PUND
-fatigue, PUND and wakeup) under the code revisions, and none under the edges. Proposal, not decided: code revisions that count only the methods a call can select. The walk
-reads the code inferred for the observed argument types, instead of the lowered code:
-
-- A call whose function and argument types inference knows counts the methods applicable to those
-  types.
-- A function called with types that are not known, or passed as a value, as to `map`, counts all
-  its methods, as the code revisions do today.
-- The revision is a content hash of the counted methods, so it is stored and compared across
-  sessions as today, and computed again after each method definition, as today.
-
-This is safe because inferred types contain the types that occur while running: the method chosen
-while running is always one of the methods counted. A new method that the data selects changes the
-set, so it changes the revision. In the probe `fused-revisions.jl`, adding `helper(::Vector{Int})`
-or editing `helper(::AbstractString)` leaves unchanged the revision of code that calls `helper` with
-a `Float64`; adding `helper(::Float64)` changes it, and then editing `helper(::Real)`, which
-`helper(::Float64)` now hides from that data, does not. Code that calls `helper` with a value from a
-`Dict{Symbol,Any}`, or passes it to `map`, changes in every case.
-
-Limits: a walk is needed for each distinct observed argument type of a function; inference costs more
-than reading lowered code, not measured; the walk reads inferred code, which is internal to the
-compiler in the same way as lowered code is for today's walk. Not tested on the RuO2 project.
-
-### Project methods in the same graph
-
-A call of a project's `process` method is a `Computed` value too:
-`Computed(process, (project, x))`. Every such call has the same function type, `typeof(process)`,
-but the argument types select the method, so the type still identifies which method runs. Core
-computes the inputs first, so the project's methods receive values of their own types, never a
-`Computed` value.
-
-From the types of the source items, inference unrolls the chain before anything is read: each
-input type selects a method, and the method's inferred result type selects the next one. In the
-probe, `Raw → Clean → Fitted` is known in advance. The unrolling stops where:
-
-- no project method takes the type: the chain ends;
-- the result type equals the input type: "repeat until unchanged" is decided while running;
-- the result is not one concrete type, as `Union{Fitted, Notes}` for a method whose result depends
-  on the data: the next step is known only after running, as today.
-
-So GUI computations and the project's `process` methods form one graph. The catalog already
-works this way for the calls of the project: each version of a value gets the calls that a method
-takes, and the code revisions are computed per function and argument types.
-
-### What the workspace records
-
-The function and the inputs are in the value. The workspace keeps, under each value's id:
-
-- the status: not computed, computing, computed or failed;
-- the code revisions of the functions in its type, and the revisions of its inputs;
-- the result, in the cache.
-
-This gives memoization (the same id and revisions reuse the result), recomputation (a new revision
-makes every value whose type or inputs contain it out of date), provenance (the inputs, back to the
-files) and laziness (a value is computed when something asks for its result). It extends the
-catalog's pipeline rows and code revisions, which already do this for `read` and `process`.
+- no project method accepts the type (the chain ends);
+- the return type equals the input type ("repeat until `isequal`" must run to decide); or
+- the inferred return type is non-concrete, such as `Union{Fitted, Notes}` (the next step depends on
+  the runtime value, as today).
 
 ### Types of values: inferred, then observed
 
-Proposal from the plot builder session, 25 October 2026; not decided. The plot builder decides
-whether a scale holds categories or numbers from the inferred type of each mapped value. Paths into
-item data, such as `:data.I`, infer as `Any` today, because Core records no type for an item's data.
+The plot builder chooses categorical or numeric scales from each mapped expression's type, yet paths
+into item data such as `:data.I` infer as `Any` today because Core records no type for item data.
+Under one proposed design:
 
-1. The workspace keeps one type per value, under its id, next to its status, revisions and result,
-   and the cache saves it. Before the value is computed, it is the type inferred from its
-   `Computed` type. Once computed, `typeof(result)` replaces it. Plots, the tree and the discovery
-   of `process` methods read this one record.
-2. A path of a plot's mapping, such as `:data.I`, is a `Computed` value of its own. Its type is
-   observed when it is computed: a data frame's column `I` gives a concrete vector type. No rule
-   per table interface is needed.
-3. An observed type is invalidated as a result is: a new code revision or input revision drops it,
-   and the type falls back to inference.
-4. A stored type that contains a function needs that function in a later session. It is found by
-   its code, as described above.
-5. Over a selection, the same chain on items of one type has one inferred type. Observed types can
-   differ per item; they combine by union, and a plot role whose kinds disagree is unknown.
+1. The workspace keeps a single type per value alongside its status, revisions, and result, saved in
+   the cache. Before execution, that type is inferred from the `Computation` type; once executed,
+   `typeof(result)` replaces it, and plots, the tree, and `process` discovery all read this field.
+2. Each mapping path such as `:data.I` becomes its own computation whose concrete type (e.g., a
+   `DataFrame` column's vector type) is observed when computed.
+3. Invalidating a result's code or input revision drops the observed type back to the inferred one.
+4. Any stored type containing a function locates that function on reopen by its code hash as
+   described above.
+5. Across a selection, items running the same chain share an inferred type; differing observed types
+   combine by `Union`, leaving a plot role's kind unknown when their kinds disagree.
 
 ### Computations over parts of the rows
 
-`fit` and `aggregate` divide the rows of several items into parts by a key, such as the values of
-`Chip`, and make one `Computed` value per part. The data is moved as little as possible:
+`fit` and `aggregate` partition rows across multiple items by a grouping key (such as `Chip`) and
+create one computation per part while minimizing data movement:
 
-1. Each item is read once, and only the columns the computation names are taken.
-2. The rows are divided by one pass over the key values, giving the row numbers of each part. No
-   row is copied.
-3. The function receives views of its part's columns. It copies only if it needs contiguous memory.
-4. Each part is its own value, so a change to one item recomputes only the parts that read it.
+1. Each item is read once, taking only the columns named by the computation.
+2. One pass over the key column assigns row indices to each part without copying rows.
+3. The computation function receives column views for its part and copies only if it needs
+   contiguous memory.
+4. Because each part is an independent value, editing one item reruns only the parts that read it.
 
-An output always records whole items as its members. When an item's data is a table, it can also
-record the rows it read; other data is understood only as far as its type allows.
+Outputs always record whole items as their members and, for table-backed items, can also record the
+specific rows read; other data types expose whatever detail their type supports. `Result` is removed,
+with `fit` and `aggregate` returning their per-part computations as a `Selection`, and `@plot`
+keeps only drawing specifications (mapping and plot type) while plotting code stays out of Core.
 
-### What this replaces
+## Open
 
-- `Result` is deleted. `fit` and `aggregate` return their `Computed` values, one per part, as a
-  `Selection`.
-- The `@plot` line keeps what is only about drawing: the mapping of its points and its plot type.
-  Nothing about plotting goes into Core.
-
-### Open
-
-1. Ids grow with the length of the chain and the number of inputs. The cache may need a short
-   form, such as a hash, with the readable form kept for display. To be tested by trying to make
-   two values collide and by renaming functions.
-2. Where the key of a part goes: in the settings, in the id, or both.
-3. Members and inputs of a computation whose result is part of its inputs, such as a filter.
-4. Values that cannot be memoized: a mutable value changed in place, code the revision does not
+1. Ids grow with chain length and input count; the cache may need a short hash key alongside a
+   readable display name (test by attempting collisions and renaming functions).
+2. Where a part's key lives: in settings, in the id, or in both.
+3. How members and inputs work for computations whose output is a subset of their inputs, such as
+   filters.
+4. Values unsuitable for memoization: values mutated in place and code that code revisions cannot
    follow.
-5. Whether a selection kept from the GUI becomes a computed value. Davide, 2026-10-25: yes, and so
-   does a window's output. Example: the Table window keeps the points of
-   an IV sweep where |V| > threshold, and passes them to the Plot Builder. The Table's output is a
-   computed value whose computation is the filter, with the rows and columns selected in it, if
-   any. The Table built this in part: its output is one computation `view(item, selection)` for
-   each item, with the rows and columns selected in it, as the docstring of `output` describes.
-   Direction agreed (Davide, 2026-10-25), in place of storing row numbers:
-   - Every visualizer has a transform and a selection. Its output is the selection applied to what
-     the transform gave.
-   - The transform may change values. It is a computed value, and can be cached.
-   - The selection only restricts data, as the visualizer defines it: rows and shown columns for a
-     Table, a crop for a matrix, a region for an image. It is lazy and never cached: a view into what
-     the transform gave, or a copy (see "View or copy" below).
-   - The items keep their id and metadata; only their data is restricted, so the Plot Builder
-     reads them by paths such as `:data.V`.
-   - Each unchanged step is reused whenever the graph changes.
-   - Davide, 2026-10-25: the transform becomes the window's `process`, which gives one or more
-     `Computed` values, as the Plot Builder's fits do. The selection is a `Computed` value too,
-     kept in memory and never cached; its definition is part of the ids of what reads it. Which
-     values are cached is decided with the type API, so caching waits for this.
-   - Keeping or dropping a selection made by hand when the data changes is the visualizer's job.
-   - View or copy (Davide, 2026-10-25). For each type of data it shows, the visualizer gives two
-     forms of its restriction: a view, such as `view(V, mask)`, `view(A, rows, cols)` or
-     `view(df, rows, cols)`, and a copy, such as `V[mask]`. A project item is restricted through its
-     data and rebuilt with `reconstruct(T, id, restricted data, metadata)`. A reader gets the view
-     when inference proves both that it returns the same type with the view as with the copy, and
-     that it writes nothing visible (`effect_free`). Otherwise it gets the copy, made once for each
-     request; so does a view that would be kept inside a result that is kept or cached, since the
-     view keeps its whole parent and serializing it writes the parent. Users never choose; a
-     function that accepts `AbstractVector` and does not change its input gets views. Checked
-     with `Base.infer_return_type` and `Base.infer_effects` on Julia 1.13.
-     - A struct field of a concrete type, such as `V::Vector{Float64}`, cannot hold a view, so its
-       item always gets the copy.
-     - Inference is conservative: a function that changes only its own copy, or logs with `@info`,
-       gets a copy.
-     - Inference does not see speed: a view through a mask is slower to read element by element, so
-       a function that reads the data many times may be faster with a copy.
-6. Whether Core's concrete `Group` remains. Core has none today: a computation's result keeps
-   its own type, and `storage(project, T)` chooses its store by that type.
-7. How the cache stores a value, and finding functions by their code: the lookup by module and
-   enclosing function, captured values in the id, and functions from packages.
-8. The first-use cost in the real catalog, cache and GUI, and whether a generated package of
-   `precompile` calls can store that compiled code between sessions.
-9. Project methods that return several items: how many is known only after running, so their
-   outputs cannot appear in the tree before.
-10. `read` as the first value of each chain: a non-repeatable read must keep its result in the
-    cache, never be computed again.
+5. Visualizer selections as computations (a Table window's output is already `view(item, selection)`
+   per item):
+   - A selection restricts data in visualizer-specific ways (rows and visible columns for a Table, a
+     crop for a matrix, a region for an image). It stays in memory uncached, and its definition enters
+     downstream ids, while the type API governs which downstream results are cached.
+   - Keeping or dropping a manual selection when underlying data changes belongs to the visualizer.
+   - **View vs. copy.** For each data type, a visualizer provides both a view (`view(V, mask)`,
+     `view(df, rows, cols)`) and a copy (`V[mask]`). A reader receives the view when Julia inference
+     proves both identical return types and no visible side effects (`effect_free`), and receives a
+     per-request copy otherwise — or whenever the value would live inside a retained or cached
+     result, since a view pins its parent array. Checked via `Base.infer_return_type` and
+     `Base.infer_effects` on Julia 1.13, users never choose manually: concrete struct fields like
+     `V::Vector{Float64}` always receive a copy; conservative inference gives a copy to functions
+     that mutate local buffers or call `@info`; and inference ignores access speed, even where a
+     masked view iterates more slowly than a copy.
+6. Whether Core needs a concrete `Group` type; today a computation's result keeps its own type and
+   `storage(project, T)` picks a store by that type.
+7. Storage encoding and code-based function lookup across restarts (lookup by module and enclosing
+   function, captured values in ids, and package-defined functions).
+8. First-use compilation cost in the full workspace, cache, and GUI, and whether generating a tiny
+   `precompile` package helps across sessions (in a probe, a generated package precompiled in under
+   a second, loaded in ~6 ms on restart, and reloaded cleanly under Revise).
+9. Project methods returning multiple items: item counts are known only after execution, so their
+   outputs cannot appear in the tree beforehand.
+10. `read` as the root of a non-repeatable chain: its result must stay in the cache and never rerun.
+11. How a group `process` accesses derived values produced from its members: because a sample mean
+    gets its own id rather than becoming a new version of the sample, a `process` on the top group of
+    all samples does not receive those means; comparing means across existing and future samples
+    requires naming produced values.
+12. How users inspect the exact input versions used when a group `process` ran on newer member
+    versions than `members(group)` lists.
+13. When a vector-valued result (such as one difference trace per repeat) expands into separate items
+    with their own ids.
 
-## Evidence and limits
-
-The current implementation has chains of `process` calls and live code invalidation. Its catalog cutover is
-recorded in [workspace-graph](workspace-graph/workspace-graph.md). That work is not proof of the
-new invocation, group reconstruction or Recipes contracts. The earlier engineering and product
-reviews are preserved in the [group discussion archive](archive/2026-10-21-discussion/groupings.md).
-
-The probes in `work/computation-graph` were run outside the workspace, on Julia 1.13.2 and
-Revise 3.17.3. The folder left the repository in commit `99e6737`; `git show 00f1e65:work/computation-graph/lazy-computed.jl`
-prints a probe.
-
-- `lazy-computed.jl`: the lazy `Computed` value on a chain of two steps and a fit per chip. Equal
-  types for different items, ids before running, the inferred result type, a `process` method on
-  the fit, computing through a memo, and a Revise edit marking the values that read it.
-- `type-api-graph.jl`: a type-API project's `process` chain unrolled by inference before running,
-  stopping at a result that depends on the data, and the same chain computed as lazy values.
-- `anonymous-by-content.jl`: an anonymous function found again in a later session by the hash of
-  its lowered code, after its generated name changed.
-- `compiler-structures.jl`: the compiler's edges for a chain, their invalidation by a redefined
-  method two calls away, and an anonymous function stored by `Serialization`.
-- `fused-revisions.jl`: a code revision from the methods that inferred argument types select, with
-  every method counted where the types are not known; added and edited methods that the data does
-  not select leave it unchanged.
-- `compiler-edges-limits.jl`: edges missed through a `Dict{Symbol,Any}` value and a stored
-  function, recorded again when the same metadata is rebuilt with its values' types, and code
-  marked stale by a method that does not apply to the data.
-- `lazy-depth.jl`: compile time and inference against chain depth, up to 80 steps, compared with
-  calling the same functions directly.
-- `compile-cost.jl`: the first use of a new type costs about 10–30 ms when values are held in an
-  abstract vector, and about 120 ms for a sort of a concrete vector of it.
-- `parametric-kinds.jl`: an earlier shape, with the computation's name as a type parameter.
-- `generated-package.jl` and `generated-package-revise.jl`: a struct written per computation. A
-  package written at runtime precompiles in under a second and loads in about 6 ms in the next
-  session; Revise follows it when it is rewritten during a session.
-
-They do not cover the real catalog, cache or GUI.
+The probes above ran outside the workspace on Julia 1.13.2 and Revise 3.17.3; they are preserved in
+git history (`git show 00f1e65:work/computation-graph/lazy-computed.jl` and sibling files) and do
+not cover the full workspace, cache, or GUI.

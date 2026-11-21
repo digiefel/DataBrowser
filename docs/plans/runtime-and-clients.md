@@ -1,224 +1,59 @@
 # Runtime and clients
 
-Target design, started on 30 October 2026. On 9 November 2026 Davide chose the split below, with a
-Julia host, as the working direction. This plan owns the pieces of DataBrowser, the two contracts
-between them and the messages that cross. [The client API](client-api.md) owns the functions that
-clients call, and [the code editor](code-editor.md) owns the editor that the split makes possible.
-[Visualizers](visualizers.md) owns what a visualizer does inside a window; [graphics](graphics-grammar.md)
-owns plot declarations.
+[Architecture](../ARCHITECTURE.md) describes today's workspace, where `DataBrowserCore` runs the
+work of both DBCore and the Julia host in one process, and the [vision](../vision.md) (§8 and §14)
+defines the target pieces, their roles, and the kinds of clients. The messages between DBCore and a
+host, the path from a saved edit to redrawing, what crosses to a client for a visualizer, and
+process boundaries remain open.
 
-The split is not built: today DataBrowserCore does the work of DBCore and of the Julia host in one
-process, as [Architecture](../ARCHITECTURE.md) describes. Of the agreed points below, the
-visualizers of the workspace, the browser driven by code and the client calls without the catalog
-lock are built; only a read of a result that its store lacks still takes that lock. Of the
-proposals, only `show` and `showable` of a visualizer are built, for the Export button of the
-browser.
+## The provider protocol
 
-## The pieces
-
-DataBrowser has three kinds of piece.
-
-- *DBCore* keeps the workspace: the function calls that exist, their state, what runs next, and
-  what clients read. Everything that it holds is data: ids, revisions, states and metadata.
-- A *provider* is code that produces or keeps values: a `read` or `process` method of a project, a
-  source, a store, the `settings` and `prepare!` of a visualizer. A *host* is a process that loads
-  the providers of one language and runs them when DBCore asks. The Julia host is the only host
-  planned.
-- A *client* is anything that a person or an agent uses to work with a workspace: the browser,
-  which is the desktop GUI drawn with ImGui, a web client, a terminal UI, an agent or a script.
-
-Two contracts connect the pieces. The *client API* is the set of functions that a client calls and
-DBCore implements. The *provider contract* is what a provider implements and DBCore calls through
-a host. *Runtime* means DBCore together with its hosts.
-
-```mermaid
-flowchart LR
-    subgraph clients["clients"]
-        gui["the browser (ImGui)"]
-        web["the web client,<br/>with the code editor"]
-        script["a script, an agent,<br/>a Python package"]
-        vscode["VS Code"]
-    end
-    core["DBCore:<br/>the catalog, the table items,<br/>the shared state, the visualizers"]
-    subgraph host["the Julia host"]
-        providers["the providers:<br/>project code, sources, stores"]
-        server["the Julia language server"]
-    end
-    gui -- "client API" --> core
-    web -- "client API" --> core
-    script -- "client API" --> core
-    core -- "provider protocol" --> providers
-    web -- "LSP" --> server
-    vscode -- "LSP" --> server
-```
-
-A client that works on code also talks to the Julia language server through LSP, the Language
-Server Protocol that editors such as VS Code use. The language server runs in the Julia host
-because it needs the loaded code of the project. [The code editor](code-editor.md) says what the
-language server does.
-
-## Requirements
-
-1. **Julia project code runs in a full Julia process.** The Julia host needs the whole of Julia,
-   compiler included, by construction. DBCore is Julia today. The split lets its language be chosen
-   later, and Davide set that choice aside on 9 November 2026.
-2. **Every other component can be written in any language.** GUI, visualizers, sources, stores and
-   the recipes API. The test: each could be built as a language-independent binding, and the GUI
-   could be a client written in any language.
-3. **All sorts of clients, several at once.** Desktop GUI, web UI, terminal UI, agents and language
-   packages are all supported, at the same time on the same runtime. Supporting every kind of
-   client is the intended uniqueness; no client type is dropped to simplify the model.
-4. **A web UI with full capability.** Clients need not be web views, but the model must support a
-   web UI in which an agent live-codes arbitrary visualizers: dashboards, layouts, themes.
-5. **A visualizer can be any interactive UI.** A plot is one visualizer; a plotting script is a
-   setting of that visualizer.
-6. **A Python package as powerful as Julia.** It covers what DataBrowserRecipes covers and can create
-   arbitrary plots, without requiring its users to learn Julia or Makie.
-7. **Everything is inspectable.** From any visual a user reaches the computation, its code, its
-   input items and the values in between. The code then shows the values that this computation had
-   inside when it produced the visual (Davide, 9 November 2026). This is how scientists can trust
-   code an agent wrote.
-8. **Code-driven work stays first-class.** Pipelines and analyses are plain files under version
-   control; GUI actions and code describe the same work.
-9. **Batteries included, through public contracts only.** Built-in components use only the contracts
-   a third party could use. Bundling decides which modules ship by default.
-10. **Light to compile and load.** Heavy dependencies stay with the feature that needs them. A client
-    that connects to a running runtime does not pay its loading time again.
-11. **None of Jupyter's failures.** Each one below has the requirement that prevents it:
-
-    | Jupyter failure | Requirement here |
-    | --- | --- |
-    | Each frontend (Notebook, Lab, VS Code, Colab) reimplements output and widget support, so the same output works in one and breaks in another, and users pick plot "backends" per frontend | One contract per kind of client, owned by this project and checked by tests. A client either draws a visualizer or shows its declared fallback; it never shows it partly broken. |
-    | Widgets were added on top of the output model later; Python and JavaScript widget versions must match | Synchronized state (settings, output, selection) is the base of the protocol, versioned with it. |
-    | Every output is styled on its own, so a notebook does not look like one application | The client gives every visualizer one theme. Visualizers use it and do not bring their own. |
-    | Hidden state: cells run in any order, so the shown results may not follow from the shown code | Results follow from the dependency graph; what is shown always says which code and inputs produced it. |
-    | Notebooks are JSON files with outputs inside, hard to diff and review | Work is plain source files; results are stored apart from code. |
-12. **A notebook is one possible client, not the model.** Exploratory analysis is not always a
-    linear sequence of cells. A linear document is still useful for sharing, so the contract must
-    make it possible to build a notebook-like client.
-13. **Nothing hangs, and a saved change shows at once.** Davide, 9 November 2026: "async,
-    high-throughput, low-latency computation with zero UI hangs and as low overhead as possible is
-    a given everywhere. After a change to process, which gets picked up instantly with interactive
-    latency, work starts being scheduled according to a properly chosen priority (visible first -
-    decided by the client and/or Core -, then based on the computation graph and membership graph,
-    cleverly chosen)". Julia stops all the threads of a process to collect garbage, and a loop in
-    project code that allocates nothing keeps every other thread waiting for that stop. A client
-    therefore runs in another process than project code.
-
-## The split
-
-Five principles decide where each part of today's code goes:
-
-1. Each piece has one role: DBCore, a host with its providers, a client, or a contract.
-2. The two contracts hold declarations only: the names of functions, their docstrings and the types
-   that cross.
-3. The protocol between a client and DBCore is the client API sent as messages. The server that
-   carries the messages translates them and adds no behavior.
-4. Drawing belongs to clients.
-5. What depends on one language stays in the host of that language, or in a client for it. DBCore
-   and the DataBrowser protocols carry data: values, metadata and the fact that code changed.
-   Features for writing code, such as completions or the types shown in an editor, go through LSP.
-
-DBCore keeps what decides which calls run and when, and what clients read:
-
-| DBCore keeps | Today in |
-| --- | --- |
-| The *catalog*, which has one entry for each function call that the workspace runs: its state, its inputs, its jobs, its priority, and what becomes stale when something changes | `Catalogs.jl` |
-| The *revision* of each result: a hash of the code revision of the function, the revisions of its inputs, its other arguments and its settings. The code revision comes from the host | `Evaluate.jl`, in part |
-| The table `items`, its generations, publishing and change events | `Items.jl` |
-| The shared state (selection, tags, order) and its files | `Tags.jl`, `Selection.jl`, DataBrowserAnnotations |
-| The visualizers of the workspace: id, settings, input and links | `Visualizers.jl`, in part |
-| The catalog file, and the copy of the metadata that queries read | DataBrowserCache, in part |
-| The client API, the status of the workspace, and starting and stopping hosts | `Operations.jl`, `Status.jl`; hosts are new |
-
-The Julia host takes everything that calls project code:
-
-| The Julia host takes | Today in |
-| --- | --- |
-| Loading edits with Revise, and *code revisions*: for each function, a hash of all the code that it can reach | `CodeRevisions.jl`, `watch_code` |
-| Finding the `process` methods that take a value: `hasmethod`, `methods`, the inferred result type | `Pipeline.jl`, `Calls.jl` |
-| Running calls, and `isequal` and `deepcopy` of their results | `Evaluate.jl` |
-| `storage(project, T)` and the stores | `Evaluate.jl`, DataBrowserCache |
-| Sources: scanning and watching | DataBrowserSources |
-| The `settings`, the transform and the `prepare!` of a visualizer | `Visualizers.jl` |
-| The Julia language server | new |
-| The scientific code that DataBrowser supplies, such as `fit` | DataBrowserFitting, DataBrowserPlots |
-
-Today's packages land in the split as follows:
-
-| Today's package | In the split |
-| --- | --- |
-| DataBrowserAPI | The two contracts: the client API and the provider contract |
-| DataBrowserCore | DBCore, without the parts that the Julia host takes |
-| DataBrowserCache | The catalog file goes to DBCore; `MemoryStore` and `DuckDBStore` are providers |
-| DataBrowserAnnotations | The files of the shared state, in DBCore |
-| DataBrowserSources, DataBrowserRecipes | Providers |
-| DataBrowserPlots | Plot declarations and figures are providers; its ImGui windows go to the browser |
-| DataBrowserFitting | A library that providers use |
-| DataBrowserGUI | The browser, a client that uses only the client API |
-| DataBrowserProfiling | A tool for developers |
-| New | The server that carries the client API as messages, the Julia language server, the web client, a Python package |
-
-## The provider contract
-
-The provider contract has two layers: the Julia methods written by an author, and the messages
-that carry them between DBCore and a host.
-
-### The methods of an author
-
-An author writes the same methods as today: `read`, the three kinds of `process` method (on an
-item, on a group with the values of its members, and on a member with its group), `storage`,
-sources, stores, and the `settings` and `prepare!` of a visualizer. Every value gives its `id`,
-`label`, `metadata`, `data` and `members`.
-
-Two things leave this contract. `draw!`, `draw_header!` and `initial_size` draw with ImGui, so they
-belong to the contract of the browser. `reconstruct` is to be deleted, as [storage](storage.md)
-says.
-
-### The provider protocol
-
-The *provider protocol* is the set of messages between DBCore and a host, and it is the same for a
-host of any language. Types cross it as names. DBCore never interprets a type name, and asks the
-host what it needs to know about a type.
+The *provider protocol* is the set of messages exchanged between DBCore and a host, and it stays the
+same regardless of the host's language. Types cross as names: DBCore never interprets a type name,
+asking the host whatever it needs to know about a type instead.
 
 Providers come in two kinds. A *function* is repeatable, and a revision identifies its result:
-`read`, `process`, a function given to `evaluate`, the `settings` and `prepare!` of a visualizer. A
-*service* has a lifetime and keeps state: a source or a store.
+`read`, `process`, a function passed to `evaluate`, and a visualizer's `settings` and `prepare!`.
+A *service* has a lifetime and holds state: a source or a store.
 
-The messages below are proposals; their names and fields are examples.
+The message names and fields below are proposals:
 
-| Message | From → to | What it carries |
+| Message | Direction | What it carries |
 | --- | --- | --- |
-| `run` | DBCore → host | The function, its inputs by revision, the revision that the result will have, and the priority |
-| `result` | host → DBCore | The revision; the id, label, type, metadata and members of the value, and how long the call took; or the error. The value stays in the host |
-| `cancel` | DBCore → host | A call whose result is no longer wanted |
-| `code changed` | host → DBCore | Each function, with its argument types, whose code revision changed, and the new code revision; the changed answers to the questions below; warnings about code that the host cannot follow |
-| `source changed` | host → DBCore | The source items that came, changed or left |
-| questions about code | DBCore → host | Which functions take a value of a type; the code revision of a function for given argument types; the type that a function returns, when the host can infer it; whether a type is a subtype of another |
-| store requests | DBCore → host | Write, read or remove the result of a revision. DBCore decides when, and the host does it with the store that `storage(project, T)` gives |
-| `value` | client → DBCore → host, and back | A value, a part of it, or one of its representations |
+| `run` | DBCore → host | the function, its inputs by revision, the target revision for the result, and priority |
+| `result` | host → DBCore | the revision; the value's id, label, type, metadata, members, and call duration; or an error (the value itself stays in the host) |
+| `cancel` | DBCore → host | a call whose result is no longer wanted |
+| `code changed` | host → DBCore | each function and its argument types whose code revision changed, the new code revision, updated answers to the code questions below, and warnings about untrackable code |
+| `source changed` | host → DBCore | source items that arrived, changed, or disappeared |
+| questions about code | DBCore → host | which functions accept a type, a function's code revision for given argument types, inferred return types when available, and subtype checks |
+| store requests | DBCore → host | write, read, or remove the result for a revision; DBCore decides when, and the host executes it through `storage(project, T)` |
+| `value` | client → DBCore → host, and back | a value, a slice of it, or one of its representations |
 
-DBCore also starts each host, and it can stop a host from outside and start another. Stopping from
-outside is how the workspace survives a call that never returns. It also ends a call whose result is
-no longer wanted, when the host cannot end that call. A host that ignores `cancel` still works with
-DBCore, which drops such a result in any case.
+DBCore starts each host and can terminate and restart it from outside. Terminating a host is how
+the workspace survives a call that never returns, and also stops a call whose result is no longer
+wanted when the host cannot interrupt it internally. A host that ignores `cancel` still works with
+DBCore, because DBCore drops stale results in any case.
+
+A host reports its startup as a change from nothing: its first `code changed` lists every function,
+and its first `source changed` lists every source item. A host restarted by DBCore takes the same
+path, so the protocol needs no separate project-loading message.
 
 ### What a host does
 
-A host of any language does the left column, and DBCore works with that alone. The right column
-makes the workspace better where the language allows it.
+Any host implements the left column, which suffices for DBCore to run a project; the right column
+lists optional capabilities where the language allows them.
 
 | A host must | A host may add |
 | --- | --- |
-| Load the providers and run a call, then report the id, label, metadata, members and type of the value, or the error | The type that a function returns, inferred before it runs, so that a chain of calls is known before any of them runs |
-| Say which functions take a value of a type | Stores that keep results between sessions; without them, results stay in memory |
-| Give a code revision for each function, and report when code changes | Other sources than the supplied ones |
-| Give a value, or one of its representations, to a client | Descriptions of figures, the values inside a computation, a language server |
+| Load providers, run calls, and report each value's id, label, metadata, members, and type (or error) | Infer return types before running, so an entire call chain is known ahead of time |
+| Report which functions accept a given type | Persistent stores across sessions (otherwise results stay in memory) |
+| Compute a code revision per function and report code changes | Custom sources beyond the built-in ones |
+| Send a value or one of its representations to a client | Figure descriptions, local values inside computations, and a language server |
 
 ## From a save to the redraw
 
-Requirement 13 is measured on one case. The user edits a `process` method in any editor and saves.
-A client shows, in a window, a visualizer `v` whose input is the item `a`, and `a` comes from that
+The end-to-end target is measured on one scenario: the user edits a `process` method in any editor
+and saves, while a client window displays a visualizer `v` whose input item `a` comes from that
 method.
 
 ```mermaid
@@ -247,249 +82,150 @@ sequenceDiagram
     Note over C: redraws
 ```
 
-1. **The save.** The editor writes the file, and the host watches the files of the loaded code. No
-   message of DataBrowser is involved, so any editor works.
-2. **The host loads the edit** with Revise and computes the code revision of each function that
-   the edit reaches.
-3. **`code changed`.** The host tells DBCore which functions have a new code revision.
-4. **DBCore marks calls stale.** A *stale* call has a result made by older code or older inputs.
-   The `process` call on `a` becomes stale, and so does every call that reads its result, here the
-   `prepare!` of `v`. DBCore sends `cancel` for the stale calls that are still running.
-5. **`changed`, the first time.** DBCore tells each client that shows `a` or `v` that they are
-   working. The event carries the generation and the changed ids among those that the client shows.
-   The client keeps the old picture on the screen and marks it.
-6. **`run`.** DBCore asks the host for the `process` call on `a` ahead of every call that no client
-   shows.
-7. **`result`.** The host runs `process`, keeps the value, writes a copy to its store under the
-   revision, and reports to DBCore. When the value is `isequal` to the earlier one, the host says
-   so, the result keeps its earlier revision, and the calls that read it become current without
+1. **Save.** The editor writes the file, and the host watches loaded source files, so any editor
+   works without DataBrowser messages.
+2. **Load in Revise.** The host loads the edit with Revise and recomputes the code revision of each
+   function reached by the edit.
+3. **`code changed`.** The host sends DBCore the functions whose code revision changed.
+4. **Mark stale.** DBCore marks the `process` call on `a` stale along with every downstream call
+   reading its result, here `prepare!` of `v`, and sends `cancel` for stale calls currently running.
+5. **First `changed`.** DBCore notifies each client displaying `a` or `v` that they are working,
+   carrying the generation and the changed ids among those the client shows. The client keeps its old
+   picture on screen and marks it as updating.
+6. **`run`.** DBCore asks the host to run `process` on `a` ahead of calls no client displays.
+7. **`result`.** The host runs `process`, retains the value, writes a copy to its store under the
+   revision, and reports back to DBCore. If the value is `isequal` to the previous one, the host
+   reports that too; the result keeps its earlier revision and downstream calls turn current without
    running.
-8. **`prepare!`.** DBCore asks the host for the `prepare!` of `v`, whose input now has a new
+8. **`prepare!`.** DBCore asks the host to run `prepare!` for `v`, whose input now carries a new
    revision.
-9. **`changed`, the second time.** DBCore publishes and tells the client that `a` and `v` changed.
-10. **`value`.** The client asks for `v` in a form that it can draw, the host gives it, and the
-    client redraws. [What crosses for a visualizer](#what-crosses-for-a-visualizer) lists the forms.
+9. **Second `changed`.** DBCore updates the items and notifies the client that `a` and `v` changed.
+10. **`value`.** The client requests `v` in a drawable form, the host returns it, and the client
+    redraws. [What crosses for a visualizer](#what-crosses-for-a-visualizer) lists those forms.
 
-Each part costs the following today and in the target:
+From saving the file to marking the screen, the target path pays only for detecting the changed file,
+loading the edit in Revise, recomputing affected code revisions, and publishing once; the rest is
+the project's own execution time. Three steps remain open:
 
-| Part | Today | Target |
-| --- | --- | --- |
-| Noticing the save | `watch_code` looks 50 times a second at the queue where Revise puts each saved file | The same look, in the host |
-| Loading the edit | Revise: 5 to 9 ms for one changed method, and about 4 s for the first edit of a file | The same. The host could pay the cost of the first edit in the background when it opens the project; whether Revise allows this is not checked |
-| New code revisions | Every known function is hashed again: about 50 ms on the RuO2 project | Only the functions that reach the edited method. Not built, not measured |
-| Marking stale, telling clients | Under the lock of the catalog; the publish follows at most 0.05 s later | The same work in DBCore; the event goes out with the publish |
-| Running the calls | The calls shown by a window run first | The same, with the priority from what each client says it shows |
-| A call that becomes stale while it runs | The call runs to its end and its result is dropped. The same call starts again only then | DBCore sends `cancel`, and the host ends the call where the call next enters the host's own code. DBCore stops a host whose stale call goes on for longer than a new host takes to start |
-| Drawing | The window draws the figure made by `prepare!`, in the same process | A form of the visualizer crosses to the client |
+- **Detecting saves.** Today a task polls 50 times a second, consuming CPU while the workspace is
+  idle. Waiting on `Revise.revision_event` (signaled when a watched file changes) would cost nothing
+  when idle, except that each notification wakes only one waiting task, so a second listener would
+  steal every other save.
+- **Loading the first edit.** Revise takes several seconds on the first edit to a file. The host
+  could pay that cost in the background at project startup, though whether Revise permits this has
+  not been checked.
+- **Recomputing code revisions.** Today every tracked function is hashed again on every save; in the
+  target, the host hashes only functions reachable from the edited method.
 
-From the save to the mark on the screen, the target costs the look, the load by Revise, the new
-code revisions and one publish. After that, the time is that of the project's own code.
+### A call that becomes stale while it runs
 
-The look replaced a check every 0.5 s on 9 November 2026. Until then, the check also ran only while
-the browser had the keyboard focus, so a save made in an editor waited until the user came back to
-the browser. On a project with one item, a call became stale 426 ms after the save with the check
-(median of 11 saves, 78 to 507 ms), and becomes stale after 48 ms with the look (36 to 65 ms);
-Revise's file watcher takes 14 ms of these. With a browser window open in the background, the call
-becomes stale after 62 ms (median of 40 saves, 48 to 97 ms). An editor that writes a file in several
-steps makes the workspace load the file at each step: when a save left the file empty for 50 ms, the
-`process` call failed first, and gave its result 100 ms after the last step. The look also costs
-processor time while the workspace is idle: a Julia task that wakes 50 times a second uses 2.7 % of
-one core, and one that wakes twice a second 0.25 %. Waiting for `Revise.revision_event`, the event
-that Revise sets when a watched file changes, would cost nothing while idle. However, each
-notification of the event wakes only one of the tasks that wait for it, so a second waiting tool
-takes every second save. KaimonGate 1.7.0 is such a tool. Both were measured on Julia 1.13.3 with
-Revise 3.17.3 and two threads.
+In the target design, a save never increases concurrency beyond a host's fixed worker limit, and a
+stale running call still occupies its worker slot until it ends. A new call with the same function
+and inputs starts only after the stale call finishes, preventing two runs from racing on the same
+output file. Unstarted calls run once with the latest code, as today, so a save wastes at most the
+calls currently executing. DBCore also marks calls stale on every save rather than pausing for a
+follow-up edit, because waiting would delay every save.
 
-A second save can make a call stale while it runs. This was measured on 9 November 2026 with one
-item, a `process` that takes 1 s, and two saves 0.2 s apart. When the second save changed the same
-function again, the running call ended 1.13 s after the first save and the workspace dropped its
-result. The call then ran again, and gave the result of the second save after 2.16 s; a call
-started at the second save would have given it after 1.3 s. When the second save changed a function
-that `process` does not call, or added a comment, no call became stale: the running call gave its
-result after 1.10 s. When the second save brought back the code from before the first save, the
-workspace still had the result of that code and ran no call for it. However, it gave this result
-only when the stale call had ended, after 1.12 s. A call that still waits for a worker runs once,
-with the code of the last save: with six items and two workers, `process` ran eight times, twice
-with the code of the first save. All of this was measured on Julia 1.13.3 with one thread and no
-browser.
+A stale call stops early in two ways. First, the host interrupts it when it next enters host code,
+such as when a group `process` reads a member's value through the host. Second, for a stale call
+that never calls back into the host, DBCore lets it run for as long as a fresh host takes to start
+and load project code, then terminates and replaces the host. By the classic *ski rental* bound
+(renting until total rent equals purchase price), total wasted time is at most twice what an oracle
+knowing the call's duration would lose. Host startup latency has not yet been measured.
 
-In the target, a save never adds to the calls that run at the same time. A host runs a fixed number
-of calls at the same time, and a stale call counts among them until it ends. The new call with the
-same function and inputs starts only after the stale call has ended, because both could write the
-same file, and the stale call could write last. A call that has not started runs once, with the code
-of the last save, as today. A save therefore wastes at most the work of the calls that run at that
-moment. DBCore also marks calls stale at each save without waiting for a later save: a wait would
-delay every save, and it would spare only those calls.
+Both rules stem from Julia's runtime limits. Julia 1.13 offers no safe way to kill an arbitrary
+running task (its manual warns against calling `schedule` on a started task). Even the cancellation
+feature designed for Julia 1.14 interrupts tasks only at yield points or explicit cancellation
+checks, so tight compute loops still run to completion (per [this blog
+description](https://viralinstruction.com/posts/cancellation/); Julia's source has not been checked).
 
-A stale call ends early in two ways. First, the host ends it where it next enters the host's own
-code. For example, a `process` on a group reads the value of each member through the host, and the
-host can end the call at such a read. Second, DBCore stops the host of a stale call that never
-enters the host's code. DBCore lets such a call go on for as long as a new host takes to start and
-to load the project's code, and then stops the host. With this rule, the time lost is at most twice
-the time that the best choice would lose if the length of the call were known. The same rule
-answers the *ski rental* problem, in which a person rents skis until the rent paid equals their
-price, and then buys them. How long a host takes to start is not measured.
+### The other cases of a save
 
-Both ways follow from what Julia can do. Julia 1.13 has no function that stops a running task from
-outside, and its documentation calls the use of `schedule` on a task that has already started
-incorrect. The cancellation written for Julia 1.14 stops a task only where the task waits or where
-its code has a check, so a loop that only computes runs to its end
-([description](https://viralinstruction.com/posts/cancellation/), read on 9 November 2026; the Julia
-source was not read).
-
-Revise was measured on Julia 1.13.3 with Revise 3.18.0, one thread, and files of 200 to 500
-one-line methods; with 2000 methods a later edit takes 29 to 53 ms and the first one 19 s. The code
-revisions were measured for the earlier fixed stages
-([measurements](../../research_notes/code-change-detection/design.md)).
-
-The other cases of a save:
-
-- **The file does not parse.** Revise keeps the methods that it loaded last. In the target, the
-  host reports the error with `code changed`, clients show it, and the workspace keeps working with
-  the last loaded code.
-- **The result is the same.** Step 7 covers it: the readers become current without running. The
-  workspace does this today.
-- **A method is added or removed.** The answers of the host about which functions take a type
-  change, and DBCore adds or releases calls. Today `calls!` does this under the lock of the catalog.
-- **A call never returns.** The other threads of the host continue. The user, or a time limit,
-  stops the host; DBCore starts another one. Stores that keep results between sessions give them
-  back, and the results of a `MemoryStore` run again. Clients keep drawing, because they are other
-  processes.
-- **The edit is undone.** The code revision returns to its earlier value, but the earlier result
-  has left its store, so the call runs again. A store that kept the earlier result under its
-  revision would answer at once.
-- **Code that Revise cannot follow.** Revise does not track a type alias or a `const` used in a
-  type definition, a changed macro or generated function does not reach the code that already used
-  it, and a running task keeps the old code. The host reports what it can detect as a warning in
+- **Syntax errors.** When a file fails to parse, Revise keeps the last valid methods. In the target,
+  the host reports the parse error via `code changed`, clients display it, and the workspace keeps
+  running with the prior code.
+- **Multi-step editor saves.** Because the workspace loads each intermediate write, an editor that
+  briefly writes an empty file causes a `process` call to fail before the final write succeeds.
+- **Added or removed methods.** When the host reports changed answers about which functions accept a
+  type, DBCore adds or removes the affected calls.
+- **Non-terminating calls.** Other host threads continue while one call hangs. When the user or a
+  timeout stops the host, DBCore starts a fresh one; persistent stores recover their results,
+  `MemoryStore` results rerun, and clients keep drawing uninterrupted in separate processes.
+- **Undoing an edit.** When a code revision reverts to an earlier value whose result already left its
+  store, the call reruns; a store that retained earlier revisions would answer immediately.
+- **Code invisible to Revise.** Revise does not track type aliases or `const` bindings used inside
+  type definitions, edited macros or generated functions do not update already-expanded callers, and
+  already-running tasks keep the old code. The host reports detectable cases as warnings in
   `code changed`.
 
 ## What crosses for a visualizer
 
-The `prepare!` of a runtime visualizer runs in a host and a client draws, so something crosses
-between them. It can take three forms:
+Because `prepare!` for a runtime visualizer runs in a host while a client draws, data must cross
+between them in one of three forms:
 
 | What crosses | Who draws | Interaction |
 | --- | --- | --- |
-| The data: a representation of the value | A client visualizer, with the technology of its client | All in the client |
-| A description of the figure: its axes and plots, with their data and attributes, as Makie's SpecApi gives them | Makie in the client, such as GLMakie in the browser | Pan, zoom and hover stay in the client |
-| A picture: PNG or SVG, drawn by CairoMakie in the host | Any client, an agent, an export | Each change needs a new picture |
+| Value data: a representation of the value | a client visualizer using the client's UI toolkit | handled entirely in the client |
+| A figure description: axes, plots, data, and attributes (e.g. Makie SpecAPI) | Makie inside the client, such as GLMakie in the desktop browser | pan, zoom, and hover stay in the client |
+| A rendered image: PNG or SVG drawn by CairoMakie in the host | any client, agent, or export target | every view change needs a new image |
 
-Proposal: a Julia plot crosses as a description where the client has Makie, and as a picture
-everywhere else. Davide, 9 November 2026: for figures in the browser, drawing them in ImGui is
-simplest. He left open whether Makie becomes the form offered to every client that supports it, or
-whether "client-rendered visualizer" and "server-rendered visualizer" become formal kinds.
+Under this proposal, a Julia plot crosses as a figure description when the client includes Makie and
+as a rendered image otherwise; in the desktop browser, drawing images in ImGui is simplest. Whether
+Makie becomes an optional transport offered to capable clients or "client-rendered" and
+"server-rendered" visualizers become formal kinds remains open.
 
-Two points limit the description. First, nobody has checked that a SpecApi description survives
-the trip between two Julia processes; an attribute that holds a function, such as a tick formatter,
-and a plot type defined by a project would need the picture. Second, WGLMakie draws in a web page
-with JavaScript, and its Julia part needs a Julia process that holds the figure. In a web client
-the description is therefore WGLMakie's own traffic between the host and the page.
-
-## Agreed
-
-- The web client is a browser UI served by a local runtime first, then a remote one.
-- Julia plots are Makie figures built in the Julia host; a backend per client draws them: GLMakie
-  in the process that holds the figure, WGLMakie in a web browser, CairoMakie pictures for terminal
-  clients, agents and export. Makie is the figure model, not a backend. Requirement 6 means Makie
-  is the Julia plot visualizer, not the only way to plot.
-- Visualizers are building blocks, simple or sophisticated, of two origins. Runtime visualizers,
-  such as Makie plots, appear in every client that can show their output. Client visualizers use
-  the client's own technology and appear in that client only. Both receive data and metadata:
-  DataBrowser is the layer that connects any source, any type and any visualizer. Their settings,
-  output and links are held by the runtime, so blocks of both origins combine in one client and
-  agents can set them up for humans to use.
-- Values reach client visualizers through representations, not one format. A value offers the
-  representations it can become (an image with scale, PNG, a table, its generic fields, text); a
-  client visualizer declares the ones it accepts; the runtime sends a match in that
-  representation's own encoding. Anyone can define a representation for a type, as with
-  `show(io, MIME, x)` or Makie's `convert_arguments`. No type is excluded: generic fields, text
-  and pictures from runtime visualizers always exist. Large values stay in the runtime and the
-  client asks for slices or a size.
-- No client call takes the catalog lock. A client call that changes the workspace, such as `tag!`
-  or `evaluate` of a new computation, returns for now once the published version shows the change,
-  so a script sees its own change right after the call. A call that returns at once may come
-  later. [The client API](client-api.md) that does this is designed whole first, as a target of
-  its own.
-- A visualizer is an object of the workspace, with an id, its settings, its input and its value,
-  and every client shows the same visualizers. Each client shows a visualizer in its own way: the
-  browser in a window, which can close while the visualizer stays; the REPL as a picture or text
-  of it as it is now; an MCP server by its id, with a picture for the agent.
-  `visualize!(workspace, visualizer)` adds one to the workspace, and
-  `visualize!(browser, visualizer)` also shows it in a window.
-- Each client arranges the visualizers in a layout of its own, and the runtime keeps no layout.
-  Clients can therefore look nothing alike, such as a terminal UI and a desktop client that show the
-  same visualizers. The links between visualizers, such as an input that is the output of another
-  visualizer, belong to the visualizers, and every client sees them.
-- A host reports its start as a change from nothing: its first `code changed` lists every function,
-  and its first `source changed` every source item. A host that DBCore starts again after stopping
-  it takes the same path, so the protocol has no message for loading a project.
-- Code drives the browser while it shows through the functions that the browser's controls call:
-  `select!(workspace, ids)`, `visualize!(browser, v)`, `close(w)`, or a setting such as
-  `v.inspect = true`. Automatic checks of the browser's behavior and of its performance call these
-  functions, unattended, for example overnight.
+Two constraints affect figure descriptions. First, SpecAPI descriptions have not yet been tested
+across two Julia processes, and function-valued attributes (such as tick formatters) or
+project-defined plot types would still require rendered images. Second, WGLMakie renders in a web
+page via JavaScript backed by a Julia process holding the figure, so in a web client the crossing
+traffic is WGLMakie's own protocol between host and browser.
 
 ## Proposals
 
-These are not yet agreed.
-
-- **One protocol for all clients:** commands, change events, opaque ids and values as
-  representations. Julia clients use the same commands as direct calls.
-- **A client says which ids it shows.** That one statement gives DBCore the priority of their
-  calls and the list of ids for the change events of that client, so the work for each event
-  follows what is on the screen. [The client API](client-api.md) owns its form.
-- **WebAssembly components as a plugin format** for sources, stores and transforms: written in any
-  language, sandboxed, loadable by the runtime or a client. Julia access to a WebAssembly runtime
-  has not been checked.
-- **The runtime ships as one app that contains Julia:** DBCore and the Julia host as a compiled
-  Julia program with the packages built in, so it starts fast and needs no Julia installation. The
-  Python package downloads it on first use and starts it in the background when none is running.
-  It must keep the full Julia compiler, because the host loads and compiles the project's Julia
-  code. A stand-in app built with PackageCompiler compiles new code and installs packages
+- **One protocol for all clients:** commands, change events, opaque ids, and representations of
+  values; Julia clients expose the same commands as direct function calls.
+- **Client-declared visible ids.** A client reports which ids it currently displays, letting DBCore
+  prioritize those calls and filter change events down to what is on screen (form owned by
+  [the client API](client-api.md)).
+- **WebAssembly components as plugins** for sources, stores, and transforms: language-neutral,
+  sandboxed, and loadable by the runtime or clients; Julia's WebAssembly runtime support has not
+  been tested yet.
+- **Self-contained runtime app:** bundle DBCore and the Julia host as a compiled Julia application
+  with prebuilt packages so it starts fast without a user-installed Julia, downloaded on demand by
+  the Python package. It must keep the full Julia compiler to load and compile project code; a
+  PackageCompiler prototype compiles new code and installs packages
   ([check](../../work/runtime-app-check/README.md)).
-- **A boundary test:** a check that fails when the GUI uses a Core name that is not public.
-- **A runtime visualizer has representations, as a value does:** `show(io, mime, visualizer)` and
-  `showable(mime, visualizer)` in Julia, a MIME type and bytes across the protocol. The same
-  representations then serve "Export" in any client, the picture a client shows when it cannot
-  draw the visualizer, and the PNG an agent asks for. A client visualizer exports with the
-  technology of its client.
+- **Boundary test:** an automated check that fails whenever the GUI calls a non-public Core symbol.
+- **Visualizer representations as MIME bytes.** Runtime visualizers already use
+  `show(io, mime, visualizer)` and `showable(mime, visualizer)` for browser export. Sending the same
+  `(mime, bytes)` pairs across the protocol handles exports in any client, fallback pictures in
+  clients without native drawing, and PNGs for agents, while client visualizers export natively.
 
 ## Open questions
 
-- Which process does the browser run in? In the host's process, a Makie figure passes from
-  `prepare!` to `draw!` by reference, as it does now, and project code can hang the browser, which
-  requirement 13 forbids. In a process of its own, the figure crosses as a description or a
-  picture.
-- Where does a Julia script or the REPL run? Either one reads values of the project's own types, so
-  it needs the project's code. Inside the Julia host, values arrive by reference. In a Julia process
-  of its own, each value arrives as a copy.
-- Do values pass through DBCore, or go from the host to the client directly? Through DBCore,
-  unopened, is the simplest first form. A direct path would give the client a ticket that it shows
-  to the host, as Arrow Flight does.
-- One Julia host or several? Several hosts keep work running while one is stopped, and each of them
-  loads and compiles the project's code. With one host, stopping it for one stale call also ends
-  every other call that runs.
-- What does project code see when the host ends its stale call, and can project code ask whether its
-  call is stale? An exception thrown where the call enters the host's code, such as the read of a
-  member's value, is one form. A check that project code calls in a long loop would also end a call
-  that never enters the host's code, as `Base.@cancel_check` does in the cancellation written for
-  Julia 1.14. Both belong to [the methods of an author](#the-methods-of-an-author).
-- What does a client show for a visualizer it has no drawing part for: a picture drawn by the
-  host, the value as a table or text, or nothing?
-- How does Python code provide sources, `process` methods and visualizers: in a Python host of its
-  own, or as providers of the Julia host, which calls Python through PythonCall? A host for another
-  language is a large piece of work, as the left column of
-  [what a host does](#what-a-host-does) shows. Davide set this question aside on 9 November 2026.
-- Does the project ship a notebook-like client, the tools to build one, or both?
-- How must a provider written in another language perform? Calls per item cross a process or
-  language boundary.
-
-## Current state
-
-DataBrowserCore does the work of DBCore and of the Julia host in one process, and the browser runs
-in that process too. No provider protocol, server or host exists.
-
-Measured on 30 October 2026, the GUI and DataBrowserPlots used 61 Core names that Core does not
-export, at 267 places in 15 files, and read Core structures and locks directly. The
-[boundary inventory](../../work/runtime-boundary/inventory.md) lists them by need. Identity (internal
-keys in place of ids) is the largest group. DataBrowserPlots also computes fits itself and
-depends on DataBrowserGUI.
+- **Where the browser runs.** Running in the host's process passes Makie figures from `prepare!` to
+  `draw!` by reference as today, which lets project code hang the browser; running in its own
+  process isolates the UI and sends figures as descriptions or images.
+- **Where Julia scripts and the REPL run.** Because scripts and the REPL inspect project-defined
+  types directly, they need project code loaded: inside the Julia host they receive values by
+  reference, whereas in a separate Julia process each value arrives as a copy.
+- **Direct vs. proxied value transfer.** Routing values unopened through DBCore is simplest first; a
+  direct path could hand clients a ticket for the host (as Arrow Flight does), or map items and
+  large buffers read-only or copy-on-write via shared memory on the same machine so reads avoid
+  copying and in-place client writes cannot corrupt shared data.
+- **Single vs. multiple Julia hosts.** Multiple hosts keep unrelated work running when one is
+  killed, at the cost of loading and compiling project code in each; a single host cancels all
+  in-flight calls whenever it is stopped for one stale call.
+- **How stale calls fail in project code.** Stopping a call at host boundaries could throw an
+  exception when reading a member's value, while a cancellation check inside tight loops (like
+  `Base.@cancel_check` proposed for Julia 1.14) could stop compute-bound calls; either mechanism
+  affects user-authored project methods.
+- **Fallback for unsupported visualizers.** When a client lacks a drawer for a visualizer, should it
+  show a host-rendered image, a generic table or text view, or nothing?
+- **Python providers.** Should Python sources, `process` methods, and visualizers run in a dedicated
+  Python host or inside the Julia host via PythonCall? Building a separate language host requires
+  implementing the full left column of [what a host does](#what-a-host-does).
+- **Notebook client.** Should DataBrowser ship a notebook-like client, building blocks for one, or
+  both?
+- **Cross-process provider throughput.** Per-item calls crossing a process or language boundary need
+  performance budgets and batching measurements.

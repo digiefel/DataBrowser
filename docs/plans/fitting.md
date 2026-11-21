@@ -20,8 +20,6 @@ appropriate starts, constraints or model knowledge.
 
 ## Agreed behavior
 
-Davide agreed the following in the fitting discussion:
-
 - The package is `DataBrowserFitting`, connected to Core. Plain-vector fitting also works without
   the browser. A plot-defined fit must not require a second unrelated `process`/`analyze`
   definition to make its result useful elsewhere.
@@ -71,7 +69,7 @@ must be distinguishable from solving the point estimate.
 
 A fit of one item's data and a fit over several items use the common item/group model. Generic
 groups are now the chosen concept. A fit is a lazy computed value, one per part, as described in
-[computations and their outputs](processing.md#computations-and-their-outputs); the
+[computations over parts of the rows](processing.md#computations-over-parts-of-the-rows); the
 declaration-to-workspace execution API remains open.
 Large native models, sample sets and grids need retained payloads; do not require every result to
 be a scalar metadata column. Queryable summaries and native results must remain connected.
@@ -97,10 +95,6 @@ These remain proposals, not settled API:
   loss does not decide which measurements are valid.
 
 ## Numerical questions that remain open
-
-The separate numerical review is consolidated here. The
-[original review](archive/2026-10-21-discussion/fitting-review.md) preserves its counterexamples,
-references and probe details.
 
 ### Model, objective and uncertainty
 
@@ -129,9 +123,10 @@ Retain joint covariance or shared samples for derived quantities involving sever
 independent marginal error propagation loses correlation. Repeated sweeps are not automatically
 independent observations. Resampling choices need to reflect the input model.
 
-Fit coordinate space on transformed axes is explicitly open: fitting raw values and fitting
-log/displayed coordinates changes the objective. A logarithmic axis or AoG lowering must not
-silently decide this contract. No raw-space or axis-space default has been chosen.
+Fit coordinate space on transformed axes is chosen: the residuals are measured on the axis, after
+the function of the y scale, such as `log10`. Fitting raw values and fitting displayed coordinates
+give different objectives, so the y scale of a plot changes its fits. Raw-space residuals remain an
+option to offer explicitly.
 
 `fullrange` must not create an axis-expansion feedback loop. Zoom, display range and sampling
 should not mutate the fitted observation set.
@@ -157,10 +152,11 @@ All consumers must see one consistent result revision, including background inte
 
 ## Package evaluation and validation
 
-CurveFit and direct NonlinearSolve use remain candidates. Compare documented public capabilities:
-weighted/bounded solves, status, fixed parameters, derivatives, retained outputs and repeated
-refits. Load time is not the main decision criterion. The archived source review records caveats
-for the versions inspected; verify them against the chosen version before implementation.
+`DataBrowserFitting` uses NonlinearSolve directly: a `NonlinearLeastSquaresProblem` solved with
+Levenberg–Marquardt, and ForwardDiff for the Jacobian of the standard errors. DataBrowserPlots
+loads it on the first fit of a session. Weighted and bounded solves, fixed parameters and status
+beyond convergence are not built; CurveFit remains a candidate for them. Load time is not the main
+decision criterion.
 
 Validation needs real SuperGaN and RuO2 analyses with the curve, selected rows, noise model and
 known limits recorded. Do not make data-quality or fit claims from unconfirmed status flags.
@@ -168,6 +164,3 @@ NIST StRD is a proposed reference corpus; confirm the available files before cla
 Use small constructed cases for known failures and interval coverage, not as the whole test set.
 The existing contract probe demonstrates selected counterexamples; it is not a solver benchmark
 or verification of a complete real-data workflow.
-
-The older proposal and coordination are preserved in the
-[archive](archive/2026-10-21-discussion/fitting.md).
