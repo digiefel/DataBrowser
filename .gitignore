@@ -9,3 +9,4 @@ imgui.ini
 
 docs/build/
 docs/generated/
+lib/WgpuMakie/crates/target/
