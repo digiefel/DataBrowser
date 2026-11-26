@@ -493,6 +493,164 @@ pub struct GlyphMetric {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorEntryValue {
+    pub expr: String,
+    pub is_literal: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorMappingEntry {
+    pub role: String,
+    pub value_expr: String,
+    pub label: Option<String>,
+    pub transform_expr: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorLayerSpec {
+    pub id: u32,
+    pub name: Option<String>,
+    pub visible: bool,
+    pub data_expr: Option<String>,
+    pub mapping: Vec<EditorMappingEntry>,
+    pub analysis_expr: Option<String>,
+    pub plottype_expr: String,
+    pub visual_kwargs: Vec<(String, EditorEntryValue)>,
+    pub is_statement_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorInspectorSpec {
+    pub show: bool,
+    pub title: Option<String>,
+    pub fields: Vec<String>,
+    pub show_coords: bool,
+    pub digits: u32,
+    pub has_callback: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorThemeSpec {
+    pub base: Option<String>,
+    pub settings: Vec<(String, EditorEntryValue)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorDocumentSnapshot {
+    pub revision: u64,
+    pub has_grafico: bool,
+    pub available_columns: Vec<String>,
+    pub header_data_expr: Option<String>,
+    pub header_mapping: Vec<EditorMappingEntry>,
+    pub layers: Vec<EditorLayerSpec>,
+    pub scales: Vec<(String, Vec<(String, EditorEntryValue)>)>,
+    pub coords: Vec<(String, EditorEntryValue)>,
+    pub legend: Vec<(String, EditorEntryValue)>,
+    pub theme: Option<EditorThemeSpec>,
+    pub inspector: Option<EditorInspectorSpec>,
+    pub code: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+pub enum EditorCommand {
+    SetVisual {
+        layer_id: u32,
+        key: String,
+        expr: String,
+    },
+    RemoveVisual {
+        layer_id: u32,
+        key: String,
+    },
+    SetLayerVisible {
+        layer_id: u32,
+        visible: bool,
+    },
+    SetLayerPlottype {
+        layer_id: u32,
+        plottype_expr: String,
+    },
+    AddLayer {
+        plottype_expr: String,
+    },
+    RemoveLayer {
+        layer_id: u32,
+    },
+    MoveLayer {
+        layer_id: u32,
+        delta: i32,
+    },
+    SetMapping {
+        layer_id: Option<u32>,
+        role: String,
+        value_expr: String,
+        label: Option<String>,
+        transform_expr: Option<String>,
+    },
+    RemoveMapping {
+        layer_id: Option<u32>,
+        role: String,
+    },
+    SetAnalysis {
+        layer_id: u32,
+        analysis_expr: Option<String>,
+    },
+    SetScale {
+        role: String,
+        key: String,
+        expr: String,
+    },
+    RemoveScale {
+        role: String,
+        key: Option<String>,
+    },
+    SetCoord {
+        key: String,
+        expr: String,
+    },
+    SetLegend {
+        key: String,
+        expr: String,
+    },
+    RemoveLegend {
+        key: String,
+    },
+    SetTheme {
+        base: Option<String>,
+        key: Option<String>,
+        expr: Option<String>,
+    },
+    SetInspector {
+        show: bool,
+        title: Option<String>,
+        fields: Vec<String>,
+        show_coords: bool,
+        digits: u32,
+    },
+    RequestCode {
+        include_imports: bool,
+        include_figure: bool,
+    },
+    SetAxisAttr {
+        axis_id: u64,
+        key: String,
+        expr: String,
+    },
+    SetPlotAttr {
+        plot_id: u64,
+        key: String,
+        expr: String,
+    },
+    RequestCustomTooltip {
+        plot_id: u64,
+        element_index: u32,
+        pos: [f64; 3],
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum ServerMessage {
     Hello {
@@ -547,6 +705,19 @@ pub enum ServerMessage {
     },
     SetEditorVisible {
         visible: bool,
+    },
+    SyncEditorState {
+        state: EditorDocumentSnapshot,
+    },
+    CodeExportReply {
+        code: String,
+        include_imports: bool,
+        include_figure: bool,
+    },
+    InspectorTooltipReply {
+        plot_id: u64,
+        element_index: u32,
+        text: String,
     },
     Close,
 }
@@ -614,6 +785,9 @@ pub enum ClientMessage {
     PlotVisibilityChanged {
         plot_id: u64,
         visible: bool,
+    },
+    EditorCommand {
+        command: EditorCommand,
     },
     WindowClosed,
 }
@@ -688,5 +862,85 @@ mod tests {
         let mut rcur = Cursor::new(rbuf);
         let rdec: ClientMessage = read_frame(&mut rcur).unwrap().unwrap();
         assert_eq!(reply, rdec);
+    }
+
+    #[test]
+    fn frame_roundtrip_editor_messages() {
+        let sync = ServerMessage::SyncEditorState {
+            state: EditorDocumentSnapshot {
+                revision: 2,
+                has_grafico: true,
+                available_columns: vec!["x".into(), "y".into()],
+                header_data_expr: Some("rows".into()),
+                header_mapping: vec![EditorMappingEntry {
+                    role: "x".into(),
+                    value_expr: ":x".into(),
+                    label: Some("Time".into()),
+                    transform_expr: None,
+                }],
+                layers: vec![EditorLayerSpec {
+                    id: 1,
+                    name: None,
+                    visible: true,
+                    data_expr: None,
+                    mapping: vec![],
+                    analysis_expr: None,
+                    plottype_expr: "Scatter".into(),
+                    visual_kwargs: vec![(
+                        "markersize".into(),
+                        EditorEntryValue {
+                            expr: "12".into(),
+                            is_literal: true,
+                        },
+                    )],
+                    is_statement_only: false,
+                }],
+                scales: vec![],
+                coords: vec![],
+                legend: vec![],
+                theme: None,
+                inspector: Some(EditorInspectorSpec {
+                    show: true,
+                    title: Some("Point".into()),
+                    fields: vec!["color".into()],
+                    show_coords: true,
+                    digits: 4,
+                    has_callback: false,
+                }),
+                code: "@plot data(rows) * mapping(x = :x)".into(),
+                error: None,
+            },
+        };
+        let code_reply = ServerMessage::CodeExportReply {
+            code: "using Makie, Grafico\nplot = @plot data(rows)".into(),
+            include_imports: true,
+            include_figure: false,
+        };
+        let tip_reply = ServerMessage::InspectorTooltipReply {
+            plot_id: 9,
+            element_index: 4,
+            text: "val: 42".into(),
+        };
+        let cmd = ClientMessage::EditorCommand {
+            command: EditorCommand::SetVisual {
+                layer_id: 1,
+                key: "markersize".into(),
+                expr: "6 * 4".into(),
+            },
+        };
+
+        for m in [sync, code_reply, tip_reply] {
+            let mut buf = Vec::new();
+            write_frame(&mut buf, &m).unwrap();
+            let mut cur = Cursor::new(buf);
+            let dec: ServerMessage = read_frame(&mut cur).unwrap().unwrap();
+            assert_eq!(m, dec);
+        }
+
+        let mut cbuf = Vec::new();
+        write_frame(&mut cbuf, &cmd).unwrap();
+        let mut ccur = Cursor::new(cbuf);
+        let cdec: ClientMessage = read_frame(&mut ccur).unwrap().unwrap();
+        assert_eq!(cmd, cdec);
     }
 }

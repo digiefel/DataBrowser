@@ -3072,6 +3072,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wgpu-makie-editor"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "serde",
+ "wgpu-makie-proto",
+ "wgpu-makie-scene",
+]
+
+[[package]]
 name = "wgpu-makie-native"
 version = "0.1.0"
 dependencies = [
@@ -3082,6 +3092,7 @@ dependencies = [
  "pollster",
  "serde_bytes",
  "wgpu",
+ "wgpu-makie-editor",
  "wgpu-makie-proto",
  "wgpu-makie-render",
  "wgpu-makie-scene",

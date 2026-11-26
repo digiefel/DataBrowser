@@ -6,8 +6,11 @@ use std::os::unix::net::UnixStream;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
+use wgpu_makie_editor::{
+    draw_editor_panel, draw_inspector_dock, draw_toolbar, EditorAction, EditorModel,
+};
 use wgpu_makie_proto::{
-    read_frame, write_frame, ClientMessage, PointerEventKind, ServerMessage,
+    read_frame, write_frame, ClientMessage, EditorCommand, PointerEventKind, ServerMessage,
 };
 use wgpu_makie_render::{HeadlessRenderer, WgpuRenderer};
 use wgpu_makie_scene::{format_tooltip, reset_axes, CameraController, InteractionUpdate, SceneGraph};
@@ -186,12 +189,11 @@ struct ViewerApp {
     win: Option<WindowState>,
     graph: SceneGraph,
     camera_ctrl: CameraController,
+    editor: EditorModel,
     pointer_unitless: [f64; 2],
     buttons_mask: u8,
     mods_mask: u8,
     hover_tooltip: Option<String>,
-    selected_elem: Option<(u64, u32)>,
-    inspector_panel: bool,
     last_pick_time: Instant,
 }
 
@@ -209,12 +211,11 @@ impl ViewerApp {
                 ..Default::default()
             },
             camera_ctrl: CameraController::default(),
+            editor: EditorModel::new(),
             pointer_unitless: [0.0, 0.0],
             buttons_mask: 0,
             mods_mask: 0,
             hover_tooltip: None,
-            selected_elem: None,
-            inspector_panel: true,
             last_pick_time: Instant::now(),
         }
     }
@@ -279,12 +280,25 @@ impl ViewerApp {
             .is_some_and(|s| s.state.camera.is_3d);
         let pos = element_data_pos(&entry.payload.primitive, elem_idx)
             .unwrap_or([self.pointer_unitless[0], self.pointer_unitless[1], 0.0]);
-        self.hover_tooltip = Some(format_tooltip(
-            entry.payload.inspector.as_ref(),
-            pos,
-            elem_idx,
-            is_3d,
-        ));
+        if let Some(custom) = self.editor.custom_tooltips.get(&(plot_id, elem_idx)) {
+            self.hover_tooltip = Some(custom.clone());
+        } else {
+            self.hover_tooltip = Some(format_tooltip(
+                entry.payload.inspector.as_ref(),
+                pos,
+                elem_idx,
+                is_3d,
+            ));
+            if self.editor.has_custom_inspector_callback() {
+                self.send(ClientMessage::EditorCommand {
+                    command: EditorCommand::RequestCustomTooltip {
+                        plot_id,
+                        element_index: elem_idx,
+                        pos,
+                    },
+                });
+            }
+        }
     }
 
     fn render_frame(&mut self) {
@@ -318,119 +332,26 @@ impl ViewerApp {
             .prepare(&ws.device, &ws.queue, &mut self.graph, w, h);
 
         let raw_input = ws.egui_state.take_egui_input(&ws.window);
-        let mut actions: Vec<ClientMessage> = Vec::new();
-        let mut reset_req = false;
-        let mut editor_toggle = false;
+        let mut editor_actions: Vec<EditorAction> = Vec::new();
+        let fps = ws.fps_ema;
+        let frame_ms = dt * 1000.0;
 
         let full_output = ws.egui_ctx.run_ui(raw_input, |ui| {
-            // Top compact bar
             egui::Panel::top("wgpu_makie_top").show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(format!(
-                        "WgpuMakie  {:.0} FPS ({:.2} ms)",
-                        ws.fps_ema,
-                        dt * 1000.0
-                    ));
-                    ui.separator();
-                    if ui.button("Reset View").clicked() {
-                        reset_req = true;
-                    }
-                    if ui
-                        .selectable_label(self.graph.editor_visible, "Editor")
-                        .clicked()
-                    {
-                        editor_toggle = true;
-                    }
-                    ui.checkbox(&mut self.inspector_panel, "Inspector");
-                });
+                editor_actions.extend(draw_toolbar(ui, &mut self.editor, &self.graph, fps, frame_ms));
             });
 
             if self.graph.editor_visible {
                 egui::Panel::right("wgpu_makie_editor")
-                    .default_size(270.0)
+                    .default_size(290.0)
                     .show(ui, |ui| {
-                        ui.heading("Plot Editor");
-                        ui.separator();
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.label(format!(
-                                "Axes: {}   Plots: {}",
-                                self.graph.axes.len(),
-                                self.graph.plots.len()
-                            ));
-                            ui.add_space(6.0);
-                            let mut ax_ids: Vec<u64> = self.graph.axes.keys().copied().collect();
-                            ax_ids.sort_unstable();
-                            for ax_id in ax_ids {
-                                if let Some(ax) = self.graph.axes.get(&ax_id) {
-                                    egui::CollapsingHeader::new(format!(
-                                        "Axis #{ax_id} {}",
-                                        if ax.title.is_empty() { "" } else { &ax.title }
-                                    ))
-                                    .default_open(true)
-                                    .show(ui, |ui| {
-                                        ui.label(format!(
-                                            "x: [{:.3}, {:.3}]",
-                                            ax.limits[0], ax.limits[2]
-                                        ));
-                                        ui.label(format!(
-                                            "y: [{:.3}, {:.3}]",
-                                            ax.limits[1], ax.limits[3]
-                                        ));
-                                        if !ax.xlabel.is_empty() {
-                                            ui.label(format!("xlabel: {}", ax.xlabel));
-                                        }
-                                        if !ax.ylabel.is_empty() {
-                                            ui.label(format!("ylabel: {}", ax.ylabel));
-                                        }
-                                    });
-                                }
-                            }
-
-                            ui.add_space(6.0);
-                            ui.label("Layers / Primitives:");
-                            for &pid in &self.graph.plot_order {
-                                if let Some(entry) = self.graph.plots.get_mut(&pid) {
-                                    let mut vis = entry.payload.visible;
-                                    let label = entry
-                                        .payload
-                                        .inspector
-                                        .as_ref()
-                                        .map(|m| m.label.as_str())
-                                        .filter(|s| !s.is_empty())
-                                        .unwrap_or("Primitive");
-                                    if ui.checkbox(&mut vis, format!("#{pid} {label}")).changed() {
-                                        entry.payload.visible = vis;
-                                        actions.push(ClientMessage::PlotVisibilityChanged {
-                                            plot_id: pid,
-                                            visible: vis,
-                                        });
-                                    }
-                                }
-                            }
-
-                            if self.inspector_panel {
-                                ui.add_space(8.0);
-                                ui.separator();
-                                ui.heading("Inspector");
-                                if let Some((pid, idx)) = self.selected_elem {
-                                    ui.label(format!("Picked plot #{pid} index {idx}"));
-                                    if let Some(entry) = self.graph.plots.get(&pid) {
-                                        if let Some(meta) = &entry.payload.inspector {
-                                            for (k, vals) in &meta.fields {
-                                                if let Some(v) = vals
-                                                    .get(idx as usize)
-                                                    .or_else(|| vals.first())
-                                                {
-                                                    ui.label(format!("{k}: {v}"));
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    ui.label("Click a plot element to inspect.");
-                                }
-                            }
-                        });
+                        editor_actions.extend(draw_editor_panel(ui, &mut self.editor, &mut self.graph));
+                    });
+            } else if self.editor.show_inspector_dock && self.editor.selected_elem.is_some() {
+                egui::Window::new("Inspector")
+                    .default_width(250.0)
+                    .show(ui.ctx(), |ui| {
+                        editor_actions.extend(draw_inspector_dock(ui, &mut self.editor, &self.graph));
                     });
             }
 
@@ -533,16 +454,29 @@ impl ViewerApp {
         ws.queue.submit(cmd_bufs);
         ws.queue.present(frame);
 
-        if reset_req {
-            let ids: Vec<u64> = self.graph.axes.keys().copied().collect();
-            let updates = reset_axes(&mut self.graph, &ids);
-            self.handle_interaction_update(InteractionUpdate::AxisLimits(updates));
+        let mut copy_text: Option<String> = None;
+        for act in editor_actions {
+            match act {
+                EditorAction::ResetView => {
+                    let ids: Vec<u64> = self.graph.axes.keys().copied().collect();
+                    let updates = reset_axes(&mut self.graph, &ids);
+                    self.handle_interaction_update(InteractionUpdate::AxisLimits(updates));
+                }
+                EditorAction::ToggleEditor => {
+                    self.graph.editor_visible = !self.graph.editor_visible;
+                }
+                EditorAction::CopyToClipboard(text) => {
+                    copy_text = Some(text);
+                }
+                EditorAction::Send(msg) => {
+                    self.send(msg);
+                }
+            }
         }
-        if editor_toggle {
-            self.graph.editor_visible = !self.graph.editor_visible;
-        }
-        for msg in actions {
-            self.send(msg);
+        if let Some(text) = copy_text {
+            if let Some(ws) = &self.win {
+                ws.egui_ctx.copy_text(text);
+            }
         }
     }
 }
@@ -718,7 +652,9 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                         ));
                     }
                 }
-                self.graph.apply(msg);
+                if !self.editor.apply_server_message(&msg) {
+                    self.graph.apply(msg);
+                }
                 if let Some(ws) = &self.win {
                     ws.window.request_redraw();
                 }
@@ -867,8 +803,15 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                                     self.pointer_unitless[1].round() as i32,
                                     8,
                                 ) {
-                                    self.selected_elem = hits.first().copied();
-                                    let (pid, idx) = match self.selected_elem {
+                                    let sel = hits.first().copied();
+                                    let pos = sel.and_then(|(p, i)| {
+                                        self.graph
+                                            .plots
+                                            .get(&p)
+                                            .and_then(|e| element_data_pos(&e.payload.primitive, i))
+                                    });
+                                    self.editor.set_selection(sel, pos);
+                                    let (pid, idx) = match sel {
                                         Some((p, i)) => (Some(p), Some(i)),
                                         None => (None, None),
                                     };
@@ -876,6 +819,17 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                                         plot_id: pid,
                                         element_index: idx,
                                     });
+                                    if let (Some((p, i)), Some(ppos)) = (sel, pos) {
+                                        if self.editor.has_custom_inspector_callback() {
+                                            self.send(ClientMessage::EditorCommand {
+                                                command: EditorCommand::RequestCustomTooltip {
+                                                    plot_id: p,
+                                                    element_index: i,
+                                                    pos: ppos,
+                                                },
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }

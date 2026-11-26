@@ -147,6 +147,9 @@ impl SceneGraph {
             }
             ServerMessage::RequestColorBuffer { .. }
             | ServerMessage::RequestPick { .. }
+            | ServerMessage::SyncEditorState { .. }
+            | ServerMessage::CodeExportReply { .. }
+            | ServerMessage::InspectorTooltipReply { .. }
             | ServerMessage::Close => {}
         }
     }

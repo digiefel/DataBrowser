@@ -4,6 +4,7 @@ members = [
     "wgpu-makie-proto",
     "wgpu-makie-scene",
     "wgpu-makie-render",
+    "wgpu-makie-editor",
     "wgpu-makie-native",
 ]
 

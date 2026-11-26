@@ -11,6 +11,7 @@ path = "src/main.rs"
 wgpu-makie-proto = { path = "../wgpu-makie-proto" }
 wgpu-makie-scene = { path = "../wgpu-makie-scene" }
 wgpu-makie-render = { path = "../wgpu-makie-render" }
+wgpu-makie-editor = { path = "../wgpu-makie-editor" }
 wgpu.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
