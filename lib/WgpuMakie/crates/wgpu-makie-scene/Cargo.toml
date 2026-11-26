@@ -1,0 +1,9 @@
+[package]
+name = "wgpu-makie-scene"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wgpu-makie-proto = { path = "../wgpu-makie-proto" }
+glam.workspace = true
+serde.workspace = true

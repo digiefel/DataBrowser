@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "wgpu-makie-proto",
+    "wgpu-makie-scene",
+    "wgpu-makie-render",
+    "wgpu-makie-native",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+wgpu = "30"
+egui = "0.37"
+egui-wgpu = "0.37"
+egui-winit = "0.37"
+winit = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+rmp-serde = "1"
+rmpv = { version = "1", features = ["with-serde"] }
+glam = { version = "0.30", features = ["bytemuck", "serde"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+png = "0.17"
+thiserror = "2"

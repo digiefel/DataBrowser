@@ -1,0 +1,316 @@
+//! Retained scene graph, coordinate space transforms, and incremental updates.
+
+use crate::decimate::{LineLod, ScatterLod};
+use glam::{Mat3, Mat4, Vec3};
+use std::collections::HashMap;
+use wgpu_makie_proto::{
+    AxisMeta, CoordSpace, GlyphAtlasPatch, GlyphMetric, PlotPayload, PrimitiveKind, SceneState,
+    ServerMessage, TypedBuffer,
+};
+
+#[derive(Debug, Clone)]
+pub struct SceneNode {
+    pub state: SceneState,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlotEntry {
+    pub payload: PlotPayload,
+    pub line_lod: Option<LineLod>,
+    pub scatter_lod: Option<ScatterLod>,
+    pub revision: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct SceneGraph {
+    pub title: String,
+    pub size: [u32; 2],
+    pub px_per_unit: f32,
+    pub editor_visible: bool,
+    pub scenes: HashMap<u64, SceneNode>,
+    pub scene_order: Vec<u64>,
+    pub axes: HashMap<u64, AxisMeta>,
+    pub plots: HashMap<u64, PlotEntry>,
+    pub plot_order: Vec<u64>,
+    pub atlas_size: [u32; 2],
+    pub pending_atlas_patches: Vec<GlyphAtlasPatch>,
+    pub glyph_metrics: HashMap<u32, GlyphMetric>,
+    pub revision: u64,
+}
+
+impl SceneGraph {
+    pub fn apply(&mut self, msg: ServerMessage) {
+        match msg {
+            ServerMessage::Hello {
+                title,
+                size,
+                px_per_unit,
+                show_editor,
+                ..
+            } => {
+                self.title = title;
+                self.size = size;
+                self.px_per_unit = px_per_unit.max(0.5);
+                self.editor_visible = show_editor;
+                self.revision += 1;
+            }
+            ServerMessage::Batch { messages } => {
+                for m in messages {
+                    self.apply(m);
+                }
+            }
+            ServerMessage::UpsertScene { scene } => {
+                let id = scene.id;
+                let rev = self.revision + 1;
+                self.revision = rev;
+                if let Some(node) = self.scenes.get_mut(&id) {
+                    node.state = scene;
+                    node.revision = rev;
+                } else {
+                    self.scenes.insert(
+                        id,
+                        SceneNode {
+                            state: scene,
+                            revision: rev,
+                        },
+                    );
+                    self.rebuild_scene_order();
+                }
+            }
+            ServerMessage::RemoveScene { id } => {
+                if self.scenes.remove(&id).is_some() {
+                    self.rebuild_scene_order();
+                    self.revision += 1;
+                }
+            }
+            ServerMessage::UpsertAxisMeta { axis } => {
+                self.axes.insert(axis.axis_id, axis);
+                self.revision += 1;
+            }
+            ServerMessage::UpsertPlot { plot } => {
+                let id = plot.id;
+                let rev = self.revision + 1;
+                self.revision = rev;
+                let (line_lod, scatter_lod) = build_lods(&plot.primitive);
+                let is_new = !self.plots.contains_key(&id);
+                self.plots.insert(
+                    id,
+                    PlotEntry {
+                        payload: plot,
+                        line_lod,
+                        scatter_lod,
+                        revision: rev,
+                    },
+                );
+                if is_new {
+                    self.rebuild_plot_order();
+                }
+            }
+            ServerMessage::UpdatePlotBuffer {
+                id,
+                field,
+                offset_elems,
+                total_elems,
+                data,
+            } => {
+                if let Some(entry) = self.plots.get_mut(&id) {
+                    if apply_buffer_patch(&mut entry.payload.primitive, &field, offset_elems, total_elems, &data) {
+                        let (ll, sl) = build_lods(&entry.payload.primitive);
+                        entry.line_lod = ll;
+                        entry.scatter_lod = sl;
+                        self.revision += 1;
+                        entry.revision = self.revision;
+                    }
+                }
+            }
+            ServerMessage::RemovePlot { id } => {
+                if self.plots.remove(&id).is_some() {
+                    self.rebuild_plot_order();
+                    self.revision += 1;
+                }
+            }
+            ServerMessage::UploadGlyphAtlas {
+                atlas_size,
+                patches,
+                metrics,
+            } => {
+                self.atlas_size = atlas_size;
+                self.pending_atlas_patches.extend(patches);
+                for m in metrics {
+                    self.glyph_metrics.insert(m.char_code, m);
+                }
+                self.revision += 1;
+            }
+            ServerMessage::SetEditorVisible { visible } => {
+                self.editor_visible = visible;
+            }
+            ServerMessage::RequestColorBuffer { .. }
+            | ServerMessage::RequestPick { .. }
+            | ServerMessage::Close => {}
+        }
+    }
+
+    fn rebuild_scene_order(&mut self) {
+        let mut roots: Vec<u64> = self
+            .scenes
+            .values()
+            .filter(|s| s.state.parent.is_none() || !self.scenes.contains_key(&s.state.parent.unwrap()))
+            .map(|s| s.state.id)
+            .collect();
+        roots.sort_unstable();
+        let mut order = Vec::with_capacity(self.scenes.len());
+        fn visit(id: u64, scenes: &HashMap<u64, SceneNode>, out: &mut Vec<u64>) {
+            out.push(id);
+            let mut children: Vec<u64> = scenes
+                .values()
+                .filter(|s| s.state.parent == Some(id))
+                .map(|s| s.state.id)
+                .collect();
+            children.sort_unstable();
+            for c in children {
+                visit(c, scenes, out);
+            }
+        }
+        for r in roots {
+            visit(r, &self.scenes, &mut order);
+        }
+        self.scene_order = order;
+    }
+
+    fn rebuild_plot_order(&mut self) {
+        let mut ids: Vec<u64> = self.plots.keys().copied().collect();
+        ids.sort_by_key(|id| {
+            let p = &self.plots[id].payload;
+            (p.z_order, *id)
+        });
+        self.plot_order = ids;
+    }
+}
+
+fn build_lods(primitive: &PrimitiveKind) -> (Option<LineLod>, Option<ScatterLod>) {
+    match primitive {
+        PrimitiveKind::Lines(lines) if !lines.is_segments => {
+            if let Ok(pos) = lines.positions.as_f32_vec() {
+                let lod = LineLod::build(&pos);
+                if !lod.levels.is_empty() {
+                    return (Some(lod), None);
+                }
+            }
+            (None, None)
+        }
+        PrimitiveKind::Scatter(scatter) => {
+            if let Ok(pos) = scatter.positions.as_f32_vec() {
+                let lod = ScatterLod::build(&pos);
+                if !lod.levels.is_empty() {
+                    return (None, Some(lod));
+                }
+            }
+            (None, None)
+        }
+        _ => (None, None),
+    }
+}
+
+fn apply_buffer_patch(
+    primitive: &mut PrimitiveKind,
+    field: &str,
+    offset_elems: u32,
+    total_elems: u32,
+    patch: &TypedBuffer,
+) -> bool {
+    let target = match (primitive, field) {
+        (PrimitiveKind::Lines(l), "positions") => &mut l.positions,
+        (PrimitiveKind::Scatter(s), "positions") => &mut s.positions,
+        _ => return false,
+    };
+    if target.dtype != patch.dtype {
+        return false;
+    }
+    let elem_bytes = target.dtype.byte_size();
+    let total_bytes = (total_elems as usize) * elem_bytes;
+    let offset_bytes = (offset_elems as usize) * elem_bytes;
+    let mut vec = target.bytes.to_vec();
+    if vec.len() != total_bytes {
+        vec.resize(total_bytes, 0);
+    }
+    let end = (offset_bytes + patch.bytes.len()).min(vec.len());
+    let copy_len = end.saturating_sub(offset_bytes);
+    vec[offset_bytes..offset_bytes + copy_len].copy_from_slice(&patch.bytes[..copy_len]);
+    target.set_raw_bytes(total_elems, vec);
+    true
+}
+
+/// Projection and view matrices for both `space` and `markerspace`.
+#[derive(Debug, Clone, Copy)]
+pub struct SpaceMatrices {
+    pub space_view: Mat4,
+    pub space_proj: Mat4,
+    pub space_pv: Mat4,
+    pub marker_pv: Mat4,
+    pub preprojection: Mat4,
+}
+
+/// Compute view, projection, projectionview, marker_pv, and preprojection matrices for a plot's `CoordSpace`.
+pub fn space_matrices(
+    scene: &SceneState,
+    space: CoordSpace,
+    markerspace: CoordSpace,
+    billboard: bool,
+) -> SpaceMatrices {
+    let (_, _, w, h) = (
+        scene.viewport[0],
+        scene.viewport[1],
+        scene.viewport[2].max(1.0),
+        scene.viewport[3].max(1.0),
+    );
+    let data_view = Mat4::from_cols_array(&scene.camera.view);
+    let data_proj = Mat4::from_cols_array(&scene.camera.projection);
+    let data_pv = Mat4::from_cols_array(&scene.camera.projectionview);
+    let pixel_proj = Mat4::from_cols_array(&crate::camera::makie_ortho(
+        0.0, w, 0.0, h, -10_000.0, 10_000.0,
+    ));
+    let relative_proj = Mat4::from_cols_array(&[
+        2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.0, -1.0, 0.0, 1.0,
+    ]);
+    let clip_proj = Mat4::IDENTITY;
+
+    let (view, proj, pv) = match space {
+        CoordSpace::Data => (data_view, data_proj, data_pv),
+        CoordSpace::Pixel => (Mat4::IDENTITY, pixel_proj, pixel_proj),
+        CoordSpace::Relative => (Mat4::IDENTITY, relative_proj, relative_proj),
+        CoordSpace::Clip => (Mat4::IDENTITY, clip_proj, clip_proj),
+    };
+    let (_m_view, m_proj, m_pv) = match markerspace {
+        CoordSpace::Data => (data_view, data_proj, data_pv),
+        CoordSpace::Pixel => (Mat4::IDENTITY, pixel_proj, pixel_proj),
+        CoordSpace::Relative => (Mat4::IDENTITY, relative_proj, relative_proj),
+        CoordSpace::Clip => (Mat4::IDENTITY, clip_proj, clip_proj),
+    };
+    let marker_pv = if billboard && matches!(markerspace, CoordSpace::Data) {
+        m_proj
+    } else {
+        m_pv
+    };
+    let preprojection = marker_pv.inverse() * pv;
+    SpaceMatrices {
+        space_view: view,
+        space_proj: proj,
+        space_pv: pv,
+        marker_pv,
+        preprojection,
+    }
+}
+
+/// Compute effective light direction (accounting for `camera_relative` flag).
+pub fn effective_light_dir(scene: &SceneState) -> Vec3 {
+    let dir = Vec3::from_array(scene.lights.dir_direction);
+    let out = if scene.lights.camera_relative {
+        let view = Mat4::from_cols_array(&scene.camera.view);
+        let inv3 = Mat3::from_mat4(view).inverse();
+        inv3 * dir
+    } else {
+        dir
+    };
+    out.normalize_or_zero()
+}
