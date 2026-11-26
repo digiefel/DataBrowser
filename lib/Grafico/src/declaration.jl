@@ -8,6 +8,10 @@ struct Declaration
     ## The type of the values of each named role of each line for an input, as `role => type`,
     ## inferred without drawing; see `scale_kinds`.
     types::Function
+    ## Parsed editable document metadata attached by `@plot`.
+    document::Any
+    Declaration(layers::Function, types::Function) = new(layers, types, nothing)
+    Declaration(layers::Function, types::Function, document) = new(layers, types, document)
 end
 
 function inherit end
@@ -64,6 +68,9 @@ them with `figure(lines)`.
 """
 struct PlotLines
     lines::Vector{PlotLine}
+    document::Any
+    PlotLines(lines::Vector{PlotLine}) = new(lines, nothing)
+    PlotLines(lines::Vector{PlotLine}, document) = new(lines, document)
 end
 
 # The `theme(...)` line of a plot: one of Makie's themes by name, such as `:dark` for `theme_dark` or
@@ -89,10 +96,56 @@ struct Scaled
     ## The settings of each `coord(...)` line, in order, such as `(; y = (; scale = log10))`; the
     ## function of the points that a line takes by place is under `points`.
     coords::Vector{NamedTuple}
+    ## Optional hover inspector configuration set by `inspector(...)`.
+    inspector::Union{Nothing,InspectorSpec}
+    ## Parsed editable document metadata attached by `@plot`.
+    document::Any
+    Scaled(layers, scales, texts, legend, theme, coords) =
+        new(layers, scales, texts, legend, theme, coords, nothing, nothing)
+    Scaled(layers, scales, texts, legend, theme, coords, inspector) =
+        new(layers, scales, texts, legend, theme, coords, inspector, nothing)
+    Scaled(layers, scales, texts, legend, theme, coords, inspector, document) =
+        new(layers, scales, texts, legend, theme, coords, inspector, document)
 end
 
 # The roles whose values a legend explains, and whose section a legend text names.
 const LEGEND_ROLES = (:color, :marker, :linestyle, :markersize, :linewidth)
+
+_build_plot_document(_header, _block, _eval_module, _existing_inspector=nothing) = nothing
+const _SKIP_DOCUMENT_ATTACH = Ref(false)
+_copy_ast(e) = e isa Expr ? Expr(e.head, map(_copy_ast, e.args)...) : e
+
+function _attach_plot_document(obj::Declaration, header_expr, block_expr, eval_module::Module)
+    _SKIP_DOCUMENT_ATTACH[] && return obj
+    return Declaration(obj.layers, obj.types, _build_plot_document(header_expr, block_expr, eval_module))
+end
+
+function _attach_plot_document(obj::PlotLines, header_expr, block_expr, eval_module::Module)
+    _SKIP_DOCUMENT_ATTACH[] && return obj
+    return PlotLines(obj.lines, _build_plot_document(header_expr, block_expr, eval_module))
+end
+
+function _attach_plot_document(obj::Scaled, header_expr, block_expr, eval_module::Module)
+    _SKIP_DOCUMENT_ATTACH[] && return obj
+    return Scaled(
+        obj.layers,
+        obj.scales,
+        obj.texts,
+        obj.legend,
+        obj.theme,
+        obj.coords,
+        obj.inspector,
+        _build_plot_document(header_expr, block_expr, eval_module, obj.inspector),
+    )
+end
+
+function _attach_plot_document(obj, header_expr, block_expr, eval_module::Module)
+    _SKIP_DOCUMENT_ATTACH[] && return obj
+    doc = _build_plot_document(header_expr, block_expr, eval_module)
+    doc === nothing && return obj
+    resolved = obj isa Union{Layer,Layers} ? resolve(obj, nothing, (;)) : obj
+    return Scaled(resolved, Pair{Symbol,Any}[], Pair{Symbol,Function}[], (;), nothing, NamedTuple[], nothing, doc)
+end
 
 """
 One entry of a legend: the values of the roles in its section, as `role => value`, and the name of
@@ -180,6 +233,8 @@ drawn in order. A line that evaluates to `nothing` or `false` is left out.
 """
 macro plot(header, block)
     Meta.isexpr(block, :block) || error("@plot takes a header and a `begin ... end` block of layers")
+    raw_header = _copy_ast(header)
+    raw_block = _copy_ast(block)
     assigned=Symbol[first(line.args) for line in block.args if Meta.isexpr(line,:(=))]
     (header,block),wrap_data=bind_plot_inputs((header,block),assigned)
     header_roles_y = y_roles(header)
@@ -191,7 +246,7 @@ macro plot(header, block)
     lines = [hidden ? last(line.args) : line for (line, hidden) in zip(lines, invisible)]
     statements = filter(line -> Meta.isexpr(line, :(=)), lines)
     names = Symbol[first(statement.args) for statement in statements]
-    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme, :plot_theme, :coord), lines)
+    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme, :plot_theme, :coord, :inspector), lines)
     input = gensym("input")
     ## Each line, named or drawn, is a layer of the header; a name holds its line's value.
     statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))
@@ -223,7 +278,9 @@ macro plot(header, block)
         for line in lines if !Meta.isexpr(line, :(=)) && !(line in settings) && !has_data(line) && !any(name -> uses(line, name), names)
         for (role, value) in merge(Dict(named), Dict(find_call(line, :mapping) === nothing ? [] : last(call_arguments(find_call(line, :mapping)))))
         if value !== :nothing]
-    return esc(wrap_data(declare(declared, statements; input, settings=declare_settings(settings, header, names, input), types)))
+    compiled = declare(declared, statements; input, settings=declare_settings(settings, header, names, input), types)
+    attached = :($_attach_plot_document($compiled, $(QuoteNode(raw_header)), $(QuoteNode(raw_block)), @__MODULE__))
+    return esc(wrap_data(attached))
 end
 
 """
@@ -237,9 +294,12 @@ macro invisible(line)
 end
 
 macro plot(declaration)
+    raw_declaration = _copy_ast(declaration)
     input = gensym("input")
     (declaration,),wrap_data=bind_plot_inputs((declaration,))
-    return esc(wrap_data(declare(declare_layers(positions_named(declaration), input), [:($AXES = (;))]; input)))
+    compiled = declare(declare_layers(positions_named(declaration), input), [:($AXES = (;))]; input)
+    attached = :($_attach_plot_document($compiled, $(QuoteNode(raw_declaration)), nothing, @__MODULE__))
+    return esc(wrap_data(attached))
 end
 
 is_y_scale(name::Symbol) = name === :y || occursin(r"^y[1-9]\d*$", String(name))

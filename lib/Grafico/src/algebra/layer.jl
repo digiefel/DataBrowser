@@ -52,6 +52,7 @@ spec = data(...) * mapping(...)
 ```
 """
 data(df) = _hasobs(df) ? _lift_call(data,df) : Layer(data = Columns(columns(df)))
+data(c::Columns) = Layer(data = c)
 data(p::Pregrouped) = Layer(data = p)
 
 """

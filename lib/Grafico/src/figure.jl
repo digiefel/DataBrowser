@@ -45,6 +45,7 @@ function spec(
     axis=(;),
     facet=(;),
     colorbar=(;),
+    inspector_spec::Union{Nothing,InspectorSpec}=nothing,
     _trace=nothing,
     options...,
 )
@@ -56,10 +57,8 @@ function spec(
         _trace === nothing || push!(_trace, ase)
         plots = Makie.PlotSpec[_entry_spec(entry) for entry in ase.entries]
         ax_spec = _axis_spec(ase.axis,plots)
-        ax_spec.then() do axis
-            label_inspector!([AxisEntries(axis,ase.entries,ase.categoricalscales,
-                                           ase.continuousscales,ase.processedlayers)])
-        end
+        ax_spec.then(_InspectorHook(axis -> label_inspector!([AxisEntries(axis, ase.entries,
+            ase.categoricalscales, ase.continuousscales, ase.processedlayers)]; inspector_spec)))
         push!(cells, ase.axis.position => ax_spec)
     end
     if get(legend, :show, true)
@@ -104,41 +103,139 @@ function spec(
     return grid
 end
 
-# The text the inspector shows for a point: its x and y under the labels of the axes, then the value
-# of each role of its group, such as its color, under the title of the role's scale.
-function label_inspector!(grid)
+function _format_inspector_values(value, names::Union{Nothing,Dict}, digits::Int)::Vector{String}
+    format_one(v) = begin
+        if names !== nothing && haskey(names, v)
+            return string(names[v])
+        elseif v isa Real && !(v isa Bool)
+            return inspected(v; digits)
+        else
+            return string(v)
+        end
+    end
+    if value isa AbstractVector
+        return String[format_one(v) for v in value]
+    else
+        return String[format_one(value)]
+    end
+end
+
+function _collect_inspector_fields(p, categoricalscales, inspector_spec::Union{Nothing,InspectorSpec})
+    mapping = aesthetic_mapping(p)
+    categorical_by_key = Dict{Symbol,Tuple{String,Dict,Any}}()
+    for (key, value) in pairs(p.primary)
+        scale = get(get(categoricalscales, get(mapping, key, nothing), Dict()), nothing, nothing)
+        scale === nothing && continue
+        names = Dict(zip(datavalues(scale), datalabels(scale)))
+        categorical_by_key[key] = (string(getlabel(scale)), names, value)
+    end
+    digits = inspector_spec === nothing ? 4 : inspector_spec.digits
+    fields = Pair{String,Vector{String}}[]
+    if inspector_spec === nothing || isempty(inspector_spec.fields)
+        for (key, _) in pairs(p.primary)
+            haskey(categorical_by_key, key) || continue
+            title, names, value = categorical_by_key[key]
+            push!(fields, title => _format_inspector_values(value, names, digits))
+        end
+    else
+        for field in inspector_spec.fields
+            fname = string(field)
+            if haskey(categorical_by_key, field)
+                title, names, value = categorical_by_key[field]
+                push!(fields, title => _format_inspector_values(value, names, digits))
+            elseif haskey(p.primary, field)
+                label = string(get(p.labels, field, field))
+                push!(fields, label => _format_inspector_values(p.primary[field], nothing, digits))
+            elseif haskey(p.named, field)
+                label = string(get(p.labels, field, field))
+                push!(fields, label => _format_inspector_values(p.named[field], nothing, digits))
+            else
+                matched = false
+                for (_, (title, names, value)) in categorical_by_key
+                    if title == fname
+                        push!(fields, title => _format_inspector_values(value, names, digits))
+                        matched = true
+                        break
+                    end
+                end
+                matched && continue
+                for (key, value) in pairs(p.primary)
+                    lbl = string(get(p.labels, key, ""))
+                    if lbl == fname
+                        push!(fields, lbl => _format_inspector_values(value, nothing, digits))
+                        matched = true
+                        break
+                    end
+                end
+                matched && continue
+                for (key, value) in pairs(p.named)
+                    lbl = string(get(p.labels, key, ""))
+                    if lbl == fname
+                        push!(fields, lbl => _format_inspector_values(value, nothing, digits))
+                        break
+                    end
+                end
+            end
+        end
+    end
+    return fields
+end
+
+function _build_entry_inspector_attrs(p, categoricalscales, xlabel::String, ylabel::String, zlabel::String, is3d::Bool, plot_label::String, inspector_spec::Union{Nothing,InspectorSpec})
+    if inspector_spec !== nothing && !inspector_spec.show
+        return (:inspectable => false,)
+    end
+    if inspector_spec !== nothing && inspector_spec.callback !== nothing
+        return (:inspector_label => inspector_spec.callback,)
+    end
+    digits = inspector_spec === nothing ? 4 : inspector_spec.digits
+    show_coords = inspector_spec === nothing ? true : inspector_spec.show_coords
+    fields = _collect_inspector_fields(p, categoricalscales, inspector_spec)
+    label = inspector_spec !== nothing && inspector_spec.title !== nothing ? inspector_spec.title :
+        (inspector_spec !== nothing && !isempty(plot_label) ? plot_label : "")
+    return (:inspector_label => DeclarativeInspector(label, xlabel, ylabel, zlabel, is3d, show_coords, digits, fields),)
+end
+
+struct _InspectorHook{F} <: Function
+    apply::F
+end
+(h::_InspectorHook)(axis) = h.apply(axis)
+
+# The text the inspector shows for a point: its coordinates under the labels of the axes, then
+# the configured fields or categorical group values under each scale's title.
+function label_inspector!(grid; inspector_spec::Union{Nothing,InspectorSpec}=nothing)
     for entries in grid
         axis = entries.axis
-        axis isa Axis || continue
+        (axis isa Axis || axis isa Axis3) || continue
+        is3d = axis isa Axis3
+        xlabel = string(axis.xlabel[])
+        ylabel = string(axis.ylabel[])
+        zlabel = is3d && hasproperty(axis, :zlabel) ? string(axis.zlabel[]) : "z"
         for (plot, p) in zip(axis.scene.plots, entries.processedlayers)
-            mapping = aesthetic_mapping(p)
-            roles = [(getlabel(scale), Dict(zip(datavalues(scale), datalabels(scale))), value)
-                for (key, value) in pairs(p.primary)
-                for scale in (get(get(entries.categoricalscales, get(mapping, key, nothing), Dict()), nothing, nothing),)
-                if scale !== nothing]
-            plot.inspector_label = function (_, index, position)
-                lines = ["$(axis.xlabel[]): $(inspected(position[1]))", "$(axis.ylabel[]): $(inspected(position[2]))"]
-                for (title, names, value) in roles
-                    value isa AbstractVector && (value = value[index])
-                    push!(lines, "$title: $(get(names, value, value))")
+            plot_label = haskey(plot, :label) ? string(something(plot.label[], "")) : ""
+            extra = _build_entry_inspector_attrs(p, entries.categoricalscales, xlabel, ylabel, zlabel, is3d, plot_label, inspector_spec)
+            for (k, v) in extra
+                if k === :inspectable
+                    plot.inspectable = v
+                else
+                    plot.inspector_label = v
                 end
-                return join(lines, "\n")
             end
         end
     end
     return nothing
 end
 
-# A number as the inspector shows it: four significant digits, and a power of ten for a very large
-# or very small one, such as 1.234×10⁻⁵.
-function inspected(value)::String
+# A number as the inspector shows it: configurable significant digits, and a power of ten for a
+# very large or very small one, such as 1.234×10⁻⁵.
+function inspected(value; digits::Int=4)::String
     value isa Real && isfinite(value) || return string(value)
     value == 0 && return "0"
     power = floor(Int, log10(abs(value)))
-    digits(x) = replace(string(round(x; sigdigits=4)), r"\.0$" => "")
-    -3 <= power < 4 && return digits(value)
+    fmt(x) = replace(string(round(x; sigdigits=digits)), r"\.0$" => "")
+    -3 <= power < digits && return fmt(value)
     superscript = map(c -> c == '-' ? '⁻' : "⁰¹²³⁴⁵⁶⁷⁸⁹"[nextind("⁰¹²³⁴⁵⁶⁷⁸⁹", 0, c - '0' + 1)], string(power))
-    return "$(digits(value / 10.0^power))×10$superscript"
+    return "$(fmt(value / 10.0^power))×10$superscript"
 end
 
 # The processed layers of each line, drawn or not, each with the values of its groups' roles. A
@@ -177,7 +274,7 @@ function spec(plot::PlotLines, args...; yscales=Dict{Symbol,Any}(), options...)
     return spec(ProcessedLayers(first.(drawn)), args...; options..., groups)
 end
 
-function scaled_y_figure(plot::PlotLines, yscales, args...; legend=(;), texts=Pair{Symbol,Function}[], axis=(;), options...)
+function scaled_y_figure(plot::PlotLines, yscales, args...; legend=(;), texts=Pair{Symbol,Function}[], axis=(;), inspector_spec::Union{Nothing,InspectorSpec}=nothing, options...)
     settings = !isempty(args) && first(args) isa Scales ? first(args) : scales()
     primarysettings = get(yscales, :y, (;))
     groups = Dict{Symbol,Vector{PlotLine}}(:y => PlotLine[])
@@ -238,7 +335,7 @@ function scaled_y_figure(plot::PlotLines, yscales, args...; legend=(;), texts=Pa
         push!(grids, vec(grid))
     end
     grid = reduce(vcat, grids)
-    label_inspector!(grid)
+    label_inspector!(grid; inspector_spec)
     if get(legend, :show, true)
         all_groups = Dict{Symbol,Any}[Dict{Symbol,Any}(key => entries[i] for (key, entries) in pairs(primary))
             for ps in values(processed) for pieces in ps for (_, primary) in pieces
@@ -255,7 +352,7 @@ function scaled_y_figure(plot::PlotLines, yscales, args...; legend=(;), texts=Pa
     return drawn.figure
 end
 
-function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair{Symbol,Function}[], axis=(;), facet=(;), options...)
+function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair{Symbol,Function}[], axis=(;), facet=(;), inspector_spec::Union{Nothing,InspectorSpec}=nothing, options...)
     settings = !isempty(args) && first(args) isa Scales ? first(args) : scales()
     primarysettings = get(yscales, :y, (;))
     groups = Dict{Symbol,Vector{PlotLine}}(:y => PlotLine[])
@@ -295,6 +392,8 @@ function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair
     ase_primary = only(ae_primary)
     primary_plots = Makie.PlotSpec[Makie.PlotSpec(e.plottype, e.positional...; pairs(e.named)...) for e in ase_primary.entries]
     primary_spec = S.Axis(; plots=primary_plots, pairs(ase_primary.axis.attributes)...)
+    primary_spec.then(_InspectorHook(axis -> label_inspector!([AxisEntries(axis, ase_primary.entries,
+        ase_primary.categoricalscales, ase_primary.continuousscales, ase_primary.processedlayers)]; inspector_spec)))
     cells = Pair{Tuple{Int,Int},Any}[(1, 1) => primary_spec]
     axes_to_link = [primary_spec]
     aes = [vec(ae_primary)]
@@ -312,6 +411,8 @@ function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair
         ase_sec = only(ae_sec)
         sec_plots = Makie.PlotSpec[Makie.PlotSpec(e.plottype, e.positional...; pairs(e.named)...) for e in ase_sec.entries]
         sec_spec = S.Axis(; plots=sec_plots, pairs(ase_sec.axis.attributes)...)
+        sec_spec.then(_InspectorHook(axis -> label_inspector!([AxisEntries(axis, ase_sec.entries,
+            ase_sec.categoricalscales, ase_sec.continuousscales, ase_sec.processedlayers)]; inspector_spec)))
         push!(cells, (1, 1) => sec_spec)
         push!(axes_to_link, sec_spec)
         push!(aes, vec(ae_sec))
@@ -640,7 +741,7 @@ function spec(plot::Scaled, args...; options...)
     _hasobs(plot) && return spec(_snapshot(plot),args...;options...)
     layers, settings, axis_kw, legend, yscales = prepare_scaled(plot; options...)
     build_spec() = spec(layers, settings, args...; options..., axis=axis_kw,
-        texts=plot.texts, legend, (layers isa PlotLines ? (; yscales) : (;))...)
+        texts=plot.texts, legend, inspector_spec=plot.inspector, (layers isa PlotLines ? (; yscales) : (;))...)
     return plot.theme === nothing ? build_spec() : Makie.with_theme(build_spec, makie_theme(plot.theme))
 end
 

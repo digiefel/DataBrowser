@@ -8,6 +8,11 @@ using PrecompileTools: @compile_workload, @setup_workload
 
 export @plot, @invisible, @manipulate, manipulate, figure, spec, ydims, fit, aggregate
 export coord, legend, plot_theme, ComposedFigure
+export inspector, editable, to_code
+public document, editable_plot, parse_plot_document, parse_plot_code, compile_document
+public set_visual!, remove_visual!, set_layer_visible!, set_layer_plottype!, add_layer!, remove_layer!
+public set_mapping!, remove_mapping!, set_analysis!, set_scale!, remove_scale!
+public set_coord!, set_legend!, remove_legend!, set_theme!, set_inspector!
 export AbstractMark, CircleMark, RectMark, PolygonMark, LineMark, Segment, TextMark, T, U, R, Style, mark, graphic_mark
 export SectorMark, Wedge, RibbonMark
 export boundingbox, anchor, beside, above, atop
@@ -54,6 +59,7 @@ include("draw.jl")
 include("paginate.jl")
 include("fitting.jl")
 include("aggregate.jl")
+include("inspector.jl")
 include("declaration.jl")
 include("expansion.jl")
 include("figure.jl")
@@ -62,6 +68,8 @@ include("layout.jl")
 include("marks.jl")
 include("manipulate.jl")
 include("reactive.jl")
+include("document.jl")
+include("codegen.jl")
 include("graphics/plotmarks.jl")
 include("graphics/frames.jl")
 include("motion/values.jl")

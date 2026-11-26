@@ -208,6 +208,7 @@ end
 function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol)
     isempty(settings) && return nothing
     scales, templates, legend, theme, coords = Expr[], Pair{Symbol,Any}[], Expr[], nothing, Expr[]
+    inspector_expr = nothing
     for line in filter(line -> line.args[1] in (:theme, :plot_theme), settings)
         base, named = call_arguments(line)
         theme = :($PlotTheme($(isempty(base) ? nothing : only(base)), $(Expr(:tuple, Expr(:parameters, (Expr(:kw, k, v) for (k, v) in named)...)))))
@@ -218,7 +219,10 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
         points = [Expr(:kw, :points, f) for f in positional]
         push!(coords, Expr(:tuple, Expr(:parameters, points..., (Expr(:kw, k, v) for (k, v) in named)...)))
     end
-    for line in filter(line -> !(line.args[1] in (:theme, :plot_theme, :coord)), settings), (key, value) in last(call_arguments(line))
+    for line in filter(line -> line.args[1] === :inspector, settings)
+        inspector_expr = Expr(:call, GlobalRef(@__MODULE__, :inspector), line.args[2:end]...)
+    end
+    for line in filter(line -> !(line.args[1] in (:theme, :plot_theme, :coord, :inspector)), settings), (key, value) in last(call_arguments(line))
         line.args[1] === :scales ? push!(scales, :($(QuoteNode(key)) => $value)) :
         key in LEGEND_ROLES ? push!(templates, key => value) : push!(legend, Expr(:kw, key, value))
     end
@@ -247,7 +251,7 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
         :($(QuoteNode(role)) => ($entry -> string($text)))
     end
     return (; statements, arguments=(:(Pair{Symbol,Any}[$(scales...)]), :(Pair{Symbol,Function}[$(texts...)]),
-        Expr(:tuple, Expr(:parameters, legend...)), theme, :(NamedTuple[$(coords...)])))
+        Expr(:tuple, Expr(:parameters, legend...)), theme, :(NamedTuple[$(coords...)]), inspector_expr))
 end
 
 # A legend text with each path `p` replaced by `onpath(p)` and each name of the block by

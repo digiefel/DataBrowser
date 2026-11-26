@@ -99,10 +99,11 @@ inherit(a::Layer,b::ObservablePlot) = _lift_call(inherit,a,b)
 
 _snapshot(x) = x
 _snapshot(x::Makie.Observable) = _snapshot(x[])
-_snapshot(x::PlotLines) = PlotLines([PlotLine(_snapshot(line.layers),line.shared,line.drawn) for line in x.lines])
+_snapshot(x::PlotLines) = PlotLines([PlotLine(_snapshot(line.layers),line.shared,line.drawn) for line in x.lines], x.document)
 _snapshot(x::YScaleLayers) = YScaleLayers([role => _snapshot(layer) for (role,layer) in x.layers])
 _snapshot(x::Scaled) = Scaled(_snapshot(x.layers),x.scales,x.texts,x.legend,x.theme,
-    NamedTuple[(; (key => (key === :points ? _unobserve(value) : value) for (key,value) in pairs(step))...) for step in x.coords])
+    NamedTuple[(; (key => (key === :points ? _unobserve(value) : value) for (key,value) in pairs(step))...) for step in x.coords],
+    x.inspector, x.document)
 
 spec(x::Makie.Observable,args...;kwargs...) = spec(_snapshot(x),args...;kwargs...)
 spec(x::Makie.GridLayoutSpec,args...;kwargs...) = x
@@ -120,6 +121,8 @@ visual(type::Makie.Observable;kwargs...) = Makie.lift(t -> visual(t;kwargs...),t
 # SpecApi's diff updater accepts values, not new Observable inputs. A private
 # Makie recipe keeps those connections on the native child across data updates.
 Makie.@recipe_internal LiveEntry (entry,) begin
+    inspector_label = Makie.automatic
+    inspectable = true
 end
 
 Makie.convert_arguments(::Type{<:LiveEntry},entry::Entry) = (entry,)
@@ -149,9 +152,24 @@ function Makie.plot!(wrapper::LiveEntry)
                 filter!(p -> p !== child[],wrapper.plots)
             end
             native=entry.plottype(Tuple(entry.positional),Dict{Symbol,Any}(pairs(entry.named)))
-            child[]=Makie.plot!(wrapper,native)
+            c = Makie.plot!(wrapper,native)
+            lbl = wrapper.inspector_label[]
+            lbl === Makie.automatic || (c.inspector_label = lbl)
+            c.inspectable = wrapper.inspectable[]
+            child[] = c
         end
         previous[]=entry
+    end
+    insp_obs = Makie.ComputePipeline.get_observable!(wrapper.inspector_label; use_deepcopy=false)
+    Makie.on(wrapper, insp_obs) do fn
+        fn === Makie.automatic && return
+        c = child[]
+        c === nothing || (c.inspector_label = fn)
+    end
+    vis_obs = Makie.ComputePipeline.get_observable!(wrapper.inspectable; use_deepcopy=false)
+    Makie.on(wrapper, vis_obs) do flag
+        c = child[]
+        c === nothing || (c.inspectable = flag)
     end
     wrapper
 end
@@ -180,6 +198,17 @@ function (binding::_AxisBinding)(axis)
     end
 end
 
+function _axis_obs(value)
+    value isa Makie.Observable && return value
+    sources = _sources(value)
+    template = _reactive_template(value, sources)
+    out = Makie.Observable{Any}(_unobserve(value))
+    Makie.onany(sources...) do vals...
+        out[] = _reactive_value(template, vals)
+    end
+    return out
+end
+
 # Coordinate display settings may contain Observables inside a tuple of limits.
 function _axis_spec(axis,plots)
     attributes = (;pairs(axis.attributes)...)
@@ -187,7 +216,7 @@ function _axis_spec(axis,plots)
                                  S.Axis(;plots,_unobserve(attributes)...)
     for (key, value) in pairs(attributes)
         _hasobs(value) || continue
-        block.then(_AxisBinding(key, _lift_call(identity, value)))
+        block.then(_AxisBinding(key, _axis_obs(value)))
     end
     block
 end
@@ -336,6 +365,13 @@ function _update_native_layout!(layout, specification, reusable, current)
             Makie.GridLayoutBase.remove_from_gridlayout!(content)
         end
         Makie.update_gridlayout!(layout, specification, reusable, current)
+        for ((_, _, child_spec), (block, _)) in current
+            child_spec isa Makie.BlockSpec || continue
+            (block isa Axis || block isa Axis3) || continue
+            for fn in child_spec.then_funcs
+                fn isa _InspectorHook && fn(block)
+            end
+        end
     end
 end
 

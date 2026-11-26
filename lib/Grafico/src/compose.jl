@@ -73,7 +73,7 @@ a plot with `+`.
 plot_theme(base::Union{Nothing,Symbol}=nothing; kwargs...) = PlotTheme(base, NamedTuple(kwargs))
 const theme = plot_theme
 
-const PlotModifier = Union{Scales, CoordSpec, LegendSpec, PlotTheme}
+const PlotModifier = Union{Scales, CoordSpec, LegendSpec, PlotTheme, InspectorSpec}
 const PlotSpecObject = Union{AbstractAlgebraic, Result, PlotLines, Scaled}
 
 function to_scaled(plot::Scaled)
@@ -83,7 +83,8 @@ end
 function to_scaled(plot::Union{AbstractAlgebraic, Result, PlotLines})
     resolved = plot isa Layer ? resolve(plot, nothing, (;)) :
                plot isa Layers ? resolve(plot, nothing, (;)) : plot
-    return Scaled(resolved, Pair{Symbol,Any}[], Pair{Symbol,Function}[], (;), nothing, NamedTuple[])
+    doc = plot isa PlotLines ? plot.document : nothing
+    return Scaled(resolved, Pair{Symbol,Any}[], Pair{Symbol,Function}[], (;), nothing, NamedTuple[], nothing, doc)
 end
 
 function apply_modifier(plot::Scaled, s::Scales)
@@ -96,19 +97,23 @@ function apply_modifier(plot::Scaled, s::Scales)
     if !isempty(axes) && layers isa Union{Layer, Layers}
         layers = resolve(layers, nothing, axes)
     end
-    return Scaled(layers, new_scales, plot.texts, plot.legend, plot.theme, plot.coords)
+    return Scaled(layers, new_scales, plot.texts, plot.legend, plot.theme, plot.coords, plot.inspector, plot.document)
 end
 
 function apply_modifier(plot::Scaled, c::CoordSpec)
-    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, [plot.coords; c.step])
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, [plot.coords; c.step], plot.inspector, plot.document)
 end
 
 function apply_modifier(plot::Scaled, l::LegendSpec)
-    return Scaled(plot.layers, plot.scales, [plot.texts; l.texts], merge(plot.legend, l.settings), plot.theme, plot.coords)
+    return Scaled(plot.layers, plot.scales, [plot.texts; l.texts], merge(plot.legend, l.settings), plot.theme, plot.coords, plot.inspector, plot.document)
 end
 
 function apply_modifier(plot::Scaled, t::PlotTheme)
-    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, t, plot.coords)
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, t, plot.coords, plot.inspector, plot.document)
+end
+
+function apply_modifier(plot::Scaled, ins::InspectorSpec)
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, plot.coords, ins, plot.document)
 end
 
 Base.:+(plot::PlotSpecObject, mod::PlotModifier) = apply_modifier(to_scaled(plot), mod)
@@ -155,7 +160,9 @@ end
 abstract type AbstractMark end
 abstract type _SpatialPlot end
 
-const ComposablePlot = Union{AbstractMark, _SpatialPlot, AbstractAlgebraic, Result, PlotLines, Scaled, Declaration, ComposedFigure, Makie.GridLayoutSpec}
+abstract type AbstractEditablePlot end
+
+const ComposablePlot = Union{AbstractMark, _SpatialPlot, AbstractAlgebraic, Result, PlotLines, Scaled, Declaration, AbstractEditablePlot, ComposedFigure, Makie.GridLayoutSpec}
 
 function Base.hcat(plots::ComposablePlot...)
     return ComposedFigure([(1, j) => p for (j, p) in enumerate(plots)])
