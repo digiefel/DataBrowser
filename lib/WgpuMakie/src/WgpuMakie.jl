@@ -29,6 +29,7 @@ include("primitives.jl")
 include("scene_sync.jl")
 include("events.jl")
 include("screen.jl")
+include("editor_sync.jl")
 
 const LAST_INLINE = Ref{Union{Makie.Automatic, Bool}}(false)
 

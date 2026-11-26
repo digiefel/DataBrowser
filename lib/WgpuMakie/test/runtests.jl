@@ -172,4 +172,118 @@ end
         scr = Makie.getscreen(fig.scene)
         !isnothing(scr) && close(scr)
     end
+
+    @testset "Editor protocol & live bi-directional editing" begin
+        rows = [(x = Float64(i), y = Float64(i)^1.5, grp = iseven(i) ? "even" : "odd") for i in 1:8]
+        spec = @plot data(rows) * mapping(:x, :y; color = :grp) begin
+            visual(Scatter; markersize = 8, color = :steelblue)
+            coord(x = (; scale = identity))
+            inspector(:color; title = "Editable")
+        end
+        ep = Grafico.editable(spec)
+        fig = Grafico.figure(ep)
+        img1 = Makie.colorbuffer(fig)
+        scr = Makie.getscreen(fig.scene)
+        @test !isnothing(scr)
+
+        snap = WgpuMakie._build_editor_snapshot(scr)
+        @test snap["has_grafico"] == true
+        @test snap["available_columns"] == ["grp", "x", "y"]
+        @test occursin("@plot data(rows)", snap["code"])
+
+        # Zero-recompile expression edit preserves source formula and updates GPU image
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_visual", "layer_id" => 1, "key" => "markersize", "expr" => "6 * 4"),
+        ))
+        @test scr.last_editor_error === nothing
+        @test ep.revision == 0
+        @test occursin("markersize = 6 * 4", Grafico.to_code(ep))
+        img2 = Makie.colorbuffer(fig; update = true)
+        @test img1 != img2
+
+        # Add, toggle visibility, reorder, and remove layer + coord, legend, theme, inspector
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "add_layer", "plottype_expr" => "Lines"),
+        ))
+        @test length(ep.doc.layers) == 2
+
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "move_layer", "layer_id" => 2, "delta" => -1),
+        ))
+        @test ep.doc.layers[1].id == 2
+
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_coord", "key" => "xscale", "expr" => "log10"),
+        ))
+        ax = first(c for c in fig.content if c isa Axis)
+        @test ax.xscale[] === log10
+
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_legend", "key" => "position", "expr" => ":bottom"),
+        ))
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_theme", "base" => "dark", "key" => "fontsize", "expr" => "15"),
+        ))
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "request_code", "include_imports" => true, "include_figure" => true),
+        ))
+        @test scr.editor_include_imports == true
+        @test scr.editor_include_figure == true
+        full_code = WgpuMakie._build_editor_snapshot(scr)["code"]
+        @test startswith(full_code, "using Makie, Grafico")
+        @test occursin("fig = figure(plot)", full_code)
+
+        # Syntax error resilience: invalid expression records error without crashing or dropping plot
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_visual", "layer_id" => 1, "key" => "markersize", "expr" => "1 + * )"),
+        ))
+        @test scr.last_editor_error !== nothing
+
+        # Valid edit clears error state
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_visual", "layer_id" => 1, "key" => "markersize", "expr" => "12"),
+        ))
+        @test scr.last_editor_error === nothing
+        close(scr)
+
+        # Plain Makie fallback editing (axes + plot attributes) + custom callback tooltip
+        pfig = Figure(size = (400, 300))
+        pax = Axis(pfig[1, 1]; title = "Before", xlabel = "t")
+        pplt = scatter!(pax, [1.0, 2.0, 3.0], [1.0, 4.0, 9.0]; markersize = 10, color = :steelblue,
+            inspector_label = (_, idx, pos) -> "cb:$idx")
+        pimg1 = Makie.colorbuffer(pfig)
+        pscr = Makie.getscreen(pfig.scene)
+        @test WgpuMakie._build_editor_snapshot(pscr)["has_grafico"] == false
+
+        aid = UInt64(objectid(pax))
+        pid = UInt64(objectid(pplt))
+        WgpuMakie._handle_viewer_event!(pscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_axis_attr", "axis_id" => aid, "key" => "title", "expr" => "\"After\""),
+        ))
+        @test pax.title[] == "After"
+        WgpuMakie._handle_viewer_event!(pscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_plot_attr", "plot_id" => pid, "key" => "markersize", "expr" => "28"),
+        ))
+        @test all(==(28), pplt.markersize[])
+        pimg2 = Makie.colorbuffer(pfig; update = true)
+        @test pimg1 != pimg2
+
+        # Custom inspector callback reply does not throw
+        WgpuMakie._handle_viewer_event!(pscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "request_custom_tooltip", "plot_id" => pid, "element_index" => 1, "pos" => [2.0, 4.0, 0.0]),
+        ))
+        close(pscr)
+    end
 end

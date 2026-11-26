@@ -67,6 +67,8 @@ function _handle_viewer_event!(screen, msg::AbstractDict)
         if !isnothing(plt)
             plt.visible[] = vis
         end
+    elseif op == "editor_command"
+        _handle_editor_command!(screen, msg["command"])
     elseif op == "resize_event"
         w = Int(msg["width"])
         h = Int(msg["height"])

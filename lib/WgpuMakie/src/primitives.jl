@@ -156,7 +156,14 @@ function _extract_inspector_meta(plot::AbstractPlot)
             "fields" => Any[],
         )
     end
-    insp = haskey(plot, :inspector_label) ? plot.inspector_label[] : nothing
+    insp = nothing
+    if haskey(plot.attributes, :inspector_label)
+        inp = get(plot.attributes.inputs, :inspector_label, nothing)
+        raw = inp !== nothing ? Makie.to_value(inp.value) : Makie.automatic
+        if raw !== Makie.automatic
+            insp = plot.inspector_label[]
+        end
+    end
     if insp !== nothing && hasproperty(insp, :fields) && hasproperty(insp, :xlabel) && hasproperty(insp, :ylabel)
         lbl = hasproperty(insp, :label) && !isempty(string(insp.label)) ?
             string(insp.label) :

@@ -62,7 +62,12 @@ mutable struct Screen <: Makie.MakieScreen
     dirty_plots::Set{Tuple{Scene, AbstractPlot}}
     sync_lock::ReentrantLock
     syncing_from_viewer::Ref{Bool}
+    syncing_editor::Ref{Bool}
     selection::Observable{Any}
+    editor_include_imports::Bool
+    editor_include_figure::Bool
+    last_editor_error::Union{Nothing, String}
+    editor_observers::Vector{Any}
     open::Bool
 end
 
@@ -84,7 +89,12 @@ function Screen(scene::Union{Nothing, Scene}, config::ScreenConfig, args...)
         Set{Tuple{Scene, AbstractPlot}}(),
         ReentrantLock(),
         Ref(false),
+        Ref(false),
         Observable{Any}(nothing),
+        false,
+        false,
+        nothing,
+        Any[],
         true,
     )
     finalizer(s -> (!isnothing(s.viewer) && @async close(s)), screen)
@@ -146,6 +156,8 @@ function Base.display(screen::Screen, scene::Scene; figure = nothing, unused...)
     Makie.events(scene).window_open[] = true
     _sync_figure_axes!(screen, screen.figure)
     _sync_subtree!(screen, scene, nothing)
+    _attach_editor_observers!(screen)
+    sync_editor_state!(screen)
     return screen
 end
 
@@ -234,6 +246,13 @@ function _clear_observers!(screen::Screen)
         end
     end
     empty!(screen.axis_observers)
+    for o in screen.editor_observers
+        try
+            Observables.off(o)
+        catch
+        end
+    end
+    empty!(screen.editor_observers)
     empty!(screen.id_to_scene)
     empty!(screen.id_to_plot)
     empty!(screen.plot_zorder)
