@@ -124,4 +124,52 @@ end
         scr = Makie.getscreen(fig.scene)
         !isnothing(scr) && close(scr)
     end
+
+    @testset "Grafico inspector metadata + EditablePlot updates" begin
+        rows1 = [(x = Float64(i), y = Float64(i)^2, grp = iseven(i) ? "even" : "odd") for i in 1:6]
+        rows2 = [(x = Float64(i), y = 10.0 - Float64(i), grp = iseven(i) ? "even" : "odd") for i in 1:6]
+        spec = @plot data(rows1) * mapping(:x => "X val", :y => "Y val"; color = :grp) begin
+            visual(Scatter; markersize = 10)
+            inspector(:color; title = "Run 1")
+        end
+        ep = Grafico.editable(spec)
+        fig = Grafico.figure(ep)
+        img1 = Makie.colorbuffer(fig)
+
+        ax = first(c for c in fig.content if c isa Axis)
+        leaf_scatter = nothing
+        function find_scatter(p)
+            p isa Scatter && (leaf_scatter = p; return)
+            for child in p.plots
+                find_scatter(child)
+            end
+        end
+        foreach(find_scatter, ax.scene.plots)
+        @test leaf_scatter !== nothing
+        meta = WgpuMakie._extract_inspector_meta(leaf_scatter)
+        @test meta["label"] == "Run 1"
+        @test meta["xlabel"] == "X val"
+        @test meta["ylabel"] == "Y val"
+        @test !isempty(meta["fields"])
+
+        Grafico.set_visual!(ep, 1; markersize = 26)
+        img2 = Makie.colorbuffer(fig; update = true)
+        @test img1 != img2
+
+        ep.data[] = rows2
+        img3 = Makie.colorbuffer(fig; update = true)
+        @test img2 != img3
+        @test all(s -> all(==(26), s.markersize[]), begin
+            found = Scatter[]
+            function collect_s(p)
+                p isa Scatter && push!(found, p)
+                foreach(collect_s, p.plots)
+            end
+            foreach(collect_s, ax.scene.plots)
+            found
+        end)
+
+        scr = Makie.getscreen(fig.scene)
+        !isnothing(scr) && close(scr)
+    end
 end

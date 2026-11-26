@@ -147,6 +147,38 @@ function _pack_color_source(color; interpolate::Bool = true)
 end
 
 function _extract_inspector_meta(plot::AbstractPlot)
+    if haskey(plot, :inspectable) && plot.inspectable[] === false
+        return Dict{String, Any}(
+            "label" => "",
+            "xlabel" => "x",
+            "ylabel" => "y",
+            "zlabel" => "z",
+            "fields" => Any[],
+        )
+    end
+    insp = haskey(plot, :inspector_label) ? plot.inspector_label[] : nothing
+    if insp !== nothing && hasproperty(insp, :fields) && hasproperty(insp, :xlabel) && hasproperty(insp, :ylabel)
+        lbl = hasproperty(insp, :label) && !isempty(string(insp.label)) ?
+            string(insp.label) :
+            (haskey(plot, :label) ? string(something(plot.label[], "")) : string(Makie.plotkey(plot)))
+        xlabel = string(insp.xlabel)
+        ylabel = string(insp.ylabel)
+        zlabel = hasproperty(insp, :zlabel) ? string(insp.zlabel) : "z"
+        fields = Any[]
+        for (name, vals) in insp.fields
+            push!(fields, Any[string(name), String[string(v) for v in vals]])
+        end
+        if isempty(fields) && !isempty(lbl)
+            push!(fields, Any["label", String[lbl]])
+        end
+        return Dict{String, Any}(
+            "label" => lbl,
+            "xlabel" => xlabel,
+            "ylabel" => ylabel,
+            "zlabel" => zlabel,
+            "fields" => fields,
+        )
+    end
     lbl = haskey(plot, :label) ? string(something(plot.label[], "")) : string(Makie.plotkey(plot))
     fields = Any[]
     if !isempty(lbl)
