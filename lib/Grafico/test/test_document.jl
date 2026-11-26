@@ -208,3 +208,48 @@ end
     fig = figure(ep)
     @test to_code(fig) == code
 end
+
+@testset "Expression-preserving editor helpers" begin
+    rows = [(time=Float64(i), signal=Float64(i)^2, series=iseven(i) ? "B" : "A") for i in 1:6]
+    p = @plot data(rows) * mapping(:time, :signal; color=:series) begin
+        visual(Scatter; markersize=8, color=:steelblue)
+        visual(Lines; linewidth=2)
+        coord(x=(; scale=identity))
+    end
+    ep = editable(p)
+    fig = figure(ep)
+
+    cols = Grafico.available_columns(ep)
+    @test cols == ["series", "signal", "time"]
+
+    # Zero-recompile expression edit preserves exact expression text
+    Grafico.set_visual_expr!(ep, 1, :markersize, "6 * 4")
+    @test ep.revision == 0
+    sc = first(_native_plots_of(fig, Scatter))
+    @test all(==(24), sc.markersize[])
+    @test occursin("markersize = 6 * 4", to_code(ep))
+
+    # Invalid expression throws without corrupting document
+    @test_throws Exception Grafico.set_visual_expr!(ep, 1, :markersize, "6 * )")
+    @test occursin("markersize = 6 * 4", to_code(ep))
+
+    # Coordinate, scale, legend, theme expression helpers + layer reorder
+    Grafico.set_coord_expr!(ep, :xscale, "log10")
+    @test fig.content[1].xscale[] === log10
+    @test occursin("scale = log10", to_code(ep))
+
+    Grafico.set_scale_expr!(ep, :x, :label, "\"Time (s)\"")
+    @test occursin("label = \"Time (s)\"", to_code(ep))
+
+    Grafico.set_legend_expr!(ep, :position, ":bottom")
+    @test occursin("legend(position = :bottom)", to_code(ep))
+
+    Grafico.set_theme_expr!(ep; base=:dark, key=:fontsize, expr_text="14")
+    @test occursin("theme(:dark; fontsize = 14)", to_code(ep))
+
+    @test [l.plottype_expr for l in ep.doc.layers] == ["Scatter", "Lines"]
+    Grafico.move_layer!(ep, 2, -1)
+    @test [l.plottype_expr for l in ep.doc.layers] == ["Lines", "Scatter"]
+    Grafico.move_layer!(ep, 2, 1)
+    @test [l.plottype_expr for l in ep.doc.layers] == ["Scatter", "Lines"]
+end

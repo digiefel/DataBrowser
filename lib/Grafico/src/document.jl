@@ -1504,6 +1504,169 @@ function set_theme!(ep::EditablePlot, base::Union{Nothing,Symbol}=nothing; kwarg
 end
 
 """
+    move_layer!(ep::EditablePlot, layer_id::Int, delta::Int) -> EditablePlot
+
+Move `layer_id` earlier (`delta < 0`) or later (`delta > 0`) in `ep`'s layer list.
+"""
+function move_layer!(ep::EditablePlot, layer_id::Int, delta::Int)
+    idx = findfirst(l -> l.id == layer_id, ep.doc.layers)
+    idx === nothing && error("Layer id $layer_id not found")
+    target = clamp(idx + delta, 1, length(ep.doc.layers))
+    target == idx && return ep
+    ep.structure_dirty = true
+    layer = popat!(ep.doc.layers, idx)
+    insert!(ep.doc.layers, target, layer)
+    return _recompile!(ep)
+end
+
+function _validate_and_parse_expr(doc::PlotDocument, expr_text::AbstractString)
+    parsed = Meta.parse(expr_text)
+    val = _eval_in_module(doc.eval_module, parsed)
+    ev = EntryValue(String(strip(expr_text)), _is_literal_expr(parsed))
+    return val, ev
+end
+
+"""
+    set_visual_expr!(ep::EditablePlot, layer_id::Int, key::Symbol, expr_text::AbstractString) -> EditablePlot
+
+Evaluate `expr_text` and assign visual attribute `key` on `layer_id` while keeping `expr_text`
+verbatim for [`to_code`](@ref). Updates existing bound attributes in place without recompiling.
+"""
+function set_visual_expr!(ep::EditablePlot, layer_id::Int, key::Symbol, expr_text::AbstractString)
+    val, ev = _validate_and_parse_expr(ep.doc, expr_text)
+    tid, vk, _ = _find_layer_target(ep, layer_id)
+    vk[key] = ev
+    obs_map = get!(Dict{Symbol,Makie.Observable{Any}}, ep.visual_obs, tid)
+    if key in _SEMANTIC_VISUAL_KEYS || !haskey(obs_map, key)
+        return _recompile!(ep)
+    else
+        obs_map[key][] = val
+        return ep
+    end
+end
+
+"""
+    set_coord_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString) -> EditablePlot
+
+Evaluate `expr_text` and assign coordinate setting `key` (`:xscale`, `:yscale`, `:xreversed`,
+`:yreversed`, `:xlimits`, `:ylimits`, `:aspect`, or `:points`) while keeping `expr_text`
+verbatim for [`to_code`](@ref).
+"""
+function set_coord_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString)
+    val, ev = _validate_and_parse_expr(ep.doc, expr_text)
+    isempty(ep.doc.coords) && push!(ep.doc.coords, Dict{Symbol,Any}())
+    step = ep.doc.coords[end]
+    axis_split = Dict{Symbol,Tuple{Symbol,Symbol}}(
+        :xscale => (:x, :scale),
+        :xreversed => (:x, :reversed),
+        :xlimits => (:x, :limits),
+        :yscale => (:y, :scale),
+        :yreversed => (:y, :reversed),
+        :ylimits => (:y, :limits),
+    )
+    if haskey(axis_split, key)
+        axis_key, sub_key = axis_split[key]
+        sub = get!(Dict{Symbol,EntryValue}, step, axis_key)
+        sub[sub_key] = ev
+        if haskey(ep.coord_obs, key)
+            ep.coord_obs[key][] = val
+            return ep
+        end
+        return _recompile!(ep)
+    elseif key in (:aspect, :points)
+        step[key] = ev
+        if key === :aspect && haskey(ep.coord_obs, :aspect)
+            ep.coord_obs[:aspect][] = val
+            return ep
+        end
+        return _recompile!(ep)
+    else
+        throw(ArgumentError("Unsupported coordinate setting: $key"))
+    end
+end
+
+"""
+    set_scale_expr!(ep::EditablePlot, role::Symbol, key::Symbol, expr_text::AbstractString) -> EditablePlot
+
+Evaluate `expr_text` and assign scale attribute `key` for `role` while keeping `expr_text`
+verbatim for [`to_code`](@ref).
+"""
+function set_scale_expr!(ep::EditablePlot, role::Symbol, key::Symbol, expr_text::AbstractString)
+    _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+    inner = get!(Dict{Symbol,EntryValue}, ep.doc.scales, role)
+    inner[key] = ev
+    return _recompile!(ep)
+end
+
+"""
+    set_legend_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString) -> EditablePlot
+
+Assign legend setting `key` using `expr_text` while keeping `expr_text` verbatim for
+[`to_code`](@ref).
+"""
+function set_legend_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString)
+    parsed = Meta.parse(expr_text)
+    if !(key in LEGEND_ROLES)
+        _eval_in_module(ep.doc.eval_module, parsed)
+    end
+    ep.doc.legend[key] = EntryValue(String(strip(expr_text)), _is_literal_expr(parsed))
+    return _recompile!(ep)
+end
+
+"""
+    set_theme_expr!(ep::EditablePlot; base=:keep, key=nothing, expr_text=nothing) -> EditablePlot
+
+Update theme base or theme setting `key` with `expr_text` while preserving expression text for
+[`to_code`](@ref).
+"""
+function set_theme_expr!(
+    ep::EditablePlot;
+    base::Union{Nothing,Symbol}=:keep,
+    key::Union{Nothing,Symbol}=nothing,
+    expr_text::Union{Nothing,AbstractString}=nothing,
+)
+    new_base = base === :keep ? (ep.doc.theme === nothing ? nothing : ep.doc.theme.base) : base
+    settings = ep.doc.theme === nothing ? Dict{Symbol,EntryValue}() : copy(ep.doc.theme.settings)
+    if key !== nothing
+        if expr_text === nothing || isempty(strip(expr_text))
+            delete!(settings, key)
+        else
+            _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+            settings[key] = ev
+        end
+    end
+    if new_base === nothing && isempty(settings)
+        ep.doc.theme = nothing
+    else
+        ep.doc.theme = ThemeSpec(new_base, settings)
+    end
+    return _recompile!(ep)
+end
+
+"""
+    available_columns(ep::EditablePlot) -> Vector{String}
+
+Return sorted column names from `ep`'s active dataset, or an empty vector when no table
+columns are attached.
+"""
+function available_columns(ep::EditablePlot)::Vector{String}
+    src = ep.data[] !== nothing ? ep.data[] : ep.initial_data
+    src === nothing && return String[]
+    try
+        if src isa Columns
+            return sort!(unique(String[string(c) for c in Tables.columnnames(src.columns)]))
+        end
+        cols = Tables.columns(src)
+        return sort!(unique(String[string(c) for c in Tables.columnnames(cols)]))
+    catch
+        if src isa AbstractVector && !isempty(src) && first(src) isa NamedTuple
+            return sort!(unique(String[string(c) for c in keys(first(src))]))
+        end
+        return String[]
+    end
+end
+
+"""
     set_inspector!(ep::EditablePlot, spec::Union{Nothing,InspectorSpec}) -> EditablePlot
 
 Set or clear the [`InspectorSpec`](@ref) on `ep`.
