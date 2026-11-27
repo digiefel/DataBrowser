@@ -457,6 +457,12 @@ function _target_axis_for_id(screen::Screen, aid_raw)
 end
 
 function _clear_plain_ann_plots!(screen::Screen, aid::Int)
+    for o in pop!(screen.plain_annotation_observers, aid, Any[])
+        try
+            Observables.off(o)
+        catch
+        end
+    end
     old = pop!(screen.plain_annotation_plots, aid, AbstractPlot[])
     for p in old
         sc = Makie.parent_scene(p)
@@ -467,6 +473,77 @@ function _clear_plain_ann_plots!(screen::Screen, aid::Int)
             end
         end
     end
+    return nothing
+end
+
+function _plain_arrow_screen_angle(sc::Makie.Scene, p1::Point2f, p2::Point2f, space::Symbol, pv, vp)::Float32
+    w = Float32(max(1.0, Makie.widths(vp)[1]))
+    h = Float32(max(1.0, Makie.widths(vp)[2]))
+    if space === :relative
+        dx = (p2[1] - p1[1]) * w
+        dy = (p2[2] - p1[2]) * h
+        return Float32(atan(dy, dx))
+    elseif space === :pixel
+        return Float32(atan(p2[2] - p1[2], p2[1] - p1[1]))
+    else
+        tf = sc.transformation.transform_func[]
+        t1 = try
+            Makie.apply_transform(tf, p1)
+        catch
+            p1
+        end
+        t2 = try
+            Makie.apply_transform(tf, p2)
+        catch
+            p2
+        end
+        c1 = pv * Makie.Vec4f(Float32(t1[1]), Float32(t1[2]), 0.0f0, 1.0f0)
+        c2 = pv * Makie.Vec4f(Float32(t2[1]), Float32(t2[2]), 0.0f0, 1.0f0)
+        abs(c1[4]) > 1.0f-12 && (c1 = c1 / c1[4])
+        abs(c2[4]) > 1.0f-12 && (c2 = c2 / c2[4])
+        dx = (c2[1] - c1[1]) * 0.5f0 * w
+        dy = (c2[2] - c1[2]) * 0.5f0 * h
+        return Float32(atan(dy, dx))
+    end
+end
+
+function _add_plain_arrow_head!(
+    screen::Screen,
+    ax::Makie.Axis,
+    id::Int,
+    plts::Vector{AbstractPlot},
+    p1::Point2f,
+    p2::Point2f,
+    col,
+    space::Symbol,
+    vis::Bool,
+)
+    sc = ax.scene
+    rot_obs = Observable{Float32}(
+        _plain_arrow_screen_angle(sc, p1, p2, space, sc.camera.projectionview[], Makie.viewport(sc)[]),
+    )
+    o1 = on(sc.camera.projectionview) do pv
+        rot_obs[] = _plain_arrow_screen_angle(sc, p1, p2, space, pv, Makie.viewport(sc)[])
+    end
+    o2 = on(Makie.viewport(sc)) do vp
+        rot_obs[] = _plain_arrow_screen_angle(sc, p1, p2, space, sc.camera.projectionview[], vp)
+    end
+    append!(get!(Vector{Any}, screen.plain_annotation_observers, id), Any[o1, o2])
+    push!(
+        plts,
+        Makie.scatter!(
+            ax,
+            [p2];
+            marker = :rtriangle,
+            markersize = 12,
+            markerspace = :pixel,
+            color = col,
+            rotation = rot_obs,
+            space = space,
+            visible = vis,
+            inspectable = false,
+        ),
+    )
     return nothing
 end
 
@@ -498,31 +575,29 @@ function _rebuild_plain_annotation!(screen::Screen, rec::Dict{Symbol, Any})
 
     if kind === :text || kind === :fit_label
         pt = Point2f(Float32(_eval_plain_kw(kw, :x, 0.5)), Float32(_eval_plain_kw(kw, :y, 0.5)))
-        isempty(txt) || push!(plts, Makie.text!(ax, pt; text = txt, color = col, fontsize = fs, space = sp, visible = vis))
+        isempty(txt) || push!(plts, Makie.text!(ax, pt; text = txt, color = col, fontsize = fs, space = sp, visible = vis, inspectable = false))
     elseif kind === :arrow
         p1 = Point2f(Float32(_eval_plain_kw(kw, :x, 0.0)), Float32(_eval_plain_kw(kw, :y, 0.0)))
         p2 = Point2f(Float32(_eval_plain_kw(kw, :x2, p1[1] + 1.0)), Float32(_eval_plain_kw(kw, :y2, p1[2] + 1.0)))
-        push!(plts, Makie.lines!(ax, [p1, p2]; color = col, linewidth = lw, linestyle = ls, space = sp, visible = vis))
-        angle = atan(Float32(p2[2] - p1[2]), Float32(p2[1] - p1[1]))
-        push!(plts, Makie.scatter!(ax, [p2]; marker = :rtriangle, markersize = 12, markerspace = :pixel, color = col, rotation = angle, space = sp, visible = vis, inspectable = false))
+        push!(plts, Makie.lines!(ax, [p1, p2]; color = col, linewidth = lw, linestyle = ls, space = sp, visible = vis, inspectable = false))
+        _add_plain_arrow_head!(screen, ax, id, plts, p1, p2, col, Symbol(sp), vis)
     elseif kind === :callout
         px = Float32(_eval_plain_kw(kw, :x, 0.5))
         py = Float32(_eval_plain_kw(kw, :y, 0.5))
         tx = Float32(_eval_plain_kw(kw, :tx, px + 0.5))
         ty = Float32(_eval_plain_kw(kw, :ty, py + 0.5))
         p_t = Point2f(px, py); p_l = Point2f(tx, ty)
-        push!(plts, Makie.lines!(ax, [p_l, p_t]; color = col, linewidth = lw, linestyle = ls, space = sp, visible = vis))
-        angle = atan(Float32(p_t[2] - p_l[2]), Float32(p_t[1] - p_l[1]))
-        push!(plts, Makie.scatter!(ax, [p_t]; marker = :rtriangle, markersize = 12, markerspace = :pixel, color = col, rotation = angle, space = sp, visible = vis, inspectable = false))
-        isempty(txt) || push!(plts, Makie.text!(ax, p_l; text = txt, color = col, fontsize = fs, space = sp, visible = vis))
+        push!(plts, Makie.lines!(ax, [p_l, p_t]; color = col, linewidth = lw, linestyle = ls, space = sp, visible = vis, inspectable = false))
+        _add_plain_arrow_head!(screen, ax, id, plts, p_l, p_t, col, Symbol(sp), vis)
+        isempty(txt) || push!(plts, Makie.text!(ax, p_l; text = txt, color = col, fontsize = fs, space = sp, visible = vis, inspectable = false))
     elseif kind === :vspan
         xmin = Float32(_eval_plain_kw(kw, :xmin, 0.0))
         xmax = Float32(_eval_plain_kw(kw, :xmax, 1.0))
-        push!(plts, Makie.vspan!(ax, min(xmin, xmax), max(xmin, xmax); color = _eval_plain_kw(kw, :color, (:gold, 0.22)), visible = vis))
+        push!(plts, Makie.vspan!(ax, min(xmin, xmax), max(xmin, xmax); color = _eval_plain_kw(kw, :color, (:gold, 0.22)), visible = vis, inspectable = false))
     elseif kind === :hspan
         ymin = Float32(_eval_plain_kw(kw, :ymin, 0.0))
         ymax = Float32(_eval_plain_kw(kw, :ymax, 1.0))
-        push!(plts, Makie.hspan!(ax, min(ymin, ymax), max(ymin, ymax); color = _eval_plain_kw(kw, :color, (:teal, 0.22)), visible = vis))
+        push!(plts, Makie.hspan!(ax, min(ymin, ymax), max(ymin, ymax); color = _eval_plain_kw(kw, :color, (:teal, 0.22)), visible = vis, inspectable = false))
     elseif kind === :rect
         x0 = Float32(_eval_plain_kw(kw, :xmin, 0.0))
         x1 = Float32(_eval_plain_kw(kw, :xmax, 1.0))
@@ -532,11 +607,11 @@ function _rebuild_plain_annotation!(screen::Screen, rec::Dict{Symbol, Any})
         push!(plts, Makie.poly!(ax, GeometryBasics.Rect2f(rx0, ry0, max(rx1 - rx0, 1.0f-5), max(ry1 - ry0, 1.0f-5));
             color = _eval_plain_kw(kw, :color, (:steelblue, 0.16)),
             strokecolor = _eval_plain_kw(kw, :strokecolor, :steelblue),
-            strokewidth = Float32(_eval_plain_kw(kw, :strokewidth, 1.5)), visible = vis))
+            strokewidth = Float32(_eval_plain_kw(kw, :strokewidth, 1.5)), visible = vis, inspectable = false))
     elseif kind === :hline
-        push!(plts, Makie.hlines!(ax, [Float32(_eval_plain_kw(kw, :y, 0.0))]; color = col, linewidth = lw, linestyle = ls, visible = vis))
+        push!(plts, Makie.hlines!(ax, [Float32(_eval_plain_kw(kw, :y, 0.0))]; color = col, linewidth = lw, linestyle = ls, visible = vis, inspectable = false))
     elseif kind === :vline
-        push!(plts, Makie.vlines!(ax, [Float32(_eval_plain_kw(kw, :x, 0.0))]; color = col, linewidth = lw, linestyle = ls, visible = vis))
+        push!(plts, Makie.vlines!(ax, [Float32(_eval_plain_kw(kw, :x, 0.0))]; color = col, linewidth = lw, linestyle = ls, visible = vis, inspectable = false))
     end
     screen.plain_annotation_plots[id] = plts
     return nothing
@@ -575,35 +650,68 @@ function _move_plain_block!(screen::Screen, fig::Makie.Figure, bid::UInt64, kind
     end
     gc = blk.layoutobservables.gridcontent[]
     isnothing(gc) || Makie.GridLayoutBase.remove_from_gridlayout!(gc)
+    Makie.GridLayoutBase.trim!(gl)
+
+    primary_ax = nothing
+    for x in fig.content
+        if (x isa Makie.Axis || x isa Makie.Axis3) && x !== blk
+            tw = hasproperty(x, :tellwidth) ? x.tellwidth[] : true
+            th = hasproperty(x, :tellheight) ? x.tellheight[] : true
+            if tw || th
+                primary_ax = x
+                break
+            end
+            isnothing(primary_ax) && (primary_ax = x)
+        end
+    end
+    ax_gc = isnothing(primary_ax) ? nothing : primary_ax.layoutobservables.gridcontent[]
+    ax_rows = isnothing(ax_gc) ? (1:1) : ax_gc.span.rows
+    ax_cols = isnothing(ax_gc) ? (1:1) : ax_gc.span.cols
     nrows, ncols = size(gl)
+
     if dock == "inside"
+        hasproperty(blk, :orientation) && (blk.orientation = :vertical)
+        blk isa Makie.Colorbar && (blk.vertical = true)
         hasproperty(blk, :tellwidth) && (blk.tellwidth = false)
         hasproperty(blk, :tellheight) && (blk.tellheight = false)
         hasproperty(blk, :halign) && (blk.halign = clamp(halign, 0.02f0, 0.98f0))
         hasproperty(blk, :valign) && (blk.valign = clamp(valign, 0.02f0, 0.98f0))
-        gl[1, 1] = blk
+        gl[ax_rows, ax_cols] = blk
     elseif dock == "left"
+        hasproperty(blk, :orientation) && (blk.orientation = :vertical)
+        blk isa Makie.Colorbar && (blk.vertical = true)
         hasproperty(blk, :tellwidth) && (blk.tellwidth = true)
         hasproperty(blk, :tellheight) && (blk.tellheight = false)
+        hasproperty(blk, :halign) && (blk.halign = :center)
+        hasproperty(blk, :valign) && (blk.valign = :center)
         gl[1:max(1, nrows), 0] = blk
     elseif dock == "right"
+        hasproperty(blk, :orientation) && (blk.orientation = :vertical)
+        blk isa Makie.Colorbar && (blk.vertical = true)
         hasproperty(blk, :tellwidth) && (blk.tellwidth = true)
         hasproperty(blk, :tellheight) && (blk.tellheight = false)
+        hasproperty(blk, :halign) && (blk.halign = :center)
+        hasproperty(blk, :valign) && (blk.valign = :center)
         gl[1:max(1, nrows), ncols + 1] = blk
     elseif dock == "top"
         hasproperty(blk, :tellwidth) && (blk.tellwidth = false)
         hasproperty(blk, :tellheight) && (blk.tellheight = true)
         hasproperty(blk, :orientation) && (blk.orientation = :horizontal)
         blk isa Makie.Colorbar && (blk.vertical = false)
+        hasproperty(blk, :halign) && (blk.halign = :center)
+        hasproperty(blk, :valign) && (blk.valign = :center)
         gl[0, 1:max(1, ncols)] = blk
     elseif dock == "bottom"
         hasproperty(blk, :tellwidth) && (blk.tellwidth = false)
         hasproperty(blk, :tellheight) && (blk.tellheight = true)
         hasproperty(blk, :orientation) && (blk.orientation = :horizontal)
         blk isa Makie.Colorbar && (blk.vertical = false)
+        hasproperty(blk, :halign) && (blk.halign = :center)
+        hasproperty(blk, :valign) && (blk.valign = :center)
         gl[nrows + 1, 1:max(1, ncols)] = blk
     end
     Makie.GridLayoutBase.trim!(gl)
+    Makie.GridLayoutBase.update!(fig.layout)
     return nothing
 end
 
@@ -673,6 +781,31 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
             val = _eval_wgpu_expr(string(cmd["expr"]))
             if key === :limits
                 ax.limits[] = val
+            elseif key === :xscale || key === :yscale
+                prev_xs = ax.xscale[]
+                prev_ys = ax.yscale[]
+                prev_tf = ax.scene.transformation.transform_func[]
+                prev_fl = ax.finallimits[]
+                prev_tl = ax.targetlimits[]
+                try
+                    setproperty!(ax, key, val)
+                catch err
+                    ax.xscale.val = prev_xs
+                    ax.yscale.val = prev_ys
+                    ax.scene.transformation.transform_func[] = prev_tf
+                    ax.targetlimits.val = prev_tl
+                    ax.finallimits[] = prev_fl
+                    @lock screen.sync_lock begin
+                        push!(screen.dirty_scenes, ax.scene)
+                        push!(screen.dirty_axes, ax)
+                        for p in ax.scene.plots
+                            p isa Makie.ComputePlots && push!(screen.dirty_plots, (ax.scene, p))
+                        end
+                    end
+                    _sync_figure_axes!(screen, screen.figure)
+                    flush_updates!(screen)
+                    rethrow(err)
+                end
             else
                 setproperty!(ax, key, val)
             end
@@ -768,7 +901,7 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
             for r in 1:nrows
                 Makie.rowsize!(gl, r, Makie.Auto())
             end
-            Makie.update_state_before_display!(screen.figure)
+            Makie.GridLayoutBase.update!(screen.figure.layout)
             _sync_figure_axes!(screen, screen.figure)
             _sync_layout_meta!(screen, screen.figure)
             flush_updates!(screen)
@@ -792,7 +925,7 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
                     gl_parent[rb, cb] = ba
                     gl_parent[ra, ca] = bb
                     Makie.GridLayoutBase.trim!(gl_parent)
-                    Makie.update_state_before_display!(fig)
+                    Makie.GridLayoutBase.update!(fig.layout)
                 end
             end
             _sync_figure_axes!(screen, screen.figure)
@@ -873,8 +1006,11 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
                     ins_ax = Makie.Axis(screen.figure[1, 1]; tellwidth = false, tellheight = false, backgroundcolor = :white)
                     _apply_plain_inset_bbox!(ins_ax, bbox)
                     for p in ax.scene.plots
+                        (haskey(p, :inspectable) && p.inspectable[] === false) && continue
                         if p isa Makie.Lines
                             Makie.lines!(ins_ax, p[1][]; color = p.color[], linewidth = p.linewidth[])
+                        elseif p isa Makie.LineSegments
+                            Makie.linesegments!(ins_ax, p[1][]; color = p.color[], linewidth = p.linewidth[])
                         elseif p isa Makie.Scatter
                             Makie.scatter!(ins_ax, p[1][]; color = p.color[], markersize = p.markersize[])
                         end

@@ -13,6 +13,7 @@ pub struct SceneNode {
     pub state: SceneState,
     pub initial_camera: CameraState,
     pub revision: u64,
+    pub insert_order: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +35,7 @@ pub struct SceneGraph {
     pub local_cam3d_seq: HashMap<u64, u64>,
     pub scenes: HashMap<u64, SceneNode>,
     pub scene_order: Vec<u64>,
+    pub next_scene_order: u64,
     pub axes: HashMap<u64, AxisMeta>,
     pub layout: Option<LayoutMeta>,
     pub plots: HashMap<u64, PlotEntry>,
@@ -86,12 +88,15 @@ impl SceneGraph {
                     node.revision = rev;
                 } else {
                     let initial_camera = scene.camera.clone();
+                    let insert_order = self.next_scene_order;
+                    self.next_scene_order += 1;
                     self.scenes.insert(
                         id,
                         SceneNode {
                             state: scene,
                             initial_camera,
                             revision: rev,
+                            insert_order,
                         },
                     );
                     self.rebuild_scene_order();
@@ -205,7 +210,7 @@ impl SceneGraph {
             .filter(|s| s.state.parent.is_none() || !self.scenes.contains_key(&s.state.parent.unwrap()))
             .map(|s| s.state.id)
             .collect();
-        roots.sort_unstable();
+        roots.sort_by_key(|id| self.scenes[id].insert_order);
         let mut order = Vec::with_capacity(self.scenes.len());
         fn visit(id: u64, scenes: &HashMap<u64, SceneNode>, out: &mut Vec<u64>) {
             out.push(id);
@@ -214,7 +219,7 @@ impl SceneGraph {
                 .filter(|s| s.state.parent == Some(id))
                 .map(|s| s.state.id)
                 .collect();
-            children.sort_unstable();
+            children.sort_by_key(|cid| scenes[cid].insert_order);
             for c in children {
                 visit(c, scenes, out);
             }
@@ -223,6 +228,34 @@ impl SceneGraph {
             visit(r, &self.scenes, &mut order);
         }
         self.scene_order = order;
+    }
+
+    /// Partition `scene_order` into Makie top-level render groups (root scene + each direct child
+    /// block scene subtree) so overlays like legends and zoom insets clear depth per block.
+    pub fn scene_render_groups(&self) -> Vec<Vec<u64>> {
+        let root_ids: std::collections::HashSet<u64> = self
+            .scenes
+            .values()
+            .filter(|s| s.state.parent.is_none() || !self.scenes.contains_key(&s.state.parent.unwrap()))
+            .map(|s| s.state.id)
+            .collect();
+        let mut groups: Vec<Vec<u64>> = Vec::new();
+        for &sid in &self.scene_order {
+            let Some(node) = self.scenes.get(&sid) else {
+                continue;
+            };
+            let starts_group = root_ids.contains(&sid)
+                || node
+                    .state
+                    .parent
+                    .is_some_and(|p| root_ids.contains(&p));
+            if starts_group || groups.is_empty() {
+                groups.push(vec![sid]);
+            } else if let Some(last) = groups.last_mut() {
+                last.push(sid);
+            }
+        }
+        groups
     }
 
     fn rebuild_plot_order(&mut self) {
@@ -465,6 +498,7 @@ mod tests {
             xlabel: String::new(),
             ylabel: String::new(),
             title: String::new(),
+            decorations: Default::default(),
         }
     }
 
@@ -506,5 +540,30 @@ mod tests {
             axis: dummy_axis(10, 1, [1.0, 1.0, 8.0, 8.0]),
         });
         assert_eq!(graph.axes[&10].limits, [1.0, 1.0, 8.0, 8.0]);
+    }
+
+    #[test]
+    fn scene_order_preserves_insertion_order_and_groups() {
+        let mut graph = SceneGraph::default();
+        let mut root = dummy_scene(100, 0.2);
+        root.parent = None;
+        let mut ax_block = dummy_scene(50, 0.2);
+        ax_block.parent = Some(100);
+        let mut ax_data = dummy_scene(200, 0.2);
+        ax_data.parent = Some(50);
+        // Smaller numeric ID added later must still come after ax_block
+        let mut ins_block = dummy_scene(10, 0.2);
+        ins_block.parent = Some(100);
+        let mut ins_data = dummy_scene(5, 0.2);
+        ins_data.parent = Some(10);
+
+        for sc in [root, ax_block, ax_data, ins_block, ins_data] {
+            graph.apply(ServerMessage::UpsertScene { scene: sc });
+        }
+        assert_eq!(graph.scene_order, vec![100, 50, 200, 10, 5]);
+        assert_eq!(
+            graph.scene_render_groups(),
+            vec![vec![100], vec![50, 200], vec![10, 5]]
+        );
     }
 }

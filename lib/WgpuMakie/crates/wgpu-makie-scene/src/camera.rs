@@ -168,13 +168,24 @@ pub fn point_inside_legend(graph: &SceneGraph, pos_px: [f64; 2]) -> bool {
     let Some(layout) = &graph.layout else {
         return false;
     };
-    layout
-        .blocks
-        .iter()
-        .any(|b| b.kind == LayoutBlockKind::Legend && inside_rect(pos_px, b.bbox_px))
+    for b in layout.blocks.iter().rev() {
+        if matches!(b.kind, LayoutBlockKind::Legend | LayoutBlockKind::Inset)
+            && inside_rect(pos_px, b.bbox_px)
+        {
+            return b.kind == LayoutBlockKind::Legend;
+        }
+    }
+    false
 }
 
 impl CameraController {
+    /// Clear any active 2D/3D camera gesture and zoom marquee overlay.
+    pub fn cancel(&mut self) {
+        self.gesture_2d = None;
+        self.gesture_3d = None;
+        self.overlay_rect_px = None;
+    }
+
     /// Reset the 2D axis (or 3D scene) containing `pos_px` back to its initial bounds/camera.
     pub fn reset_at(&mut self, graph: &mut SceneGraph, pos_px: [f64; 2]) -> InteractionUpdate {
         let mut hit_with_area: Vec<(f32, u64)> = graph
@@ -843,6 +854,7 @@ mod tests {
                 xlabel: "x".into(),
                 ylabel: "y".into(),
                 title: "".into(),
+                decorations: Default::default(),
             },
         });
         graph.apply(wgpu_makie_proto::ServerMessage::UpsertAxisMeta {
@@ -867,6 +879,7 @@ mod tests {
                 xlabel: "x".into(),
                 ylabel: "y2".into(),
                 title: "".into(),
+                decorations: Default::default(),
             },
         });
 
@@ -889,5 +902,50 @@ mod tests {
         // Ctrl+left click inside axis 10 resets limits
         ctrl.on_pointer_down(&mut graph, [250.0, 200.0], 0, 0b0010);
         assert_eq!(graph.axes[&10].limits, [0.0, 0.0, 10.0, 10.0]);
+
+        // Cancel clears active marquee zoom cleanly
+        ctrl.on_pointer_down(&mut graph, [100.0, 100.0], 0, 0);
+        ctrl.on_pointer_move(&mut graph, [220.0, 180.0]);
+        assert!(ctrl.overlay_rect_px.is_some());
+        ctrl.cancel();
+        assert!(ctrl.gesture_2d.is_none());
+        assert!(ctrl.overlay_rect_px.is_none());
+
+        // Topmost inset overlapping a legend blocks legend hit
+        graph.apply(wgpu_makie_proto::ServerMessage::UpsertLayoutMeta {
+            layout: wgpu_makie_proto::LayoutMeta {
+                nrows: 1,
+                ncols: 1,
+                figure_size: [500.0, 500.0],
+                blocks: vec![
+                    wgpu_makie_proto::LayoutBlockMeta {
+                        block_id: 1,
+                        kind: LayoutBlockKind::Legend,
+                        bbox_px: [300.0, 200.0, 100.0, 80.0],
+                        parent_axis_id: None,
+                        row_span: [1, 1],
+                        col_span: [1, 1],
+                        halign: 0.9,
+                        valign: 0.9,
+                        rel_size: [0.2, 0.2],
+                        dock_position: "inside".into(),
+                    },
+                    wgpu_makie_proto::LayoutBlockMeta {
+                        block_id: 2,
+                        kind: LayoutBlockKind::Inset,
+                        bbox_px: [290.0, 190.0, 120.0, 100.0],
+                        parent_axis_id: Some(10),
+                        row_span: [1, 1],
+                        col_span: [1, 1],
+                        halign: 0.9,
+                        valign: 0.9,
+                        rel_size: [0.3, 0.3],
+                        dock_position: "inside".into(),
+                    },
+                ],
+                splits: vec![],
+            },
+        });
+        assert!(!point_inside_legend(&graph, [340.0, 230.0]));
     }
 }

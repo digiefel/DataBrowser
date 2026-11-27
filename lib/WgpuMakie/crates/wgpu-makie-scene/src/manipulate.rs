@@ -108,6 +108,9 @@ pub enum DragTarget {
         inset_id: Option<u32>,
         parent_bbox: Option<[f32; 4]>,
         orig_bbox: [f32; 4],
+        orig_dock: String,
+        orig_halign: f32,
+        orig_valign: f32,
         start_px: [f64; 2],
     },
     LayoutSplit {
@@ -160,6 +163,17 @@ impl DirectManipController {
         self.preview_split_px = None;
         self.preview_block_px = None;
         self.preview_dock_zone = None;
+    }
+
+    /// Return `true` while dragging out a new arrow or callout annotation.
+    pub fn is_creating_arrow_like(&self) -> bool {
+        matches!(
+            self.active_drag,
+            Some(DragTarget::CreateShape {
+                mode: ToolMode::AddArrow | ToolMode::AddCallout,
+                ..
+            })
+        )
     }
 
     pub fn clear_brush(&mut self) -> ClientMessage {
@@ -471,6 +485,9 @@ impl DirectManipController {
                                 inset_id: cur_ins_id,
                                 parent_bbox,
                                 orig_bbox: blk.bbox_px,
+                                orig_dock: blk.dock_position.clone(),
+                                orig_halign: blk.halign,
+                                orig_valign: blk.valign,
                                 start_px: pos_px,
                             });
                             self.preview_block_px = Some(blk.bbox_px);
@@ -489,6 +506,9 @@ impl DirectManipController {
                             inset_id: None,
                             parent_bbox: None,
                             orig_bbox: blk.bbox_px,
+                            orig_dock: blk.dock_position.clone(),
+                            orig_halign: blk.halign,
+                            orig_valign: blk.valign,
                             start_px: pos_px,
                         });
                         self.preview_block_px = Some(blk.bbox_px);
@@ -789,6 +809,9 @@ impl DirectManipController {
                 inset_id,
                 parent_bbox,
                 orig_bbox,
+                orig_dock,
+                orig_halign,
+                orig_valign,
                 start_px,
             } => {
                 self.preview_rect_px = None;
@@ -823,14 +846,22 @@ impl DirectManipController {
                     if kind == LayoutBlockKind::Colorbar && zone == "inside" {
                         zone = "right".into();
                     }
-                    let cmd = EditorCommand::MoveBlock {
+                    let fwd = EditorCommand::MoveBlock {
                         block_id,
                         kind,
                         dock_position: zone,
                         halign,
                         valign,
                     };
-                    out.messages.push(ClientMessage::EditorCommand { command: cmd });
+                    let inv = EditorCommand::MoveBlock {
+                        block_id,
+                        kind,
+                        dock_position: orig_dock,
+                        halign: orig_halign,
+                        valign: orig_valign,
+                    };
+                    out.undo_pair = Some((fwd.clone(), inv));
+                    out.messages.push(ClientMessage::EditorCommand { command: fwd });
                 }
             }
             DragTarget::LayoutSplit {
@@ -898,7 +929,9 @@ impl DirectManipController {
                 let Some(vp) = graph.scenes.get(&ax.data_scene_id).map(|s| s.state.viewport) else {
                     return out;
                 };
-                if let Some(cmd) = build_create_command(mode, ax, vp, start_px, pos_px) {
+                if let Some(cmd) =
+                    build_create_command(graph, mode, ax, vp, start_px, pos_px)
+                {
                     out.messages.push(ClientMessage::EditorCommand { command: cmd });
                 }
             }
@@ -1123,35 +1156,50 @@ pub fn compute_brush(
 
 /// Classify a pointer drop position into dock edge (`left`/`right`/`top`/`bottom`) or floating `inside` (`halign`, `valign`).
 pub fn classify_dock_zone(layout: &LayoutMeta, pos_px: [f64; 2]) -> (String, f32, f32) {
-    let w = layout.figure_size[0].max(1.0) as f64;
-    let h = layout.figure_size[1].max(1.0) as f64;
-    let fx = (pos_px[0] / w).clamp(0.0, 1.0);
-    let fy = (pos_px[1] / h).clamp(0.0, 1.0);
-    if fx < 0.14 {
-        return ("left".into(), 0.05, fy as f32);
-    }
-    if fx > 0.86 {
-        return ("right".into(), 0.95, fy as f32);
-    }
-    if fy < 0.14 {
-        return ("bottom".into(), fx as f32, 0.05);
-    }
-    if fy > 0.86 {
-        return ("top".into(), fx as f32, 0.95);
-    }
-    // Map drop position onto primary axis bbox if available.
     if let Some(ax_blk) = layout
         .blocks
         .iter()
         .find(|b| matches!(b.kind, LayoutBlockKind::Axis | LayoutBlockKind::Axis3))
     {
-        let hx = ((pos_px[0] - ax_blk.bbox_px[0] as f64) / (ax_blk.bbox_px[2] as f64).max(1.0))
-            .clamp(0.04, 0.96) as f32;
-        let hy = ((pos_px[1] - ax_blk.bbox_px[1] as f64) / (ax_blk.bbox_px[3] as f64).max(1.0))
-            .clamp(0.04, 0.96) as f32;
-        return ("inside".into(), hx, hy);
+        let ax_x0 = ax_blk.bbox_px[0] as f64;
+        let ax_y0 = ax_blk.bbox_px[1] as f64;
+        let ax_w = (ax_blk.bbox_px[2] as f64).max(1.0);
+        let ax_h = (ax_blk.bbox_px[3] as f64).max(1.0);
+        let ax_x1 = ax_x0 + ax_w;
+        let ax_y1 = ax_y0 + ax_h;
+
+        if pos_px[0] >= ax_x0
+            && pos_px[0] <= ax_x1
+            && pos_px[1] >= ax_y0
+            && pos_px[1] <= ax_y1
+        {
+            let hx = ((pos_px[0] - ax_x0) / ax_w).clamp(0.02, 0.98) as f32;
+            let hy = ((pos_px[1] - ax_y0) / ax_h).clamp(0.02, 0.98) as f32;
+            return ("inside".into(), hx, hy);
+        }
+
+        let dx_left = (ax_x0 - pos_px[0]).max(0.0);
+        let dx_right = (pos_px[0] - ax_x1).max(0.0);
+        let dy_bot = (ax_y0 - pos_px[1]).max(0.0);
+        let dy_top = (pos_px[1] - ax_y1).max(0.0);
+        let max_d = dx_left.max(dx_right).max(dy_bot).max(dy_top);
+        let hx = ((pos_px[0] - ax_x0) / ax_w).clamp(0.04, 0.96) as f32;
+        let hy = ((pos_px[1] - ax_y0) / ax_h).clamp(0.04, 0.96) as f32;
+        if max_d == dx_left {
+            return ("left".into(), 0.05, hy);
+        } else if max_d == dx_right {
+            return ("right".into(), 0.95, hy);
+        } else if max_d == dy_bot {
+            return ("bottom".into(), hx, 0.05);
+        } else {
+            return ("top".into(), hx, 0.95);
+        }
     }
-    ("inside".into(), fx as f32, fy as f32)
+    let w = layout.figure_size[0].max(1.0) as f64;
+    let h = layout.figure_size[1].max(1.0) as f64;
+    let fx = (pos_px[0] / w).clamp(0.04, 0.96) as f32;
+    let fy = (pos_px[1] / h).clamp(0.04, 0.96) as f32;
+    ("inside".into(), fx, fy)
 }
 
 fn inside_bbox(pos_px: [f64; 2], bbox: [f32; 4]) -> bool {
@@ -1347,7 +1395,45 @@ fn fmt_f64(v: f64) -> String {
         .to_string()
 }
 
+/// Pick a clean default `[xmin, xmax, ymin, ymax]` placement box for a new zoom inset,
+/// avoiding overlap with any upper-right docked or inside `Legend`.
+pub fn default_inset_bbox(graph: &SceneGraph, axis_id: Option<u64>) -> [f64; 4] {
+    let top_right = [0.56, 0.95, 0.56, 0.95];
+    let Some(layout) = &graph.layout else {
+        return top_right;
+    };
+    let target_ax = axis_id
+        .and_then(|id| graph.axes.get(&id))
+        .or_else(|| graph.axes.values().next());
+    let Some(ax) = target_ax else {
+        return top_right;
+    };
+    let Some(vp) = graph.scenes.get(&ax.data_scene_id).map(|s| s.state.viewport) else {
+        return top_right;
+    };
+    let rx0 = vp[0] as f64 + top_right[0] * vp[2] as f64;
+    let rx1 = vp[0] as f64 + top_right[1] * vp[2] as f64;
+    let ry0 = vp[1] as f64 + top_right[2] * vp[3] as f64;
+    let ry1 = vp[1] as f64 + top_right[3] * vp[3] as f64;
+    let overlaps_legend = layout.blocks.iter().any(|b| {
+        if b.kind != LayoutBlockKind::Legend {
+            return false;
+        }
+        let lx0 = b.bbox_px[0] as f64;
+        let lx1 = lx0 + b.bbox_px[2] as f64;
+        let ly0 = b.bbox_px[1] as f64;
+        let ly1 = ly0 + b.bbox_px[3] as f64;
+        lx0 < rx1 && lx1 > rx0 && ly0 < ry1 && ly1 > ry0
+    });
+    if overlaps_legend {
+        [0.06, 0.45, 0.56, 0.95]
+    } else {
+        top_right
+    }
+}
+
 fn build_create_command(
+    graph: &SceneGraph,
     mode: ToolMode,
     ax: &AxisMeta,
     vp: [f32; 4],
@@ -1401,24 +1487,19 @@ fn build_create_command(
             })
         }
         ToolMode::AddCallout => {
-            let (tx, ty) = if has_drag {
-                (d1[0], d1[1])
-            } else {
-                (
-                    d0[0] + 0.12 * (ax.limits[2] - ax.limits[0]),
-                    d0[1] + 0.12 * (ax.limits[3] - ax.limits[1]),
-                )
-            };
+            if !has_drag {
+                return None;
+            }
             Some(EditorCommand::AddAnnotation {
                 kind: "callout".into(),
                 text: "Callout".into(),
                 source_expr: None,
                 axis_id: aid,
                 kwargs: vec![
-                    ("x".into(), fmt_f64(d0[0])),
-                    ("y".into(), fmt_f64(d0[1])),
-                    ("tx".into(), fmt_f64(tx)),
-                    ("ty".into(), fmt_f64(ty)),
+                    ("tx".into(), fmt_f64(d0[0])),
+                    ("ty".into(), fmt_f64(d0[1])),
+                    ("x".into(), fmt_f64(d1[0])),
+                    ("y".into(), fmt_f64(d1[1])),
                 ],
             })
         }
@@ -1477,7 +1558,7 @@ fn build_create_command(
             let ylimits = Some([d0[1].min(d1[1]), d0[1].max(d1[1])]);
             Some(EditorCommand::AddInset {
                 axis_id: aid,
-                bbox: [0.56, 0.95, 0.56, 0.95],
+                bbox: default_inset_bbox(graph, aid),
                 xlimits,
                 ylimits,
             })
@@ -1517,6 +1598,7 @@ mod tests {
             xlabel: "x".into(),
             ylabel: "y".into(),
             title: "t".into(),
+            decorations: Default::default(),
         }
     }
 
@@ -1752,6 +1834,10 @@ mod tests {
                 }
             }) if dock_position == "inside"
         ));
+        let layout_ref = g.layout.as_ref().unwrap();
+        assert_eq!(classify_dock_zone(layout_ref, [430.0, 330.0]).0, "inside");
+        assert_eq!(classify_dock_zone(layout_ref, [470.0, 200.0]).0, "right");
+        assert_eq!(classify_dock_zone(layout_ref, [250.0, 370.0]).0, "top");
 
         // 3. Split drag
         ctrl.on_pointer_down(&g, Some(&doc), ToolMode::Edit, [455.0, 200.0], 0);
@@ -1771,13 +1857,46 @@ mod tests {
         // 4. Create arrow
         ctrl.on_pointer_down(&g, Some(&doc), ToolMode::AddArrow, [100.0, 100.0], 0);
         ctrl.on_pointer_move(&g, Some(&doc), [250.0, 200.0]);
+        assert!(ctrl.is_creating_arrow_like());
         let ar_up = ctrl.on_pointer_up(&g, Some(&doc), [250.0, 200.0]);
+        assert!(!ctrl.is_creating_arrow_like());
         assert!(matches!(
             ar_up.messages.first(),
             Some(ClientMessage::EditorCommand {
                 command: EditorCommand::AddAnnotation { kind, .. }
             }) if kind == "arrow"
         ));
+
+        // 4b. Callout requires a drag and places text at drag start and arrowhead at drag release
+        ctrl.on_pointer_down(&g, Some(&doc), ToolMode::AddCallout, [100.0, 100.0], 0);
+        assert!(ctrl.is_creating_arrow_like());
+        let callout_click = ctrl.on_pointer_up(&g, Some(&doc), [101.0, 101.0]);
+        assert!(callout_click.messages.is_empty());
+
+        ctrl.on_pointer_down(&g, Some(&doc), ToolMode::AddCallout, [100.0, 100.0], 0);
+        ctrl.on_pointer_move(&g, Some(&doc), [250.0, 200.0]);
+        let callout_up = ctrl.on_pointer_up(&g, Some(&doc), [250.0, 200.0]);
+        let start_data = pixel_to_data(&g.axes[&10], g.scenes[&1].state.viewport, [100.0, 100.0]).unwrap();
+        let end_data = pixel_to_data(&g.axes[&10], g.scenes[&1].state.viewport, [250.0, 200.0]).unwrap();
+        match callout_up.messages.first() {
+            Some(ClientMessage::EditorCommand {
+                command: EditorCommand::AddAnnotation { kind, kwargs, .. },
+            }) => {
+                assert_eq!(kind, "callout");
+                let kw = |k: &str| {
+                    kwargs
+                        .iter()
+                        .find(|(key, _)| key == k)
+                        .and_then(|(_, v)| v.parse::<f64>().ok())
+                        .unwrap()
+                };
+                assert!((kw("tx") - start_data[0]).abs() < 1e-3);
+                assert!((kw("ty") - start_data[1]).abs() < 1e-3);
+                assert!((kw("x") - end_data[0]).abs() < 1e-3);
+                assert!((kw("y") - end_data[1]).abs() < 1e-3);
+            }
+            other => panic!("expected callout AddAnnotation command, got {other:?}"),
+        }
 
         // 5. Brush selection picks points (2,2) and (3,4) in data [1..5] x [1..5]
         let ax = &g.axes[&10];

@@ -42,7 +42,12 @@ struct VsOut {
     @location(4) @interpolate(flat) instance_id: u32,
     @location(5) clip_d0: vec4<f32>,
     @location(6) clip_d1: vec4<f32>,
+    @location(7) @interpolate(flat) join_caps: vec2<f32>,
 };
+
+fn is_valid_pt(p: vec3<f32>) -> bool {
+    return all(p == p) && abs(p.x) < 1e30 && abs(p.y) < 1e30 && abs(p.z) < 1e30;
+}
 
 fn fetch_color(idx: u32) -> vec4<f32> {
     if (u.color_mode == 1u) {
@@ -88,10 +93,7 @@ fn vs_main(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -
     let p1_raw = positions[idx1].xyz;
 
     // Cull NaN / Inf gaps cleanly
-    let valid = all(p0_raw == p0_raw) && all(p1_raw == p1_raw) &&
-                abs(p0_raw.x) < 1e30 && abs(p0_raw.y) < 1e30 &&
-                abs(p1_raw.x) < 1e30 && abs(p1_raw.y) < 1e30;
-    if (!valid) {
+    if (!is_valid_pt(p0_raw) || !is_valid_pt(p1_raw)) {
         out.clip_pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
         out.quad_sdf = vec2<f32>(0.0);
         out.halfwidth = 0.0;
@@ -100,8 +102,20 @@ fn vs_main(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -
         out.instance_id = 0u;
         out.clip_d0 = vec4<f32>(1.0);
         out.clip_d1 = vec4<f32>(1.0);
+        out.join_caps = vec2<f32>(0.0);
         return out;
     }
+
+    let n_pts = arrayLength(&positions);
+    var has_prev = false;
+    if (u.is_segments == 0u && idx0 > 0u) {
+        has_prev = is_valid_pt(positions[idx0 - 1u].xyz);
+    }
+    var has_next = false;
+    if (u.is_segments == 0u && idx1 + 1u < n_pts) {
+        has_next = is_valid_pt(positions[idx1 + 1u].xyz);
+    }
+    out.join_caps = vec2<f32>(select(0.0, 1.0, has_prev), select(0.0, 1.0, has_next));
 
     // Quad vertices: 6 vertices (2 triangles) per segment
     // vid: 0:(0,-1), 1:(1,-1), 2:(1,1), 3:(0,-1), 4:(1,1), 5:(0,1)
@@ -183,22 +197,22 @@ fn line_alpha(in: VsOut) -> f32 {
     let y = abs(in.quad_sdf.y);
     var dist: f32;
     if (x < 0.0) {
-        if (u.linecap == 1u) {
+        if (in.join_caps.x > 0.5 || u.linecap == 2u) {
+            // round join at interior polyline vertex or explicit round cap
+            dist = length(vec2<f32>(-x, y));
+        } else if (u.linecap == 1u) {
             // square cap
             dist = max(-x, y);
-        } else if (u.linecap == 2u) {
-            // round cap
-            dist = length(vec2<f32>(-x, y));
         } else {
             // butt
             dist = max(-x + in.halfwidth, y);
         }
     } else if (x > in.seg_len) {
         let dx = x - in.seg_len;
-        if (u.linecap == 1u) {
-            dist = max(dx, y);
-        } else if (u.linecap == 2u) {
+        if (in.join_caps.y > 0.5 || u.linecap == 2u) {
             dist = length(vec2<f32>(dx, y));
+        } else if (u.linecap == 1u) {
+            dist = max(dx, y);
         } else {
             dist = max(dx + in.halfwidth, y);
         }

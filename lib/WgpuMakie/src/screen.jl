@@ -71,6 +71,7 @@ mutable struct Screen <: Makie.MakieScreen
     id_to_block::Dict{UInt64, Any}
     plain_annotations::Vector{Dict{Symbol, Any}}
     plain_annotation_plots::Dict{Int, Vector{AbstractPlot}}
+    plain_annotation_observers::Dict{Int, Vector{Any}}
     next_plain_ann_id::Int
     plain_insets::Dict{Int, Tuple{Makie.Axis, Any}}
     next_plain_inset_id::Int
@@ -123,6 +124,7 @@ function Screen(scene::Union{Nothing, Scene}, config::ScreenConfig, args...)
         Dict{UInt64, Any}(),
         Dict{Symbol, Any}[],
         Dict{Int, Vector{AbstractPlot}}(),
+        Dict{Int, Vector{Any}}(),
         1,
         Dict{Int, Tuple{Makie.Axis, Any}}(),
         1,
@@ -354,6 +356,15 @@ function _clear_observers!(screen::Screen)
     empty!(screen.id_to_block)
     empty!(screen.plain_annotations)
     empty!(screen.plain_annotation_plots)
+    for obs_list in values(screen.plain_annotation_observers)
+        for o in obs_list
+            try
+                Observables.off(o)
+            catch
+            end
+        end
+    end
+    empty!(screen.plain_annotation_observers)
     empty!(screen.plain_insets)
     empty!(screen.dirty_scenes)
     empty!(screen.dirty_axes)

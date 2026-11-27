@@ -4,7 +4,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconKind {
     Navigate,
-    Edit,
     Annotate,
     Brush,
     Undo,
@@ -45,18 +44,6 @@ pub fn draw_icon(painter: &egui::Painter, rect: egui::Rect, kind: IconKind, colo
             painter.line_segment([p4, p5], thin);
             painter.line_segment([p5, p6], stroke);
             painter.line_segment([p6, p0], stroke);
-        }
-        IconKind::Edit => {
-            // Diagonal pencil body + tip
-            let a = egui::pos2(c.x - s * 0.7, c.y + s * 0.7);
-            let b = egui::pos2(c.x + s * 0.5, c.y - s * 0.5);
-            let b2 = egui::pos2(c.x + s * 0.78, c.y - s * 0.78);
-            painter.line_segment([a, b], egui::Stroke::new(2.0, color));
-            painter.line_segment([b, b2], stroke);
-            painter.line_segment(
-                [egui::pos2(c.x - s * 0.85, c.y + s * 0.85), a],
-                thin,
-            );
         }
         IconKind::Annotate => {
             // Crisp plus symbol

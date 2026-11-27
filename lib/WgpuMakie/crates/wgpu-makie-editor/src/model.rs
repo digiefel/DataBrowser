@@ -43,6 +43,27 @@ pub struct InlineTextEdit {
     pub needs_focus: bool,
 }
 
+/// Deferred undo binding for commands whose server-assigned ID arrives on the next snapshot.
+#[derive(Debug, Clone)]
+pub enum PendingUndoBind {
+    AddAnnotation {
+        fwd: EditorCommand,
+        clear_redo: bool,
+    },
+    AddInset {
+        fwd: EditorCommand,
+        clear_redo: bool,
+    },
+    RestoreAnnotation {
+        inv_add: EditorCommand,
+    },
+    RestoreInset {
+        inv_add: EditorCommand,
+    },
+}
+
+const MAX_UNDO_HISTORY: usize = 256;
+
 /// State model for the modular WgpuMakie plot and layout editor.
 #[derive(Debug, Default)]
 pub struct EditorModel {
@@ -63,6 +84,7 @@ pub struct EditorModel {
     pub annotate_menu_open: bool,
     pub expanded_plots: HashSet<u64>,
     pub inline_edit_ann: Option<InlineTextEdit>,
+    pub pending_edit_newest_text: bool,
     pub add_attr_key: String,
     pub add_attr_expr: String,
     pub add_mapping_role: String,
@@ -82,8 +104,10 @@ pub struct EditorModel {
     pub swap_panel_a: u32,
     pub swap_panel_b: u32,
     pub playback_accum_secs: f64,
-    pub undo_stack: Vec<(EditorCommand, EditorCommand)>,
-    pub redo_stack: Vec<(EditorCommand, EditorCommand)>,
+    pub undo_stack: Vec<(ClientMessage, ClientMessage)>,
+    pub redo_stack: Vec<(ClientMessage, ClientMessage)>,
+    pub pending_undo_bind: Option<PendingUndoBind>,
+    pub dismissed_error: Option<String>,
 }
 
 impl EditorModel {
@@ -133,6 +157,10 @@ impl EditorModel {
                 }
                 // Drop drafts for properties whose server values settled so fresh snapshots display cleanly.
                 self.drafts.clear();
+                if state.error != self.dismissed_error {
+                    self.dismissed_error = None;
+                }
+                self.resolve_pending_undo_bind(state);
                 self.doc = Some(state.clone());
                 true
             }
@@ -158,6 +186,20 @@ impl EditorModel {
             ServerMessage::SyncTimelineState { timeline } => {
                 self.timeline = Some(timeline.clone());
                 true
+            }
+            ServerMessage::RemovePlot { id } => {
+                if self.selected_elem.is_some_and(|(pid, _)| pid == *id) {
+                    self.selected_elem = None;
+                    self.selected_pos = None;
+                }
+                self.expanded_plots.remove(id);
+                false
+            }
+            ServerMessage::Batch { messages } => {
+                for m in messages {
+                    let _ = self.apply_server_message(m);
+                }
+                false
             }
             _ => false,
         }
@@ -227,22 +269,163 @@ impl EditorModel {
     }
 
     /// Emit an editor command, optionally pushing a matching `(forward, inverse)` pair onto undo history.
+    fn resolve_pending_undo_bind(&mut self, state: &EditorDocumentSnapshot) {
+        let Some(bind) = self.pending_undo_bind.take() else {
+            return;
+        };
+        match bind {
+            PendingUndoBind::AddAnnotation { fwd, clear_redo } => {
+                if let Some(new_id) = state.annotations.iter().map(|a| a.id).max() {
+                    let inv = EditorCommand::RemoveAnnotation { id: new_id };
+                    self.undo_stack.push((
+                        ClientMessage::EditorCommand { command: fwd },
+                        ClientMessage::EditorCommand { command: inv },
+                    ));
+                    if self.undo_stack.len() > MAX_UNDO_HISTORY {
+                        self.undo_stack.remove(0);
+                    }
+                    if clear_redo {
+                        self.redo_stack.clear();
+                    }
+                }
+            }
+            PendingUndoBind::AddInset { fwd, clear_redo } => {
+                if let Some(new_id) = state.insets.iter().map(|i| i.id).max() {
+                    let inv = EditorCommand::RemoveInset { id: new_id };
+                    self.undo_stack.push((
+                        ClientMessage::EditorCommand { command: fwd },
+                        ClientMessage::EditorCommand { command: inv },
+                    ));
+                    if self.undo_stack.len() > MAX_UNDO_HISTORY {
+                        self.undo_stack.remove(0);
+                    }
+                    if clear_redo {
+                        self.redo_stack.clear();
+                    }
+                }
+            }
+            PendingUndoBind::RestoreAnnotation { inv_add } => {
+                if let Some(new_id) = state.annotations.iter().map(|a| a.id).max() {
+                    let fwd_rm = EditorCommand::RemoveAnnotation { id: new_id };
+                    self.redo_stack.push((
+                        ClientMessage::EditorCommand { command: fwd_rm },
+                        ClientMessage::EditorCommand { command: inv_add },
+                    ));
+                }
+            }
+            PendingUndoBind::RestoreInset { inv_add } => {
+                if let Some(new_id) = state.insets.iter().map(|i| i.id).max() {
+                    let fwd_rm = EditorCommand::RemoveInset { id: new_id };
+                    self.redo_stack.push((
+                        ClientMessage::EditorCommand { command: fwd_rm },
+                        ClientMessage::EditorCommand { command: inv_add },
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Push a ready `(forward, inverse)` client message pair directly onto the undo stack.
+    pub fn push_undo_pair(&mut self, forward: ClientMessage, inverse: ClientMessage) {
+        self.undo_stack.push((forward, inverse));
+        if self.undo_stack.len() > MAX_UNDO_HISTORY {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    /// Record a deferred undo inverse for an `AddAnnotation` command already queued for sending.
+    pub fn record_pending_add_annotation(&mut self, fwd: EditorCommand) {
+        self.pending_undo_bind = Some(PendingUndoBind::AddAnnotation {
+            fwd,
+            clear_redo: true,
+        });
+    }
+
+    /// Record a deferred undo inverse for an `AddInset` command already queued for sending.
+    pub fn record_pending_add_inset(&mut self, fwd: EditorCommand) {
+        self.pending_undo_bind = Some(PendingUndoBind::AddInset {
+            fwd,
+            clear_redo: true,
+        });
+    }
+
+    /// Emit any [`ClientMessage`], optionally recording an undo inverse.
+    pub fn push_message(
+        &mut self,
+        actions: &mut Vec<EditorAction>,
+        forward: ClientMessage,
+        inverse: Option<ClientMessage>,
+    ) {
+        if let Some(inv) = inverse {
+            self.push_undo_pair(forward.clone(), inv);
+        }
+        actions.push(EditorAction::Send(forward));
+    }
+
+    /// Emit an editor command, optionally pushing a matching `(forward, inverse)` pair onto undo history.
     pub fn push_command(
         &mut self,
         actions: &mut Vec<EditorAction>,
         forward: EditorCommand,
         inverse: Option<EditorCommand>,
     ) {
-        if let Some(inv) = inverse {
-            self.undo_stack.push((forward.clone(), inv));
-            if self.undo_stack.len() > 64 {
-                self.undo_stack.remove(0);
-            }
-            self.redo_stack.clear();
-        }
+        self.push_message(
+            actions,
+            ClientMessage::EditorCommand { command: forward },
+            inverse.map(|inv| ClientMessage::EditorCommand { command: inv }),
+        );
+    }
+
+    /// Emit an `AddAnnotation` command and bind its `RemoveAnnotation` inverse once the ID is assigned.
+    pub fn push_add_annotation(&mut self, actions: &mut Vec<EditorAction>, fwd: EditorCommand) {
+        self.record_pending_add_annotation(fwd.clone());
         actions.push(EditorAction::Send(ClientMessage::EditorCommand {
-            command: forward,
+            command: fwd,
         }));
+    }
+
+    /// Emit an `AddInset` command and bind its `RemoveInset` inverse once the ID is assigned.
+    pub fn push_add_inset(&mut self, actions: &mut Vec<EditorAction>, fwd: EditorCommand) {
+        self.record_pending_add_inset(fwd.clone());
+        actions.push(EditorAction::Send(ClientMessage::EditorCommand {
+            command: fwd,
+        }));
+    }
+
+    /// Emit `RemoveAnnotation` with a full `AddAnnotation` inverse captured from the current snapshot.
+    pub fn push_remove_annotation(&mut self, actions: &mut Vec<EditorAction>, id: u32) {
+        let inv = self
+            .doc
+            .as_ref()
+            .and_then(|d| d.annotations.iter().find(|a| a.id == id))
+            .map(|ann| EditorCommand::AddAnnotation {
+                kind: ann.kind.clone(),
+                text: ann.text.clone(),
+                source_expr: ann.source_expr.clone(),
+                axis_id: ann.axis_id,
+                kwargs: ann
+                    .kwargs
+                    .iter()
+                    .map(|(k, ev)| (k.clone(), ev.expr.clone()))
+                    .collect(),
+            });
+        self.push_command(actions, EditorCommand::RemoveAnnotation { id }, inv);
+    }
+
+    /// Emit `RemoveInset` with an `AddInset` inverse captured from the current snapshot.
+    pub fn push_remove_inset(&mut self, actions: &mut Vec<EditorAction>, id: u32) {
+        let inv = self
+            .doc
+            .as_ref()
+            .and_then(|d| d.insets.iter().find(|i| i.id == id))
+            .map(|ins| EditorCommand::AddInset {
+                axis_id: None,
+                bbox: ins.bbox,
+                xlimits: ins.xlimits,
+                ylimits: ins.ylimits,
+            });
+        self.push_command(actions, EditorCommand::RemoveInset { id }, inv);
     }
 
     pub fn can_undo(&self) -> bool {
@@ -255,19 +438,56 @@ impl EditorModel {
 
     pub fn undo(&mut self, actions: &mut Vec<EditorAction>) {
         if let Some((fwd, inv)) = self.undo_stack.pop() {
-            actions.push(EditorAction::Send(ClientMessage::EditorCommand {
-                command: inv.clone(),
-            }));
-            self.redo_stack.push((fwd, inv));
+            actions.push(EditorAction::Send(inv.clone()));
+            match &inv {
+                ClientMessage::EditorCommand {
+                    command: cmd @ EditorCommand::AddAnnotation { .. },
+                } => {
+                    self.pending_undo_bind = Some(PendingUndoBind::RestoreAnnotation {
+                        inv_add: cmd.clone(),
+                    });
+                }
+                ClientMessage::EditorCommand {
+                    command: cmd @ EditorCommand::AddInset { .. },
+                } => {
+                    self.pending_undo_bind = Some(PendingUndoBind::RestoreInset {
+                        inv_add: cmd.clone(),
+                    });
+                }
+                _ => {
+                    self.redo_stack.push((fwd, inv));
+                }
+            }
         }
     }
 
     pub fn redo(&mut self, actions: &mut Vec<EditorAction>) {
         if let Some((fwd, inv)) = self.redo_stack.pop() {
-            actions.push(EditorAction::Send(ClientMessage::EditorCommand {
-                command: fwd.clone(),
-            }));
-            self.undo_stack.push((fwd, inv));
+            actions.push(EditorAction::Send(fwd.clone()));
+            match &fwd {
+                ClientMessage::EditorCommand {
+                    command: cmd @ EditorCommand::AddAnnotation { .. },
+                } => {
+                    self.pending_undo_bind = Some(PendingUndoBind::AddAnnotation {
+                        fwd: cmd.clone(),
+                        clear_redo: false,
+                    });
+                }
+                ClientMessage::EditorCommand {
+                    command: cmd @ EditorCommand::AddInset { .. },
+                } => {
+                    self.pending_undo_bind = Some(PendingUndoBind::AddInset {
+                        fwd: cmd.clone(),
+                        clear_redo: false,
+                    });
+                }
+                _ => {
+                    self.undo_stack.push((fwd, inv));
+                    if self.undo_stack.len() > MAX_UNDO_HISTORY {
+                        self.undo_stack.remove(0);
+                    }
+                }
+            }
         }
     }
 }

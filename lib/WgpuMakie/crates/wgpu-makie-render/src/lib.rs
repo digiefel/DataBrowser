@@ -312,6 +312,7 @@ mod tests {
                 xlabel: "x".into(),
                 ylabel: "y".into(),
                 title: "".into(),
+                decorations: Default::default(),
             },
         });
 
@@ -683,5 +684,284 @@ mod tests {
             .filter(|px| px[0] > 90 && px[2] > 90 && px[1] < px[0] && px[1] < px[2])
             .count();
         assert!(purple_blended > 200, "expected OIT red+blue overlap pixels, got {purple_blended}");
+    }
+
+    #[test]
+    fn inset_block_background_occludes_parent_line_regardless_of_scene_id() {
+        let mut hr = HeadlessRenderer::new().expect("adapter");
+        let mut graph = SceneGraph::default();
+        graph.apply(ServerMessage::Hello {
+            protocol_version: 1,
+            title: "Inset".into(),
+            size: [160, 160],
+            px_per_unit: 1.0,
+        });
+        let make_ortho = |id: u64, parent: Option<u64>, vp: [f32; 4], pv: [f32; 16]| SceneState {
+            id,
+            parent,
+            viewport: vp,
+            background: [1.0, 1.0, 1.0, 1.0],
+            clear: parent.is_none(),
+            visible: true,
+            camera: CameraState {
+                view: Mat4::IDENTITY.to_cols_array(),
+                projection: pv,
+                projectionview: pv,
+                eyeposition: [0.0, 0.0, 1.0],
+                resolution: [vp[2], vp[3]],
+                is_3d: false,
+                lookat: [0.0; 3],
+                upvector: [0.0, 1.0, 0.0],
+                fov: 45.0,
+                near: -10.0,
+                far: 10.0,
+            },
+            lights: LightState {
+                ambient: [0.3; 3],
+                dir_color: [0.8; 3],
+                dir_direction: [1.0; 3],
+                camera_relative: false,
+                dir_lights: vec![],
+                point_lights: vec![],
+            },
+        };
+        let root_pv = makie_ortho(0.0, 160.0, 0.0, 160.0, -10_000.0, 10_000.0);
+        let data_pv = makie_ortho(0.0, 10.0, 0.0, 10.0, -10_000.0, 10_000.0);
+        // Root scene = 1000
+        graph.apply(ServerMessage::UpsertScene {
+            scene: make_ortho(1000, None, [0.0, 0.0, 160.0, 160.0], root_pv),
+        });
+        // Main axis block & data scene = 500 -> 501 (larger IDs than inset!)
+        graph.apply(ServerMessage::UpsertScene {
+            scene: make_ortho(500, Some(1000), [0.0, 0.0, 160.0, 160.0], root_pv),
+        });
+        graph.apply(ServerMessage::UpsertScene {
+            scene: make_ortho(501, Some(500), [0.0, 0.0, 160.0, 160.0], data_pv),
+        });
+        // Inset axis block & data scene added later with smaller numeric IDs 10 -> 11
+        graph.apply(ServerMessage::UpsertScene {
+            scene: make_ortho(10, Some(1000), [0.0, 0.0, 160.0, 160.0], root_pv),
+        });
+        graph.apply(ServerMessage::UpsertScene {
+            scene: make_ortho(11, Some(10), [80.0, 80.0, 70.0, 70.0], data_pv),
+        });
+
+        // Thick blue line across main axis (including center of inset at 115, 115 in bottom-left)
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 1,
+                scene_id: 501,
+                z_order: 1,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Lines(LinesData {
+                    is_segments: false,
+                    positions: TypedBuffer::from_f32(&[0.0, 0.0, 0.0, 10.0, 10.0, 0.0]),
+                    colors: ColorSource::Uniform {
+                        rgba: [0.0, 0.0, 1.0, 1.0],
+                    },
+                    linewidth: ScalarOrBuffer::Scalar1(12.0),
+                    linecap: 2,
+                    joinstyle: 0,
+                    miter_limit: 4.0,
+                    pattern: None,
+                    pattern_length: 1.0,
+                    colormap: None,
+                }),
+                inspector: None,
+            },
+        });
+        // Opaque white inset background mesh inside inset blockscene (10) at z = -100
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 2,
+                scene_id: 10,
+                z_order: 2,
+                visible: true,
+                inspectable: false,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Pixel,
+                markerspace: CoordSpace::Pixel,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Mesh(MeshData {
+                    positions: TypedBuffer::from_f32(&[
+                        80.0, 80.0, -100.0, 150.0, 80.0, -100.0, 150.0, 150.0, -100.0, 80.0, 150.0, -100.0,
+                    ]),
+                    faces: TypedBuffer::from_u32(&[0, 1, 2, 0, 2, 3]),
+                    normals: None,
+                    uvs: None,
+                    colors: ColorSource::Uniform {
+                        rgba: [1.0, 1.0, 1.0, 1.0],
+                    },
+                    colormap: None,
+                    uv_transform: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                    shading: false,
+                    diffuse: [1.0; 3],
+                    specular: [0.0; 3],
+                    shininess: 1.0,
+                    backlight: 0.0,
+                    interpolate_in_fragment: false,
+                }),
+                inspector: None,
+            },
+        });
+        // Red line inside inset data scene (11)
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 3,
+                scene_id: 11,
+                z_order: 3,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Lines(LinesData {
+                    is_segments: false,
+                    positions: TypedBuffer::from_f32(&[0.0, 5.0, 0.0, 10.0, 5.0, 0.0]),
+                    colors: ColorSource::Uniform {
+                        rgba: [1.0, 0.0, 0.0, 1.0],
+                    },
+                    linewidth: ScalarOrBuffer::Scalar1(8.0),
+                    linecap: 2,
+                    joinstyle: 0,
+                    miter_limit: 4.0,
+                    pattern: None,
+                    pattern_length: 1.0,
+                    colormap: None,
+                }),
+                inspector: None,
+            },
+        });
+
+        let rgba = hr.render_rgba8(&mut graph, 160, 160).unwrap();
+        // Outside the inset at (40,40), the main diagonal blue line is visible.
+        let blue_y = 160usize - 1 - 40;
+        let bidx = (blue_y * 160 + 40) * 4;
+        assert!(
+            rgba[bidx + 2] > 200 && rgba[bidx] < 50,
+            "expected main blue diagonal at (40,40), got {:?}",
+            &rgba[bidx..bidx + 4]
+        );
+        // Inside the inset along the main diagonal path at (95,95) (below red line),
+        // the white inset background must occlude the parent blue diagonal line underneath.
+        let top_y = 160usize - 1 - 95;
+        let idx = (top_y * 160 + 95) * 4;
+        assert!(
+            rgba[idx] > 240 && rgba[idx + 1] > 240 && rgba[idx + 2] > 240,
+            "expected white inset background at (95,95), got {:?}",
+            &rgba[idx..idx + 4]
+        );
+        // Center of inset red horizontal line (x=115, bottom-up y=115 -> top-down y=45) must be red.
+        let red_y = 160usize - 1 - 115;
+        let ridx = (red_y * 160 + 115) * 4;
+        assert!(
+            rgba[ridx] > 200 && rgba[ridx + 2] < 50,
+            "expected red inset line over white background at (115,115), got {:?}",
+            &rgba[ridx..ridx + 4]
+        );
+    }
+
+    #[test]
+    fn thick_polyline_joins_fill_outer_corners() {
+        let mut hr = HeadlessRenderer::new().expect("adapter");
+        let mut graph = SceneGraph::default();
+        graph.apply(ServerMessage::Hello {
+            protocol_version: 1,
+            title: "Joins".into(),
+            size: [160, 160],
+            px_per_unit: 1.0,
+        });
+        let pv = makie_ortho(0.0, 10.0, 0.0, 10.0, -10_000.0, 10_000.0);
+        graph.apply(ServerMessage::UpsertScene {
+            scene: SceneState {
+                id: 1,
+                parent: None,
+                viewport: [0.0, 0.0, 160.0, 160.0],
+                background: [1.0, 1.0, 1.0, 1.0],
+                clear: true,
+                visible: true,
+                camera: CameraState {
+                    view: Mat4::IDENTITY.to_cols_array(),
+                    projection: pv,
+                    projectionview: pv,
+                    eyeposition: [0.0, 0.0, 1.0],
+                    resolution: [160.0, 160.0],
+                    is_3d: false,
+                    lookat: [0.0; 3],
+                    upvector: [0.0, 1.0, 0.0],
+                    fov: 45.0,
+                    near: -10.0,
+                    far: 10.0,
+                },
+                lights: LightState {
+                    ambient: [0.3; 3],
+                    dir_color: [0.8; 3],
+                    dir_direction: [1.0; 3],
+                    camera_relative: false,
+                    dir_lights: vec![],
+                    point_lights: vec![],
+                },
+            },
+        });
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 1,
+                scene_id: 1,
+                z_order: 1,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Lines(LinesData {
+                    is_segments: false,
+                    positions: TypedBuffer::from_f32(&[2.0, 2.0, 0.0, 5.0, 8.0, 0.0, 8.0, 2.0, 0.0]),
+                    colors: ColorSource::Uniform {
+                        rgba: [0.0, 0.0, 0.0, 1.0],
+                    },
+                    linewidth: ScalarOrBuffer::Scalar1(30.0),
+                    linecap: 0,
+                    joinstyle: 2,
+                    miter_limit: 4.0,
+                    pattern: None,
+                    pattern_length: 1.0,
+                    colormap: None,
+                }),
+                inspector: None,
+            },
+        });
+        let rgba = hr.render_rgba8(&mut graph, 160, 160).unwrap();
+        // Peak vertex (5, 8) maps to (80, 128) bottom-up; outer corner at y = 136 is 8 px above
+        // the peak (within halfwidth = 15 px) and would be white if butt ends left a wedge gap.
+        let top_y = 160usize - 1 - 136;
+        let idx = (top_y * 160 + 80) * 4;
+        assert!(
+            rgba[idx] < 50 && rgba[idx + 1] < 50 && rgba[idx + 2] < 50,
+            "expected round-joined black pixels above peak vertex at (80,136), got {:?}",
+            &rgba[idx..idx + 4]
+        );
     }
 }

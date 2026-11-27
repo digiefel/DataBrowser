@@ -7,16 +7,17 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
 use wgpu_makie_editor::{
-    draw_canvas_overlays, draw_editor_panel, draw_inline_text_editor, draw_inspector_dock,
-    draw_toolbar, show_timeline_bar, EditorAction, EditorModel, InlineTextEdit,
+    draw_canvas_overlays, draw_editor_panel, draw_inline_text_editor, draw_toolbar,
+    show_timeline_bar, EditorAction, EditorModel, InlineTextEdit,
 };
 use wgpu_makie_proto::{
-    read_frame, write_frame, ClientMessage, EditorCommand, PointerEventKind, ServerMessage,
+    read_frame, write_frame, ClientMessage, EditorCommand, LayoutBlockKind, PointerEventKind,
+    ServerMessage,
 };
 use wgpu_makie_render::{HeadlessRenderer, WgpuRenderer};
 use wgpu_makie_scene::{
-    format_tooltip, point_inside_legend, CameraController, DirectManipController,
-    InteractionUpdate, SceneGraph, ToolMode,
+    format_tooltip, point_inside_legend, AnnHandleKind, CameraController, DirectManipController,
+    DragTarget, InteractionUpdate, SceneGraph, ToolMode,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -201,6 +202,7 @@ struct ViewerApp {
     hover_tooltip: Option<String>,
     last_pick_time: Instant,
     last_edit_click: Option<(Instant, [f64; 2])>,
+    left_down_pos: Option<[f64; 2]>,
     plot_rect_pts: egui::Rect,
     last_sent_plot_size: [u32; 2],
     interaction_seq: u64,
@@ -230,6 +232,7 @@ impl ViewerApp {
             hover_tooltip: None,
             last_pick_time: Instant::now(),
             last_edit_click: None,
+            left_down_pos: None,
             plot_rect_pts: egui::Rect::from_min_size(
                 egui::pos2(0.0, 40.0),
                 egui::vec2(900.0, 560.0),
@@ -244,6 +247,16 @@ impl ViewerApp {
     fn send(&self, msg: ClientMessage) {
         if let Some(tx) = &self.tx {
             let _ = tx.send(msg);
+        }
+    }
+
+    fn close_editor_interactions(&mut self) {
+        self.manip.cancel_drag();
+        self.editor.inline_edit_ann = None;
+        self.editor.annotate_menu_open = false;
+        self.editor.pending_edit_newest_text = false;
+        if self.editor.tool_mode != ToolMode::Brush {
+            self.editor.tool_mode = ToolMode::Navigate;
         }
     }
 
@@ -397,14 +410,6 @@ impl ViewerApp {
                     .max_size(380.0)
                     .show(ui, |ui| {
                         editor_actions.extend(draw_editor_panel(ui, &mut self.editor, &mut self.graph));
-                    });
-            } else if self.editor.show_inspector_dock
-                && (self.editor.selected_elem.is_some() || self.editor.brush.is_some())
-            {
-                egui::Window::new("Inspector")
-                    .default_width(240.0)
-                    .show(ui.ctx(), |ui| {
-                        editor_actions.extend(draw_inspector_dock(ui, &mut self.editor, &self.graph));
                     });
             }
 
@@ -563,6 +568,9 @@ impl ViewerApp {
             match act {
                 EditorAction::ToggleEditor => {
                     self.graph.editor_visible = !self.graph.editor_visible;
+                    if !self.graph.editor_visible {
+                        self.close_editor_interactions();
+                    }
                     self.last_resize_send = Instant::now() - std::time::Duration::from_millis(100);
                     needs_redraw = true;
                     self.send(ClientMessage::EditorVisibilityChanged {
@@ -573,6 +581,11 @@ impl ViewerApp {
                     copy_text = Some(text);
                 }
                 EditorAction::Send(msg) => {
+                    if let ClientMessage::PlotVisibilityChanged { plot_id, visible } = &msg {
+                        if let Some(entry) = self.graph.plots.get_mut(plot_id) {
+                            entry.payload.visible = *visible;
+                        }
+                    }
                     self.send(msg);
                 }
             }
@@ -765,8 +778,44 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                 if matches!(&msg, ServerMessage::SetEditorVisible { .. }) {
                     self.last_resize_send = Instant::now() - std::time::Duration::from_millis(100);
                 }
+                let is_sync_editor = matches!(&msg, ServerMessage::SyncEditorState { .. });
+                let is_editor_off = matches!(&msg, ServerMessage::SetEditorVisible { visible: false });
                 if !self.editor.apply_server_message(&msg) {
                     self.graph.apply(msg);
+                }
+                if is_editor_off {
+                    self.close_editor_interactions();
+                }
+                if is_sync_editor && self.editor.pending_edit_newest_text {
+                    self.editor.pending_edit_newest_text = false;
+                    if let Some(doc) = &self.editor.doc {
+                        if let Some(newest) = doc
+                            .annotations
+                            .iter()
+                            .filter(|a| a.kind == "text" || a.kind == "callout")
+                            .max_by_key(|a| a.id)
+                        {
+                            let want_handle = if newest.kind == "callout" {
+                                AnnHandleKind::TextAnchor
+                            } else {
+                                AnnHandleKind::Primary
+                            };
+                            let handles = self.manip.compute_handles(&self.graph, Some(doc));
+                            if let Some(h) = handles
+                                .iter()
+                                .find(|h| h.ann_id == newest.id && h.kind == want_handle)
+                            {
+                                self.editor.selected_annotation = Some(newest.id);
+                                self.editor.inline_edit_ann = Some(InlineTextEdit {
+                                    ann_id: newest.id,
+                                    draft: newest.text.clone(),
+                                    orig_text: newest.text.clone(),
+                                    anchor_px: h.pos_px,
+                                    needs_focus: true,
+                                });
+                            }
+                        }
+                    }
                 }
                 if let Some(ws) = &self.win {
                     self.graph.px_per_unit = ws.window.scale_factor() as f32;
@@ -820,6 +869,13 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     ws.window.request_redraw();
                 }
             }
+            WindowEvent::Focused(false) => {
+                self.buttons_mask = 0;
+                self.left_down_pos = None;
+                self.camera_ctrl.cancel();
+                self.manip.cancel_drag();
+                request_redraw = true;
+            }
             WindowEvent::ModifiersChanged(mods) => {
                 let s = mods.state();
                 self.mods_mask = (self.mods_mask & !0b0111)
@@ -848,30 +904,43 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                 if pressed && !consumed {
                     match &event.logical_key {
                         Key::Named(NamedKey::Escape) => {
+                            self.camera_ctrl.cancel();
                             self.manip.cancel_drag();
                             self.editor.tool_mode = ToolMode::Navigate;
                             request_redraw = true;
                         }
                         Key::Named(NamedKey::Delete) | Key::Named(NamedKey::Backspace) => {
-                            if self.editor.tool_mode == ToolMode::Edit {
+                            if self.graph.editor_visible {
                                 if let Some(aid) = self.editor.selected_annotation.take() {
-                                    self.send(ClientMessage::EditorCommand {
-                                        command: EditorCommand::RemoveAnnotation { id: aid },
-                                    });
+                                    let mut acts = Vec::new();
+                                    self.editor.push_remove_annotation(&mut acts, aid);
+                                    for act in acts {
+                                        if let EditorAction::Send(m) = act {
+                                            self.send(m);
+                                        }
+                                    }
                                     request_redraw = true;
                                 }
                             }
                         }
-                        Key::Character(c) if (self.mods_mask & 0b0010) != 0 && c.eq_ignore_ascii_case("z") => {
+                        Key::Character(c)
+                            if (self.mods_mask & 0b0010) != 0
+                                && (c.eq_ignore_ascii_case("z") || c.eq_ignore_ascii_case("y")) =>
+                        {
                             let mut acts = Vec::new();
-                            if (self.mods_mask & 0b0001) != 0 {
+                            if c.eq_ignore_ascii_case("y") || (self.mods_mask & 0b0001) != 0 {
                                 self.editor.redo(&mut acts);
                             } else {
                                 self.editor.undo(&mut acts);
                             }
                             for act in acts {
-                                if let EditorAction::Send(m) = act {
-                                    self.send(m);
+                                if let EditorAction::Send(msg) = act {
+                                    if let ClientMessage::PlotVisibilityChanged { plot_id, visible } = &msg {
+                                        if let Some(entry) = self.graph.plots.get_mut(plot_id) {
+                                            entry.payload.visible = *visible;
+                                        }
+                                    }
+                                    self.send(msg);
                                 }
                             }
                             request_redraw = true;
@@ -903,7 +972,7 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     let ux = px_pts - (self.plot_rect_pts.min.x as f64);
                     let uy = (self.plot_rect_pts.max.y as f64) - py_pts;
                     self.pointer_unitless = [ux, uy];
-                    if self.editor.tool_mode != ToolMode::Navigate {
+                    if self.manip.active_drag.is_some() {
                         let mo = self.manip.on_pointer_move(
                             &self.graph,
                             self.editor.doc.as_ref(),
@@ -915,7 +984,7 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                         for msg in mo.messages {
                             self.send(msg);
                         }
-                    } else {
+                    } else if self.editor.tool_mode == ToolMode::Navigate {
                         let upd = self
                             .camera_ctrl
                             .on_pointer_move(&mut self.graph, self.pointer_unitless);
@@ -937,7 +1006,7 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     request_redraw = true;
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } if !consumed => {
+            WindowEvent::MouseInput { state, button, .. } if !consumed || state == ElementState::Released => {
                 let btn = match button {
                     MouseButton::Left => 0u8,
                     MouseButton::Right => 1u8,
@@ -946,16 +1015,40 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                 };
                 if btn < 3 {
                     let bit = 1u8 << btn;
-                    if state == ElementState::Pressed {
+                    if consumed && state == ElementState::Released {
+                        self.buttons_mask &= !bit;
+                        self.left_down_pos = None;
+                        self.camera_ctrl.cancel();
+                        self.manip.cancel_drag();
+                    } else if state == ElementState::Pressed {
                         self.buttons_mask |= bit;
+                        let mut handled_by_manip = false;
                         if self.editor.tool_mode != ToolMode::Navigate && btn == 0 {
-                            let is_edit_dbl = self.editor.tool_mode == ToolMode::Edit
-                                && self.last_edit_click.is_some_and(|(t, p)| {
-                                    t.elapsed().as_millis() <= 400
-                                        && (p[0] - self.pointer_unitless[0])
-                                            .hypot(p[1] - self.pointer_unitless[1])
-                                            <= 8.0
-                                });
+                            let mo = self.manip.on_pointer_down(
+                                &self.graph,
+                                self.editor.doc.as_ref(),
+                                self.editor.tool_mode,
+                                self.pointer_unitless,
+                                btn,
+                            );
+                            if mo.selected_annotation.is_some() {
+                                self.editor.selected_annotation = mo.selected_annotation;
+                            }
+                            for msg in mo.messages {
+                                self.send(msg);
+                            }
+                            handled_by_manip = true;
+                        } else if self.graph.editor_visible
+                            && self.editor.tool_mode == ToolMode::Navigate
+                            && btn == 0
+                            && (self.mods_mask & 0b0010) == 0
+                        {
+                            let is_edit_dbl = self.last_edit_click.is_some_and(|(t, p)| {
+                                t.elapsed().as_millis() <= 400
+                                    && (p[0] - self.pointer_unitless[0])
+                                        .hypot(p[1] - self.pointer_unitless[1])
+                                        <= 8.0
+                            });
                             if is_edit_dbl {
                                 self.last_edit_click = None;
                                 if let Some((aid, txt, anchor_px)) = self.manip.hit_text_annotation(
@@ -972,41 +1065,33 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                                         anchor_px,
                                         needs_focus: true,
                                     });
-                                } else {
-                                    let mo = self.manip.on_pointer_down(
-                                        &self.graph,
-                                        self.editor.doc.as_ref(),
-                                        self.editor.tool_mode,
-                                        self.pointer_unitless,
-                                        btn,
-                                    );
+                                    handled_by_manip = true;
+                                }
+                            } else {
+                                self.last_edit_click =
+                                    Some((Instant::now(), self.pointer_unitless));
+                            }
+                            if !handled_by_manip {
+                                let mo = self.manip.on_pointer_down(
+                                    &self.graph,
+                                    self.editor.doc.as_ref(),
+                                    ToolMode::Edit,
+                                    self.pointer_unitless,
+                                    0,
+                                );
+                                if self.manip.active_drag.is_some() {
                                     if mo.selected_annotation.is_some() {
                                         self.editor.selected_annotation = mo.selected_annotation;
                                     }
                                     for msg in mo.messages {
                                         self.send(msg);
                                     }
-                                }
-                            } else {
-                                if self.editor.tool_mode == ToolMode::Edit {
-                                    self.last_edit_click =
-                                        Some((Instant::now(), self.pointer_unitless));
-                                }
-                                let mo = self.manip.on_pointer_down(
-                                    &self.graph,
-                                    self.editor.doc.as_ref(),
-                                    self.editor.tool_mode,
-                                    self.pointer_unitless,
-                                    btn,
-                                );
-                                if mo.selected_annotation.is_some() {
-                                    self.editor.selected_annotation = mo.selected_annotation;
-                                }
-                                for msg in mo.messages {
-                                    self.send(msg);
+                                    handled_by_manip = true;
                                 }
                             }
-                        } else {
+                        }
+
+                        if !handled_by_manip {
                             let on_legend = self.editor.tool_mode == ToolMode::Navigate
                                 && point_inside_legend(&self.graph, self.pointer_unitless);
                             if on_legend {
@@ -1030,6 +1115,116 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                                     || !matches!(upd, InteractionUpdate::None);
                                 self.handle_interaction_update(upd);
                                 if btn == 0 {
+                                    self.left_down_pos = Some(self.pointer_unitless);
+                                }
+                                if !cam_consumed {
+                                    self.send(ClientMessage::PointerEvent {
+                                        x: self.pointer_unitless[0],
+                                        y: self.pointer_unitless[1],
+                                        buttons: self.buttons_mask,
+                                        modifiers: self.mods_mask,
+                                        kind: PointerEventKind::Down,
+                                        scroll: [0.0, 0.0],
+                                    });
+                                }
+                            }
+                        }
+                    } else {
+                        self.buttons_mask &= !bit;
+                        let click_pos = if btn == 0 {
+                            self.left_down_pos.take()
+                        } else {
+                            None
+                        };
+                        if btn == 0 && self.manip.active_drag.is_some() {
+                            let quick_legend_click = matches!(
+                                self.manip.active_drag,
+                                Some(DragTarget::BlockMove { kind: LayoutBlockKind::Legend, start_px, .. })
+                                if (start_px[0] - self.pointer_unitless[0])
+                                    .hypot(start_px[1] - self.pointer_unitless[1])
+                                    < 4.0
+                            );
+                            if quick_legend_click {
+                                self.manip.cancel_drag();
+                                self.send(ClientMessage::PointerEvent {
+                                    x: self.pointer_unitless[0],
+                                    y: self.pointer_unitless[1],
+                                    buttons: self.buttons_mask | bit,
+                                    modifiers: self.mods_mask,
+                                    kind: PointerEventKind::Down,
+                                    scroll: [0.0, 0.0],
+                                });
+                                self.send(ClientMessage::PointerEvent {
+                                    x: self.pointer_unitless[0],
+                                    y: self.pointer_unitless[1],
+                                    buttons: self.buttons_mask,
+                                    modifiers: self.mods_mask,
+                                    kind: PointerEventKind::Up,
+                                    scroll: [0.0, 0.0],
+                                });
+                            } else {
+                                let mo = self.manip.on_pointer_up(
+                                    &self.graph,
+                                    self.editor.doc.as_ref(),
+                                    self.pointer_unitless,
+                                );
+                                if mo.clear_brush {
+                                    self.editor.brush = None;
+                                } else if let Some(br) = mo.brush {
+                                    self.editor.brush = Some(br);
+                                }
+                                if let Some((fwd, inv)) = mo.undo_pair {
+                                    self.editor.push_undo_pair(
+                                        ClientMessage::EditorCommand { command: fwd },
+                                        ClientMessage::EditorCommand { command: inv },
+                                    );
+                                }
+                                let created = !mo.messages.is_empty();
+                                for msg in mo.messages {
+                                    match &msg {
+                                        ClientMessage::EditorCommand {
+                                            command: cmd @ EditorCommand::AddAnnotation { .. },
+                                        } => self.editor.record_pending_add_annotation(cmd.clone()),
+                                        ClientMessage::EditorCommand {
+                                            command: cmd @ EditorCommand::AddInset { .. },
+                                        } => self.editor.record_pending_add_inset(cmd.clone()),
+                                        _ => {}
+                                    }
+                                    self.send(msg);
+                                }
+                                if created
+                                    && matches!(
+                                        self.editor.tool_mode,
+                                        ToolMode::AddText
+                                            | ToolMode::AddArrow
+                                            | ToolMode::AddCallout
+                                            | ToolMode::AddVSpan
+                                            | ToolMode::AddHSpan
+                                            | ToolMode::AddRect
+                                            | ToolMode::AddHLine
+                                            | ToolMode::AddVLine
+                                            | ToolMode::AddInset
+                                    )
+                                {
+                                    self.editor.pending_edit_newest_text = matches!(
+                                        self.editor.tool_mode,
+                                        ToolMode::AddText | ToolMode::AddCallout
+                                    );
+                                    self.editor.tool_mode = ToolMode::Navigate;
+                                }
+                            }
+                        } else {
+                            let had_gesture = self.camera_ctrl.gesture_2d.is_some()
+                                || self.camera_ctrl.gesture_3d.is_some();
+                            let upd = self
+                                .camera_ctrl
+                                .on_pointer_up(&mut self.graph, self.pointer_unitless);
+                            self.handle_interaction_update(upd);
+                            if let Some(p0) = click_pos {
+                                let is_click = (p0[0] - self.pointer_unitless[0])
+                                    .hypot(p0[1] - self.pointer_unitless[1])
+                                    < 4.0;
+                                if is_click {
                                     if let Some(ws) = &mut self.win {
                                         if let Ok(hits) = ws.renderer.pick_region(
                                             &ws.device,
@@ -1071,64 +1266,7 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                                         }
                                     }
                                 }
-                                if !cam_consumed {
-                                    self.send(ClientMessage::PointerEvent {
-                                        x: self.pointer_unitless[0],
-                                        y: self.pointer_unitless[1],
-                                        buttons: self.buttons_mask,
-                                        modifiers: self.mods_mask,
-                                        kind: PointerEventKind::Down,
-                                        scroll: [0.0, 0.0],
-                                    });
-                                }
                             }
-                        }
-                    } else {
-                        self.buttons_mask &= !bit;
-                        if self.editor.tool_mode != ToolMode::Navigate && btn == 0 {
-                            let had_manip_drag = self.manip.active_drag.is_some();
-                            let mo = self.manip.on_pointer_up(
-                                &self.graph,
-                                self.editor.doc.as_ref(),
-                                self.pointer_unitless,
-                            );
-                            if mo.clear_brush {
-                                self.editor.brush = None;
-                            } else if let Some(br) = mo.brush {
-                                self.editor.brush = Some(br);
-                            }
-                            if let Some((fwd, inv)) = mo.undo_pair {
-                                self.editor.undo_stack.push((fwd, inv));
-                                self.editor.redo_stack.clear();
-                            }
-                            let created = !mo.messages.is_empty();
-                            for msg in mo.messages {
-                                self.send(msg);
-                            }
-                            if had_manip_drag
-                                && created
-                                && matches!(
-                                    self.editor.tool_mode,
-                                    ToolMode::AddText
-                                        | ToolMode::AddArrow
-                                        | ToolMode::AddCallout
-                                        | ToolMode::AddVSpan
-                                        | ToolMode::AddHSpan
-                                        | ToolMode::AddRect
-                                        | ToolMode::AddHLine
-                                        | ToolMode::AddVLine
-                                        | ToolMode::AddInset
-                                )
-                            {
-                                self.editor.tool_mode = ToolMode::Edit;
-                            }
-                        } else {
-                            let had_gesture = self.camera_ctrl.gesture_2d.is_some()
-                                || self.camera_ctrl.gesture_3d.is_some();
-                            let upd = self
-                                .camera_ctrl
-                                .on_pointer_up(&mut self.graph, self.pointer_unitless);
-                            self.handle_interaction_update(upd);
                             if !had_gesture {
                                 self.send(ClientMessage::PointerEvent {
                                     x: self.pointer_unitless[0],
@@ -1360,6 +1498,7 @@ mod tests {
                 xlabel: "x".into(),
                 ylabel: "y".into(),
                 title: "UI Check".into(),
+                decorations: Default::default(),
             },
         });
         graph.apply(ServerMessage::UpsertPlot {

@@ -142,9 +142,20 @@ pub fn color_or_expr_row(
         ui.label(label);
         if model.expr_mode.contains(key) {
             out = expr_text_input(ui, model, key, current_expr, 130.0);
-        } else if let Some(mut rgba) = parse_makie_color_expr(current_expr) {
-            if ui.color_edit_button_rgba_unmultiplied(&mut rgba).changed() {
-                out = Some(format_rgba_expr(rgba));
+        } else if let Some(rgba) = parse_makie_color_expr(current_expr) {
+            let mut srgba = [
+                (rgba[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (rgba[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (rgba[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (rgba[3].clamp(0.0, 1.0) * 255.0).round() as u8,
+            ];
+            if ui.color_edit_button_srgba_unmultiplied(&mut srgba).changed() {
+                out = Some(format_rgba_expr([
+                    srgba[0] as f32 / 255.0,
+                    srgba[1] as f32 / 255.0,
+                    srgba[2] as f32 / 255.0,
+                    srgba[3] as f32 / 255.0,
+                ]));
             }
             ui.small(current_expr);
         } else {

@@ -296,6 +296,42 @@ pub struct SceneState {
     pub lights: LightState,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AxisDecorations {
+    pub xgridvisible: bool,
+    pub ygridvisible: bool,
+    pub xminorgridvisible: bool,
+    pub yminorgridvisible: bool,
+    pub xticksvisible: bool,
+    pub yticksvisible: bool,
+    pub xminorticksvisible: bool,
+    pub yminorticksvisible: bool,
+    pub topspinevisible: bool,
+    pub rightspinevisible: bool,
+    pub bottomspinevisible: bool,
+    pub leftspinevisible: bool,
+}
+
+impl Default for AxisDecorations {
+    fn default() -> Self {
+        Self {
+            xgridvisible: true,
+            ygridvisible: true,
+            xminorgridvisible: false,
+            yminorgridvisible: false,
+            xticksvisible: true,
+            yticksvisible: true,
+            xminorticksvisible: false,
+            yminorticksvisible: false,
+            topspinevisible: true,
+            rightspinevisible: true,
+            bottomspinevisible: true,
+            leftspinevisible: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AxisMeta {
     pub axis_id: u64,
@@ -321,6 +357,8 @@ pub struct AxisMeta {
     pub xlabel: String,
     pub ylabel: String,
     pub title: String,
+    #[serde(default)]
+    pub decorations: AxisDecorations,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

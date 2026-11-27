@@ -172,6 +172,20 @@ function _extract_axis_meta(ax::Makie.Axis)
         "xlabel" => string(ax.xlabel[]),
         "ylabel" => string(ax.ylabel[]),
         "title" => string(ax.title[]),
+        "decorations" => Dict{String, Any}(
+            "xgridvisible" => Bool(ax.xgridvisible[]),
+            "ygridvisible" => Bool(ax.ygridvisible[]),
+            "xminorgridvisible" => Bool(ax.xminorgridvisible[]),
+            "yminorgridvisible" => Bool(ax.yminorgridvisible[]),
+            "xticksvisible" => Bool(ax.xticksvisible[]),
+            "yticksvisible" => Bool(ax.yticksvisible[]),
+            "xminorticksvisible" => Bool(ax.xminorticksvisible[]),
+            "yminorticksvisible" => Bool(ax.yminorticksvisible[]),
+            "topspinevisible" => Bool(ax.topspinevisible[]),
+            "rightspinevisible" => Bool(ax.rightspinevisible[]),
+            "bottomspinevisible" => Bool(ax.bottomspinevisible[]),
+            "leftspinevisible" => Bool(ax.leftspinevisible[]),
+        ),
     )
 end
 
@@ -307,6 +321,15 @@ function _collect_figure_axes_msgs!(screen, figure::Union{Nothing, Makie.Figure}
                 "axis" => _extract_axis_meta(blk),
             ))
             if !haskey(screen.axis_observers, aid)
+                # Rust CameraController owns zoom, pan, and reset so Makie does not start competing drags behind overlays
+                for iname in (:rectanglezoom, :dragpan, :scrollzoom, :limitreset)
+                    if haskey(blk.interactions, iname)
+                        try
+                            Makie.deactivate_interaction!(blk, iname)
+                        catch
+                        end
+                    end
+                end
                 fn = on(blk.finallimits) do _
                     screen.syncing_from_viewer[] && return
                     @lock screen.sync_lock push!(screen.dirty_axes, blk)
@@ -527,7 +550,7 @@ end
 function _sync_layout_meta!(screen, figure::Union{Nothing, Makie.Figure})
     (isnothing(figure) || isnothing(screen.viewer) || !screen.open) && return nothing
     try
-        Makie.update_state_before_display!(figure)
+        Makie.GridLayoutBase.update!(figure.layout)
     catch
     end
     send_msg!(screen.viewer, Dict{String, Any}(
@@ -553,7 +576,7 @@ function flush_updates!(screen; ack_seq::UInt64 = UInt64(0), include_layout::Boo
                 if plot isa Makie.ComputePlots
                     sc = Makie.parent_scene(plot)
                     sc === nothing && continue
-                    for key in (:positions_transformed_f32c, :per_char_positions_transformed_f32c, :scaled_color, :text_color, :visible)
+                    for key in (:positions_transformed_f32c, :per_char_positions_transformed_f32c, :scaled_color, :text_color, :uniform_linewidth, :quad_scale, :visible)
                         if haskey(plot.attributes, key)
                             try
                                 plot.attributes[key][]

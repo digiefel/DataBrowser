@@ -5,15 +5,18 @@ use wgpu_makie_editor::{
     draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, show_timeline_bar,
     EditorAction, EditorModel,
 };
-use wgpu_makie_proto::{read_frame, ClientMessage, PointerEventKind, ProtoError, ServerMessage};
+use wgpu_makie_proto::{
+    read_frame, ClientMessage, EditorCommand, LayoutBlockKind, PointerEventKind, ProtoError,
+    ServerMessage,
+};
 #[cfg(not(target_arch = "wasm32"))]
-use wgpu_makie_proto::{EditorCommand, PrimitiveKind};
+use wgpu_makie_proto::PrimitiveKind;
 use wgpu_makie_render::WgpuRenderer;
 #[cfg(not(target_arch = "wasm32"))]
 use wgpu_makie_scene::format_tooltip;
 use wgpu_makie_scene::{
-    point_inside_legend, CameraController, DirectManipController, InteractionUpdate, SceneGraph,
-    ToolMode,
+    point_inside_legend, CameraController, DirectManipController, DragTarget, InteractionUpdate,
+    SceneGraph, ToolMode,
 };
 
 /// Embeddable plot and editor session that hosts can drive inside any wgpu surface and egui UI.
@@ -60,8 +63,22 @@ impl EmbeddedViewer {
 
     /// Apply a decoded [`ServerMessage`] to either the editor model or the retained scene graph.
     pub fn apply_server_message(&mut self, msg: ServerMessage) {
+        let editor_off = matches!(&msg, ServerMessage::SetEditorVisible { visible: false });
         if !self.editor.apply_server_message(&msg) {
             self.graph.apply(msg);
+        }
+        if editor_off {
+            self.close_editor_interactions();
+        }
+    }
+
+    fn close_editor_interactions(&mut self) {
+        self.manip.cancel_drag();
+        self.editor.inline_edit_ann = None;
+        self.editor.annotate_menu_open = false;
+        self.editor.pending_edit_newest_text = false;
+        if self.editor.tool_mode != ToolMode::Brush {
+            self.editor.tool_mode = ToolMode::Navigate;
         }
     }
 
@@ -159,6 +176,9 @@ impl EmbeddedViewer {
             match act {
                 EditorAction::ToggleEditor => {
                     self.graph.editor_visible = !self.graph.editor_visible;
+                    if !self.graph.editor_visible {
+                        self.close_editor_interactions();
+                    }
                     self.outbound.push(ClientMessage::EditorVisibilityChanged {
                         visible: self.graph.editor_visible,
                     });
@@ -167,6 +187,11 @@ impl EmbeddedViewer {
                     copied = Some(text);
                 }
                 EditorAction::Send(msg) => {
+                    if let ClientMessage::PlotVisibilityChanged { plot_id, visible } = &msg {
+                        if let Some(entry) = self.graph.plots.get_mut(plot_id) {
+                            entry.payload.visible = *visible;
+                        }
+                    }
                     self.outbound.push(msg);
                 }
             }
@@ -219,7 +244,7 @@ impl EmbeddedViewer {
     /// Handle pointer movement in Makie unitless bottom-left coordinates.
     pub fn on_pointer_move(&mut self, x: f64, y: f64) {
         self.pointer_unitless = [x, y];
-        if self.editor.tool_mode != ToolMode::Navigate {
+        if self.manip.active_drag.is_some() {
             let mo = self
                 .manip
                 .on_pointer_move(&self.graph, self.editor.doc.as_ref(), self.pointer_unitless);
@@ -227,7 +252,7 @@ impl EmbeddedViewer {
                 self.editor.brush = Some(br);
             }
             self.outbound.extend(mo.messages);
-        } else {
+        } else if self.editor.tool_mode == ToolMode::Navigate {
             let upd = self.camera.on_pointer_move(&mut self.graph, self.pointer_unitless);
             self.push_interaction_update(upd);
             let dragging =
@@ -250,6 +275,7 @@ impl EmbeddedViewer {
         self.mods_mask = modifiers;
         if button < 3 {
             self.buttons_mask |= 1u8 << button;
+            let mut handled_by_manip = false;
             if self.editor.tool_mode != ToolMode::Navigate && button == 0 {
                 let mo = self.manip.on_pointer_down(
                     &self.graph,
@@ -262,7 +288,28 @@ impl EmbeddedViewer {
                     self.editor.selected_annotation = mo.selected_annotation;
                 }
                 self.outbound.extend(mo.messages);
-            } else {
+                handled_by_manip = true;
+            } else if self.graph.editor_visible
+                && self.editor.tool_mode == ToolMode::Navigate
+                && button == 0
+                && (modifiers & 0b0010) == 0
+            {
+                let mo = self.manip.on_pointer_down(
+                    &self.graph,
+                    self.editor.doc.as_ref(),
+                    ToolMode::Edit,
+                    self.pointer_unitless,
+                    0,
+                );
+                if self.manip.active_drag.is_some() {
+                    if mo.selected_annotation.is_some() {
+                        self.editor.selected_annotation = mo.selected_annotation;
+                    }
+                    self.outbound.extend(mo.messages);
+                    handled_by_manip = true;
+                }
+            }
+            if !handled_by_manip {
                 let on_legend = self.editor.tool_mode == ToolMode::Navigate
                     && point_inside_legend(&self.graph, self.pointer_unitless);
                 if on_legend {
@@ -303,21 +350,66 @@ impl EmbeddedViewer {
     /// Handle mouse release.
     pub fn on_pointer_up(&mut self, button: u8) {
         if button < 3 {
-            self.buttons_mask &= !(1u8 << button);
-            if self.editor.tool_mode != ToolMode::Navigate && button == 0 {
-                let mo = self
-                    .manip
-                    .on_pointer_up(&self.graph, self.editor.doc.as_ref(), self.pointer_unitless);
-                if mo.clear_brush {
-                    self.editor.brush = None;
-                } else if let Some(br) = mo.brush {
-                    self.editor.brush = Some(br);
+            let bit = 1u8 << button;
+            self.buttons_mask &= !bit;
+            if button == 0 && self.manip.active_drag.is_some() {
+                let quick_legend_click = matches!(
+                    self.manip.active_drag,
+                    Some(DragTarget::BlockMove { kind: LayoutBlockKind::Legend, start_px, .. })
+                    if (start_px[0] - self.pointer_unitless[0])
+                        .hypot(start_px[1] - self.pointer_unitless[1])
+                        < 4.0
+                );
+                if quick_legend_click {
+                    self.manip.cancel_drag();
+                    self.outbound.push(ClientMessage::PointerEvent {
+                        x: self.pointer_unitless[0],
+                        y: self.pointer_unitless[1],
+                        buttons: self.buttons_mask | bit,
+                        modifiers: self.mods_mask,
+                        kind: PointerEventKind::Down,
+                        scroll: [0.0, 0.0],
+                    });
+                    self.outbound.push(ClientMessage::PointerEvent {
+                        x: self.pointer_unitless[0],
+                        y: self.pointer_unitless[1],
+                        buttons: self.buttons_mask,
+                        modifiers: self.mods_mask,
+                        kind: PointerEventKind::Up,
+                        scroll: [0.0, 0.0],
+                    });
+                } else {
+                    let mo = self
+                        .manip
+                        .on_pointer_up(&self.graph, self.editor.doc.as_ref(), self.pointer_unitless);
+                    if mo.clear_brush {
+                        self.editor.brush = None;
+                    } else if let Some(br) = mo.brush {
+                        self.editor.brush = Some(br);
+                    }
+                    if let Some((fwd, inv)) = mo.undo_pair {
+                        self.editor.push_undo_pair(
+                            ClientMessage::EditorCommand { command: fwd },
+                            ClientMessage::EditorCommand { command: inv },
+                        );
+                    }
+                    let created = !mo.messages.is_empty();
+                    for msg in mo.messages {
+                        match &msg {
+                            ClientMessage::EditorCommand {
+                                command: cmd @ EditorCommand::AddAnnotation { .. },
+                            } => self.editor.record_pending_add_annotation(cmd.clone()),
+                            ClientMessage::EditorCommand {
+                                command: cmd @ EditorCommand::AddInset { .. },
+                            } => self.editor.record_pending_add_inset(cmd.clone()),
+                            _ => {}
+                        }
+                        self.outbound.push(msg);
+                    }
+                    if created && self.editor.tool_mode != ToolMode::Brush {
+                        self.editor.tool_mode = ToolMode::Navigate;
+                    }
                 }
-                if let Some((fwd, inv)) = mo.undo_pair {
-                    self.editor.undo_stack.push((fwd, inv));
-                    self.editor.redo_stack.clear();
-                }
-                self.outbound.extend(mo.messages);
             } else {
                 let had_gesture =
                     self.camera.gesture_2d.is_some() || self.camera.gesture_3d.is_some();
@@ -581,6 +673,7 @@ mod tests {
                     xlabel: "x".into(),
                     ylabel: "y".into(),
                     title: "Embed".into(),
+                    decorations: Default::default(),
                 },
             },
             ServerMessage::UpsertPlot {

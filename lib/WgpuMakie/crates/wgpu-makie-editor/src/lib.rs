@@ -161,6 +161,7 @@ mod tests {
                 xlabel: "x".into(),
                 ylabel: "y".into(),
                 title: "Main".into(),
+                decorations: Default::default(),
             },
         });
         graph.apply(ServerMessage::UpsertPlot {
@@ -243,6 +244,56 @@ mod tests {
         assert!(model.can_redo());
         model.redo(&mut actions);
         assert_eq!(actions.len(), 3);
+
+        // Add annotation -> server assigns id 7 -> undo removes id 7 -> redo re-adds -> server assigns id 9 -> undo removes id 9
+        let mut actions2 = Vec::new();
+        model.push_add_annotation(
+            &mut actions2,
+            EditorCommand::AddAnnotation {
+                kind: "text".into(),
+                text: "Peak".into(),
+                source_expr: None,
+                axis_id: Some(10),
+                kwargs: vec![("x".into(), "1.0".into()), ("y".into(), "2.0".into())],
+            },
+        );
+        let mut snap7 = sample_snapshot();
+        snap7.annotations.push(EditorAnnotationSpec {
+            id: 7,
+            kind: "text".into(),
+            text: "Peak".into(),
+            source_expr: None,
+            visible: true,
+            axis_id: Some(10),
+            kwargs: vec![],
+        });
+        model.apply_server_message(&ServerMessage::SyncEditorState { state: snap7 });
+        model.undo(&mut actions2);
+        assert!(matches!(
+            actions2.last(),
+            Some(EditorAction::Send(wgpu_makie_proto::ClientMessage::EditorCommand {
+                command: EditorCommand::RemoveAnnotation { id: 7 }
+            }))
+        ));
+        model.redo(&mut actions2);
+        let mut snap9 = sample_snapshot();
+        snap9.annotations.push(EditorAnnotationSpec {
+            id: 9,
+            kind: "text".into(),
+            text: "Peak".into(),
+            source_expr: None,
+            visible: true,
+            axis_id: Some(10),
+            kwargs: vec![],
+        });
+        model.apply_server_message(&ServerMessage::SyncEditorState { state: snap9 });
+        model.undo(&mut actions2);
+        assert!(matches!(
+            actions2.last(),
+            Some(EditorAction::Send(wgpu_makie_proto::ClientMessage::EditorCommand {
+                command: EditorCommand::RemoveAnnotation { id: 9 }
+            }))
+        ));
     }
 
     #[test]

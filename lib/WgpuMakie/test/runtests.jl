@@ -572,4 +572,199 @@ end
 
         close(mscr)
     end
+
+    @testset "Plain annotation arrowhead rotation tracks pixel space" begin
+        fig_arr = Makie.Figure(size = (800, 600))
+        ax_arr = Makie.Axis(fig_arr[1, 1]; limits = (0, 10, 0, 1))
+        Makie.lines!(ax_arr, [0.0, 10.0], [0.0, 1.0])
+        scr_arr = WgpuMakie.Screen(; visible = false)
+        display(scr_arr, fig_arr.scene; figure = fig_arr)
+
+        WgpuMakie._handle_viewer_event!(scr_arr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "add_annotation",
+                "kind" => "arrow",
+                "text" => "",
+                "source_expr" => nothing,
+                "axis_id" => UInt64(objectid(ax_arr)),
+                "kwargs" => [["x", "1.0"], ["y", "0.1"], ["x2", "5.0"], ["y2", "0.9"]],
+            ),
+        ))
+        arr_id = scr_arr.plain_annotations[end][:id]
+        arr_head = scr_arr.plain_annotation_plots[arr_id][2]
+
+        WgpuMakie._handle_viewer_event!(scr_arr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "add_annotation",
+                "kind" => "callout",
+                "text" => "Peak",
+                "source_expr" => nothing,
+                "axis_id" => UInt64(objectid(ax_arr)),
+                "kwargs" => [["tx", "1.0"], ["ty", "0.1"], ["x", "5.0"], ["y", "0.9"]],
+            ),
+        ))
+        cal_id = scr_arr.plain_annotations[end][:id]
+        cal_head = scr_arr.plain_annotation_plots[cal_id][2]
+
+        exp1 = WgpuMakie._plain_arrow_screen_angle(
+            ax_arr.scene,
+            GeometryBasics.Point2f(1.0f0, 0.1f0),
+            GeometryBasics.Point2f(5.0f0, 0.9f0),
+            :data,
+            ax_arr.scene.camera.projectionview[],
+            Makie.viewport(ax_arr.scene)[],
+        )
+        data_angle = atan(0.8f0, 4.0f0)
+        @test isapprox(Float32(arr_head.rotation[]), exp1; atol = 1.0f-4)
+        @test isapprox(Float32(cal_head.rotation[]), exp1; atol = 1.0f-4)
+        @test abs(Float32(arr_head.rotation[]) - data_angle) > 0.4f0
+
+        Makie.ylims!(ax_arr, 0, 10)
+        exp2 = WgpuMakie._plain_arrow_screen_angle(
+            ax_arr.scene,
+            GeometryBasics.Point2f(1.0f0, 0.1f0),
+            GeometryBasics.Point2f(5.0f0, 0.9f0),
+            :data,
+            ax_arr.scene.camera.projectionview[],
+            Makie.viewport(ax_arr.scene)[],
+        )
+        @test abs(exp2 - exp1) > 0.4f0
+        @test isapprox(Float32(arr_head.rotation[]), exp2; atol = 1.0f-4)
+        @test isapprox(Float32(cal_head.rotation[]), exp2; atol = 1.0f-4)
+
+        close(scr_arr)
+        @test isempty(scr_arr.plain_annotation_observers)
+    end
+
+    @testset "Insets keep zoom and opaque background; decorations in AxisMeta" begin
+        fig_i = Makie.Figure(size = (640, 480))
+        ax_i = Makie.Axis(fig_i[1, 1])
+        Makie.lines!(ax_i, 0.0:0.5:10.0, 0.0:0.5:10.0; color = :blue, linewidth = 12)
+        scr_i = WgpuMakie.Screen(; visible = false)
+        display(scr_i, fig_i.scene; figure = fig_i)
+
+        # Deactivated Makie camera interactions prevent ghost marquee zoom behind overlays
+        for iname in (:rectanglezoom, :dragpan, :scrollzoom, :limitreset)
+            if haskey(ax_i.interactions, iname)
+                @test !ax_i.interactions[iname][1]
+            end
+        end
+
+        # Decorations metadata reports Axis defaults and updates via set_axis_attr
+        ameta = WgpuMakie._extract_axis_meta(ax_i)
+        @test ameta["decorations"]["xgridvisible"] == true
+        @test ameta["decorations"]["xminorticksvisible"] == false
+        @test ameta["decorations"]["topspinevisible"] == true
+        WgpuMakie._handle_viewer_event!(scr_i, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "set_axis_attr",
+                "axis_id" => UInt64(objectid(ax_i)),
+                "key" => "topspinevisible",
+                "expr" => "false",
+            ),
+        ))
+        @test ax_i.topspinevisible[] == false
+
+        # Plain annotations stay non-inspectable
+        WgpuMakie._handle_viewer_event!(scr_i, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "add_annotation",
+                "kind" => "text",
+                "text" => "Note",
+                "source_expr" => nothing,
+                "axis_id" => UInt64(objectid(ax_i)),
+                "kwargs" => [["x", "2.0"], ["y", "2.0"]],
+            ),
+        ))
+        ann_id = scr_i.plain_annotations[end][:id]
+        @test all(p -> p.inspectable[] === false, scr_i.plain_annotation_plots[ann_id])
+
+        # Zoom main axis, add an inset, move it, and verify both keep their limits
+        Makie.xlims!(ax_i, 2.0, 8.0)
+        Makie.ylims!(ax_i, 2.0, 8.0)
+        zoomed_lims = ax_i.finallimits[]
+        WgpuMakie._handle_viewer_event!(scr_i, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "add_inset",
+                "axis_id" => UInt64(objectid(ax_i)),
+                "bbox" => [0.10, 0.90, 0.10, 0.90],
+                "xlimits" => [0.5, 2.5],
+                "ylimits" => [7.0, 9.0],
+            ),
+        ))
+        @test ax_i.finallimits[] == zoomed_lims
+        ins_ax = scr_i.plain_insets[1][1]
+        ins_lims = ins_ax.finallimits[]
+
+        WgpuMakie._handle_viewer_event!(scr_i, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "move_inset",
+                "id" => 1,
+                "bbox" => [0.15, 0.85, 0.15, 0.85],
+            ),
+        ))
+        @test ax_i.finallimits[] == zoomed_lims
+        @test ins_ax.finallimits[] == ins_lims
+
+        # Inset white background occludes the main diagonal blue line underneath
+        img = Makie.colorbuffer(scr_i)
+        center_px = img[size(img, 1) ÷ 2, size(img, 2) ÷ 2]
+        @test Float64(Colors.red(center_px)) > 0.9
+        @test Float64(Colors.green(center_px)) > 0.9
+        @test Float64(Colors.blue(center_px)) > 0.9
+
+        # Invalid log10 xscale rolls back axis scale, transform_func, and limits cleanly
+        Makie.xlims!(ax_i, -1.0, 8.0)
+        lims_before_log = ax_i.finallimits[]
+        WgpuMakie._handle_viewer_event!(scr_i, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "set_axis_attr",
+                "axis_id" => UInt64(objectid(ax_i)),
+                "key" => "xscale",
+                "expr" => "log10",
+            ),
+        ))
+        @test !isnothing(scr_i.last_editor_error)
+        @test ax_i.xscale[] === identity
+        @test ax_i.scene.transformation.transform_func[] == (identity, identity)
+        @test ax_i.finallimits[] == lims_before_log
+
+        close(scr_i)
+    end
+
+    @testset "Legend moves between outside docks and inside without phantom cells" begin
+        fig_d = Makie.Figure(size = (640, 480))
+        ax_d = Makie.Axis(fig_d[1, 1])
+        Makie.lines!(ax_d, 1:5, 1:5; label = "a")
+        leg_d = Makie.axislegend(ax_d)
+        scr_d = WgpuMakie.Screen(; visible = false)
+        display(scr_d, fig_d.scene; figure = fig_d)
+        bid = UInt64(objectid(leg_d))
+
+        for (dock, hx, hy) in (("top", 0.5, 0.95), ("inside", 0.25, 0.75), ("right", 0.95, 0.5), ("inside", 0.85, 0.85))
+            WgpuMakie._handle_viewer_event!(scr_d, Dict(
+                "op" => "editor_command",
+                "command" => Dict(
+                    "cmd" => "move_block",
+                    "block_id" => bid,
+                    "kind" => "legend",
+                    "dock_position" => dock,
+                    "halign" => hx,
+                    "valign" => hy,
+                ),
+            ))
+        end
+        @test size(WgpuMakie._active_gridlayout(fig_d)) == (1, 1)
+        @test leg_d.orientation[] === :vertical
+        ax_h = widths(ax_d.layoutobservables.computedbbox[])[2]
+        @test ax_h > 300.0
+        close(scr_d)
+    end
 end

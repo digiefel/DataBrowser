@@ -348,7 +348,8 @@ impl WgpuRenderer {
         }
     }
 
-    /// Encode all visible scenes and plots into `color_view`, running WBOIT when transparent plots exist.
+    /// Encode all visible scenes and plots into `color_view`, clearing depth per top-level block
+    /// group and running WBOIT when transparent plots exist inside a group.
     pub fn encode_render_pass(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -361,9 +362,10 @@ impl WgpuRenderer {
         let Some((_, _, _, depth_view)) = &self.depth_tex else {
             return;
         };
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("wgpu_makie_color_pass"),
+        let groups = graph.scene_render_groups();
+        if groups.is_empty() {
+            let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("wgpu_makie_clear_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: color_view,
                     depth_slice: None,
@@ -388,102 +390,141 @@ impl WgpuRenderer {
                 }),
                 ..Default::default()
             });
-
-            self.draw_scenes(&mut rpass, graph, fb_width, fb_height, RenderMode::Opaque);
-        }
-
-        let has_transparent = graph.plot_order.iter().any(|pid| {
-            graph.plots.get(pid).is_some_and(|p| {
-                p.payload.visible
-                    && p.payload.transparency
-                    && graph
-                        .scenes
-                        .get(&p.payload.scene_id)
-                        .is_some_and(|s| s.state.visible)
-            })
-        });
-        if !has_transparent {
             return;
         }
-        let (
-            Some((_, _, _, accum_view)),
-            Some((_, _, _, reveal_view)),
-            Some(comp_bg),
-        ) = (
-            &self.oit_accum_tex,
-            &self.oit_reveal_tex,
-            &self.oit_composite_bg,
-        ) else {
-            return;
-        };
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("wgpu_makie_oit_pass"),
-                color_attachments: &[
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: accum_view,
+
+        for (gi, group) in groups.iter().enumerate() {
+            let color_load = if gi == 0 {
+                wgpu::LoadOp::Clear(wgpu::Color {
+                    r: clear_bg[0] as f64,
+                    g: clear_bg[1] as f64,
+                    b: clear_bg[2] as f64,
+                    a: clear_bg[3] as f64,
+                })
+            } else {
+                wgpu::LoadOp::Load
+            };
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("wgpu_makie_color_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: color_view,
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            load: color_load,
                             store: wgpu::StoreOp::Store,
                         },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
                     }),
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: reveal_view,
+                    ..Default::default()
+                });
+
+                self.draw_scene_list(&mut rpass, graph, group, fb_width, fb_height, RenderMode::Opaque);
+            }
+
+            let has_transparent = graph.plot_order.iter().any(|pid| {
+                graph.plots.get(pid).is_some_and(|p| {
+                    p.payload.visible
+                        && p.payload.transparency
+                        && group.contains(&p.payload.scene_id)
+                        && graph
+                            .scenes
+                            .get(&p.payload.scene_id)
+                            .is_some_and(|s| s.state.visible)
+                })
+            });
+            if !has_transparent {
+                continue;
+            }
+            let (
+                Some((_, _, _, accum_view)),
+                Some((_, _, _, reveal_view)),
+                Some(comp_bg),
+            ) = (
+                &self.oit_accum_tex,
+                &self.oit_reveal_tex,
+                &self.oit_composite_bg,
+            ) else {
+                continue;
+            };
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("wgpu_makie_oit_pass"),
+                    color_attachments: &[
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: accum_view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: reveal_view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                    ],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    ..Default::default()
+                });
+                self.draw_scene_list(&mut rpass, graph, group, fb_width, fb_height, RenderMode::Oit);
+            }
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("wgpu_makie_oit_composite_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: color_view,
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
                         },
-                    }),
-                ],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
-            self.draw_scenes(&mut rpass, graph, fb_width, fb_height, RenderMode::Oit);
-        }
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("wgpu_makie_oit_composite_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                ..Default::default()
-            });
-            rpass.set_viewport(0.0, 0.0, fb_width.max(1) as f32, fb_height.max(1) as f32, 0.0, 1.0);
-            rpass.set_scissor_rect(0, 0, fb_width.max(1), fb_height.max(1));
-            rpass.set_pipeline(&self.oit_composite_pipeline);
-            rpass.set_bind_group(0, comp_bg, &[]);
-            rpass.draw(0..3, 0..1);
+                    })],
+                    depth_stencil_attachment: None,
+                    ..Default::default()
+                });
+                rpass.set_viewport(0.0, 0.0, fb_width.max(1) as f32, fb_height.max(1) as f32, 0.0, 1.0);
+                rpass.set_scissor_rect(0, 0, fb_width.max(1), fb_height.max(1));
+                rpass.set_pipeline(&self.oit_composite_pipeline);
+                rpass.set_bind_group(0, comp_bg, &[]);
+                rpass.draw(0..3, 0..1);
+            }
         }
     }
 
-    fn draw_scenes<'a>(
+    fn draw_scene_list<'a>(
         &'a self,
         rpass: &mut wgpu::RenderPass<'a>,
         graph: &'a SceneGraph,
+        scene_ids: &[u64],
         fb_width: u32,
         fb_height: u32,
         mode: RenderMode,
     ) {
         let ppu = graph.px_per_unit.max(0.5);
-        for &sid in &graph.scene_order {
+        for &sid in scene_ids {
             let Some(scene_node) = graph.scenes.get(&sid) else {
                 continue;
             };
@@ -752,9 +793,10 @@ impl WgpuRenderer {
         let (_, _, _, pick_depth_view) = self.pick_depth_tex.as_ref().unwrap();
 
         let mut encoder = device.create_command_encoder(&Default::default());
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("wgpu_makie_pick_pass"),
+        let groups = graph.scene_render_groups();
+        if groups.is_empty() {
+            let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("wgpu_makie_pick_clear_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: pick_view,
                     depth_slice: None,
@@ -779,7 +821,41 @@ impl WgpuRenderer {
                 }),
                 ..Default::default()
             });
-            self.draw_scenes(&mut rpass, graph, w, h, RenderMode::Pick);
+        } else {
+            for (gi, group) in groups.iter().enumerate() {
+                let pick_load = if gi == 0 {
+                    wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    })
+                } else {
+                    wgpu::LoadOp::Load
+                };
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("wgpu_makie_pick_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: pick_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: pick_load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: pick_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    ..Default::default()
+                });
+                self.draw_scene_list(&mut rpass, graph, group, w, h, RenderMode::Pick);
+            }
         }
 
         let ppu = graph.px_per_unit.max(0.5);
