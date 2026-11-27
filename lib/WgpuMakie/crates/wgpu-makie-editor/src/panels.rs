@@ -5,8 +5,11 @@ use crate::widgets::{
     bool_or_expr_row, color_or_expr_row, combo_or_expr_row, slider_or_expr_row,
     text_or_expr_row,
 };
-use wgpu_makie_proto::{ClientMessage, EditorCommand, EditorDocumentSnapshot};
+use wgpu_makie_proto::{
+    ClientMessage, EditorAnnotationSpec, EditorCommand, EditorDocumentSnapshot,
+};
 use wgpu_makie_scene::inspector::format_tooltip;
+use wgpu_makie_scene::manipulate::{DirectManipController, ToolMode};
 use wgpu_makie_scene::scene::SceneGraph;
 
 const PLOTTYPES: &[&str] = &[
@@ -97,7 +100,20 @@ const THEMES: &[&str] = &[
     ":black",
 ];
 
-/// Draw the compact top bar with FPS readout, view reset, editor toggle, and copy code button.
+const TOOLBAR_TOOLS: &[ToolMode] = &[
+    ToolMode::Navigate,
+    ToolMode::Edit,
+    ToolMode::AddText,
+    ToolMode::AddArrow,
+    ToolMode::AddCallout,
+    ToolMode::AddVSpan,
+    ToolMode::AddHSpan,
+    ToolMode::AddRect,
+    ToolMode::AddInset,
+    ToolMode::Brush,
+];
+
+/// Draw the compact top bar with FPS readout, tool mode strip, view reset, editor toggle, and copy code button.
 pub fn draw_toolbar(
     ui: &mut egui::Ui,
     model: &mut EditorModel,
@@ -109,8 +125,17 @@ pub fn draw_toolbar(
     if model.copy_notice_frames > 0 {
         model.copy_notice_frames -= 1;
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(format!("WgpuMakie  {:.0} FPS ({:.2} ms)", fps, frame_ms));
+        ui.separator();
+        for &tool in TOOLBAR_TOOLS {
+            if ui
+                .selectable_label(model.tool_mode == tool, tool.label())
+                .clicked()
+            {
+                model.tool_mode = tool;
+            }
+        }
         ui.separator();
         if ui.button("Reset View").clicked() {
             actions.push(EditorAction::ResetView);
@@ -128,15 +153,15 @@ pub fn draw_toolbar(
                 actions.push(EditorAction::CopyToClipboard(model.exported_code.clone()));
                 model.copy_notice_frames = 90;
             }
-            if model.can_undo() && ui.button("Undo").clicked() {
-                model.undo(&mut actions);
-            }
-            if model.can_redo() && ui.button("Redo").clicked() {
-                model.redo(&mut actions);
-            }
-            if model.copy_notice_frames > 0 {
-                ui.colored_label(egui::Color32::from_rgb(70, 170, 90), "Copied");
-            }
+        }
+        if model.can_undo() && ui.button("Undo").clicked() {
+            model.undo(&mut actions);
+        }
+        if model.can_redo() && ui.button("Redo").clicked() {
+            model.redo(&mut actions);
+        }
+        if model.copy_notice_frames > 0 {
+            ui.colored_label(egui::Color32::from_rgb(70, 170, 90), "Copied");
         }
     });
     actions
@@ -167,6 +192,7 @@ pub fn draw_editor_panel(
     ui.horizontal_wrapped(|ui| {
         ui.selectable_value(&mut model.active_tab, EditorTab::Layers, "Layers");
         ui.selectable_value(&mut model.active_tab, EditorTab::AxesScales, "Axes / Scales");
+        ui.selectable_value(&mut model.active_tab, EditorTab::Annotations, "Annotate / Layout");
         ui.selectable_value(&mut model.active_tab, EditorTab::Style, "Style");
         ui.selectable_value(&mut model.active_tab, EditorTab::Inspector, "Inspector");
         ui.selectable_value(&mut model.active_tab, EditorTab::Code, "Code");
@@ -176,6 +202,7 @@ pub fn draw_editor_panel(
     egui::ScrollArea::vertical().show(ui, |ui| match model.active_tab {
         EditorTab::Layers => draw_layers_tab(ui, model, graph, &mut actions),
         EditorTab::AxesScales => draw_axes_scales_tab(ui, model, graph, &mut actions),
+        EditorTab::Annotations => draw_annotations_tab(ui, model, graph, &mut actions),
         EditorTab::Style => draw_style_tab(ui, model, graph, &mut actions),
         EditorTab::Inspector => {
             let dock_actions = draw_inspector_dock(ui, model, graph);
@@ -283,8 +310,64 @@ pub fn draw_inspector_dock(
         } else {
             ui.label("Selected plot is no longer present.");
         }
-    } else {
-        ui.label("Click a data point or curve in the plot to inspect it.");
+    } else if model.brush.is_none() {
+        ui.label("Click a data point or curve to inspect, or select Brush to select a region.");
+    }
+
+    if let Some(brush) = model.brush.clone() {
+        ui.add_space(6.0);
+        ui.separator();
+        ui.heading("Brushed Region");
+        ui.label(format!("{} points selected (axis #{})", brush.total_points, brush.axis_id));
+        if brush.total_points > 0 {
+            ui.monospace(format!("X: [{:.4}, {:.4}]  mean {:.4}", brush.x_min, brush.x_max, brush.x_mean));
+            ui.monospace(format!("Y: [{:.4}, {:.4}]  mean {:.4}", brush.y_min, brush.y_max, brush.y_mean));
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Save as Rect").clicked() {
+                model.push_command(
+                    &mut actions,
+                    EditorCommand::AddAnnotation {
+                        kind: "rect".into(),
+                        text: format!("{} pts", brush.total_points),
+                        source_expr: None,
+                        axis_id: Some(brush.axis_id),
+                        kwargs: vec![
+                            ("xmin".into(), format!("{:.4}", brush.rect_data[0])),
+                            ("ymin".into(), format!("{:.4}", brush.rect_data[1])),
+                            ("xmax".into(), format!("{:.4}", brush.rect_data[2])),
+                            ("ymax".into(), format!("{:.4}", brush.rect_data[3])),
+                        ],
+                    },
+                    None,
+                );
+            }
+            if ui.button("Save as V-Span").clicked() {
+                model.push_command(
+                    &mut actions,
+                    EditorCommand::AddAnnotation {
+                        kind: "vspan".into(),
+                        text: String::new(),
+                        source_expr: None,
+                        axis_id: Some(brush.axis_id),
+                        kwargs: vec![
+                            ("xmin".into(), format!("{:.4}", brush.rect_data[0])),
+                            ("xmax".into(), format!("{:.4}", brush.rect_data[2])),
+                        ],
+                    },
+                    None,
+                );
+            }
+            if ui.button("Clear Brush").clicked() {
+                let axis_id = brush.axis_id;
+                model.brush = None;
+                actions.push(EditorAction::Send(ClientMessage::BrushSelectionChanged {
+                    axis_id,
+                    rect: None,
+                    plot_indices: vec![],
+                }));
+            }
+        });
     }
     actions
 }
@@ -999,7 +1082,7 @@ fn draw_style_tab(
         "leg_pos",
         "Position",
         pos_cur,
-        &[":right", ":left", ":top", ":bottom"],
+        &[":right", ":left", ":top", ":bottom", ":inside"],
     ) {
         model.push_command(
             actions,
@@ -1224,5 +1307,519 @@ fn axis_scale_name(scale: wgpu_makie_proto::AxisScale) -> &'static str {
         wgpu_makie_proto::AxisScale::Log2 => "log2",
         wgpu_makie_proto::AxisScale::Ln => "ln",
         wgpu_makie_proto::AxisScale::Other => "identity",
+    }
+}
+
+fn draw_annotations_tab(
+    ui: &mut egui::Ui,
+    model: &mut EditorModel,
+    graph: &SceneGraph,
+    actions: &mut Vec<EditorAction>,
+) {
+    let default_axis_id = {
+        let mut ids: Vec<u64> = graph.axes.keys().copied().collect();
+        ids.sort_unstable();
+        ids.first().copied()
+    };
+    let default_center = default_axis_id
+        .and_then(|id| graph.axes.get(&id))
+        .map(|a| [0.5 * (a.limits[0] + a.limits[2]), 0.5 * (a.limits[1] + a.limits[3]), a.limits[2] - a.limits[0], a.limits[3] - a.limits[1]])
+        .unwrap_or([0.5, 0.5, 1.0, 1.0]);
+
+    ui.heading("Add Annotation or Inset");
+    ui.horizontal(|ui| {
+        ui.label("Text:");
+        ui.add(egui::TextEdit::singleline(&mut model.new_ann_text).desired_width(130.0));
+    });
+    ui.horizontal_wrapped(|ui| {
+        if ui.small_button("+ Text").clicked() {
+            model.push_command(
+                actions,
+                EditorCommand::AddAnnotation {
+                    kind: "text".into(),
+                    text: model.new_ann_text.clone(),
+                    source_expr: None,
+                    axis_id: default_axis_id,
+                    kwargs: vec![
+                        ("x".into(), format!("{:.3}", default_center[0])),
+                        ("y".into(), format!("{:.3}", default_center[1])),
+                    ],
+                },
+                None,
+            );
+        }
+        if ui.small_button("+ Arrow").clicked() {
+            let dx = default_center[2] * 0.15;
+            let dy = default_center[3] * 0.15;
+            model.push_command(
+                actions,
+                EditorCommand::AddAnnotation {
+                    kind: "arrow".into(),
+                    text: String::new(),
+                    source_expr: None,
+                    axis_id: default_axis_id,
+                    kwargs: vec![
+                        ("x".into(), format!("{:.3}", default_center[0] - dx)),
+                        ("y".into(), format!("{:.3}", default_center[1] - dy)),
+                        ("x2".into(), format!("{:.3}", default_center[0] + dx)),
+                        ("y2".into(), format!("{:.3}", default_center[1] + dy)),
+                    ],
+                },
+                None,
+            );
+        }
+        if ui.small_button("+ Callout").clicked() {
+            let dx = default_center[2] * 0.14;
+            let dy = default_center[3] * 0.14;
+            model.push_command(
+                actions,
+                EditorCommand::AddAnnotation {
+                    kind: "callout".into(),
+                    text: model.new_ann_text.clone(),
+                    source_expr: None,
+                    axis_id: default_axis_id,
+                    kwargs: vec![
+                        ("x".into(), format!("{:.3}", default_center[0])),
+                        ("y".into(), format!("{:.3}", default_center[1])),
+                        ("tx".into(), format!("{:.3}", default_center[0] + dx)),
+                        ("ty".into(), format!("{:.3}", default_center[1] + dy)),
+                    ],
+                },
+                None,
+            );
+        }
+        if ui.small_button("+ V-Span").clicked() {
+            let hw = default_center[2] * 0.12;
+            model.push_command(
+                actions,
+                EditorCommand::AddAnnotation {
+                    kind: "vspan".into(),
+                    text: String::new(),
+                    source_expr: None,
+                    axis_id: default_axis_id,
+                    kwargs: vec![
+                        ("xmin".into(), format!("{:.3}", default_center[0] - hw)),
+                        ("xmax".into(), format!("{:.3}", default_center[0] + hw)),
+                    ],
+                },
+                None,
+            );
+        }
+        if ui.small_button("+ H-Span").clicked() {
+            let hh = default_center[3] * 0.12;
+            model.push_command(
+                actions,
+                EditorCommand::AddAnnotation {
+                    kind: "hspan".into(),
+                    text: String::new(),
+                    source_expr: None,
+                    axis_id: default_axis_id,
+                    kwargs: vec![
+                        ("ymin".into(), format!("{:.3}", default_center[1] - hh)),
+                        ("ymax".into(), format!("{:.3}", default_center[1] + hh)),
+                    ],
+                },
+                None,
+            );
+        }
+        if ui.small_button("+ Rect").clicked() {
+            let hw = default_center[2] * 0.12;
+            let hh = default_center[3] * 0.12;
+            model.push_command(
+                actions,
+                EditorCommand::AddAnnotation {
+                    kind: "rect".into(),
+                    text: String::new(),
+                    source_expr: None,
+                    axis_id: default_axis_id,
+                    kwargs: vec![
+                        ("xmin".into(), format!("{:.3}", default_center[0] - hw)),
+                        ("xmax".into(), format!("{:.3}", default_center[0] + hw)),
+                        ("ymin".into(), format!("{:.3}", default_center[1] - hh)),
+                        ("ymax".into(), format!("{:.3}", default_center[1] + hh)),
+                    ],
+                },
+                None,
+            );
+        }
+        if ui.small_button("+ H-Line").clicked() {
+            model.push_command(
+                actions,
+                EditorCommand::AddAnnotation {
+                    kind: "hline".into(),
+                    text: String::new(),
+                    source_expr: None,
+                    axis_id: default_axis_id,
+                    kwargs: vec![("y".into(), format!("{:.3}", default_center[1]))],
+                },
+                None,
+            );
+        }
+        if ui.small_button("+ V-Line").clicked() {
+            model.push_command(
+                actions,
+                EditorCommand::AddAnnotation {
+                    kind: "vline".into(),
+                    text: String::new(),
+                    source_expr: None,
+                    axis_id: default_axis_id,
+                    kwargs: vec![("x".into(), format!("{:.3}", default_center[0]))],
+                },
+                None,
+            );
+        }
+        if ui.small_button("+ Zoom Inset").clicked() {
+            let hw = default_center[2] * 0.2;
+            let hh = default_center[3] * 0.2;
+            model.push_command(
+                actions,
+                EditorCommand::AddInset {
+                    axis_id: default_axis_id,
+                    bbox: [0.56, 0.95, 0.56, 0.95],
+                    xlimits: Some([default_center[0] - hw, default_center[0] + hw]),
+                    ylimits: Some([default_center[1] - hh, default_center[1] + hh]),
+                },
+                None,
+            );
+        }
+    });
+
+    if model.has_grafico() {
+        ui.horizontal(|ui| {
+            ui.label("Fit var:");
+            ui.add(egui::TextEdit::singleline(&mut model.new_ann_source).desired_width(60.0));
+            if ui.small_button("+ Fit Label").clicked() && !model.new_ann_source.trim().is_empty() {
+                model.push_command(
+                    actions,
+                    EditorCommand::AddAnnotation {
+                        kind: "fit_label".into(),
+                        text: String::new(),
+                        source_expr: Some(model.new_ann_source.trim().to_string()),
+                        axis_id: default_axis_id,
+                        kwargs: vec![
+                            ("x".into(), "0.05".into()),
+                            ("y".into(), "0.94".into()),
+                            ("space".into(), ":relative".into()),
+                        ],
+                    },
+                    None,
+                );
+            }
+        });
+    }
+
+    ui.separator();
+    let doc_opt = model.doc.clone();
+    let anns: Vec<EditorAnnotationSpec> = doc_opt
+        .as_ref()
+        .map(|d| d.annotations.clone())
+        .unwrap_or_default();
+
+    ui.heading(format!("Annotations ({})", anns.len()));
+    for ann in &anns {
+        let is_sel = model.selected_annotation == Some(ann.id);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let mut vis = ann.visible;
+                if ui.checkbox(&mut vis, "").changed() {
+                    model.push_command(
+                        actions,
+                        EditorCommand::SetAnnotationVisible {
+                            id: ann.id,
+                            visible: vis,
+                        },
+                        Some(EditorCommand::SetAnnotationVisible {
+                            id: ann.id,
+                            visible: !vis,
+                        }),
+                    );
+                }
+                let summary = if ann.text.is_empty() {
+                    ann.source_expr
+                        .as_deref()
+                        .map(|s| format!("#{} :{} ({s})", ann.id, ann.kind))
+                        .unwrap_or_else(|| format!("#{} :{}", ann.id, ann.kind))
+                } else {
+                    format!("#{} :{} \"{}\"", ann.id, ann.kind, ann.text.replace('\n', " "))
+                };
+                if ui.selectable_label(is_sel, summary).clicked() {
+                    model.selected_annotation = Some(ann.id);
+                }
+                if ui.small_button("×").clicked() {
+                    model.push_command(
+                        actions,
+                        EditorCommand::RemoveAnnotation { id: ann.id },
+                        None,
+                    );
+                }
+            });
+            if is_sel {
+                if ann.source_expr.is_none() {
+                    if let Some(new_t) = text_or_expr_row(
+                        ui,
+                        model,
+                        &format!("ann_text_{}", ann.id),
+                        "text",
+                        &ann.text,
+                    ) {
+                        model.push_command(
+                            actions,
+                            EditorCommand::SetAnnotationAttr {
+                                id: ann.id,
+                                key: "text".into(),
+                                expr: new_t,
+                            },
+                            None,
+                        );
+                    }
+                }
+                for (k, ev) in &ann.kwargs {
+                    let row_k = format!("ann_{}_{}", ann.id, k);
+                    let changed = match k.as_str() {
+                        "color" | "strokecolor" | "bgcolor" | "bordercolor" | "textcolor" => {
+                            color_or_expr_row(ui, model, &row_k, k, &ev.expr, ev.is_literal)
+                        }
+                        "fontsize" | "linewidth" | "strokewidth" | "arrowsize" => {
+                            slider_or_expr_row(
+                                ui,
+                                model,
+                                &row_k,
+                                k,
+                                &ev.expr,
+                                ev.is_literal,
+                                0.5..=48.0,
+                                0.25,
+                            )
+                        }
+                        "space" => combo_or_expr_row(
+                            ui,
+                            model,
+                            &row_k,
+                            k,
+                            &ev.expr,
+                            &[":data", ":relative"],
+                        ),
+                        "linestyle" => {
+                            combo_or_expr_row(ui, model, &row_k, k, &ev.expr, LINESTYLES)
+                        }
+                        _ => text_or_expr_row(ui, model, &row_k, k, &ev.expr),
+                    };
+                    if let Some(new_expr) = changed {
+                        let prev = ev.expr.clone();
+                        model.push_command(
+                            actions,
+                            EditorCommand::SetAnnotationAttr {
+                                id: ann.id,
+                                key: k.clone(),
+                                expr: new_expr,
+                            },
+                            Some(EditorCommand::SetAnnotationAttr {
+                                id: ann.id,
+                                key: k.clone(),
+                                expr: prev,
+                            }),
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    if let Some(doc) = &doc_opt {
+        if !doc.insets.is_empty() {
+            ui.add_space(6.0);
+            ui.separator();
+            ui.heading(format!("Insets ({})", doc.insets.len()));
+            for ins in &doc.insets {
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "Inset #{} [{:.2}..{:.2}, {:.2}..{:.2}]",
+                        ins.id, ins.bbox[0], ins.bbox[1], ins.bbox[2], ins.bbox[3]
+                    ));
+                    if ui.small_button("×").clicked() {
+                        model.push_command(
+                            actions,
+                            EditorCommand::RemoveInset { id: ins.id },
+                            None,
+                        );
+                    }
+                });
+            }
+        }
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.heading("Layout & Guides");
+        let colgap_cur = doc
+            .layout_settings
+            .iter()
+            .find(|(k, _)| k == "colgaps")
+            .map(|(_, ev)| ev.expr.as_str())
+            .unwrap_or("12");
+        if let Some(new_cg) =
+            slider_or_expr_row(ui, model, "lay_colgaps", "colgaps", colgap_cur, true, 0.0..=64.0, 1.0)
+        {
+            model.push_command(
+                actions,
+                EditorCommand::SetLayoutAttr {
+                    key: "colgaps".into(),
+                    expr: new_cg,
+                },
+                None,
+            );
+        }
+        let rowgap_cur = doc
+            .layout_settings
+            .iter()
+            .find(|(k, _)| k == "rowgaps")
+            .map(|(_, ev)| ev.expr.as_str())
+            .unwrap_or("12");
+        if let Some(new_rg) =
+            slider_or_expr_row(ui, model, "lay_rowgaps", "rowgaps", rowgap_cur, true, 0.0..=64.0, 1.0)
+        {
+            model.push_command(
+                actions,
+                EditorCommand::SetLayoutAttr {
+                    key: "rowgaps".into(),
+                    expr: new_rg,
+                },
+                None,
+            );
+        }
+        if doc.has_grafico {
+            let cb_pos_cur = doc
+                .colorbar
+                .iter()
+                .find(|(k, _)| k == "position")
+                .map(|(_, ev)| ev.expr.as_str())
+                .unwrap_or(":right");
+            if let Some(new_cb) = combo_or_expr_row(
+                ui,
+                model,
+                "cb_pos",
+                "Colorbar",
+                cb_pos_cur,
+                &[":right", ":left", ":top", ":bottom"],
+            ) {
+                model.push_command(
+                    actions,
+                    EditorCommand::SetColorbarAttr {
+                        key: "position".into(),
+                        expr: new_cb,
+                    },
+                    None,
+                );
+            }
+        }
+    }
+}
+
+/// Draw annotation control handles, subplot resize dividers, guide drag previews, and brush overlays.
+pub fn draw_canvas_overlays(
+    ctx: &egui::Context,
+    graph: &SceneGraph,
+    manip: &DirectManipController,
+    model: &EditorModel,
+    fb_height_px: u32,
+) {
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::unique("wgpu_makie_manip_overlays"),
+    ));
+    let win_h_pts = (fb_height_px as f32) / ctx.pixels_per_point().max(0.5);
+    let scale = graph.px_per_unit.max(0.5) / ctx.pixels_per_point().max(0.5);
+    let to_egui_pt = |p: [f32; 2]| egui::pos2(p[0] * scale, win_h_pts - p[1] * scale);
+    let to_egui_rect = |r: [f32; 4]| {
+        egui::Rect::from_min_max(
+            egui::pos2(r[0] * scale, win_h_pts - (r[1] + r[3]) * scale),
+            egui::pos2((r[0] + r[2]) * scale, win_h_pts - r[1] * scale),
+        )
+    };
+
+    if model.tool_mode == ToolMode::Edit {
+        if let Some(layout) = &graph.layout {
+            for sp in &layout.splits {
+                let (p0, p1) = if sp.is_vertical {
+                    (
+                        to_egui_pt([sp.pos_px, sp.span_min_px]),
+                        to_egui_pt([sp.pos_px, sp.span_max_px]),
+                    )
+                } else {
+                    (
+                        to_egui_pt([sp.span_min_px, sp.pos_px]),
+                        to_egui_pt([sp.span_max_px, sp.pos_px]),
+                    )
+                };
+                painter.line_segment(
+                    [p0, p1],
+                    egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(90, 140, 220, 160)),
+                );
+                let mid = egui::pos2(0.5 * (p0.x + p1.x), 0.5 * (p0.y + p1.y));
+                painter.circle_filled(mid, 4.0, egui::Color32::from_rgb(70, 130, 220));
+            }
+            for blk in &layout.blocks {
+                if matches!(
+                    blk.kind,
+                    wgpu_makie_proto::LayoutBlockKind::Legend
+                        | wgpu_makie_proto::LayoutBlockKind::Colorbar
+                        | wgpu_makie_proto::LayoutBlockKind::Inset
+                ) {
+                    let rect = to_egui_rect(blk.bbox_px);
+                    painter.rect_stroke(
+                        rect,
+                        2.0,
+                        egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(120, 170, 230, 180)),
+                        egui::StrokeKind::Inside,
+                    );
+                    if blk.kind == wgpu_makie_proto::LayoutBlockKind::Inset {
+                        for corner in [rect.left_top(), rect.right_top(), rect.left_bottom(), rect.right_bottom()] {
+                            painter.rect_filled(
+                                egui::Rect::from_center_size(corner, egui::vec2(7.0, 7.0)),
+                                1.0,
+                                egui::Color32::from_rgb(245, 160, 40),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        for h in manip.compute_handles(graph, model.doc.as_ref()) {
+            let selected = model.selected_annotation == Some(h.ann_id);
+            let fill = if selected {
+                egui::Color32::from_rgb(245, 140, 30)
+            } else {
+                egui::Color32::from_rgb(55, 145, 235)
+            };
+            let pt = to_egui_pt(h.pos_px);
+            painter.circle_filled(pt, if selected { 6.0 } else { 4.8 }, fill);
+            painter.circle_stroke(pt, if selected { 6.0 } else { 4.8 }, egui::Stroke::new(1.2, egui::Color32::WHITE));
+        }
+    }
+
+    if let Some((is_v, pos, smin, smax)) = manip.preview_split_px {
+        let (p0, p1) = if is_v {
+            (to_egui_pt([pos, smin]), to_egui_pt([pos, smax]))
+        } else {
+            (to_egui_pt([smin, pos]), to_egui_pt([smax, pos]))
+        };
+        painter.line_segment([p0, p1], egui::Stroke::new(2.5, egui::Color32::from_rgb(255, 140, 40)));
+    }
+    if let Some(br) = manip.preview_block_px {
+        let r = to_egui_rect(br);
+        painter.rect_stroke(r, 2.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 140, 40)), egui::StrokeKind::Inside);
+    }
+    if let Some((p0, p1)) = manip.preview_line_px {
+        painter.line_segment([to_egui_pt(p0), to_egui_pt(p1)], egui::Stroke::new(2.0, egui::Color32::from_rgb(230, 90, 50)));
+    }
+    if let Some(rp) = manip.preview_rect_px {
+        let r = to_egui_rect(rp);
+        painter.rect_filled(r, 0.0, egui::Color32::from_rgba_unmultiplied(40, 180, 170, 45));
+        painter.rect_stroke(r, 0.0, egui::Stroke::new(1.6, egui::Color32::from_rgb(30, 165, 155)), egui::StrokeKind::Inside);
+    }
+    if let Some(brush) = &model.brush {
+        for &pt in &brush.highlighted_px {
+            painter.circle_filled(to_egui_pt(pt), 3.2, egui::Color32::from_rgba_unmultiplied(255, 180, 20, 210));
+        }
     }
 }

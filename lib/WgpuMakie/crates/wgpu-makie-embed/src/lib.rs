@@ -2,7 +2,8 @@
 
 use std::io::Cursor;
 use wgpu_makie_editor::{
-    draw_editor_panel, draw_inspector_dock, draw_toolbar, EditorAction, EditorModel,
+    draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, EditorAction,
+    EditorModel,
 };
 use wgpu_makie_proto::{read_frame, ClientMessage, PointerEventKind, ProtoError, ServerMessage};
 #[cfg(not(target_arch = "wasm32"))]
@@ -10,12 +11,15 @@ use wgpu_makie_proto::{EditorCommand, PrimitiveKind};
 use wgpu_makie_render::WgpuRenderer;
 #[cfg(not(target_arch = "wasm32"))]
 use wgpu_makie_scene::format_tooltip;
-use wgpu_makie_scene::{reset_axes, CameraController, InteractionUpdate, SceneGraph};
+use wgpu_makie_scene::{
+    reset_axes, CameraController, DirectManipController, InteractionUpdate, SceneGraph, ToolMode,
+};
 
 /// Embeddable plot and editor session that hosts can drive inside any wgpu surface and egui UI.
 pub struct EmbeddedViewer {
     pub graph: SceneGraph,
     pub camera: CameraController,
+    pub manip: DirectManipController,
     pub editor: EditorModel,
     pub renderer: WgpuRenderer,
     pub hover_tooltip: Option<String>,
@@ -40,6 +44,7 @@ impl EmbeddedViewer {
                 ..Default::default()
             },
             camera: CameraController::default(),
+            manip: DirectManipController::default(),
             editor: EditorModel::new(),
             renderer: WgpuRenderer::new(device, queue, color_format),
             hover_tooltip: None,
@@ -127,6 +132,11 @@ impl EmbeddedViewer {
         self.apply_editor_actions(actions)
     }
 
+    /// Render annotation handles, layout split dividers, and brush overlays over the canvas.
+    pub fn draw_overlays_ui(&self, ctx: &egui::Context, fb_height_px: u32) {
+        draw_canvas_overlays(ctx, &self.graph, &self.manip, &self.editor, fb_height_px);
+    }
+
     fn apply_editor_actions(&mut self, actions: Vec<EditorAction>) -> Option<String> {
         let mut copied = None;
         for act in actions {
@@ -185,8 +195,18 @@ impl EmbeddedViewer {
     /// Handle pointer movement in Makie unitless bottom-left coordinates.
     pub fn on_pointer_move(&mut self, x: f64, y: f64) {
         self.pointer_unitless = [x, y];
-        let upd = self.camera.on_pointer_move(&mut self.graph, self.pointer_unitless);
-        self.push_interaction_update(upd);
+        if self.editor.tool_mode != ToolMode::Navigate {
+            let mo = self
+                .manip
+                .on_pointer_move(&self.graph, self.editor.doc.as_ref(), self.pointer_unitless);
+            if let Some(br) = mo.brush {
+                self.editor.brush = Some(br);
+            }
+            self.outbound.extend(mo.messages);
+        } else {
+            let upd = self.camera.on_pointer_move(&mut self.graph, self.pointer_unitless);
+            self.push_interaction_update(upd);
+        }
         self.outbound.push(ClientMessage::PointerEvent {
             x,
             y,
@@ -202,13 +222,27 @@ impl EmbeddedViewer {
         self.mods_mask = modifiers;
         if button < 3 {
             self.buttons_mask |= 1u8 << button;
-            let upd = self.camera.on_pointer_down(
-                &mut self.graph,
-                self.pointer_unitless,
-                button,
-                modifiers,
-            );
-            self.push_interaction_update(upd);
+            if self.editor.tool_mode != ToolMode::Navigate && button == 0 {
+                let mo = self.manip.on_pointer_down(
+                    &self.graph,
+                    self.editor.doc.as_ref(),
+                    self.editor.tool_mode,
+                    self.pointer_unitless,
+                    button,
+                );
+                if mo.selected_annotation.is_some() {
+                    self.editor.selected_annotation = mo.selected_annotation;
+                }
+                self.outbound.extend(mo.messages);
+            } else {
+                let upd = self.camera.on_pointer_down(
+                    &mut self.graph,
+                    self.pointer_unitless,
+                    button,
+                    modifiers,
+                );
+                self.push_interaction_update(upd);
+            }
             self.outbound.push(ClientMessage::PointerEvent {
                 x: self.pointer_unitless[0],
                 y: self.pointer_unitless[1],
@@ -224,8 +258,24 @@ impl EmbeddedViewer {
     pub fn on_pointer_up(&mut self, button: u8) {
         if button < 3 {
             self.buttons_mask &= !(1u8 << button);
-            let upd = self.camera.on_pointer_up(&mut self.graph, self.pointer_unitless);
-            self.push_interaction_update(upd);
+            if self.editor.tool_mode != ToolMode::Navigate && button == 0 {
+                let mo = self
+                    .manip
+                    .on_pointer_up(&self.graph, self.editor.doc.as_ref(), self.pointer_unitless);
+                if mo.clear_brush {
+                    self.editor.brush = None;
+                } else if let Some(br) = mo.brush {
+                    self.editor.brush = Some(br);
+                }
+                if let Some((fwd, inv)) = mo.undo_pair {
+                    self.editor.undo_stack.push((fwd, inv));
+                    self.editor.redo_stack.clear();
+                }
+                self.outbound.extend(mo.messages);
+            } else {
+                let upd = self.camera.on_pointer_up(&mut self.graph, self.pointer_unitless);
+                self.push_interaction_update(upd);
+            }
             self.outbound.push(ClientMessage::PointerEvent {
                 x: self.pointer_unitless[0],
                 y: self.pointer_unitless[1],
@@ -534,6 +584,10 @@ mod tests {
                     legend: vec![],
                     theme: None,
                     inspector: None,
+                    annotations: vec![],
+                    insets: vec![],
+                    layout_settings: vec![],
+                    colorbar: vec![],
                     code: "@plot data(rows)".into(),
                     error: None,
                 },

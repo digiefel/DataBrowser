@@ -4,8 +4,8 @@ use crate::decimate::{LineLod, ScatterLod};
 use glam::{Mat3, Mat4, Vec3};
 use std::collections::HashMap;
 use wgpu_makie_proto::{
-    AxisMeta, CoordSpace, GlyphAtlasPatch, GlyphMetric, PlotPayload, PrimitiveKind, SceneState,
-    ServerMessage, TypedBuffer,
+    AxisMeta, CoordSpace, GlyphAtlasPatch, GlyphMetric, LayoutMeta, PlotPayload, PrimitiveKind,
+    SceneState, ServerMessage, TypedBuffer,
 };
 
 #[derive(Debug, Clone)]
@@ -31,6 +31,7 @@ pub struct SceneGraph {
     pub scenes: HashMap<u64, SceneNode>,
     pub scene_order: Vec<u64>,
     pub axes: HashMap<u64, AxisMeta>,
+    pub layout: Option<LayoutMeta>,
     pub plots: HashMap<u64, PlotEntry>,
     pub plot_order: Vec<u64>,
     pub atlas_size: [u32; 2],
@@ -86,6 +87,10 @@ impl SceneGraph {
             }
             ServerMessage::UpsertAxisMeta { axis } => {
                 self.axes.insert(axis.axis_id, axis);
+                self.revision += 1;
+            }
+            ServerMessage::UpsertLayoutMeta { layout } => {
+                self.layout = Some(layout);
                 self.revision += 1;
             }
             ServerMessage::UpsertPlot { plot } => {

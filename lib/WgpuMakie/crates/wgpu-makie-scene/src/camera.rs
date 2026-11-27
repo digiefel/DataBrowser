@@ -183,17 +183,27 @@ impl CameraController {
             _ => [true, true],
         };
 
-        // Check 2D axes first.
-        let mut hit_axes: Vec<u64> = graph
+        // Check 2D axes first; prefer smallest-area containing axis (insets on top), keeping coincident overlaid axes together.
+        let mut hit_with_area: Vec<(f32, u64)> = graph
             .axes
             .values()
-            .filter(|ax| {
-                graph
-                    .scenes
-                    .get(&ax.data_scene_id)
-                    .is_some_and(|s| s.state.visible && inside_rect(pos_px, s.state.viewport))
+            .filter_map(|ax| {
+                let s = graph.scenes.get(&ax.data_scene_id)?;
+                if s.state.visible && inside_rect(pos_px, s.state.viewport) {
+                    Some((s.state.viewport[2] * s.state.viewport[3], ax.axis_id))
+                } else {
+                    None
+                }
             })
-            .map(|ax| ax.axis_id)
+            .collect();
+        let min_area = hit_with_area
+            .iter()
+            .map(|(a, _)| *a)
+            .fold(f32::INFINITY, f32::min);
+        let mut hit_axes: Vec<u64> = hit_with_area
+            .drain(..)
+            .filter(|(a, _)| *a <= min_area * 1.05 + 1.0)
+            .map(|(_, id)| id)
             .collect();
         hit_axes.sort_unstable();
 
@@ -394,16 +404,26 @@ impl CameraController {
             _ => [true, true],
         };
 
-        let mut hit_axes: Vec<u64> = graph
+        let mut hit_with_area: Vec<(f32, u64)> = graph
             .axes
             .values()
-            .filter(|ax| {
-                graph
-                    .scenes
-                    .get(&ax.data_scene_id)
-                    .is_some_and(|s| s.state.visible && inside_rect(pos_px, s.state.viewport))
+            .filter_map(|ax| {
+                let s = graph.scenes.get(&ax.data_scene_id)?;
+                if s.state.visible && inside_rect(pos_px, s.state.viewport) {
+                    Some((s.state.viewport[2] * s.state.viewport[3], ax.axis_id))
+                } else {
+                    None
+                }
             })
-            .map(|ax| ax.axis_id)
+            .collect();
+        let min_area = hit_with_area
+            .iter()
+            .map(|(a, _)| *a)
+            .fold(f32::INFINITY, f32::min);
+        let mut hit_axes: Vec<u64> = hit_with_area
+            .drain(..)
+            .filter(|(a, _)| *a <= min_area * 1.05 + 1.0)
+            .map(|(_, id)| id)
             .collect();
         hit_axes.sort_unstable();
 

@@ -5,18 +5,19 @@ pub mod panels;
 pub mod widgets;
 
 pub use model::{EditorAction, EditorModel, EditorTab};
-pub use panels::{draw_editor_panel, draw_inspector_dock, draw_toolbar};
+pub use panels::{draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use wgpu_makie_proto::{
-        AxisMeta, AxisScale, CameraState, ColorSource, CoordSpace, EditorCommand,
-        EditorDocumentSnapshot, EditorEntryValue, EditorInspectorSpec, EditorLayerSpec,
-        EditorMappingEntry, InspectorMeta, LightState, LinesData, PlotPayload, PrimitiveKind,
-        ScalarOrBuffer, SceneState, ServerMessage, TypedBuffer,
+        AxisMeta, AxisScale, CameraState, ColorSource, CoordSpace, EditorAnnotationSpec,
+        EditorCommand, EditorDocumentSnapshot, EditorEntryValue, EditorInsetSpec,
+        EditorInspectorSpec, EditorLayerSpec, EditorMappingEntry, InspectorMeta, LightState,
+        LinesData, PlotPayload, PrimitiveKind, ScalarOrBuffer, SceneState, ServerMessage,
+        TypedBuffer,
     };
-    use wgpu_makie_scene::scene::SceneGraph;
+    use wgpu_makie_scene::{DirectManipController, SceneGraph, ToolMode};
 
     fn sample_snapshot() -> EditorDocumentSnapshot {
         EditorDocumentSnapshot {
@@ -76,6 +77,25 @@ mod tests {
                 digits: 4,
                 has_callback: false,
             }),
+            annotations: vec![EditorAnnotationSpec {
+                id: 1,
+                kind: "text".into(),
+                text: "Marker".into(),
+                source_expr: None,
+                visible: true,
+                axis_id: None,
+                kwargs: vec![],
+            }],
+            insets: vec![EditorInsetSpec {
+                id: 1,
+                visible: true,
+                bbox: [0.56, 0.95, 0.56, 0.95],
+                xlimits: Some([1.0, 2.0]),
+                ylimits: Some([3.0, 4.0]),
+                kwargs: vec![],
+            }],
+            layout_settings: vec![],
+            colorbar: vec![],
             code: "@plot data(rows) * mapping(x = :x, y = :y) begin\n    visual(Scatter; markersize = 12)\nend".into(),
             error: None,
         }
@@ -232,11 +252,14 @@ mod tests {
         for tab in [
             EditorTab::Layers,
             EditorTab::AxesScales,
+            EditorTab::Annotations,
             EditorTab::Style,
             EditorTab::Inspector,
             EditorTab::Code,
         ] {
             model.active_tab = tab;
+            model.tool_mode = ToolMode::Edit;
+            let manip = DirectManipController::default();
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::Panel::top("top").show(ui, |ui| {
                     let _ = draw_toolbar(ui, &mut model, &graph, 120.0, 8.3);
@@ -244,6 +267,7 @@ mod tests {
                 egui::Panel::right("right").show(ui, |ui| {
                     let _ = draw_editor_panel(ui, &mut model, &mut graph);
                 });
+                draw_canvas_overlays(ui.ctx(), &graph, &manip, &model, 400);
             });
             out.textures_delta.clear();
         }

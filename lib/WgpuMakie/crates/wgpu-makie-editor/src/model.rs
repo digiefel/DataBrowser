@@ -4,12 +4,14 @@ use std::collections::{HashMap, HashSet};
 use wgpu_makie_proto::{
     ClientMessage, EditorCommand, EditorDocumentSnapshot, EditorLayerSpec, ServerMessage,
 };
+use wgpu_makie_scene::{BrushSummary, ToolMode};
 
 /// Active tab inside the right-hand plot editor sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorTab {
     Layers,
     AxesScales,
+    Annotations,
     Style,
     Inspector,
     Code,
@@ -53,6 +55,12 @@ pub struct EditorModel {
     pub add_scale_role: String,
     pub add_inspector_field: String,
     pub inspector_title_draft: String,
+    pub tool_mode: ToolMode,
+    pub selected_annotation: Option<u32>,
+    pub selected_inset: Option<u32>,
+    pub brush: Option<BrushSummary>,
+    pub new_ann_text: String,
+    pub new_ann_source: String,
     pub undo_stack: Vec<(EditorCommand, EditorCommand)>,
     pub redo_stack: Vec<(EditorCommand, EditorCommand)>,
 }
@@ -66,6 +74,8 @@ impl EditorModel {
             add_attr_expr: "0.8".into(),
             add_mapping_role: "color".into(),
             add_scale_role: "color".into(),
+            new_ann_text: "Note".into(),
+            new_ann_source: "f".into(),
             ..Default::default()
         }
     }

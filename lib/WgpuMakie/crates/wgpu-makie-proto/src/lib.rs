@@ -535,6 +535,74 @@ pub struct EditorThemeSpec {
     pub settings: Vec<(String, EditorEntryValue)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutBlockKind {
+    Axis,
+    Axis3,
+    Legend,
+    Colorbar,
+    Inset,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayoutBlockMeta {
+    pub block_id: u64,
+    pub kind: LayoutBlockKind,
+    /// `[x, y, width, height]` in unitless bottom-left figure coordinates.
+    pub bbox_px: [f32; 4],
+    pub parent_axis_id: Option<u64>,
+    pub row_span: [u32; 2],
+    pub col_span: [u32; 2],
+    pub halign: f32,
+    pub valign: f32,
+    pub rel_size: [f32; 2],
+    pub dock_position: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayoutSplitMeta {
+    /// True for a column boundary (vertical divider line); false for a row boundary.
+    pub is_vertical: bool,
+    /// Left column index or top row index (`1`-based).
+    pub index: u32,
+    pub pos_px: f32,
+    pub span_min_px: f32,
+    pub span_max_px: f32,
+    pub prev_frac: f32,
+    pub next_frac: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayoutMeta {
+    pub nrows: u32,
+    pub ncols: u32,
+    pub figure_size: [f32; 2],
+    pub blocks: Vec<LayoutBlockMeta>,
+    pub splits: Vec<LayoutSplitMeta>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorAnnotationSpec {
+    pub id: u32,
+    pub kind: String,
+    pub text: String,
+    pub source_expr: Option<String>,
+    pub visible: bool,
+    pub axis_id: Option<u64>,
+    pub kwargs: Vec<(String, EditorEntryValue)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorInsetSpec {
+    pub id: u32,
+    pub visible: bool,
+    pub bbox: [f64; 4],
+    pub xlimits: Option<[f64; 2]>,
+    pub ylimits: Option<[f64; 2]>,
+    pub kwargs: Vec<(String, EditorEntryValue)>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EditorDocumentSnapshot {
     pub revision: u64,
@@ -548,6 +616,14 @@ pub struct EditorDocumentSnapshot {
     pub legend: Vec<(String, EditorEntryValue)>,
     pub theme: Option<EditorThemeSpec>,
     pub inspector: Option<EditorInspectorSpec>,
+    #[serde(default)]
+    pub annotations: Vec<EditorAnnotationSpec>,
+    #[serde(default)]
+    pub insets: Vec<EditorInsetSpec>,
+    #[serde(default)]
+    pub layout_settings: Vec<(String, EditorEntryValue)>,
+    #[serde(default)]
+    pub colorbar: Vec<(String, EditorEntryValue)>,
     pub code: String,
     pub error: Option<String>,
 }
@@ -648,6 +724,68 @@ pub enum EditorCommand {
         element_index: u32,
         pos: [f64; 3],
     },
+    AddAnnotation {
+        kind: String,
+        text: String,
+        source_expr: Option<String>,
+        axis_id: Option<u64>,
+        kwargs: Vec<(String, String)>,
+    },
+    SetAnnotationAttr {
+        id: u32,
+        key: String,
+        expr: String,
+    },
+    MoveAnnotation {
+        id: u32,
+        updates: Vec<(String, f64)>,
+    },
+    SetAnnotationVisible {
+        id: u32,
+        visible: bool,
+    },
+    RemoveAnnotation {
+        id: u32,
+    },
+    AddInset {
+        axis_id: Option<u64>,
+        bbox: [f64; 4],
+        xlimits: Option<[f64; 2]>,
+        ylimits: Option<[f64; 2]>,
+    },
+    SetInsetAttr {
+        id: u32,
+        key: String,
+        expr: String,
+    },
+    MoveInset {
+        id: u32,
+        bbox: [f64; 4],
+    },
+    RemoveInset {
+        id: u32,
+    },
+    MoveBlock {
+        block_id: u64,
+        kind: LayoutBlockKind,
+        dock_position: String,
+        halign: f32,
+        valign: f32,
+    },
+    ResizeLayoutSplit {
+        is_vertical: bool,
+        index: u32,
+        prev_frac: f32,
+        next_frac: f32,
+    },
+    SetLayoutAttr {
+        key: String,
+        expr: String,
+    },
+    SetColorbarAttr {
+        key: String,
+        expr: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -671,6 +809,9 @@ pub enum ServerMessage {
     },
     UpsertAxisMeta {
         axis: AxisMeta,
+    },
+    UpsertLayoutMeta {
+        layout: LayoutMeta,
     },
     UpsertPlot {
         plot: PlotPayload,
@@ -788,6 +929,11 @@ pub enum ClientMessage {
     },
     EditorCommand {
         command: EditorCommand,
+    },
+    BrushSelectionChanged {
+        axis_id: u64,
+        rect: Option<[f64; 4]>,
+        plot_indices: Vec<(u64, Vec<u32>)>,
     },
     WindowClosed,
 }
@@ -907,6 +1053,25 @@ mod tests {
                     digits: 4,
                     has_callback: false,
                 }),
+                annotations: vec![EditorAnnotationSpec {
+                    id: 1,
+                    kind: "callout".into(),
+                    text: "Peak".into(),
+                    source_expr: None,
+                    visible: true,
+                    axis_id: Some(10),
+                    kwargs: vec![],
+                }],
+                insets: vec![EditorInsetSpec {
+                    id: 1,
+                    visible: true,
+                    bbox: [0.55, 0.95, 0.55, 0.95],
+                    xlimits: Some([1.0, 2.0]),
+                    ylimits: Some([3.0, 4.0]),
+                    kwargs: vec![],
+                }],
+                layout_settings: vec![],
+                colorbar: vec![],
                 code: "@plot data(rows) * mapping(x = :x)".into(),
                 error: None,
             },
@@ -942,5 +1107,50 @@ mod tests {
         let mut ccur = Cursor::new(cbuf);
         let cdec: ClientMessage = read_frame(&mut ccur).unwrap().unwrap();
         assert_eq!(cmd, cdec);
+
+        let lay_msg = ServerMessage::UpsertLayoutMeta {
+            layout: LayoutMeta {
+                nrows: 1,
+                ncols: 2,
+                figure_size: [900.0, 600.0],
+                blocks: vec![LayoutBlockMeta {
+                    block_id: 99,
+                    kind: LayoutBlockKind::Legend,
+                    bbox_px: [780.0, 220.0, 100.0, 160.0],
+                    parent_axis_id: None,
+                    row_span: [1, 1],
+                    col_span: [2, 2],
+                    halign: 0.95,
+                    valign: 0.95,
+                    rel_size: [0.3, 0.3],
+                    dock_position: "right".into(),
+                }],
+                splits: vec![LayoutSplitMeta {
+                    is_vertical: true,
+                    index: 1,
+                    pos_px: 420.0,
+                    span_min_px: 40.0,
+                    span_max_px: 560.0,
+                    prev_frac: 0.5,
+                    next_frac: 0.5,
+                }],
+            },
+        };
+        let mut lbuf = Vec::new();
+        write_frame(&mut lbuf, &lay_msg).unwrap();
+        let mut lcur = Cursor::new(lbuf);
+        let ldec: ServerMessage = read_frame(&mut lcur).unwrap().unwrap();
+        assert_eq!(lay_msg, ldec);
+
+        let brush_msg = ClientMessage::BrushSelectionChanged {
+            axis_id: 10,
+            rect: Some([1.0, 2.0, 3.0, 4.0]),
+            plot_indices: vec![(77, vec![0, 2, 5])],
+        };
+        let mut bbuf = Vec::new();
+        write_frame(&mut bbuf, &brush_msg).unwrap();
+        let mut bcur = Cursor::new(bbuf);
+        let bdec: ClientMessage = read_frame(&mut bcur).unwrap().unwrap();
+        assert_eq!(brush_msg, bdec);
     }
 }

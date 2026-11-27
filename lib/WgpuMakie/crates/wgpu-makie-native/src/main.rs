@@ -7,13 +7,17 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
 use wgpu_makie_editor::{
-    draw_editor_panel, draw_inspector_dock, draw_toolbar, EditorAction, EditorModel,
+    draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, EditorAction,
+    EditorModel,
 };
 use wgpu_makie_proto::{
     read_frame, write_frame, ClientMessage, EditorCommand, PointerEventKind, ServerMessage,
 };
 use wgpu_makie_render::{HeadlessRenderer, WgpuRenderer};
-use wgpu_makie_scene::{format_tooltip, reset_axes, CameraController, InteractionUpdate, SceneGraph};
+use wgpu_makie_scene::{
+    format_tooltip, reset_axes, CameraController, DirectManipController, InteractionUpdate,
+    SceneGraph, ToolMode,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -189,6 +193,7 @@ struct ViewerApp {
     win: Option<WindowState>,
     graph: SceneGraph,
     camera_ctrl: CameraController,
+    manip: DirectManipController,
     editor: EditorModel,
     pointer_unitless: [f64; 2],
     buttons_mask: u8,
@@ -211,6 +216,7 @@ impl ViewerApp {
                 ..Default::default()
             },
             camera_ctrl: CameraController::default(),
+            manip: DirectManipController::default(),
             editor: EditorModel::new(),
             pointer_unitless: [0.0, 0.0],
             buttons_mask: 0,
@@ -347,13 +353,17 @@ impl ViewerApp {
                     .show(ui, |ui| {
                         editor_actions.extend(draw_editor_panel(ui, &mut self.editor, &mut self.graph));
                     });
-            } else if self.editor.show_inspector_dock && self.editor.selected_elem.is_some() {
+            } else if self.editor.show_inspector_dock
+                && (self.editor.selected_elem.is_some() || self.editor.brush.is_some())
+            {
                 egui::Window::new("Inspector")
                     .default_width(250.0)
                     .show(ui.ctx(), |ui| {
                         editor_actions.extend(draw_inspector_dock(ui, &mut self.editor, &self.graph));
                     });
             }
+
+            draw_canvas_overlays(ui.ctx(), &self.graph, &self.manip, &self.editor, h);
 
             // Box-zoom overlay & hover tooltip
             let painter = ui.ctx().layer_painter(egui::LayerId::new(
@@ -734,6 +744,40 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                         }
                     }
                 }
+                if pressed && !consumed {
+                    match &event.logical_key {
+                        Key::Named(NamedKey::Escape) => {
+                            self.manip.cancel_drag();
+                            self.editor.tool_mode = ToolMode::Navigate;
+                            request_redraw = true;
+                        }
+                        Key::Named(NamedKey::Delete) | Key::Named(NamedKey::Backspace) => {
+                            if self.editor.tool_mode == ToolMode::Edit {
+                                if let Some(aid) = self.editor.selected_annotation.take() {
+                                    self.send(ClientMessage::EditorCommand {
+                                        command: EditorCommand::RemoveAnnotation { id: aid },
+                                    });
+                                    request_redraw = true;
+                                }
+                            }
+                        }
+                        Key::Character(c) if (self.mods_mask & 0b0010) != 0 && c.eq_ignore_ascii_case("z") => {
+                            let mut acts = Vec::new();
+                            if (self.mods_mask & 0b0001) != 0 {
+                                self.editor.redo(&mut acts);
+                            } else {
+                                self.editor.undo(&mut acts);
+                            }
+                            for act in acts {
+                                if let EditorAction::Send(m) = act {
+                                    self.send(m);
+                                }
+                            }
+                            request_redraw = true;
+                        }
+                        _ => {}
+                    }
+                }
                 if !consumed {
                     let key_name = match &event.logical_key {
                         Key::Character(c) => c.to_string(),
@@ -757,11 +801,25 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     let ux = position.x / ppu;
                     let uy = win_h_u - (position.y / ppu);
                     self.pointer_unitless = [ux, uy];
-                    let upd = self
-                        .camera_ctrl
-                        .on_pointer_move(&mut self.graph, self.pointer_unitless);
-                    self.handle_interaction_update(upd);
-                    self.update_hover_tooltip();
+                    if self.editor.tool_mode != ToolMode::Navigate {
+                        let mo = self.manip.on_pointer_move(
+                            &self.graph,
+                            self.editor.doc.as_ref(),
+                            self.pointer_unitless,
+                        );
+                        if let Some(br) = mo.brush {
+                            self.editor.brush = Some(br);
+                        }
+                        for msg in mo.messages {
+                            self.send(msg);
+                        }
+                    } else {
+                        let upd = self
+                            .camera_ctrl
+                            .on_pointer_move(&mut self.graph, self.pointer_unitless);
+                        self.handle_interaction_update(upd);
+                        self.update_hover_tooltip();
+                    }
                     self.send(ClientMessage::PointerEvent {
                         x: ux,
                         y: uy,
@@ -784,50 +842,66 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     let bit = 1u8 << btn;
                     if state == ElementState::Pressed {
                         self.buttons_mask |= bit;
-                        let upd = self.camera_ctrl.on_pointer_down(
-                            &mut self.graph,
-                            self.pointer_unitless,
-                            btn,
-                            self.mods_mask,
-                        );
-                        self.handle_interaction_update(upd);
-                        if btn == 0 {
-                            if let Some(ws) = &mut self.win {
-                                if let Ok(hits) = ws.renderer.pick_region(
-                                    &ws.device,
-                                    &ws.queue,
-                                    &mut self.graph,
-                                    ws.surface_config.width,
-                                    ws.surface_config.height,
-                                    self.pointer_unitless[0].round() as i32,
-                                    self.pointer_unitless[1].round() as i32,
-                                    8,
-                                ) {
-                                    let sel = hits.first().copied();
-                                    let pos = sel.and_then(|(p, i)| {
-                                        self.graph
-                                            .plots
-                                            .get(&p)
-                                            .and_then(|e| element_data_pos(&e.payload.primitive, i))
-                                    });
-                                    self.editor.set_selection(sel, pos);
-                                    let (pid, idx) = match sel {
-                                        Some((p, i)) => (Some(p), Some(i)),
-                                        None => (None, None),
-                                    };
-                                    self.send(ClientMessage::SelectionChanged {
-                                        plot_id: pid,
-                                        element_index: idx,
-                                    });
-                                    if let (Some((p, i)), Some(ppos)) = (sel, pos) {
-                                        if self.editor.has_custom_inspector_callback() {
-                                            self.send(ClientMessage::EditorCommand {
-                                                command: EditorCommand::RequestCustomTooltip {
-                                                    plot_id: p,
-                                                    element_index: i,
-                                                    pos: ppos,
-                                                },
-                                            });
+                        if self.editor.tool_mode != ToolMode::Navigate && btn == 0 {
+                            let mo = self.manip.on_pointer_down(
+                                &self.graph,
+                                self.editor.doc.as_ref(),
+                                self.editor.tool_mode,
+                                self.pointer_unitless,
+                                btn,
+                            );
+                            if mo.selected_annotation.is_some() {
+                                self.editor.selected_annotation = mo.selected_annotation;
+                            }
+                            for msg in mo.messages {
+                                self.send(msg);
+                            }
+                        } else {
+                            let upd = self.camera_ctrl.on_pointer_down(
+                                &mut self.graph,
+                                self.pointer_unitless,
+                                btn,
+                                self.mods_mask,
+                            );
+                            self.handle_interaction_update(upd);
+                            if btn == 0 {
+                                if let Some(ws) = &mut self.win {
+                                    if let Ok(hits) = ws.renderer.pick_region(
+                                        &ws.device,
+                                        &ws.queue,
+                                        &mut self.graph,
+                                        ws.surface_config.width,
+                                        ws.surface_config.height,
+                                        self.pointer_unitless[0].round() as i32,
+                                        self.pointer_unitless[1].round() as i32,
+                                        8,
+                                    ) {
+                                        let sel = hits.first().copied();
+                                        let pos = sel.and_then(|(p, i)| {
+                                            self.graph
+                                                .plots
+                                                .get(&p)
+                                                .and_then(|e| element_data_pos(&e.payload.primitive, i))
+                                        });
+                                        self.editor.set_selection(sel, pos);
+                                        let (pid, idx) = match sel {
+                                            Some((p, i)) => (Some(p), Some(i)),
+                                            None => (None, None),
+                                        };
+                                        self.send(ClientMessage::SelectionChanged {
+                                            plot_id: pid,
+                                            element_index: idx,
+                                        });
+                                        if let (Some((p, i)), Some(ppos)) = (sel, pos) {
+                                            if self.editor.has_custom_inspector_callback() {
+                                                self.send(ClientMessage::EditorCommand {
+                                                    command: EditorCommand::RequestCustomTooltip {
+                                                        plot_id: p,
+                                                        element_index: i,
+                                                        pos: ppos,
+                                                    },
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -843,10 +917,44 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                         });
                     } else {
                         self.buttons_mask &= !bit;
-                        let upd = self
-                            .camera_ctrl
-                            .on_pointer_up(&mut self.graph, self.pointer_unitless);
-                        self.handle_interaction_update(upd);
+                        if self.editor.tool_mode != ToolMode::Navigate && btn == 0 {
+                            let mo = self.manip.on_pointer_up(
+                                &self.graph,
+                                self.editor.doc.as_ref(),
+                                self.pointer_unitless,
+                            );
+                            if mo.clear_brush {
+                                self.editor.brush = None;
+                            } else if let Some(br) = mo.brush {
+                                self.editor.brush = Some(br);
+                            }
+                            if let Some((fwd, inv)) = mo.undo_pair {
+                                self.editor.undo_stack.push((fwd, inv));
+                                self.editor.redo_stack.clear();
+                            }
+                            for msg in mo.messages {
+                                self.send(msg);
+                            }
+                            if matches!(
+                                self.editor.tool_mode,
+                                ToolMode::AddText
+                                    | ToolMode::AddArrow
+                                    | ToolMode::AddCallout
+                                    | ToolMode::AddVSpan
+                                    | ToolMode::AddHSpan
+                                    | ToolMode::AddRect
+                                    | ToolMode::AddHLine
+                                    | ToolMode::AddVLine
+                                    | ToolMode::AddInset
+                            ) {
+                                self.editor.tool_mode = ToolMode::Edit;
+                            }
+                        } else {
+                            let upd = self
+                                .camera_ctrl
+                                .on_pointer_up(&mut self.graph, self.pointer_unitless);
+                            self.handle_interaction_update(upd);
+                        }
                         self.send(ClientMessage::PointerEvent {
                             x: self.pointer_unitless[0],
                             y: self.pointer_unitless[1],
