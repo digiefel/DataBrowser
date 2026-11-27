@@ -387,6 +387,13 @@ function _tell_flag(blk, sym::Symbol)::Bool
     return v isa Bool ? v : true
 end
 
+function _align_to_f32(v)::Float32
+    v isa Real && return clamp(Float32(v), 0.0f0, 1.0f0)
+    (v === :left || v === :bottom) && return 0.0f0
+    (v === :right || v === :top) && return 1.0f0
+    return 0.5f0
+end
+
 function _dock_position_for_block(blk, rspan, cspan, nrows::Int, ncols::Int)::String
     tw = _tell_flag(blk, :tellwidth)
     th = _tell_flag(blk, :tellheight)
@@ -435,8 +442,8 @@ function _extract_layout_meta(screen, figure::Makie.Figure)
         bb = _block_bbox_px(blk)
         tw = _tell_flag(blk, :tellwidth)
         th = _tell_flag(blk, :tellheight)
-        ha = hasproperty(blk, :halign) && blk.halign[] isa Real ? Float32(blk.halign[]) : 0.5f0
-        va = hasproperty(blk, :valign) && blk.valign[] isa Real ? Float32(blk.valign[]) : 0.5f0
+        ha = hasproperty(blk, :halign) ? _align_to_f32(blk.halign[]) : 0.5f0
+        va = hasproperty(blk, :valign) ? _align_to_f32(blk.valign[]) : 0.5f0
 
         parent_aid = nothing
         kind = if blk isa Makie.Axis3

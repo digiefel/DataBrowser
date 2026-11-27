@@ -748,7 +748,16 @@ end
         display(scr_d, fig_d.scene; figure = fig_d)
         bid = UInt64(objectid(leg_d))
 
-        for (dock, hx, hy) in (("top", 0.5, 0.95), ("inside", 0.25, 0.75), ("right", 0.95, 0.5), ("inside", 0.85, 0.85))
+        for (dock, hx, hy) in (
+            ("top", 0.5, 0.95),
+            ("top", 0.25, 0.95),
+            ("left", 0.05, 0.5),
+            ("left", 0.05, 0.25),
+            ("bottom", 0.5, 0.05),
+            ("right", 0.95, 0.5),
+            ("top", 0.5, 0.95),
+            ("inside", 0.85, 0.85),
+        )
             WgpuMakie._handle_viewer_event!(scr_d, Dict(
                 "op" => "editor_command",
                 "command" => Dict(
@@ -760,11 +769,62 @@ end
                     "valign" => hy,
                 ),
             ))
+            gl_d = WgpuMakie._active_gridlayout(fig_d)
+            expected_sz = if dock in ("top", "bottom")
+                (2, 1)
+            elseif dock in ("left", "right")
+                (1, 2)
+            else
+                (1, 1)
+            end
+            @test size(gl_d) == expected_sz
+            @test all(c -> c.span.rows.start >= 1 && c.span.cols.start >= 1, gl_d.content)
+            @test widths(ax_d.layoutobservables.computedbbox[])[2] > 250.0
         end
         @test size(WgpuMakie._active_gridlayout(fig_d)) == (1, 1)
         @test leg_d.orientation[] === :vertical
         ax_h = widths(ax_d.layoutobservables.computedbbox[])[2]
         @test ax_h > 300.0
+
+        # Symbolic :rt aligns serialize to (1.0, 1.0) and corner moves reach flush edges
+        leg_d.halign = :right
+        leg_d.valign = :top
+        meta_rt = WgpuMakie._extract_layout_meta(scr_d, fig_d)
+        leg_meta_rt = first(b for b in meta_rt["blocks"] if b["kind"] == "legend")
+        @test leg_meta_rt["halign"] == 1.0f0
+        @test leg_meta_rt["valign"] == 1.0f0
+
+        rt_bbox = leg_d.layoutobservables.computedbbox[]
+        WgpuMakie._handle_viewer_event!(scr_d, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "move_block",
+                "block_id" => bid,
+                "kind" => "legend",
+                "dock_position" => "inside",
+                "halign" => 0.0,
+                "valign" => 0.0,
+            ),
+        ))
+        lb_bbox = leg_d.layoutobservables.computedbbox[]
+        ax_bbox = ax_d.layoutobservables.computedbbox[]
+        @test abs(minimum(lb_bbox)[1] - minimum(ax_bbox)[1]) < 2.0f0
+        @test abs(minimum(lb_bbox)[2] - minimum(ax_bbox)[2]) < 2.0f0
+
+        WgpuMakie._handle_viewer_event!(scr_d, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "move_block",
+                "block_id" => bid,
+                "kind" => "legend",
+                "dock_position" => "inside",
+                "halign" => 1.0,
+                "valign" => 1.0,
+            ),
+        ))
+        rt_after = leg_d.layoutobservables.computedbbox[]
+        @test abs(minimum(rt_after)[1] - minimum(rt_bbox)[1]) < 2.0f0
+        @test abs(minimum(rt_after)[2] - minimum(rt_bbox)[2]) < 2.0f0
         close(scr_d)
     end
 end

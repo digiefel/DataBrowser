@@ -503,6 +503,13 @@ impl ViewerApp {
             }
         }
 
+        if full_output
+            .viewport_output
+            .values()
+            .any(|v| v.repaint_delay.is_zero())
+        {
+            needs_redraw = true;
+        }
         ws.renderer
             .prepare(&ws.device, &ws.queue, &mut self.graph, w, h);
 

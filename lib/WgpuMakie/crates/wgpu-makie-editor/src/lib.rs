@@ -419,4 +419,63 @@ mod tests {
             "expected rasterized font glyphs in font atlas, got {font_pixels} non-zero pixels"
         );
     }
+
+    #[test]
+    fn long_error_banner_wraps_without_widening_sidebar() {
+        let ctx = egui::Context::default();
+        let mut graph = sample_graph();
+        let mut model = EditorModel::new();
+        let mut snap = sample_snapshot();
+        snap.error = Some(
+            "Invalid input: Invalid x-limits (-0.6283185400806344, 13.194689154439807) for scale log10 which is defined on the interval 0.0 .. Inf (open)"
+                .into(),
+        );
+        model.apply_server_message(&ServerMessage::SyncEditorState {
+            state: snap.clone(),
+        });
+
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(900.0, 600.0),
+        ));
+
+        let mut panel_rect = egui::Rect::NOTHING;
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(raw.clone(), |ui| {
+                let resp = egui::Panel::right("wgpu_makie_editor")
+                    .resizable(true)
+                    .default_size(235.0)
+                    .min_size(195.0)
+                    .max_size(380.0)
+                    .show(ui, |ui| {
+                        let _ = draw_editor_panel(ui, &mut model, &mut graph);
+                    });
+                panel_rect = resp.response.rect;
+            });
+            out.textures_delta.clear();
+        }
+        assert!(
+            panel_rect.width() <= 245.0,
+            "expected right panel width <= 245.0 pt, got {}",
+            panel_rect.width()
+        );
+
+        let err_text = snap.error.clone().unwrap();
+        model.dismissed_error = Some(err_text);
+        let mut central_with_dismissed = egui::Rect::NOTHING;
+        let mut out_after = ctx.run_ui(raw, |ui| {
+            egui::Panel::right("wgpu_makie_editor")
+                .resizable(true)
+                .default_size(235.0)
+                .min_size(195.0)
+                .max_size(380.0)
+                .show(ui, |ui| {
+                    let _ = draw_editor_panel(ui, &mut model, &mut graph);
+                });
+            central_with_dismissed = ui.available_rect_before_wrap();
+        });
+        out_after.textures_delta.clear();
+        assert!(central_with_dismissed.width() >= 650.0);
+    }
 }

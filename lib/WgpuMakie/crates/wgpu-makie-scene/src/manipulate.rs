@@ -632,25 +632,32 @@ impl DirectManipController {
             } => {
                 let dx = (pos_px[0] - start_px[0]) as f32;
                 let dy = (pos_px[1] - start_px[1]) as f32;
-                self.preview_block_px = Some([
+                let dragged = [
                     orig_bbox[0] + dx,
                     orig_bbox[1] + dy,
                     orig_bbox[2],
                     orig_bbox[3],
-                ]);
+                ];
                 if *kind == LayoutBlockKind::Legend {
                     if let Some(layout) = &graph.layout {
-                        self.preview_dock_zone = Some(classify_dock_zone(layout, pos_px).0);
+                        let (zone, _, _, snapped_box) = classify_block_dock_zone(layout, dragged);
+                        self.preview_block_px = Some(snapped_box);
+                        self.preview_dock_zone = Some(zone);
+                    } else {
+                        self.preview_block_px = Some(dragged);
                     }
                 } else if *kind == LayoutBlockKind::Colorbar {
+                    self.preview_block_px = Some(dragged);
                     if let Some(layout) = &graph.layout {
-                        let zone = classify_dock_zone(layout, pos_px).0;
-                        self.preview_dock_zone = Some(if zone == "inside" {
-                            "right".into()
-                        } else {
-                            zone
-                        });
+                        let (mut zone, _, _, _) = classify_block_dock_zone(layout, dragged);
+                        if zone == "inside" {
+                            zone = nearest_outer_dock(layout, dragged);
+                        }
+                        self.preview_dock_zone = Some(zone);
                     }
+                } else {
+                    self.preview_block_px = Some(dragged);
+                    self.preview_dock_zone = None;
                 }
             }
             DragTarget::LayoutSplit {
@@ -842,9 +849,15 @@ impl DirectManipController {
                         out.messages.push(ClientMessage::EditorCommand { command: fwd });
                     }
                 } else if let Some(layout) = &graph.layout {
-                    let (mut zone, halign, valign) = classify_dock_zone(layout, pos_px);
+                    let dragged = [
+                        orig_bbox[0] + dx,
+                        orig_bbox[1] + dy,
+                        orig_bbox[2],
+                        orig_bbox[3],
+                    ];
+                    let (mut zone, halign, valign, _) = classify_block_dock_zone(layout, dragged);
                     if kind == LayoutBlockKind::Colorbar && zone == "inside" {
-                        zone = "right".into();
+                        zone = nearest_outer_dock(layout, dragged);
                     }
                     let fwd = EditorCommand::MoveBlock {
                         block_id,
@@ -1154,8 +1167,17 @@ pub fn compute_brush(
     }
 }
 
-/// Classify a pointer drop position into dock edge (`left`/`right`/`top`/`bottom`) or floating `inside` (`halign`, `valign`).
-pub fn classify_dock_zone(layout: &LayoutMeta, pos_px: [f64; 2]) -> (String, f32, f32) {
+/// Classify a dragged block rectangle into an outer dock (`left`/`right`/`top`/`bottom`) or
+/// an `inside` alignment `(halign, valign)` with its resolved canvas rectangle.
+pub fn classify_block_dock_zone(
+    layout: &LayoutMeta,
+    dragged_bbox: [f32; 4],
+) -> (String, f32, f32, [f32; 4]) {
+    let lw = (dragged_bbox[2] as f64).max(0.0);
+    let lh = (dragged_bbox[3] as f64).max(0.0);
+    let cx = dragged_bbox[0] as f64 + 0.5 * lw;
+    let cy = dragged_bbox[1] as f64 + 0.5 * lh;
+
     if let Some(ax_blk) = layout
         .blocks
         .iter()
@@ -1168,38 +1190,94 @@ pub fn classify_dock_zone(layout: &LayoutMeta, pos_px: [f64; 2]) -> (String, f32
         let ax_x1 = ax_x0 + ax_w;
         let ax_y1 = ax_y0 + ax_h;
 
-        if pos_px[0] >= ax_x0
-            && pos_px[0] <= ax_x1
-            && pos_px[1] >= ax_y0
-            && pos_px[1] <= ax_y1
-        {
-            let hx = ((pos_px[0] - ax_x0) / ax_w).clamp(0.02, 0.98) as f32;
-            let hy = ((pos_px[1] - ax_y0) / ax_h).clamp(0.02, 0.98) as f32;
-            return ("inside".into(), hx, hy);
+        if cx >= ax_x0 && cx <= ax_x1 && cy >= ax_y0 && cy <= ax_y1 {
+            let span_x = (ax_w - lw).max(1.0);
+            let span_y = (ax_h - lh).max(1.0);
+            let mut hx = ((dragged_bbox[0] as f64 - ax_x0) / span_x).clamp(0.0, 1.0) as f32;
+            let mut hy = ((dragged_bbox[1] as f64 - ax_y0) / span_y).clamp(0.0, 1.0) as f32;
+
+            // Snap to frame edges when dragged within 12 px so corners are effortless to hit.
+            const EDGE_SNAP_PX: f64 = 12.0;
+            if dragged_bbox[0] as f64 - ax_x0 <= EDGE_SNAP_PX {
+                hx = 0.0;
+            } else if ax_x1 - (dragged_bbox[0] as f64 + lw) <= EDGE_SNAP_PX {
+                hx = 1.0;
+            }
+            if dragged_bbox[1] as f64 - ax_y0 <= EDGE_SNAP_PX {
+                hy = 0.0;
+            } else if ax_y1 - (dragged_bbox[1] as f64 + lh) <= EDGE_SNAP_PX {
+                hy = 1.0;
+            }
+
+            let snap_x = ax_x0 as f32 + hx * (ax_w - lw).max(0.0) as f32;
+            let snap_y = ax_y0 as f32 + hy * (ax_h - lh).max(0.0) as f32;
+            return (
+                "inside".into(),
+                hx,
+                hy,
+                [snap_x, snap_y, dragged_bbox[2], dragged_bbox[3]],
+            );
         }
 
-        let dx_left = (ax_x0 - pos_px[0]).max(0.0);
-        let dx_right = (pos_px[0] - ax_x1).max(0.0);
-        let dy_bot = (ax_y0 - pos_px[1]).max(0.0);
-        let dy_top = (pos_px[1] - ax_y1).max(0.0);
+        let dx_left = (ax_x0 - cx).max(0.0);
+        let dx_right = (cx - ax_x1).max(0.0);
+        let dy_bot = (ax_y0 - cy).max(0.0);
+        let dy_top = (cy - ax_y1).max(0.0);
         let max_d = dx_left.max(dx_right).max(dy_bot).max(dy_top);
-        let hx = ((pos_px[0] - ax_x0) / ax_w).clamp(0.04, 0.96) as f32;
-        let hy = ((pos_px[1] - ax_y0) / ax_h).clamp(0.04, 0.96) as f32;
-        if max_d == dx_left {
-            return ("left".into(), 0.05, hy);
+        let hx = ((cx - ax_x0) / ax_w).clamp(0.0, 1.0) as f32;
+        let hy = ((cy - ax_y0) / ax_h).clamp(0.0, 1.0) as f32;
+        let zone = if max_d == dx_left {
+            ("left".into(), 0.0, hy)
         } else if max_d == dx_right {
-            return ("right".into(), 0.95, hy);
+            ("right".into(), 1.0, hy)
         } else if max_d == dy_bot {
-            return ("bottom".into(), hx, 0.05);
+            ("bottom".into(), hx, 0.0)
         } else {
-            return ("top".into(), hx, 0.95);
+            ("top".into(), hx, 1.0)
+        };
+        return (zone.0, zone.1, zone.2, dragged_bbox);
+    }
+
+    let w = (layout.figure_size[0] as f64 - lw).max(1.0);
+    let h = (layout.figure_size[1] as f64 - lh).max(1.0);
+    let fx = (dragged_bbox[0] as f64 / w).clamp(0.0, 1.0) as f32;
+    let fy = (dragged_bbox[1] as f64 / h).clamp(0.0, 1.0) as f32;
+    ("inside".into(), fx, fy, dragged_bbox)
+}
+
+fn nearest_outer_dock(layout: &LayoutMeta, dragged_bbox: [f32; 4]) -> String {
+    let cx = dragged_bbox[0] as f64 + 0.5 * (dragged_bbox[2] as f64).max(0.0);
+    let cy = dragged_bbox[1] as f64 + 0.5 * (dragged_bbox[3] as f64).max(0.0);
+    if let Some(ax_blk) = layout
+        .blocks
+        .iter()
+        .find(|b| matches!(b.kind, LayoutBlockKind::Axis | LayoutBlockKind::Axis3))
+    {
+        let ax_x0 = ax_blk.bbox_px[0] as f64;
+        let ax_y0 = ax_blk.bbox_px[1] as f64;
+        let ax_x1 = ax_x0 + (ax_blk.bbox_px[2] as f64).max(1.0);
+        let ax_y1 = ax_y0 + (ax_blk.bbox_px[3] as f64).max(1.0);
+        let d_left = (cx - ax_x0).abs();
+        let d_right = (ax_x1 - cx).abs();
+        let d_bot = (cy - ax_y0).abs();
+        let d_top = (ax_y1 - cy).abs();
+        let m = d_left.min(d_right).min(d_bot).min(d_top);
+        if m == d_left {
+            return "left".into();
+        } else if m == d_bot {
+            return "bottom".into();
+        } else if m == d_top {
+            return "top".into();
         }
     }
-    let w = layout.figure_size[0].max(1.0) as f64;
-    let h = layout.figure_size[1].max(1.0) as f64;
-    let fx = (pos_px[0] / w).clamp(0.04, 0.96) as f32;
-    let fy = (pos_px[1] / h).clamp(0.04, 0.96) as f32;
-    ("inside".into(), fx, fy)
+    "right".into()
+}
+
+/// Classify a pointer drop position into dock edge (`left`/`right`/`top`/`bottom`) or floating `inside` (`halign`, `valign`).
+pub fn classify_dock_zone(layout: &LayoutMeta, pos_px: [f64; 2]) -> (String, f32, f32) {
+    let (zone, hx, hy, _) =
+        classify_block_dock_zone(layout, [pos_px[0] as f32, pos_px[1] as f32, 0.0, 0.0]);
+    (zone, hx, hy)
 }
 
 fn inside_bbox(pos_px: [f64; 2], bbox: [f32; 4]) -> bool {
@@ -1927,5 +2005,58 @@ mod tests {
         assert_eq!(hit_anchor, Some((1, "Hello".to_string(), ann_px)));
         let hit_body = ctrl.hit_text_annotation(&g, Some(&doc), [ann_px[0] as f64 + 18.0, ann_px[1] as f64]);
         assert_eq!(hit_body, Some((1, "Hello".to_string(), ann_px)));
+    }
+
+    #[test]
+    fn legend_corner_drag_snaps_to_corners_and_centers_outside() {
+        let (g, doc) = test_scene_graph();
+        let layout_ref = g.layout.as_ref().unwrap();
+        let mut ctrl = DirectManipController::default();
+
+        // Axis box is [50, 50, 400, 300] (x in 50..450, y in 50..350); legend size is 100x80 at [780, 160].
+        // Dragging near top-right corner while grabbing the left half of the legend:
+        // start at [800, 180], move to [368, 286] => dragged bbox [348, 266, 100, 80], center [398, 306] (inside),
+        // within 12 px of right (450) and top (350) => snaps to ("inside", 1.0, 1.0) and [350, 270, 100, 80].
+        ctrl.on_pointer_down(&g, Some(&doc), ToolMode::Edit, [800.0, 180.0], 0);
+        ctrl.on_pointer_move(&g, Some(&doc), [368.0, 286.0]);
+        assert_eq!(ctrl.preview_dock_zone.as_deref(), Some("inside"));
+        assert_eq!(ctrl.preview_block_px, Some([350.0, 270.0, 100.0, 80.0]));
+        let up_rt = ctrl.on_pointer_up(&g, Some(&doc), [368.0, 286.0]);
+        assert!(ctrl.preview_block_px.is_none());
+        assert!(ctrl.preview_dock_zone.is_none());
+        assert!(matches!(
+            up_rt.messages.first(),
+            Some(ClientMessage::EditorCommand {
+                command: EditorCommand::MoveBlock {
+                    kind: LayoutBlockKind::Legend,
+                    dock_position,
+                    halign,
+                    valign,
+                    ..
+                }
+            }) if dock_position == "inside" && (*halign - 1.0).abs() < 1e-5 && (*valign - 1.0).abs() < 1e-5
+        ));
+
+        // Dragging near bottom-left corner => snaps to ("inside", 0.0, 0.0).
+        let (zone_lb, hx_lb, hy_lb, box_lb) =
+            classify_block_dock_zone(layout_ref, [55.0, 55.0, 100.0, 80.0]);
+        assert_eq!(zone_lb, "inside");
+        assert!((hx_lb - 0.0).abs() < 1e-5 && (hy_lb - 0.0).abs() < 1e-5);
+        assert_eq!(box_lb, [50.0, 50.0, 100.0, 80.0]);
+
+        // Midway inside => smooth un-snapped fractional alignment: x0 = 200 out of travel 300 => halign = 0.5.
+        let (zone_mid, hx_mid, hy_mid, _) =
+            classify_block_dock_zone(layout_ref, [200.0, 160.0, 100.0, 80.0]);
+        assert_eq!(zone_mid, "inside");
+        assert!((hx_mid - 0.5).abs() < 1e-5);
+        assert!((hy_mid - 0.5).abs() < 1e-5);
+
+        // Dragging box center outside right spine [410, 160, 100, 80] (center x=460 > 450) => "right".
+        let (zone_right, _, _, _) = classify_block_dock_zone(layout_ref, [410.0, 160.0, 100.0, 80.0]);
+        assert_eq!(zone_right, "right");
+
+        // Dragging box center outside top spine [200, 320, 100, 80] (center y=360 > 350) => "top".
+        let (zone_top, _, _, _) = classify_block_dock_zone(layout_ref, [200.0, 320.0, 100.0, 80.0]);
+        assert_eq!(zone_top, "top");
     }
 }

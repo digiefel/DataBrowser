@@ -629,6 +629,41 @@ function _apply_plain_inset_bbox!(ax::Makie.Axis, bbox)
     return nothing
 end
 
+function _normalize_grid_spans!(gl::Makie.GridLayout)
+    isempty(gl.content) && return nothing
+    min_r = minimum(c.span.rows.start for c in gl.content)
+    min_c = minimum(c.span.cols.start for c in gl.content)
+    (min_r == 1 && min_c == 1) && return nothing
+    items = [
+        (c.content, c.span.rows .- (min_r - 1), c.span.cols .- (min_c - 1))
+        for c in copy(gl.content)
+    ]
+    for c in copy(gl.content)
+        Makie.GridLayoutBase.remove_from_gridlayout!(c)
+    end
+    Makie.GridLayoutBase.trim!(gl)
+    for (obj, rs, cs) in items
+        gl[rs, cs] = obj
+    end
+    return nothing
+end
+
+function _shift_grid_contents!(gl::Makie.GridLayout, dr::Int, dc::Int)
+    isempty(gl.content) && return nothing
+    items = [
+        (c.content, c.span.rows .+ dr, c.span.cols .+ dc)
+        for c in copy(gl.content)
+    ]
+    for c in copy(gl.content)
+        Makie.GridLayoutBase.remove_from_gridlayout!(c)
+    end
+    Makie.GridLayoutBase.trim!(gl)
+    for (obj, rs, cs) in items
+        gl[rs, cs] = obj
+    end
+    return nothing
+end
+
 function _move_plain_block!(screen::Screen, fig::Makie.Figure, bid::UInt64, kind_str::String, dock::String, halign::Float32, valign::Float32)
     blk = get(screen.id_to_block, bid, nothing)
     isnothing(blk) && return nothing
@@ -651,6 +686,7 @@ function _move_plain_block!(screen::Screen, fig::Makie.Figure, bid::UInt64, kind
     gc = blk.layoutobservables.gridcontent[]
     isnothing(gc) || Makie.GridLayoutBase.remove_from_gridlayout!(gc)
     Makie.GridLayoutBase.trim!(gl)
+    _normalize_grid_spans!(gl)
 
     primary_ax = nothing
     for x in fig.content
@@ -667,24 +703,32 @@ function _move_plain_block!(screen::Screen, fig::Makie.Figure, bid::UInt64, kind
     ax_gc = isnothing(primary_ax) ? nothing : primary_ax.layoutobservables.gridcontent[]
     ax_rows = isnothing(ax_gc) ? (1:1) : ax_gc.span.rows
     ax_cols = isnothing(ax_gc) ? (1:1) : ax_gc.span.cols
-    nrows, ncols = size(gl)
+    if isempty(gl.content)
+        r_lo, r_hi, c_lo, c_hi = 1, 1, 1, 1
+    else
+        r_lo = minimum(c.span.rows.start for c in gl.content)
+        r_hi = maximum(c.span.rows.stop for c in gl.content)
+        c_lo = minimum(c.span.cols.start for c in gl.content)
+        c_hi = maximum(c.span.cols.stop for c in gl.content)
+    end
 
     if dock == "inside"
         hasproperty(blk, :orientation) && (blk.orientation = :vertical)
         blk isa Makie.Colorbar && (blk.vertical = true)
         hasproperty(blk, :tellwidth) && (blk.tellwidth = false)
         hasproperty(blk, :tellheight) && (blk.tellheight = false)
-        hasproperty(blk, :halign) && (blk.halign = clamp(halign, 0.02f0, 0.98f0))
-        hasproperty(blk, :valign) && (blk.valign = clamp(valign, 0.02f0, 0.98f0))
+        hasproperty(blk, :halign) && (blk.halign = clamp(halign, 0.0f0, 1.0f0))
+        hasproperty(blk, :valign) && (blk.valign = clamp(valign, 0.0f0, 1.0f0))
         gl[ax_rows, ax_cols] = blk
     elseif dock == "left"
+        _shift_grid_contents!(gl, 0, 1)
         hasproperty(blk, :orientation) && (blk.orientation = :vertical)
         blk isa Makie.Colorbar && (blk.vertical = true)
         hasproperty(blk, :tellwidth) && (blk.tellwidth = true)
         hasproperty(blk, :tellheight) && (blk.tellheight = false)
         hasproperty(blk, :halign) && (blk.halign = :center)
         hasproperty(blk, :valign) && (blk.valign = :center)
-        gl[1:max(1, nrows), 0] = blk
+        gl[r_lo:r_hi, 1] = blk
     elseif dock == "right"
         hasproperty(blk, :orientation) && (blk.orientation = :vertical)
         blk isa Makie.Colorbar && (blk.vertical = true)
@@ -692,15 +736,16 @@ function _move_plain_block!(screen::Screen, fig::Makie.Figure, bid::UInt64, kind
         hasproperty(blk, :tellheight) && (blk.tellheight = false)
         hasproperty(blk, :halign) && (blk.halign = :center)
         hasproperty(blk, :valign) && (blk.valign = :center)
-        gl[1:max(1, nrows), ncols + 1] = blk
+        gl[r_lo:r_hi, c_hi + 1] = blk
     elseif dock == "top"
+        _shift_grid_contents!(gl, 1, 0)
         hasproperty(blk, :tellwidth) && (blk.tellwidth = false)
         hasproperty(blk, :tellheight) && (blk.tellheight = true)
         hasproperty(blk, :orientation) && (blk.orientation = :horizontal)
         blk isa Makie.Colorbar && (blk.vertical = false)
         hasproperty(blk, :halign) && (blk.halign = :center)
         hasproperty(blk, :valign) && (blk.valign = :center)
-        gl[0, 1:max(1, ncols)] = blk
+        gl[1, c_lo:c_hi] = blk
     elseif dock == "bottom"
         hasproperty(blk, :tellwidth) && (blk.tellwidth = false)
         hasproperty(blk, :tellheight) && (blk.tellheight = true)
@@ -708,7 +753,7 @@ function _move_plain_block!(screen::Screen, fig::Makie.Figure, bid::UInt64, kind
         blk isa Makie.Colorbar && (blk.vertical = false)
         hasproperty(blk, :halign) && (blk.halign = :center)
         hasproperty(blk, :valign) && (blk.valign = :center)
-        gl[nrows + 1, 1:max(1, ncols)] = blk
+        gl[r_hi + 1, c_lo:c_hi] = blk
     end
     Makie.GridLayoutBase.trim!(gl)
     Makie.GridLayoutBase.update!(fig.layout)

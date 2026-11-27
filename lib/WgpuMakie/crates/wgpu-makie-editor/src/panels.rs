@@ -302,18 +302,40 @@ pub fn draw_editor_panel(
 
     if let Some(err) = model.doc.as_ref().and_then(|d| d.error.clone()) {
         if model.dismissed_error.as_deref() != Some(err.as_str()) {
+            let panel_w = (ui.available_width() - 16.0).max(120.0);
             egui::Frame::group(ui.style())
                 .fill(egui::Color32::from_rgba_unmultiplied(180, 40, 40, 35))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(220, 80, 80, 140),
+                ))
                 .show(ui, |ui| {
+                    ui.set_width(panel_w);
                     ui.horizontal(|ui| {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(220, 70, 70),
-                            format!("Invalid input: {err}"),
+                        ui.label(
+                            egui::RichText::new("Could not apply")
+                                .color(egui::Color32::from_rgb(240, 110, 110))
+                                .small()
+                                .strong(),
                         );
-                        if ui.small_button("×").on_hover_text("Dismiss error").clicked() {
-                            model.dismissed_error = Some(err);
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .small_button("Dismiss")
+                                .on_hover_text("Hide this message")
+                                .clicked()
+                            {
+                                model.dismissed_error = Some(err.clone());
+                            }
+                        });
                     });
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&err)
+                                .color(egui::Color32::from_rgb(235, 135, 135))
+                                .small(),
+                        )
+                        .wrap(),
+                    );
                 });
         }
     }
@@ -2576,7 +2598,48 @@ pub fn draw_canvas_overlays(
     }
     if let Some(br) = manip.preview_block_px {
         let r = to_egui_rect(br);
-        painter.rect_stroke(r, 2.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 140, 40)), egui::StrokeKind::Inside);
+        let is_inside = manip.preview_dock_zone.as_deref() == Some("inside");
+        let stroke_col = if is_inside {
+            egui::Color32::from_rgb(55, 165, 95)
+        } else {
+            egui::Color32::from_rgb(255, 140, 40)
+        };
+        painter.rect_stroke(r, 2.0, egui::Stroke::new(2.0, stroke_col), egui::StrokeKind::Inside);
+        if let Some(zone) = &manip.preview_dock_zone {
+            let label = match zone.as_str() {
+                "inside" => "Inside",
+                "left" => "Dock Left",
+                "right" => "Dock Right",
+                "top" => "Dock Top",
+                "bottom" => "Dock Bottom",
+                other => other,
+            };
+            let galley = painter.layout_no_wrap(
+                label.to_string(),
+                egui::FontId::proportional(11.0),
+                egui::Color32::WHITE,
+            );
+            let pad = egui::vec2(6.0, 2.0);
+            let pill_size = galley.size() + pad * 2.0;
+            let raw_y = if r.min.y - pill_size.y - 4.0 >= plot_rect_pts.min.y {
+                r.min.y - pill_size.y - 4.0
+            } else {
+                r.max.y + 4.0
+            };
+            let pill_min = egui::pos2(
+                (r.center().x - 0.5 * pill_size.x).clamp(
+                    plot_rect_pts.min.x + 2.0,
+                    (plot_rect_pts.max.x - pill_size.x - 2.0).max(plot_rect_pts.min.x + 2.0),
+                ),
+                raw_y.clamp(
+                    plot_rect_pts.min.y + 2.0,
+                    (plot_rect_pts.max.y - pill_size.y - 2.0).max(plot_rect_pts.min.y + 2.0),
+                ),
+            );
+            let pill_rect = egui::Rect::from_min_size(pill_min, pill_size);
+            painter.rect_filled(pill_rect, 3.0, stroke_col);
+            painter.galley(pill_min + pad, galley, egui::Color32::WHITE);
+        }
     }
     if let Some((p0, p1)) = manip.preview_line_px {
         let ep0 = to_egui_pt(p0);

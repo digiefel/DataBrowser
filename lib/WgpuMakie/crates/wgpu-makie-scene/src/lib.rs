@@ -12,9 +12,9 @@ pub use camera::{
 pub use decimate::{raw_x_range, LineLod, ScatterLod};
 pub use inspector::format_tooltip;
 pub use manipulate::{
-    classify_dock_zone, compute_brush, data_to_pixel, pixel_to_data, pixel_to_relative,
-    relative_to_pixel, AnnHandleKind, AnnotationHandleVisual, BrushSummary, DirectManipController,
-    DragTarget, ManipOutcome, ToolMode,
+    classify_block_dock_zone, classify_dock_zone, compute_brush, data_to_pixel, pixel_to_data,
+    pixel_to_relative, relative_to_pixel, AnnHandleKind, AnnotationHandleVisual, BrushSummary,
+    DirectManipController, DragTarget, ManipOutcome, ToolMode,
 };
 pub use scene::{
     effective_light_dir, resolve_scene_lights, space_matrices, PlotEntry, ResolvedLights,

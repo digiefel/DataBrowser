@@ -157,9 +157,7 @@ impl EditorModel {
                 }
                 // Drop drafts for properties whose server values settled so fresh snapshots display cleanly.
                 self.drafts.clear();
-                if state.error != self.dismissed_error {
-                    self.dismissed_error = None;
-                }
+                self.dismissed_error = None;
                 self.resolve_pending_undo_bind(state);
                 self.doc = Some(state.clone());
                 true
