@@ -16,10 +16,22 @@ cd lib/WgpuMakie/crates && cargo build --release --bin wgpu-makie-viewer
 - `02_3d_surface_mesh.jl`: 3D shaded surface, mesh, and instanced `meshscatter!`.
 - `03_heatmap_image.jl`: Colormapped `heatmap!` with a colorbar and RGBA `image!`.
 - `04_grafico_quickstart.jl`: Grammar-of-graphics `Grafico.@plot` rendered by `WgpuMakie`.
+- `05_live_editor.jl`: `Grafico.EditablePlot` with the `ƒ` live expression editor and `copy_code`.
+- `06_10m_points_lod.jl`: 10,000,000-point monotonic-X curve rendered via M4 spike-preserving decimation.
+- `07_live_streaming_60hz.jl`: 2-channel `Observable` waveform and peak marker streaming benchmark (`--frames N`).
+- `08_linked_axes_and_3d_compose.jl`: Composed figure with linked linear and `log10` 2D axes, colorbar, and 3D `Axis3` scene.
 
 ## Running
 
 ```bash
 julia --project=lib/WgpuMakie lib/WgpuMakie/examples/01_lines_scatter_2d.jl
 julia --project=lib/WgpuMakie lib/WgpuMakie/examples/01_lines_scatter_2d.jl --save /tmp/01.png
+```
+
+## WebAssembly Viewer
+
+Build the WebAssembly bundle and serve `lib/WgpuMakie/web/index.html` alongside `wasm-pack` output when targeting a browser or Tauri WebView:
+
+```bash
+cd lib/WgpuMakie/crates && cargo build --release --target wasm32-unknown-unknown -p wgpu-makie-web
 ```

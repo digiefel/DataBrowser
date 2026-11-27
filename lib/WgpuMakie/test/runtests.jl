@@ -286,4 +286,44 @@ end
         ))
         close(pscr)
     end
+
+    @testset "High-throughput streaming & large-N LOD rendering" begin
+        WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
+
+        # 1) Large-N (>100k) monotonic-X line triggers Rust M4 LOD builder and preserves spikes
+        n_lod = 200_000
+        xs_lod = collect(Float32, range(0.0f0, 100.0f0; length = n_lod))
+        ys_lod = sin.(xs_lod .* 0.5f0)
+        ys_lod[50_000] = 6.0f0
+        ys_lod[150_000] = -6.0f0
+        fig_lod = Figure(size = (480, 240))
+        ax_lod = Axis(fig_lod[1, 1])
+        lines!(ax_lod, xs_lod, ys_lod; color = :royalblue, linewidth = 2)
+        ylims!(ax_lod, -7.0, 7.0)
+        img_lod = Makie.colorbuffer(fig_lod; update = true)
+        @test size(img_lod) == (240, 480)
+        @test count(c -> c.r < 0.4 && c.b > 0.6, img_lod) > 100
+
+        # 2) 60-frame Observable streaming updates produce distinct changing renders cleanly
+        n_stream = 1024
+        xs_s = collect(Float32, range(0.0f0, 2.0f0 * Float32(pi); length = n_stream))
+        pts_obs = Observable(Point2f.(xs_s, sin.(xs_s)))
+        fig_s = Figure(size = (320, 200))
+        ax_s = Axis(fig_s[1, 1])
+        lines!(ax_s, pts_obs; color = :crimson, linewidth = 3)
+        ylims!(ax_s, -1.5, 1.5)
+        img_start = copy(Makie.colorbuffer(fig_s; update = true))
+        for frame_i in 1:60
+            phase = Float32(frame_i) * 0.1f0
+            buf = pts_obs.val
+            for j in eachindex(xs_s)
+                buf[j] = Point2f(xs_s[j], sin(xs_s[j] + phase))
+            end
+            notify(pts_obs)
+            Makie.colorbuffer(fig_s; update = true)
+        end
+        img_end = Makie.colorbuffer(fig_s; update = true)
+        @test size(img_end) == (200, 320)
+        @test img_start != img_end
+    end
 end
