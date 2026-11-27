@@ -793,10 +793,10 @@ function ensure_editable!(fig::Makie.Figure)
         decl[] = value
     end
     Makie.on(fig.scene, ep.theme_obs) do th
-        _apply_figure_theme!(fig, th)
+        _apply_figure_theme!(fig, th; legend_overrides = _eval_legend_from_doc(ep.doc))
     end
     decl[] = ep.compiled[]
-    ep.theme_obs[] === nothing || _apply_figure_theme!(fig, ep.theme_obs[])
+    ep.theme_obs[] === nothing || _apply_figure_theme!(fig, ep.theme_obs[]; legend_overrides = _eval_legend_from_doc(ep.doc))
     fig.attributes[:_grafico_editable] = ep
     return ep
 end
@@ -1708,6 +1708,22 @@ function _find_layer_target(ep::EditablePlot, layer_id::Int)
     error("Layer id $layer_id not found in EditablePlot")
 end
 
+function _with_doc_rollback!(f, ep::EditablePlot)
+    prev_doc = deepcopy(ep.doc)
+    prev_struct = ep.structure_dirty
+    prev_map = ep.mapping_dirty
+    prev_rev = ep.revision
+    try
+        return f()
+    catch
+        ep.doc = prev_doc
+        ep.structure_dirty = prev_struct
+        ep.mapping_dirty = prev_map
+        ep.revision = prev_rev
+        rethrow()
+    end
+end
+
 """
     set_visual!(ep::EditablePlot, layer_id::Int; kwargs...) -> EditablePlot
 
@@ -1715,19 +1731,21 @@ Set `visual` keyword arguments on `layer_id` in `ep`. Existing non-semantic `Obs
 visual keys update in place without recompiling analyses.
 """
 function set_visual!(ep::EditablePlot, layer_id::Int; kwargs...)
-    tid, vk, _ = _find_layer_target(ep, layer_id)
-    needs_recompile = false
-    obs_map = get!(Dict{Symbol,Makie.Observable{Any}}, ep.visual_obs, tid)
-    for (k, val) in kwargs
-        vk[k] = _entry_value_from_runtime(val)
-        if k in _SEMANTIC_VISUAL_KEYS || !haskey(obs_map, k)
-            needs_recompile = true
-        else
-            obs_map[k][] = val
+    return _with_doc_rollback!(ep) do
+        tid, vk, _ = _find_layer_target(ep, layer_id)
+        needs_recompile = false
+        obs_map = get!(Dict{Symbol,Makie.Observable{Any}}, ep.visual_obs, tid)
+        for (k, val) in kwargs
+            vk[k] = _entry_value_from_runtime(val)
+            if k in _SEMANTIC_VISUAL_KEYS || !haskey(obs_map, k)
+                needs_recompile = true
+            else
+                obs_map[k][] = val
+            end
         end
+        needs_recompile && _recompile!(ep)
+        return ep
     end
-    needs_recompile && _recompile!(ep)
-    return ep
 end
 
 """
@@ -1736,10 +1754,12 @@ end
 Remove a `visual` keyword argument from `layer_id` in `ep`.
 """
 function remove_visual!(ep::EditablePlot, layer_id::Int, key::Symbol)
-    tid, vk, _ = _find_layer_target(ep, layer_id)
-    delete!(vk, key)
-    haskey(ep.visual_obs, tid) && delete!(ep.visual_obs[tid], key)
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        tid, vk, _ = _find_layer_target(ep, layer_id)
+        delete!(vk, key)
+        haskey(ep.visual_obs, tid) && delete!(ep.visual_obs[tid], key)
+        return _recompile!(ep)
+    end
 end
 
 function _promote_header_to_block!(ep::EditablePlot)
@@ -1777,11 +1797,13 @@ end
 Show or hide `layer_id` in `ep` (corresponding to `@invisible` in code export).
 """
 function set_layer_visible!(ep::EditablePlot, layer_id::Int, visible::Bool)
-    _promote_header_to_block!(ep)
-    _, _, layer = _find_layer_target(ep, layer_id)
-    layer === nothing && error("Cannot toggle visibility of layer $layer_id")
-    layer.visible = visible
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        _promote_header_to_block!(ep)
+        _, _, layer = _find_layer_target(ep, layer_id)
+        layer === nothing && error("Cannot toggle visibility of layer $layer_id")
+        layer.visible = visible
+        return _recompile!(ep)
+    end
 end
 
 """
@@ -1790,14 +1812,16 @@ end
 Change the Makie plot type (`Scatter`, `Lines`, or a string expression) of `layer_id`.
 """
 function set_layer_plottype!(ep::EditablePlot, layer_id::Int, plottype::Union{AbstractString,Type})
-    pt_str = plottype isa Type ? _plottype_name(plottype) : String(plottype)
-    if layer_id == 0 || (!ep.doc.has_block && isempty(ep.doc.layers))
-        ep.doc.header_plottype_expr = pt_str
-    else
-        _, _, layer = _find_layer_target(ep, layer_id)
-        layer.plottype_expr = pt_str
+    return _with_doc_rollback!(ep) do
+        pt_str = plottype isa Type ? _plottype_name(plottype) : String(plottype)
+        if layer_id == 0 || (!ep.doc.has_block && isempty(ep.doc.layers))
+            ep.doc.header_plottype_expr = pt_str
+        else
+            _, _, layer = _find_layer_target(ep, layer_id)
+            layer.plottype_expr = pt_str
+        end
+        return _recompile!(ep)
     end
-    return _recompile!(ep)
 end
 
 """
@@ -1814,24 +1838,26 @@ function add_layer!(
     visual::Dict{Symbol,EntryValue}=Dict{Symbol,EntryValue}(),
     data::Union{Nothing,AbstractString}=nothing,
 )::Int
-    _promote_header_to_block!(ep)
-    ep.structure_dirty = true
-    id = ep.doc.next_layer_id
-    ep.doc.next_layer_id += 1
-    pt_str = plottype isa Type ? _plottype_name(plottype) : String(plottype)
-    push!(ep.doc.layers, LayerSpec(
-        id,
-        nothing,
-        visible,
-        data === nothing ? nothing : String(data),
-        copy(mapping),
-        analysis === nothing ? nothing : String(analysis),
-        pt_str,
-        copy(visual),
-        false,
-    ))
-    _recompile!(ep)
-    return id
+    return _with_doc_rollback!(ep) do
+        _promote_header_to_block!(ep)
+        ep.structure_dirty = true
+        id = ep.doc.next_layer_id
+        ep.doc.next_layer_id += 1
+        pt_str = plottype isa Type ? _plottype_name(plottype) : String(plottype)
+        push!(ep.doc.layers, LayerSpec(
+            id,
+            nothing,
+            visible,
+            data === nothing ? nothing : String(data),
+            copy(mapping),
+            analysis === nothing ? nothing : String(analysis),
+            pt_str,
+            copy(visual),
+            false,
+        ))
+        _recompile!(ep)
+        return id
+    end
 end
 
 """
@@ -1840,12 +1866,14 @@ end
 Remove `layer_id` from `ep`.
 """
 function remove_layer!(ep::EditablePlot, layer_id::Int)
-    idx = findfirst(l -> l.id == layer_id, ep.doc.layers)
-    idx === nothing && error("Layer id $layer_id not found")
-    ep.structure_dirty = true
-    deleteat!(ep.doc.layers, idx)
-    delete!(ep.visual_obs, layer_id)
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        idx = findfirst(l -> l.id == layer_id, ep.doc.layers)
+        idx === nothing && error("Layer id $layer_id not found")
+        ep.structure_dirty = true
+        deleteat!(ep.doc.layers, idx)
+        delete!(ep.visual_obs, layer_id)
+        return _recompile!(ep)
+    end
 end
 
 """
@@ -1861,28 +1889,30 @@ function set_mapping!(
     label::Union{Nothing,AbstractString}=nothing,
     transform::Union{Nothing,AbstractString}=nothing,
 )
-    target = if layer_id === nothing || layer_id == 0
-        ep.doc.header_mapping
-    else
-        _, _, layer = _find_layer_target(ep, layer_id)
-        layer.mapping
+    return _with_doc_rollback!(ep) do
+        target = if layer_id === nothing || layer_id == 0
+            ep.doc.header_mapping
+        else
+            _, _, layer = _find_layer_target(ep, layer_id)
+            layer.mapping
+        end
+        entry = MappingEntry(
+            role,
+            String(value_expr),
+            label === nothing ? nothing : String(label),
+            transform === nothing ? nothing : String(transform),
+        )
+        _eval_mapping_entry(ep.doc, entry)
+        idx = findfirst(m -> m.role === role, target)
+        if idx === nothing
+            push!(target, entry)
+        else
+            target[idx] = entry
+        end
+        ep.mapping_dirty = true
+        ep.structure_dirty = !_can_patch_mappings_in_julia(ep)
+        return _recompile!(ep)
     end
-    entry = MappingEntry(
-        role,
-        String(value_expr),
-        label === nothing ? nothing : String(label),
-        transform === nothing ? nothing : String(transform),
-    )
-    _eval_mapping_entry(ep.doc, entry)
-    idx = findfirst(m -> m.role === role, target)
-    if idx === nothing
-        push!(target, entry)
-    else
-        target[idx] = entry
-    end
-    ep.mapping_dirty = true
-    ep.structure_dirty = !_can_patch_mappings_in_julia(ep)
-    return _recompile!(ep)
 end
 
 """
@@ -1891,16 +1921,18 @@ end
 Remove mapping `role` from the header (`layer_id === nothing`) or from a layer.
 """
 function remove_mapping!(ep::EditablePlot, layer_id::Union{Nothing,Int}, role::Symbol)
-    target = if layer_id === nothing || layer_id == 0
-        ep.doc.header_mapping
-    else
-        _, _, layer = _find_layer_target(ep, layer_id)
-        layer.mapping
+    return _with_doc_rollback!(ep) do
+        target = if layer_id === nothing || layer_id == 0
+            ep.doc.header_mapping
+        else
+            _, _, layer = _find_layer_target(ep, layer_id)
+            layer.mapping
+        end
+        filter!(m -> m.role !== role, target)
+        ep.mapping_dirty = true
+        ep.structure_dirty = !_can_patch_mappings_in_julia(ep)
+        return _recompile!(ep)
     end
-    filter!(m -> m.role !== role, target)
-    ep.mapping_dirty = true
-    ep.structure_dirty = !_can_patch_mappings_in_julia(ep)
-    return _recompile!(ep)
 end
 
 """
@@ -1909,15 +1941,17 @@ end
 Set or clear the analysis expression on `layer_id`.
 """
 function set_analysis!(ep::EditablePlot, layer_id::Int, analysis_expr::Union{Nothing,AbstractString})
-    ep.structure_dirty = true
-    val = analysis_expr === nothing ? nothing : String(analysis_expr)
-    if layer_id == 0 || (!ep.doc.has_block && isempty(ep.doc.layers))
-        ep.doc.header_analysis_expr = val
-    else
-        _, _, layer = _find_layer_target(ep, layer_id)
-        layer.analysis_expr = val
+    return _with_doc_rollback!(ep) do
+        ep.structure_dirty = true
+        val = analysis_expr === nothing ? nothing : String(analysis_expr)
+        if layer_id == 0 || (!ep.doc.has_block && isempty(ep.doc.layers))
+            ep.doc.header_analysis_expr = val
+        else
+            _, _, layer = _find_layer_target(ep, layer_id)
+            layer.analysis_expr = val
+        end
+        return _recompile!(ep)
     end
-    return _recompile!(ep)
 end
 
 """
@@ -1926,11 +1960,13 @@ end
 Set scale attributes for `role` in `ep`.
 """
 function set_scale!(ep::EditablePlot, role::Symbol; kwargs...)
-    inner = get!(Dict{Symbol,EntryValue}, ep.doc.scales, role)
-    for (k, v) in kwargs
-        inner[k] = _entry_value_from_runtime(v)
+    return _with_doc_rollback!(ep) do
+        inner = get!(Dict{Symbol,EntryValue}, ep.doc.scales, role)
+        for (k, v) in kwargs
+            inner[k] = _entry_value_from_runtime(v)
+        end
+        return _recompile!(ep)
     end
-    return _recompile!(ep)
 end
 
 """
@@ -1939,13 +1975,15 @@ end
 Remove a scale attribute or the entire scale entry for `role` in `ep`.
 """
 function remove_scale!(ep::EditablePlot, role::Symbol, key::Union{Nothing,Symbol}=nothing)
-    if key === nothing
-        delete!(ep.doc.scales, role)
-    elseif haskey(ep.doc.scales, role)
-        delete!(ep.doc.scales[role], key)
-        isempty(ep.doc.scales[role]) && delete!(ep.doc.scales, role)
+    return _with_doc_rollback!(ep) do
+        if key === nothing
+            delete!(ep.doc.scales, role)
+        elseif haskey(ep.doc.scales, role)
+            delete!(ep.doc.scales[role], key)
+            isempty(ep.doc.scales[role]) && delete!(ep.doc.scales, role)
+        end
+        return _recompile!(ep)
     end
-    return _recompile!(ep)
 end
 
 """
@@ -1955,32 +1993,34 @@ Update coordinate settings (`x`, `y`, `aspect`) on `ep`. Attributes already boun
 `Observable`s update the axis in place without recompiling analyses.
 """
 function set_coord!(ep::EditablePlot; kwargs...)
-    isempty(ep.doc.coords) && push!(ep.doc.coords, Dict{Symbol,Any}())
-    step = ep.doc.coords[end]
-    needs_recompile = false
-    for (k, v) in kwargs
-        if k in (:x, :y) && v isa NamedTuple
-            sub = get!(Dict{Symbol,EntryValue}, step, k)
-            for (subk, subv) in pairs(v)
-                sub[subk] = _entry_value_from_runtime(subv)
-                ckey = Symbol(k, subk)
-                if haskey(ep.coord_obs, ckey)
-                    ep.coord_obs[ckey][] = subv
+    return _with_doc_rollback!(ep) do
+        isempty(ep.doc.coords) && push!(ep.doc.coords, Dict{Symbol,Any}())
+        step = ep.doc.coords[end]
+        needs_recompile = false
+        for (k, v) in kwargs
+            if k in (:x, :y) && v isa NamedTuple
+                sub = get!(Dict{Symbol,EntryValue}, step, k)
+                for (subk, subv) in pairs(v)
+                    sub[subk] = _entry_value_from_runtime(subv)
+                    ckey = Symbol(k, subk)
+                    if haskey(ep.coord_obs, ckey)
+                        ep.coord_obs[ckey][] = subv
+                    else
+                        needs_recompile = true
+                    end
+                end
+            else
+                step[k] = _entry_value_from_runtime(v)
+                if haskey(ep.coord_obs, k)
+                    ep.coord_obs[k][] = v
                 else
                     needs_recompile = true
                 end
             end
-        else
-            step[k] = _entry_value_from_runtime(v)
-            if haskey(ep.coord_obs, k)
-                ep.coord_obs[k][] = v
-            else
-                needs_recompile = true
-            end
         end
+        needs_recompile && _recompile!(ep)
+        return ep
     end
-    needs_recompile && _recompile!(ep)
-    return ep
 end
 
 """
@@ -1989,10 +2029,16 @@ end
 Update legend settings on `ep`.
 """
 function set_legend!(ep::EditablePlot; kwargs...)
-    for (k, v) in kwargs
-        ep.doc.legend[k] = _entry_value_from_runtime(v)
+    return _with_doc_rollback!(ep) do
+        for (k, v) in kwargs
+            ep.doc.legend[k] = _entry_value_from_runtime(v)
+        end
+        if haskey(kwargs, :position) && kwargs[:position] !== :inside
+            haskey(kwargs, :halign) || delete!(ep.doc.legend, :halign)
+            haskey(kwargs, :valign) || delete!(ep.doc.legend, :valign)
+        end
+        return _recompile!(ep)
     end
-    return _recompile!(ep)
 end
 
 """
@@ -2001,8 +2047,10 @@ end
 Remove legend setting `key` from `ep`.
 """
 function remove_legend!(ep::EditablePlot, key::Symbol)
-    delete!(ep.doc.legend, key)
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        delete!(ep.doc.legend, key)
+        return _recompile!(ep)
+    end
 end
 
 """
@@ -2011,12 +2059,14 @@ end
 Set the base theme symbol (such as `:dark` or `:default`) and theme settings on `ep`.
 """
 function set_theme!(ep::EditablePlot, base::Union{Nothing,Symbol}=nothing; kwargs...)
-    settings = ep.doc.theme === nothing ? Dict{Symbol,EntryValue}() : copy(ep.doc.theme.settings)
-    for (k, v) in kwargs
-        settings[k] = _entry_value_from_runtime(v)
+    return _with_doc_rollback!(ep) do
+        settings = ep.doc.theme === nothing ? Dict{Symbol,EntryValue}() : copy(ep.doc.theme.settings)
+        for (k, v) in kwargs
+            settings[k] = _entry_value_from_runtime(v)
+        end
+        ep.doc.theme = ThemeSpec(base, settings)
+        return _recompile!(ep)
     end
-    ep.doc.theme = ThemeSpec(base, settings)
-    return _recompile!(ep)
 end
 
 """
@@ -2025,14 +2075,16 @@ end
 Move `layer_id` earlier (`delta < 0`) or later (`delta > 0`) in `ep`'s layer list.
 """
 function move_layer!(ep::EditablePlot, layer_id::Int, delta::Int)
-    idx = findfirst(l -> l.id == layer_id, ep.doc.layers)
-    idx === nothing && error("Layer id $layer_id not found")
-    target = clamp(idx + delta, 1, length(ep.doc.layers))
-    target == idx && return ep
-    ep.structure_dirty = true
-    layer = popat!(ep.doc.layers, idx)
-    insert!(ep.doc.layers, target, layer)
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        idx = findfirst(l -> l.id == layer_id, ep.doc.layers)
+        idx === nothing && error("Layer id $layer_id not found")
+        target = clamp(idx + delta, 1, length(ep.doc.layers))
+        target == idx && return ep
+        ep.structure_dirty = true
+        layer = popat!(ep.doc.layers, idx)
+        insert!(ep.doc.layers, target, layer)
+        return _recompile!(ep)
+    end
 end
 
 function _validate_and_parse_expr(doc::PlotDocument, expr_text::AbstractString)
@@ -2049,15 +2101,17 @@ Evaluate `expr_text` and assign visual attribute `key` on `layer_id` while keepi
 verbatim for [`to_code`](@ref). Updates existing bound attributes in place without recompiling.
 """
 function set_visual_expr!(ep::EditablePlot, layer_id::Int, key::Symbol, expr_text::AbstractString)
-    val, ev = _validate_and_parse_expr(ep.doc, expr_text)
-    tid, vk, _ = _find_layer_target(ep, layer_id)
-    vk[key] = ev
-    obs_map = get!(Dict{Symbol,Makie.Observable{Any}}, ep.visual_obs, tid)
-    if key in _SEMANTIC_VISUAL_KEYS || !haskey(obs_map, key)
-        return _recompile!(ep)
-    else
-        obs_map[key][] = val
-        return ep
+    return _with_doc_rollback!(ep) do
+        val, ev = _validate_and_parse_expr(ep.doc, expr_text)
+        tid, vk, _ = _find_layer_target(ep, layer_id)
+        vk[key] = ev
+        obs_map = get!(Dict{Symbol,Makie.Observable{Any}}, ep.visual_obs, tid)
+        if key in _SEMANTIC_VISUAL_KEYS || !haskey(obs_map, key)
+            return _recompile!(ep)
+        else
+            obs_map[key][] = val
+            return ep
+        end
     end
 end
 
@@ -2069,35 +2123,37 @@ Evaluate `expr_text` and assign coordinate setting `key` (`:xscale`, `:yscale`, 
 verbatim for [`to_code`](@ref).
 """
 function set_coord_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString)
-    val, ev = _validate_and_parse_expr(ep.doc, expr_text)
-    isempty(ep.doc.coords) && push!(ep.doc.coords, Dict{Symbol,Any}())
-    step = ep.doc.coords[end]
-    axis_split = Dict{Symbol,Tuple{Symbol,Symbol}}(
-        :xscale => (:x, :scale),
-        :xreversed => (:x, :reversed),
-        :xlimits => (:x, :limits),
-        :yscale => (:y, :scale),
-        :yreversed => (:y, :reversed),
-        :ylimits => (:y, :limits),
-    )
-    if haskey(axis_split, key)
-        axis_key, sub_key = axis_split[key]
-        sub = get!(Dict{Symbol,EntryValue}, step, axis_key)
-        sub[sub_key] = ev
-        if haskey(ep.coord_obs, key)
-            ep.coord_obs[key][] = val
-            return ep
+    return _with_doc_rollback!(ep) do
+        val, ev = _validate_and_parse_expr(ep.doc, expr_text)
+        isempty(ep.doc.coords) && push!(ep.doc.coords, Dict{Symbol,Any}())
+        step = ep.doc.coords[end]
+        axis_split = Dict{Symbol,Tuple{Symbol,Symbol}}(
+            :xscale => (:x, :scale),
+            :xreversed => (:x, :reversed),
+            :xlimits => (:x, :limits),
+            :yscale => (:y, :scale),
+            :yreversed => (:y, :reversed),
+            :ylimits => (:y, :limits),
+        )
+        if haskey(axis_split, key)
+            axis_key, sub_key = axis_split[key]
+            sub = get!(Dict{Symbol,EntryValue}, step, axis_key)
+            sub[sub_key] = ev
+            if haskey(ep.coord_obs, key)
+                ep.coord_obs[key][] = val
+                return ep
+            end
+            return _recompile!(ep)
+        elseif key in (:aspect, :points)
+            step[key] = ev
+            if key === :aspect && haskey(ep.coord_obs, :aspect)
+                ep.coord_obs[:aspect][] = val
+                return ep
+            end
+            return _recompile!(ep)
+        else
+            throw(ArgumentError("Unsupported coordinate setting: $key"))
         end
-        return _recompile!(ep)
-    elseif key in (:aspect, :points)
-        step[key] = ev
-        if key === :aspect && haskey(ep.coord_obs, :aspect)
-            ep.coord_obs[:aspect][] = val
-            return ep
-        end
-        return _recompile!(ep)
-    else
-        throw(ArgumentError("Unsupported coordinate setting: $key"))
     end
 end
 
@@ -2108,10 +2164,12 @@ Evaluate `expr_text` and assign scale attribute `key` for `role` while keeping `
 verbatim for [`to_code`](@ref).
 """
 function set_scale_expr!(ep::EditablePlot, role::Symbol, key::Symbol, expr_text::AbstractString)
-    _, ev = _validate_and_parse_expr(ep.doc, expr_text)
-    inner = get!(Dict{Symbol,EntryValue}, ep.doc.scales, role)
-    inner[key] = ev
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+        inner = get!(Dict{Symbol,EntryValue}, ep.doc.scales, role)
+        inner[key] = ev
+        return _recompile!(ep)
+    end
 end
 
 """
@@ -2121,12 +2179,39 @@ Assign legend setting `key` using `expr_text` while keeping `expr_text` verbatim
 [`to_code`](@ref).
 """
 function set_legend_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString)
-    parsed = Meta.parse(expr_text)
-    if !(key in LEGEND_ROLES)
-        _eval_in_module(ep.doc.eval_module, parsed)
+    return _with_doc_rollback!(ep) do
+        parsed = Meta.parse(expr_text)
+        val = nothing
+        if !(key in LEGEND_ROLES)
+            val = _eval_in_module(ep.doc.eval_module, parsed)
+        end
+        ep.doc.legend[key] = EntryValue(String(strip(expr_text)), _is_literal_expr(parsed))
+        if key === :position && val !== :inside
+            delete!(ep.doc.legend, :halign)
+            delete!(ep.doc.legend, :valign)
+        end
+        return _recompile!(ep)
     end
-    ep.doc.legend[key] = EntryValue(String(strip(expr_text)), _is_literal_expr(parsed))
-    return _recompile!(ep)
+end
+
+"""
+    set_legend_position!(ep::EditablePlot, dock::Symbol; halign=nothing, valign=nothing) -> EditablePlot
+
+Move the legend to `dock` (`:right`, `:left`, `:top`, `:bottom`, or `:inside`) in one
+recompilation, setting `halign` and `valign` for `:inside` and clearing them for outside docks.
+"""
+function set_legend_position!(ep::EditablePlot, dock::Symbol; halign=nothing, valign=nothing)
+    return _with_doc_rollback!(ep) do
+        ep.doc.legend[:position] = EntryValue(":$dock", true)
+        if dock === :inside
+            halign === nothing || (ep.doc.legend[:halign] = EntryValue(string(round(Float64(halign); digits=3)), true))
+            valign === nothing || (ep.doc.legend[:valign] = EntryValue(string(round(Float64(valign); digits=3)), true))
+        else
+            delete!(ep.doc.legend, :halign)
+            delete!(ep.doc.legend, :valign)
+        end
+        return _recompile!(ep)
+    end
 end
 
 """
@@ -2141,30 +2226,32 @@ function set_theme_expr!(
     key::Union{Nothing,Symbol}=nothing,
     expr_text::Union{Nothing,AbstractString}=nothing,
 )
-    prev_base = ep.doc.theme === nothing ? nothing : ep.doc.theme.base
-    new_base = base === :keep ? prev_base : base
-    settings = ep.doc.theme === nothing ? Dict{Symbol,EntryValue}() : copy(ep.doc.theme.settings)
-    if key !== nothing
-        if expr_text === nothing || isempty(strip(expr_text))
-            delete!(settings, key)
-        else
-            _, ev = _validate_and_parse_expr(ep.doc, expr_text)
-            settings[key] = ev
+    return _with_doc_rollback!(ep) do
+        prev_base = ep.doc.theme === nothing ? nothing : ep.doc.theme.base
+        new_base = base === :keep ? prev_base : base
+        settings = ep.doc.theme === nothing ? Dict{Symbol,EntryValue}() : copy(ep.doc.theme.settings)
+        if key !== nothing
+            if expr_text === nothing || isempty(strip(expr_text))
+                delete!(settings, key)
+            else
+                _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+                settings[key] = ev
+            end
         end
-    end
-    if new_base === nothing && isempty(settings)
-        ep.doc.theme = nothing
-    else
-        ep.doc.theme = ThemeSpec(new_base, settings)
-    end
-    if key === nothing || key in (:fontsize, :textcolor, :backgroundcolor)
-        ep.revision += 1
-        ep.theme_obs[] = _eval_theme_from_doc(ep.doc)
+        if new_base === nothing && isempty(settings)
+            ep.doc.theme = nothing
+        else
+            ep.doc.theme = ThemeSpec(new_base, settings)
+        end
+        if key === nothing || key in (:fontsize, :textcolor, :backgroundcolor)
+            ep.revision += 1
+            ep.theme_obs[] = _eval_theme_from_doc(ep.doc)
+            return ep
+        end
+        _recompile!(ep)
+        ep.theme_obs.val = _eval_theme_from_doc(ep.doc)
         return ep
     end
-    _recompile!(ep)
-    ep.theme_obs.val = _eval_theme_from_doc(ep.doc)
-    return ep
 end
 
 """
@@ -2196,8 +2283,10 @@ end
 Set or clear the [`InspectorSpec`](@ref) on `ep`.
 """
 function set_inspector!(ep::EditablePlot, spec::Union{Nothing,InspectorSpec})
-    ep.doc.inspector = spec
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        ep.doc.inspector = spec
+        return _recompile!(ep)
+    end
 end
 
 function _find_annotation_doc(ep::EditablePlot, ann_id::Int)::AnnotationDoc
@@ -2234,21 +2323,23 @@ function add_annotation!(
     visible::Bool=true,
     kwargs_exprs::AbstractDict{Symbol,<:AbstractString}=Dict{Symbol,String}(),
 )::Int
-    kind in ANNOTATION_KINDS || throw(ArgumentError("Unsupported annotation kind :$kind"))
-    kw = Dict{Symbol,EntryValue}()
-    for (k, ex) in kwargs_exprs
-        _, ev = _validate_and_parse_expr(ep.doc, ex)
-        kw[k] = ev
+    return _with_doc_rollback!(ep) do
+        kind in ANNOTATION_KINDS || throw(ArgumentError("Unsupported annotation kind :$kind"))
+        kw = Dict{Symbol,EntryValue}()
+        for (k, ex) in kwargs_exprs
+            _, ev = _validate_and_parse_expr(ep.doc, ex)
+            kw[k] = ev
+        end
+        id = ep.doc.next_annotation_id
+        ep.doc.next_annotation_id += 1
+        src = source_expr === nothing ? nothing : String(source_expr)
+        ann_doc = AnnotationDoc(id, kind, String(text), src, visible, kw)
+        push!(ep.doc.annotations, ann_doc)
+        ep.doc.has_block = true
+        src === nothing || (ep.structure_dirty = true)
+        _recompile!(ep)
+        return id
     end
-    id = ep.doc.next_annotation_id
-    ep.doc.next_annotation_id += 1
-    src = source_expr === nothing ? nothing : String(source_expr)
-    ann_doc = AnnotationDoc(id, kind, String(text), src, visible, kw)
-    push!(ep.doc.annotations, ann_doc)
-    ep.doc.has_block = true
-    src === nothing || (ep.structure_dirty = true)
-    _recompile!(ep)
-    return id
 end
 
 function _decode_text_input(expr_text::AbstractString)::String
@@ -2269,22 +2360,24 @@ end
 Update an annotation property (`:text`, `:visible`, or any keyword expression) in place when bound.
 """
 function set_annotation_expr!(ep::EditablePlot, ann_id::Int, key::Symbol, expr_text::AbstractString)
-    ann_doc = _find_annotation_doc(ep, ann_id)
-    if key === :text
-        ann_doc.text = _decode_text_input(expr_text)
-    elseif key === :visible
-        val, _ = _validate_and_parse_expr(ep.doc, expr_text)
-        ann_doc.visible = Bool(val)
-    elseif key === :source_expr
-        ann_doc.source_expr = isempty(strip(expr_text)) ? nothing : String(strip(expr_text))
-        ep.structure_dirty = true
-        return _recompile!(ep)
-    else
-        _, ev = _validate_and_parse_expr(ep.doc, expr_text)
-        ann_doc.kwargs[key] = ev
+    return _with_doc_rollback!(ep) do
+        ann_doc = _find_annotation_doc(ep, ann_id)
+        if key === :text
+            ann_doc.text = _decode_text_input(expr_text)
+        elseif key === :visible
+            val, _ = _validate_and_parse_expr(ep.doc, expr_text)
+            ann_doc.visible = Bool(val)
+        elseif key === :source_expr
+            ann_doc.source_expr = isempty(strip(expr_text)) ? nothing : String(strip(expr_text))
+            ep.structure_dirty = true
+            return _recompile!(ep)
+        else
+            _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+            ann_doc.kwargs[key] = ev
+        end
+        _push_annotation_update!(ep, ann_doc) || _recompile!(ep)
+        return ep
     end
-    _push_annotation_update!(ep, ann_doc) || _recompile!(ep)
-    return ep
 end
 
 """
@@ -2321,11 +2414,13 @@ end
 Remove annotation `ann_id` from `ep`.
 """
 function remove_annotation!(ep::EditablePlot, ann_id::Int)
-    idx = findfirst(a -> a.id == ann_id, ep.doc.annotations)
-    idx === nothing && error("Annotation id $ann_id not found in EditablePlot")
-    deleteat!(ep.doc.annotations, idx)
-    delete!(ep.annotation_obs, ann_id)
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        idx = findfirst(a -> a.id == ann_id, ep.doc.annotations)
+        idx === nothing && error("Annotation id $ann_id not found in EditablePlot")
+        deleteat!(ep.doc.annotations, idx)
+        delete!(ep.annotation_obs, ann_id)
+        return _recompile!(ep)
+    end
 end
 
 """
@@ -2341,20 +2436,22 @@ function add_inset!(
     visible::Bool=true,
     kwargs_exprs::AbstractDict{Symbol,<:AbstractString}=Dict{Symbol,String}(),
 )::Int
-    kw = Dict{Symbol,EntryValue}()
-    kw[:bbox] = _entry_value_from_runtime(ntuple(i -> round(Float64(bbox[i]); digits=4), 4))
-    xlimits === nothing || (kw[:xlimits] = _entry_value_from_runtime((round(Float64(xlimits[1]); sigdigits=5), round(Float64(xlimits[2]); sigdigits=5))))
-    ylimits === nothing || (kw[:ylimits] = _entry_value_from_runtime((round(Float64(ylimits[1]); sigdigits=5), round(Float64(ylimits[2]); sigdigits=5))))
-    for (k, ex) in kwargs_exprs
-        _, ev = _validate_and_parse_expr(ep.doc, ex)
-        kw[k] = ev
+    return _with_doc_rollback!(ep) do
+        kw = Dict{Symbol,EntryValue}()
+        kw[:bbox] = _entry_value_from_runtime(ntuple(i -> round(Float64(bbox[i]); digits=4), 4))
+        xlimits === nothing || (kw[:xlimits] = _entry_value_from_runtime((round(Float64(xlimits[1]); sigdigits=5), round(Float64(xlimits[2]); sigdigits=5))))
+        ylimits === nothing || (kw[:ylimits] = _entry_value_from_runtime((round(Float64(ylimits[1]); sigdigits=5), round(Float64(ylimits[2]); sigdigits=5))))
+        for (k, ex) in kwargs_exprs
+            _, ev = _validate_and_parse_expr(ep.doc, ex)
+            kw[k] = ev
+        end
+        id = ep.doc.next_inset_id
+        ep.doc.next_inset_id += 1
+        push!(ep.doc.insets, InsetDoc(id, visible, kw))
+        ep.doc.has_block = true
+        _recompile!(ep)
+        return id
     end
-    id = ep.doc.next_inset_id
-    ep.doc.next_inset_id += 1
-    push!(ep.doc.insets, InsetDoc(id, visible, kw))
-    ep.doc.has_block = true
-    _recompile!(ep)
-    return id
 end
 
 """
@@ -2363,15 +2460,17 @@ end
 Update an inset attribute expression in `ep`.
 """
 function set_inset_expr!(ep::EditablePlot, inset_id::Int, key::Symbol, expr_text::AbstractString)
-    ins = _find_inset_doc(ep, inset_id)
-    if key === :visible
-        val, _ = _validate_and_parse_expr(ep.doc, expr_text)
-        ins.visible = Bool(val)
-    else
-        _, ev = _validate_and_parse_expr(ep.doc, expr_text)
-        ins.kwargs[key] = ev
+    return _with_doc_rollback!(ep) do
+        ins = _find_inset_doc(ep, inset_id)
+        if key === :visible
+            val, _ = _validate_and_parse_expr(ep.doc, expr_text)
+            ins.visible = Bool(val)
+        else
+            _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+            ins.kwargs[key] = ev
+        end
+        return _recompile!(ep)
     end
-    return _recompile!(ep)
 end
 
 """
@@ -2380,9 +2479,11 @@ end
 Update the normalized `(xmin, xmax, ymin, ymax)` placement box of inset `inset_id`.
 """
 function move_inset!(ep::EditablePlot, inset_id::Int, bbox::NTuple{4,Real})
-    ins = _find_inset_doc(ep, inset_id)
-    ins.kwargs[:bbox] = _entry_value_from_runtime(ntuple(i -> round(Float64(bbox[i]); digits=4), 4))
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        ins = _find_inset_doc(ep, inset_id)
+        ins.kwargs[:bbox] = _entry_value_from_runtime(ntuple(i -> round(Float64(bbox[i]); digits=4), 4))
+        return _recompile!(ep)
+    end
 end
 
 """
@@ -2391,11 +2492,13 @@ end
 Remove inset `inset_id` from `ep`.
 """
 function remove_inset!(ep::EditablePlot, inset_id::Int)
-    idx = findfirst(i -> i.id == inset_id, ep.doc.insets)
-    idx === nothing && error("Inset id $inset_id not found in EditablePlot")
-    deleteat!(ep.doc.insets, idx)
-    delete!(ep.inset_obs, inset_id)
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        idx = findfirst(i -> i.id == inset_id, ep.doc.insets)
+        idx === nothing && error("Inset id $inset_id not found in EditablePlot")
+        deleteat!(ep.doc.insets, idx)
+        delete!(ep.inset_obs, inset_id)
+        return _recompile!(ep)
+    end
 end
 
 """
@@ -2405,10 +2508,12 @@ Set a panel layout property (`:colsizes`, `:rowsizes`, `:colgaps`, `:rowgaps`, `
 on `ep` using `expr_text`.
 """
 function set_layout_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString)
-    _, ev = _validate_and_parse_expr(ep.doc, expr_text)
-    ep.doc.layout_settings[key] = ev
-    ep.doc.has_block = true
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+        ep.doc.layout_settings[key] = ev
+        ep.doc.has_block = true
+        return _recompile!(ep)
+    end
 end
 
 """
@@ -2417,10 +2522,12 @@ end
 Set a colorbar guide property (`:show`, `:position`, `:vertical`, `:label`) on `ep`.
 """
 function set_colorbar_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString)
-    _, ev = _validate_and_parse_expr(ep.doc, expr_text)
-    ep.doc.colorbar[key] = ev
-    ep.doc.has_block = true
-    return _recompile!(ep)
+    return _with_doc_rollback!(ep) do
+        _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+        ep.doc.colorbar[key] = ev
+        ep.doc.has_block = true
+        return _recompile!(ep)
+    end
 end
 
 function spec(ep::EditablePlot, args...; options...)
@@ -2434,9 +2541,9 @@ end
 function figure(ep::EditablePlot, args...; options...)
     fig = _reactive_figure(ep.compiled, args...; options...)
     Makie.on(fig.scene, ep.theme_obs) do th
-        _apply_figure_theme!(fig, th)
+        _apply_figure_theme!(fig, th; legend_overrides = _eval_legend_from_doc(ep.doc))
     end
-    ep.theme_obs[] === nothing || _apply_figure_theme!(fig, ep.theme_obs[])
+    ep.theme_obs[] === nothing || _apply_figure_theme!(fig, ep.theme_obs[]; legend_overrides = _eval_legend_from_doc(ep.doc))
     fig.attributes[:_grafico_editable] = ep
     return fig
 end

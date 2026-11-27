@@ -14,7 +14,7 @@ public document, editable_plot, ensure_editable!, parse_plot_document, parse_plo
 public set_visual!, remove_visual!, set_layer_visible!, set_layer_plottype!, add_layer!, remove_layer!, move_layer!
 public set_mapping!, remove_mapping!, set_analysis!, set_scale!, remove_scale!
 public set_coord!, set_legend!, remove_legend!, set_theme!, set_inspector!
-public set_visual_expr!, set_coord_expr!, set_scale_expr!, set_legend_expr!, set_theme_expr!, available_columns
+public set_visual_expr!, set_coord_expr!, set_scale_expr!, set_legend_expr!, set_legend_position!, set_theme_expr!, available_columns
 public add_annotation!, set_annotation_expr!, move_annotation!, set_annotation_visible!, remove_annotation!
 public add_inset!, set_inset_expr!, move_inset!, remove_inset!, set_layout_expr!, set_colorbar_expr!
 export AbstractMark, CircleMark, RectMark, PolygonMark, LineMark, Segment, TextMark, T, U, R, Style, mark, graphic_mark
@@ -110,18 +110,23 @@ include("portable/compute.jl")
         ep = editable(ordinary)
         figure(ep)
         set_visual_expr!(ep, 1, :markersize, "10")
+        set_visual_expr!(ep, 1, :alpha, "0.6")
         set_visual_expr!(ep, 1, :color, ":crimson")
         set_layer_visible!(ep, 1, false)
         set_layer_visible!(ep, 1, true)
         set_legend_expr!(ep, :show, "false")
-        set_legend_expr!(ep, :position, ":inside")
-        set_legend_expr!(ep, :position, ":right")
+        set_legend_position!(ep, :inside; halign = 0.9, valign = 0.9)
+        set_legend_position!(ep, :right)
         set_legend_expr!(ep, :show, "true")
         set_theme_expr!(ep; base = :dark, key = :fontsize, expr_text = "16")
+        set_theme_expr!(ep; base = :latexfonts)
         set_theme_expr!(ep; base = :black)
         set_theme_expr!(ep; base = nothing)
+        set_coord_expr!(ep, :xscale, "log10")
+        set_coord_expr!(ep, :xscale, "identity")
         set_coord_expr!(ep, :yscale, "log10")
         set_coord_expr!(ep, :yscale, "identity")
+        set_inspector!(ep, inspector(:chip; title = "T", digits = 3))
         available_columns(ep)
         to_code(ep; include_imports = true, include_figure = true)
 

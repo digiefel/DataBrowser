@@ -334,7 +334,8 @@ function _compile_plot(source::Makie.Observable,args...;kwargs...)
         if fig !== nothing
             th = value isa Scaled ? value.theme : nothing
             if th !== nothing || (haskey(fig.attributes, :_grafico_themed) && fig.attributes[:_grafico_themed][])
-                _apply_figure_theme!(fig, th)
+                leg = value isa Scaled ? value.legend : (;)
+                _apply_figure_theme!(fig, th; legend_overrides = leg)
             end
         end
     end)
@@ -423,7 +424,7 @@ function _reactive_figure(plot,args...;figure_kw=(;),figure=(;),kwargs...)
         GC.@preserve compiled nothing
     end
     if plot isa Makie.Observable && plot[] isa Scaled && plot[].theme !== nothing
-        _apply_figure_theme!(fig, plot[].theme)
+        _apply_figure_theme!(fig, plot[].theme; legend_overrides = plot[].legend)
     end
     fig
 end

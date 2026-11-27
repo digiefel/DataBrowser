@@ -114,9 +114,9 @@ function _legend_block_spec(sections, legend::NamedTuple)
             backgroundcolor=get(legend, :backgroundcolor, (:white, 0.92)),
             kwargs...)
     end
-    kwargs = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
+    kwargs = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge, :orientation))
     return S.Legend([s.samples for s in sections], [s.texts for s in sections], titles;
-        orientation=default_orientation(position), kwargs...)
+        orientation=get(legend, :orientation, default_orientation(position)), kwargs...)
 end
 
 struct _LegendBindHook{F} <: Function
@@ -971,23 +971,55 @@ end
 
 _tget(attrs, key, default) = haskey(attrs, key) ? attrs[key][] : default
 
-function _apply_figure_theme!(fig::Makie.Figure, plot_theme::Union{Nothing,PlotTheme})
+function _apply_fonts_to_plot!(p::Makie.AbstractPlot, fonts)
+    if haskey(p.attributes, :fonts)
+        try
+            p.fonts[] = fonts
+        catch
+        end
+    end
+    for c in p.plots
+        _apply_fonts_to_plot!(c, fonts)
+    end
+    return nothing
+end
+
+function _apply_fonts_to_scene!(sc::Makie.Scene, fonts)
+    for p in sc.plots
+        _apply_fonts_to_plot!(p, fonts)
+    end
+    for ch in sc.children
+        _apply_fonts_to_scene!(ch, fonts)
+    end
+    return nothing
+end
+
+function _apply_figure_theme!(
+    fig::Makie.Figure,
+    plot_theme::Union{Nothing,PlotTheme};
+    legend_overrides::NamedTuple=(;),
+)
     d = Makie.current_default_theme()
     t = plot_theme === nothing ? d : makie_theme(plot_theme)
     bg = Makie.to_color(haskey(t, :backgroundcolor) ? t[:backgroundcolor][] : d[:backgroundcolor][])
     tc = haskey(t, :textcolor) ? t[:textcolor][] : d[:textcolor][]
     fs = Float32(haskey(t, :fontsize) ? t[:fontsize][] : d[:fontsize][])
+    new_fonts = haskey(t, :fonts) ? merge(copy(t[:fonts]), copy(d[:fonts])) : d[:fonts]
     ax_t = haskey(t, :Axis) ? t[:Axis] : Makie.Attributes()
     leg_t = haskey(t, :Legend) ? t[:Legend] : Makie.Attributes()
     cb_t = haskey(t, :Colorbar) ? t[:Colorbar] : Makie.Attributes()
 
     fig.scene.backgroundcolor[] = bg
+    fig.scene.theme[:fonts] = new_fonts
     fig.attributes[:_grafico_themed] = (plot_theme !== nothing)
+
+    ax_bg = haskey(ax_t, :backgroundcolor) ? ax_t[:backgroundcolor][] :
+        (plot_theme !== nothing && haskey(plot_theme.settings, :backgroundcolor) ? bg : :white)
 
     for blk in fig.content
         if blk isa Makie.Axis
             is_inset = blk.tellwidth[] === false && blk.tellheight[] === false
-            blk.backgroundcolor = is_inset ? bg : _tget(ax_t, :backgroundcolor, :white)
+            blk.backgroundcolor = is_inset ? bg : ax_bg
             for k in (:titlecolor, :xlabelcolor, :ylabelcolor, :xticklabelcolor, :yticklabelcolor)
                 setproperty!(blk, k, _tget(ax_t, k, tc))
             end
@@ -1020,16 +1052,24 @@ function _apply_figure_theme!(fig::Makie.Figure, plot_theme::Union{Nothing,PlotT
             end
         elseif blk isa Makie.Legend
             is_inside = blk.tellwidth[] === false && blk.tellheight[] === false
-            blk.backgroundcolor = haskey(leg_t, :backgroundcolor) ? leg_t[:backgroundcolor][] :
-                (is_inside ? (bg, 0.92f0) : bg)
-            blk.framevisible = _tget(leg_t, :framevisible, true)
-            blk.framecolor = _tget(leg_t, :framecolor, tc)
-            blk.labelcolor = _tget(leg_t, :labelcolor, tc)
-            blk.titlecolor = _tget(leg_t, :titlecolor, tc)
-            blk.labelsize = Float32(_tget(leg_t, :labelsize, fs))
-            blk.titlesize = Float32(_tget(leg_t, :titlesize, fs))
-            blk.patchcolor = _tget(leg_t, :patchcolor, :transparent)
-            blk.padding = _tget(leg_t, :padding, (6.0f0, 6.0f0, 6.0f0, 6.0f0))
+            blk.backgroundcolor = haskey(legend_overrides, :backgroundcolor) ? legend_overrides[:backgroundcolor] :
+                (haskey(leg_t, :backgroundcolor) ? leg_t[:backgroundcolor][] : (is_inside ? (bg, 0.92f0) : bg))
+            blk.framevisible = haskey(legend_overrides, :framevisible) ? legend_overrides[:framevisible] :
+                _tget(leg_t, :framevisible, true)
+            blk.framecolor = haskey(legend_overrides, :framecolor) ? legend_overrides[:framecolor] :
+                _tget(leg_t, :framecolor, tc)
+            blk.labelcolor = haskey(legend_overrides, :labelcolor) ? legend_overrides[:labelcolor] :
+                _tget(leg_t, :labelcolor, tc)
+            blk.titlecolor = haskey(legend_overrides, :titlecolor) ? legend_overrides[:titlecolor] :
+                _tget(leg_t, :titlecolor, tc)
+            blk.labelsize = Float32(haskey(legend_overrides, :labelsize) ? legend_overrides[:labelsize] :
+                _tget(leg_t, :labelsize, fs))
+            blk.titlesize = Float32(haskey(legend_overrides, :titlesize) ? legend_overrides[:titlesize] :
+                _tget(leg_t, :titlesize, fs))
+            blk.patchcolor = haskey(legend_overrides, :patchcolor) ? legend_overrides[:patchcolor] :
+                _tget(leg_t, :patchcolor, :transparent)
+            blk.padding = haskey(legend_overrides, :padding) ? legend_overrides[:padding] :
+                _tget(leg_t, :padding, (6.0f0, 6.0f0, 6.0f0, 6.0f0))
         elseif blk isa Makie.Colorbar
             for k in (:labelcolor, :ticklabelcolor, :tickcolor,
                       :topspinecolor, :bottomspinecolor, :leftspinecolor, :rightspinecolor)
@@ -1042,6 +1082,7 @@ function _apply_figure_theme!(fig::Makie.Figure, plot_theme::Union{Nothing,PlotT
             blk.spinewidth = Float32(_tget(cb_t, :spinewidth, 1.0f0))
         end
     end
+    _apply_fonts_to_scene!(fig.scene, new_fonts)
     return fig
 end
 

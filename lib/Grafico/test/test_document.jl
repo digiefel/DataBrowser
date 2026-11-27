@@ -394,3 +394,84 @@ end
     @test ep.compiled[] === compiled_before
     @test fig.scene.backgroundcolor[] == Makie.RGBAf(1, 1, 1, 1)
 end
+
+@testset "Cross-kind scale tolerance, rollback, live latexfonts, and legend dock alignment" begin
+    rows = [
+        (x = Float64(i), y = Float64(i)^2, signal = sin(Float64(i)), series = iseven(i) ? "B" : "A")
+        for i in 1:6
+    ]
+    p = @plot data(rows) * mapping(:x, :y; color = :series) begin
+        visual(Scatter; markersize = 8)
+        scales(color = (; categories = ["A", "B"]))
+        legend(position = :right, framevisible = false, orientation = :vertical)
+    end
+    ep = editable(p)
+    fig = figure(ep)
+
+    # 1. Cross-kind scale tolerance: switching color :series -> :signal ignores categorical :categories
+    Grafico.set_mapping!(ep, nothing, :color, ":signal")
+    @test occursin("categories = [\"A\", \"B\"]", to_code(ep))
+    # Switching back to categorical :series restores using preserved :categories
+    Grafico.set_mapping!(ep, nothing, :color, ":series")
+    @test occursin("categories = [\"A\", \"B\"]", to_code(ep))
+
+    # Genuine typo still throws ArgumentError
+    p_typo = @plot data(rows) * mapping(:x, :y; color = :series) begin
+        visual(Scatter)
+        scales(color = (; catagories = ["A", "B"]))
+    end
+    @test_throws ArgumentError figure(p_typo)
+
+    # 2. Rollback on failed edit leaves ep.doc and to_code(ep) untouched
+    code_before = to_code(ep)
+    @test_throws ArgumentError Grafico.set_scale_expr!(ep, :color, :catagories, "[\"A\"]")
+    @test !haskey(ep.doc.scales[:color], :catagories)
+    @test to_code(ep) == code_before
+
+    # 3. Live :latexfonts font switch & restore
+    _text_families(sc) = begin
+        fams = String[]
+        function visit(pl)
+            if haskey(pl.attributes, :selected_font)
+                f = pl.attributes[:selected_font][]
+                push!(fams, string(f))
+            end
+            for ch in pl.plots
+                visit(ch)
+            end
+        end
+        for pl in sc.plots
+            visit(pl)
+        end
+        for ch in sc.children
+            append!(fams, _text_families(ch))
+        end
+        return fams
+    end
+    Grafico.set_theme_expr!(ep; base = :latexfonts)
+    latex_fams = _text_families(fig.scene)
+    @test !isempty(latex_fams)
+    @test all(f -> occursin("NewComputerModern", f), latex_fams)
+    Grafico.set_theme_expr!(ep; base = nothing)
+    default_fams = _text_families(fig.scene)
+    @test !isempty(default_fams)
+    @test all(f -> occursin("TeX Gyre Heros", f), default_fams)
+
+    # 4. Legend outside dock clears stale :halign / :valign and preserves explicit legend overrides
+    Grafico.set_legend_position!(ep, :inside; halign = 1.0, valign = 1.0)
+    @test haskey(ep.doc.legend, :halign)
+    @test haskey(ep.doc.legend, :valign)
+    Grafico.set_legend_position!(ep, :right)
+    @test !haskey(ep.doc.legend, :halign)
+    @test !haskey(ep.doc.legend, :valign)
+
+    Grafico.set_legend_position!(ep, :inside; halign = 0.9, valign = 0.8)
+    Grafico.set_legend_expr!(ep, :position, ":left")
+    @test !haskey(ep.doc.legend, :halign)
+    @test !haskey(ep.doc.legend, :valign)
+
+    # Explicit legend(framevisible = false) survives dark theme switch
+    Grafico.set_theme_expr!(ep; base = :dark)
+    leg = only(filter(b -> b isa Legend, fig.content))
+    @test leg.framevisible[] == false
+end

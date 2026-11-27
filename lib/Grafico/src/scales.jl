@@ -268,13 +268,28 @@ categorical_aes_props_type(::Type{<:Aesthetic}) = EmptyCategoricalProps
 
 categorical_aes_props(type::Type{<:Aesthetic}, props_dict::Dictionary{Symbol, Any}) = aes_props(Val(:categorical), type, props_dict)
 
+const _CATEGORICAL_COMMON_SCALE_KEYS = (:legend, :show_labels, :hide_unused_legend, :label, :categories, :palette, :dim_labels)
+const _CONTINUOUS_COMMON_SCALE_KEYS = (:legend, :label, :unit)
+
+function _inactive_kind_scale_keys(::Val{:categorical}, type::Type{<:Aesthetic})
+    return (_CONTINUOUS_COMMON_SCALE_KEYS..., fieldnames(continuous_aes_props_type(type))...)
+end
+function _inactive_kind_scale_keys(::Val{:continuous}, type::Type{<:Aesthetic})
+    return (_CATEGORICAL_COMMON_SCALE_KEYS..., fieldnames(categorical_aes_props_type(type))...)
+end
+
 function aes_props(kind::Val, type::Type{<:Aesthetic}, props_dict::Dictionary{Symbol, Any})
     f_T(::Val{:categorical}) = categorical_aes_props_type
     f_T(::Val{:continuous}) = continuous_aes_props_type
     T = f_T(kind)(type)
+    valid_fields = fieldnames(T)
+    inactive_keys = _inactive_kind_scale_keys(kind, type)
+    filtered_pairs = Pair{Symbol, Any}[
+        k => v for (k, v) in pairs(props_dict) if (k in valid_fields) || !(k in inactive_keys)
+    ]
     local invalid_keys
     try
-        return T(; pairs(props_dict)...)
+        return T(; filtered_pairs...)
     catch e
         is_kw_error = @static if isdefined(Core, :kwcall)
             e isa MethodError && e.f === Core.kwcall
