@@ -75,6 +75,11 @@ mutable struct Screen <: Makie.MakieScreen
     editor_include_figure::Bool
     last_editor_error::Union{Nothing, String}
     editor_observers::Vector{Any}
+    timeline::Any
+    timeline_playing::Bool
+    timeline_loop::Bool
+    timeline_speed::Float32
+    timeline_observer::Any
     open::Bool
 end
 
@@ -109,6 +114,11 @@ function Screen(scene::Union{Nothing, Scene}, config::ScreenConfig, args...)
         false,
         nothing,
         Any[],
+        nothing,
+        false,
+        true,
+        1.0f0,
+        nothing,
         true,
     )
     finalizer(s -> (!isnothing(s.viewer) && @async close(s)), screen)
@@ -157,7 +167,7 @@ function Makie.apply_screen_config!(screen::Screen, config::ScreenConfig, scene:
     return screen
 end
 
-function Base.display(screen::Screen, scene::Scene; figure = nothing, unused...)
+function Base.display(screen::Screen, scene::Scene; figure = nothing, motion = nothing, unused...)
     screen.scene = scene
     if figure isa Makie.Figure
         screen.figure = figure
@@ -173,6 +183,8 @@ function Base.display(screen::Screen, scene::Scene; figure = nothing, unused...)
     _sync_subtree!(screen, scene, nothing)
     _attach_editor_observers!(screen)
     sync_editor_state!(screen)
+    !isnothing(motion) && attach_timeline!(screen, motion)
+    sync_timeline_state!(screen)
     return screen
 end
 
@@ -268,6 +280,13 @@ function _clear_observers!(screen::Screen)
         end
     end
     empty!(screen.editor_observers)
+    if !isnothing(screen.timeline_observer)
+        try
+            Observables.off(screen.timeline_observer)
+        catch
+        end
+        screen.timeline_observer = nothing
+    end
     empty!(screen.id_to_scene)
     empty!(screen.id_to_plot)
     empty!(screen.plot_zorder)

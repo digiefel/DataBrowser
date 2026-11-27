@@ -2,8 +2,8 @@
 
 use std::io::Cursor;
 use wgpu_makie_editor::{
-    draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, EditorAction,
-    EditorModel,
+    draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, show_timeline_bar,
+    EditorAction, EditorModel,
 };
 use wgpu_makie_proto::{read_frame, ClientMessage, PointerEventKind, ProtoError, ServerMessage};
 #[cfg(not(target_arch = "wasm32"))]
@@ -130,6 +130,19 @@ impl EmbeddedViewer {
     pub fn draw_inspector_ui(&mut self, ui: &mut egui::Ui) -> Option<String> {
         let actions = draw_inspector_dock(ui, &mut self.editor, &self.graph);
         self.apply_editor_actions(actions)
+    }
+
+    /// Render the bottom animation timeline bar when a timeline is attached.
+    pub fn draw_timeline_ui(&mut self, ui: &mut egui::Ui) -> Option<String> {
+        let actions = show_timeline_bar(ui, &mut self.editor);
+        self.apply_editor_actions(actions)
+    }
+
+    /// Advance timeline playback by `dt_secs` and queue any resulting `TimelineSeek` command.
+    pub fn step_playback(&mut self, dt_secs: f64) {
+        if let Some(act) = self.editor.step_playback(dt_secs) {
+            let _ = self.apply_editor_actions(vec![act]);
+        }
     }
 
     /// Render annotation handles, layout split dividers, and brush overlays over the canvas.

@@ -719,6 +719,31 @@ pub struct EditorDocumentSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimelineSegmentMeta {
+    pub start: f64,
+    pub stop: f64,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimelineChannelMeta {
+    pub id: u32,
+    pub label: String,
+    pub segments: Vec<TimelineSegmentMeta>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimelineState {
+    pub has_timeline: bool,
+    pub duration: f64,
+    pub current_time: f64,
+    pub playing: bool,
+    pub looping: bool,
+    pub speed: f32,
+    pub channels: Vec<TimelineChannelMeta>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum EditorCommand {
     SetVisual {
@@ -876,6 +901,24 @@ pub enum EditorCommand {
         key: String,
         expr: String,
     },
+    TimelineSeek {
+        time: f64,
+    },
+    TimelineSetPlaying {
+        playing: bool,
+    },
+    TimelineSetLoop {
+        looping: bool,
+    },
+    TimelineExportHtml {
+        path: String,
+        framerate: u32,
+    },
+    ComposeSwapPanels {
+        a_index: u32,
+        b_index: u32,
+    },
+    ComposeEqualizeSplits,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -949,6 +992,9 @@ pub enum ServerMessage {
         plot_id: u64,
         element_index: u32,
         text: String,
+    },
+    SyncTimelineState {
+        timeline: TimelineState,
     },
     Close,
 }

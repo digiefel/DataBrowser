@@ -5,7 +5,9 @@ pub mod panels;
 pub mod widgets;
 
 pub use model::{EditorAction, EditorModel, EditorTab};
-pub use panels::{draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar};
+pub use panels::{
+    draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, show_timeline_bar,
+};
 
 #[cfg(test)]
 mod tests {
@@ -256,6 +258,7 @@ mod tests {
             EditorTab::AxesScales,
             EditorTab::Annotations,
             EditorTab::Style,
+            EditorTab::Timeline,
             EditorTab::Inspector,
             EditorTab::Code,
         ] {
@@ -269,10 +272,42 @@ mod tests {
                 egui::Panel::right("right").show(ui, |ui| {
                     let _ = draw_editor_panel(ui, &mut model, &mut graph);
                 });
+                let _ = show_timeline_bar(ui, &mut model);
                 draw_canvas_overlays(ui.ctx(), &graph, &manip, &model, 400);
             });
             out.textures_delta.clear();
         }
+
+        // Timeline playback & bottom bar tests
+        model.apply_server_message(&ServerMessage::SyncTimelineState {
+            timeline: wgpu_makie_proto::TimelineState {
+                has_timeline: true,
+                duration: 2.0,
+                current_time: 0.5,
+                playing: true,
+                looping: true,
+                speed: 2.0,
+                channels: vec![wgpu_makie_proto::TimelineChannelMeta {
+                    id: 1,
+                    label: "phase".into(),
+                    segments: vec![wgpu_makie_proto::TimelineSegmentMeta {
+                        start: 0.0,
+                        stop: 2.0,
+                        label: "0.0..2.0s".into(),
+                    }],
+                }],
+            },
+        });
+        assert!(model.is_timeline_playing());
+        let act = model.step_playback(0.5);
+        assert!(act.is_some());
+        assert!((model.timeline.as_ref().unwrap().current_time - 1.5).abs() < 1e-6);
+        let _ = model.step_playback(0.5); // wraps to 0.5
+        assert!((model.timeline.as_ref().unwrap().current_time - 0.5).abs() < 1e-6);
+        let mut out_tl = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let _ = show_timeline_bar(ui, &mut model);
+        });
+        out_tl.textures_delta.clear();
 
         // Plain Makie fallback when no Grafico snapshot is present
         let mut plain_model = EditorModel::new();

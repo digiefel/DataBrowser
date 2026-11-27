@@ -7,8 +7,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
 use wgpu_makie_editor::{
-    draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, EditorAction,
-    EditorModel,
+    draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, show_timeline_bar,
+    EditorAction, EditorModel,
 };
 use wgpu_makie_proto::{
     read_frame, write_frame, ClientMessage, EditorCommand, PointerEventKind, ServerMessage,
@@ -320,6 +320,13 @@ impl ViewerApp {
             ws.fps_ema * 0.9 + (1.0 / dt) * 0.1
         };
 
+        if let Some(EditorAction::Send(msg)) = self.editor.step_playback(dt as f64) {
+            if let Some(tx) = &self.tx {
+                let _ = tx.send(msg);
+            }
+        }
+        let timeline_playing = self.editor.is_timeline_playing();
+
         let frame = match ws.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(tex)
             | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
@@ -362,6 +369,8 @@ impl ViewerApp {
                         editor_actions.extend(draw_inspector_dock(ui, &mut self.editor, &self.graph));
                     });
             }
+
+            editor_actions.extend(show_timeline_bar(ui, &mut self.editor));
 
             draw_canvas_overlays(ui.ctx(), &self.graph, &self.manip, &self.editor, h);
 
@@ -486,6 +495,11 @@ impl ViewerApp {
         if let Some(text) = copy_text {
             if let Some(ws) = &self.win {
                 ws.egui_ctx.copy_text(text);
+            }
+        }
+        if timeline_playing {
+            if let Some(ws) = &self.win {
+                ws.window.request_redraw();
             }
         }
     }

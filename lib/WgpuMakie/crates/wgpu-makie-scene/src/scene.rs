@@ -155,6 +155,7 @@ impl SceneGraph {
             | ServerMessage::SyncEditorState { .. }
             | ServerMessage::CodeExportReply { .. }
             | ServerMessage::InspectorTooltipReply { .. }
+            | ServerMessage::SyncTimelineState { .. }
             | ServerMessage::Close => {}
         }
     }

@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use wgpu_makie_proto::{
     ClientMessage, EditorCommand, EditorDocumentSnapshot, EditorLayerSpec, ServerMessage,
+    TimelineState,
 };
 use wgpu_makie_scene::{BrushSummary, ToolMode};
 
@@ -13,6 +14,7 @@ pub enum EditorTab {
     AxesScales,
     Annotations,
     Style,
+    Timeline,
     Inspector,
     Code,
 }
@@ -61,6 +63,12 @@ pub struct EditorModel {
     pub brush: Option<BrushSummary>,
     pub new_ann_text: String,
     pub new_ann_source: String,
+    pub timeline: Option<TimelineState>,
+    pub html_export_path: String,
+    pub html_export_fps: u32,
+    pub swap_panel_a: u32,
+    pub swap_panel_b: u32,
+    pub playback_accum_secs: f64,
     pub undo_stack: Vec<(EditorCommand, EditorCommand)>,
     pub redo_stack: Vec<(EditorCommand, EditorCommand)>,
 }
@@ -76,6 +84,10 @@ impl EditorModel {
             add_scale_role: "color".into(),
             new_ann_text: "Note".into(),
             new_ann_source: "f".into(),
+            html_export_path: "figure.html".into(),
+            html_export_fps: 30,
+            swap_panel_a: 0,
+            swap_panel_b: 1,
             ..Default::default()
         }
     }
@@ -130,8 +142,49 @@ impl EditorModel {
                     .insert((*plot_id, *element_index), text.clone());
                 true
             }
+            ServerMessage::SyncTimelineState { timeline } => {
+                self.timeline = Some(timeline.clone());
+                true
+            }
             _ => false,
         }
+    }
+
+    /// Return `true` when an active timeline is currently playing.
+    pub fn is_timeline_playing(&self) -> bool {
+        self.timeline
+            .as_ref()
+            .is_some_and(|t| t.has_timeline && t.playing && t.duration > 0.0)
+    }
+
+    /// Advance local timeline playback by `dt_secs`, emitting a seek action at up to 60 Hz.
+    pub fn step_playback(&mut self, dt_secs: f64) -> Option<EditorAction> {
+        let tl = self.timeline.as_mut()?;
+        if !tl.has_timeline || !tl.playing || tl.duration <= 0.0 || dt_secs <= 0.0 {
+            return None;
+        }
+        let speed = tl.speed.max(0.05) as f64;
+        let next = tl.current_time + dt_secs * speed;
+        if next >= tl.duration {
+            if tl.looping {
+                tl.current_time = next % tl.duration;
+            } else {
+                tl.current_time = tl.duration;
+                tl.playing = false;
+            }
+        } else {
+            tl.current_time = next;
+        }
+        self.playback_accum_secs += dt_secs;
+        if !tl.playing || self.playback_accum_secs >= 1.0 / 60.0 {
+            self.playback_accum_secs = 0.0;
+            return Some(EditorAction::Send(ClientMessage::EditorCommand {
+                command: EditorCommand::TimelineSeek {
+                    time: tl.current_time,
+                },
+            }));
+        }
+        None
     }
 
     /// Record the user's clicked plot element for the Inspector tab and dock.

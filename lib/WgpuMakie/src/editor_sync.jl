@@ -320,6 +320,100 @@ function _build_editor_snapshot(screen::Screen; error::Union{Nothing, String} = 
 end
 
 """
+    sync_timeline_state!(screen)
+
+Publish the attached animation `MotionPlan` metadata and playhead state to the Rust viewer.
+"""
+function sync_timeline_state!(screen::Screen)
+    (isnothing(screen.viewer) || !screen.open) && return nothing
+    tl = screen.timeline
+    msg = if isnothing(tl)
+        Dict{String, Any}(
+            "op" => "sync_timeline_state",
+            "timeline" => Dict{String, Any}(
+                "has_timeline" => false,
+                "duration" => 0.0,
+                "current_time" => 0.0,
+                "playing" => false,
+                "looping" => true,
+                "speed" => 1.0f0,
+                "channels" => Any[],
+            ),
+        )
+    else
+        channels = Any[]
+        for (idx, ch) in enumerate(tl.channels)
+            segs = Any[]
+            for seg in ch.segments
+                push!(segs, Dict{String, Any}(
+                    "start" => Float64(seg.start),
+                    "stop" => Float64(seg.stop),
+                    "label" => "$(round(seg.start; digits=2))..$(round(seg.stop; digits=2))s",
+                ))
+            end
+            push!(channels, Dict{String, Any}(
+                "id" => UInt32(idx),
+                "label" => "obs_$idx",
+                "segments" => segs,
+            ))
+        end
+        Dict{String, Any}(
+            "op" => "sync_timeline_state",
+            "timeline" => Dict{String, Any}(
+                "has_timeline" => true,
+                "duration" => Float64(tl.seconds),
+                "current_time" => Float64(tl.time[]),
+                "playing" => screen.timeline_playing,
+                "looping" => screen.timeline_loop,
+                "speed" => screen.timeline_speed,
+                "channels" => channels,
+            ),
+        )
+    end
+    send_msg!(screen.viewer, msg)
+    return nothing
+end
+
+"""
+    attach_timeline!(screen::Screen, plan; playing = false, looping = true, speed = 1.0f0)
+
+Attach a `Grafico.MotionPlan` (or compatible timeline object with `.seconds`, `.time`,
+and `.channels`) to `screen` so the editor's bottom timeline scrubber and Play/Pause
+controls seek the live figure.
+"""
+function attach_timeline!(
+    screen::Screen,
+    plan;
+    playing::Bool = false,
+    looping::Bool = true,
+    speed::Real = 1.0f0,
+)
+    if !isnothing(screen.timeline_observer)
+        try
+            Observables.off(screen.timeline_observer)
+        catch
+        end
+        screen.timeline_observer = nothing
+    end
+    screen.timeline = plan
+    screen.timeline_playing = playing
+    screen.timeline_loop = looping
+    screen.timeline_speed = Float32(max(0.05, speed))
+    if !isnothing(plan) && hasproperty(plan, :time)
+        weak_scr = WeakRef(screen)
+        screen.timeline_observer = on(plan.time) do _
+            scr = weak_scr.value
+            scr === nothing && return
+            scr.syncing_editor[] && return
+            flush_updates!(scr)
+            sync_timeline_state!(scr)
+        end
+    end
+    sync_timeline_state!(screen)
+    return screen
+end
+
+"""
     sync_editor_state!(screen; error = screen.last_editor_error)
 
 Push the current Grafico `PlotDocument` snapshot and generated code to the Rust viewer.
@@ -632,6 +726,74 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
                 G.set_colorbar_expr!(ep_check, :position, ":$dock")
             elseif !isnothing(screen.figure)
                 _move_plain_block!(screen, screen.figure, UInt64(cmd["block_id"]), bkind, dock, ha, va)
+            end
+            _sync_figure_axes!(screen, screen.figure)
+            _sync_layout_meta!(screen, screen.figure)
+            flush_updates!(screen)
+            sync_editor_state!(screen)
+            return nothing
+        elseif kind == "timeline_seek"
+            tl = screen.timeline
+            if !isnothing(tl)
+                t = clamp(Float64(cmd["time"]), 0.0, Float64(tl.seconds))
+                G_tl = parentmodule(typeof(tl))
+                G_tl.seek!(tl, t)
+                _sync_figure_axes!(screen, screen.figure)
+                flush_updates!(screen)
+                sync_timeline_state!(screen)
+            end
+            return nothing
+        elseif kind == "timeline_set_playing"
+            screen.timeline_playing = Bool(cmd["playing"])
+            sync_timeline_state!(screen)
+            return nothing
+        elseif kind == "timeline_set_loop"
+            screen.timeline_loop = Bool(cmd["looping"])
+            sync_timeline_state!(screen)
+            return nothing
+        elseif kind == "timeline_export_html"
+            out_path = string(cmd["path"])
+            fps = max(1, Int(get(cmd, "framerate", 30)))
+            target = something(_find_grafico_editable(screen), screen.figure)
+            if !isnothing(target) && isdefined(@__MODULE__, :export_html)
+                export_html(out_path, target; motion = screen.timeline, framerate = fps)
+            end
+            return nothing
+        elseif kind == "compose_equalize_splits" && !isnothing(screen.figure)
+            gl = _active_gridlayout(screen.figure)
+            nrows, ncols = size(gl)
+            for c in 1:ncols
+                Makie.colsize!(gl, c, Makie.Auto())
+            end
+            for r in 1:nrows
+                Makie.rowsize!(gl, r, Makie.Auto())
+            end
+            Makie.update_state_before_display!(screen.figure)
+            _sync_figure_axes!(screen, screen.figure)
+            _sync_layout_meta!(screen, screen.figure)
+            flush_updates!(screen)
+            sync_editor_state!(screen)
+            return nothing
+        elseif kind == "compose_swap_panels" && !isnothing(screen.figure)
+            fig = screen.figure
+            panels = [blk for blk in fig.content if blk isa Makie.Axis || blk isa Makie.Axis3]
+            ia = Int(cmd["a_index"]) + 1
+            ib = Int(cmd["b_index"]) + 1
+            if 1 <= ia <= length(panels) && 1 <= ib <= length(panels) && ia != ib
+                ba, bb = panels[ia], panels[ib]
+                ga = ba.layoutobservables.gridcontent[]
+                gb = bb.layoutobservables.gridcontent[]
+                if !isnothing(ga) && !isnothing(gb) && ga.parent === gb.parent
+                    gl_parent = ga.parent
+                    ra, ca = ga.span.rows, ga.span.cols
+                    rb, cb = gb.span.rows, gb.span.cols
+                    Makie.GridLayoutBase.remove_from_gridlayout!(ga)
+                    Makie.GridLayoutBase.remove_from_gridlayout!(gb)
+                    gl_parent[rb, cb] = ba
+                    gl_parent[ra, ca] = bb
+                    Makie.GridLayoutBase.trim!(gl_parent)
+                    Makie.update_state_before_display!(fig)
+                end
             end
             _sync_figure_axes!(screen, screen.figure)
             _sync_layout_meta!(screen, screen.figure)

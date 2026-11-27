@@ -194,6 +194,7 @@ pub fn draw_editor_panel(
         ui.selectable_value(&mut model.active_tab, EditorTab::AxesScales, "Axes / Scales");
         ui.selectable_value(&mut model.active_tab, EditorTab::Annotations, "Annotate / Layout");
         ui.selectable_value(&mut model.active_tab, EditorTab::Style, "Style");
+        ui.selectable_value(&mut model.active_tab, EditorTab::Timeline, "Timeline");
         ui.selectable_value(&mut model.active_tab, EditorTab::Inspector, "Inspector");
         ui.selectable_value(&mut model.active_tab, EditorTab::Code, "Code");
     });
@@ -204,6 +205,7 @@ pub fn draw_editor_panel(
         EditorTab::AxesScales => draw_axes_scales_tab(ui, model, graph, &mut actions),
         EditorTab::Annotations => draw_annotations_tab(ui, model, graph, &mut actions),
         EditorTab::Style => draw_style_tab(ui, model, graph, &mut actions),
+        EditorTab::Timeline => draw_timeline_tab(ui, model, &mut actions),
         EditorTab::Inspector => {
             let dock_actions = draw_inspector_dock(ui, model, graph);
             actions.extend(dock_actions);
@@ -1712,6 +1714,220 @@ fn draw_annotations_tab(
             }
         }
     }
+
+    if let Some(layout) = &graph.layout {
+        let panel_count = layout
+            .blocks
+            .iter()
+            .filter(|b| {
+                matches!(
+                    b.kind,
+                    wgpu_makie_proto::LayoutBlockKind::Axis
+                        | wgpu_makie_proto::LayoutBlockKind::Axis3
+                )
+            })
+            .count() as u32;
+        if panel_count >= 2 {
+            ui.add_space(6.0);
+            ui.separator();
+            ui.heading(format!("Panel Composition ({panel_count})"));
+            if ui.button("Equalize Splits").clicked() {
+                model.push_command(actions, EditorCommand::ComposeEqualizeSplits, None);
+            }
+            ui.horizontal(|ui| {
+                ui.label("Swap");
+                egui::ComboBox::from_id_salt("compose_swap_a")
+                    .selected_text(format!("Panel {}", model.swap_panel_a + 1))
+                    .width(76.0)
+                    .show_ui(ui, |ui| {
+                        for idx in 0..panel_count {
+                            ui.selectable_value(
+                                &mut model.swap_panel_a,
+                                idx,
+                                format!("Panel {}", idx + 1),
+                            );
+                        }
+                    });
+                ui.label("↔");
+                egui::ComboBox::from_id_salt("compose_swap_b")
+                    .selected_text(format!("Panel {}", model.swap_panel_b + 1))
+                    .width(76.0)
+                    .show_ui(ui, |ui| {
+                        for idx in 0..panel_count {
+                            ui.selectable_value(
+                                &mut model.swap_panel_b,
+                                idx,
+                                format!("Panel {}", idx + 1),
+                            );
+                        }
+                    });
+            });
+            if model.swap_panel_a != model.swap_panel_b && ui.button("Swap Panels").clicked() {
+                model.push_command(
+                    actions,
+                    EditorCommand::ComposeSwapPanels {
+                        a_index: model.swap_panel_a,
+                        b_index: model.swap_panel_b,
+                    },
+                    None,
+                );
+            }
+        }
+    }
+}
+
+fn draw_timeline_controls_row(
+    ui: &mut egui::Ui,
+    model: &mut EditorModel,
+    actions: &mut Vec<EditorAction>,
+) {
+    let Some(tl) = model.timeline.as_mut() else {
+        return;
+    };
+    let dur = tl.duration.max(1e-6);
+    ui.horizontal(|ui| {
+        let play_lbl = if tl.playing { "Pause" } else { "Play" };
+        if ui.button(play_lbl).clicked() {
+            tl.playing = !tl.playing;
+            actions.push(EditorAction::Send(ClientMessage::EditorCommand {
+                command: EditorCommand::TimelineSetPlaying {
+                    playing: tl.playing,
+                },
+            }));
+        }
+        if ui.small_button("Reset").clicked() {
+            tl.current_time = 0.0;
+            actions.push(EditorAction::Send(ClientMessage::EditorCommand {
+                command: EditorCommand::TimelineSeek { time: 0.0 },
+            }));
+        }
+        if ui.checkbox(&mut tl.looping, "Loop").changed() {
+            actions.push(EditorAction::Send(ClientMessage::EditorCommand {
+                command: EditorCommand::TimelineSetLoop {
+                    looping: tl.looping,
+                },
+            }));
+        }
+        egui::ComboBox::from_id_salt("timeline_speed_combo")
+            .selected_text(format!("{}x", tl.speed))
+            .width(58.0)
+            .show_ui(ui, |ui| {
+                for &sp in &[0.25f32, 0.5, 1.0, 2.0] {
+                    ui.selectable_value(&mut tl.speed, sp, format!("{sp}x"));
+                }
+            });
+        let mut t = tl.current_time;
+        let resp = ui.add(
+            egui::Slider::new(&mut t, 0.0..=dur)
+                .show_value(false)
+                .step_by(dur / 240.0),
+        );
+        if resp.changed() {
+            tl.current_time = t;
+            actions.push(EditorAction::Send(ClientMessage::EditorCommand {
+                command: EditorCommand::TimelineSeek { time: t },
+            }));
+        }
+        ui.monospace(format!("{:.2} / {:.2} s", tl.current_time, dur));
+    });
+}
+
+fn draw_timeline_tracks(ui: &mut egui::Ui, tl: &wgpu_makie_proto::TimelineState) {
+    let dur = tl.duration.max(1e-6);
+    let ch_count = tl.channels.len().max(1);
+    let height = (ch_count as f32 * 14.0 + 6.0).min(84.0);
+    let (rect, _resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width().max(120.0), height),
+        egui::Sense::hover(),
+    );
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 2.0, egui::Color32::from_gray(236));
+    let row_h = (rect.height() - 4.0) / ch_count as f32;
+    for (ci, ch) in tl.channels.iter().enumerate() {
+        let y0 = rect.top() + 2.0 + ci as f32 * row_h;
+        let y1 = (y0 + row_h - 2.0).max(y0 + 3.0);
+        for seg in &ch.segments {
+            let x0 = rect.left() + ((seg.start / dur) as f32).clamp(0.0, 1.0) * rect.width();
+            let x1 = rect.left() + ((seg.stop / dur) as f32).clamp(0.0, 1.0) * rect.width();
+            let srect = egui::Rect::from_min_max(
+                egui::pos2(x0, y0),
+                egui::pos2(x1.max(x0 + 3.0), y1),
+            );
+            painter.rect_filled(srect, 2.0, egui::Color32::from_rgb(75, 145, 225));
+        }
+    }
+    let px = rect.left() + ((tl.current_time / dur) as f32).clamp(0.0, 1.0) * rect.width();
+    painter.line_segment(
+        [egui::pos2(px, rect.top()), egui::pos2(px, rect.bottom())],
+        egui::Stroke::new(2.0, egui::Color32::from_rgb(220, 50, 50)),
+    );
+}
+
+fn draw_timeline_tab(
+    ui: &mut egui::Ui,
+    model: &mut EditorModel,
+    actions: &mut Vec<EditorAction>,
+) {
+    ui.heading("Animation Timeline");
+    if model.timeline.as_ref().is_some_and(|t| t.has_timeline) {
+        draw_timeline_controls_row(ui, model, actions);
+        if let Some(tl) = &model.timeline {
+            ui.add_space(4.0);
+            draw_timeline_tracks(ui, tl);
+            ui.add_space(4.0);
+            for ch in &tl.channels {
+                ui.label(format!(
+                    "Channel #{} ({}, {} segment(s))",
+                    ch.id,
+                    ch.label,
+                    ch.segments.len()
+                ));
+            }
+        }
+    } else {
+        ui.label("Attach a Grafico MotionPlan via WgpuMakie.attach_timeline!(screen, plan) to scrub animation frames.");
+    }
+
+    ui.add_space(8.0);
+    ui.separator();
+    ui.heading("Offline HTML Export");
+    ui.horizontal(|ui| {
+        ui.label("File:");
+        ui.add(egui::TextEdit::singleline(&mut model.html_export_path).desired_width(150.0));
+    });
+    let mut fps_i = model.html_export_fps as i32;
+    if ui
+        .add(egui::Slider::new(&mut fps_i, 10..=60).text("FPS"))
+        .changed()
+    {
+        model.html_export_fps = fps_i.max(1) as u32;
+    }
+    if ui.button("Export Offline HTML").clicked() && !model.html_export_path.trim().is_empty() {
+        actions.push(EditorAction::Send(ClientMessage::EditorCommand {
+            command: EditorCommand::TimelineExportHtml {
+                path: model.html_export_path.trim().to_string(),
+                framerate: model.html_export_fps.max(1),
+            },
+        }));
+    }
+}
+
+/// Draw the collapsible bottom animation timeline bar when a `MotionPlan` is attached.
+pub fn show_timeline_bar(ui: &mut egui::Ui, model: &mut EditorModel) -> Vec<EditorAction> {
+    let mut actions = Vec::new();
+    let Some(has_tl) = model.timeline.as_ref().map(|t| t.has_timeline) else {
+        return actions;
+    };
+    if !has_tl {
+        return actions;
+    }
+    egui::Panel::bottom("wgpu_makie_timeline_bar").show(ui, |ui| {
+        draw_timeline_controls_row(ui, model, &mut actions);
+        if let Some(tl) = &model.timeline {
+            draw_timeline_tracks(ui, tl);
+        }
+    });
+    actions
 }
 
 /// Draw annotation control handles, subplot resize dividers, guide drag previews, and brush overlays.

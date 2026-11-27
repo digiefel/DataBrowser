@@ -67,6 +67,6 @@ for name in names(Makie; all = true)
     end
 end
 
-export Screen, ScreenConfig
+export Screen, ScreenConfig, attach_timeline!, export_html, record_html
 
 end # module WgpuMakie
