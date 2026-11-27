@@ -358,6 +358,18 @@ function _qualify_expr(e, eval_module::Module)
 end
 
 function _eval_in_module(eval_module::Module, expr)
+    if expr isa Number || expr isa Bool || expr isa AbstractString || expr === nothing
+        return expr
+    elseif expr isa QuoteNode && expr.value isa Symbol
+        return expr.value
+    elseif expr isa Symbol
+        expr === :nothing && return nothing
+        expr === :true && return true
+        expr === :false && return false
+        isdefined(eval_module, expr) && return Base.invokelatest(getfield, eval_module, expr)
+        isdefined(@__MODULE__, expr) && return getfield(@__MODULE__, expr)
+        isdefined(Makie, expr) && return getfield(Makie, expr)
+    end
     qualified = _qualify_expr(expr, eval_module)
     return Base.invokelatest(Core.eval, eval_module, qualified)
 end
@@ -605,6 +617,7 @@ mutable struct EditablePlot <: AbstractEditablePlot
     coord_obs::Dict{Symbol,Makie.Observable{Any}}
     annotation_obs::Dict{Int,Makie.Observable{AnnotationSpec}}
     inset_obs::Dict{Int,Dict{Symbol,Makie.Observable{Any}}}
+    theme_obs::Makie.Observable{Any}
     base_plot::Any
     initial_data::Any
     structure_dirty::Bool
@@ -751,6 +764,40 @@ function editable_plot(fig::Makie.Figure)
     haskey(fig.attributes, :_grafico_editable) || return nothing
     ep = fig.attributes[:_grafico_editable][]
     return ep isa EditablePlot ? ep : nothing
+end
+
+"""
+    ensure_editable!(fig::Makie.Figure) -> Union{Nothing,EditablePlot}
+
+Promote a `Grafico.figure(...)` created from a plain `@plot` value into a live
+[`EditablePlot`](@ref) bound to `fig` when possible, returning the attached plot or `nothing`.
+"""
+function ensure_editable!(fig::Makie.Figure)
+    existing = editable_plot(fig)
+    existing !== nothing && return existing
+    haskey(fig.attributes, :_grafico_compilation) || return nothing
+    compiled = fig.attributes[:_grafico_compilation][]
+    hasproperty(compiled, :declaration) || return nothing
+    decl = compiled.declaration
+    decl isa Makie.Observable || return nothing
+    src = decl[]
+    (src isa Union{Nothing,ComposedFigure,Makie.GridLayoutSpec,Makie.Observable,Declaration}) && return nothing
+    _hasobs(src) && return nothing
+    ep = try
+        editable(src)
+    catch
+        return nothing
+    end
+    Makie.on(fig.scene, ep.compiled) do value
+        decl[] = value
+    end
+    Makie.on(fig.scene, ep.theme_obs) do th
+        _apply_figure_theme!(fig, th)
+    end
+    decl[] = ep.compiled[]
+    ep.theme_obs[] === nothing || _apply_figure_theme!(fig, ep.theme_obs[])
+    fig.attributes[:_grafico_editable] = ep
+    return ep
 end
 
 const _SEMANTIC_VISUAL_KEYS = (:direction, :orientation)
@@ -1405,7 +1452,12 @@ function compile_document(ep::EditablePlot)
         ep.base_plot = saved_base
         return built
     end
-    return _compile_from_doc_ast(ep)
+    built = _compile_from_doc_ast(ep)
+    if !(built isa Declaration) && !(ep.base_plot isa Declaration)
+        ep.base_plot = built
+        ep.structure_dirty = false
+    end
+    return built
 end
 
 function _recompile!(ep::EditablePlot)
@@ -1460,6 +1512,7 @@ function editable(plot, input=nothing)
     doc = deepcopy(document(plot))
     data_obs = Makie.Observable{Any}(input)
     compiled_obs = Makie.Observable{Any}(nothing)
+    theme_obs = Makie.Observable{Any}(_eval_theme_from_doc(doc))
     init_data = input !== nothing ? input : _extract_initial_data(plot)
     ep = EditablePlot(
         doc,
@@ -1469,6 +1522,7 @@ function editable(plot, input=nothing)
         Dict{Symbol,Makie.Observable{Any}}(),
         Dict{Int,Makie.Observable{AnnotationSpec}}(),
         Dict{Int,Dict{Symbol,Makie.Observable{Any}}}(),
+        theme_obs,
         plot,
         init_data,
         false,
@@ -1922,7 +1976,8 @@ function set_theme_expr!(
     key::Union{Nothing,Symbol}=nothing,
     expr_text::Union{Nothing,AbstractString}=nothing,
 )
-    new_base = base === :keep ? (ep.doc.theme === nothing ? nothing : ep.doc.theme.base) : base
+    prev_base = ep.doc.theme === nothing ? nothing : ep.doc.theme.base
+    new_base = base === :keep ? prev_base : base
     settings = ep.doc.theme === nothing ? Dict{Symbol,EntryValue}() : copy(ep.doc.theme.settings)
     if key !== nothing
         if expr_text === nothing || isempty(strip(expr_text))
@@ -1937,7 +1992,15 @@ function set_theme_expr!(
     else
         ep.doc.theme = ThemeSpec(new_base, settings)
     end
-    return _recompile!(ep)
+    next_base = ep.doc.theme === nothing ? nothing : ep.doc.theme.base
+    if prev_base === next_base && key in (:fontsize, :textcolor, :backgroundcolor)
+        ep.revision += 1
+        ep.theme_obs[] = _eval_theme_from_doc(ep.doc)
+        return ep
+    end
+    _recompile!(ep)
+    ep.theme_obs.val = _eval_theme_from_doc(ep.doc)
+    return ep
 end
 
 """
@@ -2206,6 +2269,10 @@ end
 
 function figure(ep::EditablePlot, args...; options...)
     fig = _reactive_figure(ep.compiled, args...; options...)
+    Makie.on(fig.scene, ep.theme_obs) do th
+        _apply_figure_theme!(fig, th)
+    end
+    ep.theme_obs[] === nothing || _apply_figure_theme!(fig, ep.theme_obs[])
     fig.attributes[:_grafico_editable] = ep
     return fig
 end

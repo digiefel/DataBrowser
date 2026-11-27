@@ -119,6 +119,42 @@ function _legend_block_spec(sections, legend::NamedTuple)
         orientation=default_orientation(position), kwargs...)
 end
 
+struct _LegendBindHook{F} <: Function
+    apply::F
+end
+(h::_LegendBindHook)(leg) = h.apply(leg)
+
+function _bind_legend_plots!(leg::Makie.Legend, sections, plot_slots::AbstractVector)
+    groups = leg.entrygroups[]
+    length(groups) == length(sections) || return nothing
+    bound = false
+    for (sidx, (_, entries)) in enumerate(groups)
+        sec = sections[sidx]
+        hasproperty(sec, :indices) || continue
+        length(entries) == length(sec.indices) || continue
+        for (eidx, entry) in enumerate(entries)
+            isempty(entry.elements) && continue
+            matched = Makie.AbstractPlot[]
+            for pidx in sec.indices[eidx]
+                if 1 <= pidx <= length(plot_slots)
+                    pl = plot_slots[pidx]
+                    if pl !== nothing && !any(x -> x === pl, matched)
+                        push!(matched, pl)
+                    end
+                end
+            end
+            # Put matched plots only on the first element so Makie's toggle flips each plot once.
+            for el in entry.elements
+                empty!(el.plots)
+            end
+            append!(entry.elements[1].plots, matched)
+            bound = true
+        end
+    end
+    bound && Makie.notify(leg.entrygroups)
+    return nothing
+end
+
 function spec(
     specification::Union{Layer, Layers, ProcessedLayer, ProcessedLayers},
     args...;
@@ -138,6 +174,9 @@ function spec(
     settings = !isempty(args) && first(args) isa Scales ? first(args) : scales()
     ae = compute_axes_grid(drawable(specification), settings;
         axis=_kwdict(axis, :axis), facet=_kwdict(facet, :facet))
+    total_slots = sum(length(ase.processedlayers) for ase in ae; init=0)
+    plot_slots = Vector{Union{Nothing,Makie.Plot}}(nothing, total_slots)
+    slot_offset = 0
     cells = Pair{Tuple{Int,Int},Any}[]
     first_pos = nothing
     first_base_plots = Makie.PlotSpec[]
@@ -149,9 +188,17 @@ function spec(
         else
             base_plots
         end
+        n_pl = length(ase.processedlayers)
+        my_offset = slot_offset
+        slot_offset += n_pl
         ax_spec = _axis_spec(ase.axis, plots)
-        ax_spec.then(_InspectorHook(axis -> label_inspector!([AxisEntries(axis, ase.entries,
-            ase.categoricalscales, ase.continuousscales, ase.processedlayers)]; inspector_spec)))
+        ax_spec.then(_InspectorHook(axis -> begin
+            for (k, pl) in enumerate(axis.scene.plots)
+                k <= n_pl && (plot_slots[my_offset + k] = pl)
+            end
+            label_inspector!([AxisEntries(axis, ase.entries,
+                ase.categoricalscales, ase.continuousscales, ase.processedlayers)]; inspector_spec)
+        end))
         push!(cells, ase.axis.position => ax_spec)
         if idx == 1
             first_pos = ase.axis.position
@@ -166,6 +213,7 @@ function spec(
         if !isempty(sections)
             position = get(legend, :position, :right)
             leg_spec = _legend_block_spec(sections, legend)
+            leg_spec.then(_LegendBindHook(leg -> _bind_legend_plots!(leg, sections, plot_slots)))
             rows, cols = size(ae)
             if position === :inside
                 push!(cells, (1, 1) => leg_spec)
@@ -443,8 +491,10 @@ function scaled_y_figure(plot::PlotLines, yscales, args...; legend=(;), texts=Pa
             position = get(legend, :position, :right)
             kwargs = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
             titles = [get(legend, :titlevisible, true) && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
-            Legend(guides_position(drawn.figure, position), [s.samples for s in sections],
+            leg = Legend(guides_position(drawn.figure, position), [s.samples for s in sections],
                 [s.texts for s in sections], titles; orientation=default_orientation(position), kwargs...)
+            plot_slots = Union{Nothing,Makie.Plot}[pl for entry in grid for (pl, _) in zip(entry.axis.scene.plots, entry.processedlayers)]
+            _bind_legend_plots!(leg, sections, plot_slots)
         end
     end
     return drawn.figure
@@ -495,11 +545,8 @@ function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair
         vcat(primary_plots, _annotation_plotspecs(annotations), _inset_box_plotspecs(insets)) :
         primary_plots
     primary_spec = S.Axis(; plots=full_primary_plots, pairs(ase_primary.axis.attributes)...)
-    primary_spec.then(_InspectorHook(axis -> label_inspector!([AxisEntries(axis, ase_primary.entries,
-        ase_primary.categoricalscales, ase_primary.continuousscales, ase_primary.processedlayers)]; inspector_spec)))
-    cells = Pair{Tuple{Int,Int},Any}[(1, 1) => primary_spec]
-    axes_to_link = [primary_spec]
-    aes = [vec(ae_primary)]
+    sec_ases = Any[]
+    sec_specs = Makie.BlockSpec[]
     for role in roles[2:end]
         scale = config(role)
         secondaryaxis = (; yaxisposition=get(scale, :position, :left), backgroundcolor=:transparent,
@@ -514,8 +561,35 @@ function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair
         ase_sec = only(ae_sec)
         sec_plots = Makie.PlotSpec[Makie.PlotSpec(e.plottype, e.positional...; pairs(e.named)...) for e in ase_sec.entries]
         sec_spec = S.Axis(; plots=sec_plots, pairs(ase_sec.axis.attributes)...)
-        sec_spec.then(_InspectorHook(axis -> label_inspector!([AxisEntries(axis, ase_sec.entries,
-            ase_sec.categoricalscales, ase_sec.continuousscales, ase_sec.processedlayers)]; inspector_spec)))
+        push!(sec_ases, ae_sec)
+        push!(sec_specs, sec_spec)
+    end
+    total_slots = length(ase_primary.processedlayers) + sum(length(only(a).processedlayers) for a in sec_ases; init=0)
+    plot_slots = Vector{Union{Nothing,Makie.Plot}}(nothing, total_slots)
+    n_prim = length(ase_primary.processedlayers)
+    primary_spec.then(_InspectorHook(axis -> begin
+        for (k, pl) in enumerate(axis.scene.plots)
+            k <= n_prim && (plot_slots[k] = pl)
+        end
+        label_inspector!([AxisEntries(axis, ase_primary.entries,
+            ase_primary.categoricalscales, ase_primary.continuousscales, ase_primary.processedlayers)]; inspector_spec)
+    end))
+    cells = Pair{Tuple{Int,Int},Any}[(1, 1) => primary_spec]
+    axes_to_link = [primary_spec]
+    aes = [vec(ae_primary)]
+    slot_offset = n_prim
+    for (ae_sec, sec_spec) in zip(sec_ases, sec_specs)
+        ase_sec = only(ae_sec)
+        n_sec = length(ase_sec.processedlayers)
+        my_offset = slot_offset
+        slot_offset += n_sec
+        sec_spec.then(_InspectorHook(axis -> begin
+            for (k, pl) in enumerate(axis.scene.plots)
+                k <= n_sec && (plot_slots[my_offset + k] = pl)
+            end
+            label_inspector!([AxisEntries(axis, ase_sec.entries,
+                ase_sec.categoricalscales, ase_sec.continuousscales, ase_sec.processedlayers)]; inspector_spec)
+        end))
         push!(cells, (1, 1) => sec_spec)
         push!(axes_to_link, sec_spec)
         push!(aes, vec(ae_sec))
@@ -530,6 +604,7 @@ function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair
         sections = legend_sections(reduce(vcat, aes), texts, get(legend, :merge, nothing), all_groups)
         if !isempty(sections)
             leg_spec = _legend_block_spec(sections, legend)
+            leg_spec.then(_LegendBindHook(leg -> _bind_legend_plots!(leg, sections, plot_slots)))
             pos = get(legend, :position, :right)
             push!(cells, (pos === :inside ? (1, 1) : (1, 2)) => leg_spec)
         end
@@ -640,8 +715,11 @@ function legend_sections(grid, texts::Vector{Pair{Symbol,Function}}, merge, all_
     append!(sections, [continuous_section(aes, scale, processed) for (aes, scale) in continuous])
     labelled = unique(piece, filter(p -> haskey(p.attributes, :label), processed))
     labels = unique(p.attributes[:label] for p in labelled)
-    isempty(labels) || push!(sections, (; samples=[reduce(vcat, [_legend_elements(p, MixedArguments())
-        for p in labelled if p.attributes[:label] == label]) for label in labels], texts=labels, title=nothing))
+    if !isempty(labels)
+        label_indices = [[i for (i, p) in enumerate(processed) if get(p.attributes, :label, nothing) == label] for label in labels]
+        push!(sections, (; samples=[reduce(vcat, [_legend_elements(p, MixedArguments())
+            for p in labelled if p.attributes[:label] == label]) for label in labels], texts=labels, title=nothing, indices=label_indices))
+    end
     return filter(s -> !isempty(s.texts), sections)
 end
 
@@ -678,7 +756,7 @@ end
 # Its title joins the titles of the scales, each once, without the empty ones.
 function categorical_section(section, scales, groups, processed, names, text)
     looks = [Dict(zip(datavalues(scales[aes]), plotvalues(scales[aes]))) for aes in section]
-    position(k, value) = findfirst(==(value), datavalues(scales[section[k]]))
+    position(k, value) = something(findfirst(==(value), datavalues(scales[section[k]])), typemax(Int))
     found = sort(combinations(section, groups); by=c -> [position(k, v) for (k, v) in enumerate(c)])
     samples = map(found) do combination
         entry_samples(Dict(aes => looks[k][combination[k]] for (k, aes) in enumerate(section)),
@@ -689,8 +767,13 @@ function categorical_section(section, scales, groups, processed, names, text)
         text === nothing ? join(unique(names[role(aes)][v] for (aes, v) in zip(section, combination)), ", ") :
             Base.invokelatest(text, entry)
     end
+    indices = map(found) do combination
+        target = Dict(zip(section, combination))
+        [i for (i, (_, vals)) in enumerate(groups)
+            if all(aes -> haskey(vals, aes) && isequal(vals[aes], target[aes]), keys(target))]
+    end
     title = join(filter(!isempty, unique(string(getlabel(scales[aes])) for aes in section)), ", ")
-    return (; samples, texts, title)
+    return (; samples, texts, title, indices)
 end
 
 # The samples of one entry: one from each piece that drew a group with the entry's `values`, drawn
@@ -725,7 +808,7 @@ function continuous_section(aes, scale, processed)
             isempty(attributes) ? LegendElement[] : _legend_elements(p, attributes)
         end)
     end
-    return (; samples, texts=string.(labels), title=string(getlabel(scale)))
+    return (; samples, texts=string.(labels), title=string(getlabel(scale)), indices=[Int[] for _ in labels])
 end
 
 # The scale of each role that `scales(...)` can set.
@@ -873,6 +956,82 @@ function makie_theme(theme::PlotTheme)::Makie.Theme
     base = theme.base === nothing ? Makie.current_default_theme() :
         theme.base === :default ? Makie.Theme() : getproperty(Makie, Symbol(:theme_, theme.base))()
     return merge(Makie.Theme(; pairs(theme.settings)...), base)
+end
+
+_tget(attrs, key, default) = haskey(attrs, key) ? attrs[key][] : default
+
+function _apply_figure_theme!(fig::Makie.Figure, plot_theme::Union{Nothing,PlotTheme})
+    d = Makie.current_default_theme()
+    t = plot_theme === nothing ? d : makie_theme(plot_theme)
+    bg = Makie.to_color(haskey(t, :backgroundcolor) ? t[:backgroundcolor][] : d[:backgroundcolor][])
+    tc = haskey(t, :textcolor) ? t[:textcolor][] : d[:textcolor][]
+    fs = Float32(haskey(t, :fontsize) ? t[:fontsize][] : d[:fontsize][])
+    ax_t = haskey(t, :Axis) ? t[:Axis] : Makie.Attributes()
+    leg_t = haskey(t, :Legend) ? t[:Legend] : Makie.Attributes()
+    cb_t = haskey(t, :Colorbar) ? t[:Colorbar] : Makie.Attributes()
+
+    fig.scene.backgroundcolor[] = bg
+    fig.attributes[:_grafico_themed] = (plot_theme !== nothing)
+
+    for blk in fig.content
+        if blk isa Makie.Axis
+            is_inset = blk.tellwidth[] === false && blk.tellheight[] === false
+            blk.backgroundcolor = is_inset ? bg : _tget(ax_t, :backgroundcolor, :white)
+            for k in (:titlecolor, :xlabelcolor, :ylabelcolor, :xticklabelcolor, :yticklabelcolor)
+                setproperty!(blk, k, _tget(ax_t, k, tc))
+            end
+            for k in (:titlesize, :xlabelsize, :ylabelsize, :xticklabelsize, :yticklabelsize)
+                setproperty!(blk, k, Float32(_tget(ax_t, k, fs)))
+            end
+            for k in (:xgridcolor, :ygridcolor)
+                setproperty!(blk, k, _tget(ax_t, k, Makie.RGBAf(0, 0, 0, 0.12)))
+            end
+            for k in (:xgridvisible, :ygridvisible, :leftspinevisible, :rightspinevisible,
+                      :topspinevisible, :bottomspinevisible, :xticksvisible, :yticksvisible)
+                setproperty!(blk, k, _tget(ax_t, k, true))
+            end
+            for k in (:xminorgridvisible, :yminorgridvisible, :xminorticksvisible, :yminorticksvisible)
+                setproperty!(blk, k, _tget(ax_t, k, false))
+            end
+            for k in (:leftspinecolor, :rightspinecolor, :topspinecolor, :bottomspinecolor,
+                      :xtickcolor, :ytickcolor)
+                setproperty!(blk, k, _tget(ax_t, k, tc))
+            end
+            blk.spinewidth = Float32(_tget(ax_t, :spinewidth, 1.0f0))
+        elseif blk isa Makie.Axis3
+            for k in (:titlecolor, :xlabelcolor, :ylabelcolor, :zlabelcolor,
+                      :xticklabelcolor, :yticklabelcolor, :zticklabelcolor)
+                hasproperty(blk, k) && setproperty!(blk, k, tc)
+            end
+            for k in (:titlesize, :xlabelsize, :ylabelsize, :zlabelsize,
+                      :xticklabelsize, :yticklabelsize, :zticklabelsize)
+                hasproperty(blk, k) && setproperty!(blk, k, fs)
+            end
+        elseif blk isa Makie.Legend
+            is_inside = blk.tellwidth[] === false && blk.tellheight[] === false
+            blk.backgroundcolor = haskey(leg_t, :backgroundcolor) ? leg_t[:backgroundcolor][] :
+                (is_inside ? (bg, 0.92f0) : bg)
+            blk.framevisible = _tget(leg_t, :framevisible, true)
+            blk.framecolor = _tget(leg_t, :framecolor, tc)
+            blk.labelcolor = _tget(leg_t, :labelcolor, tc)
+            blk.titlecolor = _tget(leg_t, :titlecolor, tc)
+            blk.labelsize = Float32(_tget(leg_t, :labelsize, fs))
+            blk.titlesize = Float32(_tget(leg_t, :titlesize, fs))
+            blk.patchcolor = _tget(leg_t, :patchcolor, :transparent)
+            blk.padding = _tget(leg_t, :padding, (6.0f0, 6.0f0, 6.0f0, 6.0f0))
+        elseif blk isa Makie.Colorbar
+            for k in (:labelcolor, :ticklabelcolor, :tickcolor,
+                      :topspinecolor, :bottomspinecolor, :leftspinecolor, :rightspinecolor)
+                hasproperty(blk, k) && setproperty!(blk, k, _tget(cb_t, k, tc))
+            end
+            for k in (:labelsize, :ticklabelsize)
+                hasproperty(blk, k) && setproperty!(blk, k, Float32(_tget(cb_t, k, fs)))
+            end
+            blk.ticksvisible = _tget(cb_t, :ticksvisible, true)
+            blk.spinewidth = Float32(_tget(cb_t, :spinewidth, 1.0f0))
+        end
+    end
+    return fig
 end
 
 # The function that places a value computed after `scale`, the function of an axis, back on that

@@ -253,3 +253,74 @@ end
     Grafico.move_layer!(ep, 2, 1)
     @test [l.plottype_expr for l in ep.doc.layers] == ["Scatter", "Lines"]
 end
+
+@testset "Legend entry toggle, ensure_editable!, live theme, and structure_dirty reset" begin
+    rows = [
+        (x = Float64(i), y = Float64(i) + off, series = lbl)
+        for (lbl, off) in (("alpha", 0.0), ("beta", 2.0))
+        for i in 1:6
+    ]
+    p = @plot data(rows) * mapping(:x, :y; color = :series) begin
+        visual(Lines; linewidth = 2)
+        visual(Scatter; markersize = 8)
+    end
+
+    # Plain figure(spec) binds legend entries to all matching series plots (Lines + Scatter)
+    fig_plain = figure(p)
+    leg_plain = only(filter(b -> b isa Legend, fig_plain.content))
+    entries_plain = leg_plain.entrygroups[][1][2]
+    @test length(entries_plain) == 2
+    plots_plain = fig_plain.content[1].scene.plots
+    @test length(plots_plain) == 4
+    @test all(pl -> pl.visible[] == true, plots_plain)
+    Makie.toggle_visibility!(entries_plain[1])
+    @test [pl.visible[] for pl in plots_plain] == [false, true, false, true]
+    Makie.toggle_visibility!(entries_plain[1])
+    @test all(pl -> pl.visible[] == true, plots_plain)
+
+    # ensure_editable! promotes plain figure(p) cleanly and keeps legend toggles working through LiveEntry
+    ep_auto = Grafico.ensure_editable!(fig_plain)
+    @test ep_auto isa Grafico.EditablePlot
+    @test Grafico.editable_plot(fig_plain) === ep_auto
+    leg_auto = only(filter(b -> b isa Legend, fig_plain.content))
+    entries_auto = leg_auto.entrygroups[][1][2]
+    Makie.toggle_visibility!(entries_auto[1])
+    ax_auto = only(filter(b -> b isa Axis, fig_plain.content))
+    @test [pl.plots[1].visible[] for pl in ax_auto.scene.plots] == [false, true, false, true]
+    Makie.toggle_visibility!(entries_auto[1])
+    @test all(pl -> pl.plots[1].visible[], ax_auto.scene.plots)
+
+    # Visual edits propagate cleanly after ensure_editable!
+    Grafico.set_visual_expr!(ep_auto, 1, :linewidth, "5")
+    ax_after = only(filter(b -> b isa Axis, fig_plain.content))
+    @test ax_after.scene.plots[1].plots[1].linewidth[] == 5
+
+    # Live theme updates work in place for font size and reset cleanly for base=nothing
+    ep = editable(p)
+    fig = figure(ep)
+    ax = only(filter(b -> b isa Axis, fig.content))
+    leg = only(filter(b -> b isa Legend, fig.content))
+
+    Grafico.set_theme_expr!(ep; base = :dark)
+    @test fig.scene.backgroundcolor[] != Makie.RGBAf(1, 1, 1, 1)
+    @test ax.xticklabelcolor[] != :black
+    @test leg.labelcolor[] != :black
+
+    compiled_before = ep.compiled[]
+    Grafico.set_theme_expr!(ep; base = :dark, key = :fontsize, expr_text = "22")
+    @test ep.compiled[] === compiled_before
+    @test Float32(ax.xlabelsize[]) == 22.0f0
+    @test Float32(ax.xticklabelsize[]) == 22.0f0
+    @test Float32(leg.labelsize[]) == 22.0f0
+
+    Grafico.set_theme_expr!(ep; base = nothing, key = :fontsize, expr_text = nothing)
+    @test fig.scene.backgroundcolor[] == Makie.RGBAf(1, 1, 1, 1)
+    @test ax.xticklabelcolor[] == :black
+    @test Float32(ax.xlabelsize[]) == 14.0f0
+
+    # structure_dirty resets to false after AST recompilation
+    Grafico.add_layer!(ep; plottype = "Scatter")
+    @test ep.structure_dirty == false
+    Grafico.set_analysis!(ep, 2, "smooth()")
+    @test ep.structure_dirty == false
+end

@@ -10,7 +10,7 @@ export @plot, @invisible, @manipulate, manipulate, figure, spec, ydims, fit, agg
 export coord, legend, plot_theme, ComposedFigure
 export annotate, inset, panel_layout, colorbar
 export inspector, editable, to_code
-public document, editable_plot, parse_plot_document, parse_plot_code, compile_document
+public document, editable_plot, ensure_editable!, parse_plot_document, parse_plot_code, compile_document
 public set_visual!, remove_visual!, set_layer_visible!, set_layer_plottype!, add_layer!, remove_layer!, move_layer!
 public set_mapping!, remove_mapping!, set_analysis!, set_scale!, remove_scale!
 public set_coord!, set_legend!, remove_legend!, set_theme!, set_inspector!
@@ -107,6 +107,20 @@ include("portable/compute.jl")
             legend(color = "chip $(:chip)")
         end
         figure(ordinary)
+        ep = editable(ordinary)
+        figure(ep)
+        set_visual_expr!(ep, 1, :markersize, "10")
+        set_visual_expr!(ep, 1, :color, ":crimson")
+        set_layer_visible!(ep, 1, false)
+        set_layer_visible!(ep, 1, true)
+        set_legend_expr!(ep, :show, "false")
+        set_legend_expr!(ep, :position, ":left")
+        set_legend_expr!(ep, :show, "true")
+        set_theme_expr!(ep; base = :dark, key = :fontsize, expr_text = "16")
+        set_theme_expr!(ep; base = nothing)
+        set_coord_expr!(ep, :yscale, "log10")
+        set_coord_expr!(ep, :yscale, "identity")
+        to_code(ep; include_imports = true, include_figure = true)
     end
 end
 

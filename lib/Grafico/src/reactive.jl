@@ -123,6 +123,7 @@ visual(type::Makie.Observable;kwargs...) = Makie.lift(t -> visual(t;kwargs...),t
 Makie.@recipe_internal LiveEntry (entry,) begin
     inspector_label = Makie.automatic
     inspectable = true
+    visible = true
 end
 
 Makie.convert_arguments(::Type{<:LiveEntry},entry::Entry) = (entry,)
@@ -156,6 +157,7 @@ function Makie.plot!(wrapper::LiveEntry)
             lbl = wrapper.inspector_label[]
             lbl === Makie.automatic || (c.inspector_label = lbl)
             c.inspectable = wrapper.inspectable[]
+            c.visible = wrapper.visible[]
             child[] = c
         end
         previous[]=entry
@@ -170,6 +172,11 @@ function Makie.plot!(wrapper::LiveEntry)
     Makie.on(wrapper, vis_obs) do flag
         c = child[]
         c === nothing || (c.inspectable = flag)
+    end
+    vis_show_obs = Makie.ComputePipeline.get_observable!(wrapper.visible; use_deepcopy=false)
+    Makie.on(wrapper, vis_show_obs) do flag
+        c = child[]
+        c === nothing || (c.visible = flag)
     end
     wrapper
 end
@@ -320,6 +327,13 @@ function _compile_plot(source::Makie.Observable,args...;kwargs...)
         current.forwarding = [forward(replacement)]
         current.specification[] = replacement.specification[]
         _render_compilation!(replacement)
+        fig = current.figure.value
+        if fig !== nothing
+            th = value isa Scaled ? value.theme : nothing
+            if th !== nothing || (haskey(fig.attributes, :_grafico_themed) && fig.attributes[:_grafico_themed][])
+                _apply_figure_theme!(fig, th)
+            end
+        end
     end)
     node
 end
@@ -372,6 +386,13 @@ function _update_native_layout!(layout, specification, reusable, current)
                 fn isa _InspectorHook && fn(block)
             end
         end
+        for ((_, _, child_spec), (block, _)) in current
+            child_spec isa Makie.BlockSpec || continue
+            block isa Makie.Legend || continue
+            for fn in child_spec.then_funcs
+                fn isa _LegendBindHook && fn(block)
+            end
+        end
     end
 end
 
@@ -397,6 +418,9 @@ function _reactive_figure(plot,args...;figure_kw=(;),figure=(;),kwargs...)
     # Dropping the figure then allows the entire graph and its observers to die.
     Makie.on(compiled.specification) do _
         GC.@preserve compiled nothing
+    end
+    if plot isa Makie.Observable && plot[] isa Scaled && plot[].theme !== nothing
+        _apply_figure_theme!(fig, plot[].theme)
     end
     fig
 end
