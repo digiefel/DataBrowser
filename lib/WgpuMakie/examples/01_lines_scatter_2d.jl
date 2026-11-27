@@ -25,15 +25,12 @@ function build_figure()
 end
 
 save_path = parse_save_arg(ARGS)
+fig = build_figure()
 if isnothing(save_path)
-    WgpuMakie.activate!(; headless = false, visible = true, show_editor = true)
-    fig = build_figure()
     display(fig)
     println("Close the viewer window or press Enter to exit...")
     readline()
 else
-    WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
-    fig = build_figure()
     mkpath(dirname(save_path))
     Makie.save(save_path, fig)
     println("Saved ", save_path)

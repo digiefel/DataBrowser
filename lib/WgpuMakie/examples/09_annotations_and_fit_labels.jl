@@ -36,17 +36,14 @@ function build_example()
 end
 
 idx = findfirst(==("--save"), ARGS)
+fig, ep = build_example()
 if isnothing(idx) || idx >= length(ARGS)
-    WgpuMakie.activate!(; headless = false, visible = true, show_editor = true, title = "WgpuMakie Annotations & Fit Label")
-    fig, ep = build_example()
-    display(fig)
+    display(fig; title = "WgpuMakie Annotations & Fit Label")
     println("Standalone Grafico code:\n")
     println(Grafico.to_code(ep; include_imports = true, include_figure = true))
     println("\nSwitch to Edit / Text / Arrow / Callout tools in the top bar. Close viewer or press Enter...")
     readline()
 else
-    WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
-    fig, ep = build_example()
     out = ARGS[idx + 1]
     mkpath(dirname(out))
     Makie.save(out, fig)

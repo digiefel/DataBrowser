@@ -59,7 +59,6 @@ save_path = parse_flag_arg(ARGS, "--save", nothing)
 n_frames = parse(Int, string(parse_flag_arg(ARGS, "--frames", "30")))
 
 if isnothing(save_path)
-    WgpuMakie.activate!(; headless = false, visible = true, show_editor = true)
     fig, step_frame! = build_streaming_figure()
     display(fig)
     t0 = time_ns()
@@ -72,7 +71,6 @@ if isnothing(save_path)
     println("Close the viewer window or press Enter to exit...")
     readline()
 else
-    WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
     fig, step_frame! = build_streaming_figure()
     # Warm up first frame, then time consecutive Observable updates + colorbuffer readbacks.
     Makie.colorbuffer(fig; update = true)

@@ -34,7 +34,6 @@ function build_example()
 end
 
 function main(args = ARGS)
-    WgpuMakie.activate!(show_editor = true, title = "WgpuMakie Live Editor")
     fig, ep = build_example()
     idx = findfirst(==("--save"), args)
     if !isnothing(idx) && idx < length(args)
@@ -45,7 +44,7 @@ function main(args = ARGS)
         println("\nGenerated standalone Grafico code:\n")
         println(Grafico.to_code(ep; include_imports = true, include_figure = true))
     else
-        display(fig)
+        display(fig; title = "WgpuMakie Live Editor")
         println("Viewer open with always-on Plot Editor. Edit layers, scales, theme, inspector, or copy Grafico code.")
     end
     return nothing

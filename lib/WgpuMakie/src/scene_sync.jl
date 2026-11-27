@@ -150,7 +150,7 @@ function _register_plot_observers!(screen, scene::Scene, plot::AbstractPlot)
             obs_fn = on(plot.attributes.onchange) do _
                 screen.syncing_from_viewer[] && return
                 @lock screen.sync_lock push!(screen.dirty_plots, (scene, plot))
-                if !screen.config.headless && screen.config.visible && screen.open
+                if screen.config.visible && screen.open
                     @async flush_updates!(screen)
                 end
                 return

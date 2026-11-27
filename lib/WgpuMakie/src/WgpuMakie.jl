@@ -17,7 +17,6 @@ using Sockets
 const _DEFAULT_CONFIG = Makie.Attributes(
     title = "WgpuMakie",
     visible = true,
-    headless = false,
     show_editor = true,
     px_per_unit = 1.0f0,
     size = (800, 600),
@@ -55,7 +54,7 @@ function activate!(; inline::Union{Makie.Automatic, Bool} = LAST_INLINE[], scree
 end
 
 function __init__()
-    _ensure_theme_defaults!()
+    activate!()
     return nothing
 end
 
@@ -67,6 +66,6 @@ for name in names(Makie; all = true)
     end
 end
 
-export Screen, ScreenConfig, attach_timeline!, export_html, record_html
+export Screen, ScreenConfig
 
 end # module WgpuMakie

@@ -1,13 +1,12 @@
 # MakieScreen implementation and display/colorbuffer/pick integration for `WgpuMakie`.
 
 """
-    ScreenConfig(; title, visible, headless, show_editor, px_per_unit, size)
+    ScreenConfig(; title, visible, show_editor, px_per_unit, size)
 
 Configuration options for `WgpuMakie.Screen` and `WgpuMakie.activate!`.
 
 - `title::String = "WgpuMakie"`: Window title for interactive displays.
 - `visible::Bool = true`: Show the native viewer window when true; run offscreen when false.
-- `headless::Bool = false`: Force the windowless offscreen viewer (`--headless`).
 - `show_editor::Bool = true`: Show the built-in plot editor side panel on startup.
 - `px_per_unit::Float32 = 1.0f0`: Pixel scaling factor for `colorbuffer` and rendering.
 - `size::Tuple{Int, Int} = (800, 600)`: Fallback window size when a scene reports no area.
@@ -15,7 +14,6 @@ Configuration options for `WgpuMakie.Screen` and `WgpuMakie.activate!`.
 mutable struct ScreenConfig
     title::String
     visible::Bool
-    headless::Bool
     show_editor::Bool
     px_per_unit::Float32
     size::Tuple{Int, Int}
@@ -23,7 +21,6 @@ mutable struct ScreenConfig
     function ScreenConfig(
         title::AbstractString,
         visible::Bool,
-        headless::Bool,
         show_editor::Bool,
         px_per_unit::Real,
         size::Tuple{Integer, Integer},
@@ -31,7 +28,6 @@ mutable struct ScreenConfig
         return new(
             String(title),
             visible,
-            headless,
             show_editor,
             Float32(px_per_unit),
             (Int(size[1]), Int(size[2])),
@@ -139,7 +135,7 @@ function _ensure_viewer!(screen::Screen, scene::Scene)
     if !isnothing(screen.viewer) && screen.viewer.open[]
         return screen.viewer
     end
-    headless = screen.config.headless || !screen.config.visible
+    headless = !screen.config.visible
     vp = start_viewer!(msg -> _handle_viewer_event!(screen, msg); headless = headless)
     screen.viewer = vp
     screen.open = true

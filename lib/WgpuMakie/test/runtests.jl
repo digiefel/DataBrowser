@@ -14,7 +14,8 @@ function count_non_white(img)
 end
 
 @testset "WgpuMakie Phase 1A" begin
-    WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
+    @test Makie.current_backend() === WgpuMakie
+    WgpuMakie.activate!(; visible = false, show_editor = false)
 
     @testset "2D Axis + Lines + LineSegments + Scatter + Text + PNG save" begin
         fig = Figure(size = (400, 300))
@@ -288,7 +289,7 @@ end
     end
 
     @testset "High-throughput streaming & large-N LOD rendering" begin
-        WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
+        WgpuMakie.activate!(; visible = false, show_editor = false)
 
         # 1) Large-N (>100k) monotonic-X line triggers Rust M4 LOD builder and preserves spikes
         n_lod = 200_000
@@ -328,7 +329,7 @@ end
     end
 
     @testset "Milestone 2: Annotations, Layout Manipulation & Brushing" begin
-        WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
+        WgpuMakie.activate!(; visible = false, show_editor = false)
 
         # 1. Grafico.EditablePlot annotations, fit_label persistence, and zero-recompile moves
         fit_fn(x; a = 1.0, b = 0.0) = a * x + b
@@ -344,7 +345,7 @@ end
         end
         ep = Grafico.editable(decl, d1)
         fig = Grafico.figure(ep)
-        scr = WgpuMakie.Screen(fig.scene, WgpuMakie.ScreenConfig("M2", false, true, false, 1.0f0, (640, 420)))
+        scr = WgpuMakie.Screen(fig.scene, WgpuMakie.ScreenConfig("M2", false, false, 1.0f0, (640, 420)))
         display(scr, fig.scene; figure = fig)
         WgpuMakie.flush_updates!(scr)
 
@@ -415,7 +416,7 @@ end
         Legend(fig_m[1, 3], ax_l)
         Colorbar(fig_m[2, 1:2]; vertical = false, limits = (0, 1))
 
-        mscr = WgpuMakie.Screen(fig_m.scene, WgpuMakie.ScreenConfig("M2-Layout", false, true, false, 1.0f0, (800, 480)))
+        mscr = WgpuMakie.Screen(fig_m.scene, WgpuMakie.ScreenConfig("M2-Layout", false, false, 1.0f0, (800, 480)))
         display(mscr, fig_m.scene; figure = fig_m)
         WgpuMakie.flush_updates!(mscr)
 

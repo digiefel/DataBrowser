@@ -51,10 +51,9 @@ function build_figure()
 end
 
 save_path = parse_save_arg(ARGS)
+fig = build_figure()
 if isnothing(save_path)
-    WgpuMakie.activate!(; headless = false, visible = true, show_editor = true, title = "WgpuMakie Layout, Insets & Brushing")
-    fig = build_figure()
-    scr = display(fig)
+    scr = display(fig; title = "WgpuMakie Layout, Insets & Brushing")
     on(scr.brush_selection) do sel
         isnothing(sel) && return
         println("Brushed ", sum(length(idxs) for (_, idxs) in sel.plots), " vertices inside ", sel.rect)
@@ -63,8 +62,6 @@ if isnothing(save_path)
     println("Close the viewer or press Enter to exit...")
     readline()
 else
-    WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
-    fig = build_figure()
     mkpath(dirname(save_path))
     Makie.save(save_path, fig)
     println("Saved ", save_path)

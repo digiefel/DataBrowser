@@ -33,7 +33,6 @@ end
 
 save_path = parse_save_arg(ARGS)
 if isnothing(save_path)
-    WgpuMakie.activate!(; headless = false, visible = true, show_editor = true)
     t0 = time_ns()
     fig = build_figure()
     display(fig)
@@ -41,7 +40,6 @@ if isnothing(save_path)
     println("Displayed 10M points in ", round(dt_ms; digits = 1), " ms. Close viewer or press Enter...")
     readline()
 else
-    WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
     t_build = @elapsed fig = build_figure()
     mkpath(dirname(save_path))
     t_save = @elapsed Makie.save(save_path, fig)
