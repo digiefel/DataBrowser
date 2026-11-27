@@ -44,7 +44,7 @@ function _format_fit_result(res; digits::Int=3, title=nothing)::String
             (k === :curve || k in group_set) && continue
             push!(param_parts, "$k = $(_format_fit_value(g[k], digits))")
         end
-        body = join(param_parts, ", ")
+        body = multi ? join(param_parts, ", ") : join(param_parts, "\n")
         if multi
             gparts = ["$c = $(g[c])" for c in unique(group_cols) if haskey(g, c)]
             prefix = isempty(gparts) ? "" : "[" * join(gparts, ", ") * "] "
@@ -232,7 +232,7 @@ function _card_dims_and_offset(txt::String, fs::Float32, align)
     lines = split(txt, '\n')
     max_chars = isempty(lines) ? 0 : maximum(length, lines)
     n_lines = max(1, length(lines))
-    box_w = max(24.0f0, Float32(max_chars) * fs * 0.58f0 + 14.0f0)
+    box_w = max(24.0f0, Float32(max_chars) * fs * 0.51f0 + 14.0f0)
     box_h = max(18.0f0, Float32(n_lines) * fs * 1.28f0 + 10.0f0)
     ha, va = _normalize_align(align)
     ox = ha === :left ? box_w * 0.5f0 - 4.0f0 : ha === :right ? -box_w * 0.5f0 + 4.0f0 : 0.0f0
@@ -354,7 +354,9 @@ function _build_annotation_children!(
         _draw_arrow_head!(p1, p2, col, Float32(get(kw, :arrowsize, 13.0)))
         if !isempty(txt)
             mid = Point2f((p1[1] + p2[1]) * 0.5f0, (p1[2] + p2[2]) * 0.5f0)
-            _draw_text_card!(mid, txt, (:center, :bottom), get(kw, :bgcolor, nothing))
+            slope_neg = (p2[1] - p1[1]) * (p2[2] - p1[2]) < 0
+            def_align = slope_neg ? (:left, :bottom) : (:right, :bottom)
+            _draw_text_card!(mid, txt, def_align, get(kw, :bgcolor, nothing))
         end
     elseif kind === :callout
         px = Float32(get(kw, :x, 0.5))
