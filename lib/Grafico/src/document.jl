@@ -50,6 +50,31 @@ mutable struct ThemeSpec
 end
 
 """
+    AnnotationDoc
+
+Editable declaration of a plot annotation inside a [`PlotDocument`](@ref).
+"""
+mutable struct AnnotationDoc
+    id::Int
+    kind::Symbol
+    text::String
+    source_expr::Union{Nothing,String}
+    visible::Bool
+    kwargs::Dict{Symbol,EntryValue}
+end
+
+"""
+    InsetDoc
+
+Editable declaration of a zoom inset axis inside a [`PlotDocument`](@ref).
+"""
+mutable struct InsetDoc
+    id::Int
+    visible::Bool
+    kwargs::Dict{Symbol,EntryValue}
+end
+
+"""
     PlotDocument
 
 Structured editable representation of a `@plot` specification.
@@ -66,9 +91,15 @@ mutable struct PlotDocument
     legend::Dict{Symbol,EntryValue}
     theme::Union{Nothing,ThemeSpec}
     inspector::Union{Nothing,InspectorSpec}
+    annotations::Vector{AnnotationDoc}
+    insets::Vector{InsetDoc}
+    layout_settings::Dict{Symbol,EntryValue}
+    colorbar::Dict{Symbol,EntryValue}
     has_block::Bool
     eval_module::Module
     next_layer_id::Int
+    next_annotation_id::Int
+    next_inset_id::Int
 end
 
 function Base.deepcopy_internal(doc::PlotDocument, stackdict::IdDict)
@@ -85,9 +116,15 @@ function Base.deepcopy_internal(doc::PlotDocument, stackdict::IdDict)
         Base.deepcopy_internal(doc.legend, stackdict),
         doc.theme === nothing ? nothing : Base.deepcopy_internal(doc.theme, stackdict),
         doc.inspector === nothing ? nothing : Base.deepcopy_internal(doc.inspector, stackdict),
+        Base.deepcopy_internal(doc.annotations, stackdict),
+        Base.deepcopy_internal(doc.insets, stackdict),
+        Base.deepcopy_internal(doc.layout_settings, stackdict),
+        Base.deepcopy_internal(doc.colorbar, stackdict),
         doc.has_block,
         doc.eval_module,
         doc.next_layer_id,
+        doc.next_annotation_id,
+        doc.next_inset_id,
     )
     stackdict[doc] = copy
     return copy
@@ -367,6 +404,64 @@ function _parse_scale_value(expr)
     return Dict{Symbol,EntryValue}(:value => _make_entry_value(cleaned))
 end
 
+function _parse_annotate_expr!(doc::PlotDocument, line::Expr, hidden::Bool)
+    pos, named = call_arguments(line)
+    kind = :text
+    text = ""
+    source_expr = nothing
+    if !isempty(pos)
+        first_arg = pos[1]
+        if first_arg isa QuoteNode && first_arg.value isa Symbol
+            kind = first_arg.value
+            if length(pos) >= 2
+                c = pos[2]
+                if c isa AbstractString
+                    text = String(c)
+                elseif kind === :fit_label
+                    source_expr = _expr_to_string(c)
+                elseif c !== :nothing
+                    val = _eval_in_module(doc.eval_module, c)
+                    text = val === nothing ? "" : string(val)
+                end
+            end
+        elseif first_arg isa AbstractString
+            text = String(first_arg)
+        elseif first_arg !== :nothing
+            text = string(_eval_in_module(doc.eval_module, first_arg))
+        end
+    end
+    vis = !hidden
+    kw = Dict{Symbol,EntryValue}()
+    for (k, v) in named
+        if k === :visible
+            vis = Bool(_eval_in_module(doc.eval_module, v))
+        else
+            kw[k] = _make_entry_value(v)
+        end
+    end
+    id = doc.next_annotation_id
+    doc.next_annotation_id += 1
+    push!(doc.annotations, AnnotationDoc(id, kind, text, source_expr, vis, kw))
+    return nothing
+end
+
+function _parse_inset_expr!(doc::PlotDocument, line::Expr, hidden::Bool)
+    _, named = call_arguments(line)
+    vis = !hidden
+    kw = Dict{Symbol,EntryValue}()
+    for (k, v) in named
+        if k === :visible
+            vis = Bool(_eval_in_module(doc.eval_module, v))
+        else
+            kw[k] = _make_entry_value(v)
+        end
+    end
+    id = doc.next_inset_id
+    doc.next_inset_id += 1
+    push!(doc.insets, InsetDoc(id, vis, kw))
+    return nothing
+end
+
 """
     parse_plot_document(header_expr, block_expr=nothing; eval_module=Main) -> PlotDocument
 
@@ -391,8 +486,14 @@ function parse_plot_document(
         Dict{Symbol,EntryValue}(),
         nothing,
         nothing,
+        AnnotationDoc[],
+        InsetDoc[],
+        Dict{Symbol,EntryValue}(),
+        Dict{Symbol,EntryValue}(),
         block_expr !== nothing,
         eval_module,
+        1,
+        1,
         1,
     )
     block_expr === nothing && return doc
@@ -435,6 +536,20 @@ function parse_plot_document(
             doc.theme = ThemeSpec(base, settings)
         elseif Meta.isexpr(line, :call) && line.args[1] === :inspector
             doc.inspector = existing_inspector !== nothing ? existing_inspector : _parse_inspector_expr(line, eval_module)
+        elseif Meta.isexpr(line, :call) && line.args[1] === :annotate
+            _parse_annotate_expr!(doc, line, hidden)
+        elseif Meta.isexpr(line, :call) && line.args[1] === :inset
+            _parse_inset_expr!(doc, line, hidden)
+        elseif Meta.isexpr(line, :call) && line.args[1] === :panel_layout
+            _, named = call_arguments(line)
+            for (k, v) in named
+                doc.layout_settings[k] = _make_entry_value(v)
+            end
+        elseif Meta.isexpr(line, :call) && line.args[1] === :colorbar
+            _, named = call_arguments(line)
+            for (k, v) in named
+                doc.colorbar[k] = _make_entry_value(v)
+            end
         else
             d, m, a, pt, vk = _parse_layer_terms(line)
             id = doc.next_layer_id
@@ -488,6 +603,8 @@ mutable struct EditablePlot <: AbstractEditablePlot
     compiled::Makie.Observable{Any}
     visual_obs::Dict{Int,Dict{Symbol,Makie.Observable{Any}}}
     coord_obs::Dict{Symbol,Makie.Observable{Any}}
+    annotation_obs::Dict{Int,Makie.Observable{AnnotationSpec}}
+    inset_obs::Dict{Int,Dict{Symbol,Makie.Observable{Any}}}
     base_plot::Any
     initial_data::Any
     structure_dirty::Bool
@@ -524,8 +641,14 @@ function _document_from_runtime(plot::Layer)::PlotDocument
         Dict{Symbol,EntryValue}(),
         nothing,
         nothing,
+        AnnotationDoc[],
+        InsetDoc[],
+        Dict{Symbol,EntryValue}(),
+        Dict{Symbol,EntryValue}(),
         false,
         Main,
+        1,
+        1,
         1,
     )
 end
@@ -534,7 +657,9 @@ function _document_from_runtime(plot::Scaled)::PlotDocument
     base_doc = plot.layers isa Layer ? _document_from_runtime(plot.layers) :
                PlotDocument(nothing, MappingEntry[], nothing, "", Dict{Symbol,EntryValue}(),
                    LayerSpec[], Dict{Symbol,Dict{Symbol,EntryValue}}(), Dict{Symbol,Any}[],
-                   Dict{Symbol,EntryValue}(), nothing, plot.inspector, plot.layers isa PlotLines, Main, 1)
+                   Dict{Symbol,EntryValue}(), nothing, plot.inspector,
+                   AnnotationDoc[], InsetDoc[], Dict{Symbol,EntryValue}(), Dict{Symbol,EntryValue}(),
+                   plot.layers isa PlotLines, Main, 1, 1, 1)
     base_doc.inspector = plot.inspector
     if plot.theme !== nothing
         settings = Dict{Symbol,EntryValue}(k => _entry_value_from_runtime(v) for (k, v) in pairs(plot.theme.settings))
@@ -542,6 +667,31 @@ function _document_from_runtime(plot::Scaled)::PlotDocument
     end
     for (k, v) in pairs(plot.legend)
         base_doc.legend[k] = _entry_value_from_runtime(v)
+    end
+    for ann_raw in plot.annotations
+        ann = ann_raw isa Makie.Observable ? ann_raw[] : ann_raw
+        kw = Dict{Symbol,EntryValue}(k => _entry_value_from_runtime(v) for (k, v) in pairs(ann.kwargs))
+        id = base_doc.next_annotation_id
+        base_doc.next_annotation_id += 1
+        push!(base_doc.annotations, AnnotationDoc(id, ann.kind, ann.text, ann.source_expr, ann.visible, kw))
+    end
+    for ins in plot.insets
+        kw = Dict{Symbol,EntryValue}(k => _entry_value_from_runtime(v) for (k, v) in pairs(ins.kwargs))
+        kw[:bbox] = _entry_value_from_runtime(ins.bbox)
+        ins.xlimits === nothing || (kw[:xlimits] = _entry_value_from_runtime(ins.xlimits))
+        ins.ylimits === nothing || (kw[:ylimits] = _entry_value_from_runtime(ins.ylimits))
+        ins.show_box || (kw[:show_box] = EntryValue("false", true))
+        id = base_doc.next_inset_id
+        base_doc.next_inset_id += 1
+        push!(base_doc.insets, InsetDoc(id, ins.visible, kw))
+    end
+    if plot.layout !== nothing
+        for (k, v) in pairs(plot.layout.settings)
+            base_doc.layout_settings[k] = _entry_value_from_runtime(v)
+        end
+    end
+    for (k, v) in pairs(plot.colorbar)
+        base_doc.colorbar[k] = _entry_value_from_runtime(v)
     end
     return base_doc
 end
@@ -566,7 +716,9 @@ document(x::Layer) = _document_from_runtime(x)
 function document(x::Layers)
     doc = PlotDocument(nothing, MappingEntry[], nothing, "", Dict{Symbol,EntryValue}(),
         LayerSpec[], Dict{Symbol,Dict{Symbol,EntryValue}}(), Dict{Symbol,Any}[],
-        Dict{Symbol,EntryValue}(), nothing, nothing, true, Main, 1)
+        Dict{Symbol,EntryValue}(), nothing, nothing,
+        AnnotationDoc[], InsetDoc[], Dict{Symbol,EntryValue}(), Dict{Symbol,EntryValue}(),
+        true, Main, 1, 1, 1)
     for (idx, layer) in enumerate(x.layers)
         ldoc = _document_from_runtime(layer)
         push!(doc.layers, LayerSpec(idx, nothing, true, ldoc.header_data_expr, ldoc.header_mapping,
@@ -720,7 +872,8 @@ _replace_data(x::Layers, df) = Layers([_replace_data(l, df) for l in x.layers])
 _replace_data(x::YScaleLayers, df) = YScaleLayers([r => _replace_data(l, df) for (r, l) in x.layers])
 _replace_data(x::PlotLine, df) = PlotLine(_replace_data(x.layers, df), x.shared, x.drawn)
 _replace_data(x::PlotLines, df) = PlotLines([_replace_data(l, df) for l in x.lines], x.document)
-_replace_data(x::Scaled, df) = Scaled(_replace_data(x.layers, df), x.scales, x.texts, x.legend, x.theme, x.coords, x.inspector, x.document)
+_replace_data(x::Scaled, df) = Scaled(_replace_data(x.layers, df), x.scales, x.texts, x.legend, x.theme, x.coords,
+    x.inspector, x.annotations, x.insets, x.layout, x.colorbar, x.document)
 _replace_data(x, _) = x
 
 function _eval_scales_from_doc(doc::PlotDocument)
@@ -785,6 +938,90 @@ function _eval_theme_from_doc(doc::PlotDocument)
     return PlotTheme(doc.theme.base, (; pairs_list...))
 end
 
+function _build_annotation_spec(doc::PlotDocument, ann_doc::AnnotationDoc, base_ann=nothing)::AnnotationSpec
+    raw_base = base_ann isa Makie.Observable ? base_ann[] : base_ann
+    fit_res = (raw_base isa AnnotationSpec && raw_base.kind === ann_doc.kind &&
+        (raw_base.source_expr === nothing || raw_base.source_expr == ann_doc.source_expr)) ?
+        raw_base.fit_result : nothing
+    kw_pairs = Pair{Symbol,Any}[k => _eval_entry_value(doc, ev) for (k, ev) in pairs(ann_doc.kwargs)]
+    txt = fit_res isa Result ? _format_fit_result(fit_res;
+        digits=Int(get(Dict(kw_pairs), :digits, 3)),
+        title=get(Dict(kw_pairs), :title, nothing)) : ann_doc.text
+    return AnnotationSpec(
+        ann_doc.id,
+        ann_doc.kind,
+        txt,
+        ann_doc.source_expr,
+        fit_res,
+        ann_doc.visible,
+        (; kw_pairs...),
+    )
+end
+
+function _sync_annotations_from_doc!(ep::EditablePlot, base_anns=Any[])::Vector{Any}
+    out = Any[]
+    for (idx, ann_doc) in enumerate(ep.doc.annotations)
+        matched = nothing
+        for candidate in base_anns
+            raw = candidate isa Makie.Observable ? candidate[] : candidate
+            raw isa AnnotationSpec || continue
+            if (raw.id != 0 && raw.id == ann_doc.id) || (raw.kind === ann_doc.kind && (raw.source_expr === nothing || raw.source_expr == ann_doc.source_expr))
+                matched = raw
+                break
+            end
+        end
+        if matched === nothing && idx <= length(base_anns)
+            matched = base_anns[idx]
+        end
+        spec = _build_annotation_spec(ep.doc, ann_doc, matched)
+        obs = get!(ep.annotation_obs, ann_doc.id) do
+            Makie.Observable{AnnotationSpec}(spec)
+        end
+        obs.val = spec
+        push!(out, obs)
+    end
+    return out
+end
+
+function _eval_insets_from_doc(doc::PlotDocument)::Vector{InsetSpec}
+    out = InsetSpec[]
+    for ins in doc.insets
+        kw_pairs = Pair{Symbol,Any}[]
+        bbox = (0.56, 0.95, 0.56, 0.95)
+        xlims = nothing
+        ylims = nothing
+        show_box = true
+        for (k, ev) in pairs(ins.kwargs)
+            val = _eval_entry_value(doc, ev)
+            if k === :bbox
+                bbox = (Float64(val[1]), Float64(val[2]), Float64(val[3]), Float64(val[4]))
+            elseif k === :xlimits
+                xlims = val === nothing ? nothing : (val[1], val[2])
+            elseif k === :ylimits
+                ylims = val === nothing ? nothing : (val[1], val[2])
+            elseif k === :show_box
+                show_box = Bool(val)
+            else
+                push!(kw_pairs, k => val)
+            end
+        end
+        push!(out, InsetSpec(ins.id, ins.visible, bbox, xlims, ylims, show_box, (; kw_pairs...)))
+    end
+    return out
+end
+
+function _eval_layout_from_doc(doc::PlotDocument)::Union{Nothing,PanelLayoutSpec}
+    isempty(doc.layout_settings) && return nothing
+    pairs_list = Pair{Symbol,Any}[k => _eval_entry_value(doc, ev) for (k, ev) in pairs(doc.layout_settings)]
+    return PanelLayoutSpec((; pairs_list...))
+end
+
+function _eval_colorbar_from_doc(doc::PlotDocument)::NamedTuple
+    isempty(doc.colorbar) && return (;)
+    pairs_list = Pair{Symbol,Any}[k => _eval_entry_value(doc, ev) for (k, ev) in pairs(doc.colorbar)]
+    return (; pairs_list...)
+end
+
 function _rebuild_from_base(ep::EditablePlot)
     doc = ep.doc
     base = ep.data[] === nothing ? ep.base_plot : _replace_data(ep.base_plot, ep.data[])
@@ -815,7 +1052,12 @@ function _rebuild_from_base(ep::EditablePlot)
         coords_vec = _eval_coords_from_doc(doc, coord_obs, base.coords)
         legend_nt = _eval_legend_from_doc(doc)
         theme_obj = _eval_theme_from_doc(doc)
-        return Scaled(layers, scales_vec, base.texts, legend_nt, theme_obj, coords_vec, doc.inspector, doc)
+        anns = _sync_annotations_from_doc!(ep, base.annotations)
+        insets = _eval_insets_from_doc(doc)
+        lay = _eval_layout_from_doc(doc)
+        cb = _eval_colorbar_from_doc(doc)
+        return Scaled(layers, scales_vec, base.texts, legend_nt, theme_obj, coords_vec,
+            doc.inspector, anns, insets, lay, cb, doc)
     elseif base isa PlotLines
         drawn_specs = [l for l in doc.layers if !l.is_statement_only]
         new_lines = PlotLine[]
@@ -835,14 +1077,35 @@ function _rebuild_from_base(ep::EditablePlot)
         coords_vec = _eval_coords_from_doc(doc, coord_obs)
         legend_nt = _eval_legend_from_doc(doc)
         theme_obj = _eval_theme_from_doc(doc)
-        if !isempty(scales_vec) || !isempty(coords_vec) || !isempty(legend_nt) || theme_obj !== nothing || doc.inspector !== nothing
-            return Scaled(pl, scales_vec, Pair{Symbol,Function}[], legend_nt, theme_obj, coords_vec, doc.inspector, doc)
+        anns = _sync_annotations_from_doc!(ep)
+        insets = _eval_insets_from_doc(doc)
+        lay = _eval_layout_from_doc(doc)
+        cb = _eval_colorbar_from_doc(doc)
+        if !isempty(scales_vec) || !isempty(coords_vec) || !isempty(legend_nt) || theme_obj !== nothing ||
+           doc.inspector !== nothing || !isempty(anns) || !isempty(insets) || lay !== nothing || !isempty(cb)
+            return Scaled(pl, scales_vec, Pair{Symbol,Function}[], legend_nt, theme_obj, coords_vec,
+                doc.inspector, anns, insets, lay, cb, doc)
         end
         return pl
     else
         obs_pairs = _ensure_visual_obs!(ep, 0, doc.header_visual_kwargs)
         pt = _resolve_plottype(doc, doc.header_plottype_expr)
-        return _patch_layer_visual(base, pt, obs_pairs)
+        res = _patch_layer_visual(base, pt, obs_pairs)
+        scales_vec = _eval_scales_from_doc(doc)
+        coords_vec = _eval_coords_from_doc(doc, coord_obs)
+        legend_nt = _eval_legend_from_doc(doc)
+        theme_obj = _eval_theme_from_doc(doc)
+        anns = _sync_annotations_from_doc!(ep)
+        insets = _eval_insets_from_doc(doc)
+        lay = _eval_layout_from_doc(doc)
+        cb = _eval_colorbar_from_doc(doc)
+        if !isempty(scales_vec) || !isempty(coords_vec) || !isempty(legend_nt) || theme_obj !== nothing ||
+           doc.inspector !== nothing || !isempty(anns) || !isempty(insets) || lay !== nothing || !isempty(cb)
+            resolved = res isa Union{Layer,Layers} ? resolve(res, nothing, (;)) : res
+            return Scaled(resolved, scales_vec, Pair{Symbol,Function}[], legend_nt, theme_obj, coords_vec,
+                doc.inspector, anns, insets, lay, cb, doc)
+        end
+        return res
     end
 end
 
@@ -997,7 +1260,8 @@ function _compile_from_doc_ast(ep::EditablePlot)
         data_override,
     )
     need_block = doc.has_block || !isempty(doc.layers) || !isempty(doc.scales) ||
-        !isempty(doc.coords) || !isempty(doc.legend) || doc.theme !== nothing || doc.inspector !== nothing
+        !isempty(doc.coords) || !isempty(doc.legend) || doc.theme !== nothing || doc.inspector !== nothing ||
+        !isempty(doc.annotations) || !isempty(doc.insets) || !isempty(doc.layout_settings) || !isempty(doc.colorbar)
 
     if !need_block
         macro_expr = Expr(:macrocall, GlobalRef(@__MODULE__, Symbol("@plot")), LineNumberNode(0, :editable), header_expr)
@@ -1061,6 +1325,31 @@ function _compile_from_doc_ast(ep::EditablePlot)
         isempty(tkws) || pushfirst!(targs, Expr(:parameters, tkws...))
         push!(block_stmts, Expr(:call, :theme, targs...))
     end
+    for ann in doc.annotations
+        aargs = Any[QuoteNode(ann.kind)]
+        if ann.source_expr !== nothing
+            push!(aargs, Meta.parse(ann.source_expr))
+        elseif !isempty(ann.text)
+            push!(aargs, ann.text)
+        end
+        akws = [Expr(:kw, k, Meta.parse(ann.kwargs[k].expr_text)) for k in sort!(collect(keys(ann.kwargs)))]
+        ann.visible || push!(akws, Expr(:kw, :visible, false))
+        isempty(akws) || pushfirst!(aargs, Expr(:parameters, akws...))
+        push!(block_stmts, Expr(:call, :annotate, aargs...))
+    end
+    for ins in doc.insets
+        ikws = [Expr(:kw, k, Meta.parse(ins.kwargs[k].expr_text)) for k in sort!(collect(keys(ins.kwargs)))]
+        ins.visible || push!(ikws, Expr(:kw, :visible, false))
+        push!(block_stmts, Expr(:call, :inset, Expr(:parameters, ikws...)))
+    end
+    if !isempty(doc.layout_settings)
+        lkws = [Expr(:kw, k, Meta.parse(doc.layout_settings[k].expr_text)) for k in sort!(collect(keys(doc.layout_settings)))]
+        push!(block_stmts, Expr(:call, :panel_layout, Expr(:parameters, lkws...)))
+    end
+    if !isempty(doc.colorbar)
+        ckws = [Expr(:kw, k, Meta.parse(doc.colorbar[k].expr_text)) for k in sort!(collect(keys(doc.colorbar)))]
+        push!(block_stmts, Expr(:call, :colorbar, Expr(:parameters, ckws...)))
+    end
 
     macro_expr = Expr(:macrocall, GlobalRef(@__MODULE__, Symbol("@plot")), LineNumberNode(0, :editable),
         header_expr, Expr(:block, block_stmts...))
@@ -1078,16 +1367,22 @@ function _finalize_compiled_result(ep::EditablePlot, res)
         end
         return Declaration(res.layers, res.types, doc)
     elseif res isa Scaled
-        return Scaled(res.layers, res.scales, res.texts, res.legend, res.theme, res.coords, doc.inspector, doc)
+        anns = _sync_annotations_from_doc!(ep, res.annotations)
+        return Scaled(res.layers, res.scales, res.texts, res.legend, res.theme, res.coords,
+            doc.inspector, anns, res.insets, res.layout, res.colorbar, doc)
     elseif res isa PlotLines
         pl = PlotLines(res.lines, doc)
-        if doc.inspector !== nothing
-            return Scaled(pl, Pair{Symbol,Any}[], Pair{Symbol,Function}[], (;), nothing, NamedTuple[], doc.inspector, doc)
+        anns = _sync_annotations_from_doc!(ep)
+        if doc.inspector !== nothing || !isempty(anns)
+            return Scaled(pl, Pair{Symbol,Any}[], Pair{Symbol,Function}[], (;), nothing, NamedTuple[],
+                doc.inspector, anns, InsetSpec[], nothing, (;), doc)
         end
         return pl
-    elseif doc.inspector !== nothing
+    elseif doc.inspector !== nothing || !isempty(doc.annotations)
+        anns = _sync_annotations_from_doc!(ep)
         resolved = res isa Union{Layer,Layers} ? resolve(res, nothing, (;)) : res
-        return Scaled(resolved, Pair{Symbol,Any}[], Pair{Symbol,Function}[], (;), nothing, NamedTuple[], doc.inspector, doc)
+        return Scaled(resolved, Pair{Symbol,Any}[], Pair{Symbol,Function}[], (;), nothing, NamedTuple[],
+            doc.inspector, anns, InsetSpec[], nothing, (;), doc)
     else
         return res
     end
@@ -1172,6 +1467,8 @@ function editable(plot, input=nothing)
         compiled_obs,
         Dict{Int,Dict{Symbol,Makie.Observable{Any}}}(),
         Dict{Symbol,Makie.Observable{Any}}(),
+        Dict{Int,Makie.Observable{AnnotationSpec}}(),
+        Dict{Int,Dict{Symbol,Makie.Observable{Any}}}(),
         plot,
         init_data,
         false,
@@ -1673,6 +1970,229 @@ Set or clear the [`InspectorSpec`](@ref) on `ep`.
 """
 function set_inspector!(ep::EditablePlot, spec::Union{Nothing,InspectorSpec})
     ep.doc.inspector = spec
+    return _recompile!(ep)
+end
+
+function _find_annotation_doc(ep::EditablePlot, ann_id::Int)::AnnotationDoc
+    idx = findfirst(a -> a.id == ann_id, ep.doc.annotations)
+    idx === nothing && error("Annotation id $ann_id not found in EditablePlot")
+    return ep.doc.annotations[idx]
+end
+
+function _find_inset_doc(ep::EditablePlot, inset_id::Int)::InsetDoc
+    idx = findfirst(i -> i.id == inset_id, ep.doc.insets)
+    idx === nothing && error("Inset id $inset_id not found in EditablePlot")
+    return ep.doc.insets[idx]
+end
+
+function _push_annotation_update!(ep::EditablePlot, ann_doc::AnnotationDoc)
+    if haskey(ep.annotation_obs, ann_doc.id)
+        obs = ep.annotation_obs[ann_doc.id]
+        obs[] = _build_annotation_spec(ep.doc, ann_doc, obs[])
+        return true
+    end
+    return false
+end
+
+"""
+    add_annotation!(ep::EditablePlot, kind::Symbol; text="", source_expr=nothing, visible=true, kwargs_exprs=Dict{Symbol,String}()) -> Int
+
+Add an annotation of `kind` to `ep` and return its assigned annotation id.
+"""
+function add_annotation!(
+    ep::EditablePlot,
+    kind::Symbol;
+    text::AbstractString="",
+    source_expr::Union{Nothing,AbstractString}=nothing,
+    visible::Bool=true,
+    kwargs_exprs::AbstractDict{Symbol,<:AbstractString}=Dict{Symbol,String}(),
+)::Int
+    kind in ANNOTATION_KINDS || throw(ArgumentError("Unsupported annotation kind :$kind"))
+    kw = Dict{Symbol,EntryValue}()
+    for (k, ex) in kwargs_exprs
+        _, ev = _validate_and_parse_expr(ep.doc, ex)
+        kw[k] = ev
+    end
+    id = ep.doc.next_annotation_id
+    ep.doc.next_annotation_id += 1
+    src = source_expr === nothing ? nothing : String(source_expr)
+    ann_doc = AnnotationDoc(id, kind, String(text), src, visible, kw)
+    push!(ep.doc.annotations, ann_doc)
+    ep.doc.has_block = true
+    src === nothing || (ep.structure_dirty = true)
+    _recompile!(ep)
+    return id
+end
+
+function _decode_text_input(expr_text::AbstractString)::String
+    s = String(strip(expr_text))
+    if startswith(s, "\"") && endswith(s, "\"") && length(s) >= 2
+        try
+            parsed = Meta.parse(s)
+            parsed isa AbstractString && return String(parsed)
+        catch
+        end
+    end
+    return String(expr_text)
+end
+
+"""
+    set_annotation_expr!(ep::EditablePlot, ann_id::Int, key::Symbol, expr_text::AbstractString) -> EditablePlot
+
+Update an annotation property (`:text`, `:visible`, or any keyword expression) in place when bound.
+"""
+function set_annotation_expr!(ep::EditablePlot, ann_id::Int, key::Symbol, expr_text::AbstractString)
+    ann_doc = _find_annotation_doc(ep, ann_id)
+    if key === :text
+        ann_doc.text = _decode_text_input(expr_text)
+    elseif key === :visible
+        val, _ = _validate_and_parse_expr(ep.doc, expr_text)
+        ann_doc.visible = Bool(val)
+    elseif key === :source_expr
+        ann_doc.source_expr = isempty(strip(expr_text)) ? nothing : String(strip(expr_text))
+        ep.structure_dirty = true
+        return _recompile!(ep)
+    else
+        _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+        ann_doc.kwargs[key] = ev
+    end
+    _push_annotation_update!(ep, ann_doc) || _recompile!(ep)
+    return ep
+end
+
+"""
+    move_annotation!(ep::EditablePlot, ann_id::Int; kwargs...) -> EditablePlot
+
+Move annotation coordinates (`x`, `y`, `x2`, `y2`, `tx`, `ty`, `xmin`, `xmax`, `ymin`, `ymax`)
+in place without recompiling analyses.
+"""
+function move_annotation!(ep::EditablePlot, ann_id::Int; kwargs...)
+    ann_doc = _find_annotation_doc(ep, ann_id)
+    for (k, v) in kwargs
+        val = v isa Real ? round(Float64(v); sigdigits=6) : v
+        ann_doc.kwargs[k] = _entry_value_from_runtime(val)
+    end
+    _push_annotation_update!(ep, ann_doc) || _recompile!(ep)
+    return ep
+end
+
+"""
+    set_annotation_visible!(ep::EditablePlot, ann_id::Int, visible::Bool) -> EditablePlot
+
+Show or hide annotation `ann_id` in place without recompiling analyses.
+"""
+function set_annotation_visible!(ep::EditablePlot, ann_id::Int, visible::Bool)
+    ann_doc = _find_annotation_doc(ep, ann_id)
+    ann_doc.visible = visible
+    _push_annotation_update!(ep, ann_doc) || _recompile!(ep)
+    return ep
+end
+
+"""
+    remove_annotation!(ep::EditablePlot, ann_id::Int) -> EditablePlot
+
+Remove annotation `ann_id` from `ep`.
+"""
+function remove_annotation!(ep::EditablePlot, ann_id::Int)
+    idx = findfirst(a -> a.id == ann_id, ep.doc.annotations)
+    idx === nothing && error("Annotation id $ann_id not found in EditablePlot")
+    deleteat!(ep.doc.annotations, idx)
+    delete!(ep.annotation_obs, ann_id)
+    return _recompile!(ep)
+end
+
+"""
+    add_inset!(ep::EditablePlot; bbox=(0.56, 0.95, 0.56, 0.95), xlimits=nothing, ylimits=nothing, visible=true, kwargs_exprs=Dict{Symbol,String}()) -> Int
+
+Add a zoom inset axis to `ep` and return its assigned inset id.
+"""
+function add_inset!(
+    ep::EditablePlot;
+    bbox::NTuple{4,Real}=(0.56, 0.95, 0.56, 0.95),
+    xlimits=nothing,
+    ylimits=nothing,
+    visible::Bool=true,
+    kwargs_exprs::AbstractDict{Symbol,<:AbstractString}=Dict{Symbol,String}(),
+)::Int
+    kw = Dict{Symbol,EntryValue}()
+    kw[:bbox] = _entry_value_from_runtime(ntuple(i -> round(Float64(bbox[i]); digits=4), 4))
+    xlimits === nothing || (kw[:xlimits] = _entry_value_from_runtime((round(Float64(xlimits[1]); sigdigits=5), round(Float64(xlimits[2]); sigdigits=5))))
+    ylimits === nothing || (kw[:ylimits] = _entry_value_from_runtime((round(Float64(ylimits[1]); sigdigits=5), round(Float64(ylimits[2]); sigdigits=5))))
+    for (k, ex) in kwargs_exprs
+        _, ev = _validate_and_parse_expr(ep.doc, ex)
+        kw[k] = ev
+    end
+    id = ep.doc.next_inset_id
+    ep.doc.next_inset_id += 1
+    push!(ep.doc.insets, InsetDoc(id, visible, kw))
+    ep.doc.has_block = true
+    _recompile!(ep)
+    return id
+end
+
+"""
+    set_inset_expr!(ep::EditablePlot, inset_id::Int, key::Symbol, expr_text::AbstractString) -> EditablePlot
+
+Update an inset attribute expression in `ep`.
+"""
+function set_inset_expr!(ep::EditablePlot, inset_id::Int, key::Symbol, expr_text::AbstractString)
+    ins = _find_inset_doc(ep, inset_id)
+    if key === :visible
+        val, _ = _validate_and_parse_expr(ep.doc, expr_text)
+        ins.visible = Bool(val)
+    else
+        _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+        ins.kwargs[key] = ev
+    end
+    return _recompile!(ep)
+end
+
+"""
+    move_inset!(ep::EditablePlot, inset_id::Int, bbox::NTuple{4,Real}) -> EditablePlot
+
+Update the normalized `(xmin, xmax, ymin, ymax)` placement box of inset `inset_id`.
+"""
+function move_inset!(ep::EditablePlot, inset_id::Int, bbox::NTuple{4,Real})
+    ins = _find_inset_doc(ep, inset_id)
+    ins.kwargs[:bbox] = _entry_value_from_runtime(ntuple(i -> round(Float64(bbox[i]); digits=4), 4))
+    return _recompile!(ep)
+end
+
+"""
+    remove_inset!(ep::EditablePlot, inset_id::Int) -> EditablePlot
+
+Remove inset `inset_id` from `ep`.
+"""
+function remove_inset!(ep::EditablePlot, inset_id::Int)
+    idx = findfirst(i -> i.id == inset_id, ep.doc.insets)
+    idx === nothing && error("Inset id $inset_id not found in EditablePlot")
+    deleteat!(ep.doc.insets, idx)
+    delete!(ep.inset_obs, inset_id)
+    return _recompile!(ep)
+end
+
+"""
+    set_layout_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString) -> EditablePlot
+
+Set a panel layout property (`:colsizes`, `:rowsizes`, `:colgaps`, `:rowgaps`, `:alignmode`)
+on `ep` using `expr_text`.
+"""
+function set_layout_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString)
+    _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+    ep.doc.layout_settings[key] = ev
+    ep.doc.has_block = true
+    return _recompile!(ep)
+end
+
+"""
+    set_colorbar_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString) -> EditablePlot
+
+Set a colorbar guide property (`:show`, `:position`, `:vertical`, `:label`) on `ep`.
+"""
+function set_colorbar_expr!(ep::EditablePlot, key::Symbol, expr_text::AbstractString)
+    _, ev = _validate_and_parse_expr(ep.doc, expr_text)
+    ep.doc.colorbar[key] = ev
+    ep.doc.has_block = true
     return _recompile!(ep)
 end
 

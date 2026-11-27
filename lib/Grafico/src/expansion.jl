@@ -209,6 +209,9 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
     isempty(settings) && return nothing
     scales, templates, legend, theme, coords = Expr[], Pair{Symbol,Any}[], Expr[], nothing, Expr[]
     inspector_expr = nothing
+    ann_exprs, inset_exprs = Expr[], Expr[]
+    layout_expr = nothing
+    colorbar_exprs = Expr[]
     for line in filter(line -> line.args[1] in (:theme, :plot_theme), settings)
         base, named = call_arguments(line)
         theme = :($PlotTheme($(isempty(base) ? nothing : only(base)), $(Expr(:tuple, Expr(:parameters, (Expr(:kw, k, v) for (k, v) in named)...)))))
@@ -222,7 +225,21 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
     for line in filter(line -> line.args[1] === :inspector, settings)
         inspector_expr = Expr(:call, GlobalRef(@__MODULE__, :inspector), line.args[2:end]...)
     end
-    for line in filter(line -> !(line.args[1] in (:theme, :plot_theme, :coord, :inspector)), settings), (key, value) in last(call_arguments(line))
+    for line in filter(line -> line.args[1] === :annotate, settings)
+        push!(ann_exprs, Expr(:call, GlobalRef(@__MODULE__, :annotate), line.args[2:end]...))
+    end
+    for line in filter(line -> line.args[1] === :inset, settings)
+        push!(inset_exprs, Expr(:call, GlobalRef(@__MODULE__, :inset), line.args[2:end]...))
+    end
+    for line in filter(line -> line.args[1] === :panel_layout, settings)
+        layout_expr = Expr(:call, GlobalRef(@__MODULE__, :panel_layout), line.args[2:end]...)
+    end
+    for line in filter(line -> line.args[1] === :colorbar, settings)
+        for (key, value) in last(call_arguments(line))
+            push!(colorbar_exprs, Expr(:kw, key, value))
+        end
+    end
+    for line in filter(line -> !(line.args[1] in (:theme, :plot_theme, :coord, :inspector, :annotate, :inset, :panel_layout, :colorbar)), settings), (key, value) in last(call_arguments(line))
         line.args[1] === :scales ? push!(scales, :($(QuoteNode(key)) => $value)) :
         key in LEGEND_ROLES ? push!(templates, key => value) : push!(legend, Expr(:kw, key, value))
     end
@@ -251,7 +268,9 @@ function declare_settings(settings, header, names::Vector{Symbol}, input::Symbol
         :($(QuoteNode(role)) => ($entry -> string($text)))
     end
     return (; statements, arguments=(:(Pair{Symbol,Any}[$(scales...)]), :(Pair{Symbol,Function}[$(texts...)]),
-        Expr(:tuple, Expr(:parameters, legend...)), theme, :(NamedTuple[$(coords...)]), inspector_expr))
+        Expr(:tuple, Expr(:parameters, legend...)), theme, :(NamedTuple[$(coords...)]), inspector_expr,
+        :(Any[$(ann_exprs...)]), :($InsetSpec[$(inset_exprs...)]), layout_expr,
+        Expr(:tuple, Expr(:parameters, colorbar_exprs...))))
 end
 
 # A legend text with each path `p` replaced by `onpath(p)` and each name of the block by

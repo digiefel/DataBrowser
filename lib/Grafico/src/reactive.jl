@@ -103,7 +103,7 @@ _snapshot(x::PlotLines) = PlotLines([PlotLine(_snapshot(line.layers),line.shared
 _snapshot(x::YScaleLayers) = YScaleLayers([role => _snapshot(layer) for (role,layer) in x.layers])
 _snapshot(x::Scaled) = Scaled(_snapshot(x.layers),x.scales,x.texts,x.legend,x.theme,
     NamedTuple[(; (key => (key === :points ? _unobserve(value) : value) for (key,value) in pairs(step))...) for step in x.coords],
-    x.inspector, x.document)
+    x.inspector, x.annotations, x.insets, x.layout, x.colorbar, x.document)
 
 spec(x::Makie.Observable,args...;kwargs...) = spec(_snapshot(x),args...;kwargs...)
 spec(x::Makie.GridLayoutSpec,args...;kwargs...) = x

@@ -36,6 +36,89 @@ Compile `plot` (and `input` when `plot` is a [`Declaration`](@ref)) into a decla
 are read at their current values; visual and axis settings keep their live connections. Use
 `figure(plot)` to connect future data and mapping updates.
 """
+function _annotation_plotspecs(annotations::AbstractVector)::Vector{Makie.PlotSpec}
+    specs = Makie.PlotSpec[]
+    for ann in annotations
+        arg = ann isa Makie.Observable ? _ReactiveAnnotationRef(ann) : ann
+        push!(specs, Makie.PlotSpec(LiveAnnotation, arg))
+    end
+    return specs
+end
+
+function _inset_box_plotspecs(insets::AbstractVector{InsetSpec})::Vector{Makie.PlotSpec}
+    specs = Makie.PlotSpec[]
+    for ins in insets
+        ins.visible || continue
+        (ins.show_box && ins.xlimits !== nothing && ins.ylimits !== nothing) || continue
+        x0, x1 = Float32(ins.xlimits[1]), Float32(ins.xlimits[2])
+        y0, y1 = Float32(ins.ylimits[1]), Float32(ins.ylimits[2])
+        rect = Rect2f(min(x0, x1), min(y0, y1), max(abs(x1 - x0), 1.0f-6), max(abs(y1 - y0), 1.0f-6))
+        bcol = get(ins.kwargs, :bordercolor, :gray40)
+        bw = Float32(get(ins.kwargs, :borderwidth, 1.5))
+        push!(specs, Makie.PlotSpec(Makie.Poly, rect;
+            color=(:transparent, 0.0), strokecolor=bcol, strokewidth=bw, inspectable=false))
+    end
+    return specs
+end
+
+function _append_inset_axes!(cells::Vector{Pair{Tuple{Int,Int},Any}}, pos::Tuple{Int,Int},
+        base_plots::Vector{Makie.PlotSpec}, insets::AbstractVector{InsetSpec})
+    for ins in insets
+        ins.visible || continue
+        b = ins.bbox
+        w = clamp(b[2] - b[1], 0.08, 0.94)
+        h = clamp(b[4] - b[3], 0.08, 0.94)
+        hx = w < 0.999 ? clamp(b[1] / (1.0 - w), 0.0, 1.0) : 0.5
+        hy = h < 0.999 ? clamp(b[3] / (1.0 - h), 0.0, 1.0) : 0.5
+        extra = Pair{Symbol,Any}[]
+        if ins.xlimits !== nothing && ins.ylimits !== nothing
+            push!(extra, :limits => (ins.xlimits, ins.ylimits))
+        elseif ins.xlimits !== nothing
+            push!(extra, :limits => (ins.xlimits, nothing))
+        elseif ins.ylimits !== nothing
+            push!(extra, :limits => (nothing, ins.ylimits))
+        end
+        for k in (:title, :xlabel, :ylabel)
+            haskey(ins.kwargs, k) && push!(extra, k => ins.kwargs[k])
+        end
+        bg = get(ins.kwargs, :backgroundcolor, :white)
+        inset_ax = S.Axis(;
+            plots=copy(base_plots),
+            width=Makie.Relative(w),
+            height=Makie.Relative(h),
+            halign=hx,
+            valign=hy,
+            tellwidth=false,
+            tellheight=false,
+            backgroundcolor=bg,
+            extra...,
+        )
+        push!(cells, pos => inset_ax)
+    end
+    return cells
+end
+
+function _legend_block_spec(sections, legend::NamedTuple)
+    position = get(legend, :position, :right)
+    shown = get(legend, :titlevisible, true)
+    titles = [shown && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
+    if position === :inside
+        kwargs = (k => v for (k, v) in pairs(legend)
+            if k ∉ (:show, :position, :merge, :orientation, :halign, :valign, :backgroundcolor))
+        return S.Legend([s.samples for s in sections], [s.texts for s in sections], titles;
+            orientation=get(legend, :orientation, :vertical),
+            tellwidth=false,
+            tellheight=false,
+            halign=get(legend, :halign, 0.95),
+            valign=get(legend, :valign, 0.95),
+            backgroundcolor=get(legend, :backgroundcolor, (:white, 0.92)),
+            kwargs...)
+    end
+    kwargs = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
+    return S.Legend([s.samples for s in sections], [s.texts for s in sections], titles;
+        orientation=default_orientation(position), kwargs...)
+end
+
 function spec(
     specification::Union{Layer, Layers, ProcessedLayer, ProcessedLayers},
     args...;
@@ -46,6 +129,9 @@ function spec(
     facet=(;),
     colorbar=(;),
     inspector_spec::Union{Nothing,InspectorSpec}=nothing,
+    annotations::AbstractVector=Any[],
+    insets::AbstractVector{InsetSpec}=InsetSpec[],
+    panel_layout::Union{Nothing,PanelLayoutSpec}=nothing,
     _trace=nothing,
     options...,
 )
@@ -53,25 +139,37 @@ function spec(
     ae = compute_axes_grid(drawable(specification), settings;
         axis=_kwdict(axis, :axis), facet=_kwdict(facet, :facet))
     cells = Pair{Tuple{Int,Int},Any}[]
-    for ase in ae
+    first_pos = nothing
+    first_base_plots = Makie.PlotSpec[]
+    for (idx, ase) in enumerate(ae)
         _trace === nothing || push!(_trace, ase)
-        plots = Makie.PlotSpec[_entry_spec(entry) for entry in ase.entries]
-        ax_spec = _axis_spec(ase.axis,plots)
+        base_plots = Makie.PlotSpec[_entry_spec(entry) for entry in ase.entries]
+        plots = if idx == 1 && (!isempty(annotations) || !isempty(insets))
+            vcat(base_plots, _annotation_plotspecs(annotations), _inset_box_plotspecs(insets))
+        else
+            base_plots
+        end
+        ax_spec = _axis_spec(ase.axis, plots)
         ax_spec.then(_InspectorHook(axis -> label_inspector!([AxisEntries(axis, ase.entries,
             ase.categoricalscales, ase.continuousscales, ase.processedlayers)]; inspector_spec)))
         push!(cells, ase.axis.position => ax_spec)
+        if idx == 1
+            first_pos = ase.axis.position
+            first_base_plots = base_plots
+        end
+    end
+    if first_pos !== nothing && !isempty(insets)
+        _append_inset_axes!(cells, first_pos, first_base_plots, insets)
     end
     if get(legend, :show, true)
         sections = legend_sections(ae, texts, get(legend, :merge, nothing), groups)
         if !isempty(sections)
             position = get(legend, :position, :right)
-            kwargs = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
-            shown = get(legend, :titlevisible, true)
-            titles = [shown && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
-            leg_spec = S.Legend([s.samples for s in sections], [s.texts for s in sections], titles;
-                orientation=default_orientation(position), kwargs...)
+            leg_spec = _legend_block_spec(sections, legend)
             rows, cols = size(ae)
-            if position === :top
+            if position === :inside
+                push!(cells, (1, 1) => leg_spec)
+            elseif position === :top
                 cells = [(r + 1, c) => s for ((r, c), s) in cells]
                 push!(cells, (1, 1) => leg_spec)
             elseif position === :left
@@ -100,7 +198,7 @@ function spec(
                    S.GridLayout([(1,1)=>grid,(1,2)=>bars])
         end
     end
-    return grid
+    return panel_layout === nothing ? grid : _layout_spec(grid, panel_layout.settings)
 end
 
 function _format_inspector_values(value, names::Union{Nothing,Dict}, digits::Int)::Vector{String}
@@ -352,7 +450,9 @@ function scaled_y_figure(plot::PlotLines, yscales, args...; legend=(;), texts=Pa
     return drawn.figure
 end
 
-function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair{Symbol,Function}[], axis=(;), facet=(;), inspector_spec::Union{Nothing,InspectorSpec}=nothing, options...)
+function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair{Symbol,Function}[], axis=(;), facet=(;),
+        inspector_spec::Union{Nothing,InspectorSpec}=nothing, annotations::AbstractVector=Any[],
+        insets::AbstractVector{InsetSpec}=InsetSpec[], panel_layout::Union{Nothing,PanelLayoutSpec}=nothing, options...)
     settings = !isempty(args) && first(args) isa Scales ? first(args) : scales()
     primarysettings = get(yscales, :y, (;))
     groups = Dict{Symbol,Vector{PlotLine}}(:y => PlotLine[])
@@ -391,7 +491,10 @@ function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair
     size(ae_primary) == (1, 1) || error("Independent y scales currently require one panel")
     ase_primary = only(ae_primary)
     primary_plots = Makie.PlotSpec[Makie.PlotSpec(e.plottype, e.positional...; pairs(e.named)...) for e in ase_primary.entries]
-    primary_spec = S.Axis(; plots=primary_plots, pairs(ase_primary.axis.attributes)...)
+    full_primary_plots = (!isempty(annotations) || !isempty(insets)) ?
+        vcat(primary_plots, _annotation_plotspecs(annotations), _inset_box_plotspecs(insets)) :
+        primary_plots
+    primary_spec = S.Axis(; plots=full_primary_plots, pairs(ase_primary.axis.attributes)...)
     primary_spec.then(_InspectorHook(axis -> label_inspector!([AxisEntries(axis, ase_primary.entries,
         ase_primary.categoricalscales, ase_primary.continuousscales, ase_primary.processedlayers)]; inspector_spec)))
     cells = Pair{Tuple{Int,Int},Any}[(1, 1) => primary_spec]
@@ -417,21 +520,22 @@ function scaled_y_spec(plot::PlotLines, yscales, args...; legend=(;), texts=Pair
         push!(axes_to_link, sec_spec)
         push!(aes, vec(ae_sec))
     end
+    if !isempty(insets)
+        _append_inset_axes!(cells, (1, 1), primary_plots, insets)
+    end
     if get(legend, :show, true)
         all_groups = Dict{Symbol,Any}[Dict{Symbol,Any}(key => entries[i] for (key, entries) in pairs(primary))
             for ps in values(processed) for pieces in ps for (_, primary) in pieces
             if !isempty(primary) for i in eachindex(first(values(primary)))]
         sections = legend_sections(reduce(vcat, aes), texts, get(legend, :merge, nothing), all_groups)
         if !isempty(sections)
-            position = get(legend, :position, :right)
-            kwargs = (k => v for (k, v) in pairs(legend) if k ∉ (:show, :position, :merge))
-            titles = [get(legend, :titlevisible, true) && !isempty(something(s.title, "")) ? s.title : nothing for s in sections]
-            leg_spec = S.Legend([s.samples for s in sections], [s.texts for s in sections], titles;
-                orientation=default_orientation(position), kwargs...)
-            push!(cells, (1, 2) => leg_spec)
+            leg_spec = _legend_block_spec(sections, legend)
+            pos = get(legend, :position, :right)
+            push!(cells, (pos === :inside ? (1, 1) : (1, 2)) => leg_spec)
         end
     end
-    return S.GridLayout(cells; xaxislinks=[axes_to_link])
+    grid = S.GridLayout(cells; xaxislinks=[axes_to_link])
+    return panel_layout === nothing ? grid : _layout_spec(grid, panel_layout.settings)
 end
 
 # The named roles each line can show: those of its plot types, and those of the layout.
@@ -740,8 +844,11 @@ end
 function spec(plot::Scaled, args...; options...)
     _hasobs(plot) && return spec(_snapshot(plot),args...;options...)
     layers, settings, axis_kw, legend, yscales = prepare_scaled(plot; options...)
+    cb_opt = isempty(plot.colorbar) ? get(options, :colorbar, (;)) : merge(plot.colorbar, _kwdict(get(options, :colorbar, (;)), :colorbar))
     build_spec() = spec(layers, settings, args...; options..., axis=axis_kw,
-        texts=plot.texts, legend, inspector_spec=plot.inspector, (layers isa PlotLines ? (; yscales) : (;))...)
+        texts=plot.texts, legend, colorbar=cb_opt, inspector_spec=plot.inspector,
+        annotations=plot.annotations, insets=plot.insets, panel_layout=plot.layout,
+        (layers isa PlotLines ? (; yscales) : (;))...)
     return plot.theme === nothing ? build_spec() : Makie.with_theme(build_spec, makie_theme(plot.theme))
 end
 

@@ -73,7 +73,7 @@ a plot with `+`.
 plot_theme(base::Union{Nothing,Symbol}=nothing; kwargs...) = PlotTheme(base, NamedTuple(kwargs))
 const theme = plot_theme
 
-const PlotModifier = Union{Scales, CoordSpec, LegendSpec, PlotTheme, InspectorSpec}
+const PlotModifier = Union{Scales, CoordSpec, LegendSpec, PlotTheme, InspectorSpec, AnnotationSpec, InsetSpec, PanelLayoutSpec, ColorbarSpec}
 const PlotSpecObject = Union{AbstractAlgebraic, Result, PlotLines, Scaled}
 
 function to_scaled(plot::Scaled)
@@ -97,23 +97,49 @@ function apply_modifier(plot::Scaled, s::Scales)
     if !isempty(axes) && layers isa Union{Layer, Layers}
         layers = resolve(layers, nothing, axes)
     end
-    return Scaled(layers, new_scales, plot.texts, plot.legend, plot.theme, plot.coords, plot.inspector, plot.document)
+    return Scaled(layers, new_scales, plot.texts, plot.legend, plot.theme, plot.coords, plot.inspector,
+        plot.annotations, plot.insets, plot.layout, plot.colorbar, plot.document)
 end
 
 function apply_modifier(plot::Scaled, c::CoordSpec)
-    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, [plot.coords; c.step], plot.inspector, plot.document)
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, [plot.coords; c.step], plot.inspector,
+        plot.annotations, plot.insets, plot.layout, plot.colorbar, plot.document)
 end
 
 function apply_modifier(plot::Scaled, l::LegendSpec)
-    return Scaled(plot.layers, plot.scales, [plot.texts; l.texts], merge(plot.legend, l.settings), plot.theme, plot.coords, plot.inspector, plot.document)
+    return Scaled(plot.layers, plot.scales, [plot.texts; l.texts], merge(plot.legend, l.settings), plot.theme, plot.coords, plot.inspector,
+        plot.annotations, plot.insets, plot.layout, plot.colorbar, plot.document)
 end
 
 function apply_modifier(plot::Scaled, t::PlotTheme)
-    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, t, plot.coords, plot.inspector, plot.document)
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, t, plot.coords, plot.inspector,
+        plot.annotations, plot.insets, plot.layout, plot.colorbar, plot.document)
 end
 
 function apply_modifier(plot::Scaled, ins::InspectorSpec)
-    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, plot.coords, ins, plot.document)
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, plot.coords, ins,
+        plot.annotations, plot.insets, plot.layout, plot.colorbar, plot.document)
+end
+
+function apply_modifier(plot::Scaled, ann::AnnotationSpec)
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, plot.coords, plot.inspector,
+        vcat(plot.annotations, Any[ann]), plot.insets, plot.layout, plot.colorbar, plot.document)
+end
+
+function apply_modifier(plot::Scaled, ins::InsetSpec)
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, plot.coords, plot.inspector,
+        plot.annotations, vcat(plot.insets, InsetSpec[ins]), plot.layout, plot.colorbar, plot.document)
+end
+
+function apply_modifier(plot::Scaled, lay::PanelLayoutSpec)
+    merged = plot.layout === nothing ? lay : PanelLayoutSpec(merge(plot.layout.settings, lay.settings))
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, plot.coords, plot.inspector,
+        plot.annotations, plot.insets, merged, plot.colorbar, plot.document)
+end
+
+function apply_modifier(plot::Scaled, cb::ColorbarSpec)
+    return Scaled(plot.layers, plot.scales, plot.texts, plot.legend, plot.theme, plot.coords, plot.inspector,
+        plot.annotations, plot.insets, plot.layout, merge(plot.colorbar, cb.settings), plot.document)
 end
 
 Base.:+(plot::PlotSpecObject, mod::PlotModifier) = apply_modifier(to_scaled(plot), mod)

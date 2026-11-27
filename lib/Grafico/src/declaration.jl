@@ -98,14 +98,24 @@ struct Scaled
     coords::Vector{NamedTuple}
     ## Optional hover inspector configuration set by `inspector(...)`.
     inspector::Union{Nothing,InspectorSpec}
+    ## Declarative annotation specs or live Observables attached to the primary axis.
+    annotations::Vector{Any}
+    ## Zoom inset axis specifications.
+    insets::Vector{InsetSpec}
+    ## Grid panel layout overrides set by `panel_layout(...)`.
+    layout::Union{Nothing,PanelLayoutSpec}
+    ## Colorbar guide settings set by `colorbar(...)`.
+    colorbar::NamedTuple
     ## Parsed editable document metadata attached by `@plot`.
     document::Any
     Scaled(layers, scales, texts, legend, theme, coords) =
-        new(layers, scales, texts, legend, theme, coords, nothing, nothing)
+        new(layers, scales, texts, legend, theme, coords, nothing, Any[], InsetSpec[], nothing, (;), nothing)
     Scaled(layers, scales, texts, legend, theme, coords, inspector) =
-        new(layers, scales, texts, legend, theme, coords, inspector, nothing)
+        new(layers, scales, texts, legend, theme, coords, inspector, Any[], InsetSpec[], nothing, (;), nothing)
     Scaled(layers, scales, texts, legend, theme, coords, inspector, document) =
-        new(layers, scales, texts, legend, theme, coords, inspector, document)
+        new(layers, scales, texts, legend, theme, coords, inspector, Any[], InsetSpec[], nothing, (;), document)
+    Scaled(layers, scales, texts, legend, theme, coords, inspector, annotations, insets, layout, colorbar, document=nothing) =
+        new(layers, scales, texts, legend, theme, coords, inspector, collect(Any, annotations), collect(InsetSpec, insets), layout, colorbar, document)
 end
 
 # The roles whose values a legend explains, and whose section a legend text names.
@@ -135,6 +145,10 @@ function _attach_plot_document(obj::Scaled, header_expr, block_expr, eval_module
         obj.theme,
         obj.coords,
         obj.inspector,
+        obj.annotations,
+        obj.insets,
+        obj.layout,
+        obj.colorbar,
         _build_plot_document(header_expr, block_expr, eval_module, obj.inspector),
     )
 end
@@ -246,7 +260,7 @@ macro plot(header, block)
     lines = [hidden ? last(line.args) : line for (line, hidden) in zip(lines, invisible)]
     statements = filter(line -> Meta.isexpr(line, :(=)), lines)
     names = Symbol[first(statement.args) for statement in statements]
-    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme, :plot_theme, :coord, :inspector), lines)
+    settings = filter(line -> Meta.isexpr(line, :call) && line.args[1] in (:scales, :legend, :theme, :plot_theme, :coord, :inspector, :annotate, :inset, :panel_layout, :colorbar), lines)
     input = gensym("input")
     ## Each line, named or drawn, is a layer of the header; a name holds its line's value.
     statements = [Expr(:(=), name, declare_layers(:($inherit($header, $value)), input))

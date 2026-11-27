@@ -263,3 +263,5 @@ include("test_portable.jl")
 include("test_plotmarks.jl")
 
 include("test_document.jl")
+
+include("test_annotations.jl")

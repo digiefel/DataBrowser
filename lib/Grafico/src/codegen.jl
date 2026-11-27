@@ -119,6 +119,29 @@ function _format_inspector_line(ins::InspectorSpec)::String
     end
 end
 
+function _format_annotate_line(ann::AnnotationDoc)::String
+    pos = String[":$(ann.kind)"]
+    if ann.source_expr !== nothing
+        push!(pos, ann.source_expr)
+    elseif !isempty(ann.text) || ann.kind === :text
+        push!(pos, repr(ann.text))
+    end
+    kws = ["$k = $(ann.kwargs[k].expr_text)" for k in sort!(collect(keys(ann.kwargs)))]
+    line = isempty(kws) ? "annotate($(join(pos, ", ")))" : "annotate($(join(pos, ", ")); $(join(kws, ", ")))"
+    return ann.visible ? line : "@invisible $line"
+end
+
+function _format_inset_line(ins::InsetDoc)::String
+    kws = ["$k = $(ins.kwargs[k].expr_text)" for k in sort!(collect(keys(ins.kwargs)))]
+    line = "inset(" * join(kws, ", ") * ")"
+    return ins.visible ? line : "@invisible $line"
+end
+
+function _format_kv_call(name::String, dict::Dict{Symbol,EntryValue})::String
+    parts = ["$k = $(dict[k].expr_text)" for k in sort!(collect(keys(dict)))]
+    return "$name(" * join(parts, ", ") * ")"
+end
+
 """
     to_code(plot; include_imports=false, include_figure=false) -> String
 
@@ -131,7 +154,9 @@ function to_code(
     include_figure::Bool=false,
 )::String
     need_block = doc.has_block || !isempty(doc.layers) || !isempty(doc.scales) ||
-        !isempty(doc.coords) || !isempty(doc.legend) || doc.theme !== nothing || doc.inspector !== nothing
+        !isempty(doc.coords) || !isempty(doc.legend) || doc.theme !== nothing ||
+        doc.inspector !== nothing || !isempty(doc.annotations) || !isempty(doc.insets) ||
+        !isempty(doc.layout_settings) || !isempty(doc.colorbar)
 
     header_str = if need_block
         _format_layer_expr(doc.header_data_expr, doc.header_mapping, nothing, "", Dict{Symbol,EntryValue}())
@@ -170,6 +195,14 @@ function to_code(
         isempty(doc.legend) || push!(body, "    $(_format_legend_line(doc.legend))")
         doc.theme === nothing || push!(body, "    $(_format_theme_line(doc.theme))")
         doc.inspector === nothing || push!(body, "    $(_format_inspector_line(doc.inspector))")
+        for ann in doc.annotations
+            push!(body, "    $(_format_annotate_line(ann))")
+        end
+        for ins in doc.insets
+            push!(body, "    $(_format_inset_line(ins))")
+        end
+        isempty(doc.layout_settings) || push!(body, "    $(_format_kv_call("panel_layout", doc.layout_settings))")
+        isempty(doc.colorbar) || push!(body, "    $(_format_kv_call("colorbar", doc.colorbar))")
         "@plot $header_str begin\n" * join(body, "\n") * "\nend"
     end
 

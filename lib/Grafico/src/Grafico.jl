@@ -8,12 +8,15 @@ using PrecompileTools: @compile_workload, @setup_workload
 
 export @plot, @invisible, @manipulate, manipulate, figure, spec, ydims, fit, aggregate
 export coord, legend, plot_theme, ComposedFigure
+export annotate, inset, panel_layout, colorbar
 export inspector, editable, to_code
 public document, editable_plot, parse_plot_document, parse_plot_code, compile_document
 public set_visual!, remove_visual!, set_layer_visible!, set_layer_plottype!, add_layer!, remove_layer!, move_layer!
 public set_mapping!, remove_mapping!, set_analysis!, set_scale!, remove_scale!
 public set_coord!, set_legend!, remove_legend!, set_theme!, set_inspector!
 public set_visual_expr!, set_coord_expr!, set_scale_expr!, set_legend_expr!, set_theme_expr!, available_columns
+public add_annotation!, set_annotation_expr!, move_annotation!, set_annotation_visible!, remove_annotation!
+public add_inset!, set_inset_expr!, move_inset!, remove_inset!, set_layout_expr!, set_colorbar_expr!
 export AbstractMark, CircleMark, RectMark, PolygonMark, LineMark, Segment, TextMark, T, U, R, Style, mark, graphic_mark
 export SectorMark, Wedge, RibbonMark
 export boundingbox, anchor, beside, above, atop
@@ -61,6 +64,7 @@ include("paginate.jl")
 include("fitting.jl")
 include("aggregate.jl")
 include("inspector.jl")
+include("annotations.jl")
 include("declaration.jl")
 include("expansion.jl")
 include("figure.jl")
