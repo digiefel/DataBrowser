@@ -827,4 +827,59 @@ end
         @test abs(minimum(rt_after)[2] - minimum(rt_bbox)[2]) < 2.0f0
         close(scr_d)
     end
+
+    @testset "Declarative speculative drag specs for Legend and Colorbar" begin
+        fig_s = Makie.Figure(size = (900, 600))
+        ax_s = Makie.Axis(fig_s[1, 1])
+        Makie.lines!(ax_s, 0.0:0.5:6.0, sin; label = "sin(x)")
+        Makie.lines!(ax_s, 0.0:0.5:6.0, cos; label = "cos(x)")
+        leg_s = Makie.axislegend(ax_s; position = :rt)
+        scr_s = WgpuMakie.Screen(; visible = false)
+        display(scr_s, fig_s.scene; figure = fig_s)
+
+        ori_before = leg_s.orientation[]
+        ax_bb_before = ax_s.layoutobservables.computedbbox[]
+        meta_s = WgpuMakie._extract_layout_meta(scr_s, fig_s)
+        @test leg_s.orientation[] === ori_before
+        @test ax_s.layoutobservables.computedbbox[] == ax_bb_before
+        @test haskey(meta_s, "drag_specs")
+        @test length(meta_s["drag_specs"]) == 1
+
+        leg_spec = meta_s["drag_specs"][1]
+        @test leg_spec["kind"] == "legend"
+        @test length(leg_spec["candidates"]) == 8
+        @test !isnothing(leg_spec["vary"])
+        top_cand = first(c for c in leg_spec["candidates"] if c["id"] == "top")
+        ax_bid = UInt64(objectid(ax_s))
+        spec_ax_top = first(pair[2] for pair in top_cand["layout_blocks"] if pair[1] == ax_bid)
+
+        WgpuMakie._handle_viewer_event!(scr_s, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "move_block",
+                "block_id" => UInt64(objectid(leg_s)),
+                "kind" => "legend",
+                "dock_position" => "top",
+                "halign" => 0.5,
+                "valign" => 0.5,
+            ),
+        ))
+        real_leg_top = WgpuMakie._block_bbox_px(leg_s)
+        real_ax_top = WgpuMakie._block_bbox_px(ax_s)
+        @test all(i -> abs(top_cand["target_bbox_px"][i] - real_leg_top[i]) < 2.0f0, 1:4)
+        @test all(i -> abs(spec_ax_top[i] - real_ax_top[i]) < 2.0f0, 1:4)
+        close(scr_s)
+
+        fig_cb = Makie.Figure(size = (700, 500))
+        ax_cb = Makie.Axis(fig_cb[1, 1])
+        hm = Makie.heatmap!(ax_cb, rand(8, 8))
+        cb = Makie.Colorbar(fig_cb[1, 2], hm)
+        scr_cb = WgpuMakie.Screen(; visible = false)
+        display(scr_cb, fig_cb.scene; figure = fig_cb)
+        meta_cb = WgpuMakie._extract_layout_meta(scr_cb, fig_cb)
+        cb_spec = first(s for s in meta_cb["drag_specs"] if s["kind"] == "colorbar")
+        @test length(cb_spec["candidates"]) == 4
+        @test isnothing(cb_spec["vary"])
+        close(scr_cb)
+    end
 end

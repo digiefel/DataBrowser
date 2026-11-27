@@ -2596,7 +2596,99 @@ pub fn draw_canvas_overlays(
         };
         painter.line_segment([p0, p1], egui::Stroke::new(2.5, egui::Color32::from_rgb(255, 140, 40)));
     }
-    if let Some(br) = manip.preview_block_px {
+    if let Some(dp) = &manip.preview_drag {
+        if let Some(layout) = &graph.layout {
+            for (bid, sb) in &dp.layout_blocks {
+                let changed = layout
+                    .blocks
+                    .iter()
+                    .find(|b| b.block_id == *bid)
+                    .is_some_and(|cur| {
+                        (0..4).any(|i| (cur.bbox_px[i] - sb[i]).abs() > 2.0)
+                    });
+                if changed {
+                    let sr = to_egui_rect(*sb);
+                    painter.rect_filled(
+                        sr,
+                        2.0,
+                        egui::Color32::from_rgba_unmultiplied(70, 140, 225, 22),
+                    );
+                    painter.rect_stroke(
+                        sr,
+                        2.0,
+                        egui::Stroke::new(
+                            1.5,
+                            egui::Color32::from_rgba_unmultiplied(70, 140, 225, 145),
+                        ),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+        }
+
+        let target_r = to_egui_rect(dp.target_bbox_px);
+        let stroke_col = if dp.is_inside {
+            egui::Color32::from_rgb(55, 165, 95)
+        } else {
+            egui::Color32::from_rgb(255, 140, 40)
+        };
+        let fill_col = if dp.is_inside {
+            egui::Color32::from_rgba_unmultiplied(55, 165, 95, 32)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(255, 140, 40, 32)
+        };
+        painter.rect_filled(target_r, 2.0, fill_col);
+        painter.rect_stroke(
+            target_r,
+            2.0,
+            egui::Stroke::new(2.0, stroke_col),
+            egui::StrokeKind::Inside,
+        );
+
+        let float_r = to_egui_rect(dp.floating_bbox_px);
+        if (float_r.center() - target_r.center()).length() > 4.0 {
+            painter.rect_filled(
+                float_r,
+                2.0,
+                egui::Color32::from_rgba_unmultiplied(40, 45, 55, 24),
+            );
+            painter.rect_stroke(
+                float_r,
+                2.0,
+                egui::Stroke::new(
+                    1.2,
+                    egui::Color32::from_rgba_unmultiplied(80, 90, 105, 160),
+                ),
+                egui::StrokeKind::Inside,
+            );
+        }
+
+        let galley = painter.layout_no_wrap(
+            dp.label.clone(),
+            egui::FontId::proportional(11.0),
+            egui::Color32::WHITE,
+        );
+        let pad = egui::vec2(6.0, 2.0);
+        let pill_size = galley.size() + pad * 2.0;
+        let raw_y = if target_r.min.y - pill_size.y - 4.0 >= plot_rect_pts.min.y {
+            target_r.min.y - pill_size.y - 4.0
+        } else {
+            target_r.max.y + 4.0
+        };
+        let pill_min = egui::pos2(
+            (target_r.center().x - 0.5 * pill_size.x).clamp(
+                plot_rect_pts.min.x + 2.0,
+                (plot_rect_pts.max.x - pill_size.x - 2.0).max(plot_rect_pts.min.x + 2.0),
+            ),
+            raw_y.clamp(
+                plot_rect_pts.min.y + 2.0,
+                (plot_rect_pts.max.y - pill_size.y - 2.0).max(plot_rect_pts.min.y + 2.0),
+            ),
+        );
+        let pill_rect = egui::Rect::from_min_size(pill_min, pill_size);
+        painter.rect_filled(pill_rect, 3.0, stroke_col);
+        painter.galley(pill_min + pad, galley, egui::Color32::WHITE);
+    } else if let Some(br) = manip.preview_block_px {
         let r = to_egui_rect(br);
         let is_inside = manip.preview_dock_zone.as_deref() == Some("inside");
         let stroke_col = if is_inside {

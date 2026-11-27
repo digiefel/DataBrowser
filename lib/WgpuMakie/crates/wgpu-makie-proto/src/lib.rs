@@ -701,6 +701,50 @@ pub struct LayoutSplitMeta {
     pub next_frac: f32,
 }
 
+/// Model state written when dropping a legend or colorbar in a layout slot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockDragState {
+    pub dock_position: String,
+    pub halign: f32,
+    pub valign: f32,
+}
+
+/// One candidate drop state and its solved layout rectangles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockDragCandidate {
+    pub id: String,
+    pub label: String,
+    pub state: BlockDragState,
+    /// `[x, y, width, height]` in unitless bottom-left figure coordinates.
+    pub target_bbox_px: [f32; 4],
+    /// Solved `[block_id, bbox_px]` pairs for neighbor layout blocks in this state.
+    pub layout_blocks: Vec<(u64, [f32; 4])>,
+}
+
+/// Continuous inside placement domain used outside candidate corner snap radii.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockDragVaryDomain {
+    pub dock_position: String,
+    /// Container box `[x, y, width, height]` in unitless bottom-left figure coordinates.
+    pub container_bbox_px: [f32; 4],
+    /// Dragged block `[width, height]` when placed inside.
+    pub block_size_px: [f32; 2],
+    /// Solved `[block_id, bbox_px]` pairs for neighbor layout blocks when placed inside.
+    pub layout_blocks: Vec<(u64, [f32; 4])>,
+}
+
+/// Speculatively solved drag specification for one legend or colorbar block.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockDragSpec {
+    pub block_id: u64,
+    pub kind: LayoutBlockKind,
+    pub snap_radius_px: f32,
+    /// Inside region `[x, y, width, height]` in unitless bottom-left figure coordinates.
+    pub activation_bbox_px: [f32; 4],
+    pub candidates: Vec<BlockDragCandidate>,
+    pub vary: Option<BlockDragVaryDomain>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LayoutMeta {
     pub nrows: u32,
@@ -708,6 +752,8 @@ pub struct LayoutMeta {
     pub figure_size: [f32; 2],
     pub blocks: Vec<LayoutBlockMeta>,
     pub splits: Vec<LayoutSplitMeta>,
+    #[serde(default)]
+    pub drag_specs: Vec<BlockDragSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1315,6 +1361,29 @@ mod tests {
                     span_max_px: 560.0,
                     prev_frac: 0.5,
                     next_frac: 0.5,
+                }],
+                drag_specs: vec![BlockDragSpec {
+                    block_id: 99,
+                    kind: LayoutBlockKind::Legend,
+                    snap_radius_px: 24.0,
+                    activation_bbox_px: [50.0, 50.0, 700.0, 500.0],
+                    candidates: vec![BlockDragCandidate {
+                        id: "top".into(),
+                        label: "Dock Top".into(),
+                        state: BlockDragState {
+                            dock_position: "top".into(),
+                            halign: 0.5,
+                            valign: 0.5,
+                        },
+                        target_bbox_px: [300.0, 540.0, 200.0, 44.0],
+                        layout_blocks: vec![(10, [50.0, 50.0, 700.0, 440.0])],
+                    }],
+                    vary: Some(BlockDragVaryDomain {
+                        dock_position: "inside".into(),
+                        container_bbox_px: [50.0, 50.0, 700.0, 500.0],
+                        block_size_px: [100.0, 80.0],
+                        layout_blocks: vec![(10, [50.0, 50.0, 700.0, 500.0])],
+                    }),
                 }],
             },
         };

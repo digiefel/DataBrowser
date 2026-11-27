@@ -944,6 +944,7 @@ mod tests {
                     },
                 ],
                 splits: vec![],
+                drag_specs: vec![],
             },
         });
         assert!(!point_inside_legend(&graph, [340.0, 230.0]));

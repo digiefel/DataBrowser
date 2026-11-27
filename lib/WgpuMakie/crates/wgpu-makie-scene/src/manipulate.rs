@@ -152,6 +152,7 @@ pub struct DirectManipController {
     pub preview_split_px: Option<(bool, f32, f32, f32)>,
     pub preview_block_px: Option<[f32; 4]>,
     pub preview_dock_zone: Option<String>,
+    pub preview_drag: Option<crate::dragology::DragPreview>,
     pub last_brush: Option<BrushSummary>,
 }
 
@@ -163,6 +164,8 @@ impl DirectManipController {
         self.preview_split_px = None;
         self.preview_block_px = None;
         self.preview_dock_zone = None;
+        self.preview_drag = None;
+        self.preview_drag = None;
     }
 
     /// Return `true` while dragging out a new arrow or callout annotation.
@@ -625,6 +628,7 @@ impl DirectManipController {
                 ]);
             }
             DragTarget::BlockMove {
+                block_id,
                 kind,
                 orig_bbox,
                 start_px,
@@ -638,7 +642,17 @@ impl DirectManipController {
                     orig_bbox[2],
                     orig_bbox[3],
                 ];
-                if *kind == LayoutBlockKind::Legend {
+                if let Some(spec) = graph
+                    .layout
+                    .as_ref()
+                    .and_then(|l| l.drag_specs.iter().find(|s| s.block_id == *block_id))
+                {
+                    let dp = crate::dragology::evaluate_drag_spec(spec, dragged);
+                    self.preview_block_px = Some(dp.target_bbox_px);
+                    self.preview_dock_zone = Some(dp.state.dock_position.clone());
+                    self.preview_drag = Some(dp);
+                } else if *kind == LayoutBlockKind::Legend {
+                    self.preview_drag = None;
                     if let Some(layout) = &graph.layout {
                         let (zone, _, _, snapped_box) = classify_block_dock_zone(layout, dragged);
                         self.preview_block_px = Some(snapped_box);
@@ -647,6 +661,7 @@ impl DirectManipController {
                         self.preview_block_px = Some(dragged);
                     }
                 } else if *kind == LayoutBlockKind::Colorbar {
+                    self.preview_drag = None;
                     self.preview_block_px = Some(dragged);
                     if let Some(layout) = &graph.layout {
                         let (mut zone, _, _, _) = classify_block_dock_zone(layout, dragged);
@@ -656,6 +671,7 @@ impl DirectManipController {
                         self.preview_dock_zone = Some(zone);
                     }
                 } else {
+                    self.preview_drag = None;
                     self.preview_block_px = Some(dragged);
                     self.preview_dock_zone = None;
                 }
@@ -742,6 +758,7 @@ impl DirectManipController {
         self.preview_split_px = None;
         self.preview_block_px = None;
         self.preview_dock_zone = None;
+        self.preview_drag = None;
 
         match drag {
             DragTarget::AnnotationHandle {
@@ -855,7 +872,18 @@ impl DirectManipController {
                         orig_bbox[2],
                         orig_bbox[3],
                     ];
-                    let (mut zone, halign, valign, _) = classify_block_dock_zone(layout, dragged);
+                    let (mut zone, halign, valign) = if let Some(spec) =
+                        layout.drag_specs.iter().find(|s| s.block_id == block_id)
+                    {
+                        let dp = crate::dragology::evaluate_drag_spec(spec, dragged);
+                        (dp.state.dock_position, dp.state.halign, dp.state.valign)
+                    } else {
+                        let (mut z, ha, va, _) = classify_block_dock_zone(layout, dragged);
+                        if kind == LayoutBlockKind::Colorbar && z == "inside" {
+                            z = nearest_outer_dock(layout, dragged);
+                        }
+                        (z, ha, va)
+                    };
                     if kind == LayoutBlockKind::Colorbar && zone == "inside" {
                         zone = nearest_outer_dock(layout, dragged);
                     }
@@ -1808,6 +1836,7 @@ mod tests {
                     prev_frac: 0.5,
                     next_frac: 0.5,
                 }],
+                drag_specs: vec![],
             },
         });
         let doc = EditorDocumentSnapshot {

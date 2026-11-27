@@ -394,6 +394,331 @@ function _align_to_f32(v)::Float32
     return 0.5f0
 end
 
+struct _SpecLayoutBlock
+    layoutobservables::Makie.GridLayoutBase.LayoutObservables{Makie.GridLayoutBase.GridLayout}
+end
+
+function _make_spec_block(w, h, tw::Bool, th::Bool, ha, va, prot, am, autosz = (nothing, nothing))
+    lo = Makie.GridLayoutBase.LayoutObservables(
+        Observable{Any}(w),
+        Observable{Any}(h),
+        Observable(tw),
+        Observable(th),
+        Observable{Any}(ha),
+        Observable{Any}(va),
+        Observable{Any}(am);
+        protrusions = Observable{Makie.GridLayoutBase.RectSides{Float32}}(prot),
+    )
+    lo.autosize[] = autosz
+    return _SpecLayoutBlock(lo)
+end
+
+function _legend_orientation_sizes(leg::Makie.Legend)
+    cur_ori = leg.orientation[]
+    cur_auto = leg.layoutobservables.autosize[]
+    cur_bb = _block_bbox_px(leg)
+    cur_w = cur_auto[1] isa Real ? Float32(cur_auto[1]) : cur_bb[3]
+    cur_h = cur_auto[2] isa Real ? Float32(cur_auto[2]) : cur_bb[4]
+
+    entry_gl = nothing
+    title_h = 0.0f0
+    for gc in leg.grid.content
+        if gc.content isa Makie.GridLayout
+            entry_gl = gc.content
+        elseif gc.content isa Makie.Label && hasproperty(gc.content, :layoutobservables)
+            th = gc.content.layoutobservables.autosize[][2]
+            th isa Real && (title_h += Float32(th))
+        end
+    end
+
+    label_sizes = Tuple{Float32, Float32}[]
+    if !isnothing(entry_gl)
+        for gc in entry_gl.content
+            if gc.content isa Makie.Label
+                ls = gc.content.layoutobservables.autosize[]
+                push!(label_sizes, (Float32(something(ls[1], 40.0f0)), Float32(something(ls[2], 16.0f0))))
+            end
+        end
+    end
+    isempty(label_sizes) && return ((cur_w, cur_h), (cur_w, cur_h))
+
+    pad = leg.padding[]
+    margin = leg.margin[]
+    pw = Float32(leg.patchsize[][1])
+    ph = Float32(leg.patchsize[][2])
+    plg = Float32(leg.patchlabelgap[])
+    cg = Float32(leg.colgap[] isa Makie.GridLayoutBase.Fixed ? leg.colgap[].x : leg.colgap[])
+    rg = Float32(leg.rowgap[] isa Makie.GridLayoutBase.Fixed ? leg.rowgap[].x : leg.rowgap[])
+    nb = max(1, Int(leg.nbanks[]))
+    n = length(label_sizes)
+
+    function est_size(ori::Symbol)
+        nrows = ori === :horizontal ? min(nb, n) : cld(n, min(nb, n))
+        ncols = ori === :horizontal ? cld(n, min(nb, n)) : min(nb, n)
+        ew = 0.0f0
+        for c in 1:ncols
+            cw = 0.0f0
+            for r in 1:nrows
+                idx = (c - 1) * nrows + r
+                idx <= n || continue
+                cw = max(cw, pw + plg + label_sizes[idx][1])
+            end
+            ew += cw
+        end
+        ew += max(0, ncols - 1) * cg
+        eh = 0.0f0
+        for r in 1:nrows
+            rh = ph
+            for c in 1:ncols
+                idx = (c - 1) * nrows + r
+                idx <= n || continue
+                rh = max(rh, label_sizes[idx][2])
+            end
+            eh += rh
+        end
+        eh += max(0, nrows - 1) * rg
+        w = Float32(pad[1] + pad[2] + margin[1] + margin[2]) + ew
+        h = Float32(pad[3] + pad[4] + margin[3] + margin[4]) + eh + title_h + (title_h > 0 ? Float32(leg.titlegap[]) : 0.0f0)
+        return (w, h)
+    end
+
+    v_sz = cur_ori === :vertical ? (cur_w, cur_h) : est_size(:vertical)
+    h_sz = cur_ori === :horizontal ? (cur_w, cur_h) : est_size(:horizontal)
+    return (v_sz, h_sz)
+end
+
+function _colorbar_orientation_spec(cb::Makie.Colorbar, dock::String)
+    thick = Float32(cb.size[])
+    prot = cb.layoutobservables.protrusions[]
+    side_prot = max(prot.left, prot.right, prot.bottom, prot.top, 24.0f0)
+    if dock == "left"
+        p = Makie.GridLayoutBase.RectSides{Float32}(side_prot, 0.0f0, 0.0f0, 0.0f0)
+        return ((thick, nothing), true, false, p)
+    elseif dock == "right"
+        p = Makie.GridLayoutBase.RectSides{Float32}(0.0f0, side_prot, 0.0f0, 0.0f0)
+        return ((thick, nothing), true, false, p)
+    elseif dock == "top"
+        p = Makie.GridLayoutBase.RectSides{Float32}(0.0f0, 0.0f0, 0.0f0, min(side_prot, 28.0f0))
+        return ((nothing, thick), false, true, p)
+    else
+        p = Makie.GridLayoutBase.RectSides{Float32}(0.0f0, 0.0f0, min(side_prot, 28.0f0), 0.0f0)
+        return ((nothing, thick), false, true, p)
+    end
+end
+
+function _speculative_solve_block_state(
+    active_gl::Makie.GridLayout,
+    tracked_blocks::Vector{Any},
+    target_blk,
+    primary_ax,
+    dock::String,
+    halign,
+    valign,
+    target_autosz,
+    target_tw::Bool,
+    target_th::Bool,
+    target_prot,
+)
+    sgl = Makie.GridLayoutBase.GridLayout(
+        bbox = active_gl.layoutobservables.computedbbox[],
+        alignmode = active_gl.alignmode[],
+        default_colgap = active_gl.default_colgap,
+        default_rowgap = active_gl.default_rowgap,
+    )
+
+    entries = Tuple{Any, UnitRange{Int}, UnitRange{Int}, _SpecLayoutBlock}[]
+    for gc in active_gl.content
+        obj = gc.content
+        obj === target_blk && continue
+        hasproperty(obj, :layoutobservables) || continue
+        lo = obj.layoutobservables
+        w = hasproperty(obj, :width) ? obj.width[] : Makie.Auto()
+        h = hasproperty(obj, :height) ? obj.height[] : Makie.Auto()
+        tw = _tell_flag(obj, :tellwidth)
+        th = _tell_flag(obj, :tellheight)
+        ha = hasproperty(obj, :halign) ? obj.halign[] : :center
+        va = hasproperty(obj, :valign) ? obj.valign[] : :center
+        am = hasproperty(obj, :alignmode) ? obj.alignmode[] : Makie.Inside()
+        proxy = _make_spec_block(w, h, tw, th, ha, va, lo.protrusions[], am, lo.autosize[])
+        push!(entries, (obj, gc.span.rows, gc.span.cols, proxy))
+    end
+
+    if !isempty(entries)
+        min_r = minimum(e[2].start for e in entries)
+        min_c = minimum(e[3].start for e in entries)
+        dr_norm = 1 - min_r
+        dc_norm = 1 - min_c
+        entries = [(e[1], e[2] .+ dr_norm, e[3] .+ dc_norm, e[4]) for e in entries]
+    end
+
+    if isempty(entries)
+        r_lo, r_hi, c_lo, c_hi = 1, 1, 1, 1
+        ax_rows, ax_cols = 1:1, 1:1
+    else
+        r_lo = minimum(e[2].start for e in entries)
+        r_hi = maximum(e[2].stop for e in entries)
+        c_lo = minimum(e[3].start for e in entries)
+        c_hi = maximum(e[3].stop for e in entries)
+        ax_rows, ax_cols = 1:1, 1:1
+        for (obj, rs, cs, _) in entries
+            if obj === primary_ax
+                ax_rows, ax_cols = rs, cs
+                break
+            end
+        end
+    end
+
+    dr_shift = dock == "top" ? 1 : 0
+    dc_shift = dock == "left" ? 1 : 0
+    obj_to_proxy = IdDict{Any, _SpecLayoutBlock}()
+    for (obj, rs, cs, proxy) in entries
+        sgl[rs .+ dr_shift, cs .+ dc_shift] = proxy
+        obj_to_proxy[obj] = proxy
+    end
+
+    am_t = hasproperty(target_blk, :alignmode) ? target_blk.alignmode[] : Makie.Inside()
+    w_t = hasproperty(target_blk, :width) ? target_blk.width[] : Makie.Auto()
+    h_t = hasproperty(target_blk, :height) ? target_blk.height[] : Makie.Auto()
+    target_proxy = _make_spec_block(w_t, h_t, target_tw, target_th, halign, valign, target_prot, am_t, target_autosz)
+
+    if dock == "inside"
+        sgl[ax_rows, ax_cols] = target_proxy
+    elseif dock == "left"
+        sgl[r_lo:r_hi, 1] = target_proxy
+    elseif dock == "right"
+        sgl[r_lo:r_hi, c_hi + 1] = target_proxy
+    elseif dock == "top"
+        sgl[1, c_lo:c_hi] = target_proxy
+    elseif dock == "bottom"
+        sgl[r_hi + 1, c_lo:c_hi] = target_proxy
+    end
+
+    Makie.GridLayoutBase.update!(sgl)
+
+    bb_t = target_proxy.layoutobservables.computedbbox[]
+    t_orig = minimum(bb_t)
+    t_w = widths(bb_t)
+    target_box = Float32[Float32(t_orig[1]), Float32(t_orig[2]), Float32(t_w[1]), Float32(t_w[2])]
+
+    other_boxes = Any[]
+    for obj in tracked_blocks
+        obj === target_blk && continue
+        p = get(obj_to_proxy, obj, nothing)
+        isnothing(p) && continue
+        bb = p.layoutobservables.computedbbox[]
+        orig = minimum(bb)
+        wd = widths(bb)
+        push!(other_boxes, Any[UInt64(objectid(obj)), Float32[Float32(orig[1]), Float32(orig[2]), Float32(wd[1]), Float32(wd[2])]])
+    end
+    return target_box, other_boxes
+end
+
+function _build_block_drag_specs(figure::Makie.Figure, active_gl::Makie.GridLayout, primary_ax)
+    specs = Dict{String, Any}[]
+    isnothing(primary_ax) && return specs
+    ax_box = _block_bbox_px(primary_ax)
+    tracked = Any[b for b in figure.content if (b isa Makie.Axis || b isa Makie.Axis3 || b isa Makie.Legend || b isa Makie.Colorbar)]
+
+    for blk in figure.content
+        if blk isa Makie.Legend
+            try
+                v_sz, h_sz = _legend_orientation_sizes(blk)
+                prot0 = Makie.GridLayoutBase.RectSides{Float32}(0.0f0, 0.0f0, 0.0f0, 0.0f0)
+                cands = Dict{String, Any}[]
+
+                for (id, label, dock, ha_sym, va_sym, sz, tw, th, ha_f, va_f) in (
+                    ("top", "Dock Top", "top", :center, :center, h_sz, false, true, 0.5f0, 0.5f0),
+                    ("bottom", "Dock Bottom", "bottom", :center, :center, h_sz, false, true, 0.5f0, 0.5f0),
+                    ("left", "Dock Left", "left", :center, :center, v_sz, true, false, 0.5f0, 0.5f0),
+                    ("right", "Dock Right", "right", :center, :center, v_sz, true, false, 0.5f0, 0.5f0),
+                    ("inside_lt", "Top-Left", "inside", 0.0f0, 1.0f0, v_sz, false, false, 0.0f0, 1.0f0),
+                    ("inside_rt", "Top-Right", "inside", 1.0f0, 1.0f0, v_sz, false, false, 1.0f0, 1.0f0),
+                    ("inside_lb", "Bottom-Left", "inside", 0.0f0, 0.0f0, v_sz, false, false, 0.0f0, 0.0f0),
+                    ("inside_rb", "Bottom-Right", "inside", 1.0f0, 0.0f0, v_sz, false, false, 1.0f0, 0.0f0),
+                )
+                    tbox, others = _speculative_solve_block_state(
+                        active_gl, tracked, blk, primary_ax, dock, ha_sym, va_sym, sz, tw, th, prot0,
+                    )
+                    push!(cands, Dict{String, Any}(
+                        "id" => id,
+                        "label" => label,
+                        "state" => Dict{String, Any}(
+                            "dock_position" => dock,
+                            "halign" => ha_f,
+                            "valign" => va_f,
+                        ),
+                        "target_bbox_px" => tbox,
+                        "layout_blocks" => others,
+                    ))
+                end
+
+                _, inside_others = _speculative_solve_block_state(
+                    active_gl, tracked, blk, primary_ax, "inside", 0.5f0, 0.5f0, v_sz, false, false, prot0,
+                )
+                ax_bid = UInt64(objectid(primary_ax))
+                container_box = copy(ax_box)
+                for pair in inside_others
+                    if pair[1] == ax_bid
+                        container_box = pair[2]
+                        break
+                    end
+                end
+
+                push!(specs, Dict{String, Any}(
+                    "block_id" => UInt64(objectid(blk)),
+                    "kind" => "legend",
+                    "snap_radius_px" => 24.0f0,
+                    "activation_bbox_px" => ax_box,
+                    "candidates" => cands,
+                    "vary" => Dict{String, Any}(
+                        "dock_position" => "inside",
+                        "container_bbox_px" => container_box,
+                        "block_size_px" => Float32[v_sz[1], v_sz[2]],
+                        "layout_blocks" => inside_others,
+                    ),
+                ))
+            catch
+            end
+        elseif blk isa Makie.Colorbar
+            try
+                cands = Dict{String, Any}[]
+                for (id, label, dock) in (
+                    ("right", "Dock Right", "right"),
+                    ("left", "Dock Left", "left"),
+                    ("top", "Dock Top", "top"),
+                    ("bottom", "Dock Bottom", "bottom"),
+                )
+                    autosz, tw, th, prot = _colorbar_orientation_spec(blk, dock)
+                    tbox, others = _speculative_solve_block_state(
+                        active_gl, tracked, blk, primary_ax, dock, :center, :center, autosz, tw, th, prot,
+                    )
+                    push!(cands, Dict{String, Any}(
+                        "id" => id,
+                        "label" => label,
+                        "state" => Dict{String, Any}(
+                            "dock_position" => dock,
+                            "halign" => 0.5f0,
+                            "valign" => 0.5f0,
+                        ),
+                        "target_bbox_px" => tbox,
+                        "layout_blocks" => others,
+                    ))
+                end
+                push!(specs, Dict{String, Any}(
+                    "block_id" => UInt64(objectid(blk)),
+                    "kind" => "colorbar",
+                    "snap_radius_px" => 24.0f0,
+                    "activation_bbox_px" => ax_box,
+                    "candidates" => cands,
+                    "vary" => nothing,
+                ))
+            catch
+            end
+        end
+    end
+    return specs
+end
+
 function _dock_position_for_block(blk, rspan, cspan, nrows::Int, ncols::Int)::String
     tw = _tell_flag(blk, :tellwidth)
     th = _tell_flag(blk, :tellheight)
@@ -536,12 +861,26 @@ function _extract_layout_meta(screen, figure::Makie.Figure)
         ))
     end
 
+    primary_ax = nothing
+    for blk in figure.content
+        if blk isa Makie.Axis || blk isa Makie.Axis3
+            tw = _tell_flag(blk, :tellwidth)
+            th = _tell_flag(blk, :tellheight)
+            if tw || th
+                primary_ax = blk
+                break
+            end
+            isnothing(primary_ax) && (primary_ax = blk)
+        end
+    end
+
     return Dict{String, Any}(
         "nrows" => UInt32(max(1, nrows)),
         "ncols" => UInt32(max(1, ncols)),
         "figure_size" => Float32[fig_w, fig_h],
         "blocks" => blocks_meta,
         "splits" => splits,
+        "drag_specs" => _build_block_drag_specs(figure, active_gl, primary_ax),
     )
 end
 
