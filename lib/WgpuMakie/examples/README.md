@@ -20,6 +20,12 @@ cd lib/WgpuMakie/crates && cargo build --release --bin wgpu-makie-viewer
 - `06_10m_points_lod.jl`: 10,000,000-point monotonic-X curve rendered via M4 spike-preserving decimation.
 - `07_live_streaming_60hz.jl`: 2-channel `Observable` waveform and peak marker streaming benchmark (`--frames N`).
 - `08_linked_axes_and_3d_compose.jl`: Composed figure with linked linear and `log10` 2D axes, colorbar, and 3D `Axis3` scene.
+- `09_annotations_and_fit_labels.jl`: Declarative annotations (`:fit_label`, `:callout`, `:arrow`, `:vspan`, `:hline`, `:text`) synced through `Grafico.EditablePlot` and exported to code.
+- `10_interactive_layout_insets_brush.jl`: Multi-panel layout with zoom inset axis, dockable legend, colorbar, subplot dividers, and `screen.brush_selection` hook.
+
+## Interactive Toolbar Modes
+
+Select `Edit` in the top toolbar to drag annotation control handles, subplot column/row dividers, legends, colorbars, and zoom inset corners. Select `Text`, `Arrow`, `Callout`, `V-Span`, `H-Span`, `Rect`, or `Inset` to add overlays directly on the canvas, or select `Brush` to highlight a rectangular data subset.
 
 ## Running
 

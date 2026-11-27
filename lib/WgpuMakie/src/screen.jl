@@ -64,6 +64,13 @@ mutable struct Screen <: Makie.MakieScreen
     syncing_from_viewer::Ref{Bool}
     syncing_editor::Ref{Bool}
     selection::Observable{Any}
+    brush_selection::Observable{Any}
+    id_to_block::Dict{UInt64, Any}
+    plain_annotations::Vector{Dict{Symbol, Any}}
+    plain_annotation_plots::Dict{Int, Vector{AbstractPlot}}
+    next_plain_ann_id::Int
+    plain_insets::Dict{Int, Tuple{Makie.Axis, Any}}
+    next_plain_inset_id::Int
     editor_include_imports::Bool
     editor_include_figure::Bool
     last_editor_error::Union{Nothing, String}
@@ -91,6 +98,13 @@ function Screen(scene::Union{Nothing, Scene}, config::ScreenConfig, args...)
         Ref(false),
         Ref(false),
         Observable{Any}(nothing),
+        Observable{Any}(nothing),
+        Dict{UInt64, Any}(),
+        Dict{Symbol, Any}[],
+        Dict{Int, Vector{AbstractPlot}}(),
+        1,
+        Dict{Int, Tuple{Makie.Axis, Any}}(),
+        1,
         false,
         false,
         nothing,
@@ -155,6 +169,7 @@ function Base.display(screen::Screen, scene::Scene; figure = nothing, unused...)
     _ensure_viewer!(screen, scene)
     Makie.events(scene).window_open[] = true
     _sync_figure_axes!(screen, screen.figure)
+    _sync_layout_meta!(screen, screen.figure)
     _sync_subtree!(screen, scene, nothing)
     _attach_editor_observers!(screen)
     sync_editor_state!(screen)
@@ -257,6 +272,10 @@ function _clear_observers!(screen::Screen)
     empty!(screen.id_to_plot)
     empty!(screen.plot_zorder)
     empty!(screen.id_to_axis)
+    empty!(screen.id_to_block)
+    empty!(screen.plain_annotations)
+    empty!(screen.plain_annotation_plots)
+    empty!(screen.plain_insets)
     empty!(screen.dirty_scenes)
     empty!(screen.dirty_plots)
     return nothing

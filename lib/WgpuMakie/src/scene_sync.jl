@@ -246,6 +246,204 @@ function _sync_figure_axes!(screen, figure::Union{Nothing, Makie.Figure})
     return nothing
 end
 
+function _active_gridlayout(figure::Makie.Figure)
+    gl = figure.layout
+    while length(gl.content) == 1 && gl.content[1].content isa Makie.GridLayout
+        gl = gl.content[1].content
+    end
+    return gl
+end
+
+function _block_bbox_px(blk)::Vector{Float32}
+    bb = blk.layoutobservables.computedbbox[]
+    orig = minimum(bb)
+    wd = widths(bb)
+    return Float32[Float32(orig[1]), Float32(orig[2]), Float32(wd[1]), Float32(wd[2])]
+end
+
+function _collect_grid_spans!(spans::IdDict{Any, Tuple{UnitRange{Int}, UnitRange{Int}}}, gl::Makie.GridLayout, r_off::Int = 0, c_off::Int = 0)
+    for gc in gl.content
+        rspan = (gc.span.rows.start + r_off):(gc.span.rows.stop + r_off)
+        cspan = (gc.span.cols.start + c_off):(gc.span.cols.stop + c_off)
+        if gc.content isa Makie.GridLayout
+            _collect_grid_spans!(spans, gc.content, rspan.start - 1, cspan.start - 1)
+        else
+            spans[gc.content] = (rspan, cspan)
+        end
+    end
+    return spans
+end
+
+function _tell_flag(blk, sym::Symbol)::Bool
+    hasproperty(blk, sym) || return true
+    v = getproperty(blk, sym)[]
+    return v isa Bool ? v : true
+end
+
+function _dock_position_for_block(blk, rspan, cspan, nrows::Int, ncols::Int)::String
+    tw = _tell_flag(blk, :tellwidth)
+    th = _tell_flag(blk, :tellheight)
+    if !tw && !th
+        return "inside"
+    elseif ncols > 1 && cspan.start == 1 && cspan.stop == 1
+        return "left"
+    elseif ncols > 1 && cspan.stop == ncols && cspan.start == ncols
+        return "right"
+    elseif nrows > 1 && rspan.start == 1 && rspan.stop == 1
+        return "top"
+    elseif nrows > 1 && rspan.stop == nrows && rspan.start == nrows
+        return "bottom"
+    end
+    return "right"
+end
+
+function _extract_layout_meta(screen, figure::Makie.Figure)
+    active_gl = _active_gridlayout(figure)
+    nrows, ncols = size(active_gl)
+    spans = IdDict{Any, Tuple{UnitRange{Int}, UnitRange{Int}}}()
+    _collect_grid_spans!(spans, active_gl)
+
+    fig_sz = Base.size(figure.scene)
+    fig_w = Float32(max(1, fig_sz[1]))
+    fig_h = Float32(max(1, fig_sz[2]))
+
+    # Track main axis per cell so floating Axes inside the same cell classify as Inset
+    cell_axes = Dict{Tuple{Int, Int}, Vector{Tuple{Float32, UInt64}}}()
+    for blk in figure.content
+        blk isa Makie.Axis || continue
+        rspan, cspan = get(spans, blk, (1:1, 1:1))
+        bb = _block_bbox_px(blk)
+        area = bb[3] * bb[4]
+        push!(get!(Vector{Tuple{Float32, UInt64}}, cell_axes, (rspan.start, cspan.start)), (area, UInt64(objectid(blk))))
+    end
+
+    blocks_meta = Dict{String, Any}[]
+    col_axes = Dict{Int, Vector{Vector{Float32}}}()
+    row_axes = Dict{Int, Vector{Vector{Float32}}}()
+
+    for blk in figure.content
+        bid = UInt64(objectid(blk))
+        screen.id_to_block[bid] = blk
+        rspan, cspan = get(spans, blk, (1:1, 1:1))
+        bb = _block_bbox_px(blk)
+        tw = _tell_flag(blk, :tellwidth)
+        th = _tell_flag(blk, :tellheight)
+        ha = hasproperty(blk, :halign) && blk.halign[] isa Real ? Float32(blk.halign[]) : 0.5f0
+        va = hasproperty(blk, :valign) && blk.valign[] isa Real ? Float32(blk.valign[]) : 0.5f0
+
+        parent_aid = nothing
+        kind = if blk isa Makie.Axis3
+            "axis3"
+        elseif blk isa Makie.Legend
+            "legend"
+        elseif blk isa Makie.Colorbar
+            "colorbar"
+        elseif blk isa Makie.Axis
+            siblings = get(cell_axes, (rspan.start, cspan.start), Tuple{Float32, UInt64}[])
+            max_sib = isempty(siblings) ? nothing : argmax(first, siblings)
+            if (!tw && !th) && !isnothing(max_sib) && max_sib[2] != bid
+                parent_aid = max_sib[2]
+                "inset"
+            elseif !isnothing(max_sib) && length(siblings) > 1 && max_sib[2] != bid && (bb[3] * bb[4] < 0.85f0 * max_sib[1])
+                parent_aid = max_sib[2]
+                "inset"
+            else
+                "axis"
+            end
+        else
+            continue
+        end
+
+        if kind == "axis" || kind == "axis3"
+            if cspan.start == cspan.stop
+                push!(get!(Vector{Vector{Float32}}, col_axes, cspan.start), bb)
+            end
+            if rspan.start == rspan.stop
+                push!(get!(Vector{Vector{Float32}}, row_axes, rspan.start), bb)
+            end
+        end
+
+        push!(blocks_meta, Dict{String, Any}(
+            "block_id" => bid,
+            "kind" => kind,
+            "bbox_px" => bb,
+            "parent_axis_id" => parent_aid,
+            "row_span" => UInt32[UInt32(rspan.start), UInt32(rspan.stop)],
+            "col_span" => UInt32[UInt32(cspan.start), UInt32(cspan.stop)],
+            "halign" => ha,
+            "valign" => va,
+            "rel_size" => Float32[bb[3] / fig_w, bb[4] / fig_h],
+            "dock_position" => _dock_position_for_block(blk, rspan, cspan, nrows, ncols),
+        ))
+    end
+
+    splits = Dict{String, Any}[]
+    col_widths = Float32[
+        haskey(col_axes, c) ? maximum(b[3] for b in col_axes[c]) : 0.0f0
+        for c in 1:ncols
+    ]
+    tot_col_w = max(1.0f0, sum(col_widths))
+    for c in 1:(ncols - 1)
+        (haskey(col_axes, c) && haskey(col_axes, c + 1)) || continue
+        x_right = maximum(b[1] + b[3] for b in col_axes[c])
+        x_left = minimum(b[1] for b in col_axes[c + 1])
+        ymin = min(minimum(b[2] for b in col_axes[c]), minimum(b[2] for b in col_axes[c + 1]))
+        ymax = max(maximum(b[2] + b[4] for b in col_axes[c]), maximum(b[2] + b[4] for b in col_axes[c + 1]))
+        push!(splits, Dict{String, Any}(
+            "is_vertical" => true,
+            "index" => UInt32(c),
+            "pos_px" => 0.5f0 * (x_right + x_left),
+            "span_min_px" => ymin,
+            "span_max_px" => ymax,
+            "prev_frac" => col_widths[c] / tot_col_w,
+            "next_frac" => col_widths[c + 1] / tot_col_w,
+        ))
+    end
+
+    row_heights = Float32[
+        haskey(row_axes, r) ? maximum(b[4] for b in row_axes[r]) : 0.0f0
+        for r in 1:nrows
+    ]
+    tot_row_h = max(1.0f0, sum(row_heights))
+    for r in 1:(nrows - 1)
+        (haskey(row_axes, r) && haskey(row_axes, r + 1)) || continue
+        y_bot = minimum(b[2] for b in row_axes[r])
+        y_top = maximum(b[2] + b[4] for b in row_axes[r + 1])
+        xmin = min(minimum(b[1] for b in row_axes[r]), minimum(b[1] for b in row_axes[r + 1]))
+        xmax = max(maximum(b[1] + b[3] for b in row_axes[r]), maximum(b[1] + b[3] for b in row_axes[r + 1]))
+        push!(splits, Dict{String, Any}(
+            "is_vertical" => false,
+            "index" => UInt32(r),
+            "pos_px" => 0.5f0 * (y_bot + y_top),
+            "span_min_px" => xmin,
+            "span_max_px" => xmax,
+            "prev_frac" => row_heights[r] / tot_row_h,
+            "next_frac" => row_heights[r + 1] / tot_row_h,
+        ))
+    end
+
+    return Dict{String, Any}(
+        "nrows" => UInt32(max(1, nrows)),
+        "ncols" => UInt32(max(1, ncols)),
+        "figure_size" => Float32[fig_w, fig_h],
+        "blocks" => blocks_meta,
+        "splits" => splits,
+    )
+end
+
+function _sync_layout_meta!(screen, figure::Union{Nothing, Makie.Figure})
+    (isnothing(figure) || isnothing(screen.viewer) || !screen.open) && return nothing
+    try
+        Makie.update_state_before_display!(figure)
+    catch
+    end
+    send_msg!(screen.viewer, Dict{String, Any}(
+        "op" => "upsert_layout_meta",
+        "layout" => _extract_layout_meta(screen, figure),
+    ))
+    return nothing
+end
+
 """
     flush_updates!(screen)
 

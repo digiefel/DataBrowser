@@ -326,4 +326,184 @@ end
         @test size(img_end) == (200, 320)
         @test img_start != img_end
     end
+
+    @testset "Milestone 2: Annotations, Layout Manipulation & Brushing" begin
+        WgpuMakie.activate!(; headless = true, visible = false, show_editor = false)
+
+        # 1. Grafico.EditablePlot annotations, fit_label persistence, and zero-recompile moves
+        fit_fn(x; a = 1.0, b = 0.0) = a * x + b
+        xs = collect(range(0.0, 5.0; length = 20))
+        d1 = (x = xs, y = 2.0 .* xs .+ 1.0)
+        d2 = (x = xs, y = 4.0 .* xs .+ 2.0)
+
+        decl = Grafico.@plot mapping(:x, :y) begin
+            f = fit(fit_fn, (a = 1.0, b = 0.0))
+            visual(Scatter; color = :steelblue, markersize = 10)
+            f * visual(Lines; color = :crimson)
+            annotate(:fit_label, f; x = 0.06, y = 0.92, space = :relative, digits = 3)
+        end
+        ep = Grafico.editable(decl, d1)
+        fig = Grafico.figure(ep)
+        scr = WgpuMakie.Screen(fig.scene, WgpuMakie.ScreenConfig("M2", false, true, false, 1.0f0, (640, 420)))
+        display(scr, fig.scene; figure = fig)
+        WgpuMakie.flush_updates!(scr)
+
+        img0 = copy(Makie.colorbuffer(scr; update = true))
+        @test length(ep.doc.annotations) == 1
+
+        compile_fires = Ref(0)
+        on(ep.compiled) do _
+            compile_fires[] += 1
+        end
+
+        # Add rect + move zero-recompile + style + toggle visibility + remove
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "add_annotation",
+                "kind" => "rect",
+                "text" => "ROI",
+                "source_expr" => nothing,
+                "axis_id" => nothing,
+                "kwargs" => [["xmin", "1.0"], ["xmax", "3.0"], ["ymin", "2.0"], ["ymax", "8.0"]],
+            ),
+        ))
+        @test length(ep.doc.annotations) == 2
+        img1 = copy(Makie.colorbuffer(scr; update = true))
+        @test img1 != img0
+
+        fires_before_move = compile_fires[]
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "move_annotation",
+                "id" => 1,
+                "updates" => [["x", 0.45], ["y", 0.28]],
+            ),
+        ))
+        @test compile_fires[] == fires_before_move
+        @test occursin("x = 0.45", Grafico.to_code(ep))
+        img2 = copy(Makie.colorbuffer(scr; update = true))
+        @test img2 != img1
+
+        # Updating underlying data updates fit_label while keeping moved (x, y)
+        old_txt = ep.annotation_obs[1][].text
+        ep.data[] = d2
+        WgpuMakie.flush_updates!(scr)
+        @test ep.annotation_obs[1][].text != old_txt
+        @test ep.annotation_obs[1][].kwargs.x == 0.45
+
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_annotation_visible", "id" => 2, "visible" => false),
+        ))
+        img_hidden = copy(Makie.colorbuffer(scr; update = true))
+        @test img_hidden != img2
+        WgpuMakie._handle_viewer_event!(scr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "remove_annotation", "id" => 2),
+        ))
+        @test length(ep.doc.annotations) == 1
+        close(scr)
+
+        # 2. Multi-panel plain Makie layout, insets, legend move, split resize, and brushing
+        fig_m = Figure(size = (800, 480))
+        ax_l = Axis(fig_m[1, 1]; title = "L")
+        ax_r = Axis(fig_m[1, 2]; title = "R")
+        pl_s = scatter!(ax_l, [1.0, 2.0, 5.0, 6.0], [2.0, 4.0, 8.0, 9.0]; color = :blue, markersize = 14, label = "pts")
+        lines!(ax_r, 1:5, 1:5; color = :orange, label = "line")
+        Legend(fig_m[1, 3], ax_l)
+        Colorbar(fig_m[2, 1:2]; vertical = false, limits = (0, 1))
+
+        mscr = WgpuMakie.Screen(fig_m.scene, WgpuMakie.ScreenConfig("M2-Layout", false, true, false, 1.0f0, (800, 480)))
+        display(mscr, fig_m.scene; figure = fig_m)
+        WgpuMakie.flush_updates!(mscr)
+
+        lmeta = WgpuMakie._extract_layout_meta(mscr, fig_m)
+        @test length(lmeta["blocks"]) == 4
+        @test any(s -> s["is_vertical"] == true && s["index"] == UInt32(1), lmeta["splits"])
+        leg_block = only(filter(b -> b["kind"] == "legend", lmeta["blocks"]))
+        @test leg_block["dock_position"] == "right"
+
+        # Plain Makie annotation add + move + remove
+        WgpuMakie._handle_viewer_event!(mscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "add_annotation",
+                "kind" => "vspan",
+                "text" => "",
+                "source_expr" => nothing,
+                "axis_id" => UInt64(objectid(ax_l)),
+                "kwargs" => [["xmin", "1.5"], ["xmax", "4.5"]],
+            ),
+        ))
+        @test length(mscr.plain_annotations) == 1
+        m_before = copy(Makie.colorbuffer(mscr; update = true))
+
+        # Resize vertical split cleanly
+        WgpuMakie._handle_viewer_event!(mscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "resize_layout_split",
+                "is_vertical" => true,
+                "index" => 1,
+                "prev_frac" => 0.72f0,
+                "next_frac" => 0.28f0,
+            ),
+        ))
+        m_split = copy(Makie.colorbuffer(mscr; update = true))
+        @test m_split != m_before
+        @test widths(ax_l.layoutobservables.computedbbox[])[1] > widths(ax_r.layoutobservables.computedbbox[])[1] * 1.5
+
+        # Move legend inside cell
+        WgpuMakie._handle_viewer_event!(mscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "move_block",
+                "block_id" => leg_block["block_id"],
+                "kind" => "legend",
+                "dock_position" => "inside",
+                "halign" => 0.2f0,
+                "valign" => 0.85f0,
+            ),
+        ))
+        lmeta2 = WgpuMakie._extract_layout_meta(mscr, fig_m)
+        leg_block2 = only(filter(b -> b["kind"] == "legend", lmeta2["blocks"]))
+        @test leg_block2["dock_position"] == "inside"
+
+        # Add inset & move inset
+        WgpuMakie._handle_viewer_event!(mscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "add_inset",
+                "axis_id" => UInt64(objectid(ax_l)),
+                "bbox" => [0.55, 0.95, 0.55, 0.95],
+                "xlimits" => [0.5, 2.5],
+                "ylimits" => [1.5, 4.5],
+            ),
+        ))
+        @test length(mscr.plain_insets) == 1
+        WgpuMakie._handle_viewer_event!(mscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "move_inset",
+                "id" => 1,
+                "bbox" => [0.50, 0.92, 0.45, 0.88],
+            ),
+        ))
+        @test mscr.plain_insets[1][2][:bbox][1] ≈ 0.50
+
+        # Brush selection event translates zero-based Rust vertex indices into 1-based Julia indices
+        WgpuMakie._handle_viewer_event!(mscr, Dict(
+            "op" => "brush_selection_changed",
+            "axis_id" => UInt64(objectid(ax_l)),
+            "rect" => [0.5, 1.0, 3.0, 5.0],
+            "plot_indices" => Any[Any[UInt64(objectid(pl_s)), UInt32[0, 1]]],
+        ))
+        @test !isnothing(mscr.brush_selection[])
+        @test mscr.brush_selection[].axis === ax_l
+        @test mscr.brush_selection[].plots[1].second == [1, 2]
+
+        close(mscr)
+    end
 end
