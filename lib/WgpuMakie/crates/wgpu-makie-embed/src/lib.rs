@@ -146,8 +146,8 @@ impl EmbeddedViewer {
     }
 
     /// Render annotation handles, layout split dividers, and brush overlays over the canvas.
-    pub fn draw_overlays_ui(&self, ctx: &egui::Context, fb_height_px: u32) {
-        draw_canvas_overlays(ctx, &self.graph, &self.manip, &self.editor, fb_height_px);
+    pub fn draw_overlays_ui(&self, ctx: &egui::Context, plot_rect_pts: egui::Rect) {
+        draw_canvas_overlays(ctx, &self.graph, &self.manip, &self.editor, plot_rect_pts);
     }
 
     fn apply_editor_actions(&mut self, actions: Vec<EditorAction>) -> Option<String> {

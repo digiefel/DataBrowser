@@ -20,3 +20,6 @@ winit.workspace = true
 pollster.workspace = true
 glam.workspace = true
 serde_bytes.workspace = true
+
+[dev-dependencies]
+png.workspace = true

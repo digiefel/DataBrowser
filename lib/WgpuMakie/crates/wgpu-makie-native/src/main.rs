@@ -200,6 +200,8 @@ struct ViewerApp {
     mods_mask: u8,
     hover_tooltip: Option<String>,
     last_pick_time: Instant,
+    plot_rect_pts: egui::Rect,
+    last_sent_plot_size: [u32; 2],
 }
 
 impl ViewerApp {
@@ -223,6 +225,11 @@ impl ViewerApp {
             mods_mask: 0,
             hover_tooltip: None,
             last_pick_time: Instant::now(),
+            plot_rect_pts: egui::Rect::from_min_size(
+                egui::pos2(0.0, 40.0),
+                egui::vec2(610.0, 560.0),
+            ),
+            last_sent_plot_size: [0, 0],
         }
     }
 
@@ -341,13 +348,15 @@ impl ViewerApp {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let w = ws.surface_config.width.max(1);
         let h = ws.surface_config.height.max(1);
-        ws.renderer
-            .prepare(&ws.device, &ws.queue, &mut self.graph, w, h);
+        let scale = ws.window.scale_factor() as f32;
+        self.graph.px_per_unit = scale;
 
         let raw_input = ws.egui_state.take_egui_input(&ws.window);
         let mut editor_actions: Vec<EditorAction> = Vec::new();
         let fps = ws.fps_ema;
         let frame_ms = dt * 1000.0;
+        let mut central_rect = self.plot_rect_pts;
+        let pixels_per_point = ws.egui_ctx.pixels_per_point().max(0.5);
 
         let full_output = ws.egui_ctx.run_ui(raw_input, |ui| {
             egui::Panel::top("wgpu_makie_top").show(ui, |ui| {
@@ -372,20 +381,20 @@ impl ViewerApp {
 
             editor_actions.extend(show_timeline_bar(ui, &mut self.editor));
 
-            draw_canvas_overlays(ui.ctx(), &self.graph, &self.manip, &self.editor, h);
+            central_rect = ui.available_rect_before_wrap();
+            draw_canvas_overlays(ui.ctx(), &self.graph, &self.manip, &self.editor, central_rect);
 
-            // Box-zoom overlay & hover tooltip
+            // Box-zoom overlay & hover tooltip anchored to central plot pane
             let painter = ui.ctx().layer_painter(egui::LayerId::new(
                 egui::Order::Foreground,
                 egui::Id::unique("wgpu_makie_overlay"),
             ));
-            let win_h_pts = (h as f32) / ws.egui_ctx.pixels_per_point();
-            let scale_to_pts = self.graph.px_per_unit / ws.egui_ctx.pixels_per_point();
+            let scale_to_pts = self.graph.px_per_unit / pixels_per_point;
             if let Some(r) = self.camera_ctrl.overlay_rect_px {
-                let min_x = r[0] * scale_to_pts;
-                let max_x = (r[0] + r[2]) * scale_to_pts;
-                let max_y = win_h_pts - r[1] * scale_to_pts;
-                let min_y = win_h_pts - (r[1] + r[3]) * scale_to_pts;
+                let min_x = central_rect.min.x + r[0] * scale_to_pts;
+                let max_x = central_rect.min.x + (r[0] + r[2]) * scale_to_pts;
+                let max_y = central_rect.max.y - r[1] * scale_to_pts;
+                let min_y = central_rect.max.y - (r[1] + r[3]) * scale_to_pts;
                 let rect = egui::Rect::from_min_max(
                     egui::pos2(min_x, min_y),
                     egui::pos2(max_x, max_y),
@@ -403,8 +412,8 @@ impl ViewerApp {
                 );
             }
             if let Some(tip) = &self.hover_tooltip {
-                let px = (self.pointer_unitless[0] as f32) * scale_to_pts + 14.0;
-                let py = win_h_pts - (self.pointer_unitless[1] as f32) * scale_to_pts - 14.0;
+                let px = central_rect.min.x + (self.pointer_unitless[0] as f32) * scale_to_pts + 14.0;
+                let py = central_rect.max.y - (self.pointer_unitless[1] as f32) * scale_to_pts - 14.0;
                 egui::Area::new(egui::Id::unique("hover_tooltip"))
                     .fixed_pos(egui::pos2(px, py))
                     .order(egui::Order::Tooltip)
@@ -415,6 +424,31 @@ impl ViewerApp {
                     });
             }
         });
+
+        self.plot_rect_pts = central_rect;
+        let win_h_pts = (h as f32) / pixels_per_point;
+        let ox = (central_rect.min.x * pixels_per_point).round().max(0.0);
+        let oy_bottom = ((win_h_pts - central_rect.max.y) * pixels_per_point)
+            .round()
+            .max(0.0);
+        ws.renderer.set_plot_offset_px([ox, oy_bottom]);
+
+        let cw = central_rect.width().round().max(64.0) as u32;
+        let ch = central_rect.height().round().max(64.0) as u32;
+        let pending_resize = if self.last_sent_plot_size != [cw, ch] {
+            self.last_sent_plot_size = [cw, ch];
+            self.graph.size = [cw, ch];
+            Some(ClientMessage::ResizeEvent {
+                width: cw,
+                height: ch,
+                px_per_unit: scale,
+            })
+        } else {
+            None
+        };
+
+        ws.renderer
+            .prepare(&ws.device, &ws.queue, &mut self.graph, w, h);
 
         ws.egui_state
             .handle_platform_output(&ws.window, full_output.platform_output);
@@ -483,6 +517,7 @@ impl ViewerApp {
                 }
                 EditorAction::ToggleEditor => {
                     self.graph.editor_visible = !self.graph.editor_visible;
+                    self.last_sent_plot_size = [0, 0];
                 }
                 EditorAction::CopyToClipboard(text) => {
                     copy_text = Some(text);
@@ -496,6 +531,9 @@ impl ViewerApp {
             if let Some(ws) = &self.win {
                 ws.egui_ctx.copy_text(text);
             }
+        }
+        if let Some(msg) = pending_resize {
+            self.send(msg);
         }
         if timeline_playing {
             if let Some(ws) = &self.win {
@@ -665,21 +703,26 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                 if let ServerMessage::Hello {
                     title,
                     size,
+                    show_editor,
                     ..
                 } = &msg
                 {
                     if let Some(ws) = &self.win {
                         ws.window.set_title(title);
+                        let extra_w = if *show_editor { 300 } else { 0 };
+                        let extra_h = 44;
                         let _ = ws.window.request_inner_size(LogicalSize::new(
-                            size[0].max(320),
-                            size[1].max(240),
+                            size[0].max(320) + extra_w,
+                            size[1].max(240) + extra_h,
                         ));
                     }
+                    self.last_sent_plot_size = [0, 0];
                 }
                 if !self.editor.apply_server_message(&msg) {
                     self.graph.apply(msg);
                 }
                 if let Some(ws) = &self.win {
+                    self.graph.px_per_unit = ws.window.scale_factor() as f32;
                     ws.window.request_redraw();
                 }
             }
@@ -709,7 +752,7 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                let resize_msg = if let Some(ws) = &mut self.win {
+                if let Some(ws) = &mut self.win {
                     let w = new_size.width.max(1);
                     let h = new_size.height.max(1);
                     ws.surface_config.width = w;
@@ -717,20 +760,15 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     ws.surface.configure(&ws.device, &ws.surface_config);
                     let scale = ws.window.scale_factor() as f32;
                     self.graph.px_per_unit = scale;
-                    let lw = ((w as f32) / scale).round().max(1.0) as u32;
-                    let lh = ((h as f32) / scale).round().max(1.0) as u32;
-                    self.graph.size = [lw, lh];
+                    self.last_sent_plot_size = [0, 0];
                     ws.window.request_redraw();
-                    Some(ClientMessage::ResizeEvent {
-                        width: lw,
-                        height: lh,
-                        px_per_unit: scale,
-                    })
-                } else {
-                    None
-                };
-                if let Some(msg) = resize_msg {
-                    self.send(msg);
+                }
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let Some(ws) = &self.win {
+                    self.graph.px_per_unit = ws.window.scale_factor() as f32;
+                    self.last_sent_plot_size = [0, 0];
+                    ws.window.request_redraw();
                 }
             }
             WindowEvent::ModifiersChanged(mods) => {
@@ -809,11 +847,12 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                 }
             }
             WindowEvent::CursorMoved { position, .. } if !consumed => {
-                if let Some(ws) = &self.win {
+                if self.win.is_some() {
                     let ppu = self.graph.px_per_unit.max(0.5) as f64;
-                    let win_h_u = (ws.surface_config.height as f64) / ppu;
-                    let ux = position.x / ppu;
-                    let uy = win_h_u - (position.y / ppu);
+                    let px_pts = position.x / ppu;
+                    let py_pts = position.y / ppu;
+                    let ux = px_pts - (self.plot_rect_pts.min.x as f64);
+                    let uy = (self.plot_rect_pts.max.y as f64) - py_pts;
                     self.pointer_unitless = [ux, uy];
                     if self.editor.tool_mode != ToolMode::Navigate {
                         let mo = self.manip.on_pointer_move(
@@ -1057,4 +1096,290 @@ fn run_windowed(socket_path: &str) {
     let mut app = ViewerApp::new(socket_path.to_string(), proxy);
     event_loop.run_app(&mut app).expect("run winit event loop");
     let _ = HashMap::<u64, u64>::new();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wgpu_makie_proto::{
+        AxisMeta, AxisScale, CameraState, ColorSource, CoordSpace, LightState, LinesData,
+        PlotPayload, PrimitiveKind, ScalarOrBuffer, SceneState, TypedBuffer,
+    };
+    use wgpu_makie_scene::camera::makie_ortho;
+
+    #[test]
+    fn headless_composited_ui_renders_crisp_text_and_plot() {
+        let hr = HeadlessRenderer::new().expect("headless wgpu");
+        let w = 1600u32;
+        let h = 1000u32;
+        let scale = 2.0f32;
+        let mut renderer = WgpuRenderer::new(&hr.device, &hr.queue, wgpu::TextureFormat::Rgba8Unorm);
+        let mut egui_renderer = egui_wgpu::Renderer::new(
+            &hr.device,
+            wgpu::TextureFormat::Rgba8Unorm,
+            egui_wgpu::RendererOptions::default(),
+        );
+        let egui_ctx = egui::Context::default();
+
+        let mut graph = SceneGraph::default();
+        graph.apply(ServerMessage::Hello {
+            protocol_version: 1,
+            title: "Retina UI Check".into(),
+            size: [800, 500],
+            px_per_unit: 1.0,
+            show_editor: true,
+        });
+        graph.px_per_unit = scale;
+
+        let mut model = EditorModel::new();
+        let manip = DirectManipController::default();
+
+        // First run UI pass to compute the exact central pane rect matching egui_winit HiDPI input
+        let mut raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(w as f32 / scale, h as f32 / scale),
+            )),
+            ..Default::default()
+        };
+        raw_input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .and_modify(|vp| vp.native_pixels_per_point = Some(scale));
+        let mut central = egui::Rect::NOTHING;
+        let mut out1 = egui_ctx.run_ui(raw_input.clone(), |ui| {
+            egui::Panel::top("tb").show(ui, |ui| {
+                let _ = draw_toolbar(ui, &mut model, &graph, 120.0, 8.33);
+            });
+            egui::Panel::right("ed").default_size(290.0).show(ui, |ui| {
+                let _ = draw_editor_panel(ui, &mut model, &mut graph);
+            });
+            central = ui.available_rect_before_wrap();
+            draw_canvas_overlays(ui.ctx(), &graph, &manip, &model, central);
+        });
+        let cw = central.width().round().max(100.0);
+        let ch = central.height().round().max(100.0);
+        assert!(
+            cw > 400.0 && cw < 600.0 && ch > 350.0 && ch < 490.0,
+            "expected spacious central plot rect inside 800x500 logical, got {central:?}"
+        );
+
+        let proj = makie_ortho(0.0, 10.0, 0.0, 10.0, -1000.0, 1000.0);
+        graph.apply(ServerMessage::UpsertScene {
+            scene: SceneState {
+                id: 1,
+                parent: None,
+                viewport: [0.0, 0.0, cw, ch],
+                background: [1.0, 1.0, 1.0, 1.0],
+                clear: true,
+                visible: true,
+                camera: CameraState {
+                    view: glam::Mat4::IDENTITY.to_cols_array(),
+                    projection: proj,
+                    projectionview: proj,
+                    eyeposition: [0.0, 0.0, 5.0],
+                    resolution: [cw, ch],
+                    is_3d: false,
+                    lookat: [0.0, 0.0, 0.0],
+                    upvector: [0.0, 1.0, 0.0],
+                    fov: 45.0,
+                    near: -10.0,
+                    far: 10.0,
+                },
+                lights: LightState {
+                    ambient: [0.3; 3],
+                    dir_color: [0.8; 3],
+                    dir_direction: [1.0; 3],
+                    camera_relative: false,
+                    dir_lights: vec![],
+                    point_lights: vec![],
+                },
+            },
+        });
+        graph.apply(ServerMessage::UpsertAxisMeta {
+            axis: AxisMeta {
+                axis_id: 1,
+                data_scene_id: 1,
+                block_scene_id: 1,
+                limits: [0.0, 0.0, 10.0, 10.0],
+                reset_limits: [0.0, 0.0, 10.0, 10.0],
+                xscale: AxisScale::Linear,
+                yscale: AxisScale::Linear,
+                xreversed: false,
+                yreversed: false,
+                protrusions: [0.0; 4],
+                xaxis_top: false,
+                yaxis_right: false,
+                linked_x: vec![],
+                linked_y: vec![],
+                makie_tick_plot_ids: vec![],
+                custom_xticks: false,
+                custom_yticks: false,
+                xlabel: "x".into(),
+                ylabel: "y".into(),
+                title: "UI Check".into(),
+            },
+        });
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 10,
+                scene_id: 1,
+                z_order: 1,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: glam::Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Lines(LinesData {
+                    is_segments: false,
+                    positions: TypedBuffer::from_f32(&[0.5, 0.5, 0.0, 9.5, 9.5, 0.0]),
+                    colors: ColorSource::Uniform {
+                        rgba: [0.1, 0.35, 0.9, 1.0],
+                    },
+                    linewidth: ScalarOrBuffer::Scalar1(5.0),
+                    linecap: 2,
+                    joinstyle: 0,
+                    miter_limit: 4.0,
+                    pattern: None,
+                    pattern_length: 1.0,
+                    colormap: None,
+                }),
+                inspector: None,
+            },
+        });
+
+        let win_h_pts = h as f32 / scale;
+        let ox = (central.min.x * scale).round().max(0.0);
+        let oy_bottom = ((win_h_pts - central.max.y) * scale).round().max(0.0);
+        renderer.set_plot_offset_px([ox, oy_bottom]);
+        renderer.prepare(&hr.device, &hr.queue, &mut graph, w, h);
+
+        let tex = hr.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ui_check_color"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        let screen_desc = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [w, h],
+            pixels_per_point: scale,
+        };
+        let tris = egui_ctx.tessellate(out1.shapes, out1.pixels_per_point);
+        for (id, deltas) in out1.textures_delta.set.drain() {
+            for d in &deltas {
+                egui_renderer.update_texture(&hr.device, &hr.queue, id, d);
+            }
+        }
+        let mut encoder = hr.device.create_command_encoder(&Default::default());
+        renderer.encode_render_pass(&mut encoder, &view, &graph, w, h, [1.0, 1.0, 1.0, 1.0]);
+        let extra = egui_renderer.update_buffers(&hr.device, &hr.queue, &mut encoder, &tris, &screen_desc);
+        {
+            let rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui_check_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+            let mut rp = rpass.forget_lifetime();
+            egui_renderer.render(&mut rp, &tris, &screen_desc);
+        }
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let unpadded = w * 4;
+        let padded = unpadded.div_ceil(align) * align;
+        let staging = hr.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ui_check_readback"),
+            size: (padded * h) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            tex.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let mut cmds = extra;
+        cmds.push(encoder.finish());
+        hr.queue.submit(cmds);
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = hr.device.poll(wgpu::PollType::wait_indefinitely());
+        rx.recv().unwrap().unwrap();
+        let mapped = slice.get_mapped_range().unwrap();
+        let mut rgba = Vec::with_capacity((unpadded * h) as usize);
+        for row in 0..h {
+            let s = (row * padded) as usize;
+            rgba.extend_from_slice(&mapped[s..s + unpadded as usize]);
+        }
+        drop(mapped);
+        staging.unmap();
+        out1.textures_delta.clear();
+
+        // Save PNG for visual inspection first
+        let mut f = std::fs::File::create("/tmp/wgpu_makie_ui_check.png").unwrap();
+        let mut enc = png::Encoder::new(&mut f, w, h);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header().unwrap();
+        writer.write_image_data(&rgba).unwrap();
+
+        let blue_total = rgba
+            .chunks_exact(4)
+            .filter(|px| px[2] > 180 && px[0] < 80)
+            .count();
+        let upper_right_blue = rgba
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(idx, px)| {
+                let x = (*idx as u32) % w;
+                let y = (*idx as u32) / w;
+                x > (central.min.x * scale + cw * scale * 0.65) as u32
+                    && x < (central.max.x * scale) as u32
+                    && y > (central.min.y * scale) as u32
+                    && y < (central.min.y * scale + ch * scale * 0.45) as u32
+                    && px[2] > 180
+                    && px[0] < 80
+            })
+            .count();
+        assert!(
+            upper_right_blue > 40,
+            "expected HiDPI central-pane line pixels in upper-right (central={central:?}, total_blue={blue_total}), got {upper_right_blue}"
+        );
+    }
 }

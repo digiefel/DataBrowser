@@ -50,6 +50,7 @@ pub struct WgpuRenderer {
     dummy_rgba_tex: (wgpu::Texture, wgpu::TextureView),
     atlas_tex: (wgpu::Texture, wgpu::TextureView),
     atlas_size: u32,
+    plot_offset_px: [f32; 2],
     depth_tex: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
     pick_color_tex: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
     pick_depth_tex: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
@@ -112,6 +113,7 @@ impl WgpuRenderer {
             dummy_rgba_tex,
             atlas_tex,
             atlas_size,
+            plot_offset_px: [0.0, 0.0],
             depth_tex: None,
             pick_color_tex: None,
             pick_depth_tex: None,
@@ -123,6 +125,11 @@ impl WgpuRenderer {
 
     pub fn color_format(&self) -> wgpu::TextureFormat {
         self.color_format
+    }
+
+    /// Set the physical bottom-left pixel offset `[x, y_bottom]` of the plot region inside the surface.
+    pub fn set_plot_offset_px(&mut self, offset_px: [f32; 2]) {
+        self.plot_offset_px = offset_px;
     }
 
     /// Sync pending glyph atlas patches and plot GPU buffers with `SceneGraph`.
@@ -484,10 +491,10 @@ impl WgpuRenderer {
             if !scene.visible {
                 continue;
             }
-            let vx = (scene.viewport[0] * ppu).round().max(0.0);
+            let vx = (self.plot_offset_px[0] + scene.viewport[0] * ppu).round().max(0.0);
             let vw = (scene.viewport[2] * ppu).round().max(1.0);
             let vh = (scene.viewport[3] * ppu).round().max(1.0);
-            let makie_y = scene.viewport[1] * ppu;
+            let makie_y = self.plot_offset_px[1] + scene.viewport[1] * ppu;
             let vy_top = ((fb_height as f32) - (makie_y + vh)).round().max(0.0);
             if vx >= fb_width as f32 || vy_top >= fb_height as f32 {
                 continue;
@@ -617,8 +624,11 @@ impl WgpuRenderer {
         let view = tex.create_view(&Default::default());
         let bg = root_clear_color(graph);
 
+        let prev_offset = self.plot_offset_px;
+        self.plot_offset_px = [0.0, 0.0];
         let mut encoder = device.create_command_encoder(&Default::default());
         self.encode_render_pass(&mut encoder, &view, graph, w, h, bg);
+        self.plot_offset_px = prev_offset;
 
         let unpadded_bpr = w * 4;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -773,8 +783,8 @@ impl WgpuRenderer {
         }
 
         let ppu = graph.px_per_unit.max(0.5);
-        let px_x = ((x_unitless as f32) * ppu).round() as i32;
-        let px_y_top = (h as i32) - 1 - (((y_unitless as f32) * ppu).round() as i32);
+        let px_x = (self.plot_offset_px[0] + (x_unitless as f32) * ppu).round() as i32;
+        let px_y_top = (h as i32) - 1 - ((self.plot_offset_px[1] + (y_unitless as f32) * ppu).round() as i32);
         let r = ((range_unitless.max(0) as f32) * ppu).ceil() as i32;
 
         let x0 = (px_x - r).clamp(0, w as i32 - 1) as u32;

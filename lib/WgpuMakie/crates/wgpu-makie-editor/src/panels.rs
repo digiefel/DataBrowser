@@ -1936,19 +1936,29 @@ pub fn draw_canvas_overlays(
     graph: &SceneGraph,
     manip: &DirectManipController,
     model: &EditorModel,
-    fb_height_px: u32,
+    plot_rect_pts: egui::Rect,
 ) {
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         egui::Id::unique("wgpu_makie_manip_overlays"),
     ));
-    let win_h_pts = (fb_height_px as f32) / ctx.pixels_per_point().max(0.5);
     let scale = graph.px_per_unit.max(0.5) / ctx.pixels_per_point().max(0.5);
-    let to_egui_pt = |p: [f32; 2]| egui::pos2(p[0] * scale, win_h_pts - p[1] * scale);
+    let to_egui_pt = |p: [f32; 2]| {
+        egui::pos2(
+            plot_rect_pts.min.x + p[0] * scale,
+            plot_rect_pts.max.y - p[1] * scale,
+        )
+    };
     let to_egui_rect = |r: [f32; 4]| {
         egui::Rect::from_min_max(
-            egui::pos2(r[0] * scale, win_h_pts - (r[1] + r[3]) * scale),
-            egui::pos2((r[0] + r[2]) * scale, win_h_pts - r[1] * scale),
+            egui::pos2(
+                plot_rect_pts.min.x + r[0] * scale,
+                plot_rect_pts.max.y - (r[1] + r[3]) * scale,
+            ),
+            egui::pos2(
+                plot_rect_pts.min.x + (r[0] + r[2]) * scale,
+                plot_rect_pts.max.y - r[1] * scale,
+            ),
         )
     };
 

@@ -96,6 +96,13 @@ function _handle_viewer_event!(screen, msg::AbstractDict)
         ppu = Float64(msg["px_per_unit"])
         evs.window_area[] = GeometryBasics.Rect2i(0, 0, max(1, w), max(1, h))
         evs.window_dpi[] = 96.0 * ppu
+        fig = screen.figure
+        if !isnothing(fig)
+            Makie.update_state_before_display!(fig)
+            _sync_figure_axes!(screen, fig)
+            _sync_layout_meta!(screen, fig)
+            flush_updates!(screen)
+        end
     elseif op == "pointer_event"
         x = Float64(msg["x"])
         y = Float64(msg["y"])

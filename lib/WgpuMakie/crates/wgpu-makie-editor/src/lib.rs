@@ -273,7 +273,8 @@ mod tests {
                     let _ = draw_editor_panel(ui, &mut model, &mut graph);
                 });
                 let _ = show_timeline_bar(ui, &mut model);
-                draw_canvas_overlays(ui.ctx(), &graph, &manip, &model, 400);
+                let rect = ui.available_rect_before_wrap();
+                draw_canvas_overlays(ui.ctx(), &graph, &manip, &model, rect);
             });
             out.textures_delta.clear();
         }
@@ -323,5 +324,46 @@ mod tests {
             let _ = draw_inspector_dock(ui, &mut model, &graph);
         });
         out_dock.textures_delta.clear();
+    }
+
+    #[test]
+    fn default_fonts_resolve_ui_glyphs() {
+        let ctx = egui::Context::default();
+        let mut graph = sample_graph();
+        let mut model = EditorModel::new();
+        model.apply_server_message(&ServerMessage::SyncEditorState {
+            state: sample_snapshot(),
+        });
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::Panel::top("top").show(ui, |ui| {
+                let _ = draw_toolbar(ui, &mut model, &graph, 120.0, 8.3);
+            });
+            egui::Panel::right("right").show(ui, |ui| {
+                let _ = draw_editor_panel(ui, &mut model, &mut graph);
+            });
+        });
+        let font_families = ctx.fonts(|f| !f.families().is_empty());
+        assert!(font_families, "expected non-empty egui font families");
+        let font_pixels: usize = output
+            .textures_delta
+            .set
+            .iter()
+            .filter_map(|(id, deltas)| match id {
+                egui::TextureId::Managed(0) => Some(deltas),
+                _ => None,
+            })
+            .flat_map(|deltas| deltas.iter())
+            .map(|delta| match &delta.image {
+                egui::ImageData::Color(ci) => {
+                    assert!(ci.width() > 16 && ci.height() > 16);
+                    ci.pixels.iter().filter(|p| p.a() > 0).count()
+                }
+            })
+            .sum();
+        output.textures_delta.clear();
+        assert!(
+            font_pixels > 1000,
+            "expected rasterized font glyphs in font atlas, got {font_pixels} non-zero pixels"
+        );
     }
 }
