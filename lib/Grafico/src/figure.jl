@@ -913,9 +913,20 @@ function prepare_scaled(plot::Scaled; options...)
     end
     isempty(functions) || (layers = retransformed(layers, t -> MovedPoints(functions) ∘ t))
     legend = (; plot.legend..., get(options, :legend, (;))...)
-    axis_theme = plot.theme === nothing ? (; ) :
-        (; pairs(get(makie_theme(plot.theme), :Axis, Makie.Attributes()))...)
-    axis_kw = (; axis_theme..., axis..., get(options, :axis, (;))...)
+    axis_kw = Dictionary{Symbol, Any}()
+    if plot.theme !== nothing
+        ax_t = get(makie_theme(plot.theme), :Axis, Makie.Attributes())
+        for (k, v) in pairs(ax_t)
+            set!(axis_kw, k, v)
+        end
+    end
+    for (k, v) in axis
+        set!(axis_kw, k, v)
+    end
+    opt_axis = get(options, :axis, (;))
+    for (k, v) in pairs(opt_axis)
+        set!(axis_kw, k, v)
+    end
     return layers, settings, axis_kw, legend, yscales
 end
 

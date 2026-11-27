@@ -218,10 +218,13 @@ end
 
 # Coordinate display settings may contain Observables inside a tuple of limits.
 function _axis_spec(axis,plots)
-    attributes = (;pairs(axis.attributes)...)
-    block = axis.type === Axis3 ? S.Axis3(;plots,_unobserve(attributes)...) :
-                                 S.Axis(;plots,_unobserve(attributes)...)
-    for (key, value) in pairs(attributes)
+    kw = Dict{Symbol, Any}()
+    for (key, value) in pairs(axis.attributes)
+        kw[key] = Makie.to_value(_unobserve(value))
+    end
+    plot_vec = plots isa Vector{Makie.PlotSpec} ? plots : Makie.PlotSpec[p for p in plots]
+    block = Makie.BlockSpec(axis.type === Axis3 ? :Axis3 : :Axis, kw, plot_vec)
+    for (key, value) in pairs(axis.attributes)
         _hasobs(value) || continue
         block.then(_AxisBinding(key, _axis_obs(value)))
     end

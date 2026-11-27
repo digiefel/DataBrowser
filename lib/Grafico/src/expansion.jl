@@ -27,11 +27,18 @@ function path(expression)::Union{Nothing,Vector{Symbol}}
 end
 
 # The paths in an expression, outermost first. The field of `x.name` is a name, not a path.
-paths(expression)::Vector{Vector{Symbol}} = path(expression) !== nothing ? [path(expression)] :
-    Meta.isexpr(expression, :., 2) && expression.args[2] isa QuoteNode ? paths(expression.args[1]) :
-    expression isa Expr ? unique(reduce(vcat, map(paths, expression.args); init=Vector{Symbol}[])) : Vector{Symbol}[]
+function paths(@nospecialize(expression))::Vector{Vector{Symbol}}
+    p = path(expression)
+    p !== nothing && return [p]
+    if Meta.isexpr(expression, :., 2) && expression.args[2] isa QuoteNode
+        return paths(expression.args[1])
+    elseif expression isa Expr
+        return unique(reduce(vcat, map(paths, expression.args); init=Vector{Symbol}[]))
+    end
+    return Vector{Symbol}[]
+end
 
-has_data(expression) = Meta.isexpr(expression, :call) && expression.args[1] === :data ||
+has_data(@nospecialize(expression)) = Meta.isexpr(expression, :call) && expression.args[1] === :data ||
     expression isa Expr && any(has_data, expression.args)
 
 # The value as written, such as `:data.V` or `resistance(:data.V, :data.I)`.
@@ -291,7 +298,7 @@ function header_table(call, header, input::Symbol)
 end
 
 # The first call of `name` in an expression, such as `mapping(...)`, or `nothing`.
-function find_call(expression, name::Symbol)
+function find_call(@nospecialize(expression), name::Symbol)
     Meta.isexpr(expression, :call) && expression.args[1] === name && return expression
     expression isa Expr || return nothing
     for argument in expression.args
@@ -322,9 +329,9 @@ end
 # takes the header's `x` there, and drawing reads it as `y` alone. `y2`, `y3` and so on add values
 # to `y`, which `y1` also names: the position is then their list, `[y, y2]`, and `ydims()` maps
 # which of them a point comes from, as `dims(1)`.
-function positions_named(expression)
+function positions_named(@nospecialize(expression))
     expression isa Expr || return expression
-    expression = Expr(expression.head, map(positions_named, expression.args)...)
+    expression = Expr(expression.head, Any[positions_named(a) for a in expression.args]...)
     Meta.isexpr(expression, :call) && expression.args[1] === :mapping || return expression
     positional, named = call_arguments(expression)
     ## The position and the number of a named position, such as `(2, 3)` for `y3`, or `nothing`.
@@ -354,23 +361,31 @@ function positions_named(expression)
 end
 
 # `expression` with `call` replaced by `new`; the same object, not an equal one.
-replace_call(expression, call, new) = expression === call ? new :
-    expression isa Expr ? Expr(expression.head, map(e -> replace_call(e, call, new), expression.args)...) : expression
+function replace_call(@nospecialize(expression), @nospecialize(call), @nospecialize(new))
+    expression === call && return new
+    expression isa Expr || return expression
+    return Expr(expression.head, Any[replace_call(e, call, new) for e in expression.args]...)
+end
 
-uses(expression, name::Symbol) = expression === name ||
-    expression isa Expr && any(e -> uses(e, name), expression.args)
+function uses(@nospecialize(expression), name::Symbol)
+    expression === name && return true
+    return expression isa Expr && any(e -> uses(e, name), expression.args)
+end
 
 # Resolve the grammar's y-series selector before lifting runtime inputs. The
 # marker also occurs inside labels and transformed mappings.
-dimension_selector(e) = Meta.isexpr(e, :call) && e.args == [:ydims] ? :(dims(1)) :
-    e isa Expr ? Expr(e.head, map(dimension_selector, e.args)...) : e
+function dimension_selector(@nospecialize(e))
+    Meta.isexpr(e, :call) && e.args == [:ydims] && return :(dims(1))
+    e isa Expr || return e
+    return Expr(e.head, Any[dimension_selector(a) for a in e.args]...)
+end
 
 # Evaluate the structural inputs of a complete @plot block together. Named
 # analysis results remain ordinary Results inside each reactive evaluation.
 function bind_plot_inputs(expressions,names=Symbol[])
     sources=Any[]
     arguments=Symbol[]
-    function bind(source)
+    function bind(@nospecialize(source))
         index=findfirst(x -> isequal(x,source),sources)
         if index === nothing
             push!(sources,source)
@@ -379,31 +394,31 @@ function bind_plot_inputs(expressions,names=Symbol[])
         end
         arguments[index]
     end
-    reads_result(e)=any(name -> uses(e,name),names)
-    function selector(e)
+    reads_result(@nospecialize(e))=any(name -> uses(e,name),names)
+    function selector(@nospecialize(e))
         reads_result(e) && return e
         e = dimension_selector(e)
         if (e isa Symbol || e isa Expr) && isempty(paths(e))
             return bind(e)
         elseif Meta.isexpr(e,:call)
-            return Expr(:call,e.args[1],map(selector,e.args[2:end])...)
+            return Expr(:call,e.args[1],Any[selector(a) for a in e.args[2:end]]...)
         end
         e
     end
-    function rewrite(e)
+    function rewrite(@nospecialize(e))
         e isa Expr || return e
         e.head in (:quote,:function,:->) && return e
         if Meta.isexpr(e,:call,2) && e.args[1] === :data && !reads_result(e.args[2])
             return Expr(:call,:data,bind(e.args[2]))
         elseif any(has_data,expressions) && Meta.isexpr(e,:call) && e.args[1] === :mapping
-            argument(a)=Meta.isexpr(a,:kw) ? Expr(:kw,a.args[1],selector(a.args[2])) :
-                Meta.isexpr(a,:parameters) ? Expr(:parameters,map(argument,a.args)...) : selector(a)
-            return Expr(:call,:mapping,map(argument,e.args[2:end])...)
+            argument(@nospecialize(a))=Meta.isexpr(a,:kw) ? Expr(:kw,a.args[1],selector(a.args[2])) :
+                Meta.isexpr(a,:parameters) ? Expr(:parameters,Any[argument(x) for x in a.args]...) : selector(a)
+            return Expr(:call,:mapping,Any[argument(a) for a in e.args[2:end]]...)
         end
-        Expr(e.head,map(rewrite,e.args)...)
+        Expr(e.head,Any[rewrite(a) for a in e.args]...)
     end
-    rewritten=map(rewrite,expressions)
-    wrap(body)=isempty(sources) ? body :
+    rewritten=Any[rewrite(expr) for expr in expressions]
+    wrap(@nospecialize(body))=isempty(sources) ? body :
         Expr(:call,_lift_call,Expr(:->,Expr(:tuple,arguments...),body),sources...)
     rewritten,wrap
 end

@@ -123,7 +123,10 @@ const LEGEND_ROLES = (:color, :marker, :linestyle, :markersize, :linewidth)
 
 _build_plot_document(_header, _block, _eval_module, _existing_inspector=nothing) = nothing
 const _SKIP_DOCUMENT_ATTACH = Ref(false)
-_copy_ast(e) = e isa Expr ? Expr(e.head, map(_copy_ast, e.args)...) : e
+function _copy_ast(@nospecialize(e))
+    e isa Expr || return e
+    return Expr(e.head, Any[_copy_ast(a) for a in e.args]...)
+end
 
 function _attach_plot_document(obj::Declaration, header_expr, block_expr, eval_module::Module)
     _SKIP_DOCUMENT_ATTACH[] && return obj

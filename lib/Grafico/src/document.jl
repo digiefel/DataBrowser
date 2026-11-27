@@ -130,18 +130,18 @@ function Base.deepcopy_internal(doc::PlotDocument, stackdict::IdDict)
     return copy
 end
 
-_is_literal_expr(e) = e isa Number || e isa Bool || e isa AbstractString || e isa Symbol ||
+_is_literal_expr(@nospecialize(e)) = e isa Number || e isa Bool || e isa AbstractString || e isa Symbol ||
     (e isa QuoteNode && e.value isa Symbol) || e === nothing ||
     (Meta.isexpr(e, :tuple) && all(_is_literal_expr, e.args)) ||
     (Meta.isexpr(e, :vect) && all(_is_literal_expr, e.args))
 
-function _strip_lines(e)
+function _strip_lines(@nospecialize(e))
     e isa Expr || return e
     if e.head === :block
-        args = [_strip_lines(a) for a in e.args if !(a isa LineNumberNode)]
+        args = Any[_strip_lines(a) for a in e.args if !(a isa LineNumberNode)]
         return Expr(:block, args...)
     end
-    return Expr(e.head, map(_strip_lines, e.args)...)
+    return Expr(e.head, Any[_strip_lines(a) for a in e.args]...)
 end
 
 function _format_kw_pairs(items)
@@ -156,7 +156,7 @@ function _format_kw_pairs(items)
     return parts
 end
 
-function _expr_to_string(e)::String
+function _expr_to_string(@nospecialize(e))::String
     e === nothing && return "nothing"
     e isa Bool && return e ? "true" : "false"
     e isa QuoteNode && return e.value isa Symbol ? ":$(e.value)" : repr(e.value)
@@ -333,7 +333,7 @@ function _parse_layer_terms(expr)
     return data_expr, mapping_entries, analysis_expr, plottype_expr, visual_kwargs
 end
 
-function _qualify_expr(e, eval_module::Module)
+function _qualify_expr(@nospecialize(e), eval_module::Module)
     if e isa Symbol
         isdefined(eval_module, e) && return e
         isdefined(@__MODULE__, e) && return GlobalRef(@__MODULE__, e)
@@ -351,13 +351,13 @@ function _qualify_expr(e, eval_module::Module)
         elseif e.head === :(->) && length(e.args) == 2
             return e
         else
-            return Expr(e.head, map(a -> _qualify_expr(a, eval_module), e.args)...)
+            return Expr(e.head, Any[_qualify_expr(a, eval_module) for a in e.args]...)
         end
     end
     return e
 end
 
-function _eval_in_module(eval_module::Module, expr)
+function _eval_in_module(eval_module::Module, @nospecialize(expr))
     if expr isa Number || expr isa Bool || expr isa AbstractString || expr === nothing
         return expr
     elseif expr isa QuoteNode && expr.value isa Symbol
@@ -621,6 +621,7 @@ mutable struct EditablePlot <: AbstractEditablePlot
     base_plot::Any
     initial_data::Any
     structure_dirty::Bool
+    mapping_dirty::Bool
     revision::Int
     updating::Bool
 end
@@ -811,10 +812,13 @@ function _ensure_visual_obs!(ep::EditablePlot, layer_id::Int, kwargs_dict::Dict{
         if k in _SEMANTIC_VISUAL_KEYS
             push!(pairs_out, k => val)
         else
-            obs = get!(obs_map, k) do
-                Makie.Observable{Any}(val)
+            if haskey(obs_map, k)
+                obs = obs_map[k]
+                obs.val = val
+            else
+                obs = Makie.Observable{Any}(val)
+                obs_map[k] = obs
             end
-            obs.val = val
             push!(pairs_out, k => obs)
         end
     end
@@ -1069,10 +1073,144 @@ function _eval_colorbar_from_doc(doc::PlotDocument)::NamedTuple
     return (; pairs_list...)
 end
 
+_is_patchable_layer(l::Layer) = !any(s -> s isa Union{Fit,Aggregate}, steps(l.transformation))
+_is_patchable_layer(ls::Layers) = all(_is_patchable_layer, ls.layers)
+_is_patchable_layer(pl::PlotLines) = all(line -> _is_patchable_layer(line.layers), pl.lines)
+_is_patchable_layer(s::Scaled) = _is_patchable_layer(s.layers)
+_is_patchable_layer(_) = false
+
+function _is_simple_value_expr(expr_text::AbstractString)::Bool
+    parsed = try
+        Meta.parse(expr_text)
+    catch
+        return false
+    end
+    parsed isa QuoteNode && parsed.value isa Symbol && return true
+    return parsed === :nothing || parsed isa AbstractString || parsed isa Number || parsed isa Bool
+end
+
+function _is_simple_mapping_entries(entries::Vector{MappingEntry})::Bool
+    for m in entries
+        is_y_scale(m.role) && m.role !== :y && return false
+        m.role === :y1 && return false
+        _is_simple_value_expr(m.value_expr) || return false
+        (m.transform_expr !== nothing && occursin("ydims", m.transform_expr)) && return false
+    end
+    return true
+end
+
+function _can_patch_mappings_in_julia(ep::EditablePlot)::Bool
+    base = ep.base_plot
+    (base === nothing || base isa Declaration || !_is_patchable_layer(base)) && return false
+    doc = ep.doc
+    any(k -> k in LEGEND_ROLES, keys(doc.legend)) && return false
+    any(a -> a.source_expr !== nothing, doc.annotations) && return false
+    any(l -> l.is_statement_only || l.data_expr !== nothing, doc.layers) && return false
+    _is_simple_mapping_entries(doc.header_mapping) || return false
+    all(l -> _is_simple_mapping_entries(l.mapping), doc.layers) || return false
+    inner = base isa Scaled ? base.layers : base
+    drawn_specs = [l for l in doc.layers if !l.is_statement_only]
+    if inner isa PlotLines
+        return length(inner.lines) == length(drawn_specs)
+    else
+        return length(drawn_specs) <= 1
+    end
+end
+
+function _eval_mapping_entry(doc::PlotDocument, m::MappingEntry)
+    base_val = _eval_text(doc.eval_module, m.value_expr)
+    tf = m.transform_expr === nothing ? nothing : _eval_text(doc.eval_module, m.transform_expr)
+    if tf !== nothing && m.label !== nothing
+        return base_val => tf => m.label
+    elseif tf !== nothing
+        return base_val => tf
+    elseif m.label !== nothing
+        return base_val => m.label
+    else
+        return base_val
+    end
+end
+
+_base_pos_named(l::Layer) = (l.positional, l.named)
+_base_pos_named(ls::Layers) = isempty(ls.layers) ? (Arguments(), NamedArguments()) : _base_pos_named(first(ls.layers))
+_base_pos_named(_) = (Arguments(), NamedArguments())
+
+function _eval_mapping_entry_fallback(doc::PlotDocument, m::MappingEntry, fallback)
+    try
+        return _eval_mapping_entry(doc, m)
+    catch err
+        fallback !== nothing && m.transform_expr !== nothing && return fallback
+        rethrow(err)
+    end
+end
+
+function _split_mapping_entries(doc::PlotDocument, entries::Vector{MappingEntry}, base_pos::Arguments=Arguments(), base_named::NamedArguments=NamedArguments())
+    slots = Any[nothing, nothing, nothing]
+    max_slot = 0
+    named = NamedArguments()
+    for m in entries
+        fb = if m.role === :x
+            length(base_pos) >= 1 ? base_pos[1] : nothing
+        elseif m.role === :y
+            length(base_pos) >= 2 ? base_pos[2] : nothing
+        elseif m.role === :z
+            length(base_pos) >= 3 ? base_pos[3] : nothing
+        else
+            haskey(base_named, m.role) ? base_named[m.role] : nothing
+        end
+        val = _eval_mapping_entry_fallback(doc, m, fb)
+        if m.role === :x
+            slots[1] = val
+            val === nothing || (max_slot = max(max_slot, 1))
+        elseif m.role === :y
+            slots[2] = val
+            val === nothing || (max_slot = max(max_slot, 2))
+        elseif m.role === :z
+            slots[3] = val
+            val === nothing || (max_slot = max(max_slot, 3))
+        else
+            set!(named, m.role, val)
+        end
+    end
+    (max_slot >= 3 && slots[2] === nothing) && error("`mapping` has z without y")
+    pos = Arguments(slots[1:max_slot])
+    return pos, named
+end
+
+function _build_mapping_parts(doc::PlotDocument, header_entries::Vector{MappingEntry}, layer_entries::Vector{MappingEntry}, base_inner=nothing)
+    base_pos, base_named = _base_pos_named(base_inner)
+    h_pos, h_named = _split_mapping_entries(doc, header_entries, base_pos, base_named)
+    l_pos, l_named = _split_mapping_entries(doc, layer_entries, base_pos, base_named)
+    pos = isempty(l_pos) ? copy(h_pos) : l_pos
+    if !isempty(pos) && pos[1] === nothing && length(h_pos) >= 1
+        pos = Any[h_pos[1]; pos[2:end]]
+    end
+    named = NamedArguments()
+    for (k, v) in pairs(h_named)
+        v === nothing || set!(named, k, v)
+    end
+    for (k, v) in pairs(l_named)
+        if v === nothing
+            haskey(named, k) && delete!(named, k)
+        else
+            set!(named, k, v)
+        end
+    end
+    shared = Symbol[k for (k, v) in pairs(h_named) if v !== nothing && !haskey(l_named, k)]
+    return pos, named, shared
+end
+
+_patch_layer_mapping(layer::Layer, pos::Arguments, named::NamedArguments) =
+    Layer(; transformation=layer.transformation, data=layer.data, positional=copy(pos), named=copy(named))
+_patch_layer_mapping(layers::Layers, pos::Arguments, named::NamedArguments) =
+    Layers([_patch_layer_mapping(l, pos, named) for l in layers.layers])
+_patch_layer_mapping(x, _pos, _named) = x
+
 function _rebuild_from_base(ep::EditablePlot)
     doc = ep.doc
     base = ep.data[] === nothing ? ep.base_plot : _replace_data(ep.base_plot, ep.data[])
     coord_obs = _ensure_coord_obs!(ep)
+    patch_mappings = ep.mapping_dirty && _can_patch_mappings_in_julia(ep)
     if base isa Scaled
         layers = base.layers
         if layers isa PlotLines
@@ -1084,7 +1222,12 @@ function _rebuild_from_base(ep::EditablePlot)
                     obs_pairs = _ensure_visual_obs!(ep, ls.id, ls.visual_kwargs)
                     pt = _resolve_plottype(doc, ls.plottype_expr)
                     patched_inner = _patch_layer_visual(line.layers, pt, obs_pairs)
-                    push!(new_lines, PlotLine(patched_inner, line.shared, ls.visible))
+                    shared = line.shared
+                    if patch_mappings
+                        pos, named, shared = _build_mapping_parts(doc, doc.header_mapping, ls.mapping, line.layers)
+                        patched_inner = _patch_layer_mapping(patched_inner, pos, named)
+                    end
+                    push!(new_lines, PlotLine(patched_inner, shared, ls.visible))
                 else
                     push!(new_lines, line)
                 end
@@ -1094,6 +1237,12 @@ function _rebuild_from_base(ep::EditablePlot)
             obs_pairs = _ensure_visual_obs!(ep, 0, doc.header_visual_kwargs)
             pt = _resolve_plottype(doc, doc.header_plottype_expr)
             layers = _patch_layer_visual(layers, pt, obs_pairs)
+            if patch_mappings
+                drawn_specs = [l for l in doc.layers if !l.is_statement_only]
+                layer_entries = length(drawn_specs) == 1 ? drawn_specs[1].mapping : MappingEntry[]
+                pos, named, _ = _build_mapping_parts(doc, doc.header_mapping, layer_entries, layers)
+                layers = _patch_layer_mapping(layers, pos, named)
+            end
         end
         scales_vec = _eval_scales_from_doc(doc)
         coords_vec = _eval_coords_from_doc(doc, coord_obs, base.coords)
@@ -1114,7 +1263,12 @@ function _rebuild_from_base(ep::EditablePlot)
                 obs_pairs = _ensure_visual_obs!(ep, ls.id, ls.visual_kwargs)
                 pt = _resolve_plottype(doc, ls.plottype_expr)
                 patched_inner = _patch_layer_visual(line.layers, pt, obs_pairs)
-                push!(new_lines, PlotLine(patched_inner, line.shared, ls.visible))
+                shared = line.shared
+                if patch_mappings
+                    pos, named, shared = _build_mapping_parts(doc, doc.header_mapping, ls.mapping, line.layers)
+                    patched_inner = _patch_layer_mapping(patched_inner, pos, named)
+                end
+                push!(new_lines, PlotLine(patched_inner, shared, ls.visible))
             else
                 push!(new_lines, line)
             end
@@ -1138,6 +1292,12 @@ function _rebuild_from_base(ep::EditablePlot)
         obs_pairs = _ensure_visual_obs!(ep, 0, doc.header_visual_kwargs)
         pt = _resolve_plottype(doc, doc.header_plottype_expr)
         res = _patch_layer_visual(base, pt, obs_pairs)
+        if patch_mappings
+            drawn_specs = [l for l in doc.layers if !l.is_statement_only]
+            layer_entries = length(drawn_specs) == 1 ? drawn_specs[1].mapping : MappingEntry[]
+            pos, named, _ = _build_mapping_parts(doc, doc.header_mapping, layer_entries, res)
+            res = _patch_layer_mapping(res, pos, named)
+        end
         scales_vec = _eval_scales_from_doc(doc)
         coords_vec = _eval_coords_from_doc(doc, coord_obs)
         legend_nt = _eval_legend_from_doc(doc)
@@ -1202,7 +1362,7 @@ function _layer_terms_to_expr(
     return foldl((a, b) -> Expr(:call, :(*), a, b), terms)
 end
 
-function _collect_lhs_names!(names::Set{Symbol}, e)
+function _collect_lhs_names!(names::Set{Symbol}, @nospecialize(e))
     if e isa Symbol
         push!(names, e)
     elseif e isa Expr
@@ -1215,7 +1375,7 @@ function _collect_lhs_names!(names::Set{Symbol}, e)
     return names
 end
 
-function _qualify_expanded_ast(e, eval_module::Module, locals::Set{Symbol}=Set{Symbol}())
+function _qualify_expanded_ast(@nospecialize(e), eval_module::Module, locals::Set{Symbol}=Set{Symbol}())
     if e isa Makie.Observable || e isa Columns || e isa Declaration || e isa Scaled || e isa Layer ||
        e isa PlotLines || e isa PlotLine || e isa PlotTheme || e isa InspectorSpec || e isa PlotDocument
         return e
@@ -1456,6 +1616,7 @@ function compile_document(ep::EditablePlot)
     if !(built isa Declaration) && !(ep.base_plot isa Declaration)
         ep.base_plot = built
         ep.structure_dirty = false
+        ep.mapping_dirty = false
     end
     return built
 end
@@ -1525,6 +1686,7 @@ function editable(plot, input=nothing)
         theme_obs,
         plot,
         init_data,
+        false,
         false,
         0,
         false,
@@ -1699,7 +1861,6 @@ function set_mapping!(
     label::Union{Nothing,AbstractString}=nothing,
     transform::Union{Nothing,AbstractString}=nothing,
 )
-    ep.structure_dirty = true
     target = if layer_id === nothing || layer_id == 0
         ep.doc.header_mapping
     else
@@ -1712,12 +1873,15 @@ function set_mapping!(
         label === nothing ? nothing : String(label),
         transform === nothing ? nothing : String(transform),
     )
+    _eval_mapping_entry(ep.doc, entry)
     idx = findfirst(m -> m.role === role, target)
     if idx === nothing
         push!(target, entry)
     else
         target[idx] = entry
     end
+    ep.mapping_dirty = true
+    ep.structure_dirty = !_can_patch_mappings_in_julia(ep)
     return _recompile!(ep)
 end
 
@@ -1727,7 +1891,6 @@ end
 Remove mapping `role` from the header (`layer_id === nothing`) or from a layer.
 """
 function remove_mapping!(ep::EditablePlot, layer_id::Union{Nothing,Int}, role::Symbol)
-    ep.structure_dirty = true
     target = if layer_id === nothing || layer_id == 0
         ep.doc.header_mapping
     else
@@ -1735,6 +1898,8 @@ function remove_mapping!(ep::EditablePlot, layer_id::Union{Nothing,Int}, role::S
         layer.mapping
     end
     filter!(m -> m.role !== role, target)
+    ep.mapping_dirty = true
+    ep.structure_dirty = !_can_patch_mappings_in_julia(ep)
     return _recompile!(ep)
 end
 
@@ -1992,8 +2157,7 @@ function set_theme_expr!(
     else
         ep.doc.theme = ThemeSpec(new_base, settings)
     end
-    next_base = ep.doc.theme === nothing ? nothing : ep.doc.theme.base
-    if prev_base === next_base && key in (:fontsize, :textcolor, :backgroundcolor)
+    if key === nothing || key in (:fontsize, :textcolor, :backgroundcolor)
         ep.revision += 1
         ep.theme_obs[] = _eval_theme_from_doc(ep.doc)
         return ep

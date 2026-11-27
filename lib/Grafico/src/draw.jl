@@ -36,6 +36,8 @@ function Makie.plot(
     return FigureGrid(fig, grid)
 end
 
+_kwdict(d::Dictionary{Symbol, Any}, ::Symbol)::Dictionary{Symbol, Any} = copy(d)
+
 function _kwdict(prs, keyword::Symbol)::Dictionary{Symbol, Any}
     err = nothing
     dict = try

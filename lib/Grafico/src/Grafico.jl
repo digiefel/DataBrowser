@@ -114,13 +114,25 @@ include("portable/compute.jl")
         set_layer_visible!(ep, 1, false)
         set_layer_visible!(ep, 1, true)
         set_legend_expr!(ep, :show, "false")
-        set_legend_expr!(ep, :position, ":left")
+        set_legend_expr!(ep, :position, ":inside")
+        set_legend_expr!(ep, :position, ":right")
         set_legend_expr!(ep, :show, "true")
         set_theme_expr!(ep; base = :dark, key = :fontsize, expr_text = "16")
+        set_theme_expr!(ep; base = :black)
         set_theme_expr!(ep; base = nothing)
         set_coord_expr!(ep, :yscale, "log10")
         set_coord_expr!(ep, :yscale, "identity")
+        available_columns(ep)
         to_code(ep; include_imports = true, include_figure = true)
+
+        ep_map = editable(@plot data(rows) * mapping(:x => "X", :y => "Y"; color = :chip) begin
+            visual(Scatter)
+            visual(Lines)
+            legend(position = :right)
+        end)
+        figure(ep_map)
+        set_mapping!(ep_map, nothing, :x, ":chip")
+        set_mapping!(ep_map, nothing, :x, ":x")
     end
 end
 

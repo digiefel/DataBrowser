@@ -324,3 +324,73 @@ end
     Grafico.set_analysis!(ep, 2, "smooth()")
     @test ep.structure_dirty == false
 end
+
+@testset "Pure-Julia mapping edits and in-place theme presets" begin
+    rows = [
+        (x = Float64(i), phase = Float64(i) * 2.0 + 10.0, y = Float64(i)^2, series = iseven(i) ? "B" : "A")
+        for i in 1:6
+    ]
+    p = @plot data(rows) * mapping(:x => "Time (s)", :y => "Signal (V)"; color = :series) begin
+        visual(Scatter; markersize = 11)
+        visual(Lines; linewidth = 3)
+        scales(color = (; categories = ["A", "B"]))
+        inspector(:series; title = "Trace")
+    end
+    ep = editable(p)
+    fig = figure(ep)
+    ax = only(filter(b -> b isa Axis, fig.content))
+    @test ax.xlabel[] == "Time (s)"
+
+    _axis_scatters(a) = begin
+        found = Scatter[]
+        function visit(p)
+            p isa Scatter && push!(found, p)
+            for c in p.plots
+                visit(c)
+            end
+        end
+        for p in a.scene.plots
+            visit(p)
+        end
+        return found
+    end
+
+    # Simple column switch stays off AST recompilation, updates coordinates & xlabel, keeps visual + inspector
+    Grafico.set_mapping!(ep, nothing, :x, ":phase")
+    @test ep.structure_dirty == false
+    ax = only(filter(b -> b isa Axis, fig.content))
+    @test ax.xlabel[] == "phase"
+    scatters = _axis_scatters(ax)
+    @test all(s -> all(==(11), s.markersize[]), scatters)
+    @test maximum(pt[1] for s in scatters for pt in s[1][]) ≈ 22.0
+    @test first(scatters).inspector_label[] isa Grafico.DeclarativeInspector
+
+    # Numeric -> categorical -> numeric works cleanly
+    Grafico.set_mapping!(ep, nothing, :x, ":series")
+    @test ep.structure_dirty == false
+    ax = only(filter(b -> b isa Axis, fig.content))
+    @test ax.xlabel[] == "series"
+    Grafico.set_mapping!(ep, nothing, :x, ":x"; label = "Time (s)")
+    @test ep.structure_dirty == false
+    ax = only(filter(b -> b isa Axis, fig.content))
+    @test ax.xlabel[] == "Time (s)"
+    scatters2 = _axis_scatters(ax)
+    @test maximum(pt[1] for s in scatters2 for pt in s[1][]) ≈ 6.0
+
+    # Transform + invalid expression safety
+    Grafico.set_mapping!(ep, nothing, :y, ":y"; transform = "sqrt")
+    @test ep.structure_dirty == false
+    @test_throws Exception Grafico.set_mapping!(ep, nothing, :x, "broken * )")
+    @test ep.doc.header_mapping[1].value_expr == ":x"
+
+    # Theme presets update in place without rebuilding ep.compiled[]
+    compiled_before = ep.compiled[]
+    for base in (:dark, :black, :ggplot2, :minimal, :light)
+        Grafico.set_theme_expr!(ep; base = base)
+        @test ep.compiled[] === compiled_before
+    end
+    @test ax.xgridvisible[] == true
+    Grafico.set_theme_expr!(ep; base = nothing)
+    @test ep.compiled[] === compiled_before
+    @test fig.scene.backgroundcolor[] == Makie.RGBAf(1, 1, 1, 1)
+end
