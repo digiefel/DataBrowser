@@ -561,12 +561,102 @@ function _build_plot_payload(screen, scene::Scene, plot::Makie.ComputePlots, plo
             "f32c_scale" => pack_vec3(attr[:f32c_scale][]),
         )
         nm = pack_mat3(attr[:world_normalmatrix][])
+    elseif plot isa Makie.Volume
+        _ensure_clip_planes!(attr)
+        xs = attr[:x][]
+        ys = attr[:y][]
+        zs = attr[:z][]
+        vol = Array{Float32, 3}(attr[:volume][])
+        nx, ny, nz = size(vol)
+        flat = vec(vol)
+        cmap = _extract_colormap(attr)
+        if isnothing(cmap)
+            gray_bytes = UInt8[255 * i for i in 0:1 for _ in 1:4]
+            cmap = Dict{String, Any}(
+                "rgba" => pack_u8_buf(gray_bytes),
+                "range" => Float32[0.0f0, 1.0f0],
+                "lowclip" => Float32[0, 0, 0, 0],
+                "highclip" => Float32[1, 1, 1, 1],
+                "nan_color" => Float32[0, 0, 0, 0],
+                "nearest" => false,
+            )
+        end
+        nsamples = haskey(attr, :samples) ? clamp(Int(attr[:samples][]), 16, 512) : 128
+        prim = Dict{String, Any}(
+            "kind" => "volume",
+            "bounds_min" => Float32[Float32(xs[1]), Float32(ys[1]), Float32(zs[1])],
+            "bounds_max" => Float32[Float32(xs[2]), Float32(ys[2]), Float32(zs[2])],
+            "dims" => UInt32[UInt32(nx), UInt32(ny), UInt32(nz)],
+            "data" => Dict{String, Any}(
+                "dtype" => "f32",
+                "len" => UInt32(length(flat)),
+                "bytes" => _raw_bytes(flat),
+            ),
+            "algorithm" => UInt32(max(0, Int(attr[:algorithm][]))),
+            "colormap" => cmap,
+            "isovalue" => Float32(attr[:isovalue][]),
+            "isorange" => Float32(attr[:isorange][]),
+            "absorption" => Float32(attr[:absorption][]),
+            "shading" => Bool(attr[:use_shading][]),
+            "diffuse" => pack_vec3(attr[:diffuse][]),
+            "specular" => pack_vec3(attr[:specular][]),
+            "shininess" => Float32(attr[:shininess][]),
+            "backlight" => Float32(attr[:backlight][]),
+            "samples" => UInt32(nsamples),
+        )
+        nm = pack_mat3(Makie.Mat3f(Makie.I))
+    elseif plot isa Makie.Voxels
+        _ensure_clip_planes!(attr)
+        xs = attr[:x][]
+        ys = attr[:y][]
+        zs = attr[:z][]
+        chunk = Array{UInt8, 3}(haskey(attr, :chunk_u8) ? attr[:chunk_u8][] : attr[:chunk][])
+        nx, ny, nz = size(chunk)
+        is_air_fn = haskey(attr, :is_air) ? attr[:is_air][] : (x -> x == 0x00)
+        vcols = if haskey(attr, :voxel_color)
+            attr[:voxel_color][]
+        elseif haskey(attr, :voxel_colormap)
+            attr[:voxel_colormap][]
+        else
+            RGBAf[]
+        end
+        palette = Vector{Vector{Float32}}(undef, 256)
+        palette[1] = Float32[0.0f0, 0.0f0, 0.0f0, 0.0f0]
+        for idx in 1:255
+            id = UInt8(idx)
+            air = try
+                Bool(is_air_fn(id))
+            catch
+                false
+            end
+            if air || idx > length(vcols)
+                palette[idx + 1] = Float32[0.0f0, 0.0f0, 0.0f0, 0.0f0]
+            else
+                palette[idx + 1] = pack_rgba(vcols[idx])
+            end
+        end
+        prim = Dict{String, Any}(
+            "kind" => "voxels",
+            "bounds_min" => Float32[Float32(xs[1]), Float32(ys[1]), Float32(zs[1])],
+            "bounds_max" => Float32[Float32(xs[2]), Float32(ys[2]), Float32(zs[2])],
+            "dims" => UInt32[UInt32(nx), UInt32(ny), UInt32(nz)],
+            "data" => pack_u8_buf(vec(chunk)),
+            "gap" => Float32(haskey(attr, :gap) ? attr[:gap][] : 0.0f0),
+            "palette_rgba" => palette,
+            "colormap" => nothing,
+            "shading" => Bool(attr[:use_shading][]),
+            "diffuse" => pack_vec3(attr[:diffuse][]),
+            "specular" => pack_vec3(attr[:specular][]),
+            "shininess" => Float32(attr[:shininess][]),
+            "backlight" => Float32(attr[:backlight][]),
+        )
+        nm = pack_mat3(Makie.Mat3f(Makie.I))
     else
-        # Unsupported atomic plot (Volume/Voxels scheduled for Milestone 3)
         return nothing, extra_msgs
     end
 
     mspace = haskey(attr, :markerspace) ? attr[:markerspace][] : attr[:space][]
+    model_mat = haskey(attr, :model_f32c) ? attr[:model_f32c][] : attr[:model][]
     payload = Dict{String, Any}(
         "id" => plot_id,
         "scene_id" => scene_id,
@@ -578,7 +668,7 @@ function _build_plot_payload(screen, scene::Scene, plot::Makie.ComputePlots, plo
         "depth_shift" => Float32(attr[:depth_shift][]),
         "space" => pack_coord_space(attr[:space][]),
         "markerspace" => pack_coord_space(mspace),
-        "model" => pack_mat4(attr[:model_f32c][]),
+        "model" => pack_mat4(model_mat),
         "world_normal_matrix" => nm,
         "clip_planes" => _extract_clip_planes(attr),
         "primitive" => prim,

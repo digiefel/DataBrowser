@@ -332,6 +332,11 @@ fn check_clip(in: VsOut) {
     }
 }
 
+struct OitOut {
+    @location(0) accum: vec4<f32>,
+    @location(1) reveal: vec4<f32>,
+};
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     check_clip(in);
@@ -340,6 +345,21 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     return col;
+}
+
+@fragment
+fn fs_oit(in: VsOut) -> OitOut {
+    check_clip(in);
+    let col = sprite_color(in);
+    if (col.a <= 0.001) {
+        discard;
+    }
+    let z = clamp(in.clip_pos.z, 0.0, 1.0);
+    let w = clamp(col.a * max(1e-2, 3e3 * pow(1.0 - z, 3.0)), 1e-2, 3e3);
+    return OitOut(
+        vec4<f32>(col.rgb * col.a * w, col.a * w),
+        vec4<f32>(col.a, col.a, col.a, col.a),
+    );
 }
 
 @fragment

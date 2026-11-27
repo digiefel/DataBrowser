@@ -4,7 +4,7 @@ use crate::uniforms::{MeshScatterVertex, MeshVertex, SpriteAttrs};
 use std::collections::HashMap;
 use wgpu_makie_proto::{
     BufferDType, ColorSource, ColormapData, LinesData, MeshData, MeshScatterData, PrimitiveKind,
-    ScalarOrBuffer, ScatterData, TextData, TextureFormatKind, TypedBuffer,
+    ScalarOrBuffer, ScatterData, TextData, TextureFormatKind, TypedBuffer, VolumeData, VoxelsData,
 };
 use wgpu_makie_scene::PlotEntry;
 
@@ -318,6 +318,13 @@ pub enum CachedPlotGpu {
         cmap_nearest: bool,
         bind_group: Option<wgpu::BindGroup>,
         instance_count: u32,
+    },
+    Volume {
+        uniform_buf: wgpu::Buffer,
+        vol_tex: (wgpu::Texture, wgpu::TextureView),
+        cmap_tex: Option<(wgpu::Texture, wgpu::TextureView)>,
+        cmap_nearest: bool,
+        bind_group: Option<wgpu::BindGroup>,
     },
     Unsupported,
 }
@@ -984,7 +991,242 @@ pub fn build_plot_gpu(
             nearest_samp,
             d,
         ),
-        PrimitiveKind::Volume(_) | PrimitiveKind::Voxels(_) => CachedPlotGpu::Unsupported,
+        PrimitiveKind::Volume(d) => build_volume_gpu(
+            device,
+            queue,
+            fallback_tex,
+            linear_samp,
+            nearest_samp,
+            d,
+        ),
+        PrimitiveKind::Voxels(d) => build_voxels_gpu(
+            device,
+            queue,
+            fallback_tex,
+            linear_samp,
+            nearest_samp,
+            d,
+        ),
+    }
+}
+
+pub fn build_volume_gpu(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    fallback_tex: &wgpu::TextureView,
+    linear_samp: &wgpu::Sampler,
+    nearest_samp: &wgpu::Sampler,
+    data: &VolumeData,
+) -> CachedPlotGpu {
+    let nx = data.dims[0].max(1);
+    let ny = data.dims[1].max(1);
+    let nz = data.dims[2].max(1);
+    let expected = (nx as usize) * (ny as usize) * (nz as usize);
+    let mut scalars = data.data.as_f32_vec().unwrap_or_default();
+    scalars.resize(expected, 0.0);
+
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("volume_3d_r32f"),
+        size: wgpu::Extent3d {
+            width: nx,
+            height: ny,
+            depth_or_array_layers: nz,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: wgpu::TextureFormat::R32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        tex.as_image_copy(),
+        bytemuck::cast_slice(&scalars),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(nx * 4),
+            rows_per_image: Some(ny),
+        },
+        wgpu::Extent3d {
+            width: nx,
+            height: ny,
+            depth_or_array_layers: nz,
+        },
+    );
+    let vol_view = tex.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D3),
+        ..Default::default()
+    });
+    let (cmap_tex, cmap_nearest, _, _, _, _) = upload_colormap(
+        device,
+        queue,
+        Some(&data.colormap),
+        fallback_tex,
+        linear_samp,
+        nearest_samp,
+    );
+    let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("volume_uniform"),
+        size: std::mem::size_of::<crate::uniforms::VolumeUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    CachedPlotGpu::Volume {
+        uniform_buf,
+        vol_tex: (tex, vol_view),
+        cmap_tex,
+        cmap_nearest,
+        bind_group: None,
+    }
+}
+
+pub fn build_voxels_gpu(
+    device: &wgpu::Device,
+    _queue: &wgpu::Queue,
+    fallback_tex: &wgpu::TextureView,
+    linear_samp: &wgpu::Sampler,
+    nearest_samp: &wgpu::Sampler,
+    data: &VoxelsData,
+) -> CachedPlotGpu {
+    let nx = data.dims[0] as usize;
+    let ny = data.dims[1] as usize;
+    let nz = data.dims[2] as usize;
+    let raw = data.data.as_u8_slice();
+
+    let cell_color = |id: u8| -> [f32; 4] {
+        if let Some(c) = data.palette_rgba.get(id as usize) {
+            return *c;
+        }
+        if id == 0 {
+            return [0.0, 0.0, 0.0, 0.0];
+        }
+        if let Some(cm) = &data.colormap {
+            let rgba_bytes = cm.rgba.as_u8_slice();
+            let n_c = (rgba_bytes.len() / 4).max(1);
+            let span = (cm.range[1] - cm.range[0]).max(1e-6);
+            let t = ((id as f32 - cm.range[0]) / span).clamp(0.0, 1.0);
+            let ci = ((t * (n_c - 1) as f32).round() as usize).min(n_c - 1);
+            return [
+                rgba_bytes[ci * 4] as f32 / 255.0,
+                rgba_bytes[ci * 4 + 1] as f32 / 255.0,
+                rgba_bytes[ci * 4 + 2] as f32 / 255.0,
+                rgba_bytes[ci * 4 + 3] as f32 / 255.0,
+            ];
+        }
+        let t = id as f32 / 255.0;
+        [0.2 + 0.7 * t, 0.4 + 0.4 * (1.0 - t), 0.7, 1.0]
+    };
+
+    let cell_at = |i: isize, j: isize, k: isize| -> [f32; 4] {
+        if i < 0 || j < 0 || k < 0 || i >= nx as isize || j >= ny as isize || k >= nz as isize {
+            return [0.0, 0.0, 0.0, 0.0];
+        }
+        let idx = (i as usize) + nx * ((j as usize) + ny * (k as usize));
+        let id = raw.get(idx).copied().unwrap_or(0);
+        cell_color(id)
+    };
+
+    let mut verts: Vec<MeshVertex> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    if nx > 0 && ny > 0 && nz > 0 {
+        let dx = (data.bounds_max[0] - data.bounds_min[0]) / nx as f32;
+        let dy = (data.bounds_max[1] - data.bounds_min[1]) / ny as f32;
+        let dz = (data.bounds_max[2] - data.bounds_min[2]) / nz as f32;
+        let gap = data.gap.clamp(0.0, 0.9);
+        let pad_x = 0.5 * gap * dx;
+        let pad_y = 0.5 * gap * dy;
+        let pad_z = 0.5 * gap * dz;
+        let has_gap = gap > 1e-4;
+
+        // 6 outward faces of a unit voxel box (CCW looking from outside).
+        const FACES: [([isize; 3], [f32; 3], [[f32; 3]; 4]); 6] = [
+            ([-1, 0, 0], [-1.0, 0.0, 0.0], [[0., 0., 0.], [0., 0., 1.], [0., 1., 1.], [0., 1., 0.]]),
+            ([1, 0, 0], [1.0, 0.0, 0.0], [[1., 0., 0.], [1., 1., 0.], [1., 1., 1.], [1., 0., 1.]]),
+            ([0, -1, 0], [0.0, -1.0, 0.0], [[0., 0., 0.], [1., 0., 0.], [1., 0., 1.], [0., 0., 1.]]),
+            ([0, 1, 0], [0.0, 1.0, 0.0], [[0., 1., 0.], [0., 1., 1.], [1., 1., 1.], [1., 1., 0.]]),
+            ([0, 0, -1], [0.0, 0.0, -1.0], [[0., 0., 0.], [0., 1., 0.], [1., 1., 0.], [1., 0., 0.]]),
+            ([0, 0, 1], [0.0, 0.0, 1.0], [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]]),
+        ];
+
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    let col = cell_at(i as isize, j as isize, k as isize);
+                    if col[3] <= 0.001 {
+                        continue;
+                    }
+                    let opaque = col[3] >= 0.999;
+                    let x0 = data.bounds_min[0] + i as f32 * dx + pad_x;
+                    let x1 = data.bounds_min[0] + (i + 1) as f32 * dx - pad_x;
+                    let y0 = data.bounds_min[1] + j as f32 * dy + pad_y;
+                    let y1 = data.bounds_min[1] + (j + 1) as f32 * dy - pad_y;
+                    let z0 = data.bounds_min[2] + k as f32 * dz + pad_z;
+                    let z1 = data.bounds_min[2] + (k + 1) as f32 * dz - pad_z;
+
+                    for (dir, normal, corners) in &FACES {
+                        let ncol = cell_at(
+                            i as isize + dir[0],
+                            j as isize + dir[1],
+                            k as isize + dir[2],
+                        );
+                        let visible_face = has_gap
+                            || ncol[3] <= 0.001
+                            || (opaque && ncol[3] < 0.999);
+                        if !visible_face {
+                            continue;
+                        }
+                        let base = verts.len() as u32;
+                        for c in corners {
+                            verts.push(MeshVertex {
+                                position: [
+                                    if c[0] < 0.5 { x0 } else { x1 },
+                                    if c[1] < 0.5 { y0 } else { y1 },
+                                    if c[2] < 0.5 { z0 } else { z1 },
+                                ],
+                                normal: *normal,
+                                uv: [0.5, 0.5],
+                                color: col,
+                                scalar: 0.0,
+                            });
+                        }
+                        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    }
+                }
+            }
+        }
+    }
+
+    let vertex_buf = create_buffer_with_data(
+        device,
+        "voxels_verts",
+        wgpu::BufferUsages::VERTEX,
+        bytemuck::cast_slice(&verts),
+    );
+    let index_buf = create_buffer_with_data(
+        device,
+        "voxels_indices",
+        wgpu::BufferUsages::INDEX,
+        bytemuck::cast_slice(&indices),
+    );
+    let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("voxels_uniform"),
+        size: std::mem::size_of::<crate::uniforms::MeshUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let _ = (fallback_tex, linear_samp, nearest_samp);
+    CachedPlotGpu::Mesh {
+        uniform_buf,
+        vertex_buf,
+        index_buf,
+        index_count: indices.len() as u32,
+        color_tex: None,
+        color_tex_nearest: true,
+        cmap_tex: None,
+        cmap_nearest: false,
+        bind_group: None,
+        pick_from_uv: false,
     }
 }
 

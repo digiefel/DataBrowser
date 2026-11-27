@@ -8,26 +8,30 @@ struct Uniforms {
     highclip_color: vec4<f32>,
     nan_color: vec4<f32>,
     clip_planes: array<vec4<f32>, 8>,
+    dir_light_dirs: array<vec4<f32>, 4>,
+    dir_light_colors: array<vec4<f32>, 4>,
+    point_light_pos: array<vec4<f32>, 4>,
+    point_light_colors: array<vec4<f32>, 4>,
     eyeposition: vec3<f32>,
     depth_shift: f32,
     ambient: vec3<f32>,
     shading: u32,
-    light_color: vec3<f32>,
-    shininess: f32,
-    light_direction: vec3<f32>,
-    backlight: f32,
     diffuse: vec3<f32>,
-    color_mode: u32,
+    shininess: f32,
     specular: vec3<f32>,
-    transform_marker: u32,
+    backlight: f32,
     f32c_scale: vec3<f32>,
-    has_scale_buf: u32,
+    transform_marker: u32,
     uniform_scale: vec3<f32>,
-    has_rot_buf: u32,
+    has_scale_buf: u32,
     uniform_rotation: vec4<f32>,
     colorrange: vec2<f32>,
+    color_mode: u32,
+    has_rot_buf: u32,
     num_clip_planes: u32,
     object_id: u32,
+    num_dir_lights: u32,
+    num_point_lights: u32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -48,11 +52,16 @@ struct VsIn {
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) normal: vec3<f32>,
-    @location(1) camdir: vec3<f32>,
+    @location(1) world_pos: vec3<f32>,
     @location(2) color: vec4<f32>,
     @location(3) @interpolate(flat) instance_id: u32,
     @location(4) clip_d0: vec4<f32>,
     @location(5) clip_d1: vec4<f32>,
+};
+
+struct OitOut {
+    @location(0) accum: vec4<f32>,
+    @location(1) reveal: vec4<f32>,
 };
 
 fn qmul(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
@@ -100,7 +109,7 @@ fn vs_main(in: VsIn, @builtin(instance_index) iid: u32) -> VsOut {
     clip.z = clip.z * 0.5 + clip.w * 0.5 + clip.w * u.depth_shift;
     out.clip_pos = clip;
     out.normal = n;
-    out.camdir = pos_world.xyz / pos_world.w - u.eyeposition;
+    out.world_pos = pos_world.xyz / pos_world.w;
     out.instance_id = iid;
 
     if (u.color_mode == 1u) {
@@ -138,6 +147,46 @@ fn smooth_zero_max(x: f32) -> f32 {
     return select(x, c * pow8, x < yswap);
 }
 
+fn eval_light(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, lcol: vec3<f32>, base_col: vec3<f32>) -> vec3<f32> {
+    let diff = smooth_zero_max(dot(l, -n)) + u.backlight * smooth_zero_max(dot(l, n));
+    let h = normalize(l + v);
+    var spec = pow(max(dot(h, -n), 0.0), max(u.shininess, 1.0)) +
+               u.backlight * pow(max(dot(h, n), 0.0), max(u.shininess, 1.0));
+    if (diff <= 0.0) {
+        spec = 0.0;
+    }
+    return lcol * (u.diffuse * diff * base_col + u.specular * spec);
+}
+
+fn shade_color(base: vec3<f32>, world_pos: vec3<f32>, raw_normal: vec3<f32>) -> vec3<f32> {
+    if (u.shading == 0u) {
+        return base;
+    }
+    let n_len = length(raw_normal);
+    if (n_len <= 1e-6) {
+        return base;
+    }
+    let n = raw_normal / n_len;
+    let v = normalize(world_pos - u.eyeposition);
+    var rgb = u.ambient * base;
+    let n_dir = min(u.num_dir_lights, 4u);
+    for (var i = 0u; i < n_dir; i += 1u) {
+        let l = normalize(u.dir_light_dirs[i].xyz);
+        rgb += eval_light(n, v, l, u.dir_light_colors[i].rgb, base);
+    }
+    let n_pt = min(u.num_point_lights, 4u);
+    for (var i = 0u; i < n_pt; i += 1u) {
+        let lp = u.point_light_pos[i];
+        let lc = u.point_light_colors[i];
+        let to_frag = world_pos - lp.xyz;
+        let dist = length(to_frag);
+        let l = select(vec3<f32>(0.0, 0.0, 1.0), to_frag / dist, dist > 1e-5);
+        let att = 1.0 / max(1.0 + lp.w * dist + lc.w * dist * dist, 1e-4);
+        rgb += eval_light(n, v, l, lc.rgb * att, base);
+    }
+    return rgb;
+}
+
 fn check_clip(in: VsOut) {
     if (u.num_clip_planes > 0u) {
         if (in.clip_d0.x < 0.0 || in.clip_d0.y < 0.0 || in.clip_d0.z < 0.0 || in.clip_d0.w < 0.0 ||
@@ -153,24 +202,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.color.a <= 0.0) {
         discard;
     }
-    var rgb = in.color.rgb;
-    if (u.shading != 0u) {
-        let n_len = length(in.normal);
-        if (n_len > 1e-6) {
-            let n = in.normal / n_len;
-            let v = normalize(in.camdir);
-            let l = normalize(u.light_direction);
-            let diff = smooth_zero_max(dot(l, -n)) + u.backlight * smooth_zero_max(dot(l, n));
-            let h = normalize(l + v);
-            var spec = pow(max(dot(h, -n), 0.0), max(u.shininess, 1.0)) +
-                       u.backlight * pow(max(dot(h, n), 0.0), max(u.shininess, 1.0));
-            if (diff <= 0.0) {
-                spec = 0.0;
-            }
-            rgb = u.ambient * in.color.rgb + u.light_color * (u.diffuse * diff * in.color.rgb + u.specular * spec);
-        }
-    }
+    let rgb = shade_color(in.color.rgb, in.world_pos, in.normal);
     return vec4<f32>(rgb, in.color.a);
+}
+
+@fragment
+fn fs_oit(in: VsOut) -> OitOut {
+    check_clip(in);
+    if (in.color.a <= 0.001) {
+        discard;
+    }
+    let rgb = shade_color(in.color.rgb, in.world_pos, in.normal);
+    let a = in.color.a;
+    let z = clamp(in.clip_pos.z, 0.0, 1.0);
+    let w = clamp(a * max(1e-2, 3e3 * pow(1.0 - z, 3.0)), 1e-2, 3e3);
+    return OitOut(
+        vec4<f32>(rgb * a * w, a * w),
+        vec4<f32>(a, a, a, a),
+    );
 }
 
 @fragment

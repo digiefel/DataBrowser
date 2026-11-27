@@ -666,6 +666,8 @@ mod tests {
                 dir_color: [0.8; 3],
                 dir_direction: [1.0, 1.0, 1.0],
                 camera_relative: true,
+                dir_lights: vec![],
+                point_lights: vec![],
             },
         }
     }

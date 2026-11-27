@@ -1,4 +1,4 @@
-// Indexed triangle shader for Makie Mesh, Surface, Image, and Heatmap.
+// Indexed triangle shader for Makie Mesh, Surface, Image, Heatmap, and Voxels.
 
 struct Uniforms {
     proj_view: mat4x4<f32>,
@@ -10,25 +10,29 @@ struct Uniforms {
     highclip_color: vec4<f32>,
     nan_color: vec4<f32>,
     clip_planes: array<vec4<f32>, 8>,
+    dir_light_dirs: array<vec4<f32>, 4>,
+    dir_light_colors: array<vec4<f32>, 4>,
+    point_light_pos: array<vec4<f32>, 4>,
+    point_light_colors: array<vec4<f32>, 4>,
     eyeposition: vec3<f32>,
     depth_shift: f32,
     ambient: vec3<f32>,
     shading: u32,
-    light_color: vec3<f32>,
-    shininess: f32,
-    light_direction: vec3<f32>,
-    backlight: f32,
     diffuse: vec3<f32>,
-    color_mode: u32, // 0=uniform, 1=vertex rgba, 2=vertex scalar+cmap, 3=tex2d rgba, 4=tex2d scalar+cmap
+    shininess: f32,
     specular: vec3<f32>,
-    interpolate_in_frag: u32,
+    backlight: f32,
     colorrange: vec2<f32>,
+    color_mode: u32, // 0=uniform, 1=vertex rgba, 2=vertex scalar+cmap, 3=tex2d rgba, 4=tex2d scalar+cmap
+    interpolate_in_frag: u32,
     num_clip_planes: u32,
     object_id: u32,
     pick_from_uv: u32,
-    _pad0: u32,
     interpolate_tex: u32,
-    _pad2: u32,
+    num_dir_lights: u32,
+    num_point_lights: u32,
+    _pad0: u32,
+    _pad1: u32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -49,11 +53,16 @@ struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) camdir: vec3<f32>,
+    @location(2) world_pos: vec3<f32>,
     @location(3) color: vec4<f32>,
     @location(4) @interpolate(flat) vertex_id: u32,
     @location(5) clip_d0: vec4<f32>,
     @location(6) clip_d1: vec4<f32>,
+};
+
+struct OitOut {
+    @location(0) accum: vec4<f32>,
+    @location(1) reveal: vec4<f32>,
 };
 
 fn eval_cmap(val: f32) -> vec4<f32> {
@@ -94,7 +103,7 @@ fn vs_main(in: VsIn, @builtin(vertex_index) vid: u32) -> VsOut {
         u.world_normal_matrix[2].xyz,
     );
     out.normal = nm * in.normal;
-    out.camdir = pos_world.xyz / pos_world.w - u.eyeposition;
+    out.world_pos = pos_world.xyz / pos_world.w;
     out.vertex_id = vid;
 
     if (u.color_mode == 1u) {
@@ -136,7 +145,7 @@ fn smooth_zero_max(x: f32) -> f32 {
     return select(x, c * pow8, x < yswap);
 }
 
-fn blinnphong(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, color: vec3<f32>) -> vec3<f32> {
+fn eval_light(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, lcol: vec3<f32>, base_col: vec3<f32>) -> vec3<f32> {
     let diff_coeff = smooth_zero_max(dot(l, -n)) + u.backlight * smooth_zero_max(dot(l, n));
     let h = normalize(l + v);
     var spec_coeff = pow(max(dot(h, -n), 0.0), max(u.shininess, 1.0)) +
@@ -144,7 +153,36 @@ fn blinnphong(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, color: vec3<f32>) -> vec
     if (diff_coeff <= 0.0) {
         spec_coeff = 0.0;
     }
-    return u.light_color * (u.diffuse * diff_coeff * color + u.specular * spec_coeff);
+    return lcol * (u.diffuse * diff_coeff * base_col + u.specular * spec_coeff);
+}
+
+fn shade_color(base: vec3<f32>, world_pos: vec3<f32>, raw_normal: vec3<f32>) -> vec3<f32> {
+    if (u.shading == 0u) {
+        return base;
+    }
+    let n_len = length(raw_normal);
+    if (n_len <= 1e-6) {
+        return base;
+    }
+    let n = raw_normal / n_len;
+    let v = normalize(world_pos - u.eyeposition);
+    var rgb = u.ambient * base;
+    let n_dir = min(u.num_dir_lights, 4u);
+    for (var i = 0u; i < n_dir; i += 1u) {
+        let l = normalize(u.dir_light_dirs[i].xyz);
+        rgb += eval_light(n, v, l, u.dir_light_colors[i].rgb, base);
+    }
+    let n_pt = min(u.num_point_lights, 4u);
+    for (var i = 0u; i < n_pt; i += 1u) {
+        let lp = u.point_light_pos[i];
+        let lc = u.point_light_colors[i];
+        let to_frag = world_pos - lp.xyz;
+        let dist = length(to_frag);
+        let l = select(vec3<f32>(0.0, 0.0, 1.0), to_frag / dist, dist > 1e-5);
+        let att = 1.0 / max(1.0 + lp.w * dist + lc.w * dist * dist, 1e-4);
+        rgb += eval_light(n, v, l, lc.rgb * att, base);
+    }
+    return rgb;
 }
 
 fn sample_tex_2d(uv: vec2<f32>) -> vec4<f32> {
@@ -194,17 +232,25 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (real_color.a <= 0.0) {
         discard;
     }
-    var rgb = real_color.rgb;
-    if (u.shading != 0u) {
-        let n_len = length(in.normal);
-        if (n_len > 1e-6) {
-            let n = in.normal / n_len;
-            let v = normalize(in.camdir);
-            let l = normalize(u.light_direction);
-            rgb = u.ambient * real_color.rgb + blinnphong(n, v, l, real_color.rgb);
-        }
-    }
+    let rgb = shade_color(real_color.rgb, in.world_pos, in.normal);
     return vec4<f32>(rgb, real_color.a);
+}
+
+@fragment
+fn fs_oit(in: VsOut) -> OitOut {
+    check_clip(in);
+    let real_color = sample_color(in);
+    if (real_color.a <= 0.001) {
+        discard;
+    }
+    let rgb = shade_color(real_color.rgb, in.world_pos, in.normal);
+    let a = real_color.a;
+    let z = clamp(in.clip_pos.z, 0.0, 1.0);
+    let w = clamp(a * max(1e-2, 3e3 * pow(1.0 - z, 3.0)), 1e-2, 3e3);
+    return OitOut(
+        vec4<f32>(rgb * a * w, a * w),
+        vec4<f32>(a, a, a, a),
+    );
 }
 
 @fragment

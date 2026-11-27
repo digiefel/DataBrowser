@@ -13,5 +13,8 @@ pub use manipulate::{
     relative_to_pixel, AnnHandleKind, AnnotationHandleVisual, BrushSummary, DirectManipController,
     DragTarget, ManipOutcome, ToolMode,
 };
-pub use scene::{effective_light_dir, space_matrices, PlotEntry, SceneGraph, SceneNode, SpaceMatrices};
+pub use scene::{
+    effective_light_dir, resolve_scene_lights, space_matrices, PlotEntry, ResolvedLights,
+    SceneGraph, SceneNode, SpaceMatrices,
+};
 pub use ticks::{format_tick_number, generate_ticks, GeneratedTicks};

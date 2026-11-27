@@ -219,12 +219,68 @@ pub struct CameraState {
     pub far: f32,
 }
 
+fn default_attenuation() -> [f32; 2] {
+    [1.0, 0.0]
+}
+
+fn default_isovalue() -> f32 {
+    0.5
+}
+
+fn default_isorange() -> f32 {
+    0.05
+}
+
+fn default_one() -> f32 {
+    1.0
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_diffuse() -> [f32; 3] {
+    [1.0, 1.0, 1.0]
+}
+
+fn default_specular() -> [f32; 3] {
+    [0.2, 0.2, 0.2]
+}
+
+fn default_shininess() -> f32 {
+    32.0
+}
+
+fn default_samples() -> u32 {
+    128
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DirLightState {
+    pub color: [f32; 3],
+    pub direction: [f32; 3],
+    #[serde(default)]
+    pub camera_relative: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PointLightState {
+    pub color: [f32; 3],
+    pub position: [f32; 3],
+    #[serde(default = "default_attenuation")]
+    pub attenuation: [f32; 2],
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LightState {
     pub ambient: [f32; 3],
     pub dir_color: [f32; 3],
     pub dir_direction: [f32; 3],
     pub camera_relative: bool,
+    #[serde(default)]
+    pub dir_lights: Vec<DirLightState>,
+    #[serde(default)]
+    pub point_lights: Vec<PointLightState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -421,6 +477,24 @@ pub struct VolumeData {
     pub data: TypedBuffer,
     pub algorithm: u32,
     pub colormap: ColormapData,
+    #[serde(default = "default_isovalue")]
+    pub isovalue: f32,
+    #[serde(default = "default_isorange")]
+    pub isorange: f32,
+    #[serde(default = "default_one")]
+    pub absorption: f32,
+    #[serde(default = "default_true")]
+    pub shading: bool,
+    #[serde(default = "default_diffuse")]
+    pub diffuse: [f32; 3],
+    #[serde(default = "default_specular")]
+    pub specular: [f32; 3],
+    #[serde(default = "default_shininess")]
+    pub shininess: f32,
+    #[serde(default)]
+    pub backlight: f32,
+    #[serde(default = "default_samples")]
+    pub samples: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -429,6 +503,22 @@ pub struct VoxelsData {
     pub bounds_max: [f32; 3],
     pub dims: [u32; 3],
     pub data: TypedBuffer,
+    #[serde(default)]
+    pub gap: f32,
+    #[serde(default)]
+    pub palette_rgba: Vec<[f32; 4]>,
+    #[serde(default)]
+    pub colormap: Option<ColormapData>,
+    #[serde(default = "default_true")]
+    pub shading: bool,
+    #[serde(default = "default_diffuse")]
+    pub diffuse: [f32; 3],
+    #[serde(default = "default_specular")]
+    pub specular: [f32; 3],
+    #[serde(default = "default_shininess")]
+    pub shininess: f32,
+    #[serde(default)]
+    pub backlight: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -9,8 +9,9 @@ mod tests {
     use super::*;
     use glam::Mat4;
     use wgpu_makie_proto::{
-        CameraState, ColorSource, CoordSpace, LightState, LinesData, MeshData, PlotPayload,
-        PrimitiveKind, ScalarOrBuffer, ScatterData, SceneState, ServerMessage, TypedBuffer,
+        CameraState, ColorSource, ColormapData, CoordSpace, LightState, LinesData, MeshData,
+        PlotPayload, PointLightState, PrimitiveKind, ScalarOrBuffer, ScatterData, SceneState,
+        ServerMessage, TypedBuffer, VolumeData, VoxelsData,
     };
     use wgpu_makie_scene::{camera::makie_ortho, SceneGraph};
 
@@ -41,6 +42,8 @@ mod tests {
                 dir_color: [0.8, 0.8, 0.8],
                 dir_direction: [1.0, 1.0, 1.0],
                 camera_relative: false,
+                dir_lights: vec![],
+                point_lights: vec![],
             },
         }
     }
@@ -195,6 +198,8 @@ mod tests {
                     dir_color: [0.8, 0.8, 0.8],
                     dir_direction: [-1.0, -1.0, -1.0],
                     camera_relative: true,
+                    dir_lights: vec![],
+                    point_lights: vec![],
                 },
             },
         });
@@ -283,6 +288,8 @@ mod tests {
                     dir_color: [0.8, 0.8, 0.8],
                     dir_direction: [1.0, 1.0, 1.0],
                     camera_relative: false,
+                    dir_lights: vec![],
+                    point_lights: vec![],
                 },
             },
         });
@@ -411,5 +418,274 @@ mod tests {
         }
         let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
         assert!(elapsed_ms / 60.0 < 8.0, "streaming prepare avg {:.2} ms", elapsed_ms / 60.0);
+    }
+
+    fn make_3d_scene(point_lights: Vec<PointLightState>) -> SceneState {
+        let eye = glam::Vec3::new(2.4, 2.2, 2.0);
+        let look = glam::Vec3::ZERO;
+        let view = Mat4::look_at_rh(eye, look, glam::Vec3::Z);
+        let proj = Mat4::perspective_rh_gl(45f32.to_radians(), 1.0, 0.1, 20.0);
+        let pv = proj * view;
+        SceneState {
+            id: 1,
+            parent: None,
+            viewport: [0.0, 0.0, 160.0, 160.0],
+            background: [1.0, 1.0, 1.0, 1.0],
+            clear: true,
+            visible: true,
+            camera: CameraState {
+                view: view.to_cols_array(),
+                projection: proj.to_cols_array(),
+                projectionview: pv.to_cols_array(),
+                eyeposition: eye.to_array(),
+                resolution: [160.0, 160.0],
+                is_3d: true,
+                lookat: look.to_array(),
+                upvector: [0.0, 0.0, 1.0],
+                fov: 45.0,
+                near: 0.1,
+                far: 20.0,
+            },
+            lights: LightState {
+                ambient: [0.25, 0.25, 0.25],
+                dir_color: [0.7, 0.7, 0.7],
+                dir_direction: [-1.0, -1.0, -1.0],
+                camera_relative: false,
+                dir_lights: vec![],
+                point_lights,
+            },
+        }
+    }
+
+    fn sample_colormap(range: [f32; 2]) -> ColormapData {
+        let mut bytes = Vec::with_capacity(256 * 4);
+        for i in 0..256 {
+            let t = i as f32 / 255.0;
+            bytes.push((t * 255.0) as u8);
+            bytes.push(((1.0 - (t - 0.5).abs() * 2.0).max(0.0) * 255.0) as u8);
+            bytes.push(((1.0 - t) * 255.0) as u8);
+            bytes.push(((0.1 + 0.9 * t) * 255.0) as u8);
+        }
+        ColormapData {
+            rgba: TypedBuffer::from_u8(bytes),
+            range,
+            lowclip: [0.0, 0.0, 1.0, 0.0],
+            highclip: [1.0, 1.0, 0.0, 1.0],
+            nan_color: [0.0; 4],
+            nearest: false,
+        }
+    }
+
+    #[test]
+    fn headless_volume_voxels_multilight_and_oit() {
+        let mut hr = HeadlessRenderer::new().expect("headless wgpu init");
+
+        // 1. Volume isosurface
+        let mut graph = SceneGraph::default();
+        graph.apply(ServerMessage::Hello {
+            protocol_version: 1,
+            title: "Volume".into(),
+            size: [160, 160],
+            px_per_unit: 1.0,
+            show_editor: false,
+        });
+        graph.apply(ServerMessage::UpsertScene {
+            scene: make_3d_scene(vec![]),
+        });
+        let n = 16usize;
+        let mut vol = Vec::with_capacity(n * n * n);
+        for k in 0..n {
+            for j in 0..n {
+                for i in 0..n {
+                    let x = (i as f32 / (n - 1) as f32) * 2.0 - 1.0;
+                    let y = (j as f32 / (n - 1) as f32) * 2.0 - 1.0;
+                    let z = (k as f32 / (n - 1) as f32) * 2.0 - 1.0;
+                    vol.push((1.2 - (x * x + y * y + z * z).sqrt()).max(0.0));
+                }
+            }
+        }
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 10,
+                scene_id: 1,
+                z_order: 1,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Data,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Volume(VolumeData {
+                    bounds_min: [-1.0, -1.0, -1.0],
+                    bounds_max: [1.0, 1.0, 1.0],
+                    dims: [n as u32, n as u32, n as u32],
+                    data: TypedBuffer::from_f32(&vol),
+                    algorithm: 0, // iso
+                    colormap: sample_colormap([0.0, 1.2]),
+                    isovalue: 0.45,
+                    isorange: 0.12,
+                    absorption: 1.0,
+                    shading: true,
+                    diffuse: [1.0, 1.0, 1.0],
+                    specular: [0.3, 0.3, 0.3],
+                    shininess: 32.0,
+                    backlight: 0.0,
+                    samples: 96,
+                }),
+                inspector: None,
+            },
+        });
+        let vol_rgba = hr.render_rgba8(&mut graph, 160, 160).unwrap();
+        let vol_non_bg = vol_rgba
+            .chunks_exact(4)
+            .filter(|px| px[0] < 245 || px[1] < 245 || px[2] < 245)
+            .count();
+        assert!(vol_non_bg > 500, "expected shaded volume isosurface pixels, got {vol_non_bg}");
+
+        // 2. Voxels 3x3x3 with gap
+        graph.apply(ServerMessage::RemovePlot { id: 10 });
+        let mut chunk = vec![0u8; 27];
+        chunk[1 + 3 + 9] = 1;
+        chunk[0] = 2;
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 11,
+                scene_id: 1,
+                z_order: 1,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Data,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Voxels(VoxelsData {
+                    bounds_min: [-0.9, -0.9, -0.9],
+                    bounds_max: [0.9, 0.9, 0.9],
+                    dims: [3, 3, 3],
+                    data: TypedBuffer::from_u8(chunk),
+                    gap: 0.1,
+                    palette_rgba: vec![
+                        [0.0, 0.0, 0.0, 0.0],
+                        [0.9, 0.2, 0.1, 1.0],
+                        [0.1, 0.6, 0.9, 1.0],
+                    ],
+                    colormap: None,
+                    shading: true,
+                    diffuse: [1.0, 1.0, 1.0],
+                    specular: [0.2, 0.2, 0.2],
+                    shininess: 32.0,
+                    backlight: 0.2,
+                }),
+                inspector: None,
+            },
+        });
+        let vox_rgba = hr.render_rgba8(&mut graph, 160, 160).unwrap();
+        let vox_non_bg = vox_rgba
+            .chunks_exact(4)
+            .filter(|px| px[0] < 240 || px[1] < 240 || px[2] < 240)
+            .count();
+        assert!(vox_non_bg > 200, "expected rendered voxel cube faces, got {vox_non_bg}");
+
+        // 3. OIT + Multi-light overlapping translucent quads
+        graph.apply(ServerMessage::RemovePlot { id: 11 });
+        graph.apply(ServerMessage::UpsertScene {
+            scene: make_3d_scene(vec![PointLightState {
+                color: [1.0, 0.8, 0.2],
+                position: [2.0, 0.0, 2.0],
+                attenuation: [0.2, 0.0],
+            }]),
+        });
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 12,
+                scene_id: 1,
+                z_order: 1,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: true,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Data,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Mesh(MeshData {
+                    positions: TypedBuffer::from_f32(&[
+                        -0.8, -0.8, 0.2, 0.8, -0.8, 0.2, 0.8, 0.8, 0.2, -0.8, 0.8, 0.2,
+                    ]),
+                    faces: TypedBuffer::from_u32(&[0, 1, 2, 0, 2, 3]),
+                    normals: Some(TypedBuffer::from_f32(&[
+                        0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0,
+                    ])),
+                    uvs: None,
+                    colors: ColorSource::Uniform {
+                        rgba: [0.9, 0.1, 0.1, 0.5],
+                    },
+                    colormap: None,
+                    uv_transform: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                    shading: true,
+                    diffuse: [1.0, 1.0, 1.0],
+                    specular: [0.2, 0.2, 0.2],
+                    shininess: 16.0,
+                    backlight: 0.5,
+                    interpolate_in_fragment: false,
+                }),
+                inspector: None,
+            },
+        });
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 13,
+                scene_id: 1,
+                z_order: 2,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: true,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Data,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Mesh(MeshData {
+                    positions: TypedBuffer::from_f32(&[
+                        -0.8, -0.8, -0.2, 0.8, -0.8, -0.2, 0.8, 0.8, -0.2, -0.8, 0.8, -0.2,
+                    ]),
+                    faces: TypedBuffer::from_u32(&[0, 1, 2, 0, 2, 3]),
+                    normals: Some(TypedBuffer::from_f32(&[
+                        0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0,
+                    ])),
+                    uvs: None,
+                    colors: ColorSource::Uniform {
+                        rgba: [0.1, 0.1, 0.9, 0.5],
+                    },
+                    colormap: None,
+                    uv_transform: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                    shading: true,
+                    diffuse: [1.0, 1.0, 1.0],
+                    specular: [0.2, 0.2, 0.2],
+                    shininess: 16.0,
+                    backlight: 0.5,
+                    interpolate_in_fragment: false,
+                }),
+                inspector: None,
+            },
+        });
+        let oit_rgba = hr.render_rgba8(&mut graph, 160, 160).unwrap();
+        let purple_blended = oit_rgba
+            .chunks_exact(4)
+            .filter(|px| px[0] > 90 && px[2] > 90 && px[1] < px[0] && px[1] < px[2])
+            .count();
+        assert!(purple_blended > 200, "expected OIT red+blue overlap pixels, got {purple_blended}");
     }
 }

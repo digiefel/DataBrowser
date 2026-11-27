@@ -20,6 +20,39 @@ function _extract_scene_state(scene::Scene, parent_id::Union{Nothing, UInt64})
     ddir = haskey(scene.compute, :dirlight_direction) ? scene.compute[:dirlight_direction][] : Vec3f(1, 1, 1)
     cam_rel = haskey(scene.compute, :dirlight_cam_relative) ? Bool(scene.compute[:dirlight_cam_relative][]) : false
 
+    dir_lights = Dict{String, Any}[]
+    point_lights = Dict{String, Any}[]
+    raw_lights = if isdefined(Makie, :get_lights)
+        try
+            Makie.get_lights(scene)
+        catch
+            Any[]
+        end
+    else
+        Any[]
+    end
+    for l in raw_lights
+        if l isa Makie.DirectionalLight
+            push!(dir_lights, Dict{String, Any}(
+                "color" => pack_rgb(l.color),
+                "direction" => pack_vec3(l.direction),
+                "camera_relative" => Bool(l.camera_relative),
+            ))
+        elseif l isa Makie.PointLight
+            push!(point_lights, Dict{String, Any}(
+                "color" => pack_rgb(l.color),
+                "position" => pack_vec3(l.position),
+                "attenuation" => Float32[Float32(l.attenuation[1]), Float32(l.attenuation[2])],
+            ))
+        elseif l isa Makie.SpotLight
+            push!(point_lights, Dict{String, Any}(
+                "color" => pack_rgb(l.color),
+                "position" => pack_vec3(l.position),
+                "attenuation" => Float32[1.0f0, 0.0f0],
+            ))
+        end
+    end
+
     return Dict{String, Any}(
         "id" => sid,
         "parent" => parent_id,
@@ -45,6 +78,8 @@ function _extract_scene_state(scene::Scene, parent_id::Union{Nothing, UInt64})
             "dir_color" => pack_rgb(dcol),
             "dir_direction" => pack_vec3(ddir),
             "camera_relative" => cam_rel,
+            "dir_lights" => dir_lights,
+            "point_lights" => point_lights,
         ),
     )
 end

@@ -322,3 +322,45 @@ pub fn effective_light_dir(scene: &SceneState) -> Vec3 {
     };
     out.normalize_or_zero()
 }
+
+/// Packed directional and point lights ready for GPU shaders.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ResolvedLights {
+    pub dir_dirs: [[f32; 4]; 4],
+    pub dir_colors: [[f32; 4]; 4],
+    pub num_dir: u32,
+    pub point_pos: [[f32; 4]; 4],
+    pub point_colors: [[f32; 4]; 4],
+    pub num_point: u32,
+}
+
+/// Resolve up to 4 directional lights and 4 point lights from `SceneState`.
+pub fn resolve_scene_lights(scene: &SceneState) -> ResolvedLights {
+    let mut out = ResolvedLights::default();
+    let view = Mat4::from_cols_array(&scene.camera.view);
+    let inv3 = Mat3::from_mat4(view).inverse();
+
+    if scene.lights.dir_lights.is_empty() {
+        let d = effective_light_dir(scene);
+        out.dir_dirs[0] = [d.x, d.y, d.z, 0.0];
+        let c = scene.lights.dir_color;
+        out.dir_colors[0] = [c[0], c[1], c[2], 1.0];
+        out.num_dir = 1;
+    } else {
+        for (i, dl) in scene.lights.dir_lights.iter().take(4).enumerate() {
+            let raw = Vec3::from_array(dl.direction);
+            let dir = if dl.camera_relative { inv3 * raw } else { raw }.normalize_or_zero();
+            out.dir_dirs[i] = [dir.x, dir.y, dir.z, 0.0];
+            out.dir_colors[i] = [dl.color[0], dl.color[1], dl.color[2], 1.0];
+            out.num_dir += 1;
+        }
+    }
+
+    for (i, pl) in scene.lights.point_lights.iter().take(4).enumerate() {
+        out.point_pos[i] = [pl.position[0], pl.position[1], pl.position[2], pl.attenuation[0]];
+        out.point_colors[i] = [pl.color[0], pl.color[1], pl.color[2], pl.attenuation[1]];
+        out.num_point += 1;
+    }
+
+    out
+}

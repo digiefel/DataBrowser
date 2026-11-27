@@ -7,15 +7,13 @@ use crate::gpu_resources::{
 };
 use crate::uniforms::{
     LinesUniforms, MeshScatterUniforms, MeshScatterVertex, MeshUniforms, MeshVertex,
-    SpritesUniforms,
+    SpritesUniforms, VolumeUniforms,
 };
 use glam::{Mat3, Mat4};
 use std::collections::HashMap;
 use thiserror::Error;
-use wgpu_makie_proto::{
-    ColorSource, PrimitiveKind, ScalarOrBuffer,
-};
-use wgpu_makie_scene::{effective_light_dir, space_matrices, PlotEntry, SceneGraph};
+use wgpu_makie_proto::{ColorSource, PrimitiveKind, ScalarOrBuffer};
+use wgpu_makie_scene::{resolve_scene_lights, space_matrices, PlotEntry, SceneGraph};
 
 #[derive(Debug, Error)]
 pub enum RenderError {
@@ -29,6 +27,7 @@ pub enum RenderError {
 
 struct PipelinePair {
     color: wgpu::RenderPipeline,
+    oit: wgpu::RenderPipeline,
     pick: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
 }
@@ -39,6 +38,12 @@ pub struct WgpuRenderer {
     sprites: PipelinePair,
     mesh: PipelinePair,
     meshscatter: PipelinePair,
+    volume: PipelinePair,
+    oit_composite_pipeline: wgpu::RenderPipeline,
+    oit_composite_bgl: wgpu::BindGroupLayout,
+    oit_accum_tex: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
+    oit_reveal_tex: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
+    oit_composite_bg: Option<wgpu::BindGroup>,
     linear_sampler: wgpu::Sampler,
     nearest_sampler: wgpu::Sampler,
     dummy_storage: wgpu::Buffer,
@@ -85,6 +90,9 @@ impl WgpuRenderer {
         let sprites = create_sprites_pipelines(device, color_format);
         let mesh = create_mesh_pipelines(device, color_format);
         let meshscatter = create_meshscatter_pipelines(device, color_format);
+        let volume = create_volume_pipelines(device, color_format);
+        let (oit_composite_pipeline, oit_composite_bgl) =
+            create_oit_composite_pipeline(device, color_format);
 
         Self {
             color_format,
@@ -92,6 +100,12 @@ impl WgpuRenderer {
             sprites,
             mesh,
             meshscatter,
+            volume,
+            oit_composite_pipeline,
+            oit_composite_bgl,
+            oit_accum_tex: None,
+            oit_reveal_tex: None,
+            oit_composite_bg: None,
             linear_sampler,
             nearest_sampler,
             dummy_storage,
@@ -201,7 +215,7 @@ impl WgpuRenderer {
             );
         }
 
-        // Ensure depth target exists for fb_width x fb_height
+        // Ensure depth and WBOIT targets exist for fb_width x fb_height
         let w = fb_width.max(1);
         let h = fb_height.max(1);
         if self
@@ -225,6 +239,60 @@ impl WgpuRenderer {
             });
             let view = tex.create_view(&Default::default());
             self.depth_tex = Some((w, h, tex, view));
+        }
+
+        if self
+            .oit_accum_tex
+            .as_ref()
+            .is_none_or(|(aw, ah, _, _)| *aw != w || *ah != h)
+        {
+            let accum_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("wboit_accum"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let accum_view = accum_tex.create_view(&Default::default());
+            let reveal_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("wboit_reveal"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let reveal_view = reveal_tex.create_view(&Default::default());
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wboit_composite_bg"),
+                layout: &self.oit_composite_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&accum_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&reveal_view),
+                    },
+                ],
+            });
+            self.oit_accum_tex = Some((w, h, accum_tex, accum_view));
+            self.oit_reveal_tex = Some((w, h, reveal_tex, reveal_view));
+            self.oit_composite_bg = Some(bg);
         }
 
         // Update per-plot uniforms & bind groups
@@ -263,6 +331,7 @@ impl WgpuRenderer {
                 &self.sprites.bgl,
                 &self.mesh.bgl,
                 &self.meshscatter.bgl,
+                &self.volume.bgl,
                 &self.linear_sampler,
                 &self.nearest_sampler,
                 &self.dummy_rgba_tex.1,
@@ -272,7 +341,7 @@ impl WgpuRenderer {
         }
     }
 
-    /// Encode all visible scenes and plots into `color_view`.
+    /// Encode all visible scenes and plots into `color_view`, running WBOIT when transparent plots exist.
     pub fn encode_render_pass(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -285,34 +354,117 @@ impl WgpuRenderer {
         let Some((_, _, _, depth_view)) = &self.depth_tex else {
             return;
         };
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("wgpu_makie_color_pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: color_view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: clear_bg[0] as f64,
-                        g: clear_bg[1] as f64,
-                        b: clear_bg[2] as f64,
-                        a: clear_bg[3] as f64,
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("wgpu_makie_color_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: clear_bg[0] as f64,
+                            g: clear_bg[1] as f64,
+                            b: clear_bg[2] as f64,
+                            a: clear_bg[3] as f64,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
                     }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-            ..Default::default()
-        });
+                ..Default::default()
+            });
 
-        self.draw_scenes(&mut rpass, graph, fb_width, fb_height, false);
+            self.draw_scenes(&mut rpass, graph, fb_width, fb_height, RenderMode::Opaque);
+        }
+
+        let has_transparent = graph.plot_order.iter().any(|pid| {
+            graph.plots.get(pid).is_some_and(|p| {
+                p.payload.visible
+                    && p.payload.transparency
+                    && graph
+                        .scenes
+                        .get(&p.payload.scene_id)
+                        .is_some_and(|s| s.state.visible)
+            })
+        });
+        if !has_transparent {
+            return;
+        }
+        let (
+            Some((_, _, _, accum_view)),
+            Some((_, _, _, reveal_view)),
+            Some(comp_bg),
+        ) = (
+            &self.oit_accum_tex,
+            &self.oit_reveal_tex,
+            &self.oit_composite_bg,
+        ) else {
+            return;
+        };
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("wgpu_makie_oit_pass"),
+                color_attachments: &[
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: accum_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: reveal_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                ],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            self.draw_scenes(&mut rpass, graph, fb_width, fb_height, RenderMode::Oit);
+        }
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("wgpu_makie_oit_composite_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+            rpass.set_viewport(0.0, 0.0, fb_width.max(1) as f32, fb_height.max(1) as f32, 0.0, 1.0);
+            rpass.set_scissor_rect(0, 0, fb_width.max(1), fb_height.max(1));
+            rpass.set_pipeline(&self.oit_composite_pipeline);
+            rpass.set_bind_group(0, comp_bg, &[]);
+            rpass.draw(0..3, 0..1);
+        }
     }
 
     fn draw_scenes<'a>(
@@ -321,7 +473,7 @@ impl WgpuRenderer {
         graph: &'a SceneGraph,
         fb_width: u32,
         fb_height: u32,
-        picking: bool,
+        mode: RenderMode,
     ) {
         let ppu = graph.px_per_unit.max(0.5);
         for &sid in &graph.scene_order {
@@ -355,8 +507,11 @@ impl WgpuRenderer {
                 if entry.payload.scene_id != sid || !entry.payload.visible {
                     continue;
                 }
-                if picking && !entry.payload.inspectable {
-                    continue;
+                match mode {
+                    RenderMode::Opaque if entry.payload.transparency => continue,
+                    RenderMode::Oit if !entry.payload.transparency => continue,
+                    RenderMode::Pick if !entry.payload.inspectable => continue,
+                    _ => {}
                 }
                 let Some(rec) = self.cache.plots.get(&pid) else {
                     continue;
@@ -377,11 +532,7 @@ impl WgpuRenderer {
                             uploaded_idx_count.saturating_sub(1)
                         };
                         if instances > 0 {
-                            rpass.set_pipeline(if picking {
-                                &self.lines.pick
-                            } else {
-                                &self.lines.color
-                            });
+                            rpass.set_pipeline(mode.select(&self.lines));
                             rpass.set_bind_group(0, bg, &[]);
                             rpass.draw(0..6, 0..instances as u32);
                         }
@@ -391,11 +542,7 @@ impl WgpuRenderer {
                         instance_count,
                         ..
                     } if *instance_count > 0 => {
-                        rpass.set_pipeline(if picking {
-                            &self.sprites.pick
-                        } else {
-                            &self.sprites.color
-                        });
+                        rpass.set_pipeline(mode.select(&self.sprites));
                         rpass.set_bind_group(0, bg, &[]);
                         rpass.draw(0..6, 0..*instance_count);
                     }
@@ -406,11 +553,7 @@ impl WgpuRenderer {
                         bind_group: Some(bg),
                         ..
                     } if *index_count > 0 => {
-                        rpass.set_pipeline(if picking {
-                            &self.mesh.pick
-                        } else {
-                            &self.mesh.color
-                        });
+                        rpass.set_pipeline(mode.select(&self.mesh));
                         rpass.set_bind_group(0, bg, &[]);
                         rpass.set_vertex_buffer(0, vertex_buf.slice(..));
                         rpass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
@@ -424,15 +567,19 @@ impl WgpuRenderer {
                         instance_count,
                         ..
                     } if *index_count > 0 && *instance_count > 0 => {
-                        rpass.set_pipeline(if picking {
-                            &self.meshscatter.pick
-                        } else {
-                            &self.meshscatter.color
-                        });
+                        rpass.set_pipeline(mode.select(&self.meshscatter));
                         rpass.set_bind_group(0, bg, &[]);
                         rpass.set_vertex_buffer(0, vertex_buf.slice(..));
                         rpass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
                         rpass.draw_indexed(0..*index_count, 0, 0..*instance_count);
+                    }
+                    CachedPlotGpu::Volume {
+                        bind_group: Some(bg),
+                        ..
+                    } => {
+                        rpass.set_pipeline(mode.select(&self.volume));
+                        rpass.set_bind_group(0, bg, &[]);
+                        rpass.draw(0..36, 0..1);
                     }
                     _ => {}
                 }
@@ -622,7 +769,7 @@ impl WgpuRenderer {
                 }),
                 ..Default::default()
             });
-            self.draw_scenes(&mut rpass, graph, w, h, true);
+            self.draw_scenes(&mut rpass, graph, w, h, RenderMode::Pick);
         }
 
         let ppu = graph.px_per_unit.max(0.5);
@@ -876,6 +1023,7 @@ fn update_one_plot(
     sprites_bgl: &wgpu::BindGroupLayout,
     mesh_bgl: &wgpu::BindGroupLayout,
     meshscatter_bgl: &wgpu::BindGroupLayout,
+    volume_bgl: &wgpu::BindGroupLayout,
     linear_samp: &wgpu::Sampler,
     nearest_samp: &wgpu::Sampler,
     fallback_tex: &wgpu::TextureView,
@@ -1328,7 +1476,7 @@ fn update_one_plot(
             let nm4 = Mat4::from_mat3(nm3).to_cols_array();
             let uvt3 = Mat3::from_cols_array(&d.uv_transform);
             let uvt4 = Mat4::from_mat3(uvt3).to_cols_array();
-            let ldir = effective_light_dir(scene).to_array();
+            let lights = resolve_scene_lights(scene);
             let u = MeshUniforms {
                 proj_view: pv.to_cols_array(),
                 model: payload.model,
@@ -1339,25 +1487,28 @@ fn update_one_plot(
                 highclip_color: highclip,
                 nan_color: nan_c,
                 clip_planes: clips,
+                dir_light_dirs: lights.dir_dirs,
+                dir_light_colors: lights.dir_colors,
+                point_light_pos: lights.point_pos,
+                point_light_colors: lights.point_colors,
                 eyeposition: scene.camera.eyeposition,
                 depth_shift: payload.depth_shift,
                 ambient: scene.lights.ambient,
                 shading: u32::from(d.shading),
-                light_color: scene.lights.dir_color,
-                shininess: d.shininess,
-                light_direction: ldir,
-                backlight: d.backlight,
                 diffuse: d.diffuse,
-                color_mode,
+                shininess: d.shininess,
                 specular: d.specular,
-                interpolate_in_frag: u32::from(d.interpolate_in_fragment),
+                backlight: d.backlight,
                 colorrange: crange,
+                color_mode,
+                interpolate_in_frag: u32::from(d.interpolate_in_fragment),
                 num_clip_planes: n_clips as u32,
                 object_id: obj_id,
                 pick_from_uv: u32::from(*pick_from_uv),
-                _pad0: 0,
                 interpolate_tex: u32::from(!*color_tex_nearest),
-                _pad2: 0,
+                num_dir_lights: lights.num_dir,
+                num_point_lights: lights.num_point,
+                _pad0: [0, 0],
             };
             queue.write_buffer(uniform_buf, 0, bytemuck::bytes_of(&u));
             if bind_group.is_none() {
@@ -1403,6 +1554,181 @@ fn update_one_plot(
             }
         }
         (
+            PrimitiveKind::Voxels(d),
+            CachedPlotGpu::Mesh {
+                uniform_buf,
+                color_tex,
+                color_tex_nearest,
+                cmap_tex,
+                cmap_nearest,
+                bind_group,
+                pick_from_uv,
+                ..
+            },
+        ) => {
+            let nm3 = Mat3::from_cols_array(&payload.world_normal_matrix);
+            let nm4 = Mat4::from_mat3(nm3).to_cols_array();
+            let uvt4 = Mat4::IDENTITY.to_cols_array();
+            let lights = resolve_scene_lights(scene);
+            let u = MeshUniforms {
+                proj_view: pv.to_cols_array(),
+                model: payload.model,
+                world_normal_matrix: nm4,
+                uv_transform: uvt4,
+                uniform_color: [1.0; 4],
+                lowclip_color: [0.0; 4],
+                highclip_color: [0.0; 4],
+                nan_color: [0.0; 4],
+                clip_planes: clips,
+                dir_light_dirs: lights.dir_dirs,
+                dir_light_colors: lights.dir_colors,
+                point_light_pos: lights.point_pos,
+                point_light_colors: lights.point_colors,
+                eyeposition: scene.camera.eyeposition,
+                depth_shift: payload.depth_shift,
+                ambient: scene.lights.ambient,
+                shading: u32::from(d.shading),
+                diffuse: d.diffuse,
+                shininess: d.shininess,
+                specular: d.specular,
+                backlight: d.backlight,
+                colorrange: [0.0, 1.0],
+                color_mode: 1, // PerVertexRgba baked per face corner
+                interpolate_in_frag: 0,
+                num_clip_planes: n_clips as u32,
+                object_id: obj_id,
+                pick_from_uv: u32::from(*pick_from_uv),
+                interpolate_tex: u32::from(!*color_tex_nearest),
+                num_dir_lights: lights.num_dir,
+                num_point_lights: lights.num_point,
+                _pad0: [0, 0],
+            };
+            queue.write_buffer(uniform_buf, 0, bytemuck::bytes_of(&u));
+            if bind_group.is_none() {
+                let c_view = color_tex
+                    .as_ref()
+                    .map(|(_, v)| v)
+                    .unwrap_or(fallback_tex);
+                let cm_view = cmap_tex
+                    .as_ref()
+                    .map(|(_, v)| v)
+                    .unwrap_or(fallback_tex);
+                let cm_samp = if *cmap_nearest {
+                    nearest_samp
+                } else {
+                    linear_samp
+                };
+                *bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voxels_mesh_bg"),
+                    layout: mesh_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(c_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(nearest_samp),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(cm_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::Sampler(cm_samp),
+                        },
+                    ],
+                }));
+            }
+        }
+        (
+            PrimitiveKind::Volume(d),
+            CachedPlotGpu::Volume {
+                uniform_buf,
+                vol_tex: (_, vol_view),
+                cmap_tex,
+                cmap_nearest,
+                bind_group,
+            },
+        ) => {
+            let (lowclip, highclip, nan_c, crange) = cmap_uniforms(Some(&d.colormap));
+            let lights = resolve_scene_lights(scene);
+            let inv_model = Mat4::from_cols_array(&payload.model).inverse().to_cols_array();
+            let u = VolumeUniforms {
+                proj_view: pv.to_cols_array(),
+                model: payload.model,
+                inv_model,
+                lowclip_color: lowclip,
+                highclip_color: highclip,
+                nan_color: nan_c,
+                clip_planes: clips,
+                dir_light_dirs: lights.dir_dirs,
+                dir_light_colors: lights.dir_colors,
+                point_light_pos: lights.point_pos,
+                point_light_colors: lights.point_colors,
+                bounds_min: d.bounds_min,
+                isovalue: d.isovalue,
+                bounds_max: d.bounds_max,
+                isorange: d.isorange,
+                eyeposition: scene.camera.eyeposition,
+                absorption: d.absorption,
+                ambient: scene.lights.ambient,
+                shading: u32::from(d.shading),
+                diffuse: d.diffuse,
+                shininess: d.shininess,
+                specular: d.specular,
+                backlight: d.backlight,
+                dims: d.dims,
+                algorithm: d.algorithm,
+                colorrange: crange,
+                samples: d.samples.clamp(16, 512),
+                num_clip_planes: n_clips as u32,
+                num_dir_lights: lights.num_dir,
+                num_point_lights: lights.num_point,
+                object_id: obj_id,
+                depth_shift: payload.depth_shift,
+            };
+            queue.write_buffer(uniform_buf, 0, bytemuck::bytes_of(&u));
+            if bind_group.is_none() {
+                let cm_view = cmap_tex
+                    .as_ref()
+                    .map(|(_, v)| v)
+                    .unwrap_or(fallback_tex);
+                let cm_samp = if *cmap_nearest {
+                    nearest_samp
+                } else {
+                    linear_samp
+                };
+                *bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("volume_bg"),
+                    layout: volume_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(vol_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(cm_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(cm_samp),
+                        },
+                    ],
+                }));
+            }
+        }
+        (
             PrimitiveKind::MeshScatter(d),
             CachedPlotGpu::MeshScatter {
                 uniform_buf,
@@ -1421,7 +1747,7 @@ fn update_one_plot(
             let (lowclip, highclip, nan_c, crange) = cmap_uniforms(d.colormap.as_ref());
             let (has_sc, u_sc4) = scalar4_info(&d.instance_scales, [1.0, 1.0, 1.0, 1.0]);
             let (has_rot, u_rot) = scalar4_info(&d.instance_rotations, [0.0, 0.0, 0.0, 1.0]);
-            let ldir = effective_light_dir(scene).to_array();
+            let lights = resolve_scene_lights(scene);
             let u = MeshScatterUniforms {
                 proj_view: pv.to_cols_array(),
                 model: payload.model,
@@ -1430,26 +1756,30 @@ fn update_one_plot(
                 highclip_color: highclip,
                 nan_color: nan_c,
                 clip_planes: clips,
+                dir_light_dirs: lights.dir_dirs,
+                dir_light_colors: lights.dir_colors,
+                point_light_pos: lights.point_pos,
+                point_light_colors: lights.point_colors,
                 eyeposition: scene.camera.eyeposition,
                 depth_shift: payload.depth_shift,
                 ambient: scene.lights.ambient,
                 shading: u32::from(d.shading),
-                light_color: scene.lights.dir_color,
-                shininess: d.shininess,
-                light_direction: ldir,
-                backlight: d.backlight,
                 diffuse: d.diffuse,
-                color_mode,
+                shininess: d.shininess,
                 specular: d.specular,
-                transform_marker: u32::from(d.transform_marker),
+                backlight: d.backlight,
                 f32c_scale: d.f32c_scale,
-                has_scale_buf: has_sc,
+                transform_marker: u32::from(d.transform_marker),
                 uniform_scale: [u_sc4[0], u_sc4[1], u_sc4[2]],
-                has_rot_buf: has_rot,
+                has_scale_buf: has_sc,
                 uniform_rotation: u_rot,
                 colorrange: crange,
+                color_mode,
+                has_rot_buf: has_rot,
                 num_clip_planes: n_clips as u32,
                 object_id: obj_id,
+                num_dir_lights: lights.num_dir,
+                num_point_lights: lights.num_point,
             };
             queue.write_buffer(uniform_buf, 0, bytemuck::bytes_of(&u));
             if bind_group.is_none() {
@@ -1601,6 +1931,36 @@ fn bgl_storage(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+#[derive(Clone, Copy)]
+enum RenderMode {
+    Opaque,
+    Oit,
+    Pick,
+}
+
+impl RenderMode {
+    fn select<'a>(self, pair: &'a PipelinePair) -> &'a wgpu::RenderPipeline {
+        match self {
+            RenderMode::Opaque => &pair.color,
+            RenderMode::Oit => &pair.oit,
+            RenderMode::Pick => &pair.pick,
+        }
+    }
+}
+
+fn bgl_tex3d(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable },
+            view_dimension: wgpu::TextureViewDimension::D3,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
 fn bgl_tex2d(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -1634,6 +1994,7 @@ fn build_pair(
     bgl: wgpu::BindGroupLayout,
     color_format: wgpu::TextureFormat,
     vertex_layouts: &[Option<wgpu::VertexBufferLayout<'_>>],
+    cull_mode: Option<wgpu::Face>,
 ) -> PipelinePair {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
@@ -1651,6 +2012,19 @@ fn build_pair(
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
     });
+    let oit_depth_state = Some(wgpu::DepthStencilState {
+        format: wgpu::TextureFormat::Depth32Float,
+        depth_write_enabled: Some(false),
+        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    });
+    let prim_state = wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleList,
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode,
+        ..Default::default()
+    };
     let color = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(&format!("{label}_color")),
         layout: Some(&pl_layout),
@@ -1670,12 +2044,63 @@ fn build_pair(
             })],
             compilation_options: Default::default(),
         }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
+        primitive: prim_state,
         depth_stencil: depth_state.clone(),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let oit = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(&format!("{label}_oit")),
+        layout: Some(&pl_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: vertex_layouts,
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_oit"),
+            targets: &[
+                Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+                Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Zero,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrc,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Zero,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+            ],
+            compilation_options: Default::default(),
+        }),
+        primitive: prim_state,
+        depth_stencil: oit_depth_state,
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
@@ -1700,18 +2125,14 @@ fn build_pair(
             })],
             compilation_options: Default::default(),
         }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
+        primitive: prim_state,
         depth_stencil: depth_state,
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
     });
 
-    PipelinePair { color, pick, bgl }
+    PipelinePair { color, oit, pick, bgl }
 }
 
 fn create_lines_pipelines(device: &wgpu::Device, color_format: wgpu::TextureFormat) -> PipelinePair {
@@ -1735,6 +2156,7 @@ fn create_lines_pipelines(device: &wgpu::Device, color_format: wgpu::TextureForm
         bgl,
         color_format,
         &[],
+        None,
     )
 }
 
@@ -1761,6 +2183,7 @@ fn create_sprites_pipelines(device: &wgpu::Device, color_format: wgpu::TextureFo
         bgl,
         color_format,
         &[],
+        None,
     )
 }
 
@@ -1813,6 +2236,7 @@ fn create_mesh_pipelines(device: &wgpu::Device, color_format: wgpu::TextureForma
         bgl,
         color_format,
         &[Some(vbl)],
+        None,
     )
 }
 
@@ -1861,5 +2285,75 @@ fn create_meshscatter_pipelines(
         bgl,
         color_format,
         &[Some(vbl)],
+        None,
     )
+}
+
+fn create_volume_pipelines(
+    device: &wgpu::Device,
+    color_format: wgpu::TextureFormat,
+) -> PipelinePair {
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("volume_bgl"),
+        entries: &[
+            bgl_uniform(0),
+            bgl_tex3d(1, false),
+            bgl_tex2d(2, true),
+            bgl_sampler(3, true),
+        ],
+    });
+    build_pair(
+        device,
+        "volume",
+        include_str!("shaders/volume.wgsl"),
+        bgl,
+        color_format,
+        &[],
+        Some(wgpu::Face::Front),
+    )
+}
+
+fn create_oit_composite_pipeline(
+    device: &wgpu::Device,
+    color_format: wgpu::TextureFormat,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("oit_composite_bgl"),
+        entries: &[bgl_tex2d(0, false), bgl_tex2d(1, false)],
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("oit_composite"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/oit_composite.wgsl").into()),
+    });
+    let pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("oit_composite"),
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("oit_composite_pipeline"),
+        layout: Some(&pl_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: color_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    (pipeline, bgl)
 }
