@@ -969,4 +969,159 @@ end
         @test Float64(Colors.blue(px_out)) > 0.9
         close(scr_z)
     end
+
+    @testset "Grafico figure auto-promotion, legend click toggle, live theme, and command coalescing" begin
+        rows_g = [
+            (x = x, y = sin(x) + offset, series = label)
+            for (label, offset) in (("alpha", 0.0), ("beta", 1.2))
+            for x in range(0.0, 2pi; length = 30)
+        ]
+        spec_g = @plot data(rows_g) * mapping(:x, :y; color = :series) begin
+            visual(Lines; linewidth = 2.5)
+            visual(Scatter; markersize = 8)
+            legend(position = :inside)
+        end
+        fig_g = Grafico.figure(spec_g)
+        scr_g = WgpuMakie.Screen(; visible = false)
+        display(scr_g, fig_g.scene; figure = fig_g)
+
+        snap_g = WgpuMakie._build_editor_snapshot(scr_g)
+        @test snap_g["has_grafico"] == true
+        @test haskey(fig_g.attributes, :_grafico_editable)
+        @test isnothing(scr_g.last_editor_error)
+
+        function _find_legend_label(gl::Makie.GridLayout, target::String)
+            for gc in gl.content
+                item = gc.content
+                if item isa Makie.Label && string(item.text[]) == target
+                    return item
+                elseif item isa Makie.GridLayout
+                    found = _find_legend_label(item, target)
+                    found === nothing || return found
+                end
+            end
+            return nothing
+        end
+
+        function _atomic_data_plots(ax::Makie.Axis)
+            out = Makie.AbstractPlot[]
+            function _walk(p)
+                if p isa Makie.Lines || p isa Makie.Scatter
+                    push!(out, p)
+                end
+                for c in p.plots
+                    _walk(c)
+                end
+            end
+            for p in ax.scene.plots
+                _walk(p)
+            end
+            return out
+        end
+
+        leg_g = only(filter(b -> b isa Makie.Legend, fig_g.content))
+        ax_g = only(filter(b -> b isa Makie.Axis, fig_g.content))
+        lbl_alpha = _find_legend_label(leg_g.grid, "alpha")
+        @test !isnothing(lbl_alpha)
+
+        bb = lbl_alpha.layoutobservables.computedbbox[]
+        cx = Float64(minimum(bb)[1] + 0.5 * widths(bb)[1])
+        cy = Float64(minimum(bb)[2] + 0.5 * widths(bb)[2])
+
+        data_plts = _atomic_data_plots(ax_g)
+        @test length(data_plts) == 4
+        @test all(p -> Bool(p.visible[]), data_plts)
+
+        function _click_screen!(scr, x::Float64, y::Float64)
+            WgpuMakie._handle_viewer_event!(scr, Dict("op" => "pointer_event", "x" => x, "y" => y, "kind" => "move", "buttons" => 0x00, "modifiers" => 0x00))
+            WgpuMakie._handle_viewer_event!(scr, Dict("op" => "pointer_event", "x" => x, "y" => y, "kind" => "down", "buttons" => 0x01, "modifiers" => 0x00))
+            WgpuMakie._handle_viewer_event!(scr, Dict("op" => "pointer_event", "x" => x, "y" => y, "kind" => "up", "buttons" => 0x00, "modifiers" => 0x00))
+        end
+
+        _click_screen!(scr_g, cx, cy)
+        hidden_plts = filter(p -> !Bool(p.visible[]), data_plts)
+        shown_plts = filter(p -> Bool(p.visible[]), data_plts)
+        @test length(hidden_plts) == 2
+        @test count(p -> p isa Makie.Lines, hidden_plts) == 1
+        @test count(p -> p isa Makie.Scatter, hidden_plts) == 1
+        @test length(shown_plts) == 2
+        @test count(p -> p isa Makie.Lines, shown_plts) == 1
+        @test count(p -> p isa Makie.Scatter, shown_plts) == 1
+
+        _click_screen!(scr_g, cx, cy)
+        @test all(p -> Bool(p.visible[]), data_plts)
+
+        # Working Style tab commands: legend show/hide and live theme
+        WgpuMakie._handle_viewer_event!(scr_g, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_legend", "key" => "show", "expr" => "false"),
+        ))
+        @test isempty(filter(b -> b isa Makie.Legend, fig_g.content))
+
+        WgpuMakie._handle_viewer_event!(scr_g, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_legend", "key" => "show", "expr" => "true"),
+        ))
+        @test length(filter(b -> b isa Makie.Legend, fig_g.content)) == 1
+
+        WgpuMakie._handle_viewer_event!(scr_g, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_theme", "base" => "dark", "key" => nothing, "expr" => nothing),
+        ))
+        @test isnothing(scr_g.last_editor_error)
+        bg_dark = Makie.to_color(fig_g.scene.backgroundcolor[])
+        @test Float64(Colors.red(bg_dark)) < 0.25
+        ax_now = only(filter(b -> b isa Makie.Axis, fig_g.content))
+        @test Float64(Colors.red(Makie.to_color(ax_now.xticklabelcolor[]))) > 0.35
+
+        WgpuMakie._handle_viewer_event!(scr_g, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_theme", "base" => "dark", "key" => "fontsize", "expr" => "20"),
+        ))
+        @test isnothing(scr_g.last_editor_error)
+        @test ax_now.xlabelsize[] == 20
+        @test only(filter(b -> b isa Makie.Legend, fig_g.content)).labelsize[] == 20
+
+        WgpuMakie._handle_viewer_event!(scr_g, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_theme", "base" => nothing, "key" => "fontsize", "expr" => nothing),
+        ))
+        @test isnothing(scr_g.last_editor_error)
+        bg_reset = Makie.to_color(fig_g.scene.backgroundcolor[])
+        @test Float64(Colors.red(bg_reset)) > 0.9
+        @test Float64(Colors.red(Makie.to_color(ax_now.xticklabelcolor[]))) < 0.1
+        @test ax_now.xlabelsize[] != 20
+        close(scr_g)
+
+        # Command queue coalescing in _enqueue_viewer_event!
+        scr_q = WgpuMakie.Screen(; visible = false)
+        for i in 1:25
+            WgpuMakie._enqueue_viewer_event!(scr_q, Dict(
+                "op" => "editor_command",
+                "command" => Dict("cmd" => "set_theme", "base" => nothing, "key" => "fontsize", "expr" => string(10 + i)),
+            ))
+        end
+        @test length(scr_q.pending_events) == 1
+        @test scr_q.pending_events[1]["command"]["expr"] == "35"
+
+        WgpuMakie._enqueue_viewer_event!(scr_q, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "add_layer", "plottype_expr" => "Scatter"),
+        ))
+        for i in 1:3
+            WgpuMakie._enqueue_viewer_event!(scr_q, Dict(
+                "op" => "editor_command",
+                "command" => Dict("cmd" => "set_visual", "layer_id" => 1, "key" => "linewidth", "expr" => string(i)),
+            ))
+        end
+        @test length(scr_q.pending_events) == 3
+        @test scr_q.pending_events[end]["command"]["expr"] == "3"
+
+        WgpuMakie._enqueue_viewer_event!(scr_q, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_theme", "base" => nothing, "key" => "fontsize", "expr" => "40"),
+        ))
+        @test length(scr_q.pending_events) == 4
+        close(scr_q)
+    end
 end

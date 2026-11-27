@@ -51,10 +51,23 @@ end
 function _find_grafico_editable(screen::Screen)
     fig = screen.figure
     isnothing(fig) && return nothing
-    haskey(fig.attributes, :_grafico_editable) || return nothing
-    ep = fig.attributes[:_grafico_editable][]
-    (ep !== nothing && hasproperty(ep, :doc) && hasproperty(ep, :compiled)) || return nothing
-    return ep
+    if haskey(fig.attributes, :_grafico_editable)
+        ep = fig.attributes[:_grafico_editable][]
+        if ep !== nothing && hasproperty(ep, :doc) && hasproperty(ep, :compiled)
+            return ep
+        end
+    end
+    if haskey(fig.attributes, :_grafico_compilation)
+        comp = fig.attributes[:_grafico_compilation][]
+        G = parentmodule(typeof(comp))
+        if isdefined(G, :ensure_editable!)
+            ep = G.ensure_editable!(fig)
+            if ep !== nothing && hasproperty(ep, :doc) && hasproperty(ep, :compiled)
+                return ep
+            end
+        end
+    end
+    return nothing
 end
 
 function _primary_axis_id(screen::Screen)::Union{Nothing, UInt64}
@@ -1099,6 +1112,7 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
             return nothing
         end
         G = parentmodule(typeof(ep))
+        prev_compiled = ep.compiled[]
 
         if kind == "set_visual"
             G.set_visual_expr!(ep, Int(cmd["layer_id"]), Symbol(cmd["key"]), string(cmd["expr"]))
@@ -1198,8 +1212,13 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
             G.set_colorbar_expr!(ep, Symbol(cmd["key"]), string(cmd["expr"]))
         end
 
-        _sync_figure_axes!(screen, screen.figure)
-        _sync_layout_meta!(screen, screen.figure)
+        structure_changed = ep.compiled[] !== prev_compiled
+        if structure_changed || !(kind in ("set_visual", "set_annotation_visible", "move_annotation"))
+            _sync_figure_axes!(screen, screen.figure)
+            if structure_changed || kind != "set_theme"
+                _sync_layout_meta!(screen, screen.figure)
+            end
+        end
         flush_updates!(screen)
         sync_editor_state!(screen)
     catch err

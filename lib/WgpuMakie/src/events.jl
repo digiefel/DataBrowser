@@ -140,6 +140,36 @@ function _ensure_event_worker!(screen)
     return nothing
 end
 
+function _editor_command_coalesce_key(cmd::AbstractDict)
+    kind = get(cmd, "cmd", "")
+    if kind == "set_visual"
+        return ("set_visual", get(cmd, "layer_id", nothing), get(cmd, "key", nothing))
+    elseif kind == "set_plot_attr"
+        return ("set_plot_attr", get(cmd, "plot_id", nothing), get(cmd, "key", nothing))
+    elseif kind == "set_axis_attr"
+        return ("set_axis_attr", get(cmd, "axis_id", nothing), get(cmd, "key", nothing))
+    elseif kind == "set_theme"
+        return ("set_theme", get(cmd, "key", nothing))
+    elseif kind == "set_legend"
+        return ("set_legend", get(cmd, "key", nothing))
+    elseif kind == "set_coord"
+        return ("set_coord", get(cmd, "key", nothing))
+    elseif kind == "set_scale"
+        return ("set_scale", get(cmd, "role", nothing), get(cmd, "key", nothing))
+    elseif kind == "set_annotation_attr"
+        return ("set_annotation_attr", get(cmd, "id", nothing), get(cmd, "key", nothing))
+    elseif kind == "move_annotation"
+        return ("move_annotation", get(cmd, "id", nothing))
+    elseif kind == "move_inset"
+        return ("move_inset", get(cmd, "id", nothing))
+    elseif kind == "resize_layout_split"
+        return ("resize_layout_split", get(cmd, "is_vertical", nothing), get(cmd, "index", nothing))
+    elseif kind == "timeline_seek"
+        return ("timeline_seek",)
+    end
+    return nothing
+end
+
 function _enqueue_viewer_event!(screen, msg::AbstractDict)
     op = get(msg, "op", "")
     if op == "window_closed" || op == "editor_visibility_changed"
@@ -163,6 +193,23 @@ function _enqueue_viewer_event!(screen, msg::AbstractDict)
             seq = UInt64(get(msg, "seq", 0))
             screen.pending_camera3d[sid] = (Dict{String, Any}(string(k) => v for (k, v) in pairs(msg)), seq)
         else
+            if op == "editor_command"
+                ckey = _editor_command_coalesce_key(msg["command"])
+                if !isnothing(ckey)
+                    for i in length(screen.pending_events):-1:1
+                        ev = screen.pending_events[i]
+                        if get(ev, "op", "") == "editor_command"
+                            ek = _editor_command_coalesce_key(ev["command"])
+                            if ek == ckey
+                                deleteat!(screen.pending_events, i)
+                                break
+                            elseif isnothing(ek)
+                                break
+                            end
+                        end
+                    end
+                end
+            end
             push!(screen.pending_events, Dict{String, Any}(string(k) => v for (k, v) in pairs(msg)))
         end
     end

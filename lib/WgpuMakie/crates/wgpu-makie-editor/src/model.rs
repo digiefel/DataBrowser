@@ -329,6 +329,15 @@ impl EditorModel {
 
     /// Push a ready `(forward, inverse)` client message pair directly onto the undo stack.
     pub fn push_undo_pair(&mut self, forward: ClientMessage, inverse: ClientMessage) {
+        if let Some(key) = undo_coalesce_key(&forward) {
+            if let Some((prev_fwd, _)) = self.undo_stack.last_mut() {
+                if undo_coalesce_key(prev_fwd).as_ref() == Some(&key) {
+                    *prev_fwd = forward;
+                    self.redo_stack.clear();
+                    return;
+                }
+            }
+        }
         self.undo_stack.push((forward, inverse));
         if self.undo_stack.len() > MAX_UNDO_HISTORY {
             self.undo_stack.remove(0);
@@ -365,6 +374,103 @@ impl EditorModel {
         actions.push(EditorAction::Send(forward));
     }
 
+    /// Apply immediate local snapshot updates for responsive UI controls while Julia updates asynchronously.
+    pub fn apply_optimistic_command(&mut self, cmd: &EditorCommand) {
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        let make_ev = |expr: &str| wgpu_makie_proto::EditorEntryValue {
+            expr: expr.to_string(),
+            is_literal: is_literal_expr(expr),
+        };
+        match cmd {
+            EditorCommand::SetVisual {
+                layer_id,
+                key,
+                expr,
+            } => {
+                if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == *layer_id) {
+                    if let Some((_, val)) = layer.visual_kwargs.iter_mut().find(|(k, _)| k == key) {
+                        *val = make_ev(expr);
+                    } else {
+                        layer.visual_kwargs.push((key.clone(), make_ev(expr)));
+                    }
+                }
+            }
+            EditorCommand::RemoveVisual { layer_id, key } => {
+                if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == *layer_id) {
+                    layer.visual_kwargs.retain(|(k, _)| k != key);
+                }
+            }
+            EditorCommand::SetLayerVisible { layer_id, visible } => {
+                if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == *layer_id) {
+                    layer.visible = *visible;
+                }
+            }
+            EditorCommand::SetLegend { key, expr } => {
+                if let Some((_, val)) = doc.legend.iter_mut().find(|(k, _)| k == key) {
+                    *val = make_ev(expr);
+                } else {
+                    doc.legend.push((key.clone(), make_ev(expr)));
+                }
+            }
+            EditorCommand::RemoveLegend { key } => {
+                doc.legend.retain(|(k, _)| k != key);
+            }
+            EditorCommand::SetTheme { base, key, expr } => {
+                let mut theme = doc.theme.take().unwrap_or(wgpu_makie_proto::EditorThemeSpec {
+                    base: None,
+                    settings: Vec::new(),
+                });
+                theme.base = base.clone();
+                if let Some(k) = key {
+                    match expr {
+                        Some(ex) if !ex.trim().is_empty() => {
+                            if let Some((_, val)) = theme.settings.iter_mut().find(|(sk, _)| sk == k)
+                            {
+                                *val = make_ev(ex);
+                            } else {
+                                theme.settings.push((k.clone(), make_ev(ex)));
+                            }
+                        }
+                        _ => {
+                            theme.settings.retain(|(sk, _)| sk != k);
+                        }
+                    }
+                }
+                if theme.base.is_none() && theme.settings.is_empty() {
+                    doc.theme = None;
+                } else {
+                    doc.theme = Some(theme);
+                }
+            }
+            EditorCommand::SetCoord { key, expr } => {
+                if let Some((_, val)) = doc.coords.iter_mut().find(|(k, _)| k == key) {
+                    *val = make_ev(expr);
+                } else {
+                    doc.coords.push((key.clone(), make_ev(expr)));
+                }
+            }
+            EditorCommand::SetScale { role, key, expr } => {
+                if let Some((_, inner)) = doc.scales.iter_mut().find(|(r, _)| r == role) {
+                    if let Some((_, val)) = inner.iter_mut().find(|(k, _)| k == key) {
+                        *val = make_ev(expr);
+                    } else {
+                        inner.push((key.clone(), make_ev(expr)));
+                    }
+                } else {
+                    doc.scales.push((role.clone(), vec![(key.clone(), make_ev(expr))]));
+                }
+            }
+            EditorCommand::SetAnnotationVisible { id, visible } => {
+                if let Some(ann) = doc.annotations.iter_mut().find(|a| a.id == *id) {
+                    ann.visible = *visible;
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Emit an editor command, optionally pushing a matching `(forward, inverse)` pair onto undo history.
     pub fn push_command(
         &mut self,
@@ -372,6 +478,7 @@ impl EditorModel {
         forward: EditorCommand,
         inverse: Option<EditorCommand>,
     ) {
+        self.apply_optimistic_command(&forward);
         self.push_message(
             actions,
             ClientMessage::EditorCommand { command: forward },
@@ -440,6 +547,9 @@ impl EditorModel {
 
     pub fn undo(&mut self, actions: &mut Vec<EditorAction>) {
         if let Some((fwd, inv)) = self.undo_stack.pop() {
+            if let ClientMessage::EditorCommand { command } = &inv {
+                self.apply_optimistic_command(command);
+            }
             actions.push(EditorAction::Send(inv.clone()));
             match &inv {
                 ClientMessage::EditorCommand {
@@ -465,6 +575,9 @@ impl EditorModel {
 
     pub fn redo(&mut self, actions: &mut Vec<EditorAction>) {
         if let Some((fwd, inv)) = self.redo_stack.pop() {
+            if let ClientMessage::EditorCommand { command } = &fwd {
+                self.apply_optimistic_command(command);
+            }
             actions.push(EditorAction::Send(fwd.clone()));
             match &fwd {
                 ClientMessage::EditorCommand {
@@ -491,5 +604,146 @@ impl EditorModel {
                 }
             }
         }
+    }
+}
+
+fn is_literal_expr(expr: &str) -> bool {
+    let t = expr.trim();
+    t.parse::<f64>().is_ok()
+        || matches!(t, "true" | "false" | "nothing")
+        || t.starts_with(':')
+        || (t.starts_with('"') && t.ends_with('"'))
+}
+
+fn undo_coalesce_key(msg: &ClientMessage) -> Option<String> {
+    let ClientMessage::EditorCommand { command } = msg else {
+        return None;
+    };
+    match command {
+        EditorCommand::SetVisual { layer_id, key, .. } => Some(format!("vis:{layer_id}:{key}")),
+        EditorCommand::SetPlotAttr { plot_id, key, .. } => Some(format!("pattr:{plot_id}:{key}")),
+        EditorCommand::SetAxisAttr { axis_id, key, .. } => Some(format!("aattr:{axis_id}:{key}")),
+        EditorCommand::SetTheme { key, .. } => {
+            Some(format!("theme:{}", key.as_deref().unwrap_or("")))
+        }
+        EditorCommand::MoveAnnotation { id, .. } => Some(format!("move_ann:{id}")),
+        EditorCommand::MoveInset { id, .. } => Some(format!("move_ins:{id}")),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_doc() -> EditorDocumentSnapshot {
+        EditorDocumentSnapshot {
+            revision: 1,
+            has_grafico: true,
+            available_columns: vec!["x".into(), "y".into()],
+            header_data_expr: Some("rows".into()),
+            header_mapping: vec![],
+            layers: vec![EditorLayerSpec {
+                id: 1,
+                name: None,
+                visible: true,
+                data_expr: None,
+                mapping: vec![],
+                analysis_expr: None,
+                plottype_expr: "Scatter".into(),
+                visual_kwargs: vec![(
+                    "markersize".into(),
+                    wgpu_makie_proto::EditorEntryValue {
+                        expr: "8".into(),
+                        is_literal: true,
+                    },
+                )],
+                is_statement_only: false,
+            }],
+            scales: vec![],
+            coords: vec![],
+            legend: vec![],
+            theme: None,
+            inspector: None,
+            annotations: vec![],
+            insets: vec![],
+            layout_settings: vec![],
+            colorbar: vec![],
+            code: String::new(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn optimistic_updates_and_undo_coalescing() {
+        let mut model = EditorModel::new();
+        model.doc = Some(sample_doc());
+        let mut actions = Vec::new();
+
+        for (prev, next) in [("8", "10"), ("10", "12"), ("12", "14")] {
+            model.push_command(
+                &mut actions,
+                EditorCommand::SetVisual {
+                    layer_id: 1,
+                    key: "markersize".into(),
+                    expr: next.into(),
+                },
+                Some(EditorCommand::SetVisual {
+                    layer_id: 1,
+                    key: "markersize".into(),
+                    expr: prev.into(),
+                }),
+            );
+        }
+
+        // Optimistic doc reflects final expression immediately.
+        let ms = model
+            .doc
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .visual_kwargs
+            .iter()
+            .find(|(k, _)| k == "markersize")
+            .unwrap()
+            .1
+            .expr
+            .as_str();
+        assert_eq!(ms, "14");
+
+        // All 3 consecutive slider ticks coalesce to one undo step returning to "8".
+        assert_eq!(model.undo_stack.len(), 1);
+        model.undo(&mut actions);
+        assert_eq!(
+            model.doc.as_ref().unwrap().layers[0].visual_kwargs[0].1.expr,
+            "8"
+        );
+
+        // Theme & Legend optimistic updates apply cleanly.
+        model.push_command(
+            &mut actions,
+            EditorCommand::SetTheme {
+                base: Some("dark".into()),
+                key: Some("fontsize".into()),
+                expr: Some("18".into()),
+            },
+            None,
+        );
+        let th = model.doc.as_ref().unwrap().theme.as_ref().unwrap();
+        assert_eq!(th.base.as_deref(), Some("dark"));
+        assert_eq!(th.settings[0], ("fontsize".into(), wgpu_makie_proto::EditorEntryValue { expr: "18".into(), is_literal: true }));
+
+        model.push_command(
+            &mut actions,
+            EditorCommand::SetLegend {
+                key: "show".into(),
+                expr: "false".into(),
+            },
+            None,
+        );
+        assert_eq!(
+            model.doc.as_ref().unwrap().legend[0],
+            ("show".into(), wgpu_makie_proto::EditorEntryValue { expr: "false".into(), is_literal: true })
+        );
     }
 }

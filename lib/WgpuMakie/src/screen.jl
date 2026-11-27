@@ -229,6 +229,7 @@ function Base.display(screen::Screen, scene::Scene; figure = nothing, motion = n
         fig isa Makie.Figure && (screen.figure = fig)
     end
     Makie.push_screen!(scene, screen)
+    _find_grafico_editable(screen)
     if !isnothing(screen.figure)
         Makie.update_state_before_display!(screen.figure)
     end
