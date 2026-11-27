@@ -402,6 +402,8 @@ pub enum ColorSource {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColormapData {
+    #[serde(default)]
+    pub name: Option<String>,
     pub rgba: TypedBuffer,
     pub range: [f32; 2],
     pub lowclip: [f32; 4],
@@ -680,6 +682,8 @@ pub struct LayoutBlockMeta {
     /// `[x, y, width, height]` in unitless bottom-left figure coordinates.
     pub bbox_px: [f32; 4],
     pub parent_axis_id: Option<u64>,
+    #[serde(default)]
+    pub scene_id: Option<u64>,
     pub row_span: [u32; 2],
     pub col_span: [u32; 2],
     pub halign: f32,
@@ -1346,6 +1350,7 @@ mod tests {
                     kind: LayoutBlockKind::Legend,
                     bbox_px: [780.0, 220.0, 100.0, 160.0],
                     parent_axis_id: None,
+                    scene_id: None,
                     row_span: [1, 1],
                     col_span: [2, 2],
                     halign: 0.95,

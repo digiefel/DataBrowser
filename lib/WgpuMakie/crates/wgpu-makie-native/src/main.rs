@@ -331,11 +331,7 @@ impl ViewerApp {
             self.clear_hover();
             return;
         };
-        let is_3d = self
-            .graph
-            .scenes
-            .get(&entry.payload.scene_id)
-            .is_some_and(|s| s.state.camera.is_3d);
+        let is_3d = self.graph.is_3d_scene(entry.payload.scene_id);
         let (elem_idx, pos, anchor_px) = if let Some((idx, dpos, px)) = resolved {
             self.editor.hovered_sample = Some((plot_id, idx, dpos));
             (idx, dpos, px)

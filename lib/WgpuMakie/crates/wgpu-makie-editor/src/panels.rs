@@ -70,11 +70,16 @@ const COLORMAPS: &[&str] = &[
     ":inferno",
     ":magma",
     ":cividis",
+    ":turbo",
+    ":coolwarm",
+    ":RdBu",
+    ":grays",
     ":thermal",
+    ":haline",
+    ":batlow",
     ":balance",
     ":roma",
     ":vik",
-    ":coolwarm",
 ];
 
 const MARKERS: &[&str] = &[
@@ -417,10 +422,7 @@ pub fn draw_inspector_dock(
             ui.label(format!("{label} (point {})", idx + 1));
 
             let pos = model.selected_pos.unwrap_or([0.0, 0.0, 0.0]);
-            let is_3d = graph
-                .scenes
-                .get(&entry.payload.scene_id)
-                .is_some_and(|s| s.state.camera.is_3d);
+            let is_3d = graph.is_3d_scene(entry.payload.scene_id);
 
             let copy_text = if let Some(custom) = model.custom_tooltips.get(&(pid, idx)) {
                 ui.monospace(custom);
@@ -987,48 +989,135 @@ fn primitive_display_name(prim: &wgpu_makie_proto::PrimitiveKind) -> &'static st
     }
 }
 
-fn plot_swatch_color(prim: &wgpu_makie_proto::PrimitiveKind) -> egui::Color32 {
-    let cs = match prim {
-        wgpu_makie_proto::PrimitiveKind::Lines(l) => Some(&l.colors),
-        wgpu_makie_proto::PrimitiveKind::Scatter(s) => Some(&s.colors),
-        wgpu_makie_proto::PrimitiveKind::Mesh(m) => Some(&m.colors),
-        wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => Some(&ms.colors),
-        _ => None,
-    };
-    if let Some(wgpu_makie_proto::ColorSource::Uniform { rgba }) = cs {
-        return egui::Color32::from_rgba_unmultiplied(
-            (rgba[0].clamp(0.0, 1.0) * 255.0).round() as u8,
-            (rgba[1].clamp(0.0, 1.0) * 255.0).round() as u8,
-            (rgba[2].clamp(0.0, 1.0) * 255.0).round() as u8,
-            ((rgba[3].max(0.25)).clamp(0.0, 1.0) * 255.0).round() as u8,
-        );
-    }
-    egui::Color32::from_rgb(130, 145, 165)
-}
-
-fn plain_plot_color_expr(prim: &wgpu_makie_proto::PrimitiveKind) -> String {
-    let cs = match prim {
-        wgpu_makie_proto::PrimitiveKind::Lines(l) => Some(&l.colors),
-        wgpu_makie_proto::PrimitiveKind::Scatter(s) => Some(&s.colors),
-        wgpu_makie_proto::PrimitiveKind::Mesh(m) => Some(&m.colors),
-        wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => Some(&ms.colors),
-        _ => None,
-    };
-    if let Some(wgpu_makie_proto::ColorSource::Uniform { rgba }) = cs {
-        format_rgba_expr(*rgba)
-    } else {
-        ":steelblue".into()
+fn plot_colormap(prim: &wgpu_makie_proto::PrimitiveKind) -> Option<&wgpu_makie_proto::ColormapData> {
+    match prim {
+        wgpu_makie_proto::PrimitiveKind::Lines(l) => l.colormap.as_ref(),
+        wgpu_makie_proto::PrimitiveKind::Scatter(s) => s.colormap.as_ref(),
+        wgpu_makie_proto::PrimitiveKind::Text(t) => t.colormap.as_ref(),
+        wgpu_makie_proto::PrimitiveKind::Mesh(m) => m.colormap.as_ref(),
+        wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => ms.colormap.as_ref(),
+        wgpu_makie_proto::PrimitiveKind::Volume(v) => Some(&v.colormap),
+        wgpu_makie_proto::PrimitiveKind::Voxels(vx) => vx.colormap.as_ref(),
     }
 }
 
-fn plain_plot_size_attr(prim: &wgpu_makie_proto::PrimitiveKind) -> (&'static str, String) {
+fn plot_color_source(prim: &wgpu_makie_proto::PrimitiveKind) -> Option<&wgpu_makie_proto::ColorSource> {
+    match prim {
+        wgpu_makie_proto::PrimitiveKind::Lines(l) => Some(&l.colors),
+        wgpu_makie_proto::PrimitiveKind::Scatter(s) => Some(&s.colors),
+        wgpu_makie_proto::PrimitiveKind::Text(t) => Some(&t.colors),
+        wgpu_makie_proto::PrimitiveKind::Mesh(m) => Some(&m.colors),
+        wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => Some(&ms.colors),
+        _ => None,
+    }
+}
+
+fn paint_plot_swatch(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    prim: &wgpu_makie_proto::PrimitiveKind,
+) {
+    if let Some(cmap) = plot_colormap(prim) {
+        let bytes = cmap.rgba.bytes.as_slice();
+        let n_stops = bytes.len() / 4;
+        if n_stops >= 1 {
+            let bands = 4usize;
+            let band_w = rect.width() / bands as f32;
+            for b in 0..bands {
+                let stop_idx = if n_stops == 1 {
+                    0
+                } else {
+                    (b * (n_stops - 1)) / (bands - 1)
+                };
+                let off = stop_idx * 4;
+                let col = egui::Color32::from_rgba_unmultiplied(
+                    bytes[off],
+                    bytes[off + 1],
+                    bytes[off + 2],
+                    bytes[off + 3].max(90),
+                );
+                let br = egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x + b as f32 * band_w, rect.min.y),
+                    egui::pos2(rect.min.x + (b + 1) as f32 * band_w, rect.max.y),
+                );
+                painter.rect_filled(br, if b == 0 || b + 1 == bands { 1.5 } else { 0.0 }, col);
+            }
+            return;
+        }
+    }
+    if let Some(cs) = plot_color_source(prim) {
+        match cs {
+            wgpu_makie_proto::ColorSource::Uniform { rgba } => {
+                let col = egui::Color32::from_rgba_unmultiplied(
+                    (rgba[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+                    (rgba[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+                    (rgba[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+                    ((rgba[3].max(0.25)).clamp(0.0, 1.0) * 255.0).round() as u8,
+                );
+                painter.rect_filled(rect, 2.0, col);
+                return;
+            }
+            wgpu_makie_proto::ColorSource::PerVertexRgba { data } => {
+                if let Ok(floats) = data.as_f32_vec() {
+                    if floats.len() >= 4 {
+                        let col = egui::Color32::from_rgba_unmultiplied(
+                            (floats[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+                            (floats[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+                            (floats[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+                            ((floats[3].max(0.25)).clamp(0.0, 1.0) * 255.0).round() as u8,
+                        );
+                        painter.rect_filled(rect, 2.0, col);
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(130, 145, 165));
+}
+
+enum PlainColorMode {
+    Uniform(String),
+    Colormap(String),
+    Label(&'static str),
+}
+
+fn plain_plot_color_mode(prim: &wgpu_makie_proto::PrimitiveKind) -> PlainColorMode {
+    if let Some(wgpu_makie_proto::ColorSource::Uniform { rgba }) = plot_color_source(prim) {
+        return PlainColorMode::Uniform(format_rgba_expr(*rgba));
+    }
+    if let Some(cmap) = plot_colormap(prim) {
+        let name = cmap
+            .name
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| ":viridis".into());
+        return PlainColorMode::Colormap(name);
+    }
+    match plot_color_source(prim) {
+        Some(wgpu_makie_proto::ColorSource::PerVertexRgba { .. }) => {
+            PlainColorMode::Label("per-vertex")
+        }
+        Some(wgpu_makie_proto::ColorSource::Texture2D { .. }) => PlainColorMode::Label("texture"),
+        _ => PlainColorMode::Label("mapped"),
+    }
+}
+
+fn plain_plot_size_attr(
+    prim: &wgpu_makie_proto::PrimitiveKind,
+) -> Option<(&'static str, String, std::ops::RangeInclusive<f64>, f64)> {
+    let fmt = |v: f32| {
+        let s = format!("{v:.2}");
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    };
     match prim {
         wgpu_makie_proto::PrimitiveKind::Lines(l) => {
             let v = match l.linewidth {
                 wgpu_makie_proto::ScalarOrBuffer::Scalar1(x) => x,
                 _ => 2.0,
             };
-            ("linewidth", format!("{v:.2}").trim_end_matches('0').trim_end_matches('.').to_string())
+            Some(("linewidth", fmt(v), 0.5..=24.0, 0.5))
         }
         wgpu_makie_proto::PrimitiveKind::Scatter(s) => {
             let v = match s.quad_scale {
@@ -1036,9 +1125,17 @@ fn plain_plot_size_attr(prim: &wgpu_makie_proto::PrimitiveKind) -> (&'static str
                 wgpu_makie_proto::ScalarOrBuffer::Scalar2([x, _]) => x,
                 _ => 10.0,
             };
-            ("markersize", format!("{v:.2}").trim_end_matches('0').trim_end_matches('.').to_string())
+            Some(("markersize", fmt(v), 1.0..=48.0, 0.5))
         }
-        _ => ("markersize", "10".into()),
+        wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => {
+            let v = match ms.instance_scales {
+                wgpu_makie_proto::ScalarOrBuffer::Scalar1(x) => x,
+                wgpu_makie_proto::ScalarOrBuffer::Scalar3([x, _, _]) => x,
+                _ => 0.15,
+            };
+            Some(("markersize", fmt(v), 0.02..=4.0, 0.02))
+        }
+        _ => None,
     }
 }
 
@@ -1065,6 +1162,15 @@ fn draw_plain_layers_fallback(
         .filter(|a| !inset_axis_ids.contains(&a.axis_id))
         .map(|a| a.data_scene_id)
         .collect();
+    if let Some(layout) = &graph.layout {
+        for blk in &layout.blocks {
+            if blk.kind == wgpu_makie_proto::LayoutBlockKind::Axis3 {
+                if let Some(sid) = blk.scene_id {
+                    data_scene_ids.insert(sid);
+                }
+            }
+        }
+    }
     for (sid, snode) in &graph.scenes {
         if snode.state.camera.is_3d {
             data_scene_ids.insert(*sid);
@@ -1089,9 +1195,8 @@ fn draw_plain_layers_fallback(
     for (idx, pid) in display_ids.into_iter().enumerate() {
         if let Some(entry) = graph.plots.get_mut(&pid) {
             let mut vis = entry.payload.visible;
-            let swatch = plot_swatch_color(&entry.payload.primitive);
-            let cur_color = plain_plot_color_expr(&entry.payload.primitive);
-            let (size_attr, cur_size) = plain_plot_size_attr(&entry.payload.primitive);
+            let color_mode = plain_plot_color_mode(&entry.payload.primitive);
+            let size_spec = plain_plot_size_attr(&entry.payload.primitive);
             let fallback_name = format!("{} {}", primitive_display_name(&entry.payload.primitive), idx + 1);
             let label = entry
                 .payload
@@ -1117,8 +1222,8 @@ fn draw_plain_layers_fallback(
                         }),
                     );
                 }
-                let (srect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-                ui.painter().rect_filled(srect, 2.0, swatch);
+                let (srect, _) = ui.allocate_exact_size(egui::vec2(14.0, 10.0), egui::Sense::hover());
+                paint_plot_swatch(ui.painter(), srect, &entry.payload.primitive);
                 if ui.selectable_label(expanded, &label).clicked() {
                     if expanded {
                         model.expanded_plots.remove(&pid);
@@ -1129,75 +1234,114 @@ fn draw_plain_layers_fallback(
             });
             if expanded {
                 ui.indent(format!("plain_indent_{pid}"), |ui| {
-                    let color_key = format!("plain_color_{pid}");
-                    if let Some(new_col) =
-                        color_or_expr_row(ui, model, &color_key, "color", &cur_color, true)
-                    {
-                        if let Some(rgba) = parse_makie_color_expr(&new_col) {
-                            let new_src = wgpu_makie_proto::ColorSource::Uniform { rgba };
-                            match &mut entry.payload.primitive {
-                                wgpu_makie_proto::PrimitiveKind::Lines(l) => l.colors = new_src,
-                                wgpu_makie_proto::PrimitiveKind::Scatter(s) => s.colors = new_src,
-                                wgpu_makie_proto::PrimitiveKind::Mesh(m) => m.colors = new_src,
-                                wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => {
-                                    ms.colors = new_src
+                    match color_mode {
+                        PlainColorMode::Uniform(cur_color) => {
+                            let color_key = format!("plain_color_{pid}");
+                            if let Some(new_col) =
+                                color_or_expr_row(ui, model, &color_key, "color", &cur_color, true)
+                            {
+                                if let Some(rgba) = parse_makie_color_expr(&new_col) {
+                                    let new_src = wgpu_makie_proto::ColorSource::Uniform { rgba };
+                                    match &mut entry.payload.primitive {
+                                        wgpu_makie_proto::PrimitiveKind::Lines(l) => l.colors = new_src,
+                                        wgpu_makie_proto::PrimitiveKind::Scatter(s) => s.colors = new_src,
+                                        wgpu_makie_proto::PrimitiveKind::Mesh(m) => m.colors = new_src,
+                                        wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => {
+                                            ms.colors = new_src
+                                        }
+                                        _ => {}
+                                    }
+                                    entry.revision += 1;
+                                    touched_rev = true;
                                 }
-                                _ => {}
+                                model.push_command(
+                                    actions,
+                                    EditorCommand::SetPlotAttr {
+                                        plot_id: pid,
+                                        key: "color".into(),
+                                        expr: new_col,
+                                    },
+                                    Some(EditorCommand::SetPlotAttr {
+                                        plot_id: pid,
+                                        key: "color".into(),
+                                        expr: cur_color,
+                                    }),
+                                );
                             }
-                            entry.revision += 1;
-                            touched_rev = true;
                         }
-                        model.push_command(
-                            actions,
-                            EditorCommand::SetPlotAttr {
-                                plot_id: pid,
-                                key: "color".into(),
-                                expr: new_col,
-                            },
-                            Some(EditorCommand::SetPlotAttr {
-                                plot_id: pid,
-                                key: "color".into(),
-                                expr: cur_color,
-                            }),
-                        );
+                        PlainColorMode::Colormap(cur_cmap) => {
+                            let cmap_key = format!("plain_cmap_{pid}");
+                            if let Some(new_cm) =
+                                combo_or_expr_row(ui, model, &cmap_key, "colormap", &cur_cmap, COLORMAPS)
+                            {
+                                model.push_command(
+                                    actions,
+                                    EditorCommand::SetPlotAttr {
+                                        plot_id: pid,
+                                        key: "colormap".into(),
+                                        expr: new_cm,
+                                    },
+                                    Some(EditorCommand::SetPlotAttr {
+                                        plot_id: pid,
+                                        key: "colormap".into(),
+                                        expr: cur_cmap,
+                                    }),
+                                );
+                            }
+                        }
+                        PlainColorMode::Label(desc) => {
+                            ui.label(
+                                egui::RichText::new(format!("color: {desc}"))
+                                    .weak()
+                                    .small(),
+                            );
+                        }
                     }
-                    let size_key = format!("plain_size_{pid}");
-                    if let Some(new_sz) =
-                        slider_or_expr_row(ui, model, &size_key, "size", &cur_size, true, 1.0..=48.0, 0.5)
-                    {
-                        if let Ok(v) = new_sz.trim().parse::<f32>() {
-                            match &mut entry.payload.primitive {
-                                wgpu_makie_proto::PrimitiveKind::Lines(l) => {
-                                    l.linewidth = wgpu_makie_proto::ScalarOrBuffer::Scalar1(v);
-                                    entry.revision += 1;
-                                    touched_rev = true;
+                    if let Some((size_attr, cur_size, range, speed)) = size_spec {
+                        let size_key = format!("plain_size_{pid}");
+                        if let Some(new_sz) =
+                            slider_or_expr_row(ui, model, &size_key, "size", &cur_size, true, range, speed)
+                        {
+                            if let Ok(v) = new_sz.trim().parse::<f32>() {
+                                match &mut entry.payload.primitive {
+                                    wgpu_makie_proto::PrimitiveKind::Lines(l) => {
+                                        l.linewidth = wgpu_makie_proto::ScalarOrBuffer::Scalar1(v);
+                                        entry.revision += 1;
+                                        touched_rev = true;
+                                    }
+                                    wgpu_makie_proto::PrimitiveKind::Scatter(s) => {
+                                        s.quad_scale =
+                                            wgpu_makie_proto::ScalarOrBuffer::Scalar2([v, v]);
+                                        s.quad_offset = wgpu_makie_proto::ScalarOrBuffer::Scalar2([
+                                            -0.5 * v,
+                                            -0.5 * v,
+                                        ]);
+                                        entry.revision += 1;
+                                        touched_rev = true;
+                                    }
+                                    wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => {
+                                        ms.instance_scales =
+                                            wgpu_makie_proto::ScalarOrBuffer::Scalar3([v, v, v]);
+                                        entry.revision += 1;
+                                        touched_rev = true;
+                                    }
+                                    _ => {}
                                 }
-                                wgpu_makie_proto::PrimitiveKind::Scatter(s) => {
-                                    s.quad_scale =
-                                        wgpu_makie_proto::ScalarOrBuffer::Scalar2([v, v]);
-                                    s.quad_offset = wgpu_makie_proto::ScalarOrBuffer::Scalar2([
-                                        -0.5 * v,
-                                        -0.5 * v,
-                                    ]);
-                                    entry.revision += 1;
-                                    touched_rev = true;
-                                }
-                                _ => {}
                             }
+                            model.push_command(
+                                actions,
+                                EditorCommand::SetPlotAttr {
+                                    plot_id: pid,
+                                    key: size_attr.into(),
+                                    expr: new_sz,
+                                },
+                                Some(EditorCommand::SetPlotAttr {
+                                    plot_id: pid,
+                                    key: size_attr.into(),
+                                    expr: cur_size,
+                                }),
+                            );
                         }
-                        model.push_command(
-                            actions,
-                            EditorCommand::SetPlotAttr {
-                                plot_id: pid,
-                                key: size_attr.into(),
-                                expr: new_sz,
-                            },
-                            Some(EditorCommand::SetPlotAttr {
-                                plot_id: pid,
-                                key: size_attr.into(),
-                                expr: cur_size,
-                            }),
-                        );
                     }
                 });
             }

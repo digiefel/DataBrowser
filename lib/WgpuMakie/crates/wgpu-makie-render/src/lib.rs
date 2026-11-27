@@ -517,6 +517,7 @@ mod tests {
             bytes.push(((0.1 + 0.9 * t) * 255.0) as u8);
         }
         ColormapData {
+            name: None,
             rgba: TypedBuffer::from_u8(bytes),
             range,
             lowclip: [0.0, 0.0, 1.0, 0.0],

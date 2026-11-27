@@ -46,9 +46,12 @@ mutable struct Screen <: Makie.MakieScreen
     id_to_scene::Dict{UInt64, Scene}
     id_to_plot::Dict{UInt64, AbstractPlot}
     id_to_axis::Dict{UInt64, Makie.Axis}
+    id_to_axis3::Dict{UInt64, Makie.Axis3}
+    axis3_initial::Dict{UInt64, Tuple{Float64, Float64, Float64}}
     scene_observers::Dict{UInt64, Vector{Any}}
     plot_observers::Dict{UInt64, Tuple{AbstractPlot, Any}}
     plot_zorder::Dict{UInt64, Int32}
+    plot_effective_inspectable::Dict{UInt64, Bool}
     axis_observers::Dict{UInt64, Any}
     dirty_scenes::Set{Scene}
     dirty_axes::Set{Makie.Axis}
@@ -99,9 +102,12 @@ function Screen(scene::Union{Nothing, Scene}, config::ScreenConfig, args...)
         Dict{UInt64, Scene}(),
         Dict{UInt64, AbstractPlot}(),
         Dict{UInt64, Makie.Axis}(),
+        Dict{UInt64, Makie.Axis3}(),
+        Dict{UInt64, Tuple{Float64, Float64, Float64}}(),
         Dict{UInt64, Vector{Any}}(),
         Dict{UInt64, Tuple{AbstractPlot, Any}}(),
         Dict{UInt64, Int32}(),
+        Dict{UInt64, Bool}(),
         Dict{UInt64, Any}(),
         Set{Scene}(),
         Set{Makie.Axis}(),

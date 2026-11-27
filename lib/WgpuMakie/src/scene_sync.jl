@@ -224,22 +224,24 @@ function _register_plot_observers!(screen, scene::Scene, plot::AbstractPlot)
     return nothing
 end
 
-function _collect_scene_plots!(screen, scene::Scene, plots::Vector{Plot}, msgs::Vector{Dict{String, Any}}, z_counter::Ref{Int32})
+function _collect_scene_plots!(screen, scene::Scene, plots::Vector{Plot}, msgs::Vector{Dict{String, Any}}, z_counter::Ref{Int32}, parent_inspectable::Bool = true)
     sid = UInt64(objectid(scene))
     for plot in plots
+        eff_inspectable = parent_inspectable && (!haskey(plot, :inspectable) || Bool(plot.inspectable[]))
         if plot isa Makie.ComputePlots
             pid = UInt64(objectid(plot))
             screen.id_to_plot[pid] = plot
+            screen.plot_effective_inspectable[pid] = eff_inspectable
             z_counter[] += Int32(1)
             z = z_counter[]
             screen.plot_zorder[pid] = z
-            msg, extras = _build_plot_payload(screen, scene, plot, pid, sid, z)
+            msg, extras = _build_plot_payload(screen, scene, plot, pid, sid, z; inspectable_override = eff_inspectable)
             append!(msgs, extras)
             !isnothing(msg) && push!(msgs, msg)
             _register_plot_observers!(screen, scene, plot)
         end
         if !isempty(plot.plots)
-            _collect_scene_plots!(screen, scene, plot.plots, msgs, z_counter)
+            _collect_scene_plots!(screen, scene, plot.plots, msgs, z_counter, eff_inspectable)
         end
     end
     return nothing
@@ -337,6 +339,12 @@ function _collect_figure_axes_msgs!(screen, figure::Union{Nothing, Makie.Figure}
                     return
                 end
                 screen.axis_observers[aid] = fn
+            end
+        elseif blk isa Makie.Axis3
+            aid = UInt64(objectid(blk))
+            screen.id_to_axis3[aid] = blk
+            get!(screen.axis3_initial, aid) do
+                (Float64(blk.elevation[]), Float64(blk.azimuth[]), Float64(blk.zoom_mult[]))
             end
         end
     end
@@ -807,6 +815,7 @@ function _extract_layout_meta(screen, figure::Makie.Figure)
             "kind" => kind,
             "bbox_px" => bb,
             "parent_axis_id" => parent_aid,
+            "scene_id" => (blk isa Makie.Axis || blk isa Makie.Axis3) ? UInt64(objectid(blk.scene)) : nothing,
             "row_span" => UInt32[UInt32(rspan.start), UInt32(rspan.stop)],
             "col_span" => UInt32[UInt32(cspan.start), UInt32(cspan.stop)],
             "halign" => ha,
@@ -985,7 +994,8 @@ function flush_updates!(screen; ack_seq::UInt64 = UInt64(0), include_layout::Boo
                     push!(seen, pid)
                     haskey(screen.id_to_plot, pid) || continue
                     z = get(screen.plot_zorder, pid, Int32(0))
-                    msg, extras = _build_plot_payload(screen, sc, plot, pid, UInt64(objectid(sc)), z)
+                    insp_ov = get(screen.plot_effective_inspectable, pid, nothing)
+                    msg, extras = _build_plot_payload(screen, sc, plot, pid, UInt64(objectid(sc)), z; inspectable_override = insp_ov)
                     append!(msgs, extras)
                     !isnothing(msg) && push!(msgs, msg)
                 end

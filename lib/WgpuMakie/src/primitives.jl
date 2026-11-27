@@ -47,8 +47,11 @@ function _extract_colormap(attr)
     highc = haskey(attr, :highclip_color) ? attr[:highclip_color][] : RGBAf(0, 0, 0, 0)
     nanc = haskey(attr, :nan_color) ? attr[:nan_color][] : RGBAf(0, 0, 0, 0)
     ctype = haskey(attr, :color_mapping_type) ? attr[:color_mapping_type][] : Makie.continuous
+    raw_cm = haskey(attr, :colormap) ? attr[:colormap][] : nothing
+    cm_name = raw_cm isa Symbol ? ":$(raw_cm)" : (raw_cm isa AbstractString ? string(raw_cm) : nothing)
 
     return Dict{String, Any}(
+        "name" => cm_name,
         "rgba" => pack_u8_buf(rgba_bytes),
         "range" => Float32[Float32(crange[1]), Float32(crange[2])],
         "lowclip" => lowc isa Colorant ? pack_rgba(lowc) : Float32[0, 0, 0, 0],
@@ -252,7 +255,7 @@ function _ensure_clip_planes!(attr, clip_sym = nothing)
     end
 end
 
-function _build_plot_payload(screen, scene::Scene, plot::Makie.ComputePlots, plot_id::UInt64, scene_id::UInt64, z_order::Int32)
+function _build_plot_payload(screen, scene::Scene, plot::Makie.ComputePlots, plot_id::UInt64, scene_id::UInt64, z_order::Int32; inspectable_override::Union{Nothing, Bool} = nothing)
     attr = plot.attributes
     extra_msgs = Dict{String, Any}[]
 
@@ -655,7 +658,7 @@ function _build_plot_payload(screen, scene::Scene, plot::Makie.ComputePlots, plo
         "scene_id" => scene_id,
         "z_order" => z_order,
         "visible" => Bool(attr[:visible][]),
-        "inspectable" => Bool(attr[:inspectable][]),
+        "inspectable" => isnothing(inspectable_override) ? Bool(attr[:inspectable][]) : inspectable_override,
         "overdraw" => Bool(attr[:overdraw][]),
         "transparency" => Bool(attr[:transparency][]),
         "depth_shift" => Float32(attr[:depth_shift][]),

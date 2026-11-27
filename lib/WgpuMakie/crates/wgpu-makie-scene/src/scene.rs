@@ -4,8 +4,8 @@ use crate::decimate::{LineLod, ScatterLod};
 use glam::{Mat3, Mat4, Vec3};
 use std::collections::HashMap;
 use wgpu_makie_proto::{
-    AxisMeta, CameraState, CoordSpace, GlyphAtlasPatch, GlyphMetric, LayoutMeta, PlotPayload,
-    PrimitiveKind, SceneState, ServerMessage, TypedBuffer,
+    AxisMeta, CameraState, CoordSpace, GlyphAtlasPatch, GlyphMetric, LayoutBlockKind, LayoutMeta,
+    PlotPayload, PrimitiveKind, SceneState, ServerMessage, TypedBuffer,
 };
 
 #[derive(Debug, Clone)]
@@ -47,6 +47,22 @@ pub struct SceneGraph {
 }
 
 impl SceneGraph {
+    /// Return `true` when `scene_id` uses a 3D camera (`Camera3D` or `Axis3`).
+    pub fn is_3d_scene(&self, scene_id: u64) -> bool {
+        if self
+            .scenes
+            .get(&scene_id)
+            .is_some_and(|s| s.state.camera.is_3d)
+        {
+            return true;
+        }
+        self.layout.as_ref().is_some_and(|l| {
+            l.blocks
+                .iter()
+                .any(|b| b.kind == LayoutBlockKind::Axis3 && b.scene_id == Some(scene_id))
+        })
+    }
+
     pub fn apply(&mut self, msg: ServerMessage) {
         match msg {
             ServerMessage::Hello {

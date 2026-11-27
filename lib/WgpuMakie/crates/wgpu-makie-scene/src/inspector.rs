@@ -43,7 +43,7 @@ pub fn project_plot_point_px(
     let entry = graph.plots.get(&plot_id)?;
     let scene = graph.scenes.get(&entry.payload.scene_id)?;
     let vp = scene.state.viewport;
-    let is_3d = scene.state.camera.is_3d;
+    let is_3d = graph.is_3d_scene(entry.payload.scene_id);
 
     if !is_3d {
         if let Some(ax) = graph

@@ -882,4 +882,54 @@ end
         @test isnothing(cb_spec["vary"])
         close(scr_cb)
     end
+
+    @testset "Axis3 reset, child inspectability, and colormap names" begin
+        fig3 = Makie.Figure(size = (700, 520))
+        ax3 = Makie.Axis3(fig3[1, 1])
+        xs = range(-2, 2; length = 12)
+        surf = Makie.surface!(ax3, xs, xs, [sin(x) * cos(y) for x in xs, y in xs]; colormap = :plasma)
+        msh = Makie.mesh!(ax3, GeometryBasics.Sphere(GeometryBasics.Point3f(0, 0, 1), 0.3f0); color = :steelblue)
+        msc = Makie.meshscatter!(ax3, [GeometryBasics.Point3f(i * 0.3f0, 0, 0.5f0) for i in 1:4]; color = 1:4, colormap = :turbo)
+        scr3 = WgpuMakie.Screen(; visible = false)
+        display(scr3, fig3.scene; figure = fig3)
+
+        # Child backdrop LineSegments inside ax3.blockscene inherit inspectable == false
+        bs_msgs = Dict{String, Any}[]
+        WgpuMakie._collect_scene_plots!(scr3, ax3.blockscene, ax3.blockscene.plots, bs_msgs, Ref(Int32(0)))
+        @test !isempty(bs_msgs)
+        @test all(m -> !m["plot"]["inspectable"], bs_msgs)
+
+        # Surface and MeshScatter report true colormap names, while layout reports Axis3 scene_id
+        data_msgs = Dict{String, Any}[]
+        WgpuMakie._collect_scene_plots!(scr3, ax3.scene, ax3.scene.plots, data_msgs, Ref(Int32(0)))
+        cmap_names = [m["plot"]["primitive"]["colormap"]["name"] for m in data_msgs if haskey(m["plot"]["primitive"], "colormap") && !isnothing(m["plot"]["primitive"]["colormap"])]
+        @test ":plasma" in cmap_names
+        @test ":turbo" in cmap_names
+        meta3 = WgpuMakie._extract_layout_meta(scr3, fig3)
+        ax3_blk = first(b for b in meta3["blocks"] if b["kind"] == "axis3")
+        @test ax3_blk["scene_id"] == UInt64(objectid(ax3.scene))
+
+        # Cmd+left-click resets Axis3 view angles and zoom
+        orig_el = Float64(ax3.elevation[])
+        orig_az = Float64(ax3.azimuth[])
+        orig_zm = Float64(ax3.zoom_mult[])
+        ax3.elevation[] = orig_el + 0.4
+        ax3.azimuth[] = orig_az + 0.5
+        ax3.zoom_mult[] = orig_zm * 1.4
+        vp3 = Makie.viewport(ax3.scene)[]
+        cx = Float64(minimum(vp3)[1] + 0.5 * widths(vp3)[1])
+        cy = Float64(minimum(vp3)[2] + 0.5 * widths(vp3)[2])
+        WgpuMakie._handle_viewer_event!(scr3, Dict(
+            "op" => "pointer_event",
+            "x" => cx,
+            "y" => cy,
+            "kind" => "down",
+            "buttons" => 0x01,
+            "modifiers" => 0x02,
+        ))
+        @test isapprox(Float64(ax3.elevation[]), orig_el; atol = 1e-6)
+        @test isapprox(Float64(ax3.azimuth[]), orig_az; atol = 1e-6)
+        @test isapprox(Float64(ax3.zoom_mult[]), orig_zm; atol = 1e-6)
+        close(scr3)
+    end
 end

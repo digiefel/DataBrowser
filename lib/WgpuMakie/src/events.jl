@@ -251,8 +251,13 @@ function _handle_viewer_event!(screen, msg::AbstractDict)
         y = Float64(msg["y"])
         kind = get(msg, "kind", "move")
         buttons = UInt8(get(msg, "buttons", 0))
+        modifiers = UInt8(get(msg, "modifiers", 0))
+        _sync_modifiers!(evs, modifiers)
         evs.mouseposition[] = (x, y)
         if kind == "down"
+            if (modifiers & 0x02) != 0 && (buttons & 0x01) != 0 && _reset_axis3_at!(screen, x, y)
+                return nothing
+            end
             _sync_mouse_buttons!(evs, buttons)
         elseif kind == "up"
             _sync_mouse_buttons!(evs, buttons)
@@ -263,6 +268,52 @@ function _handle_viewer_event!(screen, msg::AbstractDict)
         end
     end
     return nothing
+end
+
+function _sync_modifiers!(evs::Makie.Events, modifiers::UInt8)
+    for (mask, key) in (
+        (0x01, Makie.Keyboard.left_shift),
+        (0x02, Makie.Keyboard.left_control),
+        (0x04, Makie.Keyboard.left_alt),
+    )
+        down = (modifiers & mask) != 0
+        was_down = key in evs.keyboardstate
+        if down && !was_down
+            evs.keyboardbutton[] = Makie.KeyEvent(key, Makie.Keyboard.press)
+        elseif !down && was_down
+            evs.keyboardbutton[] = Makie.KeyEvent(key, Makie.Keyboard.release)
+        end
+    end
+    return nothing
+end
+
+function _reset_axis3_at!(screen, x::Float64, y::Float64)::Bool
+    for (aid, ax3) in screen.id_to_axis3
+        bb = Makie.viewport(ax3.scene)[]
+        x0, y0 = Float64(minimum(bb)[1]), Float64(minimum(bb)[2])
+        w, h = Float64(widths(bb)[1]), Float64(widths(bb)[2])
+        if w <= 0 || h <= 0
+            cbb = ax3.layoutobservables.computedbbox[]
+            x0, y0 = Float64(minimum(cbb)[1]), Float64(minimum(cbb)[2])
+            w, h = Float64(widths(cbb)[1]), Float64(widths(cbb)[2])
+        end
+        if x >= x0 && x <= x0 + w && y >= y0 && y <= y0 + h
+            init = get(screen.axis3_initial, aid, nothing)
+            if !isnothing(init)
+                ax3.elevation[] = init[1]
+                ax3.azimuth[] = init[2]
+                ax3.zoom_mult[] = init[3]
+            end
+            Makie.reset_limits!(ax3)
+            @lock screen.sync_lock begin
+                push!(screen.dirty_scenes, ax3.scene)
+                push!(screen.dirty_scenes, ax3.blockscene)
+            end
+            flush_updates!(screen)
+            return true
+        end
+    end
+    return false
 end
 
 function _sync_mouse_buttons!(evs::Makie.Events, buttons::UInt8)
