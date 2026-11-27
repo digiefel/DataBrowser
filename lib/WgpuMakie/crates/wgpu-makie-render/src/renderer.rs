@@ -25,6 +25,8 @@ pub enum RenderError {
     BufferMap,
 }
 
+const MSAA_SAMPLES: u32 = 4;
+
 struct PipelinePair {
     color: wgpu::RenderPipeline,
     oit: wgpu::RenderPipeline,
@@ -51,6 +53,7 @@ pub struct WgpuRenderer {
     atlas_tex: (wgpu::Texture, wgpu::TextureView),
     atlas_size: u32,
     plot_offset_px: [f32; 2],
+    msaa_color_tex: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
     depth_tex: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
     pick_color_tex: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
     pick_depth_tex: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
@@ -114,6 +117,7 @@ impl WgpuRenderer {
             atlas_tex,
             atlas_size,
             plot_offset_px: [0.0, 0.0],
+            msaa_color_tex: None,
             depth_tex: None,
             pick_color_tex: None,
             pick_depth_tex: None,
@@ -222,9 +226,31 @@ impl WgpuRenderer {
             );
         }
 
-        // Ensure depth and WBOIT targets exist for fb_width x fb_height
+        // Ensure 4x MSAA color, depth, and WBOIT targets exist for fb_width x fb_height
         let w = fb_width.max(1);
         let h = fb_height.max(1);
+        if self
+            .msaa_color_tex
+            .as_ref()
+            .is_none_or(|(mw, mh, _, _)| *mw != w || *mh != h)
+        {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("main_msaa_color"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: MSAA_SAMPLES,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.color_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&Default::default());
+            self.msaa_color_tex = Some((w, h, tex, view));
+        }
         if self
             .depth_tex
             .as_ref()
@@ -238,7 +264,7 @@ impl WgpuRenderer {
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
-                sample_count: 1,
+                sample_count: MSAA_SAMPLES,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Depth32Float,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -261,7 +287,7 @@ impl WgpuRenderer {
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
-                sample_count: 1,
+                sample_count: MSAA_SAMPLES,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba16Float,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -276,7 +302,7 @@ impl WgpuRenderer {
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
-                sample_count: 1,
+                sample_count: MSAA_SAMPLES,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -359,6 +385,9 @@ impl WgpuRenderer {
         fb_height: u32,
         clear_bg: [f32; 4],
     ) {
+        let Some((_, _, _, msaa_color_view)) = &self.msaa_color_tex else {
+            return;
+        };
         let Some((_, _, _, depth_view)) = &self.depth_tex else {
             return;
         };
@@ -380,20 +409,30 @@ impl WgpuRenderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: None,
                 ..Default::default()
             });
             return;
         }
 
         for (gi, group) in groups.iter().enumerate() {
+            let is_last_group = gi + 1 == groups.len();
+            let has_transparent = graph.plot_order.iter().any(|pid| {
+                graph.plots.get(pid).is_some_and(|p| {
+                    p.payload.visible
+                        && p.payload.transparency
+                        && group.contains(&p.payload.scene_id)
+                        && graph
+                            .scenes
+                            .get(&p.payload.scene_id)
+                            .is_some_and(|s| s.state.visible)
+                })
+            });
+            let can_oit = has_transparent
+                && self.oit_accum_tex.is_some()
+                && self.oit_reveal_tex.is_some()
+                && self.oit_composite_bg.is_some();
+
             let color_load = if gi == 0 {
                 wgpu::LoadOp::Clear(wgpu::Color {
                     r: clear_bg[0] as f64,
@@ -408,9 +447,13 @@ impl WgpuRenderer {
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("wgpu_makie_color_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: color_view,
+                        view: msaa_color_view,
                         depth_slice: None,
-                        resolve_target: None,
+                        resolve_target: if is_last_group && !can_oit {
+                            Some(color_view)
+                        } else {
+                            None
+                        },
                         ops: wgpu::Operations {
                             load: color_load,
                             store: wgpu::StoreOp::Store,
@@ -430,18 +473,7 @@ impl WgpuRenderer {
                 self.draw_scene_list(&mut rpass, graph, group, fb_width, fb_height, RenderMode::Opaque);
             }
 
-            let has_transparent = graph.plot_order.iter().any(|pid| {
-                graph.plots.get(pid).is_some_and(|p| {
-                    p.payload.visible
-                        && p.payload.transparency
-                        && group.contains(&p.payload.scene_id)
-                        && graph
-                            .scenes
-                            .get(&p.payload.scene_id)
-                            .is_some_and(|s| s.state.visible)
-                })
-            });
-            if !has_transparent {
+            if !can_oit {
                 continue;
             }
             let (
@@ -494,9 +526,9 @@ impl WgpuRenderer {
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("wgpu_makie_oit_composite_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: color_view,
+                        view: msaa_color_view,
                         depth_slice: None,
-                        resolve_target: None,
+                        resolve_target: if is_last_group { Some(color_view) } else { None },
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
@@ -2064,6 +2096,19 @@ fn bgl_tex2d(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+fn bgl_tex2d_ms(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: true,
+        },
+        count: None,
+    }
+}
+
 fn bgl_sampler(binding: u32, filtering: bool) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -2115,6 +2160,11 @@ fn build_pair(
         cull_mode,
         ..Default::default()
     };
+    let msaa_state = wgpu::MultisampleState {
+        count: MSAA_SAMPLES,
+        mask: !0,
+        alpha_to_coverage_enabled: false,
+    };
     let color = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(&format!("{label}_color")),
         layout: Some(&pl_layout),
@@ -2136,7 +2186,7 @@ fn build_pair(
         }),
         primitive: prim_state,
         depth_stencil: depth_state.clone(),
-        multisample: wgpu::MultisampleState::default(),
+        multisample: msaa_state,
         multiview_mask: None,
         cache: None,
     });
@@ -2191,7 +2241,7 @@ fn build_pair(
         }),
         primitive: prim_state,
         depth_stencil: oit_depth_state,
-        multisample: wgpu::MultisampleState::default(),
+        multisample: msaa_state,
         multiview_mask: None,
         cache: None,
     });
@@ -2409,7 +2459,7 @@ fn create_oit_composite_pipeline(
 ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
     let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("oit_composite_bgl"),
-        entries: &[bgl_tex2d(0, false), bgl_tex2d(1, false)],
+        entries: &[bgl_tex2d_ms(0), bgl_tex2d_ms(1)],
     });
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("oit_composite"),
@@ -2441,7 +2491,11 @@ fn create_oit_composite_pipeline(
         }),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
+        multisample: wgpu::MultisampleState {
+            count: MSAA_SAMPLES,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
         multiview_mask: None,
         cache: None,
     });

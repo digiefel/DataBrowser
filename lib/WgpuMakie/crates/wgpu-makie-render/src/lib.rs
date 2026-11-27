@@ -1017,4 +1017,67 @@ mod tests {
             &rgba[idx..idx + 4]
         );
     }
+
+    #[test]
+    fn msaa_smooths_slanted_mesh_edges() {
+        let mut hr = HeadlessRenderer::new().expect("headless wgpu init");
+        let mut graph = SceneGraph::default();
+        graph.apply(ServerMessage::Hello {
+            protocol_version: 1,
+            title: "MSAA Mesh".into(),
+            size: [160, 160],
+            px_per_unit: 1.0,
+        });
+        graph.apply(ServerMessage::UpsertScene {
+            scene: make_2d_scene(),
+        });
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 1,
+                scene_id: 1,
+                z_order: 1,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Mesh(MeshData {
+                    positions: TypedBuffer::from_f32(&[
+                        1.0, 1.0, 0.0,
+                        9.0, 3.0, 0.0,
+                        4.0, 9.0, 0.0,
+                    ]),
+                    faces: TypedBuffer::from_u32(&[0, 1, 2]),
+                    normals: None,
+                    uvs: None,
+                    colors: ColorSource::Uniform {
+                        rgba: [0.0, 0.0, 0.0, 1.0],
+                    },
+                    colormap: None,
+                    uv_transform: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                    shading: false,
+                    diffuse: [1.0; 3],
+                    specular: [0.0; 3],
+                    shininess: 32.0,
+                    backlight: 0.0,
+                    interpolate_in_fragment: false,
+                }),
+                inspector: None,
+            },
+        });
+        let rgba = hr.render_rgba8(&mut graph, 160, 160).unwrap();
+        let intermediate_gray = rgba
+            .chunks_exact(4)
+            .filter(|px| px[0] > 20 && px[0] < 235 && px[1] > 20 && px[1] < 235)
+            .count();
+        assert!(
+            intermediate_gray >= 20,
+            "expected MSAA intermediate gray edge pixels along slanted mesh boundary, got {intermediate_gray}"
+        );
+    }
 }

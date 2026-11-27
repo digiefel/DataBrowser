@@ -1,7 +1,7 @@
-// Fullscreen Weighted Blended OIT composite shader.
+// Fullscreen 4x MSAA Weighted Blended OIT composite shader.
 
-@group(0) @binding(0) var accum_tex: texture_2d<f32>;
-@group(0) @binding(1) var reveal_tex: texture_2d<f32>;
+@group(0) @binding(0) var accum_tex: texture_multisampled_2d<f32>;
+@group(0) @binding(1) var reveal_tex: texture_multisampled_2d<f32>;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vid: u32) -> @builtin(position) vec4<f32> {
@@ -15,13 +15,17 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> @builtin(position) vec4<f32> {
 }
 
 @fragment
-fn fs_main(@builtin(position) clip_pos: vec4<f32>) -> @location(0) vec4<f32> {
+fn fs_main(
+    @builtin(position) clip_pos: vec4<f32>,
+    @builtin(sample_index) sample_idx: u32,
+) -> @location(0) vec4<f32> {
     let coord = vec2<i32>(clip_pos.xy);
-    let reveal = textureLoad(reveal_tex, coord, 0).r;
+    let sid = i32(sample_idx);
+    let reveal = textureLoad(reveal_tex, coord, sid).r;
     if (reveal >= 0.9999) {
         discard;
     }
-    let accum = textureLoad(accum_tex, coord, 0);
+    let accum = textureLoad(accum_tex, coord, sid);
     let avg_color = accum.rgb / max(accum.a, 1e-5);
     let alpha = clamp(1.0 - reveal, 0.0, 1.0);
     return vec4<f32>(avg_color, alpha);
