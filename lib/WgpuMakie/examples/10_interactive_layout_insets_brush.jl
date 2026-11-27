@@ -59,8 +59,7 @@ if isnothing(save_path)
         println("Brushed ", sum(length(idxs) for (_, idxs) in sel.plots), " vertices inside ", sel.rect)
     end
     println("Use Edit mode to drag subplot divider, legend, colorbar, or inset corners; use Brush mode to select data.")
-    println("Close the viewer or press Enter to exit...")
-    readline()
+    isinteractive() || wait(scr)
 else
     mkpath(dirname(save_path))
     Makie.save(save_path, fig)

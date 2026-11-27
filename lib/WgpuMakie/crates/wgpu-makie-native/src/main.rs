@@ -7,16 +7,16 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
 use wgpu_makie_editor::{
-    draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, show_timeline_bar,
-    EditorAction, EditorModel,
+    draw_canvas_overlays, draw_editor_panel, draw_inline_text_editor, draw_inspector_dock,
+    draw_toolbar, show_timeline_bar, EditorAction, EditorModel, InlineTextEdit,
 };
 use wgpu_makie_proto::{
     read_frame, write_frame, ClientMessage, EditorCommand, PointerEventKind, ServerMessage,
 };
 use wgpu_makie_render::{HeadlessRenderer, WgpuRenderer};
 use wgpu_makie_scene::{
-    format_tooltip, reset_axes, CameraController, DirectManipController, InteractionUpdate,
-    SceneGraph, ToolMode,
+    format_tooltip, point_inside_legend, CameraController, DirectManipController,
+    InteractionUpdate, SceneGraph, ToolMode,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -200,8 +200,12 @@ struct ViewerApp {
     mods_mask: u8,
     hover_tooltip: Option<String>,
     last_pick_time: Instant,
+    last_edit_click: Option<(Instant, [f64; 2])>,
     plot_rect_pts: egui::Rect,
     last_sent_plot_size: [u32; 2],
+    interaction_seq: u64,
+    window_shown: bool,
+    last_resize_send: Instant,
 }
 
 impl ViewerApp {
@@ -214,7 +218,7 @@ impl ViewerApp {
             graph: SceneGraph {
                 px_per_unit: 1.0,
                 size: [900, 600],
-                editor_visible: true,
+                editor_visible: false,
                 ..Default::default()
             },
             camera_ctrl: CameraController::default(),
@@ -225,11 +229,15 @@ impl ViewerApp {
             mods_mask: 0,
             hover_tooltip: None,
             last_pick_time: Instant::now(),
+            last_edit_click: None,
             plot_rect_pts: egui::Rect::from_min_size(
                 egui::pos2(0.0, 40.0),
-                egui::vec2(610.0, 560.0),
+                egui::vec2(900.0, 560.0),
             ),
             last_sent_plot_size: [0, 0],
+            interaction_seq: 0,
+            window_shown: false,
+            last_resize_send: Instant::now(),
         }
     }
 
@@ -239,27 +247,42 @@ impl ViewerApp {
         }
     }
 
-    fn handle_interaction_update(&self, upd: InteractionUpdate) {
+    fn handle_interaction_update(&mut self, upd: InteractionUpdate) {
         match upd {
             InteractionUpdate::None => {}
             InteractionUpdate::AxisLimits(list) => {
                 for (axis_id, limits) in list {
-                    self.send(ClientMessage::AxisLimitsChanged { axis_id, limits });
+                    self.interaction_seq += 1;
+                    let seq = self.interaction_seq;
+                    self.graph.local_axis_seq.insert(axis_id, seq);
+                    self.send(ClientMessage::AxisLimitsChanged {
+                        axis_id,
+                        limits,
+                        seq,
+                    });
                 }
             }
             InteractionUpdate::Camera3D(scene_id, eyeposition, lookat, upvector, fov) => {
+                self.interaction_seq += 1;
+                let seq = self.interaction_seq;
+                self.graph.local_cam3d_seq.insert(scene_id, seq);
                 self.send(ClientMessage::Camera3DChanged {
                     scene_id,
                     eyeposition,
                     lookat,
                     upvector,
                     fov,
+                    seq,
                 });
             }
         }
     }
 
     fn update_hover_tooltip(&mut self) {
+        if !self.editor.show_inspector_dock {
+            self.hover_tooltip = None;
+            return;
+        }
         if self.last_pick_time.elapsed().as_millis() < 16 {
             return;
         }
@@ -332,7 +355,7 @@ impl ViewerApp {
                 let _ = tx.send(msg);
             }
         }
-        let timeline_playing = self.editor.is_timeline_playing();
+        let mut needs_redraw = self.editor.is_timeline_playing();
 
         let frame = match ws.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(tex)
@@ -362,10 +385,16 @@ impl ViewerApp {
             egui::Panel::top("wgpu_makie_top").show(ui, |ui| {
                 editor_actions.extend(draw_toolbar(ui, &mut self.editor, &self.graph, fps, frame_ms));
             });
+            if !self.editor.show_inspector_dock {
+                self.hover_tooltip = None;
+            }
 
             if self.graph.editor_visible {
                 egui::Panel::right("wgpu_makie_editor")
-                    .default_size(290.0)
+                    .resizable(true)
+                    .default_size(235.0)
+                    .min_size(195.0)
+                    .max_size(380.0)
                     .show(ui, |ui| {
                         editor_actions.extend(draw_editor_panel(ui, &mut self.editor, &mut self.graph));
                     });
@@ -373,7 +402,7 @@ impl ViewerApp {
                 && (self.editor.selected_elem.is_some() || self.editor.brush.is_some())
             {
                 egui::Window::new("Inspector")
-                    .default_width(250.0)
+                    .default_width(240.0)
                     .show(ui.ctx(), |ui| {
                         editor_actions.extend(draw_inspector_dock(ui, &mut self.editor, &self.graph));
                     });
@@ -383,6 +412,12 @@ impl ViewerApp {
 
             central_rect = ui.available_rect_before_wrap();
             draw_canvas_overlays(ui.ctx(), &self.graph, &self.manip, &self.editor, central_rect);
+            editor_actions.extend(draw_inline_text_editor(
+                ui.ctx(),
+                &self.graph,
+                &mut self.editor,
+                central_rect,
+            ));
 
             // Box-zoom overlay & hover tooltip anchored to central plot pane
             let painter = ui.ctx().layer_painter(egui::LayerId::new(
@@ -411,17 +446,29 @@ impl ViewerApp {
                     egui::StrokeKind::Inside,
                 );
             }
-            if let Some(tip) = &self.hover_tooltip {
-                let px = central_rect.min.x + (self.pointer_unitless[0] as f32) * scale_to_pts + 14.0;
-                let py = central_rect.max.y - (self.pointer_unitless[1] as f32) * scale_to_pts - 14.0;
-                egui::Area::new(egui::Id::unique("hover_tooltip"))
-                    .fixed_pos(egui::pos2(px, py))
-                    .order(egui::Order::Tooltip)
-                    .show(ui.ctx(), |ui| {
-                        egui::Frame::popup(ui.style()).show(ui, |ui| {
-                            ui.label(tip);
+            if self.editor.show_inspector_dock {
+                if let Some(tip) = &self.hover_tooltip {
+                    let px = (central_rect.min.x + (self.pointer_unitless[0] as f32) * scale_to_pts + 14.0)
+                        .clamp(central_rect.min.x + 4.0, (central_rect.max.x - 150.0).max(central_rect.min.x + 4.0));
+                    let py = (central_rect.max.y - (self.pointer_unitless[1] as f32) * scale_to_pts - 14.0)
+                        .clamp(central_rect.min.y + 4.0, (central_rect.max.y - 60.0).max(central_rect.min.y + 4.0));
+                    egui::Area::new(egui::Id::unique("wgpu_makie_hover_tooltip"))
+                        .fixed_pos(egui::pos2(px, py))
+                        .interactable(false)
+                        .order(egui::Order::Tooltip)
+                        .show(ui.ctx(), |ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                for (i, line) in tip.lines().enumerate() {
+                                    if i == 0 {
+                                        ui.strong(line);
+                                    } else {
+                                        ui.monospace(line);
+                                    }
+                                }
+                            });
                         });
-                    });
+                }
             }
         });
 
@@ -435,17 +482,21 @@ impl ViewerApp {
 
         let cw = central_rect.width().round().max(64.0) as u32;
         let ch = central_rect.height().round().max(64.0) as u32;
-        let pending_resize = if self.last_sent_plot_size != [cw, ch] {
-            self.last_sent_plot_size = [cw, ch];
-            self.graph.size = [cw, ch];
-            Some(ClientMessage::ResizeEvent {
-                width: cw,
-                height: ch,
-                px_per_unit: scale,
-            })
-        } else {
-            None
-        };
+        let mut pending_resize = None;
+        if self.window_shown && self.last_sent_plot_size != [cw, ch] {
+            if self.last_resize_send.elapsed().as_millis() >= 25 {
+                self.last_sent_plot_size = [cw, ch];
+                self.last_resize_send = Instant::now();
+                self.graph.size = [cw, ch];
+                pending_resize = Some(ClientMessage::ResizeEvent {
+                    width: cw,
+                    height: ch,
+                    px_per_unit: scale,
+                });
+            } else {
+                needs_redraw = true;
+            }
+        }
 
         ws.renderer
             .prepare(&ws.device, &ws.queue, &mut self.graph, w, h);
@@ -510,14 +561,13 @@ impl ViewerApp {
         let mut copy_text: Option<String> = None;
         for act in editor_actions {
             match act {
-                EditorAction::ResetView => {
-                    let ids: Vec<u64> = self.graph.axes.keys().copied().collect();
-                    let updates = reset_axes(&mut self.graph, &ids);
-                    self.handle_interaction_update(InteractionUpdate::AxisLimits(updates));
-                }
                 EditorAction::ToggleEditor => {
                     self.graph.editor_visible = !self.graph.editor_visible;
-                    self.last_sent_plot_size = [0, 0];
+                    self.last_resize_send = Instant::now() - std::time::Duration::from_millis(100);
+                    needs_redraw = true;
+                    self.send(ClientMessage::EditorVisibilityChanged {
+                        visible: self.graph.editor_visible,
+                    });
                 }
                 EditorAction::CopyToClipboard(text) => {
                     copy_text = Some(text);
@@ -535,7 +585,7 @@ impl ViewerApp {
         if let Some(msg) = pending_resize {
             self.send(msg);
         }
-        if timeline_playing {
+        if needs_redraw {
             if let Some(ws) = &self.win {
                 ws.window.request_redraw();
             }
@@ -553,6 +603,7 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
 
         let attrs = Window::default_attributes()
             .with_title(&self.graph.title)
+            .with_visible(false)
             .with_inner_size(LogicalSize::new(
                 self.graph.size[0].max(320),
                 self.graph.size[1].max(240),
@@ -700,29 +751,29 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                 }
             }
             AppEvent::Server(msg) => {
-                if let ServerMessage::Hello {
-                    title,
-                    size,
-                    show_editor,
-                    ..
-                } = &msg
-                {
+                if let ServerMessage::Hello { title, size, .. } = &msg {
                     if let Some(ws) = &self.win {
                         ws.window.set_title(title);
-                        let extra_w = if *show_editor { 300 } else { 0 };
-                        let extra_h = 44;
+                        let extra_h = 30;
                         let _ = ws.window.request_inner_size(LogicalSize::new(
-                            size[0].max(320) + extra_w,
+                            size[0].max(320),
                             size[1].max(240) + extra_h,
                         ));
                     }
-                    self.last_sent_plot_size = [0, 0];
+                    self.last_sent_plot_size = [size[0].max(64), size[1].max(64)];
+                }
+                if matches!(&msg, ServerMessage::SetEditorVisible { .. }) {
+                    self.last_resize_send = Instant::now() - std::time::Duration::from_millis(100);
                 }
                 if !self.editor.apply_server_message(&msg) {
                     self.graph.apply(msg);
                 }
                 if let Some(ws) = &self.win {
                     self.graph.px_per_unit = ws.window.scale_factor() as f32;
+                    if !self.window_shown && !self.graph.scenes.is_empty() {
+                        self.window_shown = true;
+                        ws.window.set_visible(true);
+                    }
                     ws.window.request_redraw();
                 }
             }
@@ -760,14 +811,12 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     ws.surface.configure(&ws.device, &ws.surface_config);
                     let scale = ws.window.scale_factor() as f32;
                     self.graph.px_per_unit = scale;
-                    self.last_sent_plot_size = [0, 0];
                     ws.window.request_redraw();
                 }
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 if let Some(ws) = &self.win {
                     self.graph.px_per_unit = ws.window.scale_factor() as f32;
-                    self.last_sent_plot_size = [0, 0];
                     ws.window.request_redraw();
                 }
             }
@@ -871,16 +920,20 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                             .camera_ctrl
                             .on_pointer_move(&mut self.graph, self.pointer_unitless);
                         self.handle_interaction_update(upd);
-                        self.update_hover_tooltip();
+                        let dragging = self.camera_ctrl.gesture_2d.is_some()
+                            || self.camera_ctrl.gesture_3d.is_some();
+                        if !dragging {
+                            self.update_hover_tooltip();
+                            self.send(ClientMessage::PointerEvent {
+                                x: ux,
+                                y: uy,
+                                buttons: self.buttons_mask,
+                                modifiers: self.mods_mask,
+                                kind: PointerEventKind::Move,
+                                scroll: [0.0, 0.0],
+                            });
+                        }
                     }
-                    self.send(ClientMessage::PointerEvent {
-                        x: ux,
-                        y: uy,
-                        buttons: self.buttons_mask,
-                        modifiers: self.mods_mask,
-                        kind: PointerEventKind::Move,
-                        scroll: [0.0, 0.0],
-                    });
                     request_redraw = true;
                 }
             }
@@ -896,78 +949,140 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     if state == ElementState::Pressed {
                         self.buttons_mask |= bit;
                         if self.editor.tool_mode != ToolMode::Navigate && btn == 0 {
-                            let mo = self.manip.on_pointer_down(
-                                &self.graph,
-                                self.editor.doc.as_ref(),
-                                self.editor.tool_mode,
-                                self.pointer_unitless,
-                                btn,
-                            );
-                            if mo.selected_annotation.is_some() {
-                                self.editor.selected_annotation = mo.selected_annotation;
-                            }
-                            for msg in mo.messages {
-                                self.send(msg);
+                            let is_edit_dbl = self.editor.tool_mode == ToolMode::Edit
+                                && self.last_edit_click.is_some_and(|(t, p)| {
+                                    t.elapsed().as_millis() <= 400
+                                        && (p[0] - self.pointer_unitless[0])
+                                            .hypot(p[1] - self.pointer_unitless[1])
+                                            <= 8.0
+                                });
+                            if is_edit_dbl {
+                                self.last_edit_click = None;
+                                if let Some((aid, txt, anchor_px)) = self.manip.hit_text_annotation(
+                                    &self.graph,
+                                    self.editor.doc.as_ref(),
+                                    self.pointer_unitless,
+                                ) {
+                                    self.manip.cancel_drag();
+                                    self.editor.selected_annotation = Some(aid);
+                                    self.editor.inline_edit_ann = Some(InlineTextEdit {
+                                        ann_id: aid,
+                                        draft: txt.clone(),
+                                        orig_text: txt,
+                                        anchor_px,
+                                        needs_focus: true,
+                                    });
+                                } else {
+                                    let mo = self.manip.on_pointer_down(
+                                        &self.graph,
+                                        self.editor.doc.as_ref(),
+                                        self.editor.tool_mode,
+                                        self.pointer_unitless,
+                                        btn,
+                                    );
+                                    if mo.selected_annotation.is_some() {
+                                        self.editor.selected_annotation = mo.selected_annotation;
+                                    }
+                                    for msg in mo.messages {
+                                        self.send(msg);
+                                    }
+                                }
+                            } else {
+                                if self.editor.tool_mode == ToolMode::Edit {
+                                    self.last_edit_click =
+                                        Some((Instant::now(), self.pointer_unitless));
+                                }
+                                let mo = self.manip.on_pointer_down(
+                                    &self.graph,
+                                    self.editor.doc.as_ref(),
+                                    self.editor.tool_mode,
+                                    self.pointer_unitless,
+                                    btn,
+                                );
+                                if mo.selected_annotation.is_some() {
+                                    self.editor.selected_annotation = mo.selected_annotation;
+                                }
+                                for msg in mo.messages {
+                                    self.send(msg);
+                                }
                             }
                         } else {
-                            let upd = self.camera_ctrl.on_pointer_down(
-                                &mut self.graph,
-                                self.pointer_unitless,
-                                btn,
-                                self.mods_mask,
-                            );
-                            self.handle_interaction_update(upd);
-                            if btn == 0 {
-                                if let Some(ws) = &mut self.win {
-                                    if let Ok(hits) = ws.renderer.pick_region(
-                                        &ws.device,
-                                        &ws.queue,
-                                        &mut self.graph,
-                                        ws.surface_config.width,
-                                        ws.surface_config.height,
-                                        self.pointer_unitless[0].round() as i32,
-                                        self.pointer_unitless[1].round() as i32,
-                                        8,
-                                    ) {
-                                        let sel = hits.first().copied();
-                                        let pos = sel.and_then(|(p, i)| {
-                                            self.graph
-                                                .plots
-                                                .get(&p)
-                                                .and_then(|e| element_data_pos(&e.payload.primitive, i))
-                                        });
-                                        self.editor.set_selection(sel, pos);
-                                        let (pid, idx) = match sel {
-                                            Some((p, i)) => (Some(p), Some(i)),
-                                            None => (None, None),
-                                        };
-                                        self.send(ClientMessage::SelectionChanged {
-                                            plot_id: pid,
-                                            element_index: idx,
-                                        });
-                                        if let (Some((p, i)), Some(ppos)) = (sel, pos) {
-                                            if self.editor.has_custom_inspector_callback() {
-                                                self.send(ClientMessage::EditorCommand {
-                                                    command: EditorCommand::RequestCustomTooltip {
-                                                        plot_id: p,
-                                                        element_index: i,
-                                                        pos: ppos,
-                                                    },
-                                                });
+                            let on_legend = self.editor.tool_mode == ToolMode::Navigate
+                                && point_inside_legend(&self.graph, self.pointer_unitless);
+                            if on_legend {
+                                self.send(ClientMessage::PointerEvent {
+                                    x: self.pointer_unitless[0],
+                                    y: self.pointer_unitless[1],
+                                    buttons: self.buttons_mask,
+                                    modifiers: self.mods_mask,
+                                    kind: PointerEventKind::Down,
+                                    scroll: [0.0, 0.0],
+                                });
+                            } else {
+                                let upd = self.camera_ctrl.on_pointer_down(
+                                    &mut self.graph,
+                                    self.pointer_unitless,
+                                    btn,
+                                    self.mods_mask,
+                                );
+                                let cam_consumed = self.camera_ctrl.gesture_2d.is_some()
+                                    || self.camera_ctrl.gesture_3d.is_some()
+                                    || !matches!(upd, InteractionUpdate::None);
+                                self.handle_interaction_update(upd);
+                                if btn == 0 {
+                                    if let Some(ws) = &mut self.win {
+                                        if let Ok(hits) = ws.renderer.pick_region(
+                                            &ws.device,
+                                            &ws.queue,
+                                            &mut self.graph,
+                                            ws.surface_config.width,
+                                            ws.surface_config.height,
+                                            self.pointer_unitless[0].round() as i32,
+                                            self.pointer_unitless[1].round() as i32,
+                                            8,
+                                        ) {
+                                            let sel = hits.first().copied();
+                                            let pos = sel.and_then(|(p, i)| {
+                                                self.graph.plots.get(&p).and_then(|e| {
+                                                    element_data_pos(&e.payload.primitive, i)
+                                                })
+                                            });
+                                            self.editor.set_selection(sel, pos);
+                                            let (pid, idx) = match sel {
+                                                Some((p, i)) => (Some(p), Some(i)),
+                                                None => (None, None),
+                                            };
+                                            self.send(ClientMessage::SelectionChanged {
+                                                plot_id: pid,
+                                                element_index: idx,
+                                            });
+                                            if let (Some((p, i)), Some(ppos)) = (sel, pos) {
+                                                if self.editor.has_custom_inspector_callback() {
+                                                    self.send(ClientMessage::EditorCommand {
+                                                        command:
+                                                            EditorCommand::RequestCustomTooltip {
+                                                                plot_id: p,
+                                                                element_index: i,
+                                                                pos: ppos,
+                                                            },
+                                                    });
+                                                }
                                             }
                                         }
                                     }
                                 }
+                                if !cam_consumed {
+                                    self.send(ClientMessage::PointerEvent {
+                                        x: self.pointer_unitless[0],
+                                        y: self.pointer_unitless[1],
+                                        buttons: self.buttons_mask,
+                                        modifiers: self.mods_mask,
+                                        kind: PointerEventKind::Down,
+                                        scroll: [0.0, 0.0],
+                                    });
+                                }
                             }
                         }
-                        self.send(ClientMessage::PointerEvent {
-                            x: self.pointer_unitless[0],
-                            y: self.pointer_unitless[1],
-                            buttons: self.buttons_mask,
-                            modifiers: self.mods_mask,
-                            kind: PointerEventKind::Down,
-                            scroll: [0.0, 0.0],
-                        });
                     } else {
                         self.buttons_mask &= !bit;
                         if self.editor.tool_mode != ToolMode::Navigate && btn == 0 {
@@ -1003,43 +1118,51 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                                 self.editor.tool_mode = ToolMode::Edit;
                             }
                         } else {
+                            let had_gesture = self.camera_ctrl.gesture_2d.is_some()
+                                || self.camera_ctrl.gesture_3d.is_some();
                             let upd = self
                                 .camera_ctrl
                                 .on_pointer_up(&mut self.graph, self.pointer_unitless);
                             self.handle_interaction_update(upd);
+                            if !had_gesture {
+                                self.send(ClientMessage::PointerEvent {
+                                    x: self.pointer_unitless[0],
+                                    y: self.pointer_unitless[1],
+                                    buttons: self.buttons_mask,
+                                    modifiers: self.mods_mask,
+                                    kind: PointerEventKind::Up,
+                                    scroll: [0.0, 0.0],
+                                });
+                            }
                         }
-                        self.send(ClientMessage::PointerEvent {
-                            x: self.pointer_unitless[0],
-                            y: self.pointer_unitless[1],
-                            buttons: self.buttons_mask,
-                            modifiers: self.mods_mask,
-                            kind: PointerEventKind::Up,
-                            scroll: [0.0, 0.0],
-                        });
                     }
                     request_redraw = true;
                 }
             }
             WindowEvent::MouseWheel { delta, .. } if !consumed => {
-                let (sx, sy) = match delta {
+                let (sx, mut sy) = match delta {
                     MouseScrollDelta::LineDelta(dx, dy) => (dx as f64, dy as f64),
                     MouseScrollDelta::PixelDelta(p) => (p.x / 40.0, p.y / 40.0),
                 };
+                sy = sy.clamp(-5.0, 5.0);
                 let upd = self.camera_ctrl.on_scroll(
                     &mut self.graph,
                     self.pointer_unitless,
                     sy,
                     self.mods_mask,
                 );
+                let cam_consumed = !matches!(upd, InteractionUpdate::None);
                 self.handle_interaction_update(upd);
-                self.send(ClientMessage::PointerEvent {
-                    x: self.pointer_unitless[0],
-                    y: self.pointer_unitless[1],
-                    buttons: self.buttons_mask,
-                    modifiers: self.mods_mask,
-                    kind: PointerEventKind::Scroll,
-                    scroll: [sx, sy],
-                });
+                if !cam_consumed && self.editor.tool_mode == ToolMode::Navigate {
+                    self.send(ClientMessage::PointerEvent {
+                        x: self.pointer_unitless[0],
+                        y: self.pointer_unitless[1],
+                        buttons: self.buttons_mask,
+                        modifiers: self.mods_mask,
+                        kind: PointerEventKind::Scroll,
+                        scroll: [sx, sy],
+                    });
+                }
                 request_redraw = true;
             }
             WindowEvent::RedrawRequested => {
@@ -1127,8 +1250,10 @@ mod tests {
             title: "Retina UI Check".into(),
             size: [800, 500],
             px_per_unit: 1.0,
-            show_editor: true,
         });
+        assert!(!graph.editor_visible);
+        graph.apply(ServerMessage::SetEditorVisible { visible: true });
+        assert!(graph.editor_visible);
         graph.px_per_unit = scale;
 
         let mut model = EditorModel::new();
@@ -1151,11 +1276,23 @@ mod tests {
             egui::Panel::top("tb").show(ui, |ui| {
                 let _ = draw_toolbar(ui, &mut model, &graph, 120.0, 8.33);
             });
-            egui::Panel::right("ed").default_size(290.0).show(ui, |ui| {
+            egui::Panel::right("ed").default_size(235.0).show(ui, |ui| {
                 let _ = draw_editor_panel(ui, &mut model, &mut graph);
             });
             central = ui.available_rect_before_wrap();
             draw_canvas_overlays(ui.ctx(), &graph, &manip, &model, central);
+            egui::Area::new(egui::Id::unique("ui_check_tooltip"))
+                .fixed_pos(central.center() + egui::vec2(14.0, -14.0))
+                .interactable(false)
+                .order(egui::Order::Tooltip)
+                .show(ui.ctx(), |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.strong("sin(x)");
+                        ui.monospace("x: 8.756");
+                        ui.monospace("y: 0.6204");
+                    });
+                });
         });
         let cw = central.width().round().max(100.0);
         let ch = central.height().round().max(100.0);
@@ -1259,6 +1396,29 @@ mod tests {
         renderer.set_plot_offset_px([ox, oy_bottom]);
         renderer.prepare(&hr.device, &hr.queue, &mut graph, w, h);
 
+        let mut out2 = egui_ctx.run_ui(raw_input.clone(), |ui| {
+            egui::Panel::top("tb").show(ui, |ui| {
+                let _ = draw_toolbar(ui, &mut model, &graph, 120.0, 8.33);
+            });
+            egui::Panel::right("ed").default_size(235.0).show(ui, |ui| {
+                let _ = draw_editor_panel(ui, &mut model, &mut graph);
+            });
+            central = ui.available_rect_before_wrap();
+            draw_canvas_overlays(ui.ctx(), &graph, &manip, &model, central);
+            egui::Area::new(egui::Id::unique("ui_check_tooltip"))
+                .fixed_pos(central.center() + egui::vec2(14.0, -14.0))
+                .interactable(false)
+                .order(egui::Order::Tooltip)
+                .show(ui.ctx(), |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.strong("sin(x)");
+                        ui.monospace("x: 8.756");
+                        ui.monospace("y: 0.6204");
+                    });
+                });
+        });
+
         let tex = hr.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("ui_check_color"),
             size: wgpu::Extent3d {
@@ -1278,12 +1438,18 @@ mod tests {
             size_in_pixels: [w, h],
             pixels_per_point: scale,
         };
-        let tris = egui_ctx.tessellate(out1.shapes, out1.pixels_per_point);
+        let tris = egui_ctx.tessellate(out2.shapes, out2.pixels_per_point);
         for (id, deltas) in out1.textures_delta.set.drain() {
             for d in &deltas {
                 egui_renderer.update_texture(&hr.device, &hr.queue, id, d);
             }
         }
+        for (id, deltas) in out2.textures_delta.set.drain() {
+            for d in &deltas {
+                egui_renderer.update_texture(&hr.device, &hr.queue, id, d);
+            }
+        }
+        out1.textures_delta.clear();
         let mut encoder = hr.device.create_command_encoder(&Default::default());
         renderer.encode_render_pass(&mut encoder, &view, &graph, w, h, [1.0, 1.0, 1.0, 1.0]);
         let extra = egui_renderer.update_buffers(&hr.device, &hr.queue, &mut encoder, &tris, &screen_desc);
@@ -1349,7 +1515,7 @@ mod tests {
         }
         drop(mapped);
         staging.unmap();
-        out1.textures_delta.clear();
+        out2.textures_delta.clear();
 
         // Save PNG for visual inspection first
         let mut f = std::fs::File::create("/tmp/wgpu_makie_ui_check.png").unwrap();

@@ -201,7 +201,6 @@ mod tests {
             title: "WASM".into(),
             size: [800, 600],
             px_per_unit: 2.0,
-            show_editor: true,
         };
         let raw = rmp_serde::to_vec_named(&m1).unwrap();
         assert_eq!(decode_server_messages(&raw).unwrap(), vec![m1.clone()]);

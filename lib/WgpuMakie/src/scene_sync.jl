@@ -84,28 +84,60 @@ function _extract_scene_state(scene::Scene, parent_id::Union{Nothing, UInt64})
     )
 end
 
-function _parse_reset_limits(rlims, mn, mx)
-    x0, y0 = Float64(mn[1]), Float64(mn[2])
-    x1, y1 = Float64(mx[1]), Float64(mx[2])
-    if rlims isa Tuple && length(rlims) == 4
-        return (
-            rlims[1] isa Real ? Float64(rlims[1]) : x0,
-            rlims[2] isa Real ? Float64(rlims[2]) : x1,
-            rlims[3] isa Real ? Float64(rlims[3]) : y0,
-            rlims[4] isa Real ? Float64(rlims[4]) : y1,
-        )
-    elseif rlims isa Tuple && length(rlims) == 2
-        xl, yl = rlims[1], rlims[2]
-        if xl isa Tuple && length(xl) == 2
-            x0 = xl[1] isa Real ? Float64(xl[1]) : x0
-            x1 = xl[2] isa Real ? Float64(xl[2]) : x1
-        end
-        if yl isa Tuple && length(yl) == 2
-            y0 = yl[1] isa Real ? Float64(yl[1]) : y0
-            y1 = yl[2] isa Real ? Float64(yl[2]) : y1
-        end
+function _expand_auto_limits(lo_raw::Float64, hi_raw::Float64, scale, margins)::Tuple{Float64, Float64}
+    lo_t = Float64(scale(lo_raw))
+    hi_t = Float64(scale(hi_raw))
+    if !isfinite(lo_t) || !isfinite(hi_t)
+        return (lo_raw, hi_raw)
     end
-    return (x0, x1, y0, y1)
+    span = hi_t - lo_t
+    if span <= 0.0
+        lo_t -= 0.5
+        hi_t += 0.5
+    else
+        lo_t -= span * Float64(margins[1])
+        hi_t += span * Float64(margins[2])
+    end
+    inv_scale = Makie.inverse_transform(scale)
+    out_lo = Float64(inv_scale(lo_t))
+    out_hi = Float64(inv_scale(hi_t))
+    return (isfinite(out_lo) && isfinite(out_hi)) ? (out_lo, out_hi) : (lo_raw, hi_raw)
+end
+
+function _axis_dim_reset_limits(ax::Makie.Axis, dim::Int, fb_lo::Float64, fb_hi::Float64)::Tuple{Float64, Float64}
+    rlims = ax.limits[]
+    spec = if rlims isa Tuple && length(rlims) == 4
+        (rlims[2 * (dim - 1) + 1], rlims[2 * (dim - 1) + 2])
+    elseif rlims isa Tuple && length(rlims) == 2
+        v = rlims[dim]
+        v isa Tuple && length(v) == 2 ? (v[1], v[2]) : (nothing, nothing)
+    else
+        (nothing, nothing)
+    end
+
+    explicit_lo = spec[1] isa Real ? Float64(spec[1]) : nothing
+    explicit_hi = spec[2] isa Real ? Float64(spec[2]) : nothing
+    if !isnothing(explicit_lo) && !isnothing(explicit_hi)
+        return (explicit_lo, explicit_hi)
+    end
+
+    auto_bounds = try
+        Makie.getlimits(ax, dim)
+    catch
+        nothing
+    end
+    auto_lo, auto_hi = if auto_bounds isa Tuple && length(auto_bounds) == 2 &&
+                          isfinite(auto_bounds[1]) && isfinite(auto_bounds[2])
+        scale = dim == 1 ? ax.xscale[] : ax.yscale[]
+        margins = dim == 1 ? ax.xautolimitmargin[] : ax.yautolimitmargin[]
+        _expand_auto_limits(Float64(auto_bounds[1]), Float64(auto_bounds[2]), scale, margins)
+    else
+        (fb_lo, fb_hi)
+    end
+    return (
+        isnothing(explicit_lo) ? auto_lo : explicit_lo,
+        isnothing(explicit_hi) ? auto_hi : explicit_hi,
+    )
 end
 
 function _extract_axis_meta(ax::Makie.Axis)
@@ -113,7 +145,8 @@ function _extract_axis_meta(ax::Makie.Axis)
     lims = ax.finallimits[]
     mn = minimum(lims)
     mx = maximum(lims)
-    rx0, rx1, ry0, ry1 = _parse_reset_limits(ax.limits[], mn, mx)
+    rx0, rx1 = _axis_dim_reset_limits(ax, 1, Float64(mn[1]), Float64(mx[1]))
+    ry0, ry1 = _axis_dim_reset_limits(ax, 2, Float64(mn[2]), Float64(mx[2]))
     prot = ax.layoutobservables.protrusions[]
     linked_x = UInt64[UInt64(objectid(a)) for a in ax.xaxislinks]
     linked_y = UInt64[UInt64(objectid(a)) for a in ax.yaxislinks]
@@ -142,17 +175,30 @@ function _extract_axis_meta(ax::Makie.Axis)
     )
 end
 
+function _schedule_flush!(screen)
+    (!screen.config.visible || !screen.open || screen.defer_flush[]) && return nothing
+    if !Threads.atomic_cas!(screen.flush_scheduled, false, true)
+        @async begin
+            yield()
+            screen.flush_scheduled[] = false
+            try
+                screen.open && !screen.defer_flush[] && flush_updates!(screen)
+            catch e
+                @warn "Scheduled flush failed" exception = (e, catch_backtrace())
+            end
+        end
+    end
+    return nothing
+end
+
 function _register_plot_observers!(screen, scene::Scene, plot::AbstractPlot)
     if plot isa Makie.ComputePlots
         pid = UInt64(objectid(plot))
         screen.id_to_plot[pid] = plot
         if !haskey(screen.plot_observers, pid)
             obs_fn = on(plot.attributes.onchange) do _
-                screen.syncing_from_viewer[] && return
                 @lock screen.sync_lock push!(screen.dirty_plots, (scene, plot))
-                if screen.config.visible && screen.open
-                    @async flush_updates!(screen)
-                end
+                _schedule_flush!(screen)
                 return
             end
             screen.plot_observers[pid] = (plot, obs_fn)
@@ -215,26 +261,31 @@ end
 
 function _mark_scene_dirty!(screen, scene::Scene, parent_id::Union{Nothing, UInt64})
     screen.syncing_from_viewer[] && return
-    if !isnothing(screen.viewer) && screen.open
-        send_msg!(screen.viewer, Dict{String, Any}(
-            "op" => "upsert_scene",
-            "scene" => _extract_scene_state(scene, parent_id),
-        ))
-    end
+    @lock screen.sync_lock push!(screen.dirty_scenes, scene)
+    _schedule_flush!(screen)
     return
 end
 
-function _sync_subtree!(screen, scene::Scene, parent_id::Union{Nothing, UInt64}, z_counter::Ref{Int32} = Ref(Int32(0)))
+function _collect_subtree_msgs!(screen, scene::Scene, parent_id::Union{Nothing, UInt64}, msgs::Vector{Dict{String, Any}}, z_counter::Ref{Int32} = Ref(Int32(0)))
     sid = UInt64(objectid(scene))
     screen.id_to_scene[sid] = scene
     _register_scene_observers!(screen, scene, parent_id)
 
-    msgs = Dict{String, Any}[]
     push!(msgs, Dict{String, Any}(
         "op" => "upsert_scene",
         "scene" => _extract_scene_state(scene, parent_id),
     ))
     _collect_scene_plots!(screen, scene, scene.plots, msgs, z_counter)
+
+    for child in scene.children
+        _collect_subtree_msgs!(screen, child, sid, msgs, z_counter)
+    end
+    return nothing
+end
+
+function _sync_subtree!(screen, scene::Scene, parent_id::Union{Nothing, UInt64}, z_counter::Ref{Int32} = Ref(Int32(0)))
+    msgs = Dict{String, Any}[]
+    _collect_subtree_msgs!(screen, scene, parent_id, msgs, z_counter)
 
     if !isempty(msgs) && !isnothing(screen.viewer) && screen.open
         send_msg!(screen.viewer, Dict{String, Any}(
@@ -242,16 +293,11 @@ function _sync_subtree!(screen, scene::Scene, parent_id::Union{Nothing, UInt64},
             "messages" => msgs,
         ))
     end
-
-    for child in scene.children
-        _sync_subtree!(screen, child, sid, z_counter)
-    end
     return nothing
 end
 
-function _sync_figure_axes!(screen, figure::Union{Nothing, Makie.Figure})
+function _collect_figure_axes_msgs!(screen, figure::Union{Nothing, Makie.Figure}, msgs::Vector{Dict{String, Any}})
     isnothing(figure) && return nothing
-    msgs = Dict{String, Any}[]
     for blk in figure.content
         if blk isa Makie.Axis
             aid = UInt64(objectid(blk))
@@ -263,18 +309,21 @@ function _sync_figure_axes!(screen, figure::Union{Nothing, Makie.Figure})
             if !haskey(screen.axis_observers, aid)
                 fn = on(blk.finallimits) do _
                     screen.syncing_from_viewer[] && return
-                    if !isnothing(screen.viewer) && screen.open
-                        send_msg!(screen.viewer, Dict{String, Any}(
-                            "op" => "upsert_axis_meta",
-                            "axis" => _extract_axis_meta(blk),
-                        ))
-                    end
+                    @lock screen.sync_lock push!(screen.dirty_axes, blk)
+                    _schedule_flush!(screen)
                     return
                 end
                 screen.axis_observers[aid] = fn
             end
         end
     end
+    return nothing
+end
+
+function _sync_figure_axes!(screen, figure::Union{Nothing, Makie.Figure})
+    isnothing(figure) && return nothing
+    msgs = Dict{String, Any}[]
+    _collect_figure_axes_msgs!(screen, figure, msgs)
     if !isempty(msgs) && !isnothing(screen.viewer) && screen.open
         send_msg!(screen.viewer, Dict{String, Any}("op" => "batch", "messages" => msgs))
     end
@@ -466,6 +515,15 @@ function _extract_layout_meta(screen, figure::Makie.Figure)
     )
 end
 
+function _collect_layout_meta_msg!(screen, figure::Union{Nothing, Makie.Figure}, msgs::Vector{Dict{String, Any}})
+    isnothing(figure) && return nothing
+    push!(msgs, Dict{String, Any}(
+        "op" => "upsert_layout_meta",
+        "layout" => _extract_layout_meta(screen, figure),
+    ))
+    return nothing
+end
+
 function _sync_layout_meta!(screen, figure::Union{Nothing, Makie.Figure})
     (isnothing(figure) || isnothing(screen.viewer) || !screen.open) && return nothing
     try
@@ -480,60 +538,95 @@ function _sync_layout_meta!(screen, figure::Union{Nothing, Makie.Figure})
 end
 
 """
-    flush_updates!(screen)
+    flush_updates!(screen; ack_seq = 0, include_layout = false)
 
-Push any pending scene, axis, or plot updates to the Rust viewer.
+Push any pending scene, axis, or plot updates to the Rust viewer in one atomic batch.
 """
-function flush_updates!(screen)
+function flush_updates!(screen; ack_seq::UInt64 = UInt64(0), include_layout::Bool = false)
     (isnothing(screen.viewer) || !screen.open || isnothing(screen.scene)) && return nothing
-    dirty_sc, dirty_pl = @lock screen.sync_lock begin
-        sc = collect(screen.dirty_scenes)
-        empty!(screen.dirty_scenes)
-        pl = collect(screen.dirty_plots)
-        empty!(screen.dirty_plots)
-        (sc, pl)
-    end
-    z_counter = Ref(Int32(length(screen.plot_zorder)))
-    for sc in dirty_sc
-        pid = isnothing(sc.parent) ? nothing : UInt64(objectid(sc.parent))
-        _sync_subtree!(screen, sc, pid, z_counter)
-    end
-
-    # Ensure lazy ComputePipeline outputs are resolved so `onchange` fires before draining
-    for (_, plot) in collect(screen.id_to_plot)
-        if plot isa Makie.ComputePlots
-            sc = Makie.parent_scene(plot)
-            sc === nothing && continue
-            for key in (:positions_transformed_f32c, :per_char_positions_transformed_f32c, :scaled_color, :text_color, :visible)
-                if haskey(plot.attributes, key)
-                    plot.attributes[key][]
+    @lock screen.flush_lock begin
+        prev_defer = screen.defer_flush[]
+        screen.defer_flush[] = true
+        try
+            # Ensure lazy ComputePipeline outputs are resolved so `onchange` fires before draining
+            for (_, plot) in collect(screen.id_to_plot)
+                if plot isa Makie.ComputePlots
+                    sc = Makie.parent_scene(plot)
+                    sc === nothing && continue
+                    for key in (:positions_transformed_f32c, :per_char_positions_transformed_f32c, :scaled_color, :text_color, :visible)
+                        if haskey(plot.attributes, key)
+                            try
+                                plot.attributes[key][]
+                            catch
+                            end
+                        end
+                    end
                 end
             end
-        end
-    end
 
-    more_pl = @lock screen.sync_lock begin
-        pl = collect(screen.dirty_plots)
-        empty!(screen.dirty_plots)
-        pl
-    end
-    append!(dirty_pl, more_pl)
+            dirty_sc, dirty_ax, dirty_pl = @lock screen.sync_lock begin
+                sc = collect(screen.dirty_scenes)
+                empty!(screen.dirty_scenes)
+                ax = collect(screen.dirty_axes)
+                empty!(screen.dirty_axes)
+                pl = collect(screen.dirty_plots)
+                empty!(screen.dirty_plots)
+                (sc, ax, pl)
+            end
 
-    if !isempty(dirty_pl)
-        msgs = Dict{String, Any}[]
-        seen = Set{UInt64}()
-        for (sc, plot) in dirty_pl
-            pid = UInt64(objectid(plot))
-            pid in seen && continue
-            push!(seen, pid)
-            haskey(screen.id_to_plot, pid) || continue
-            z = get(screen.plot_zorder, pid, Int32(0))
-            msg, extras = _build_plot_payload(screen, sc, plot, pid, UInt64(objectid(sc)), z)
-            append!(msgs, extras)
-            !isnothing(msg) && push!(msgs, msg)
-        end
-        if !isempty(msgs) && !isnothing(screen.viewer) && screen.open
-            send_msg!(screen.viewer, Dict{String, Any}("op" => "batch", "messages" => msgs))
+            msgs = Dict{String, Any}[]
+            if ack_seq > 0
+                push!(msgs, Dict{String, Any}("op" => "ack_interaction", "seq" => ack_seq))
+            end
+
+            seen_sc = Set{UInt64}()
+            for sc in dirty_sc
+                sid = UInt64(objectid(sc))
+                sid in seen_sc && continue
+                push!(seen_sc, sid)
+                haskey(screen.id_to_scene, sid) || continue
+                pid = isnothing(sc.parent) ? nothing : UInt64(objectid(sc.parent))
+                push!(msgs, Dict{String, Any}(
+                    "op" => "upsert_scene",
+                    "scene" => _extract_scene_state(sc, pid),
+                ))
+            end
+
+            seen_ax = Set{UInt64}()
+            for ax in dirty_ax
+                aid = UInt64(objectid(ax))
+                aid in seen_ax && continue
+                push!(seen_ax, aid)
+                screen.id_to_axis[aid] = ax
+                push!(msgs, Dict{String, Any}(
+                    "op" => "upsert_axis_meta",
+                    "axis" => _extract_axis_meta(ax),
+                ))
+            end
+
+            if include_layout && !isnothing(screen.figure)
+                _collect_layout_meta_msg!(screen, screen.figure, msgs)
+            end
+
+            if !isempty(dirty_pl)
+                seen = Set{UInt64}()
+                for (sc, plot) in dirty_pl
+                    pid = UInt64(objectid(plot))
+                    pid in seen && continue
+                    push!(seen, pid)
+                    haskey(screen.id_to_plot, pid) || continue
+                    z = get(screen.plot_zorder, pid, Int32(0))
+                    msg, extras = _build_plot_payload(screen, sc, plot, pid, UInt64(objectid(sc)), z)
+                    append!(msgs, extras)
+                    !isnothing(msg) && push!(msgs, msg)
+                end
+            end
+
+            if !isempty(msgs) && !isnothing(screen.viewer) && screen.open
+                send_msg!(screen.viewer, Dict{String, Any}("op" => "batch", "messages" => msgs))
+            end
+        finally
+            screen.defer_flush[] = prev_defer
         end
     end
     return nothing

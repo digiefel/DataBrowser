@@ -1,5 +1,6 @@
 //! Modular egui plot editor panels, toolbar, and standalone inspector dock.
 
+use crate::icons::{icon_button, icon_button_colored, tab_icon_button, IconKind};
 use crate::model::{EditorAction, EditorModel, EditorTab};
 use crate::widgets::{
     bool_or_expr_row, color_or_expr_row, combo_or_expr_row, slider_or_expr_row,
@@ -9,7 +10,7 @@ use wgpu_makie_proto::{
     ClientMessage, EditorAnnotationSpec, EditorCommand, EditorDocumentSnapshot,
 };
 use wgpu_makie_scene::inspector::format_tooltip;
-use wgpu_makie_scene::manipulate::{DirectManipController, ToolMode};
+use wgpu_makie_scene::manipulate::{data_to_pixel, DirectManipController, ToolMode};
 use wgpu_makie_scene::scene::SceneGraph;
 
 const PLOTTYPES: &[&str] = &[
@@ -100,20 +101,32 @@ const THEMES: &[&str] = &[
     ":black",
 ];
 
-const TOOLBAR_TOOLS: &[ToolMode] = &[
-    ToolMode::Navigate,
-    ToolMode::Edit,
-    ToolMode::AddText,
-    ToolMode::AddArrow,
-    ToolMode::AddCallout,
-    ToolMode::AddVSpan,
-    ToolMode::AddHSpan,
-    ToolMode::AddRect,
-    ToolMode::AddInset,
-    ToolMode::Brush,
+const ANNOTATE_MENU_TOOLS: &[(ToolMode, &str)] = &[
+    (ToolMode::AddText, "Text"),
+    (ToolMode::AddArrow, "Arrow"),
+    (ToolMode::AddCallout, "Callout"),
+    (ToolMode::AddVSpan, "Vertical Span"),
+    (ToolMode::AddHSpan, "Horizontal Span"),
+    (ToolMode::AddRect, "Rectangle"),
+    (ToolMode::AddInset, "Zoom Inset"),
 ];
 
-/// Draw the compact top bar with FPS readout, tool mode strip, view reset, editor toggle, and copy code button.
+fn is_annotate_tool(mode: ToolMode) -> bool {
+    matches!(
+        mode,
+        ToolMode::AddText
+            | ToolMode::AddArrow
+            | ToolMode::AddCallout
+            | ToolMode::AddVSpan
+            | ToolMode::AddHSpan
+            | ToolMode::AddRect
+            | ToolMode::AddHLine
+            | ToolMode::AddVLine
+            | ToolMode::AddInset
+    )
+}
+
+/// Draw the compact single-row icon toolbar.
 pub fn draw_toolbar(
     ui: &mut egui::Ui,
     model: &mut EditorModel,
@@ -125,57 +138,168 @@ pub fn draw_toolbar(
     if model.copy_notice_frames > 0 {
         model.copy_notice_frames -= 1;
     }
-    ui.horizontal_wrapped(|ui| {
-        ui.label(format!("WgpuMakie  {:.0} FPS ({:.2} ms)", fps, frame_ms));
-        ui.separator();
-        for &tool in TOOLBAR_TOOLS {
-            if ui
-                .selectable_label(model.tool_mode == tool, tool.label())
-                .clicked()
-            {
-                model.tool_mode = tool;
-            }
-        }
-        ui.separator();
-        if ui.button("Reset View").clicked() {
-            actions.push(EditorAction::ResetView);
-        }
-        if ui
-            .selectable_label(graph.editor_visible, "Editor")
-            .clicked()
+
+    ui.spacing_mut().item_spacing = egui::vec2(3.0, 2.0);
+    ui.spacing_mut().button_padding = egui::vec2(3.0, 2.0);
+
+    let mut plus_btn_rect = egui::Rect::NOTHING;
+    let mut plus_clicked = false;
+    let mut plus_hovered = false;
+
+    ui.horizontal(|ui| {
+        if icon_button(
+            ui,
+            IconKind::Navigate,
+            model.tool_mode == ToolMode::Navigate,
+            "Navigate (drag to zoom, right-drag to pan, double-click or Cmd+click to reset)",
+        )
+        .clicked()
         {
-            actions.push(EditorAction::ToggleEditor);
+            model.tool_mode = ToolMode::Navigate;
+            model.annotate_menu_open = false;
         }
-        ui.checkbox(&mut model.show_inspector_dock, "Inspector");
-        ui.separator();
+        if icon_button(
+            ui,
+            IconKind::Edit,
+            model.tool_mode == ToolMode::Edit,
+            "Edit annotations and layout",
+        )
+        .clicked()
+        {
+            model.tool_mode = ToolMode::Edit;
+            model.annotate_menu_open = false;
+        }
+        let plus_resp = icon_button(
+            ui,
+            IconKind::Annotate,
+            is_annotate_tool(model.tool_mode) || model.annotate_menu_open,
+            "Add annotation or inset",
+        );
+        plus_btn_rect = plus_resp.rect;
+        plus_hovered = plus_resp.hovered();
+        if plus_resp.clicked() {
+            plus_clicked = true;
+            model.annotate_menu_open = !model.annotate_menu_open;
+        }
+        if icon_button(
+            ui,
+            IconKind::Brush,
+            model.tool_mode == ToolMode::Brush,
+            "Brush select data points",
+        )
+        .clicked()
+        {
+            model.tool_mode = ToolMode::Brush;
+            model.annotate_menu_open = false;
+        }
+
+        if model.can_undo() || model.can_redo() || model.has_grafico() {
+            ui.separator();
+        }
+        if model.can_undo()
+            && icon_button(ui, IconKind::Undo, false, "Undo edit").clicked()
+        {
+            model.undo(&mut actions);
+        }
+        if model.can_redo()
+            && icon_button(ui, IconKind::Redo, false, "Redo edit").clicked()
+        {
+            model.redo(&mut actions);
+        }
         if model.has_grafico() {
-            if ui.button("Copy Grafico Code").clicked() {
+            let copied = model.copy_notice_frames > 0;
+            let icon = if copied { IconKind::Check } else { IconKind::Copy };
+            let tint = copied.then_some(egui::Color32::from_rgb(70, 180, 95));
+            if icon_button_colored(ui, icon, false, tint, "Copy Grafico code").clicked() {
                 actions.push(EditorAction::CopyToClipboard(model.exported_code.clone()));
                 model.copy_notice_frames = 90;
             }
         }
-        if model.can_undo() && ui.button("Undo").clicked() {
-            model.undo(&mut actions);
-        }
-        if model.can_redo() && ui.button("Redo").clicked() {
-            model.redo(&mut actions);
-        }
-        if model.copy_notice_frames > 0 {
-            ui.colored_label(egui::Color32::from_rgb(70, 170, 90), "Copied");
-        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icon_button(
+                ui,
+                IconKind::Sidebar,
+                graph.editor_visible,
+                "Toggle plot editor panel",
+            )
+            .clicked()
+            {
+                actions.push(EditorAction::ToggleEditor);
+            }
+            if icon_button(
+                ui,
+                IconKind::Inspector,
+                model.show_inspector_dock,
+                "Toggle hover data inspector",
+            )
+            .clicked()
+            {
+                model.show_inspector_dock = !model.show_inspector_dock;
+            }
+            if model.show_fps {
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!("{:3.0} FPS ({:5.2} ms)", fps, frame_ms))
+                        .small()
+                        .monospace(),
+                );
+            }
+        });
     });
+
+    if model.annotate_menu_open {
+        let popup_pos = plus_btn_rect.left_bottom() + egui::vec2(0.0, 4.0);
+        let area_resp = egui::Area::new(egui::Id::unique("wgpu_makie_annotate_menu"))
+            .fixed_pos(popup_pos)
+            .order(egui::Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(120.0);
+                    for &(mode, name) in ANNOTATE_MENU_TOOLS {
+                        if ui
+                            .selectable_label(model.tool_mode == mode, name)
+                            .clicked()
+                        {
+                            model.tool_mode = mode;
+                            model.annotate_menu_open = false;
+                        }
+                    }
+                });
+            });
+        let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let any_pressed = ui.input(|i| i.pointer.any_pressed());
+        let menu_hovered = area_resp.response.hovered();
+        if esc || (!plus_clicked && !plus_hovered && !menu_hovered && any_pressed) {
+            model.annotate_menu_open = false;
+        }
+    }
+
     actions
 }
 
-/// Draw the main right-hand plot & layout editor panel.
+fn editor_tab_title(tab: EditorTab) -> &'static str {
+    match tab {
+        EditorTab::Layers => "Layers",
+        EditorTab::AxesScales => "Axes & Scales",
+        EditorTab::Annotations => "Annotations & Layout",
+        EditorTab::Style => "Style",
+        EditorTab::Timeline => "Timeline",
+        EditorTab::Inspector => "Inspector",
+        EditorTab::Code => "Code",
+    }
+}
+
+/// Draw the compact right-hand plot & layout editor panel.
 pub fn draw_editor_panel(
     ui: &mut egui::Ui,
     model: &mut EditorModel,
     graph: &mut SceneGraph,
 ) -> Vec<EditorAction> {
     let mut actions = Vec::new();
+    ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
+    ui.spacing_mut().button_padding = egui::vec2(4.0, 2.0);
 
-    ui.heading("Plot Editor");
     if let Some(doc) = &model.doc {
         if let Some(err) = &doc.error {
             egui::Frame::group(ui.style())
@@ -189,15 +313,36 @@ pub fn draw_editor_panel(
         }
     }
 
-    ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(&mut model.active_tab, EditorTab::Layers, "Layers");
-        ui.selectable_value(&mut model.active_tab, EditorTab::AxesScales, "Axes / Scales");
-        ui.selectable_value(&mut model.active_tab, EditorTab::Annotations, "Annotate / Layout");
-        ui.selectable_value(&mut model.active_tab, EditorTab::Style, "Style");
-        ui.selectable_value(&mut model.active_tab, EditorTab::Timeline, "Timeline");
-        ui.selectable_value(&mut model.active_tab, EditorTab::Inspector, "Inspector");
-        ui.selectable_value(&mut model.active_tab, EditorTab::Code, "Code");
+    let has_tl = model.timeline.as_ref().is_some_and(|t| t.has_timeline);
+    let has_graf = model.has_grafico();
+    ui.horizontal(|ui| {
+        if tab_icon_button(ui, IconKind::Layers, model.active_tab == EditorTab::Layers, "Layers").clicked() {
+            model.active_tab = EditorTab::Layers;
+        }
+        if tab_icon_button(ui, IconKind::Axes, model.active_tab == EditorTab::AxesScales, "Axes & Scales").clicked() {
+            model.active_tab = EditorTab::AxesScales;
+        }
+        if tab_icon_button(ui, IconKind::Annotations, model.active_tab == EditorTab::Annotations, "Annotations & Layout").clicked() {
+            model.active_tab = EditorTab::Annotations;
+        }
+        if tab_icon_button(ui, IconKind::Style, model.active_tab == EditorTab::Style, "Style").clicked() {
+            model.active_tab = EditorTab::Style;
+        }
+        if tab_icon_button(ui, IconKind::Inspector, model.active_tab == EditorTab::Inspector, "Inspector").clicked() {
+            model.active_tab = EditorTab::Inspector;
+        }
+        if has_tl
+            && tab_icon_button(ui, IconKind::Timeline, model.active_tab == EditorTab::Timeline, "Timeline").clicked()
+        {
+            model.active_tab = EditorTab::Timeline;
+        }
+        if has_graf
+            && tab_icon_button(ui, IconKind::Code, model.active_tab == EditorTab::Code, "Code").clicked()
+        {
+            model.active_tab = EditorTab::Code;
+        }
     });
+    ui.label(egui::RichText::new(editor_tab_title(model.active_tab)).strong().small());
     ui.separator();
 
     egui::ScrollArea::vertical().show(ui, |ui| match model.active_tab {
@@ -209,7 +354,7 @@ pub fn draw_editor_panel(
         EditorTab::Inspector => {
             let dock_actions = draw_inspector_dock(ui, model, graph);
             actions.extend(dock_actions);
-            ui.add_space(8.0);
+            ui.add_space(6.0);
             ui.separator();
             draw_inspector_config_section(ui, model, &mut actions);
         }
@@ -236,7 +381,7 @@ pub fn draw_inspector_dock(
                 .map(|m| m.label.as_str())
                 .filter(|s| !s.is_empty())
                 .unwrap_or("Plot element");
-            ui.label(format!("{label} (#{pid}, point {})", idx + 1));
+            ui.label(format!("{label} (point {})", idx + 1));
 
             let pos = model.selected_pos.unwrap_or([0.0, 0.0, 0.0]);
             let is_3d = graph
@@ -320,7 +465,7 @@ pub fn draw_inspector_dock(
         ui.add_space(6.0);
         ui.separator();
         ui.heading("Brushed Region");
-        ui.label(format!("{} points selected (axis #{})", brush.total_points, brush.axis_id));
+        ui.label(format!("{} points selected", brush.total_points));
         if brush.total_points > 0 {
             ui.monospace(format!("X: [{:.4}, {:.4}]  mean {:.4}", brush.x_min, brush.x_max, brush.x_mean));
             ui.monospace(format!("Y: [{:.4}, {:.4}]  mean {:.4}", brush.y_min, brush.y_max, brush.y_mean));
@@ -739,62 +884,135 @@ fn draw_selected_layer_details(
     });
 }
 
+fn primitive_display_name(prim: &wgpu_makie_proto::PrimitiveKind) -> &'static str {
+    match prim {
+        wgpu_makie_proto::PrimitiveKind::Lines(l) => {
+            if l.is_segments {
+                "Line Segments"
+            } else {
+                "Lines"
+            }
+        }
+        wgpu_makie_proto::PrimitiveKind::Scatter(_) => "Scatter",
+        wgpu_makie_proto::PrimitiveKind::Text(_) => "Text",
+        wgpu_makie_proto::PrimitiveKind::Mesh(_) => "Mesh",
+        wgpu_makie_proto::PrimitiveKind::MeshScatter(_) => "Mesh Scatter",
+        wgpu_makie_proto::PrimitiveKind::Volume(_) => "Volume",
+        wgpu_makie_proto::PrimitiveKind::Voxels(_) => "Voxels",
+    }
+}
+
+fn plot_swatch_color(prim: &wgpu_makie_proto::PrimitiveKind) -> egui::Color32 {
+    let cs = match prim {
+        wgpu_makie_proto::PrimitiveKind::Lines(l) => Some(&l.colors),
+        wgpu_makie_proto::PrimitiveKind::Scatter(s) => Some(&s.colors),
+        wgpu_makie_proto::PrimitiveKind::Mesh(m) => Some(&m.colors),
+        wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => Some(&ms.colors),
+        _ => None,
+    };
+    if let Some(wgpu_makie_proto::ColorSource::Uniform { rgba }) = cs {
+        return egui::Color32::from_rgba_unmultiplied(
+            (rgba[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (rgba[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (rgba[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+            ((rgba[3].max(0.25)).clamp(0.0, 1.0) * 255.0).round() as u8,
+        );
+    }
+    egui::Color32::from_rgb(130, 145, 165)
+}
+
 fn draw_plain_layers_fallback(
     ui: &mut egui::Ui,
     model: &mut EditorModel,
     graph: &mut SceneGraph,
     actions: &mut Vec<EditorAction>,
 ) {
-    ui.label("Scene Primitives (Makie Fallback):");
-    for &pid in &graph.plot_order {
+    let mut data_scene_ids: std::collections::HashSet<u64> =
+        graph.axes.values().map(|a| a.data_scene_id).collect();
+    for (sid, snode) in &graph.scenes {
+        if snode.state.camera.is_3d {
+            data_scene_ids.insert(*sid);
+        }
+    }
+    let filtered: Vec<u64> = graph
+        .plot_order
+        .iter()
+        .copied()
+        .filter(|pid| {
+            graph.plots.get(pid).is_some_and(|e| {
+                e.payload.inspectable || data_scene_ids.contains(&e.payload.scene_id)
+            })
+        })
+        .collect();
+    let display_ids = if filtered.is_empty() {
+        graph.plot_order.clone()
+    } else {
+        filtered
+    };
+    for (idx, pid) in display_ids.into_iter().enumerate() {
         if let Some(entry) = graph.plots.get_mut(&pid) {
             let mut vis = entry.payload.visible;
+            let swatch = plot_swatch_color(&entry.payload.primitive);
+            let fallback_name = format!("{} {}", primitive_display_name(&entry.payload.primitive), idx + 1);
             let label = entry
                 .payload
                 .inspector
                 .as_ref()
                 .map(|m| m.label.as_str())
                 .filter(|s| !s.is_empty())
-                .unwrap_or("Primitive");
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.checkbox(&mut vis, format!("#{pid} {label}")).changed() {
-                        entry.payload.visible = vis;
-                        actions.push(EditorAction::Send(ClientMessage::PlotVisibilityChanged {
-                            plot_id: pid,
-                            visible: vis,
+                .unwrap_or(fallback_name.as_str())
+                .to_string();
+            let expanded = model.expanded_plots.contains(&pid);
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut vis, "").changed() {
+                    entry.payload.visible = vis;
+                    actions.push(EditorAction::Send(ClientMessage::PlotVisibilityChanged {
+                        plot_id: pid,
+                        visible: vis,
+                    }));
+                }
+                let (srect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                ui.painter().rect_filled(srect, 2.0, swatch);
+                if ui.selectable_label(expanded, &label).clicked() {
+                    if expanded {
+                        model.expanded_plots.remove(&pid);
+                    } else {
+                        model.expanded_plots.insert(pid);
+                    }
+                }
+            });
+            if expanded {
+                ui.indent(format!("plain_indent_{pid}"), |ui| {
+                    let color_key = format!("plain_color_{pid}");
+                    if let Some(new_col) =
+                        color_or_expr_row(ui, model, &color_key, "color", ":steelblue", true)
+                    {
+                        actions.push(EditorAction::Send(ClientMessage::EditorCommand {
+                            command: EditorCommand::SetPlotAttr {
+                                plot_id: pid,
+                                key: "color".into(),
+                                expr: new_col,
+                            },
+                        }));
+                    }
+                    let size_key = format!("plain_size_{pid}");
+                    if let Some(new_sz) =
+                        slider_or_expr_row(ui, model, &size_key, "size", "10", true, 1.0..=48.0, 0.5)
+                    {
+                        let attr = match entry.payload.primitive {
+                            wgpu_makie_proto::PrimitiveKind::Lines(_) => "linewidth",
+                            _ => "markersize",
+                        };
+                        actions.push(EditorAction::Send(ClientMessage::EditorCommand {
+                            command: EditorCommand::SetPlotAttr {
+                                plot_id: pid,
+                                key: attr.into(),
+                                expr: new_sz,
+                            },
                         }));
                     }
                 });
-                let color_key = format!("plain_color_{pid}");
-                if let Some(new_col) =
-                    color_or_expr_row(ui, model, &color_key, "color", ":steelblue", true)
-                {
-                    actions.push(EditorAction::Send(ClientMessage::EditorCommand {
-                        command: EditorCommand::SetPlotAttr {
-                            plot_id: pid,
-                            key: "color".into(),
-                            expr: new_col,
-                        },
-                    }));
-                }
-                let size_key = format!("plain_size_{pid}");
-                if let Some(new_sz) =
-                    slider_or_expr_row(ui, model, &size_key, "size", "10", true, 1.0..=48.0, 0.5)
-                {
-                    let attr = match entry.payload.primitive {
-                        wgpu_makie_proto::PrimitiveKind::Lines(_) => "linewidth",
-                        _ => "markersize",
-                    };
-                    actions.push(EditorAction::Send(ClientMessage::EditorCommand {
-                        command: EditorCommand::SetPlotAttr {
-                            plot_id: pid,
-                            key: attr.into(),
-                            expr: new_sz,
-                        },
-                    }));
-                }
-            });
+            }
         }
     }
 }
@@ -808,12 +1026,14 @@ fn draw_axes_scales_tab(
     let has_graf = model.has_grafico();
     let mut ax_ids: Vec<u64> = graph.axes.keys().copied().collect();
     ax_ids.sort_unstable();
-    for ax_id in ax_ids {
+    for (i, ax_id) in ax_ids.into_iter().enumerate() {
         if let Some(ax) = graph.axes.get(&ax_id) {
-            egui::CollapsingHeader::new(format!(
-                "Axis #{ax_id} {}",
-                if ax.title.is_empty() { "" } else { &ax.title }
-            ))
+            let ax_header = if ax.title.is_empty() {
+                format!("Axis {}", i + 1)
+            } else {
+                format!("Axis {}: {}", i + 1, ax.title)
+            };
+            egui::CollapsingHeader::new(ax_header)
             .id_salt(format!("ax_{ax_id}"))
             .default_open(true)
             .show(ui, |ui| {
@@ -1045,132 +1265,133 @@ fn draw_style_tab(
     _graph: &SceneGraph,
     actions: &mut Vec<EditorAction>,
 ) {
-    let Some(doc) = &model.doc.clone() else {
+    if let Some(doc) = model.doc.clone().filter(|d| d.has_grafico) {
+        ui.heading("Legend");
+        let show_cur = doc
+            .legend
+            .iter()
+            .find(|(k, _)| k == "show")
+            .map(|(_, ev)| ev.expr.as_str())
+            .unwrap_or("true");
+        if let Some(new_show) = bool_or_expr_row(ui, model, "leg_show", "Show Legend", show_cur) {
+            model.push_command(
+                actions,
+                EditorCommand::SetLegend {
+                    key: "show".into(),
+                    expr: new_show,
+                },
+                None,
+            );
+        }
+
+        let pos_cur = doc
+            .legend
+            .iter()
+            .find(|(k, _)| k == "position")
+            .map(|(_, ev)| ev.expr.as_str())
+            .unwrap_or(":right");
+        if let Some(new_pos) = combo_or_expr_row(
+            ui,
+            model,
+            "leg_pos",
+            "Position",
+            pos_cur,
+            &[":right", ":left", ":top", ":bottom", ":inside"],
+        ) {
+            model.push_command(
+                actions,
+                EditorCommand::SetLegend {
+                    key: "position".into(),
+                    expr: new_pos,
+                },
+                None,
+            );
+        }
+
+        let merge_cur = doc
+            .legend
+            .iter()
+            .find(|(k, _)| k == "merge")
+            .map(|(_, ev)| ev.expr.as_str())
+            .unwrap_or("false");
+        if let Some(new_merge) = bool_or_expr_row(ui, model, "leg_merge", "Merge Groups", merge_cur) {
+            model.push_command(
+                actions,
+                EditorCommand::SetLegend {
+                    key: "merge".into(),
+                    expr: new_merge,
+                },
+                None,
+            );
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.heading("Theme");
+        let base_cur = doc
+            .theme
+            .as_ref()
+            .and_then(|t| t.base.as_deref())
+            .map(|b| format!(":{b}"))
+            .unwrap_or_else(|| "none".into());
+        if let Some(new_base) = combo_or_expr_row(ui, model, "theme_base", "Base", &base_cur, THEMES) {
+            let base_opt = if new_base == "none" {
+                None
+            } else {
+                Some(new_base.trim_start_matches(':').to_string())
+            };
+            model.push_command(
+                actions,
+                EditorCommand::SetTheme {
+                    base: base_opt,
+                    key: None,
+                    expr: None,
+                },
+                None,
+            );
+        }
+        let fs_cur = doc
+            .theme
+            .as_ref()
+            .and_then(|t| t.settings.iter().find(|(k, _)| k == "fontsize"))
+            .map(|(_, ev)| ev.expr.as_str())
+            .unwrap_or("14");
+        let fs_lit = doc
+            .theme
+            .as_ref()
+            .and_then(|t| t.settings.iter().find(|(k, _)| k == "fontsize"))
+            .map(|(_, ev)| ev.is_literal)
+            .unwrap_or(true);
+        if let Some(new_fs) = slider_or_expr_row(
+            ui,
+            model,
+            "theme_fontsize",
+            "Font Size",
+            fs_cur,
+            fs_lit,
+            6.0..=36.0,
+            0.5,
+        ) {
+            let base_opt = doc.theme.as_ref().and_then(|t| t.base.clone());
+            model.push_command(
+                actions,
+                EditorCommand::SetTheme {
+                    base: base_opt,
+                    key: Some("fontsize".into()),
+                    expr: Some(new_fs),
+                },
+                None,
+            );
+        }
+        ui.add_space(8.0);
+        ui.separator();
+    } else {
         ui.label("Theme and legend controls apply to Grafico plots.");
-        return;
-    };
-    if !doc.has_grafico {
-        ui.label("Theme and legend controls apply to Grafico plots.");
-        return;
+        ui.add_space(8.0);
+        ui.separator();
     }
-
-    ui.heading("Legend");
-    let show_cur = doc
-        .legend
-        .iter()
-        .find(|(k, _)| k == "show")
-        .map(|(_, ev)| ev.expr.as_str())
-        .unwrap_or("true");
-    if let Some(new_show) = bool_or_expr_row(ui, model, "leg_show", "Show Legend", show_cur) {
-        model.push_command(
-            actions,
-            EditorCommand::SetLegend {
-                key: "show".into(),
-                expr: new_show,
-            },
-            None,
-        );
-    }
-
-    let pos_cur = doc
-        .legend
-        .iter()
-        .find(|(k, _)| k == "position")
-        .map(|(_, ev)| ev.expr.as_str())
-        .unwrap_or(":right");
-    if let Some(new_pos) = combo_or_expr_row(
-        ui,
-        model,
-        "leg_pos",
-        "Position",
-        pos_cur,
-        &[":right", ":left", ":top", ":bottom", ":inside"],
-    ) {
-        model.push_command(
-            actions,
-            EditorCommand::SetLegend {
-                key: "position".into(),
-                expr: new_pos,
-            },
-            None,
-        );
-    }
-
-    let merge_cur = doc
-        .legend
-        .iter()
-        .find(|(k, _)| k == "merge")
-        .map(|(_, ev)| ev.expr.as_str())
-        .unwrap_or("false");
-    if let Some(new_merge) = bool_or_expr_row(ui, model, "leg_merge", "Merge Groups", merge_cur) {
-        model.push_command(
-            actions,
-            EditorCommand::SetLegend {
-                key: "merge".into(),
-                expr: new_merge,
-            },
-            None,
-        );
-    }
-
-    ui.add_space(8.0);
-    ui.separator();
-    ui.heading("Theme");
-    let base_cur = doc
-        .theme
-        .as_ref()
-        .and_then(|t| t.base.as_deref())
-        .map(|b| format!(":{b}"))
-        .unwrap_or_else(|| "none".into());
-    if let Some(new_base) = combo_or_expr_row(ui, model, "theme_base", "Base", &base_cur, THEMES) {
-        let base_opt = if new_base == "none" {
-            None
-        } else {
-            Some(new_base.trim_start_matches(':').to_string())
-        };
-        model.push_command(
-            actions,
-            EditorCommand::SetTheme {
-                base: base_opt,
-                key: None,
-                expr: None,
-            },
-            None,
-        );
-    }
-    let fs_cur = doc
-        .theme
-        .as_ref()
-        .and_then(|t| t.settings.iter().find(|(k, _)| k == "fontsize"))
-        .map(|(_, ev)| ev.expr.as_str())
-        .unwrap_or("14");
-    let fs_lit = doc
-        .theme
-        .as_ref()
-        .and_then(|t| t.settings.iter().find(|(k, _)| k == "fontsize"))
-        .map(|(_, ev)| ev.is_literal)
-        .unwrap_or(true);
-    if let Some(new_fs) = slider_or_expr_row(
-        ui,
-        model,
-        "theme_fontsize",
-        "Font Size",
-        fs_cur,
-        fs_lit,
-        6.0..=36.0,
-        0.5,
-    ) {
-        let base_opt = doc.theme.as_ref().and_then(|t| t.base.clone());
-        model.push_command(
-            actions,
-            EditorCommand::SetTheme {
-                base: base_opt,
-                key: Some("fontsize".into()),
-                expr: Some(new_fs),
-            },
-            None,
-        );
-    }
+    ui.heading("Viewer");
+    ui.checkbox(&mut model.show_fps, "Show FPS in toolbar");
 }
 
 fn draw_inspector_config_section(
@@ -2044,8 +2265,101 @@ pub fn draw_canvas_overlays(
         painter.rect_stroke(r, 0.0, egui::Stroke::new(1.6, egui::Color32::from_rgb(30, 165, 155)), egui::StrokeKind::Inside);
     }
     if let Some(brush) = &model.brush {
-        for &pt in &brush.highlighted_px {
-            painter.circle_filled(to_egui_pt(pt), 3.2, egui::Color32::from_rgba_unmultiplied(255, 180, 20, 210));
+        if let Some(ax) = graph.axes.get(&brush.axis_id) {
+            if let Some(vp) = graph.scenes.get(&ax.data_scene_id).map(|s| s.state.viewport) {
+                let clip_painter = painter.with_clip_rect(to_egui_rect(vp));
+                if manip.preview_rect_px.is_none() {
+                    if let (Some(p0), Some(p1)) = (
+                        data_to_pixel(ax, vp, [brush.rect_data[0], brush.rect_data[1]]),
+                        data_to_pixel(ax, vp, [brush.rect_data[2], brush.rect_data[3]]),
+                    ) {
+                        let r = egui::Rect::from_two_pos(to_egui_pt(p0), to_egui_pt(p1));
+                        clip_painter.rect_filled(
+                            r,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(40, 180, 170, 45),
+                        );
+                        clip_painter.rect_stroke(
+                            r,
+                            0.0,
+                            egui::Stroke::new(1.6, egui::Color32::from_rgb(30, 165, 155)),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                }
+                for &pt in &brush.highlighted_data {
+                    if let Some(px) = data_to_pixel(ax, vp, pt) {
+                        clip_painter.circle_filled(
+                            to_egui_pt(px),
+                            3.2,
+                            egui::Color32::from_rgba_unmultiplied(255, 180, 20, 210),
+                        );
+                    }
+                }
+            }
         }
     }
+}
+
+/// Draw a floating inline text box when editing a text or callout annotation on the canvas.
+pub fn draw_inline_text_editor(
+    ctx: &egui::Context,
+    graph: &SceneGraph,
+    model: &mut EditorModel,
+    plot_rect_pts: egui::Rect,
+) -> Vec<EditorAction> {
+    let mut actions = Vec::new();
+    let Some(mut ed) = model.inline_edit_ann.take() else {
+        return actions;
+    };
+    let scale = graph.px_per_unit.max(0.5) / ctx.pixels_per_point().max(0.5);
+    let pos = egui::pos2(
+        plot_rect_pts.min.x + ed.anchor_px[0] * scale,
+        (plot_rect_pts.max.y - ed.anchor_px[1] * scale - 24.0).max(plot_rect_pts.min.y),
+    );
+    let was_just_opened = ed.needs_focus;
+    let mut lost_focus = false;
+    let mut enter = false;
+    let mut escape = false;
+
+    egui::Area::new(egui::Id::unique("wgpu_makie_inline_text_edit"))
+        .fixed_pos(pos)
+        .constrain_to(plot_rect_pts)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                let resp = ui.add(egui::TextEdit::singleline(&mut ed.draft).desired_width(160.0));
+                if ed.needs_focus {
+                    resp.request_focus();
+                    ed.needs_focus = false;
+                }
+                enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                lost_focus = !was_just_opened && resp.lost_focus();
+            });
+        });
+
+    if escape {
+        // Discard changes
+    } else if enter || lost_focus {
+        if ed.draft != ed.orig_text {
+            model.push_command(
+                &mut actions,
+                EditorCommand::SetAnnotationAttr {
+                    id: ed.ann_id,
+                    key: "text".into(),
+                    expr: ed.draft.clone(),
+                },
+                Some(EditorCommand::SetAnnotationAttr {
+                    id: ed.ann_id,
+                    key: "text".into(),
+                    expr: ed.orig_text.clone(),
+                }),
+            );
+        }
+    } else {
+        model.inline_edit_ann = Some(ed);
+    }
+
+    actions
 }

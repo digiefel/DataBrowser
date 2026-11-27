@@ -15,7 +15,7 @@ end
 
 @testset "WgpuMakie Phase 1A" begin
     @test Makie.current_backend() === WgpuMakie
-    WgpuMakie.activate!(; visible = false, show_editor = false)
+    WgpuMakie.activate!(; visible = false)
 
     @testset "2D Axis + Lines + LineSegments + Scatter + Text + PNG save" begin
         fig = Figure(size = (400, 300))
@@ -289,7 +289,7 @@ end
     end
 
     @testset "High-throughput streaming & large-N LOD rendering" begin
-        WgpuMakie.activate!(; visible = false, show_editor = false)
+        WgpuMakie.activate!(; visible = false)
 
         # 1) Large-N (>100k) monotonic-X line triggers Rust M4 LOD builder and preserves spikes
         n_lod = 200_000
@@ -329,7 +329,7 @@ end
     end
 
     @testset "Milestone 2: Annotations, Layout Manipulation & Brushing" begin
-        WgpuMakie.activate!(; visible = false, show_editor = false)
+        WgpuMakie.activate!(; visible = false)
 
         # 1. Grafico.EditablePlot annotations, fit_label persistence, and zero-recompile moves
         fit_fn(x; a = 1.0, b = 0.0) = a * x + b
@@ -345,7 +345,7 @@ end
         end
         ep = Grafico.editable(decl, d1)
         fig = Grafico.figure(ep)
-        scr = WgpuMakie.Screen(fig.scene, WgpuMakie.ScreenConfig("M2", false, false, 1.0f0, (640, 420)))
+        scr = WgpuMakie.Screen(fig.scene, WgpuMakie.ScreenConfig("M2", false, 1.0f0, (640, 420)))
         display(scr, fig.scene; figure = fig)
         WgpuMakie.flush_updates!(scr)
 
@@ -416,7 +416,7 @@ end
         Legend(fig_m[1, 3], ax_l)
         Colorbar(fig_m[2, 1:2]; vertical = false, limits = (0, 1))
 
-        mscr = WgpuMakie.Screen(fig_m.scene, WgpuMakie.ScreenConfig("M2-Layout", false, false, 1.0f0, (800, 480)))
+        mscr = WgpuMakie.Screen(fig_m.scene, WgpuMakie.ScreenConfig("M2-Layout", false, 1.0f0, (800, 480)))
         display(mscr, fig_m.scene; figure = fig_m)
         WgpuMakie.flush_updates!(mscr)
 
@@ -504,6 +504,71 @@ end
         @test !isnothing(mscr.brush_selection[])
         @test mscr.brush_selection[].axis === ax_l
         @test mscr.brush_selection[].plots[1].second == [1, 2]
+
+        # Legend click forwards pointer events and toggles series visibility cleanly
+        lmeta_cur = WgpuMakie._extract_layout_meta(mscr, fig_m)
+        leg_cur = only(filter(b -> b["kind"] == "legend", lmeta_cur["blocks"]))
+        leg_cx = Float64(leg_cur["bbox_px"][1] + leg_cur["bbox_px"][3] * 0.5)
+        leg_cy = Float64(leg_cur["bbox_px"][2] + leg_cur["bbox_px"][4] * 0.5)
+        @test pl_s.visible[] == true
+        for (knd, bmask) in (("move", 0), ("down", 1), ("up", 0))
+            WgpuMakie._handle_viewer_event!(mscr, Dict(
+                "op" => "pointer_event",
+                "x" => leg_cx,
+                "y" => leg_cy,
+                "buttons" => bmask,
+                "kind" => knd,
+            ))
+        end
+        @test pl_s.visible[] == false
+        for (knd, bmask) in (("down", 1), ("up", 0))
+            WgpuMakie._handle_viewer_event!(mscr, Dict(
+                "op" => "pointer_event",
+                "x" => leg_cx,
+                "y" => leg_cy,
+                "buttons" => bmask,
+                "kind" => knd,
+            ))
+        end
+        @test pl_s.visible[] == true
+
+        # Inline text annotation update handles plain text cleanly
+        WgpuMakie._handle_viewer_event!(mscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict(
+                "cmd" => "add_annotation",
+                "kind" => "text",
+                "text" => "Note",
+                "source_expr" => nothing,
+                "axis_id" => UInt64(objectid(ax_l)),
+                "kwargs" => [["x", "2.0"], ["y", "3.0"]],
+            ),
+        ))
+        txt_id = mscr.plain_annotations[end][:id]
+        WgpuMakie._handle_viewer_event!(mscr, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_annotation_attr", "id" => txt_id, "key" => "text", "expr" => "Peak A"),
+        ))
+        @test mscr.plain_annotations[end][:text] == "Peak A"
+
+        @test !hasfield(WgpuMakie.ScreenConfig, :show_editor)
+        @test mscr.editor_visible[] == false
+        WgpuMakie.set_editor!(fig_m, true)
+        @test mscr.editor_visible[] == true
+        WgpuMakie._handle_viewer_event!(mscr, Dict("op" => "editor_visibility_changed", "visible" => false))
+        @test mscr.editor_visible[] == false
+
+        # Zooming does not overwrite reset_limits
+        orig_reset = copy(WgpuMakie._extract_axis_meta(ax_l)["reset_limits"])
+        ax_l.targetlimits[] = GeometryBasics.Rect2d(1.5, 2.5, 1.0, 2.0)
+        zoomed_meta = WgpuMakie._extract_axis_meta(ax_l)
+        @test zoomed_meta["reset_limits"] ≈ orig_reset
+
+        # wait(screen) unblocks when window_closed arrives
+        wait_task = @async wait(mscr)
+        yield()
+        WgpuMakie._handle_viewer_event!(mscr, Dict("op" => "window_closed"))
+        @test fetch(wait_task) === mscr
 
         close(mscr)
     end

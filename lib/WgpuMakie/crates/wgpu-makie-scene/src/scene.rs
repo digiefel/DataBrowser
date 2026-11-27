@@ -4,13 +4,14 @@ use crate::decimate::{LineLod, ScatterLod};
 use glam::{Mat3, Mat4, Vec3};
 use std::collections::HashMap;
 use wgpu_makie_proto::{
-    AxisMeta, CoordSpace, GlyphAtlasPatch, GlyphMetric, LayoutMeta, PlotPayload, PrimitiveKind,
-    SceneState, ServerMessage, TypedBuffer,
+    AxisMeta, CameraState, CoordSpace, GlyphAtlasPatch, GlyphMetric, LayoutMeta, PlotPayload,
+    PrimitiveKind, SceneState, ServerMessage, TypedBuffer,
 };
 
 #[derive(Debug, Clone)]
 pub struct SceneNode {
     pub state: SceneState,
+    pub initial_camera: CameraState,
     pub revision: u64,
 }
 
@@ -28,6 +29,9 @@ pub struct SceneGraph {
     pub size: [u32; 2],
     pub px_per_unit: f32,
     pub editor_visible: bool,
+    pub acked_interaction_seq: u64,
+    pub local_axis_seq: HashMap<u64, u64>,
+    pub local_cam3d_seq: HashMap<u64, u64>,
     pub scenes: HashMap<u64, SceneNode>,
     pub scene_order: Vec<u64>,
     pub axes: HashMap<u64, AxisMeta>,
@@ -47,13 +51,11 @@ impl SceneGraph {
                 title,
                 size,
                 px_per_unit,
-                show_editor,
                 ..
             } => {
                 self.title = title;
                 self.size = size;
                 self.px_per_unit = px_per_unit.max(0.5);
-                self.editor_visible = show_editor;
                 self.revision += 1;
             }
             ServerMessage::Batch { messages } => {
@@ -61,18 +63,34 @@ impl SceneGraph {
                     self.apply(m);
                 }
             }
-            ServerMessage::UpsertScene { scene } => {
+            ServerMessage::UpsertScene { mut scene } => {
                 let id = scene.id;
+                let cam_locked = self
+                    .local_cam3d_seq
+                    .get(&id)
+                    .is_some_and(|&s| s > self.acked_interaction_seq)
+                    || self.axes.values().any(|ax| {
+                        ax.data_scene_id == id
+                            && self
+                                .local_axis_seq
+                                .get(&ax.axis_id)
+                                .is_some_and(|&s| s > self.acked_interaction_seq)
+                    });
                 let rev = self.revision + 1;
                 self.revision = rev;
                 if let Some(node) = self.scenes.get_mut(&id) {
+                    if cam_locked {
+                        scene.camera = node.state.camera.clone();
+                    }
                     node.state = scene;
                     node.revision = rev;
                 } else {
+                    let initial_camera = scene.camera.clone();
                     self.scenes.insert(
                         id,
                         SceneNode {
                             state: scene,
+                            initial_camera,
                             revision: rev,
                         },
                     );
@@ -85,8 +103,25 @@ impl SceneGraph {
                     self.revision += 1;
                 }
             }
-            ServerMessage::UpsertAxisMeta { axis } => {
-                self.axes.insert(axis.axis_id, axis);
+            ServerMessage::UpsertAxisMeta { mut axis } => {
+                let axis_pending = self
+                    .local_axis_seq
+                    .get(&axis.axis_id)
+                    .is_some_and(|&s| s > self.acked_interaction_seq);
+                if axis_pending {
+                    if let Some(existing) = self.axes.get(&axis.axis_id) {
+                        axis.limits = existing.limits;
+                    }
+                }
+                let dsid = axis.data_scene_id;
+                let aid = axis.axis_id;
+                self.axes.insert(aid, axis);
+                if axis_pending {
+                    if let (Some(ax), Some(sc)) = (self.axes.get(&aid), self.scenes.get_mut(&dsid))
+                    {
+                        crate::camera::recompute_2d_axis_camera(ax, sc);
+                    }
+                }
                 self.revision += 1;
             }
             ServerMessage::UpsertLayoutMeta { layout } => {
@@ -149,6 +184,9 @@ impl SceneGraph {
             }
             ServerMessage::SetEditorVisible { visible } => {
                 self.editor_visible = visible;
+            }
+            ServerMessage::AckInteraction { seq } => {
+                self.acked_interaction_seq = self.acked_interaction_seq.max(seq);
             }
             ServerMessage::RequestColorBuffer { .. }
             | ServerMessage::RequestPick { .. }
@@ -364,4 +402,109 @@ pub fn resolve_scene_lights(scene: &SceneState) -> ResolvedLights {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wgpu_makie_proto::{AxisScale, CameraState, LightState};
+
+    fn dummy_scene(id: u64, proj_00: f32) -> SceneState {
+        let mut proj = Mat4::IDENTITY.to_cols_array();
+        proj[0] = proj_00;
+        SceneState {
+            id,
+            parent: None,
+            viewport: [0.0, 0.0, 400.0, 300.0],
+            background: [1.0; 4],
+            clear: true,
+            visible: true,
+            camera: CameraState {
+                view: Mat4::IDENTITY.to_cols_array(),
+                projection: proj,
+                projectionview: proj,
+                eyeposition: [0.0, 0.0, 1.0],
+                resolution: [400.0, 300.0],
+                is_3d: false,
+                lookat: [0.0; 3],
+                upvector: [0.0, 1.0, 0.0],
+                fov: 45.0,
+                near: -1.0,
+                far: 1.0,
+            },
+            lights: LightState {
+                ambient: [0.3; 3],
+                dir_color: [0.8; 3],
+                dir_direction: [1.0; 3],
+                camera_relative: false,
+                dir_lights: vec![],
+                point_lights: vec![],
+            },
+        }
+    }
+
+    fn dummy_axis(axis_id: u64, scene_id: u64, limits: [f64; 4]) -> AxisMeta {
+        AxisMeta {
+            axis_id,
+            data_scene_id: scene_id,
+            block_scene_id: scene_id,
+            limits,
+            reset_limits: [0.0, 0.0, 10.0, 10.0],
+            xscale: AxisScale::Linear,
+            yscale: AxisScale::Linear,
+            xreversed: false,
+            yreversed: false,
+            protrusions: [0.0; 4],
+            xaxis_top: false,
+            yaxis_right: false,
+            linked_x: vec![],
+            linked_y: vec![],
+            makie_tick_plot_ids: vec![],
+            custom_xticks: false,
+            custom_yticks: false,
+            xlabel: String::new(),
+            ylabel: String::new(),
+            title: String::new(),
+        }
+    }
+
+    #[test]
+    fn ack_interaction_reconciles_stale_server_echoes() {
+        let mut graph = SceneGraph::default();
+        graph.apply(ServerMessage::UpsertScene {
+            scene: dummy_scene(1, 0.2),
+        });
+        graph.apply(ServerMessage::UpsertAxisMeta {
+            axis: dummy_axis(10, 1, [0.0, 0.0, 10.0, 10.0]),
+        });
+
+        // Simulate local zoom/pan to [2, 2, 4, 4] at seq = 5 with acked = 3
+        graph.acked_interaction_seq = 3;
+        graph.local_axis_seq.insert(10, 5);
+        graph.axes.get_mut(&10).unwrap().limits = [2.0, 2.0, 4.0, 4.0];
+        crate::camera::recompute_2d_axis_camera(
+            &graph.axes[&10],
+            graph.scenes.get_mut(&1).unwrap(),
+        );
+        let local_pv = graph.scenes[&1].state.camera.projectionview;
+
+        // Stale server echoes for older limits/camera should not overwrite local limits or camera
+        graph.apply(ServerMessage::UpsertAxisMeta {
+            axis: dummy_axis(10, 1, [0.0, 0.0, 10.0, 10.0]),
+        });
+        assert_eq!(graph.axes[&10].limits, [2.0, 2.0, 4.0, 4.0]);
+        assert_eq!(graph.scenes[&1].state.camera.projectionview, local_pv);
+
+        graph.apply(ServerMessage::UpsertScene {
+            scene: dummy_scene(1, 0.123),
+        });
+        assert_eq!(graph.scenes[&1].state.camera.projectionview, local_pv);
+
+        // Once server acknowledges seq 5, subsequent UpsertAxisMeta applies normally
+        graph.apply(ServerMessage::AckInteraction { seq: 5 });
+        graph.apply(ServerMessage::UpsertAxisMeta {
+            axis: dummy_axis(10, 1, [1.0, 1.0, 8.0, 8.0]),
+        });
+        assert_eq!(graph.axes[&10].limits, [1.0, 1.0, 8.0, 8.0]);
+    }
 }

@@ -12,7 +12,8 @@ use wgpu_makie_render::WgpuRenderer;
 #[cfg(not(target_arch = "wasm32"))]
 use wgpu_makie_scene::format_tooltip;
 use wgpu_makie_scene::{
-    reset_axes, CameraController, DirectManipController, InteractionUpdate, SceneGraph, ToolMode,
+    point_inside_legend, CameraController, DirectManipController, InteractionUpdate, SceneGraph,
+    ToolMode,
 };
 
 /// Embeddable plot and editor session that hosts can drive inside any wgpu surface and egui UI.
@@ -26,6 +27,7 @@ pub struct EmbeddedViewer {
     pointer_unitless: [f64; 2],
     buttons_mask: u8,
     mods_mask: u8,
+    interaction_seq: u64,
     outbound: Vec<ClientMessage>,
 }
 
@@ -40,7 +42,7 @@ impl EmbeddedViewer {
             graph: SceneGraph {
                 px_per_unit: 1.0,
                 size: [900, 600],
-                editor_visible: true,
+                editor_visible: false,
                 ..Default::default()
             },
             camera: CameraController::default(),
@@ -51,6 +53,7 @@ impl EmbeddedViewer {
             pointer_unitless: [0.0, 0.0],
             buttons_mask: 0,
             mods_mask: 0,
+            interaction_seq: 0,
             outbound: Vec::new(),
         }
     }
@@ -154,13 +157,11 @@ impl EmbeddedViewer {
         let mut copied = None;
         for act in actions {
             match act {
-                EditorAction::ResetView => {
-                    let ids: Vec<u64> = self.graph.axes.keys().copied().collect();
-                    let updates = reset_axes(&mut self.graph, &ids);
-                    self.push_interaction_update(InteractionUpdate::AxisLimits(updates));
-                }
                 EditorAction::ToggleEditor => {
                     self.graph.editor_visible = !self.graph.editor_visible;
+                    self.outbound.push(ClientMessage::EditorVisibilityChanged {
+                        visible: self.graph.editor_visible,
+                    });
                 }
                 EditorAction::CopyToClipboard(text) => {
                     copied = Some(text);
@@ -178,17 +179,27 @@ impl EmbeddedViewer {
             InteractionUpdate::None => {}
             InteractionUpdate::AxisLimits(list) => {
                 for (axis_id, limits) in list {
-                    self.outbound
-                        .push(ClientMessage::AxisLimitsChanged { axis_id, limits });
+                    self.interaction_seq += 1;
+                    let seq = self.interaction_seq;
+                    self.graph.local_axis_seq.insert(axis_id, seq);
+                    self.outbound.push(ClientMessage::AxisLimitsChanged {
+                        axis_id,
+                        limits,
+                        seq,
+                    });
                 }
             }
             InteractionUpdate::Camera3D(scene_id, eyeposition, lookat, upvector, fov) => {
+                self.interaction_seq += 1;
+                let seq = self.interaction_seq;
+                self.graph.local_cam3d_seq.insert(scene_id, seq);
                 self.outbound.push(ClientMessage::Camera3DChanged {
                     scene_id,
                     eyeposition,
                     lookat,
                     upvector,
                     fov,
+                    seq,
                 });
             }
         }
@@ -219,15 +230,19 @@ impl EmbeddedViewer {
         } else {
             let upd = self.camera.on_pointer_move(&mut self.graph, self.pointer_unitless);
             self.push_interaction_update(upd);
+            let dragging =
+                self.camera.gesture_2d.is_some() || self.camera.gesture_3d.is_some();
+            if !dragging {
+                self.outbound.push(ClientMessage::PointerEvent {
+                    x,
+                    y,
+                    buttons: self.buttons_mask,
+                    modifiers: self.mods_mask,
+                    kind: PointerEventKind::Move,
+                    scroll: [0.0, 0.0],
+                });
+            }
         }
-        self.outbound.push(ClientMessage::PointerEvent {
-            x,
-            y,
-            buttons: self.buttons_mask,
-            modifiers: self.mods_mask,
-            kind: PointerEventKind::Move,
-            scroll: [0.0, 0.0],
-        });
     }
 
     /// Handle mouse press (`0 = left, 1 = right, 2 = middle`) in bottom-left coordinates.
@@ -248,22 +263,40 @@ impl EmbeddedViewer {
                 }
                 self.outbound.extend(mo.messages);
             } else {
-                let upd = self.camera.on_pointer_down(
-                    &mut self.graph,
-                    self.pointer_unitless,
-                    button,
-                    modifiers,
-                );
-                self.push_interaction_update(upd);
+                let on_legend = self.editor.tool_mode == ToolMode::Navigate
+                    && point_inside_legend(&self.graph, self.pointer_unitless);
+                if on_legend {
+                    self.outbound.push(ClientMessage::PointerEvent {
+                        x: self.pointer_unitless[0],
+                        y: self.pointer_unitless[1],
+                        buttons: self.buttons_mask,
+                        modifiers,
+                        kind: PointerEventKind::Down,
+                        scroll: [0.0, 0.0],
+                    });
+                } else {
+                    let upd = self.camera.on_pointer_down(
+                        &mut self.graph,
+                        self.pointer_unitless,
+                        button,
+                        modifiers,
+                    );
+                    let cam_consumed = self.camera.gesture_2d.is_some()
+                        || self.camera.gesture_3d.is_some()
+                        || !matches!(upd, InteractionUpdate::None);
+                    self.push_interaction_update(upd);
+                    if !cam_consumed {
+                        self.outbound.push(ClientMessage::PointerEvent {
+                            x: self.pointer_unitless[0],
+                            y: self.pointer_unitless[1],
+                            buttons: self.buttons_mask,
+                            modifiers,
+                            kind: PointerEventKind::Down,
+                            scroll: [0.0, 0.0],
+                        });
+                    }
+                }
             }
-            self.outbound.push(ClientMessage::PointerEvent {
-                x: self.pointer_unitless[0],
-                y: self.pointer_unitless[1],
-                buttons: self.buttons_mask,
-                modifiers,
-                kind: PointerEventKind::Down,
-                scroll: [0.0, 0.0],
-            });
         }
     }
 
@@ -286,35 +319,43 @@ impl EmbeddedViewer {
                 }
                 self.outbound.extend(mo.messages);
             } else {
+                let had_gesture =
+                    self.camera.gesture_2d.is_some() || self.camera.gesture_3d.is_some();
                 let upd = self.camera.on_pointer_up(&mut self.graph, self.pointer_unitless);
                 self.push_interaction_update(upd);
+                if !had_gesture {
+                    self.outbound.push(ClientMessage::PointerEvent {
+                        x: self.pointer_unitless[0],
+                        y: self.pointer_unitless[1],
+                        buttons: self.buttons_mask,
+                        modifiers: self.mods_mask,
+                        kind: PointerEventKind::Up,
+                        scroll: [0.0, 0.0],
+                    });
+                }
             }
-            self.outbound.push(ClientMessage::PointerEvent {
-                x: self.pointer_unitless[0],
-                y: self.pointer_unitless[1],
-                buttons: self.buttons_mask,
-                modifiers: self.mods_mask,
-                kind: PointerEventKind::Up,
-                scroll: [0.0, 0.0],
-            });
         }
     }
 
     /// Handle scroll wheel zoom in bottom-left pointer coordinates.
     pub fn on_scroll(&mut self, dx: f64, dy: f64, modifiers: u8) {
         self.mods_mask = modifiers;
+        let clamped_dy = dy.clamp(-5.0, 5.0);
         let upd = self
             .camera
-            .on_scroll(&mut self.graph, self.pointer_unitless, dy, modifiers);
+            .on_scroll(&mut self.graph, self.pointer_unitless, clamped_dy, modifiers);
+        let cam_consumed = !matches!(upd, InteractionUpdate::None);
         self.push_interaction_update(upd);
-        self.outbound.push(ClientMessage::PointerEvent {
-            x: self.pointer_unitless[0],
-            y: self.pointer_unitless[1],
-            buttons: self.buttons_mask,
-            modifiers,
-            kind: PointerEventKind::Scroll,
-            scroll: [dx, dy],
-        });
+        if !cam_consumed && self.editor.tool_mode == ToolMode::Navigate {
+            self.outbound.push(ClientMessage::PointerEvent {
+                x: self.pointer_unitless[0],
+                y: self.pointer_unitless[1],
+                buttons: self.buttons_mask,
+                modifiers,
+                kind: PointerEventKind::Scroll,
+                scroll: [dx, clamped_dy],
+            });
+        }
     }
 
     /// Update the hover tooltip using GPU picking on native targets (noop on WASM where sync readback is skipped).
@@ -325,6 +366,10 @@ impl EmbeddedViewer {
         #[allow(unused)] fb_width: u32,
         #[allow(unused)] fb_height: u32,
     ) {
+        if !self.editor.show_inspector_dock {
+            self.hover_tooltip = None;
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             let x = self.pointer_unitless[0].round() as i32;

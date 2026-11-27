@@ -29,9 +29,18 @@ impl Default for EditorTab {
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditorAction {
     Send(ClientMessage),
-    ResetView,
     ToggleEditor,
     CopyToClipboard(String),
+}
+
+/// Pending inline canvas text-annotation edit state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InlineTextEdit {
+    pub ann_id: u32,
+    pub draft: String,
+    pub orig_text: String,
+    pub anchor_px: [f32; 2],
+    pub needs_focus: bool,
 }
 
 /// State model for the modular WgpuMakie plot and layout editor.
@@ -50,6 +59,10 @@ pub struct EditorModel {
     pub exported_code: String,
     pub copy_notice_frames: u32,
     pub show_inspector_dock: bool,
+    pub show_fps: bool,
+    pub annotate_menu_open: bool,
+    pub expanded_plots: HashSet<u64>,
+    pub inline_edit_ann: Option<InlineTextEdit>,
     pub add_attr_key: String,
     pub add_attr_expr: String,
     pub add_mapping_role: String,
@@ -74,10 +87,10 @@ pub struct EditorModel {
 }
 
 impl EditorModel {
-    /// Create a new editor model with inspector dock enabled by default.
+    /// Create a new editor model with inspector dock disabled by default.
     pub fn new() -> Self {
         Self {
-            show_inspector_dock: true,
+            show_inspector_dock: false,
             add_attr_key: "alpha".into(),
             add_attr_expr: "0.8".into(),
             add_mapping_role: "color".into(),

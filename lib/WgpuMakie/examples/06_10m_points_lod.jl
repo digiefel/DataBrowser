@@ -35,10 +35,10 @@ save_path = parse_save_arg(ARGS)
 if isnothing(save_path)
     t0 = time_ns()
     fig = build_figure()
-    display(fig)
+    scr = display(fig)
     dt_ms = (time_ns() - t0) / 1.0e6
-    println("Displayed 10M points in ", round(dt_ms; digits = 1), " ms. Close viewer or press Enter...")
-    readline()
+    println("Displayed 10M points in ", round(dt_ms; digits = 1), " ms.")
+    isinteractive() || wait(scr)
 else
     t_build = @elapsed fig = build_figure()
     mkpath(dirname(save_path))

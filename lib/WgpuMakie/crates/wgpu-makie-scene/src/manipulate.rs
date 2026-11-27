@@ -81,6 +81,7 @@ pub struct BrushSummary {
     pub x_mean: f64,
     pub y_mean: f64,
     pub plot_indices: Vec<(u64, Vec<u32>)>,
+    pub highlighted_data: Vec<[f64; 2]>,
     pub highlighted_px: Vec<[f32; 2]>,
 }
 
@@ -170,6 +171,34 @@ impl DirectManipController {
             rect: None,
             plot_indices: vec![],
         }
+    }
+
+    /// Hit-test a text or callout annotation anchor or label box in bottom-left unitless pixels.
+    pub fn hit_text_annotation(
+        &self,
+        graph: &SceneGraph,
+        doc_opt: Option<&EditorDocumentSnapshot>,
+        pos_px: [f64; 2],
+    ) -> Option<(u32, String, [f32; 2])> {
+        let doc = doc_opt?;
+        for h in self.compute_handles(graph, Some(doc)) {
+            let Some(ann) = doc.annotations.iter().find(|a| a.id == h.ann_id) else {
+                continue;
+            };
+            let matches_kind = (ann.kind == "text" && h.kind == AnnHandleKind::Primary)
+                || (ann.kind == "callout" && h.kind == AnnHandleKind::TextAnchor);
+            if !matches_kind {
+                continue;
+            }
+            let w_est = (ann.text.len().max(4) as f64) * 8.5 + 16.0;
+            if pos_px[0] >= (h.pos_px[0] as f64) - 12.0
+                && pos_px[0] <= (h.pos_px[0] as f64) + w_est
+                && (pos_px[1] - (h.pos_px[1] as f64)).abs() <= 18.0
+            {
+                return Some((ann.id, ann.text.clone(), h.pos_px));
+            }
+        }
+        None
     }
 
     /// Compute screen-space annotation handles (in bottom-left unitless Makie pixels).
@@ -878,6 +907,7 @@ impl DirectManipController {
                 start_px,
                 ..
             } => {
+                self.preview_rect_px = None;
                 let rpx = norm_rect_px(start_px, pos_px);
                 if rpx[2] as f64 >= MIN_DRAG_PX && rpx[3] as f64 >= MIN_DRAG_PX {
                     if let Some(ax) = graph.axes.get(&axis_id) {
@@ -899,14 +929,12 @@ impl DirectManipController {
                                     plot_indices: summary.plot_indices.clone(),
                                 });
                                 self.last_brush = Some(summary.clone());
-                                self.preview_rect_px = Some(rpx);
                                 out.brush = Some(summary);
                                 return out;
                             }
                         }
                     }
                 } else {
-                    self.preview_rect_px = None;
                     self.last_brush = None;
                     out.clear_brush = true;
                     out.messages.push(ClientMessage::BrushSelectionChanged {
@@ -1006,6 +1034,7 @@ pub fn compute_brush(
     rect_px: [f32; 4],
 ) -> BrushSummary {
     let mut plot_indices = Vec::new();
+    let mut highlighted_data = Vec::new();
     let mut highlighted_px = Vec::new();
     let mut count = 0usize;
     let mut x_min = f64::INFINITY;
@@ -1055,7 +1084,8 @@ pub fn compute_brush(
                         y_max = y_max.max(dy);
                         x_sum += dx;
                         y_sum += dy;
-                        if highlighted_px.len() < 2048 {
+                        if highlighted_data.len() < 2048 {
+                            highlighted_data.push([dx, dy]);
                             if let Some(px) = data_to_pixel(ax, vp, [dx, dy]) {
                                 highlighted_px.push(px);
                             }
@@ -1086,6 +1116,7 @@ pub fn compute_brush(
         x_mean,
         y_mean,
         plot_indices,
+        highlighted_data,
         highlighted_px,
     }
 }
@@ -1757,6 +1788,7 @@ mod tests {
         let bm = ctrl.on_pointer_move(&g, Some(&doc), [b1[0] as f64, b1[1] as f64]);
         let summary = bm.brush.expect("brush summary");
         assert_eq!(summary.total_points, 2);
+        assert_eq!(summary.highlighted_data.len(), 2);
         assert!((summary.x_mean - 2.5).abs() < 1e-6);
         assert!((summary.y_mean - 3.0).abs() < 1e-6);
         let bup = ctrl.on_pointer_up(&g, Some(&doc), [b1[0] as f64, b1[1] as f64]);
@@ -1768,5 +1800,13 @@ mod tests {
                 ..
             })
         ));
+        assert!(ctrl.preview_rect_px.is_none());
+
+        // 6. Hit-test text annotation anchor and text body
+        let ann_px = data_to_pixel(ax, vp, [5.0, 5.0]).unwrap();
+        let hit_anchor = ctrl.hit_text_annotation(&g, Some(&doc), [ann_px[0] as f64, ann_px[1] as f64]);
+        assert_eq!(hit_anchor, Some((1, "Hello".to_string(), ann_px)));
+        let hit_body = ctrl.hit_text_annotation(&g, Some(&doc), [ann_px[0] as f64 + 18.0, ann_px[1] as f64]);
+        assert_eq!(hit_body, Some((1, "Hello".to_string(), ann_px)));
     }
 }

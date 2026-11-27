@@ -1,13 +1,188 @@
 # Incoming events from the Rust viewer back into Makie `Events`, `Axis`, `Camera3D`, and `Screen.selection`.
 
+function _apply_resize!(screen, w::Int, h::Int, ppu::Float64)
+    scene = screen.scene
+    isnothing(scene) && return nothing
+    evs = Makie.events(scene)
+    prev_defer = screen.defer_flush[]
+    screen.defer_flush[] = true
+    try
+        evs.window_area[] = GeometryBasics.Rect2i(0, 0, max(1, w), max(1, h))
+        @lock screen.sync_lock begin
+            for ax in values(screen.id_to_axis)
+                push!(screen.dirty_axes, ax)
+            end
+        end
+    finally
+        screen.defer_flush[] = prev_defer
+    end
+    flush_updates!(screen; include_layout = true)
+    return nothing
+end
+
+function _apply_axis_limits!(screen, updates::Dict{UInt64, Tuple{Vector{Float64}, UInt64}})
+    isempty(updates) && return nothing
+    max_seq = UInt64(0)
+    prev_defer = screen.defer_flush[]
+    screen.defer_flush[] = true
+    screen.syncing_from_viewer[] = true
+    try
+        for (aid, (lims, seq)) in updates
+            seq > max_seq && (max_seq = seq)
+            ax = get(screen.id_to_axis, aid, nothing)
+            isnothing(ax) && continue
+            xmin, ymin, xmax, ymax = lims[1], lims[2], lims[3], lims[4]
+            if xmax > xmin && ymax > ymin
+                ax.targetlimits[] = GeometryBasics.Rect2d(xmin, ymin, xmax - xmin, ymax - ymin)
+                @lock screen.sync_lock begin
+                    push!(screen.dirty_axes, ax)
+                    for lx in ax.xaxislinks
+                        push!(screen.dirty_axes, lx)
+                    end
+                    for ly in ax.yaxislinks
+                        push!(screen.dirty_axes, ly)
+                    end
+                end
+            end
+        end
+    finally
+        screen.syncing_from_viewer[] = false
+        screen.defer_flush[] = prev_defer
+    end
+    flush_updates!(screen; ack_seq = max_seq)
+    return nothing
+end
+
+function _apply_camera3d!(screen, updates::Dict{UInt64, Tuple{Dict{String, Any}, UInt64}})
+    isempty(updates) && return nothing
+    max_seq = UInt64(0)
+    prev_defer = screen.defer_flush[]
+    screen.defer_flush[] = true
+    screen.syncing_from_viewer[] = true
+    try
+        for (sid, (msg, seq)) in updates
+            seq > max_seq && (max_seq = seq)
+            sc = get(screen.id_to_scene, sid, nothing)
+            isnothing(sc) && continue
+            cc = Makie.cameracontrols(sc)
+            if cc isa Makie.Camera3D
+                cc.eyeposition[] = Makie.Vec3f(Float32.(msg["eyeposition"])...)
+                cc.lookat[] = Makie.Vec3f(Float32.(msg["lookat"])...)
+                cc.upvector[] = Makie.Vec3f(Float32.(msg["upvector"])...)
+                cc.fov[] = Float32(msg["fov"])
+                Makie.update_cam!(sc, cc)
+                @lock screen.sync_lock push!(screen.dirty_scenes, sc)
+            end
+        end
+    finally
+        screen.syncing_from_viewer[] = false
+        screen.defer_flush[] = prev_defer
+    end
+    flush_updates!(screen; ack_seq = max_seq)
+    return nothing
+end
+
+function _ensure_event_worker!(screen)
+    if !isnothing(screen.event_worker) && !istaskdone(screen.event_worker)
+        return nothing
+    end
+    screen.event_worker = @async begin
+        while screen.open && isopen(screen.event_wake)
+            try
+                take!(screen.event_wake)
+            catch
+                break
+            end
+            while screen.open
+                rsz, ax_lims, cam3d, ev_list = @lock screen.event_lock begin
+                    r = screen.pending_resize[]
+                    screen.pending_resize[] = nothing
+                    a = copy(screen.pending_axis_limits)
+                    empty!(screen.pending_axis_limits)
+                    c = copy(screen.pending_camera3d)
+                    empty!(screen.pending_camera3d)
+                    e = copy(screen.pending_events)
+                    empty!(screen.pending_events)
+                    (r, a, c, e)
+                end
+                if isnothing(rsz) && isempty(ax_lims) && isempty(cam3d) && isempty(ev_list)
+                    break
+                end
+                screen.open || break
+                try
+                    if !isnothing(rsz)
+                        _apply_resize!(screen, rsz[1], rsz[2], rsz[3])
+                    end
+                    if !isempty(ax_lims)
+                        _apply_axis_limits!(screen, ax_lims)
+                    end
+                    if !isempty(cam3d)
+                        _apply_camera3d!(screen, cam3d)
+                    end
+                    for ev in ev_list
+                        _handle_viewer_event!(screen, ev)
+                    end
+                catch err
+                    @warn "Error processing viewer event" exception = (err, catch_backtrace())
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+function _enqueue_viewer_event!(screen, msg::AbstractDict)
+    op = get(msg, "op", "")
+    if op == "window_closed" || op == "editor_visibility_changed"
+        _handle_viewer_event!(screen, msg)
+        return nothing
+    end
+    @lock screen.event_lock begin
+        if op == "resize_event"
+            screen.pending_resize[] = (
+                Int(msg["width"]),
+                Int(msg["height"]),
+                Float64(msg["px_per_unit"]),
+            )
+        elseif op == "axis_limits_changed"
+            lims = msg["limits"]
+            vec = Float64[Float64(lims[1]), Float64(lims[2]), Float64(lims[3]), Float64(lims[4])]
+            seq = UInt64(get(msg, "seq", 0))
+            screen.pending_axis_limits[UInt64(msg["axis_id"])] = (vec, seq)
+        elseif op == "camera3d_changed"
+            sid = UInt64(msg["scene_id"])
+            seq = UInt64(get(msg, "seq", 0))
+            screen.pending_camera3d[sid] = (Dict{String, Any}(string(k) => v for (k, v) in pairs(msg)), seq)
+        else
+            push!(screen.pending_events, Dict{String, Any}(string(k) => v for (k, v) in pairs(msg)))
+        end
+    end
+    if isopen(screen.event_wake) && !isready(screen.event_wake)
+        try
+            put!(screen.event_wake, nothing)
+        catch
+        end
+    end
+    return nothing
+end
+
 function _handle_viewer_event!(screen, msg::AbstractDict)
     op = get(msg, "op", "")
     scene = screen.scene
 
     if op == "window_closed"
         screen.open = false
+        notify(screen.closed_event)
         if !isnothing(scene)
             Makie.events(scene).window_open[] = false
+        end
+        return nothing
+    elseif op == "editor_visibility_changed"
+        screen.syncing_from_viewer[] = true
+        try
+            screen.editor_visible[] = Bool(msg["visible"])
+        finally
+            screen.syncing_from_viewer[] = false
         end
         return nothing
     end
@@ -17,39 +192,15 @@ function _handle_viewer_event!(screen, msg::AbstractDict)
 
     if op == "axis_limits_changed"
         aid = UInt64(msg["axis_id"])
-        ax = get(screen.id_to_axis, aid, nothing)
-        isnothing(ax) && return nothing
         lims = msg["limits"]
-        xmin, ymin, xmax, ymax = Float64(lims[1]), Float64(lims[2]), Float64(lims[3]), Float64(lims[4])
-        if xmax > xmin && ymax > ymin
-            screen.syncing_from_viewer[] = true
-            try
-                ax.targetlimits[] = GeometryBasics.Rect2d(xmin, ymin, xmax - xmin, ymax - ymin)
-            finally
-                screen.syncing_from_viewer[] = false
-            end
-        end
+        vec = Float64[Float64(lims[1]), Float64(lims[2]), Float64(lims[3]), Float64(lims[4])]
+        seq = UInt64(get(msg, "seq", 0))
+        _apply_axis_limits!(screen, Dict{UInt64, Tuple{Vector{Float64}, UInt64}}(aid => (vec, seq)))
     elseif op == "camera3d_changed"
         sid = UInt64(msg["scene_id"])
-        sc = get(screen.id_to_scene, sid, nothing)
-        isnothing(sc) && return nothing
-        cc = Makie.cameracontrols(sc)
-        if cc isa Makie.Camera3D
-            eye = Makie.Vec3f(Float32.(msg["eyeposition"])...)
-            look = Makie.Vec3f(Float32.(msg["lookat"])...)
-            up = Makie.Vec3f(Float32.(msg["upvector"])...)
-            fov = Float32(msg["fov"])
-            screen.syncing_from_viewer[] = true
-            try
-                cc.eyeposition[] = eye
-                cc.lookat[] = look
-                cc.upvector[] = up
-                cc.fov[] = fov
-                Makie.update_cam!(sc, cc)
-            finally
-                screen.syncing_from_viewer[] = false
-            end
-        end
+        seq = UInt64(get(msg, "seq", 0))
+        d = Dict{String, Any}(string(k) => v for (k, v) in pairs(msg))
+        _apply_camera3d!(screen, Dict{UInt64, Tuple{Dict{String, Any}, UInt64}}(sid => (d, seq)))
     elseif op == "selection_changed"
         pid_raw = msg["plot_id"]
         idx_raw = msg["element_index"]
@@ -94,15 +245,7 @@ function _handle_viewer_event!(screen, msg::AbstractDict)
         w = Int(msg["width"])
         h = Int(msg["height"])
         ppu = Float64(msg["px_per_unit"])
-        evs.window_area[] = GeometryBasics.Rect2i(0, 0, max(1, w), max(1, h))
-        evs.window_dpi[] = 96.0 * ppu
-        fig = screen.figure
-        if !isnothing(fig)
-            Makie.update_state_before_display!(fig)
-            _sync_figure_axes!(screen, fig)
-            _sync_layout_meta!(screen, fig)
-            flush_updates!(screen)
-        end
+        _apply_resize!(screen, w, h, ppu)
     elseif op == "pointer_event"
         x = Float64(msg["x"])
         y = Float64(msg["y"])
@@ -113,6 +256,7 @@ function _handle_viewer_event!(screen, msg::AbstractDict)
             _sync_mouse_buttons!(evs, buttons)
         elseif kind == "up"
             _sync_mouse_buttons!(evs, buttons)
+            screen.defer_flush[] || flush_updates!(screen)
         elseif kind == "scroll"
             sc = msg["scroll"]
             evs.scroll[] = (Float64(sc[1]), Float64(sc[2]))

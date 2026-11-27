@@ -29,8 +29,11 @@ Select `Edit` in the top toolbar to drag annotation control handles, subplot col
 
 ## Running
 
+Scripts wait for the viewer window to close when launched directly with `julia`, and return to the REPL when launched with `julia -i`:
+
 ```bash
 julia --project=lib/WgpuMakie lib/WgpuMakie/examples/01_lines_scatter_2d.jl
+julia -i --project=lib/WgpuMakie lib/WgpuMakie/examples/01_lines_scatter_2d.jl
 julia --project=lib/WgpuMakie lib/WgpuMakie/examples/01_lines_scatter_2d.jl --save /tmp/01.png
 ```
 

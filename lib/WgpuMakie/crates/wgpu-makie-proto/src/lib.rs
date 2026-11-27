@@ -929,7 +929,6 @@ pub enum ServerMessage {
         title: String,
         size: [u32; 2],
         px_per_unit: f32,
-        show_editor: bool,
     },
     Batch {
         messages: Vec<ServerMessage>,
@@ -996,6 +995,9 @@ pub enum ServerMessage {
     SyncTimelineState {
         timeline: TimelineState,
     },
+    AckInteraction {
+        seq: u64,
+    },
     Close,
 }
 
@@ -1047,6 +1049,8 @@ pub enum ClientMessage {
     AxisLimitsChanged {
         axis_id: u64,
         limits: [f64; 4],
+        #[serde(default)]
+        seq: u64,
     },
     Camera3DChanged {
         scene_id: u64,
@@ -1054,6 +1058,8 @@ pub enum ClientMessage {
         lookat: [f32; 3],
         upvector: [f32; 3],
         fov: f32,
+        #[serde(default)]
+        seq: u64,
     },
     SelectionChanged {
         plot_id: Option<u64>,
@@ -1070,6 +1076,9 @@ pub enum ClientMessage {
         axis_id: u64,
         rect: Option<[f64; 4]>,
         plot_indices: Vec<(u64, Vec<u32>)>,
+    },
+    EditorVisibilityChanged {
+        visible: bool,
     },
     WindowClosed,
 }
@@ -1088,7 +1097,6 @@ mod tests {
                     title: "Test".into(),
                     size: [800, 600],
                     px_per_unit: 2.0,
-                    show_editor: true,
                 },
                 ServerMessage::UpsertPlot {
                     plot: PlotPayload {

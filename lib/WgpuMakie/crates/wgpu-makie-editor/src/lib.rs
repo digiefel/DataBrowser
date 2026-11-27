@@ -1,12 +1,14 @@
 //! Modular interactive plot & layout editor crate for WgpuMakie.
 
+pub mod icons;
 pub mod model;
 pub mod panels;
 pub mod widgets;
 
-pub use model::{EditorAction, EditorModel, EditorTab};
+pub use model::{EditorAction, EditorModel, EditorTab, InlineTextEdit};
 pub use panels::{
-    draw_canvas_overlays, draw_editor_panel, draw_inspector_dock, draw_toolbar, show_timeline_bar,
+    draw_canvas_overlays, draw_editor_panel, draw_inline_text_editor, draw_inspector_dock,
+    draw_toolbar, show_timeline_bar,
 };
 
 #[cfg(test)]

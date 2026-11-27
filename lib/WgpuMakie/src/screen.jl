@@ -1,34 +1,30 @@
 # MakieScreen implementation and display/colorbuffer/pick integration for `WgpuMakie`.
 
 """
-    ScreenConfig(; title, visible, show_editor, px_per_unit, size)
+    ScreenConfig(; title, visible, px_per_unit, size)
 
 Configuration options for `WgpuMakie.Screen` and `WgpuMakie.activate!`.
 
 - `title::String = "WgpuMakie"`: Window title for interactive displays.
 - `visible::Bool = true`: Show the native viewer window when true; run offscreen when false.
-- `show_editor::Bool = true`: Show the built-in plot editor side panel on startup.
 - `px_per_unit::Float32 = 1.0f0`: Pixel scaling factor for `colorbuffer` and rendering.
 - `size::Tuple{Int, Int} = (800, 600)`: Fallback window size when a scene reports no area.
 """
 mutable struct ScreenConfig
     title::String
     visible::Bool
-    show_editor::Bool
     px_per_unit::Float32
     size::Tuple{Int, Int}
 
     function ScreenConfig(
         title::AbstractString,
         visible::Bool,
-        show_editor::Bool,
         px_per_unit::Real,
         size::Tuple{Integer, Integer},
     )
         return new(
             String(title),
             visible,
-            show_editor,
             Float32(px_per_unit),
             (Int(size[1]), Int(size[2])),
         )
@@ -55,8 +51,19 @@ mutable struct Screen <: Makie.MakieScreen
     plot_zorder::Dict{UInt64, Int32}
     axis_observers::Dict{UInt64, Any}
     dirty_scenes::Set{Scene}
+    dirty_axes::Set{Makie.Axis}
     dirty_plots::Set{Tuple{Scene, AbstractPlot}}
+    defer_flush::Ref{Bool}
+    flush_scheduled::Threads.Atomic{Bool}
+    flush_lock::ReentrantLock
     sync_lock::ReentrantLock
+    event_lock::ReentrantLock
+    pending_resize::Ref{Union{Nothing, Tuple{Int, Int, Float64}}}
+    pending_axis_limits::Dict{UInt64, Tuple{Vector{Float64}, UInt64}}
+    pending_camera3d::Dict{UInt64, Tuple{Dict{String, Any}, UInt64}}
+    pending_events::Vector{Dict{String, Any}}
+    event_wake::Channel{Nothing}
+    event_worker::Union{Nothing, Task}
     syncing_from_viewer::Ref{Bool}
     syncing_editor::Ref{Bool}
     selection::Observable{Any}
@@ -76,6 +83,8 @@ mutable struct Screen <: Makie.MakieScreen
     timeline_loop::Bool
     timeline_speed::Float32
     timeline_observer::Any
+    editor_visible::Observable{Bool}
+    closed_event::Base.Event
     open::Bool
 end
 
@@ -94,8 +103,19 @@ function Screen(scene::Union{Nothing, Scene}, config::ScreenConfig, args...)
         Dict{UInt64, Int32}(),
         Dict{UInt64, Any}(),
         Set{Scene}(),
+        Set{Makie.Axis}(),
         Set{Tuple{Scene, AbstractPlot}}(),
+        Ref(false),
+        Threads.Atomic{Bool}(false),
         ReentrantLock(),
+        ReentrantLock(),
+        ReentrantLock(),
+        Ref{Union{Nothing, Tuple{Int, Int, Float64}}}(nothing),
+        Dict{UInt64, Tuple{Vector{Float64}, UInt64}}(),
+        Dict{UInt64, Tuple{Dict{String, Any}, UInt64}}(),
+        Dict{String, Any}[],
+        Channel{Nothing}(1),
+        nothing,
         Ref(false),
         Ref(false),
         Observable{Any}(nothing),
@@ -115,8 +135,18 @@ function Screen(scene::Union{Nothing, Scene}, config::ScreenConfig, args...)
         true,
         1.0f0,
         nothing,
+        Observable(false),
+        Base.Event(),
         true,
     )
+    Observables.on(screen.editor_visible) do vis
+        if !screen.syncing_from_viewer[] && !isnothing(screen.viewer) && screen.viewer.open[]
+            send_msg!(screen.viewer, Dict{String, Any}(
+                "op" => "set_editor_visible",
+                "visible" => Bool(vis),
+            ))
+        end
+    end
     finalizer(s -> (!isnothing(s.viewer) && @async close(s)), screen)
     return screen
 end
@@ -136,9 +166,11 @@ function _ensure_viewer!(screen::Screen, scene::Scene)
         return screen.viewer
     end
     headless = !screen.config.visible
-    vp = start_viewer!(msg -> _handle_viewer_event!(screen, msg); headless = headless)
+    vp = start_viewer!(msg -> _enqueue_viewer_event!(screen, msg); headless = headless)
     screen.viewer = vp
+    screen.closed_event = Base.Event()
     screen.open = true
+    _ensure_event_worker!(screen)
 
     sz = Base.size(scene)
     send_msg!(vp, Dict{String, Any}(
@@ -147,21 +179,38 @@ function _ensure_viewer!(screen::Screen, scene::Scene)
         "title" => screen.config.title,
         "size" => UInt32[UInt32(max(1, sz[1])), UInt32(max(1, sz[2]))],
         "px_per_unit" => screen.config.px_per_unit,
-        "show_editor" => screen.config.show_editor,
     ))
+    if screen.editor_visible[]
+        send_msg!(vp, Dict{String, Any}(
+            "op" => "set_editor_visible",
+            "visible" => true,
+        ))
+    end
     return vp
 end
 
 function Makie.apply_screen_config!(screen::Screen, config::ScreenConfig, scene::Scene, args...)
     screen.config = config
-    if !isnothing(screen.viewer) && screen.viewer.open[]
-        send_msg!(screen.viewer, Dict{String, Any}(
-            "op" => "set_editor_visible",
-            "visible" => config.show_editor,
-        ))
-    end
     return screen
 end
+
+"""
+    WgpuMakie.set_editor!(target, visible::Bool)
+
+Show or hide the built-in plot editor side panel for an open `WgpuMakie.Screen`, `Scene`, or `Figure`.
+"""
+function set_editor!(screen::Screen, visible::Bool)
+    screen.editor_visible[] = visible
+    return screen
+end
+
+function set_editor!(scene::Scene, visible::Bool)
+    scr = Makie.getscreen(scene)
+    scr isa Screen || error("Scene has no active WgpuMakie.Screen")
+    return set_editor!(scr, visible)
+end
+
+set_editor!(fig::Makie.Figure, visible::Bool) = set_editor!(fig.scene, visible)
 
 function Base.display(screen::Screen, scene::Scene; figure = nothing, motion = nothing, unused...)
     screen.scene = scene
@@ -172,11 +221,26 @@ function Base.display(screen::Screen, scene::Scene; figure = nothing, motion = n
         fig isa Makie.Figure && (screen.figure = fig)
     end
     Makie.push_screen!(scene, screen)
-    _ensure_viewer!(screen, scene)
-    Makie.events(scene).window_open[] = true
-    _sync_figure_axes!(screen, screen.figure)
-    _sync_layout_meta!(screen, screen.figure)
-    _sync_subtree!(screen, scene, nothing)
+    if !isnothing(screen.figure)
+        Makie.update_state_before_display!(screen.figure)
+    end
+    init_msgs = Dict{String, Any}[]
+    screen.defer_flush[] = true
+    try
+        _collect_figure_axes_msgs!(screen, screen.figure, init_msgs)
+        _collect_layout_meta_msg!(screen, screen.figure, init_msgs)
+        _collect_subtree_msgs!(screen, scene, nothing, init_msgs)
+        _ensure_viewer!(screen, scene)
+        Makie.events(scene).window_open[] = true
+        if !isempty(init_msgs) && !isnothing(screen.viewer) && screen.open
+            send_msg!(screen.viewer, Dict{String, Any}(
+                "op" => "batch",
+                "messages" => init_msgs,
+            ))
+        end
+    finally
+        screen.defer_flush[] = false
+    end
     _attach_editor_observers!(screen)
     sync_editor_state!(screen)
     !isnothing(motion) && attach_timeline!(screen, motion)
@@ -292,7 +356,14 @@ function _clear_observers!(screen::Screen)
     empty!(screen.plain_annotation_plots)
     empty!(screen.plain_insets)
     empty!(screen.dirty_scenes)
+    empty!(screen.dirty_axes)
     empty!(screen.dirty_plots)
+    @lock screen.event_lock begin
+        screen.pending_resize[] = nothing
+        empty!(screen.pending_axis_limits)
+        empty!(screen.pending_camera3d)
+        empty!(screen.pending_events)
+    end
     return nothing
 end
 
@@ -303,8 +374,24 @@ function Base.empty!(screen::Screen)
     return nothing
 end
 
+"""
+    wait(screen::WgpuMakie.Screen)
+
+Block until the viewer window for `screen` closes.
+"""
+function Base.wait(screen::Screen)
+    isopen(screen) && wait(screen.closed_event)
+    return screen
+end
+
 function Base.close(screen::Screen; reuse = false)
     screen.open = false
+    notify(screen.closed_event)
+    try
+        isopen(screen.event_wake) && close(screen.event_wake)
+    catch
+    end
+    screen.event_worker = nothing
     if !isnothing(screen.scene)
         scene = screen.scene
         filter!(x -> x !== screen, scene.current_screens)

@@ -5,7 +5,10 @@ pub mod manipulate;
 pub mod scene;
 pub mod ticks;
 
-pub use camera::{recompute_2d_axis_camera, reset_axes, CameraController, InteractionUpdate};
+pub use camera::{
+    point_inside_legend, recompute_2d_axis_camera, reset_3d_scenes, reset_axes, CameraController,
+    InteractionUpdate,
+};
 pub use decimate::{raw_x_range, LineLod, ScatterLod};
 pub use inspector::format_tooltip;
 pub use manipulate::{

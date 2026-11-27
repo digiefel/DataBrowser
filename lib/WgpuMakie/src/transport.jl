@@ -63,7 +63,7 @@ function start_viewer!(on_event::Function; headless::Bool = false)
             ispath(socket_path) && rm(socket_path; force = true)
             error("wgpu-makie-viewer exited prematurely (exit code $(proc.exitcode))")
         end
-        sleep(0.01)
+        sleep(0.002)
     end
     if !isready(accept_ch)
         close(server)
@@ -97,7 +97,7 @@ function start_viewer!(on_event::Function; headless::Bool = false)
         if !vp.open[]
             error("wgpu-makie-viewer disconnected before sending Ready")
         end
-        sleep(0.01)
+        sleep(0.002)
     end
     if !isready(vp.ready)
         close_viewer!(vp)

@@ -830,7 +830,12 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
                     k = Symbol(cmd["key"])
                     ex = string(cmd["expr"])
                     if k === :text
-                        rec[:text] = ex
+                        parsed = try
+                            Meta.parse(ex)
+                        catch
+                            nothing
+                        end
+                        rec[:text] = parsed isa AbstractString ? String(parsed) : ex
                     else
                         rec[:kwargs][k] = ex
                     end

@@ -17,7 +17,6 @@ using Sockets
 const _DEFAULT_CONFIG = Makie.Attributes(
     title = "WgpuMakie",
     visible = true,
-    show_editor = true,
     px_per_unit = 1.0f0,
     size = (800, 600),
 )

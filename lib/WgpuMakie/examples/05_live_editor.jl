@@ -44,8 +44,9 @@ function main(args = ARGS)
         println("\nGenerated standalone Grafico code:\n")
         println(Grafico.to_code(ep; include_imports = true, include_figure = true))
     else
-        display(fig; title = "WgpuMakie Live Editor")
-        println("Viewer open with always-on Plot Editor. Edit layers, scales, theme, inspector, or copy Grafico code.")
+        scr = display(fig; title = "WgpuMakie Live Editor")
+        println("Click Editor in the toolbar to edit layers, scales, theme, or copy Grafico code.")
+        isinteractive() || wait(scr)
     end
     return nothing
 end

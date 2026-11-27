@@ -46,10 +46,34 @@ pub fn format_tooltip(
                     None
                 }
             }) {
+                if name == "label" && val == &m.label {
+                    continue;
+                }
                 lines.push(format!("{name}: {val}"));
             }
         }
     }
 
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_tooltip_skips_duplicate_label() {
+        let meta = InspectorMeta {
+            label: "sin(x)".into(),
+            xlabel: "x".into(),
+            ylabel: "y".into(),
+            zlabel: "z".into(),
+            fields: vec![
+                ("label".into(), vec!["sin(x)".into()]),
+                ("group".into(), vec!["A".into()]),
+            ],
+        };
+        let tip = format_tooltip(Some(&meta), [1.5, 0.25, 0.0], 0, false);
+        assert_eq!(tip, "sin(x)\nx: 1.5\ny: 0.25\ngroup: A");
+    }
 }

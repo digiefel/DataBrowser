@@ -26,9 +26,8 @@ end
 save_path = parse_save_arg(ARGS)
 fig = build_figure()
 if isnothing(save_path)
-    display(fig)
-    println("Close the viewer window or press Enter to exit...")
-    readline()
+    scr = display(fig)
+    isinteractive() || wait(scr)
 else
     mkpath(dirname(save_path))
     Makie.save(save_path, fig)

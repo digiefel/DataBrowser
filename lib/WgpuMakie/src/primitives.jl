@@ -175,9 +175,6 @@ function _extract_inspector_meta(plot::AbstractPlot)
         for (name, vals) in insp.fields
             push!(fields, Any[string(name), String[string(v) for v in vals]])
         end
-        if isempty(fields) && !isempty(lbl)
-            push!(fields, Any["label", String[lbl]])
-        end
         return Dict{String, Any}(
             "label" => lbl,
             "xlabel" => xlabel,
@@ -187,16 +184,12 @@ function _extract_inspector_meta(plot::AbstractPlot)
         )
     end
     lbl = haskey(plot, :label) ? string(something(plot.label[], "")) : string(Makie.plotkey(plot))
-    fields = Any[]
-    if !isempty(lbl)
-        push!(fields, Any["label", String[lbl]])
-    end
     return Dict{String, Any}(
         "label" => lbl,
         "xlabel" => "x",
         "ylabel" => "y",
         "zlabel" => "z",
-        "fields" => fields,
+        "fields" => Any[],
     )
 end
 

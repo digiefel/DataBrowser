@@ -57,7 +57,6 @@ mod tests {
             title: "Test".into(),
             size: [200, 200],
             px_per_unit: 1.0,
-            show_editor: false,
         });
         graph.apply(ServerMessage::UpsertScene {
             scene: make_2d_scene(),
@@ -165,7 +164,6 @@ mod tests {
             title: "3D".into(),
             size: [160, 160],
             px_per_unit: 1.0,
-            show_editor: false,
         });
         let eye = glam::Vec3::new(2.0, 2.0, 2.0);
         let look = glam::Vec3::ZERO;
@@ -259,7 +257,6 @@ mod tests {
             title: "LOD & Stream".into(),
             size: [320, 200],
             px_per_unit: 1.0,
-            show_editor: false,
         });
         let proj = Mat4::orthographic_rh_gl(0.0, 100.0, -5.0, 5.0, -10.0, 10.0);
         graph.apply(ServerMessage::UpsertScene {
@@ -487,7 +484,6 @@ mod tests {
             title: "Volume".into(),
             size: [160, 160],
             px_per_unit: 1.0,
-            show_editor: false,
         });
         graph.apply(ServerMessage::UpsertScene {
             scene: make_3d_scene(vec![]),

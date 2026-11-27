@@ -38,11 +38,11 @@ end
 idx = findfirst(==("--save"), ARGS)
 fig, ep = build_example()
 if isnothing(idx) || idx >= length(ARGS)
-    display(fig; title = "WgpuMakie Annotations & Fit Label")
+    scr = display(fig; title = "WgpuMakie Annotations & Fit Label")
     println("Standalone Grafico code:\n")
     println(Grafico.to_code(ep; include_imports = true, include_figure = true))
-    println("\nSwitch to Edit / Text / Arrow / Callout tools in the top bar. Close viewer or press Enter...")
-    readline()
+    println("\nSwitch to Edit / Text / Arrow / Callout tools in the top bar.")
+    isinteractive() || wait(scr)
 else
     out = ARGS[idx + 1]
     mkpath(dirname(out))

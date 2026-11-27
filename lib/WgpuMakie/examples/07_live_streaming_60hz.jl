@@ -60,16 +60,16 @@ n_frames = parse(Int, string(parse_flag_arg(ARGS, "--frames", "30")))
 
 if isnothing(save_path)
     fig, step_frame! = build_streaming_figure()
-    display(fig)
+    scr = display(fig)
     t0 = time_ns()
     for k in 1:n_frames
+        isopen(scr) || break
         step_frame!(k)
         sleep(1.0 / 60.0)
     end
     dt_s = (time_ns() - t0) / 1.0e9
     println("Streamed ", n_frames, " frames in ", round(dt_s; digits = 2), "s (", round(n_frames / dt_s; digits = 1), " Hz)")
-    println("Close the viewer window or press Enter to exit...")
-    readline()
+    isinteractive() || wait(scr)
 else
     fig, step_frame! = build_streaming_figure()
     # Warm up first frame, then time consecutive Observable updates + colorbuffer readbacks.

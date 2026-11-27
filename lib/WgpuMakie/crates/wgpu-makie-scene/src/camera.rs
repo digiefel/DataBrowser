@@ -2,7 +2,7 @@
 
 use crate::scene::{SceneGraph, SceneNode};
 use glam::{Mat4, Vec3};
-use wgpu_makie_proto::{AxisMeta, AxisScale};
+use wgpu_makie_proto::{AxisMeta, AxisScale, LayoutBlockKind};
 
 const ZOOM_PER_STEP: f64 = 0.1;
 const MIN_RECT_PX: f64 = 5.0;
@@ -164,7 +164,93 @@ fn zoomed_window(center: f64, share: f64) -> [f64; 2] {
     [center * (1.0 - share), center + (1.0 - center) * share]
 }
 
+pub fn point_inside_legend(graph: &SceneGraph, pos_px: [f64; 2]) -> bool {
+    let Some(layout) = &graph.layout else {
+        return false;
+    };
+    layout
+        .blocks
+        .iter()
+        .any(|b| b.kind == LayoutBlockKind::Legend && inside_rect(pos_px, b.bbox_px))
+}
+
 impl CameraController {
+    /// Reset the 2D axis (or 3D scene) containing `pos_px` back to its initial bounds/camera.
+    pub fn reset_at(&mut self, graph: &mut SceneGraph, pos_px: [f64; 2]) -> InteractionUpdate {
+        let mut hit_with_area: Vec<(f32, u64)> = graph
+            .axes
+            .values()
+            .filter_map(|ax| {
+                let s = graph.scenes.get(&ax.data_scene_id)?;
+                if s.state.visible && inside_rect(pos_px, s.state.viewport) {
+                    Some((s.state.viewport[2] * s.state.viewport[3], ax.axis_id))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let min_area = hit_with_area
+            .iter()
+            .map(|(a, _)| *a)
+            .fold(f32::INFINITY, f32::min);
+        let mut hit_axes: Vec<u64> = hit_with_area
+            .drain(..)
+            .filter(|(a, _)| *a <= min_area * 1.05 + 1.0)
+            .map(|(_, id)| id)
+            .collect();
+        hit_axes.sort_unstable();
+
+        if hit_axes.is_empty() {
+            'outer: for ax in graph.axes.values() {
+                let Some(scene) = graph.scenes.get(&ax.data_scene_id) else {
+                    continue;
+                };
+                if !scene.state.visible {
+                    continue;
+                }
+                for d in 0..2 {
+                    if inside_rect(pos_px, axis_strip_rect(ax, scene.state.viewport, d)) {
+                        hit_axes.push(ax.axis_id);
+                        break 'outer;
+                    }
+                }
+            }
+        }
+
+        if !hit_axes.is_empty() {
+            let updates = reset_axes(graph, &hit_axes);
+            return if updates.is_empty() {
+                InteractionUpdate::None
+            } else {
+                InteractionUpdate::AxisLimits(updates)
+            };
+        }
+
+        let mut hit_3d: Option<u64> = None;
+        for &sid in &graph.scene_order {
+            if let Some(s) = graph.scenes.get(&sid) {
+                if s.state.visible && s.state.camera.is_3d && inside_rect(pos_px, s.state.viewport) {
+                    hit_3d = Some(sid);
+                }
+            }
+        }
+        if let Some(scene_id) = hit_3d {
+            if let Some(node) = graph.scenes.get_mut(&scene_id) {
+                node.state.camera = node.initial_camera.clone();
+                let c = node.state.camera.clone();
+                graph.revision += 1;
+                return InteractionUpdate::Camera3D(
+                    scene_id,
+                    c.eyeposition,
+                    c.lookat,
+                    c.upvector,
+                    c.fov,
+                );
+            }
+        }
+        InteractionUpdate::None
+    }
+
     /// Handle pointer press (`button`: 0=left, 1=right, 2=middle), `pos_px` in Makie bottom-left pixels.
     /// `modifiers`: bit 0 = Shift, bit 1 = Ctrl/Cmd, bit 2 = Alt, bit 3 = X key, bit 4 = Y key.
     pub fn on_pointer_down(
@@ -175,6 +261,9 @@ impl CameraController {
         modifiers: u8,
     ) -> InteractionUpdate {
         let ctrl = (modifiers & 0b0010) != 0;
+        if ctrl && button == 0 {
+            return self.reset_at(graph, pos_px);
+        }
         let hold_x = (modifiers & 0b01000) != 0;
         let hold_y = (modifiers & 0b10000) != 0;
         let free_dims = match (hold_x, hold_y) {
@@ -551,15 +640,66 @@ where
 
 pub fn reset_axes(graph: &mut SceneGraph, target_ids: &[u64]) -> Vec<(u64, [f64; 4])> {
     let mut updates = Vec::new();
+    let mut reset_roots = Vec::new();
     for &id in target_ids {
         if let Some(ax) = graph.axes.get_mut(&id) {
             ax.limits = ax.reset_limits;
             let dsid = ax.data_scene_id;
             let lims = ax.limits;
+            let lx = ax.linked_x.clone();
+            let ly = ax.linked_y.clone();
             if let Some(scene) = graph.scenes.get_mut(&dsid) {
                 recompute_2d_axis_camera(ax, scene);
             }
             updates.push((id, lims));
+            reset_roots.push((lims, lx, ly));
+        }
+    }
+    for (lims, linked_x, linked_y) in reset_roots {
+        for lx in linked_x {
+            if !target_ids.contains(&lx) {
+                if let Some(lax) = graph.axes.get_mut(&lx) {
+                    lax.limits[0] = lims[0];
+                    lax.limits[2] = lims[2];
+                    let dsid = lax.data_scene_id;
+                    let updated = lax.limits;
+                    if let Some(scene) = graph.scenes.get_mut(&dsid) {
+                        recompute_2d_axis_camera(&graph.axes[&lx], scene);
+                    }
+                    updates.push((lx, updated));
+                }
+            }
+        }
+        for ly in linked_y {
+            if !target_ids.contains(&ly) {
+                if let Some(lax) = graph.axes.get_mut(&ly) {
+                    lax.limits[1] = lims[1];
+                    lax.limits[3] = lims[3];
+                    let dsid = lax.data_scene_id;
+                    let updated = lax.limits;
+                    if let Some(scene) = graph.scenes.get_mut(&dsid) {
+                        recompute_2d_axis_camera(&graph.axes[&ly], scene);
+                    }
+                    updates.push((ly, updated));
+                }
+            }
+        }
+    }
+    if !updates.is_empty() {
+        graph.revision += 1;
+    }
+    updates
+}
+
+pub fn reset_3d_scenes(
+    graph: &mut SceneGraph,
+) -> Vec<(u64, [f32; 3], [f32; 3], [f32; 3], f32)> {
+    let mut updates = Vec::new();
+    for (&id, node) in &mut graph.scenes {
+        if node.state.camera.is_3d {
+            node.state.camera = node.initial_camera.clone();
+            let c = &node.state.camera;
+            updates.push((id, c.eyeposition, c.lookat, c.upvector, c.fov));
         }
     }
     if !updates.is_empty() {
