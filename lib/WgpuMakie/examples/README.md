@@ -29,6 +29,8 @@ Select `Edit` in the top toolbar to drag annotation handles, subplot dividers, l
 
 ## Running
 
+Examples `04`, `05`, and `09` also use `Grafico`, so run them in an environment where both `WgpuMakie` and `Grafico` are available.
+
 Scripts wait for the viewer window to close when launched with `julia`, and return to the REPL when launched with `julia -i`:
 
 ```bash

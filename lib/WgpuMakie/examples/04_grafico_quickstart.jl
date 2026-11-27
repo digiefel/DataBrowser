@@ -1,7 +1,3 @@
-let dir = normpath(joinpath(@__DIR__, "..", "..", "Grafico"))
-    dir in LOAD_PATH || push!(LOAD_PATH, dir)
-end
-
 using WgpuMakie
 using Grafico
 

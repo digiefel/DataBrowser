@@ -1,10 +1,6 @@
 # Declarative plot annotations and a live fit label edited through Grafico.EditablePlot.
 # Switch to the Edit, Text, Arrow, or Callout tools in the top bar to modify overlays.
 
-let dir = normpath(joinpath(@__DIR__, "..", "..", "Grafico"))
-    dir in LOAD_PATH || push!(LOAD_PATH, dir)
-end
-
 using Grafico
 using WgpuMakie
 

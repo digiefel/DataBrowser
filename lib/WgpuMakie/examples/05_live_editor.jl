@@ -1,10 +1,6 @@
 # Live bi-directional editor with Grafico.EditablePlot.
 # Open the editor panel in the toolbar to edit layers, scales, theme, or copy Grafico code.
 
-let dir = normpath(joinpath(@__DIR__, "..", "..", "Grafico"))
-    dir in LOAD_PATH || push!(LOAD_PATH, dir)
-end
-
 using Grafico
 using WgpuMakie
 
