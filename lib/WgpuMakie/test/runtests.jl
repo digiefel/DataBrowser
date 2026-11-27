@@ -932,4 +932,41 @@ end
         @test isapprox(Float64(ax3.zoom_mult[]), orig_zm; atol = 1e-6)
         close(scr3)
     end
+
+    @testset "Zooming updates shifted scene viewports on multi-subplot layouts" begin
+        fig_z = Makie.Figure(size = (960, 480))
+        ax1 = Makie.Axis(fig_z[1, 1]; title = "Heatmap", xlabel = "x", ylabel = "y")
+        xs = range(-2, 2; length = 40)
+        ys = range(-2, 2; length = 40)
+        mat = [exp(-(x^2 + y^2)) * cos(3x) for x in xs, y in ys]
+        hm = Makie.heatmap!(ax1, xs, ys, mat; colormap = :inferno)
+        Makie.Colorbar(fig_z[1, 2], hm)
+        ax2 = Makie.Axis(fig_z[1, 3]; title = "RGBA Image", aspect = Makie.DataAspect())
+        img_data = [RGBAf(i / 32, j / 32, 0.5f0, 1.0f0) for i in 1:32, j in 1:32]
+        Makie.image!(ax2, img_data)
+
+        scr_z = WgpuMakie.Screen(; visible = false)
+        display(scr_z, fig_z.scene; figure = fig_z)
+
+        vp1_before = Makie.viewport(ax1.scene)[]
+        aid1 = UInt64(objectid(ax1))
+        # Zoom in so y-tick labels widen ("-1,0,1" -> "-0.25,0.00,0.25,0.50,0.75") and shift viewports right
+        updates = Dict{UInt64, Tuple{Vector{Float64}, UInt64}}(
+            aid1 => ([-0.52, -0.24, 0.14, 0.78], UInt64(1)),
+        )
+        WgpuMakie._apply_axis_limits!(scr_z, updates)
+        vp1_after = Makie.viewport(ax1.scene)[]
+        @test minimum(vp1_after)[1] > minimum(vp1_before)[1] + 2.0f0
+
+        buf = Makie.colorbuffer(scr_z)
+        h_px, w_px = size(buf)
+        left_spine_x = round(Int, minimum(vp1_after)[1])
+        mid_y_topdown = clamp(h_px - round(Int, minimum(vp1_after)[2] + 0.5 * widths(vp1_after)[2]), 1, h_px)
+        outside_x = clamp(left_spine_x - 6, 1, w_px)
+        px_out = buf[mid_y_topdown, outside_x]
+        @test Float64(Colors.red(px_out)) > 0.9
+        @test Float64(Colors.green(px_out)) > 0.9
+        @test Float64(Colors.blue(px_out)) > 0.9
+        close(scr_z)
+    end
 end

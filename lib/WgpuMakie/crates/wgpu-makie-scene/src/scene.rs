@@ -97,11 +97,20 @@ impl SceneGraph {
                 let rev = self.revision + 1;
                 self.revision = rev;
                 if let Some(node) = self.scenes.get_mut(&id) {
+                    let vp_changed = node.state.viewport != scene.viewport;
                     if cam_locked {
                         scene.camera = node.state.camera.clone();
+                        if vp_changed {
+                            scene.camera.resolution = [scene.viewport[2], scene.viewport[3]];
+                        }
                     }
                     node.state = scene;
                     node.revision = rev;
+                    if cam_locked && vp_changed {
+                        if let Some(ax) = self.axes.values().find(|a| a.data_scene_id == id) {
+                            crate::camera::recompute_2d_axis_camera(ax, node);
+                        }
+                    }
                 } else {
                     let initial_camera = scene.camera.clone();
                     let insert_order = self.next_scene_order;

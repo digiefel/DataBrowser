@@ -49,7 +49,16 @@ function _apply_axis_limits!(screen, updates::Dict{UInt64, Tuple{Vector{Float64}
         screen.syncing_from_viewer[] = false
         screen.defer_flush[] = prev_defer
     end
-    flush_updates!(screen; ack_seq = max_seq)
+    viewport_changed = @lock screen.sync_lock begin
+        changed = !isempty(screen.dirty_scenes)
+        if changed
+            for ax in values(screen.id_to_axis)
+                push!(screen.dirty_axes, ax)
+            end
+        end
+        changed
+    end
+    flush_updates!(screen; ack_seq = max_seq, include_layout = viewport_changed)
     return nothing
 end
 

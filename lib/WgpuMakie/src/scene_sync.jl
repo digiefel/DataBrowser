@@ -254,13 +254,13 @@ function _register_scene_observers!(screen, scene::Scene, parent_id::Union{Nothi
 
     obs_list = Any[]
     push!(obs_list, on(Makie.viewport(scene)) do _
-        _mark_scene_dirty!(screen, scene, parent_id)
+        _mark_scene_dirty!(screen, scene, parent_id; force = true)
     end)
     push!(obs_list, on(scene.backgroundcolor) do _
-        _mark_scene_dirty!(screen, scene, parent_id)
+        _mark_scene_dirty!(screen, scene, parent_id; force = true)
     end)
     push!(obs_list, on(scene.visible) do _
-        _mark_scene_dirty!(screen, scene, parent_id)
+        _mark_scene_dirty!(screen, scene, parent_id; force = true)
     end)
     push!(obs_list, on(scene.camera.projectionview) do _
         _mark_scene_dirty!(screen, scene, parent_id)
@@ -275,8 +275,8 @@ function _register_scene_observers!(screen, scene::Scene, parent_id::Union{Nothi
     return nothing
 end
 
-function _mark_scene_dirty!(screen, scene::Scene, parent_id::Union{Nothing, UInt64})
-    screen.syncing_from_viewer[] && return
+function _mark_scene_dirty!(screen, scene::Scene, parent_id::Union{Nothing, UInt64}; force::Bool = false)
+    !force && screen.syncing_from_viewer[] && return
     @lock screen.sync_lock push!(screen.dirty_scenes, scene)
     _schedule_flush!(screen)
     return
