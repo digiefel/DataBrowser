@@ -9,11 +9,9 @@ use wgpu_makie_proto::{
     read_frame, ClientMessage, EditorCommand, LayoutBlockKind, PointerEventKind, ProtoError,
     ServerMessage,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use wgpu_makie_proto::PrimitiveKind;
 use wgpu_makie_render::WgpuRenderer;
 #[cfg(not(target_arch = "wasm32"))]
-use wgpu_makie_scene::format_tooltip;
+use wgpu_makie_scene::{element_data_pos, format_tooltip, resolve_picked_sample};
 use wgpu_makie_scene::{
     point_inside_legend, CameraController, DirectManipController, DragTarget, InteractionUpdate,
     SceneGraph, ToolMode,
@@ -460,6 +458,7 @@ impl EmbeddedViewer {
     ) {
         if !self.editor.show_inspector_dock {
             self.hover_tooltip = None;
+            self.editor.hovered_sample = None;
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -474,17 +473,22 @@ impl EmbeddedViewer {
                 fb_height,
                 x,
                 y,
-                8,
+                5,
             ) else {
                 self.hover_tooltip = None;
+                self.editor.hovered_sample = None;
                 return;
             };
-            let Some(&(plot_id, elem_idx)) = hits.first() else {
+            let Some(&(plot_id, raw_elem_idx)) = hits.first() else {
                 self.hover_tooltip = None;
+                self.editor.hovered_sample = None;
                 return;
             };
+            let resolved =
+                resolve_picked_sample(&self.graph, plot_id, raw_elem_idx, self.pointer_unitless);
             let Some(entry) = self.graph.plots.get(&plot_id) else {
                 self.hover_tooltip = None;
+                self.editor.hovered_sample = None;
                 return;
             };
             let is_3d = self
@@ -492,8 +496,16 @@ impl EmbeddedViewer {
                 .scenes
                 .get(&entry.payload.scene_id)
                 .is_some_and(|s| s.state.camera.is_3d);
-            let pos = element_data_pos(&entry.payload.primitive, elem_idx)
-                .unwrap_or([self.pointer_unitless[0], self.pointer_unitless[1], 0.0]);
+            let (elem_idx, pos) = if let Some((idx, dpos, _)) = resolved {
+                self.editor.hovered_sample = Some((plot_id, idx, dpos));
+                (idx, dpos)
+            } else {
+                self.editor.hovered_sample = None;
+                (
+                    raw_elem_idx,
+                    [self.pointer_unitless[0], self.pointer_unitless[1], 0.0],
+                )
+            };
             if let Some(custom) = self.editor.custom_tooltips.get(&(plot_id, elem_idx)) {
                 self.hover_tooltip = Some(custom.clone());
             } else {
@@ -536,15 +548,25 @@ impl EmbeddedViewer {
                 fb_height,
                 x,
                 y,
-                8,
+                5,
             ) {
-                let sel = hits.first().copied();
-                let pos = sel.and_then(|(p, i)| {
-                    self.graph
-                        .plots
-                        .get(&p)
-                        .and_then(|e| element_data_pos(&e.payload.primitive, i))
-                });
+                let (sel, pos) = match hits.first().copied() {
+                    Some((p, raw_i)) => {
+                        if let Some((ri, rpos, _)) =
+                            resolve_picked_sample(&self.graph, p, raw_i, self.pointer_unitless)
+                        {
+                            (Some((p, ri)), Some(rpos))
+                        } else {
+                            let fallback_pos = self
+                                .graph
+                                .plots
+                                .get(&p)
+                                .and_then(|e| element_data_pos(&e.payload.primitive, raw_i));
+                            (Some((p, raw_i)), fallback_pos)
+                        }
+                    }
+                    None => (None, None),
+                };
                 self.editor.set_selection(sel, pos);
                 let (pid, idx) = match sel {
                     Some((p, i)) => (Some(p), Some(i)),
@@ -579,28 +601,6 @@ fn root_clear_color(graph: &SceneGraph) -> [f32; 4] {
         }
     }
     [1.0, 1.0, 1.0, 1.0]
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn element_data_pos(prim: &PrimitiveKind, idx: u32) -> Option<[f64; 3]> {
-    let buf = match prim {
-        PrimitiveKind::Lines(l) => &l.positions,
-        PrimitiveKind::Scatter(s) => &s.positions,
-        PrimitiveKind::Mesh(m) => &m.positions,
-        PrimitiveKind::MeshScatter(ms) => &ms.instance_positions,
-        _ => return None,
-    };
-    let floats = buf.as_f32_vec().ok()?;
-    let base = (idx as usize) * 3;
-    if base + 2 < floats.len() {
-        Some([
-            floats[base] as f64,
-            floats[base + 1] as f64,
-            floats[base + 2] as f64,
-        ])
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]

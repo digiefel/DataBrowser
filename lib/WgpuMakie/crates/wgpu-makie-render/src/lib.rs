@@ -153,6 +153,58 @@ mod tests {
         let hits = hr.pick(&mut graph, 200, 200, 150, 100, 5).unwrap();
         assert!(!hits.is_empty(), "expected GPU pick hit");
         assert_eq!(hits[0], (200, 1));
+
+        // Scatter quad #1 spans x=[140..160], y=[90..110]; test circular cutoff on (dx=r, dy=r) around a tiny 1x1 marker edge.
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 300,
+                scene_id: 1,
+                z_order: 3,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: -2e-4,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: identity,
+                world_normal_matrix: nm,
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Scatter(ScatterData {
+                    positions: TypedBuffer::from_f32(&[5.0, 8.0, 0.0]),
+                    colors: ColorSource::Uniform {
+                        rgba: [0.0, 1.0, 0.0, 1.0],
+                    },
+                    quad_scale: ScalarOrBuffer::Scalar2([2.0, 2.0]),
+                    quad_offset: ScalarOrBuffer::Scalar2([-1.0, -1.0]),
+                    marker_offset: ScalarOrBuffer::Scalar3([0.0, 0.0, 0.0]),
+                    rotation: ScalarOrBuffer::Scalar4([0.0, 0.0, 0.0, 1.0]),
+                    sdf_uv: ScalarOrBuffer::Scalar4([0.0, 0.0, 1.0, 1.0]),
+                    sdf_shape: 0,
+                    strokewidth: 0.0,
+                    strokecolor: ColorSource::Uniform {
+                        rgba: [0.0, 0.0, 0.0, 1.0],
+                    },
+                    glowwidth: 0.0,
+                    glowcolor: [0.0; 4],
+                    billboard: false,
+                    transform_marker: false,
+                    f32c_scale: [1.0, 1.0, 1.0],
+                    colormap: None,
+                }),
+                inspector: None,
+            },
+        });
+        // Point 300 sits at pixel (100, 160), radius 1 px -> pixels inside x=[99..100], y=[159..160].
+        // Query at (95, 155) with range 4: corner distance is sqrt(4^2 + 4^2) = 5.66 > 4 (must miss).
+        let corner_miss = hr.pick(&mut graph, 200, 200, 95, 155, 4).unwrap();
+        assert!(
+            corner_miss.iter().all(|(pid, _)| *pid != 300),
+            "expected circular pick cutoff to reject diagonal corner hit, got {corner_miss:?}"
+        );
+        // Query at (96, 159) with range 4: distance from pixel (99, 160) is sqrt(9 + 1) <= 4 (must hit).
+        let circle_hit = hr.pick(&mut graph, 200, 200, 96, 159, 4).unwrap();
+        assert_eq!(circle_hit.first().copied(), Some((300, 0)));
     }
 
     #[test]

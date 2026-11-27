@@ -2795,6 +2795,119 @@ pub fn draw_canvas_overlays(
             }
         }
     }
+
+    if model.show_inspector_dock || graph.editor_visible {
+        if let (Some((pid, _)), Some(pos)) = (model.selected_elem, model.selected_pos) {
+            draw_sample_indicator(
+                &painter,
+                graph,
+                pid,
+                pos,
+                &to_egui_pt,
+                &to_egui_rect,
+                egui::Color32::from_rgb(235, 125, 25),
+                105,
+                6.2,
+            );
+        }
+    }
+    if model.show_inspector_dock {
+        if let Some((pid, _, pos)) = model.hovered_sample {
+            draw_sample_indicator(
+                &painter,
+                graph,
+                pid,
+                pos,
+                &to_egui_pt,
+                &to_egui_rect,
+                egui::Color32::from_rgb(35, 115, 220),
+                135,
+                5.5,
+            );
+        }
+    }
+}
+
+fn draw_dashed_line(
+    painter: &egui::Painter,
+    p0: egui::Pos2,
+    p1: egui::Pos2,
+    dash: f32,
+    gap: f32,
+    stroke: egui::Stroke,
+) {
+    let delta = p1 - p0;
+    let total = delta.length();
+    if total <= 1.0 {
+        return;
+    }
+    let dir = delta / total;
+    let step = (dash + gap).max(2.0);
+    let mut t = 0.0f32;
+    while t < total {
+        let t_end = (t + dash).min(total);
+        painter.line_segment([p0 + dir * t, p0 + dir * t_end], stroke);
+        t += step;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_sample_indicator(
+    painter: &egui::Painter,
+    graph: &SceneGraph,
+    plot_id: u64,
+    data_pos: [f64; 3],
+    to_egui_pt: &impl Fn([f32; 2]) -> egui::Pos2,
+    to_egui_rect: &impl Fn([f32; 4]) -> egui::Rect,
+    color: egui::Color32,
+    crosshair_alpha: u8,
+    radius: f32,
+) {
+    let Some((pt_px, clip_vp, is_3d)) =
+        wgpu_makie_scene::project_plot_point_px(graph, plot_id, data_pos)
+    else {
+        return;
+    };
+    let center = to_egui_pt(pt_px);
+    if !is_3d {
+        if let Some(vp) = clip_vp {
+            if pt_px[0] < vp[0] - 2.0
+                || pt_px[0] > vp[0] + vp[2] + 2.0
+                || pt_px[1] < vp[1] - 2.0
+                || pt_px[1] > vp[1] + vp[3] + 2.0
+            {
+                return;
+            }
+            let clip_rect = to_egui_rect(vp);
+            let cp = painter.with_clip_rect(clip_rect);
+            let line_col =
+                egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), crosshair_alpha);
+            let stroke = egui::Stroke::new(1.0, line_col);
+            draw_dashed_line(
+                &cp,
+                egui::pos2(clip_rect.min.x, center.y),
+                egui::pos2(clip_rect.max.x, center.y),
+                5.0,
+                4.0,
+                stroke,
+            );
+            draw_dashed_line(
+                &cp,
+                egui::pos2(center.x, clip_rect.min.y),
+                egui::pos2(center.x, clip_rect.max.y),
+                5.0,
+                4.0,
+                stroke,
+            );
+        }
+    }
+    painter.circle_stroke(
+        center,
+        radius + 1.2,
+        egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 225)),
+    );
+    painter.circle_stroke(center, radius, egui::Stroke::new(2.0, color));
+    painter.circle_filled(center, 2.0, color);
 }
 
 /// Draw a floating inline text box when editing a text or callout annotation on the canvas.

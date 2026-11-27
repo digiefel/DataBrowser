@@ -305,6 +305,8 @@ mod tests {
             state: sample_snapshot(),
         });
         model.set_selection(Some((20, 0)), Some([1.0, 2.0, 0.0]));
+        model.show_inspector_dock = true;
+        model.hovered_sample = Some((20, 0, [1.0, 2.0, 0.0]));
 
         for tab in [
             EditorTab::Layers,

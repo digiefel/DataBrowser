@@ -12,7 +12,7 @@ pub use camera::{
 };
 pub use decimate::{raw_x_range, LineLod, ScatterLod};
 pub use dragology::{evaluate_drag_spec, DragPreview};
-pub use inspector::format_tooltip;
+pub use inspector::{element_data_pos, format_tooltip, project_plot_point_px, resolve_picked_sample};
 pub use manipulate::{
     classify_block_dock_zone, classify_dock_zone, compute_brush, data_to_pixel, pixel_to_data,
     pixel_to_relative, relative_to_pixel, AnnHandleKind, AnnotationHandleVisual, BrushSummary,

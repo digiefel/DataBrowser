@@ -16,8 +16,8 @@ use wgpu_makie_proto::{
 };
 use wgpu_makie_render::{HeadlessRenderer, WgpuRenderer};
 use wgpu_makie_scene::{
-    format_tooltip, point_inside_legend, AnnHandleKind, CameraController, DirectManipController,
-    DragTarget, InteractionUpdate, SceneGraph, ToolMode,
+    element_data_pos, format_tooltip, point_inside_legend, resolve_picked_sample, AnnHandleKind,
+    CameraController, DirectManipController, DragTarget, InteractionUpdate, SceneGraph, ToolMode,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -200,6 +200,7 @@ struct ViewerApp {
     buttons_mask: u8,
     mods_mask: u8,
     hover_tooltip: Option<String>,
+    hover_anchor_px: Option<[f32; 2]>,
     last_pick_time: Instant,
     last_edit_click: Option<(Instant, [f64; 2])>,
     left_down_pos: Option<[f64; 2]>,
@@ -230,6 +231,7 @@ impl ViewerApp {
             buttons_mask: 0,
             mods_mask: 0,
             hover_tooltip: None,
+            hover_anchor_px: None,
             last_pick_time: Instant::now(),
             last_edit_click: None,
             left_down_pos: None,
@@ -291,9 +293,15 @@ impl ViewerApp {
         }
     }
 
+    fn clear_hover(&mut self) {
+        self.hover_tooltip = None;
+        self.hover_anchor_px = None;
+        self.editor.hovered_sample = None;
+    }
+
     fn update_hover_tooltip(&mut self) {
         if !self.editor.show_inspector_dock {
-            self.hover_tooltip = None;
+            self.clear_hover();
             return;
         }
         if self.last_pick_time.elapsed().as_millis() < 16 {
@@ -309,17 +317,18 @@ impl ViewerApp {
         let y = self.pointer_unitless[1].round() as i32;
         let Ok(hits) = ws
             .renderer
-            .pick_region(&ws.device, &ws.queue, &mut self.graph, px_w, px_h, x, y, 8)
+            .pick_region(&ws.device, &ws.queue, &mut self.graph, px_w, px_h, x, y, 5)
         else {
-            self.hover_tooltip = None;
+            self.clear_hover();
             return;
         };
-        let Some(&(plot_id, elem_idx)) = hits.first() else {
-            self.hover_tooltip = None;
+        let Some(&(plot_id, raw_elem_idx)) = hits.first() else {
+            self.clear_hover();
             return;
         };
+        let resolved = resolve_picked_sample(&self.graph, plot_id, raw_elem_idx, self.pointer_unitless);
         let Some(entry) = self.graph.plots.get(&plot_id) else {
-            self.hover_tooltip = None;
+            self.clear_hover();
             return;
         };
         let is_3d = self
@@ -327,8 +336,18 @@ impl ViewerApp {
             .scenes
             .get(&entry.payload.scene_id)
             .is_some_and(|s| s.state.camera.is_3d);
-        let pos = element_data_pos(&entry.payload.primitive, elem_idx)
-            .unwrap_or([self.pointer_unitless[0], self.pointer_unitless[1], 0.0]);
+        let (elem_idx, pos, anchor_px) = if let Some((idx, dpos, px)) = resolved {
+            self.editor.hovered_sample = Some((plot_id, idx, dpos));
+            (idx, dpos, px)
+        } else {
+            self.editor.hovered_sample = None;
+            (
+                raw_elem_idx,
+                [self.pointer_unitless[0], self.pointer_unitless[1], 0.0],
+                [self.pointer_unitless[0] as f32, self.pointer_unitless[1] as f32],
+            )
+        };
+        self.hover_anchor_px = Some(anchor_px);
         if let Some(custom) = self.editor.custom_tooltips.get(&(plot_id, elem_idx)) {
             self.hover_tooltip = Some(custom.clone());
         } else {
@@ -400,6 +419,8 @@ impl ViewerApp {
             });
             if !self.editor.show_inspector_dock {
                 self.hover_tooltip = None;
+                self.hover_anchor_px = None;
+                self.editor.hovered_sample = None;
             }
 
             if self.graph.editor_visible {
@@ -453,9 +474,13 @@ impl ViewerApp {
             }
             if self.editor.show_inspector_dock {
                 if let Some(tip) = &self.hover_tooltip {
-                    let px = (central_rect.min.x + (self.pointer_unitless[0] as f32) * scale_to_pts + 14.0)
+                    let anchor = self.hover_anchor_px.unwrap_or([
+                        self.pointer_unitless[0] as f32,
+                        self.pointer_unitless[1] as f32,
+                    ]);
+                    let px = (central_rect.min.x + anchor[0] * scale_to_pts + 14.0)
                         .clamp(central_rect.min.x + 4.0, (central_rect.max.x - 150.0).max(central_rect.min.x + 4.0));
-                    let py = (central_rect.max.y - (self.pointer_unitless[1] as f32) * scale_to_pts - 14.0)
+                    let py = (central_rect.max.y - anchor[1] * scale_to_pts - 14.0)
                         .clamp(central_rect.min.y + 4.0, (central_rect.max.y - 60.0).max(central_rect.min.y + 4.0));
                     egui::Area::new(egui::Id::unique("wgpu_makie_hover_tooltip"))
                         .fixed_pos(egui::pos2(px, py))
@@ -876,11 +901,12 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     ws.window.request_redraw();
                 }
             }
-            WindowEvent::Focused(false) => {
+            WindowEvent::Focused(false) | WindowEvent::CursorLeft { .. } => {
                 self.buttons_mask = 0;
                 self.left_down_pos = None;
                 self.camera_ctrl.cancel();
                 self.manip.cancel_drag();
+                self.clear_hover();
                 request_redraw = true;
             }
             WindowEvent::ModifiersChanged(mods) => {
@@ -971,6 +997,12 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     });
                 }
             }
+            WindowEvent::CursorMoved { .. } if consumed => {
+                if self.hover_tooltip.is_some() || self.editor.hovered_sample.is_some() {
+                    self.clear_hover();
+                    request_redraw = true;
+                }
+            }
             WindowEvent::CursorMoved { position, .. } if !consumed => {
                 if self.win.is_some() {
                     let ppu = self.graph.px_per_unit.max(0.5) as f64;
@@ -980,6 +1012,7 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     let uy = (self.plot_rect_pts.max.y as f64) - py_pts;
                     self.pointer_unitless = [ux, uy];
                     if self.manip.active_drag.is_some() {
+                        self.clear_hover();
                         let mo = self.manip.on_pointer_move(
                             &self.graph,
                             self.editor.doc.as_ref(),
@@ -998,7 +1031,9 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                         self.handle_interaction_update(upd);
                         let dragging = self.camera_ctrl.gesture_2d.is_some()
                             || self.camera_ctrl.gesture_3d.is_some();
-                        if !dragging {
+                        if dragging {
+                            self.clear_hover();
+                        } else {
                             self.update_hover_tooltip();
                             self.send(ClientMessage::PointerEvent {
                                 x: ux,
@@ -1009,6 +1044,8 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                                 scroll: [0.0, 0.0],
                             });
                         }
+                    } else {
+                        self.clear_hover();
                     }
                     request_redraw = true;
                 }
@@ -1241,14 +1278,30 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                                             ws.surface_config.height,
                                             self.pointer_unitless[0].round() as i32,
                                             self.pointer_unitless[1].round() as i32,
-                                            8,
+                                            5,
                                         ) {
-                                            let sel = hits.first().copied();
-                                            let pos = sel.and_then(|(p, i)| {
-                                                self.graph.plots.get(&p).and_then(|e| {
-                                                    element_data_pos(&e.payload.primitive, i)
-                                                })
-                                            });
+                                            let (sel, pos) = match hits.first().copied() {
+                                                Some((p, raw_i)) => {
+                                                    if let Some((ri, rpos, _)) = resolve_picked_sample(
+                                                        &self.graph,
+                                                        p,
+                                                        raw_i,
+                                                        self.pointer_unitless,
+                                                    ) {
+                                                        (Some((p, ri)), Some(rpos))
+                                                    } else {
+                                                        let fallback_pos =
+                                                            self.graph.plots.get(&p).and_then(|e| {
+                                                                element_data_pos(
+                                                                    &e.payload.primitive,
+                                                                    raw_i,
+                                                                )
+                                                            });
+                                                        (Some((p, raw_i)), fallback_pos)
+                                                    }
+                                                }
+                                                None => (None, None),
+                                            };
                                             self.editor.set_selection(sel, pos);
                                             let (pid, idx) = match sel {
                                                 Some((p, i)) => (Some(p), Some(i)),
@@ -1338,27 +1391,6 @@ fn root_clear_color(graph: &SceneGraph) -> [f32; 4] {
         }
     }
     [1.0, 1.0, 1.0, 1.0]
-}
-
-fn element_data_pos(prim: &wgpu_makie_proto::PrimitiveKind, idx: u32) -> Option<[f64; 3]> {
-    let buf = match prim {
-        wgpu_makie_proto::PrimitiveKind::Lines(l) => &l.positions,
-        wgpu_makie_proto::PrimitiveKind::Scatter(s) => &s.positions,
-        wgpu_makie_proto::PrimitiveKind::Mesh(m) => &m.positions,
-        wgpu_makie_proto::PrimitiveKind::MeshScatter(ms) => &ms.instance_positions,
-        _ => return None,
-    };
-    let floats = buf.as_f32_vec().ok()?;
-    let base = (idx as usize) * 3;
-    if base + 2 < floats.len() {
-        Some([
-            floats[base] as f64,
-            floats[base + 1] as f64,
-            floats[base + 2] as f64,
-        ])
-    } else {
-        None
-    }
 }
 
 fn run_windowed(socket_path: &str) {

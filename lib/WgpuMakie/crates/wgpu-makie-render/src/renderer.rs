@@ -862,6 +862,7 @@ impl WgpuRenderer {
         let px_x = (self.plot_offset_px[0] + (x_unitless as f32) * ppu).round() as i32;
         let px_y_top = (h as i32) - 1 - ((self.plot_offset_px[1] + (y_unitless as f32) * ppu).round() as i32);
         let r = ((range_unitless.max(0) as f32) * ppu).ceil() as i32;
+        let r2 = r * r;
 
         let x0 = (px_x - r).clamp(0, w as i32 - 1) as u32;
         let y0 = (px_y_top - r).clamp(0, h as i32 - 1) as u32;
@@ -945,6 +946,9 @@ impl WgpuRenderer {
                 let dx = (x0 + col) as i32 - px_x;
                 let dy = (y0 + row) as i32 - px_y_top;
                 let d2 = dx * dx + dy * dy;
+                if d2 > r2 {
+                    continue;
+                }
                 best.entry((plot_id, elem_idx))
                     .and_modify(|prev| {
                         if d2 < *prev {

@@ -72,6 +72,7 @@ pub struct EditorModel {
     pub selected_layer: Option<u32>,
     pub selected_elem: Option<(u64, u32)>,
     pub selected_pos: Option<[f64; 3]>,
+    pub hovered_sample: Option<(u64, u32, [f64; 3])>,
     pub custom_tooltips: HashMap<(u64, u32), String>,
     pub expr_mode: HashSet<String>,
     pub drafts: HashMap<String, String>,
@@ -189,6 +190,9 @@ impl EditorModel {
                 if self.selected_elem.is_some_and(|(pid, _)| pid == *id) {
                     self.selected_elem = None;
                     self.selected_pos = None;
+                }
+                if self.hovered_sample.is_some_and(|(pid, _, _)| pid == *id) {
+                    self.hovered_sample = None;
                 }
                 self.expanded_plots.remove(id);
                 false
