@@ -1,0 +1,16 @@
+[package]
+name = "wgpu-makie-embed"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wgpu-makie-proto = { path = "../wgpu-makie-proto" }
+wgpu-makie-scene = { path = "../wgpu-makie-scene" }
+wgpu-makie-render = { path = "../wgpu-makie-render" }
+wgpu-makie-editor = { path = "../wgpu-makie-editor" }
+wgpu.workspace = true
+egui.workspace = true
+rmp-serde.workspace = true
+
+[dev-dependencies]
+glam.workspace = true

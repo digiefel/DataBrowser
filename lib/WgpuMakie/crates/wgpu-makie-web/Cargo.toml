@@ -1,0 +1,22 @@
+[package]
+name = "wgpu-makie-web"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wgpu-makie-proto = { path = "../wgpu-makie-proto" }
+wgpu-makie-scene = { path = "../wgpu-makie-scene" }
+wgpu-makie-render = { path = "../wgpu-makie-render" }
+wgpu-makie-editor = { path = "../wgpu-makie-editor" }
+wgpu-makie-embed = { path = "../wgpu-makie-embed" }
+wgpu.workspace = true
+rmp-serde.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["HtmlCanvasElement"] }

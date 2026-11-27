@@ -3082,6 +3082,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wgpu-makie-embed"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "glam",
+ "rmp-serde",
+ "wgpu",
+ "wgpu-makie-editor",
+ "wgpu-makie-proto",
+ "wgpu-makie-render",
+ "wgpu-makie-scene",
+]
+
+[[package]]
 name = "wgpu-makie-native"
 version = "0.1.0"
 dependencies = [
@@ -3130,6 +3144,23 @@ dependencies = [
  "glam",
  "serde",
  "wgpu-makie-proto",
+]
+
+[[package]]
+name = "wgpu-makie-web"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "rmp-serde",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
+ "wgpu-makie-editor",
+ "wgpu-makie-embed",
+ "wgpu-makie-proto",
+ "wgpu-makie-render",
+ "wgpu-makie-scene",
 ]
 
 [[package]]
