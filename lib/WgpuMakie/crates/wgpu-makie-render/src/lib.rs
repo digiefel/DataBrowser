@@ -244,4 +244,172 @@ mod tests {
             .count();
         assert!(green_pixels > 200, "expected shaded green 3D triangle pixels, got {green_pixels}");
     }
+
+    #[test]
+    fn headless_1m_lod_render_and_60hz_streaming() {
+        let mut hr = HeadlessRenderer::new().expect("headless wgpu init");
+        let mut graph = SceneGraph::default();
+        graph.apply(ServerMessage::Hello {
+            protocol_version: 1,
+            title: "LOD & Stream".into(),
+            size: [320, 200],
+            px_per_unit: 1.0,
+            show_editor: false,
+        });
+        let proj = Mat4::orthographic_rh_gl(0.0, 100.0, -5.0, 5.0, -10.0, 10.0);
+        graph.apply(ServerMessage::UpsertScene {
+            scene: SceneState {
+                id: 1,
+                parent: None,
+                viewport: [0.0, 0.0, 320.0, 200.0],
+                background: [1.0, 1.0, 1.0, 1.0],
+                clear: true,
+                visible: true,
+                camera: wgpu_makie_proto::CameraState {
+                    view: Mat4::IDENTITY.to_cols_array(),
+                    projection: proj.to_cols_array(),
+                    projectionview: proj.to_cols_array(),
+                    eyeposition: [0.0, 0.0, 5.0],
+                    resolution: [320.0, 200.0],
+                    is_3d: false,
+                    lookat: [0.0, 0.0, 0.0],
+                    upvector: [0.0, 1.0, 0.0],
+                    fov: 45.0,
+                    near: -10.0,
+                    far: 10.0,
+                },
+                lights: wgpu_makie_proto::LightState {
+                    ambient: [0.3, 0.3, 0.3],
+                    dir_color: [0.8, 0.8, 0.8],
+                    dir_direction: [1.0, 1.0, 1.0],
+                    camera_relative: false,
+                },
+            },
+        });
+        graph.apply(ServerMessage::UpsertAxisMeta {
+            axis: wgpu_makie_proto::AxisMeta {
+                axis_id: 1,
+                data_scene_id: 1,
+                block_scene_id: 1,
+                limits: [0.0, -5.0, 100.0, 5.0],
+                reset_limits: [0.0, -5.0, 100.0, 5.0],
+                xscale: wgpu_makie_proto::AxisScale::Linear,
+                yscale: wgpu_makie_proto::AxisScale::Linear,
+                xreversed: false,
+                yreversed: false,
+                protrusions: [0.0; 4],
+                xaxis_top: false,
+                yaxis_right: false,
+                linked_x: vec![],
+                linked_y: vec![],
+                makie_tick_plot_ids: vec![],
+                custom_xticks: false,
+                custom_yticks: false,
+                xlabel: "x".into(),
+                ylabel: "y".into(),
+                title: "".into(),
+            },
+        });
+
+        let n = 1_000_000usize;
+        let mut pos = Vec::with_capacity(n * 3);
+        for i in 0..n {
+            let x = (i as f32) * (100.0 / n as f32);
+            let y = if i == 500_000 { 4.5 } else { (x * 0.3).sin() };
+            pos.extend_from_slice(&[x, y, 0.0]);
+        }
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 500,
+                scene_id: 1,
+                z_order: 1,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Lines(LinesData {
+                    is_segments: false,
+                    positions: TypedBuffer::from_f32(&pos),
+                    colors: ColorSource::Uniform {
+                        rgba: [0.1, 0.2, 0.8, 1.0],
+                    },
+                    linewidth: ScalarOrBuffer::Scalar1(2.0),
+                    linecap: 0,
+                    joinstyle: 0,
+                    miter_limit: 4.0,
+                    pattern: None,
+                    pattern_length: 1.0,
+                    colormap: None,
+                }),
+                inspector: None,
+            },
+        });
+        let rgba = hr.render_rgba8(&mut graph, 320, 200).unwrap();
+        assert!(rgba.chunks_exact(4).any(|px| px[2] > 150 && px[0] < 100));
+
+        // Streaming plot (4096 points updated in place 60 times)
+        let sn = 4096usize;
+        let mut spos = vec![0.0f32; sn * 3];
+        for i in 0..sn {
+            spos[i * 3] = (i as f32) * (100.0 / sn as f32);
+        }
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 501,
+                scene_id: 1,
+                z_order: 2,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: Mat4::IDENTITY.to_cols_array(),
+                world_normal_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Lines(LinesData {
+                    is_segments: false,
+                    positions: TypedBuffer::from_f32(&spos),
+                    colors: ColorSource::Uniform {
+                        rgba: [0.9, 0.2, 0.1, 1.0],
+                    },
+                    linewidth: ScalarOrBuffer::Scalar1(2.0),
+                    linecap: 0,
+                    joinstyle: 0,
+                    miter_limit: 4.0,
+                    pattern: None,
+                    pattern_length: 1.0,
+                    colormap: None,
+                }),
+                inspector: None,
+            },
+        });
+        let _ = hr.render_rgba8(&mut graph, 320, 200).unwrap();
+
+        let t0 = std::time::Instant::now();
+        for f in 0..60 {
+            let phase = f as f32 * 0.1;
+            for i in 0..sn {
+                spos[i * 3 + 1] = 2.0 * (spos[i * 3] * 0.2 + phase).sin();
+            }
+            graph.apply(ServerMessage::UpdatePlotBuffer {
+                id: 501,
+                field: "positions".into(),
+                offset_elems: 0,
+                total_elems: (sn * 3) as u32,
+                data: TypedBuffer::from_f32(&spos),
+            });
+            hr.renderer
+                .prepare(&hr.device, &hr.queue, &mut graph, 320, 200);
+        }
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        assert!(elapsed_ms / 60.0 < 8.0, "streaming prepare avg {:.2} ms", elapsed_ms / 60.0);
+    }
 }

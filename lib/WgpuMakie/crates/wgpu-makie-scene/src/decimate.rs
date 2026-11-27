@@ -360,4 +360,44 @@ mod tests {
         // Zoomed way in: falls back to raw points.
         assert!(lod.select_slice(500.0, 500.5, 800.0, true).is_none());
     }
+
+    #[test]
+    fn m4_10m_points_preserves_spikes_and_slices_under_8ms() {
+        let n = 10_000_000usize;
+        let mut pos = Vec::with_capacity(n * 3);
+        for i in 0..n {
+            let x = i as f32 * 0.0001;
+            let y = if i == 4_321_000 {
+                42.5
+            } else if i == 4_321_001 {
+                -37.5
+            } else {
+                (x * 0.5).sin()
+            };
+            pos.push(x);
+            pos.push(y);
+            pos.push(0.0);
+        }
+        let lod = LineLod::build(&pos);
+        assert!(lod.is_monotonic_x);
+        assert!(!lod.levels.is_empty());
+
+        let t0 = Instant::now();
+        let (_, slice) = lod.select_slice(0.0, 1000.0, 1280.0, true).unwrap();
+        assert!(t0.elapsed().as_millis() < 8);
+
+        let mut max_y = f32::NEG_INFINITY;
+        let mut min_y = f32::INFINITY;
+        for chunk in slice.positions.chunks_exact(3) {
+            max_y = max_y.max(chunk[1]);
+            min_y = min_y.min(chunk[1]);
+        }
+        assert!((max_y - 42.5).abs() < 1e-4, "max_y={max_y}");
+        assert!((min_y - (-37.5)).abs() < 1e-4, "min_y={min_y}");
+
+        let t1 = Instant::now();
+        let (s, e) = raw_x_range(&pos, 432.0, 432.5);
+        assert!(t1.elapsed().as_millis() < 8);
+        assert!(e - s < 10_000);
+    }
 }

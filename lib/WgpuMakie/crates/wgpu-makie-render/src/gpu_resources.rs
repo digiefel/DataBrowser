@@ -288,6 +288,9 @@ pub enum CachedPlotGpu {
         bind_group: Option<wgpu::BindGroup>,
         instance_count: u32,
         is_text: bool,
+        raw_point_count: usize,
+        raw_positions: Vec<f32>,
+        last_lod_key: (u64, u32),
     },
     Mesh {
         uniform_buf: wgpu::Buffer,
@@ -344,16 +347,33 @@ pub fn build_lines_gpu(
     linear_samp: &wgpu::Sampler,
     nearest_samp: &wgpu::Sampler,
     data: &LinesData,
+    has_lod: bool,
 ) -> CachedPlotGpu {
     let raw_positions = data.positions.as_f32_vec().unwrap_or_default();
     let count = raw_positions.len() / 3;
-    let pos4 = pad_vec3_to_vec4(&raw_positions);
-    let pos_buf = create_buffer_with_data(
-        device,
-        "lines_pos",
-        wgpu::BufferUsages::STORAGE,
-        bytemuck::cast_slice(&pos4),
-    );
+    let (pos_buf, orig_idx_buf, uploaded_idx_count) = if has_lod {
+        (
+            create_dummy_storage(device, "lines_lod_placeholder_pos"),
+            create_dummy_storage(device, "lines_lod_placeholder_idx"),
+            0usize,
+        )
+    } else {
+        let pos4 = pad_vec3_to_vec4(&raw_positions);
+        let pbuf = create_buffer_with_data(
+            device,
+            "lines_pos",
+            wgpu::BufferUsages::STORAGE,
+            bytemuck::cast_slice(&pos4),
+        );
+        let orig_indices: Vec<u32> = (0..count as u32).collect();
+        let ibuf = create_buffer_with_data(
+            device,
+            "lines_orig_idx",
+            wgpu::BufferUsages::STORAGE,
+            bytemuck::cast_slice(&orig_indices),
+        );
+        (pbuf, ibuf, count)
+    };
     let (_, _, col_rgba_buf, col_scalar_buf) =
         color_source_buffers(device, dummy, &data.colors);
     let width_buf = match &data.linewidth {
@@ -368,13 +388,6 @@ pub fn build_lines_gpu(
         }
         _ => create_dummy_storage(device, "dummy_lw"),
     };
-    let orig_indices: Vec<u32> = (0..count as u32).collect();
-    let orig_idx_buf = create_buffer_with_data(
-        device,
-        "lines_orig_idx",
-        wgpu::BufferUsages::STORAGE,
-        bytemuck::cast_slice(&orig_indices),
-    );
     let (cmap_tex, cmap_nearest, _, _, _, _) = upload_colormap(
         device,
         queue,
@@ -401,7 +414,7 @@ pub fn build_lines_gpu(
         bind_group: None,
         raw_point_count: count,
         raw_positions,
-        uploaded_idx_count: count,
+        uploaded_idx_count,
         last_lod_key: (0, 0, 0),
     }
 }
@@ -522,34 +535,44 @@ pub fn build_scatter_gpu(
     linear_samp: &wgpu::Sampler,
     nearest_samp: &wgpu::Sampler,
     data: &ScatterData,
+    has_lod: bool,
 ) -> CachedPlotGpu {
     let raw_positions = data.positions.as_f32_vec().unwrap_or_default();
     let count = raw_positions.len() / 3;
-    let pos4 = pad_vec3_to_vec4(&raw_positions);
-    let pos_buf = create_buffer_with_data(
-        device,
-        "scatter_pos",
-        wgpu::BufferUsages::STORAGE,
-        bytemuck::cast_slice(&pos4),
-    );
+    let (pos_buf, orig_idx_buf, instance_count) = if has_lod {
+        (
+            create_dummy_storage(device, "scatter_lod_placeholder_pos"),
+            create_dummy_storage(device, "scatter_lod_placeholder_idx"),
+            0u32,
+        )
+    } else {
+        let pos4 = pad_vec3_to_vec4(&raw_positions);
+        let pbuf = create_buffer_with_data(
+            device,
+            "scatter_pos",
+            wgpu::BufferUsages::STORAGE,
+            bytemuck::cast_slice(&pos4),
+        );
+        let orig_indices: Vec<u32> = (0..count as u32).collect();
+        let ibuf = create_buffer_with_data(
+            device,
+            "scatter_orig_idx",
+            wgpu::BufferUsages::STORAGE,
+            bytemuck::cast_slice(&orig_indices),
+        );
+        (pbuf, ibuf, count as u32)
+    };
     let (_, _, col_rgba_buf, col_scalar_buf) =
         color_source_buffers(device, dummy, &data.colors);
     let attrs_buf = pack_sprite_attrs(
         device,
-        count,
+        if has_lod { 1 } else { count },
         &data.quad_scale,
         &data.quad_offset,
         &data.marker_offset,
         &data.rotation,
         &data.sdf_uv,
         &data.strokecolor,
-    );
-    let orig_indices: Vec<u32> = (0..count as u32).collect();
-    let orig_idx_buf = create_buffer_with_data(
-        device,
-        "scatter_orig_idx",
-        wgpu::BufferUsages::STORAGE,
-        bytemuck::cast_slice(&orig_indices),
     );
     let (cmap_tex, cmap_nearest, _, _, _, _) = upload_colormap(
         device,
@@ -575,8 +598,11 @@ pub fn build_scatter_gpu(
         cmap_tex,
         cmap_nearest,
         bind_group: None,
-        instance_count: count as u32,
+        instance_count,
         is_text: false,
+        raw_point_count: count,
+        raw_positions,
+        last_lod_key: (0, 0),
     }
 }
 
@@ -643,6 +669,9 @@ pub fn build_text_gpu(
         bind_group: None,
         instance_count: count as u32,
         is_text: true,
+        raw_point_count: count,
+        raw_positions,
+        last_lod_key: (0, 0),
     }
 }
 
@@ -917,6 +946,7 @@ pub fn build_plot_gpu(
             linear_samp,
             nearest_samp,
             d,
+            entry.line_lod.is_some(),
         ),
         PrimitiveKind::Scatter(d) => build_scatter_gpu(
             device,
@@ -926,6 +956,7 @@ pub fn build_plot_gpu(
             linear_samp,
             nearest_samp,
             d,
+            entry.scatter_lod.is_some(),
         ),
         PrimitiveKind::Text(d) => build_text_gpu(
             device,

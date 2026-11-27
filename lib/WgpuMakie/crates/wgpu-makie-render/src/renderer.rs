@@ -172,32 +172,33 @@ impl WgpuRenderer {
             self.id_to_obj.insert(pid, oid);
         }
 
-        // Build or refresh plot GPU state
+        // Build or refresh plot GPU state (reusing GPU buffers in-place on 60Hz streaming when size matches)
         for &pid in &graph.plot_order {
             let entry = &graph.plots[&pid];
-            let needs_rebuild = self
-                .cache
-                .plots
-                .get(&pid)
-                .is_none_or(|r| r.revision != entry.revision);
-            if needs_rebuild {
-                let gpu = build_plot_gpu(
-                    device,
-                    queue,
-                    &self.dummy_storage,
-                    &self.dummy_rgba_tex.1,
-                    &self.linear_sampler,
-                    &self.nearest_sampler,
-                    entry,
-                );
-                self.cache.plots.insert(
-                    pid,
-                    GpuPlotRecord {
-                        revision: entry.revision,
-                        gpu,
-                    },
-                );
+            if let Some(rec) = self.cache.plots.get_mut(&pid) {
+                if rec.revision == entry.revision {
+                    continue;
+                }
+                if try_stream_update_in_place(queue, rec, entry) {
+                    continue;
+                }
             }
+            let gpu = build_plot_gpu(
+                device,
+                queue,
+                &self.dummy_storage,
+                &self.dummy_rgba_tex.1,
+                &self.linear_sampler,
+                &self.nearest_sampler,
+                entry,
+            );
+            self.cache.plots.insert(
+                pid,
+                GpuPlotRecord {
+                    revision: entry.revision,
+                    gpu,
+                },
+            );
         }
 
         // Ensure depth target exists for fb_width x fb_height
@@ -236,9 +237,9 @@ impl WgpuRenderer {
         queue: &wgpu::Queue,
         graph: &SceneGraph,
     ) {
-        let mut axis_by_scene: HashMap<u64, [f64; 4]> = HashMap::new();
+        let mut axis_by_scene: HashMap<u64, ([f64; 4], [f64; 4])> = HashMap::new();
         for ax in graph.axes.values() {
-            axis_by_scene.insert(ax.data_scene_id, ax.limits);
+            axis_by_scene.insert(ax.data_scene_id, (ax.limits, ax.reset_limits));
         }
 
         for &pid in &graph.plot_order {
@@ -796,13 +797,78 @@ impl HeadlessRenderer {
     }
 }
 
+fn try_stream_update_in_place(
+    queue: &wgpu::Queue,
+    rec: &mut GpuPlotRecord,
+    entry: &PlotEntry,
+) -> bool {
+    match (&entry.payload.primitive, &mut rec.gpu) {
+        (
+            PrimitiveKind::Lines(d),
+            CachedPlotGpu::Lines {
+                pos_buf,
+                raw_point_count,
+                raw_positions,
+                ..
+            },
+        ) if entry.line_lod.is_none()
+            && *raw_point_count > 0
+            && matches!(d.colors, ColorSource::Uniform { .. })
+            && matches!(d.linewidth, ScalarOrBuffer::Scalar1(_)) =>
+        {
+            let Ok(new_pos) = d.positions.as_f32_vec() else {
+                return false;
+            };
+            if new_pos.len() / 3 != *raw_point_count {
+                return false;
+            }
+            let pos4 = pad_vec3_to_vec4(&new_pos);
+            queue.write_buffer(pos_buf, 0, bytemuck::cast_slice(&pos4));
+            *raw_positions = new_pos;
+            rec.revision = entry.revision;
+            true
+        }
+        (
+            PrimitiveKind::Scatter(d),
+            CachedPlotGpu::Sprites {
+                pos_buf,
+                raw_point_count,
+                raw_positions,
+                is_text: false,
+                ..
+            },
+        ) if entry.scatter_lod.is_none()
+            && *raw_point_count > 0
+            && matches!(d.colors, ColorSource::Uniform { .. })
+            && matches!(d.quad_scale, ScalarOrBuffer::Scalar2(_))
+            && matches!(d.quad_offset, ScalarOrBuffer::Scalar2(_))
+            && matches!(d.marker_offset, ScalarOrBuffer::Scalar4(_) | ScalarOrBuffer::Scalar2(_))
+            && matches!(d.rotation, ScalarOrBuffer::Scalar4(_))
+            && matches!(d.sdf_uv, ScalarOrBuffer::Scalar4(_)) =>
+        {
+            let Ok(new_pos) = d.positions.as_f32_vec() else {
+                return false;
+            };
+            if new_pos.len() / 3 != *raw_point_count {
+                return false;
+            }
+            let pos4 = pad_vec3_to_vec4(&new_pos);
+            queue.write_buffer(pos_buf, 0, bytemuck::cast_slice(&pos4));
+            *raw_positions = new_pos;
+            rec.revision = entry.revision;
+            true
+        }
+        _ => false,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn update_one_plot(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     entry: &PlotEntry,
     scene: &wgpu_makie_proto::SceneState,
-    axis_limits: Option<[f64; 4]>,
+    axis_limits_pair: Option<([f64; 4], [f64; 4])>,
     obj_id: u32,
     px_per_unit: f32,
     atlas_size: u32,
@@ -849,8 +915,11 @@ fn update_one_plot(
                 last_lod_key,
             },
         ) => {
-            // Apply invisible M4 LOD slice when applicable
-            if let (Some(lod), Some(lims)) = (&entry.line_lod, axis_limits) {
+            // Apply invisible M4 LOD slice when applicable (both zoomed-out pyramid and zoomed-in raw range).
+            if let Some(lod) = &entry.line_lod {
+                let lims = axis_limits_pair
+                    .map(|(l, _)| l)
+                    .unwrap_or([-1e30, -1e30, 1e30, 1e30]);
                 let is_2d = !scene.camera.is_3d
                     && matches!(payload.space, wgpu_makie_proto::CoordSpace::Data);
                 if let Some((start_idx, slice)) =
@@ -880,23 +949,34 @@ fn update_one_plot(
                         *bind_group = None;
                     }
                 } else {
-                    let key = (entry.revision, 0, *raw_point_count as u32);
+                    let (start, end) = if lod.is_monotonic_x && is_2d && axis_limits_pair.is_some() {
+                        wgpu_makie_scene::decimate::raw_x_range(
+                            raw_positions,
+                            lims[0] as f32,
+                            lims[2] as f32,
+                        )
+                    } else {
+                        (0, *raw_point_count)
+                    };
+                    let slice_len = end.saturating_sub(start);
+                    let key = (entry.revision, start as u32, slice_len as u32);
                     if *last_lod_key != key {
-                        let pos4 = pad_vec3_to_vec4(raw_positions);
+                        let sub = &raw_positions[start * 3..end * 3];
+                        let pos4 = pad_vec3_to_vec4(sub);
                         *pos_buf = create_buffer_with_data(
                             device,
                             "lines_raw_pos",
                             wgpu::BufferUsages::STORAGE,
                             bytemuck::cast_slice(&pos4),
                         );
-                        let idxs: Vec<u32> = (0..*raw_point_count as u32).collect();
+                        let idxs: Vec<u32> = (start as u32..end as u32).collect();
                         *orig_idx_buf = create_buffer_with_data(
                             device,
                             "lines_raw_idx",
                             wgpu::BufferUsages::STORAGE,
                             bytemuck::cast_slice(&idxs),
                         );
-                        *uploaded_idx_count = *raw_point_count;
+                        *uploaded_idx_count = slice_len;
                         *last_lod_key = key;
                         *bind_group = None;
                     }
@@ -996,9 +1076,72 @@ fn update_one_plot(
                 cmap_tex,
                 cmap_nearest,
                 bind_group,
+                instance_count,
+                raw_point_count,
+                raw_positions,
+                last_lod_key,
                 ..
             },
         ) => {
+            if let Some(slod) = &entry.scatter_lod {
+                let zoom_frac = if let Some((lims, rlims)) = axis_limits_pair {
+                    let rx = (rlims[2] - rlims[0]).abs().max(1e-12);
+                    let ry = (rlims[3] - rlims[1]).abs().max(1e-12);
+                    (((lims[2] - lims[0]).abs() / rx) * ((lims[3] - lims[1]).abs() / ry))
+                        .clamp(0.0001, 1.0)
+                } else {
+                    1.0
+                };
+                if let Some(indices) = slod.select_indices(zoom_frac) {
+                    let key = (entry.revision, indices.len() as u32);
+                    if *last_lod_key != key {
+                        let mut sub = Vec::with_capacity(indices.len() * 3);
+                        for &orig in indices {
+                            let i = orig as usize;
+                            sub.push(raw_positions[i * 3]);
+                            sub.push(raw_positions[i * 3 + 1]);
+                            sub.push(raw_positions[i * 3 + 2]);
+                        }
+                        let pos4 = pad_vec3_to_vec4(&sub);
+                        *pos_buf = create_buffer_with_data(
+                            device,
+                            "scatter_lod_pos",
+                            wgpu::BufferUsages::STORAGE,
+                            bytemuck::cast_slice(&pos4),
+                        );
+                        *orig_idx_buf = create_buffer_with_data(
+                            device,
+                            "scatter_lod_idx",
+                            wgpu::BufferUsages::STORAGE,
+                            bytemuck::cast_slice(indices),
+                        );
+                        *instance_count = indices.len() as u32;
+                        *last_lod_key = key;
+                        *bind_group = None;
+                    }
+                } else {
+                    let key = (entry.revision, *raw_point_count as u32);
+                    if *last_lod_key != key {
+                        let pos4 = pad_vec3_to_vec4(raw_positions);
+                        *pos_buf = create_buffer_with_data(
+                            device,
+                            "scatter_raw_pos",
+                            wgpu::BufferUsages::STORAGE,
+                            bytemuck::cast_slice(&pos4),
+                        );
+                        let idxs: Vec<u32> = (0..*raw_point_count as u32).collect();
+                        *orig_idx_buf = create_buffer_with_data(
+                            device,
+                            "scatter_raw_idx",
+                            wgpu::BufferUsages::STORAGE,
+                            bytemuck::cast_slice(&idxs),
+                        );
+                        *instance_count = *raw_point_count as u32;
+                        *last_lod_key = key;
+                        *bind_group = None;
+                    }
+                }
+            }
             let (color_mode, uniform_color) = color_mode_and_rgba(&d.colors);
             let (stroke_color_mode, uniform_strokecolor) = color_mode_and_rgba(&d.strokecolor);
             let (lowclip, highclip, nan_c, crange) = cmap_uniforms(d.colormap.as_ref());
