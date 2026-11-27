@@ -29,13 +29,11 @@ Select `Edit` in the top toolbar to drag annotation handles, subplot dividers, l
 
 ## Running
 
-Examples `04`, `05`, and `09` also use `Grafico`, so run them in an environment where both `WgpuMakie` and `Grafico` are available.
-
-Scripts wait for the viewer window to close when launched with `julia`, and return to the REPL when launched with `julia -i`:
+Run any example from the repository root with `--project=.`, which provides both `WgpuMakie` and `Grafico`. Scripts wait for the viewer window to close when launched with `julia`, and return to the REPL when launched with `julia -i`:
 
 ```bash
-julia --project=lib/WgpuMakie lib/WgpuMakie/examples/01_lines_scatter_2d.jl
-julia -i --project=lib/WgpuMakie lib/WgpuMakie/examples/01_lines_scatter_2d.jl
+julia --project=. lib/WgpuMakie/examples/01_lines_scatter_2d.jl
+julia -i --project=. lib/WgpuMakie/examples/01_lines_scatter_2d.jl
 ```
 
 ## WebAssembly Viewer
