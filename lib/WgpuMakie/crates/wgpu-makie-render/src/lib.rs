@@ -1080,4 +1080,109 @@ mod tests {
             "expected MSAA intermediate gray edge pixels along slanted mesh boundary, got {intermediate_gray}"
         );
     }
+
+    #[test]
+    fn headless_render_ignores_trailing_hidden_and_empty_scene_groups() {
+        let mut hr = HeadlessRenderer::new().expect("headless wgpu init");
+        let mut graph = SceneGraph::default();
+        graph.apply(ServerMessage::Hello {
+            protocol_version: 1,
+            title: "Trailing Empty".into(),
+            size: [200, 200],
+            px_per_unit: 1.0,
+        });
+        graph.apply(ServerMessage::UpsertScene {
+            scene: make_2d_scene(),
+        });
+        let identity = Mat4::IDENTITY.to_cols_array();
+        let nm = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 10,
+                scene_id: 1,
+                z_order: 1,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: identity,
+                world_normal_matrix: nm,
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Lines(LinesData {
+                    is_segments: false,
+                    positions: TypedBuffer::from_f32(&[1.0, 1.0, 0.0, 9.0, 9.0, 0.0]),
+                    colors: ColorSource::Uniform {
+                        rgba: [0.0, 0.0, 1.0, 1.0],
+                    },
+                    linewidth: ScalarOrBuffer::Scalar1(4.0),
+                    linecap: 2,
+                    joinstyle: 0,
+                    miter_limit: 4.0,
+                    pattern: None,
+                    pattern_length: 1.0,
+                    colormap: None,
+                }),
+                inspector: None,
+            },
+        });
+
+        // Trailing hidden scene (simulating a detached Axis whose plots belong to it)
+        let mut hidden_scene = make_2d_scene();
+        hidden_scene.id = 2;
+        hidden_scene.visible = false;
+        graph.apply(ServerMessage::UpsertScene { scene: hidden_scene });
+        graph.apply(ServerMessage::UpsertPlot {
+            plot: PlotPayload {
+                id: 20,
+                scene_id: 2,
+                z_order: 2,
+                visible: true,
+                inspectable: true,
+                overdraw: false,
+                transparency: false,
+                depth_shift: 0.0,
+                space: CoordSpace::Data,
+                markerspace: CoordSpace::Pixel,
+                model: identity,
+                world_normal_matrix: nm,
+                clip_planes: vec![],
+                primitive: PrimitiveKind::Lines(LinesData {
+                    is_segments: false,
+                    positions: TypedBuffer::from_f32(&[1.0, 9.0, 0.0, 9.0, 1.0, 0.0]),
+                    colors: ColorSource::Uniform {
+                        rgba: [1.0, 0.0, 0.0, 1.0],
+                    },
+                    linewidth: ScalarOrBuffer::Scalar1(4.0),
+                    linecap: 2,
+                    joinstyle: 0,
+                    miter_limit: 4.0,
+                    pattern: None,
+                    pattern_length: 1.0,
+                    colormap: None,
+                }),
+                inspector: None,
+            },
+        });
+
+        // Trailing visible scene with zero plots
+        let mut empty_scene = make_2d_scene();
+        empty_scene.id = 3;
+        empty_scene.visible = true;
+        graph.apply(ServerMessage::UpsertScene { scene: empty_scene });
+
+        let rgba = hr.render_rgba8(&mut graph, 200, 200).unwrap();
+        let blue_pixels = rgba
+            .chunks_exact(4)
+            .filter(|px| px[2] > 200 && px[0] < 50 && px[1] < 50)
+            .count();
+        let magenta_pixels = rgba
+            .chunks_exact(4)
+            .filter(|px| px[0] > 200 && px[1] < 50 && px[2] > 200)
+            .count();
+        assert!(blue_pixels > 50, "expected blue line pixels, got {blue_pixels}");
+        assert_eq!(magenta_pixels, 0, "expected zero uninitialized magenta pixels");
+    }
 }

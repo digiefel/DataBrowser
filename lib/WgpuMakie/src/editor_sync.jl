@@ -786,8 +786,13 @@ function _resize_layout_split!(fig::Makie.Figure, is_vert::Bool, idx::Int, prev_
     return nothing
 end
 
-function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
-    kind = string(get(cmd, "cmd", ""))
+_to_string_dict(d::Dict{String, Any}) = d
+_to_string_dict(d::AbstractDict) = Dict{String, Any}(string(k) => v for (k, v) in pairs(d))
+
+_handle_editor_command!(screen::Screen, cmd::AbstractDict) =
+    _handle_editor_command!(screen, _to_string_dict(cmd))
+
+function _handle_readonly_editor_cmd!(screen::Screen, kind::String, cmd::Dict{String, Any})::Bool
     if kind == "request_custom_tooltip"
         pid = UInt64(cmd["plot_id"])
         idx0 = UInt32(cmd["element_index"])
@@ -812,7 +817,7 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
                 "text" => text,
             ))
         end
-        return nothing
+        return true
     elseif kind == "request_code"
         screen.editor_include_imports = Bool(get(cmd, "include_imports", false))
         screen.editor_include_figure = Bool(get(cmd, "include_figure", false))
@@ -825,406 +830,414 @@ function _handle_editor_command!(screen::Screen, cmd::AbstractDict)
                 "include_figure" => screen.editor_include_figure,
             ))
         end
-        return nothing
+        return true
     end
+    return false
+end
+
+function _handle_common_editor_cmd!(screen::Screen, kind::String, cmd::Dict{String, Any})::Symbol
+    if kind == "set_axis_attr"
+        aid = UInt64(cmd["axis_id"])
+        ax = get(screen.id_to_axis, aid, nothing)
+        isnothing(ax) && return :noop
+        key = Symbol(cmd["key"])
+        val = _eval_wgpu_expr(string(cmd["expr"]))
+        if key === :limits
+            ax.limits[] = val
+        elseif key === :xscale || key === :yscale
+            prev_xs = ax.xscale[]
+            prev_ys = ax.yscale[]
+            prev_tf = ax.scene.transformation.transform_func[]
+            prev_fl = ax.finallimits[]
+            prev_tl = ax.targetlimits[]
+            try
+                setproperty!(ax, key, val)
+            catch err
+                ax.xscale.val = prev_xs
+                ax.yscale.val = prev_ys
+                ax.scene.transformation.transform_func[] = prev_tf
+                ax.targetlimits.val = prev_tl
+                ax.finallimits[] = prev_fl
+                @lock screen.sync_lock begin
+                    push!(screen.dirty_scenes, ax.scene)
+                    push!(screen.dirty_axes, ax)
+                    for p in ax.scene.plots
+                        p isa Makie.ComputePlots && push!(screen.dirty_plots, (ax.scene, p))
+                    end
+                end
+                flush_updates!(screen; include_axes = true)
+                rethrow(err)
+            end
+        else
+            setproperty!(ax, key, val)
+        end
+        return :flush_axes
+    elseif kind == "set_plot_attr"
+        pid = UInt64(cmd["plot_id"])
+        plt = get(screen.id_to_plot, pid, nothing)
+        isnothing(plt) && return :noop
+        key = Symbol(cmd["key"])
+        val = _eval_wgpu_expr(string(cmd["expr"]))
+        setproperty!(plt, key, val)
+        sc = Makie.parent_scene(plt)
+        !isnothing(sc) && @lock screen.sync_lock push!(screen.dirty_plots, (sc, plt))
+        return :flush_plots
+    elseif kind == "resize_layout_split"
+        fig = screen.figure
+        if !isnothing(fig)
+            _resize_layout_split!(
+                fig,
+                Bool(cmd["is_vertical"]),
+                Int(cmd["index"]),
+                Float32(cmd["prev_frac"]),
+                Float32(cmd["next_frac"]),
+            )
+        end
+        return :flush_layout
+    elseif kind == "move_block"
+        ep_check = _find_grafico_editable(screen)
+        bkind = string(cmd["kind"])
+        dock = string(cmd["dock_position"])
+        ha = Float32(cmd["halign"])
+        va = Float32(cmd["valign"])
+        if ep_check !== nothing && bkind == "legend"
+            G = parentmodule(typeof(ep_check))
+            G.set_legend_expr!(ep_check, :position, ":$dock")
+            if dock == "inside"
+                G.set_legend_expr!(ep_check, :halign, string(round(ha; digits = 3)))
+                G.set_legend_expr!(ep_check, :valign, string(round(va; digits = 3)))
+            end
+        elseif ep_check !== nothing && bkind == "colorbar"
+            G = parentmodule(typeof(ep_check))
+            G.set_colorbar_expr!(ep_check, :position, ":$dock")
+        elseif !isnothing(screen.figure)
+            _move_plain_block!(screen, screen.figure, UInt64(cmd["block_id"]), bkind, dock, ha, va)
+        end
+        return :flush_layout
+    elseif kind == "timeline_seek"
+        tl = screen.timeline
+        if !isnothing(tl)
+            t = clamp(Float64(cmd["time"]), 0.0, Float64(tl.seconds))
+            G_tl = parentmodule(typeof(tl))
+            G_tl.seek!(tl, t)
+            return :flush_timeline
+        end
+        return :noop
+    elseif kind == "timeline_set_playing"
+        screen.timeline_playing = Bool(cmd["playing"])
+        sync_timeline_state!(screen)
+        return :noop
+    elseif kind == "timeline_set_loop"
+        screen.timeline_loop = Bool(cmd["looping"])
+        sync_timeline_state!(screen)
+        return :noop
+    elseif kind == "timeline_export_html"
+        out_path = string(cmd["path"])
+        fps = max(1, Int(get(cmd, "framerate", 30)))
+        target = something(_find_grafico_editable(screen), screen.figure)
+        if !isnothing(target) && isdefined(@__MODULE__, :export_html)
+            export_html(out_path, target; motion = screen.timeline, framerate = fps)
+        end
+        return :noop
+    elseif kind == "compose_equalize_splits" && !isnothing(screen.figure)
+        gl = _active_gridlayout(screen.figure)
+        nrows, ncols = size(gl)
+        for c in 1:ncols
+            Makie.colsize!(gl, c, Makie.Auto())
+        end
+        for r in 1:nrows
+            Makie.rowsize!(gl, r, Makie.Auto())
+        end
+        Makie.GridLayoutBase.update!(screen.figure.layout)
+        return :flush_layout
+    elseif kind == "compose_swap_panels" && !isnothing(screen.figure)
+        fig = screen.figure
+        panels = [blk for blk in fig.content if blk isa Makie.Axis || blk isa Makie.Axis3]
+        ia = Int(cmd["a_index"]) + 1
+        ib = Int(cmd["b_index"]) + 1
+        if 1 <= ia <= length(panels) && 1 <= ib <= length(panels) && ia != ib
+            ba, bb = panels[ia], panels[ib]
+            ga = ba.layoutobservables.gridcontent[]
+            gb = bb.layoutobservables.gridcontent[]
+            if !isnothing(ga) && !isnothing(gb) && ga.parent === gb.parent
+                gl_parent = ga.parent
+                ra, ca = ga.span.rows, ga.span.cols
+                rb, cb = gb.span.rows, gb.span.cols
+                Makie.GridLayoutBase.remove_from_gridlayout!(ga)
+                Makie.GridLayoutBase.remove_from_gridlayout!(gb)
+                gl_parent[rb, cb] = ba
+                gl_parent[ra, ca] = bb
+                Makie.GridLayoutBase.trim!(gl_parent)
+                Makie.GridLayoutBase.update!(fig.layout)
+            end
+        end
+        return :flush_layout
+    end
+    return :unhandled
+end
+
+function _handle_plain_editor_cmd!(screen::Screen, kind::String, cmd::Dict{String, Any})
+    if kind == "add_annotation"
+        ax = _target_axis_for_id(screen, get(cmd, "axis_id", nothing))
+        if !isnothing(ax)
+            aid = screen.next_plain_ann_id
+            screen.next_plain_ann_id += 1
+            kw = Dict{Symbol, String}(Symbol(p[1]) => string(p[2]) for p in get(cmd, "kwargs", Any[]))
+            rec = Dict{Symbol, Any}(
+                :id => aid,
+                :kind => string(cmd["kind"]),
+                :text => string(get(cmd, "text", "")),
+                :visible => true,
+                :axis_id => UInt64(objectid(ax)),
+                :kwargs => kw,
+            )
+            push!(screen.plain_annotations, rec)
+            _rebuild_plain_annotation!(screen, rec)
+        end
+    elseif kind == "set_annotation_attr"
+        tid = Int(cmd["id"])
+        idx = findfirst(r -> Int(r[:id]) == tid, screen.plain_annotations)
+        if idx !== nothing
+            rec = screen.plain_annotations[idx]
+            k = Symbol(cmd["key"])
+            ex = string(cmd["expr"])
+            if k === :text
+                parsed = try
+                    Meta.parse(ex)
+                catch
+                    nothing
+                end
+                rec[:text] = parsed isa AbstractString ? String(parsed) : ex
+            else
+                rec[:kwargs][k] = ex
+            end
+            _rebuild_plain_annotation!(screen, rec)
+        end
+    elseif kind == "move_annotation"
+        tid = Int(cmd["id"])
+        idx = findfirst(r -> Int(r[:id]) == tid, screen.plain_annotations)
+        if idx !== nothing
+            rec = screen.plain_annotations[idx]
+            for u in cmd["updates"]
+                rec[:kwargs][Symbol(u[1])] = string(round(Float64(u[2]); sigdigits = 6))
+            end
+            _rebuild_plain_annotation!(screen, rec)
+        end
+    elseif kind == "set_annotation_visible"
+        tid = Int(cmd["id"])
+        idx = findfirst(r -> Int(r[:id]) == tid, screen.plain_annotations)
+        if idx !== nothing
+            rec = screen.plain_annotations[idx]
+            rec[:visible] = Bool(cmd["visible"])
+            _rebuild_plain_annotation!(screen, rec)
+        end
+    elseif kind == "remove_annotation"
+        tid = Int(cmd["id"])
+        _clear_plain_ann_plots!(screen, tid)
+        filter!(r -> Int(r[:id]) != tid, screen.plain_annotations)
+    elseif kind == "add_inset" && !isnothing(screen.figure)
+        ax = _target_axis_for_id(screen, get(cmd, "axis_id", nothing))
+        if !isnothing(ax)
+            iid = screen.next_plain_inset_id
+            screen.next_plain_inset_id += 1
+            b = cmd["bbox"]
+            bbox = (Float64(b[1]), Float64(b[2]), Float64(b[3]), Float64(b[4]))
+            ins_ax = Makie.Axis(screen.figure[1, 1]; tellwidth = false, tellheight = false, backgroundcolor = :white)
+            _apply_plain_inset_bbox!(ins_ax, bbox)
+            for p in ax.scene.plots
+                (haskey(p, :inspectable) && p.inspectable[] === false) && continue
+                if p isa Makie.Lines
+                    Makie.lines!(ins_ax, p[1][]; color = p.color[], linewidth = p.linewidth[])
+                elseif p isa Makie.LineSegments
+                    Makie.linesegments!(ins_ax, p[1][]; color = p.color[], linewidth = p.linewidth[])
+                elseif p isa Makie.Scatter
+                    Makie.scatter!(ins_ax, p[1][]; color = p.color[], markersize = p.markersize[])
+                end
+            end
+            xl = get(cmd, "xlimits", nothing)
+            yl = get(cmd, "ylimits", nothing)
+            !isnothing(xl) && Makie.xlims!(ins_ax, Float64(xl[1]), Float64(xl[2]))
+            !isnothing(yl) && Makie.ylims!(ins_ax, Float64(yl[1]), Float64(yl[2]))
+            screen.plain_insets[iid] = (ins_ax, Dict{Symbol, Any}(:bbox => bbox))
+        end
+    elseif kind == "move_inset"
+        iid = Int(cmd["id"])
+        if haskey(screen.plain_insets, iid)
+            ins_ax, meta = screen.plain_insets[iid]
+            b = cmd["bbox"]
+            bbox = (Float64(b[1]), Float64(b[2]), Float64(b[3]), Float64(b[4]))
+            meta[:bbox] = bbox
+            _apply_plain_inset_bbox!(ins_ax, bbox)
+        end
+    elseif kind == "remove_inset"
+        iid = Int(cmd["id"])
+        if haskey(screen.plain_insets, iid)
+            ins_ax, _ = pop!(screen.plain_insets, iid)
+            delete!(screen.id_to_axis, UInt64(objectid(ins_ax)))
+            gc = ins_ax.layoutobservables.gridcontent[]
+            isnothing(gc) || Makie.GridLayoutBase.remove_from_gridlayout!(gc)
+            filter!(x -> x !== ins_ax, screen.figure.content)
+            try Makie.delete!(ins_ax.scene) catch end
+        end
+    elseif kind == "set_layout_attr" && !isnothing(screen.figure)
+        gl = _active_gridlayout(screen.figure)
+        lk = Symbol(cmd["key"])
+        val = _eval_wgpu_expr(string(cmd["expr"]))
+        lk === :colgaps && Makie.colgap!(gl, Float32(val))
+        lk === :rowgaps && Makie.rowgap!(gl, Float32(val))
+    end
+    return nothing
+end
+
+function _handle_grafico_editor_cmd!(screen::Screen, ep, kind::String, cmd::Dict{String, Any})
+    G = parentmodule(typeof(ep))
+    if kind == "set_visual"
+        G.set_visual_expr!(ep, Int(cmd["layer_id"]), Symbol(cmd["key"]), string(cmd["expr"]))
+    elseif kind == "remove_visual"
+        G.remove_visual!(ep, Int(cmd["layer_id"]), Symbol(cmd["key"]))
+    elseif kind == "set_layer_visible"
+        G.set_layer_visible!(ep, Int(cmd["layer_id"]), Bool(cmd["visible"]))
+    elseif kind == "set_layer_plottype"
+        G.set_layer_plottype!(ep, Int(cmd["layer_id"]), string(cmd["plottype_expr"]))
+    elseif kind == "add_layer"
+        G.add_layer!(ep; plottype = string(cmd["plottype_expr"]))
+    elseif kind == "remove_layer"
+        G.remove_layer!(ep, Int(cmd["layer_id"]))
+    elseif kind == "move_layer"
+        G.move_layer!(ep, Int(cmd["layer_id"]), Int(cmd["delta"]))
+    elseif kind == "set_mapping"
+        lid = cmd["layer_id"] === nothing ? nothing : Int(cmd["layer_id"])
+        G.set_mapping!(
+            ep,
+            lid,
+            Symbol(cmd["role"]),
+            string(cmd["value_expr"]);
+            label = cmd["label"],
+            transform = cmd["transform_expr"],
+        )
+    elseif kind == "remove_mapping"
+        lid = cmd["layer_id"] === nothing ? nothing : Int(cmd["layer_id"])
+        G.remove_mapping!(ep, lid, Symbol(cmd["role"]))
+    elseif kind == "set_analysis"
+        G.set_analysis!(ep, Int(cmd["layer_id"]), cmd["analysis_expr"])
+    elseif kind == "set_scale"
+        G.set_scale_expr!(ep, Symbol(cmd["role"]), Symbol(cmd["key"]), string(cmd["expr"]))
+    elseif kind == "remove_scale"
+        k = cmd["key"] === nothing ? nothing : Symbol(cmd["key"])
+        G.remove_scale!(ep, Symbol(cmd["role"]), k)
+    elseif kind == "set_coord"
+        G.set_coord_expr!(ep, Symbol(cmd["key"]), string(cmd["expr"]))
+    elseif kind == "set_legend"
+        G.set_legend_expr!(ep, Symbol(cmd["key"]), string(cmd["expr"]))
+    elseif kind == "remove_legend"
+        G.remove_legend!(ep, Symbol(cmd["key"]))
+    elseif kind == "set_theme"
+        b = cmd["base"] === nothing ? nothing : Symbol(cmd["base"])
+        k = cmd["key"] === nothing ? nothing : Symbol(cmd["key"])
+        ex = cmd["expr"] === nothing ? nothing : string(cmd["expr"])
+        G.set_theme_expr!(ep; base = b, key = k, expr_text = ex)
+    elseif kind == "set_inspector"
+        fields = Symbol[Symbol(f) for f in cmd["fields"]]
+        spec = G.inspector(
+            fields...;
+            show = Bool(cmd["show"]),
+            title = cmd["title"],
+            show_coords = Bool(cmd["show_coords"]),
+            digits = Int(cmd["digits"]),
+        )
+        G.set_inspector!(ep, spec)
+    elseif kind == "add_annotation"
+        kw = Dict{Symbol, String}(Symbol(p[1]) => string(p[2]) for p in get(cmd, "kwargs", Any[]))
+        src_ex = get(cmd, "source_expr", nothing)
+        G.add_annotation!(
+            ep,
+            Symbol(cmd["kind"]);
+            text = string(get(cmd, "text", "")),
+            source_expr = isnothing(src_ex) ? nothing : string(src_ex),
+            kwargs_exprs = kw,
+        )
+    elseif kind == "set_annotation_attr"
+        G.set_annotation_expr!(ep, Int(cmd["id"]), Symbol(cmd["key"]), string(cmd["expr"]))
+    elseif kind == "move_annotation"
+        kws = [Symbol(u[1]) => Float64(u[2]) for u in cmd["updates"]]
+        G.move_annotation!(ep, Int(cmd["id"]); kws...)
+    elseif kind == "set_annotation_visible"
+        G.set_annotation_visible!(ep, Int(cmd["id"]), Bool(cmd["visible"]))
+    elseif kind == "remove_annotation"
+        G.remove_annotation!(ep, Int(cmd["id"]))
+    elseif kind == "add_inset"
+        b = cmd["bbox"]
+        bbox = (Float64(b[1]), Float64(b[2]), Float64(b[3]), Float64(b[4]))
+        xl = get(cmd, "xlimits", nothing)
+        yl = get(cmd, "ylimits", nothing)
+        G.add_inset!(
+            ep;
+            bbox = bbox,
+            xlimits = isnothing(xl) ? nothing : (Float64(xl[1]), Float64(xl[2])),
+            ylimits = isnothing(yl) ? nothing : (Float64(yl[1]), Float64(yl[2])),
+        )
+    elseif kind == "set_inset_attr"
+        G.set_inset_expr!(ep, Int(cmd["id"]), Symbol(cmd["key"]), string(cmd["expr"]))
+    elseif kind == "move_inset"
+        b = cmd["bbox"]
+        G.move_inset!(ep, Int(cmd["id"]), (Float64(b[1]), Float64(b[2]), Float64(b[3]), Float64(b[4])))
+    elseif kind == "remove_inset"
+        G.remove_inset!(ep, Int(cmd["id"]))
+    elseif kind == "set_layout_attr"
+        G.set_layout_expr!(ep, Symbol(cmd["key"]), string(cmd["expr"]))
+    elseif kind == "set_colorbar_attr"
+        G.set_colorbar_expr!(ep, Symbol(cmd["key"]), string(cmd["expr"]))
+    end
+    return nothing
+end
+
+function _handle_editor_command!(screen::Screen, cmd::Dict{String, Any})
+    kind = string(get(cmd, "cmd", ""))
+    _handle_readonly_editor_cmd!(screen, kind, cmd) && return nothing
 
     screen.syncing_editor[] = true
+    prev_defer = screen.defer_flush[]
+    screen.defer_flush[] = true
     try
         screen.last_editor_error = nothing
-        if kind == "set_axis_attr"
-            aid = UInt64(cmd["axis_id"])
-            ax = get(screen.id_to_axis, aid, nothing)
-            isnothing(ax) && return nothing
-            key = Symbol(cmd["key"])
-            val = _eval_wgpu_expr(string(cmd["expr"]))
-            if key === :limits
-                ax.limits[] = val
-            elseif key === :xscale || key === :yscale
-                prev_xs = ax.xscale[]
-                prev_ys = ax.yscale[]
-                prev_tf = ax.scene.transformation.transform_func[]
-                prev_fl = ax.finallimits[]
-                prev_tl = ax.targetlimits[]
-                try
-                    setproperty!(ax, key, val)
-                catch err
-                    ax.xscale.val = prev_xs
-                    ax.yscale.val = prev_ys
-                    ax.scene.transformation.transform_func[] = prev_tf
-                    ax.targetlimits.val = prev_tl
-                    ax.finallimits[] = prev_fl
-                    @lock screen.sync_lock begin
-                        push!(screen.dirty_scenes, ax.scene)
-                        push!(screen.dirty_axes, ax)
-                        for p in ax.scene.plots
-                            p isa Makie.ComputePlots && push!(screen.dirty_plots, (ax.scene, p))
-                        end
-                    end
-                    _sync_figure_axes!(screen, screen.figure)
-                    flush_updates!(screen)
-                    rethrow(err)
-                end
-            else
-                setproperty!(ax, key, val)
-            end
-            _sync_figure_axes!(screen, screen.figure)
-            flush_updates!(screen)
-            sync_editor_state!(screen)
+        status = _handle_common_editor_cmd!(screen, kind, cmd)
+        if status === :noop
             return nothing
-        elseif kind == "set_plot_attr"
-            pid = UInt64(cmd["plot_id"])
-            plt = get(screen.id_to_plot, pid, nothing)
-            isnothing(plt) && return nothing
-            key = Symbol(cmd["key"])
-            val = _eval_wgpu_expr(string(cmd["expr"]))
-            setproperty!(plt, key, val)
-            sc = Makie.parent_scene(plt)
-            !isnothing(sc) && @lock screen.sync_lock push!(screen.dirty_plots, (sc, plt))
-            flush_updates!(screen)
-            sync_editor_state!(screen)
-            return nothing
-        elseif kind == "resize_layout_split"
-            fig = screen.figure
-            if !isnothing(fig)
-                _resize_layout_split!(
-                    fig,
-                    Bool(cmd["is_vertical"]),
-                    Int(cmd["index"]),
-                    Float32(cmd["prev_frac"]),
-                    Float32(cmd["next_frac"]),
-                )
-            end
-            _sync_figure_axes!(screen, screen.figure)
-            _sync_layout_meta!(screen, screen.figure)
-            flush_updates!(screen)
-            sync_editor_state!(screen)
-            return nothing
-        elseif kind == "move_block"
-            ep_check = _find_grafico_editable(screen)
-            bkind = string(cmd["kind"])
-            dock = string(cmd["dock_position"])
-            ha = Float32(cmd["halign"])
-            va = Float32(cmd["valign"])
-            if ep_check !== nothing && bkind == "legend"
-                G = parentmodule(typeof(ep_check))
-                G.set_legend_expr!(ep_check, :position, ":$dock")
-                if dock == "inside"
-                    G.set_legend_expr!(ep_check, :halign, string(round(ha; digits = 3)))
-                    G.set_legend_expr!(ep_check, :valign, string(round(va; digits = 3)))
-                end
-            elseif ep_check !== nothing && bkind == "colorbar"
-                G = parentmodule(typeof(ep_check))
-                G.set_colorbar_expr!(ep_check, :position, ":$dock")
-            elseif !isnothing(screen.figure)
-                _move_plain_block!(screen, screen.figure, UInt64(cmd["block_id"]), bkind, dock, ha, va)
-            end
-            _sync_figure_axes!(screen, screen.figure)
-            _sync_layout_meta!(screen, screen.figure)
-            flush_updates!(screen)
-            sync_editor_state!(screen)
-            return nothing
-        elseif kind == "timeline_seek"
-            tl = screen.timeline
-            if !isnothing(tl)
-                t = clamp(Float64(cmd["time"]), 0.0, Float64(tl.seconds))
-                G_tl = parentmodule(typeof(tl))
-                G_tl.seek!(tl, t)
-                _sync_figure_axes!(screen, screen.figure)
-                flush_updates!(screen)
-                sync_timeline_state!(screen)
-            end
-            return nothing
-        elseif kind == "timeline_set_playing"
-            screen.timeline_playing = Bool(cmd["playing"])
+        elseif status === :flush_timeline
+            screen.defer_flush[] = prev_defer
+            flush_updates!(screen; include_axes = true)
             sync_timeline_state!(screen)
             return nothing
-        elseif kind == "timeline_set_loop"
-            screen.timeline_loop = Bool(cmd["looping"])
-            sync_timeline_state!(screen)
-            return nothing
-        elseif kind == "timeline_export_html"
-            out_path = string(cmd["path"])
-            fps = max(1, Int(get(cmd, "framerate", 30)))
-            target = something(_find_grafico_editable(screen), screen.figure)
-            if !isnothing(target) && isdefined(@__MODULE__, :export_html)
-                export_html(out_path, target; motion = screen.timeline, framerate = fps)
-            end
-            return nothing
-        elseif kind == "compose_equalize_splits" && !isnothing(screen.figure)
-            gl = _active_gridlayout(screen.figure)
-            nrows, ncols = size(gl)
-            for c in 1:ncols
-                Makie.colsize!(gl, c, Makie.Auto())
-            end
-            for r in 1:nrows
-                Makie.rowsize!(gl, r, Makie.Auto())
-            end
-            Makie.GridLayoutBase.update!(screen.figure.layout)
-            _sync_figure_axes!(screen, screen.figure)
-            _sync_layout_meta!(screen, screen.figure)
-            flush_updates!(screen)
-            sync_editor_state!(screen)
-            return nothing
-        elseif kind == "compose_swap_panels" && !isnothing(screen.figure)
-            fig = screen.figure
-            panels = [blk for blk in fig.content if blk isa Makie.Axis || blk isa Makie.Axis3]
-            ia = Int(cmd["a_index"]) + 1
-            ib = Int(cmd["b_index"]) + 1
-            if 1 <= ia <= length(panels) && 1 <= ib <= length(panels) && ia != ib
-                ba, bb = panels[ia], panels[ib]
-                ga = ba.layoutobservables.gridcontent[]
-                gb = bb.layoutobservables.gridcontent[]
-                if !isnothing(ga) && !isnothing(gb) && ga.parent === gb.parent
-                    gl_parent = ga.parent
-                    ra, ca = ga.span.rows, ga.span.cols
-                    rb, cb = gb.span.rows, gb.span.cols
-                    Makie.GridLayoutBase.remove_from_gridlayout!(ga)
-                    Makie.GridLayoutBase.remove_from_gridlayout!(gb)
-                    gl_parent[rb, cb] = ba
-                    gl_parent[ra, ca] = bb
-                    Makie.GridLayoutBase.trim!(gl_parent)
-                    Makie.GridLayoutBase.update!(fig.layout)
-                end
-            end
-            _sync_figure_axes!(screen, screen.figure)
-            _sync_layout_meta!(screen, screen.figure)
-            flush_updates!(screen)
+        elseif status === :flush_axes || status === :flush_plots || status === :flush_layout
+            screen.defer_flush[] = prev_defer
+            flush_updates!(screen; include_axes = (status !== :flush_plots), include_layout = (status === :flush_layout))
             sync_editor_state!(screen)
             return nothing
         end
 
         ep = _find_grafico_editable(screen)
         if isnothing(ep)
-            # Plain Makie figure fallback handlers for annotations, insets, and layout gaps
-            if kind == "add_annotation"
-                ax = _target_axis_for_id(screen, get(cmd, "axis_id", nothing))
-                if !isnothing(ax)
-                    aid = screen.next_plain_ann_id
-                    screen.next_plain_ann_id += 1
-                    kw = Dict{Symbol, String}(Symbol(p[1]) => string(p[2]) for p in get(cmd, "kwargs", Any[]))
-                    rec = Dict{Symbol, Any}(
-                        :id => aid,
-                        :kind => string(cmd["kind"]),
-                        :text => string(get(cmd, "text", "")),
-                        :visible => true,
-                        :axis_id => UInt64(objectid(ax)),
-                        :kwargs => kw,
-                    )
-                    push!(screen.plain_annotations, rec)
-                    _rebuild_plain_annotation!(screen, rec)
-                end
-            elseif kind == "set_annotation_attr"
-                tid = Int(cmd["id"])
-                idx = findfirst(r -> Int(r[:id]) == tid, screen.plain_annotations)
-                if idx !== nothing
-                    rec = screen.plain_annotations[idx]
-                    k = Symbol(cmd["key"])
-                    ex = string(cmd["expr"])
-                    if k === :text
-                        parsed = try
-                            Meta.parse(ex)
-                        catch
-                            nothing
-                        end
-                        rec[:text] = parsed isa AbstractString ? String(parsed) : ex
-                    else
-                        rec[:kwargs][k] = ex
-                    end
-                    _rebuild_plain_annotation!(screen, rec)
-                end
-            elseif kind == "move_annotation"
-                tid = Int(cmd["id"])
-                idx = findfirst(r -> Int(r[:id]) == tid, screen.plain_annotations)
-                if idx !== nothing
-                    rec = screen.plain_annotations[idx]
-                    for u in cmd["updates"]
-                        rec[:kwargs][Symbol(u[1])] = string(round(Float64(u[2]); sigdigits = 6))
-                    end
-                    _rebuild_plain_annotation!(screen, rec)
-                end
-            elseif kind == "set_annotation_visible"
-                tid = Int(cmd["id"])
-                idx = findfirst(r -> Int(r[:id]) == tid, screen.plain_annotations)
-                if idx !== nothing
-                    rec = screen.plain_annotations[idx]
-                    rec[:visible] = Bool(cmd["visible"])
-                    _rebuild_plain_annotation!(screen, rec)
-                end
-            elseif kind == "remove_annotation"
-                tid = Int(cmd["id"])
-                _clear_plain_ann_plots!(screen, tid)
-                filter!(r -> Int(r[:id]) != tid, screen.plain_annotations)
-            elseif kind == "add_inset" && !isnothing(screen.figure)
-                ax = _target_axis_for_id(screen, get(cmd, "axis_id", nothing))
-                if !isnothing(ax)
-                    iid = screen.next_plain_inset_id
-                    screen.next_plain_inset_id += 1
-                    b = cmd["bbox"]
-                    bbox = (Float64(b[1]), Float64(b[2]), Float64(b[3]), Float64(b[4]))
-                    ins_ax = Makie.Axis(screen.figure[1, 1]; tellwidth = false, tellheight = false, backgroundcolor = :white)
-                    _apply_plain_inset_bbox!(ins_ax, bbox)
-                    for p in ax.scene.plots
-                        (haskey(p, :inspectable) && p.inspectable[] === false) && continue
-                        if p isa Makie.Lines
-                            Makie.lines!(ins_ax, p[1][]; color = p.color[], linewidth = p.linewidth[])
-                        elseif p isa Makie.LineSegments
-                            Makie.linesegments!(ins_ax, p[1][]; color = p.color[], linewidth = p.linewidth[])
-                        elseif p isa Makie.Scatter
-                            Makie.scatter!(ins_ax, p[1][]; color = p.color[], markersize = p.markersize[])
-                        end
-                    end
-                    xl = get(cmd, "xlimits", nothing)
-                    yl = get(cmd, "ylimits", nothing)
-                    !isnothing(xl) && Makie.xlims!(ins_ax, Float64(xl[1]), Float64(xl[2]))
-                    !isnothing(yl) && Makie.ylims!(ins_ax, Float64(yl[1]), Float64(yl[2]))
-                    screen.plain_insets[iid] = (ins_ax, Dict{Symbol, Any}(:bbox => bbox))
-                end
-            elseif kind == "move_inset"
-                iid = Int(cmd["id"])
-                if haskey(screen.plain_insets, iid)
-                    ins_ax, meta = screen.plain_insets[iid]
-                    b = cmd["bbox"]
-                    bbox = (Float64(b[1]), Float64(b[2]), Float64(b[3]), Float64(b[4]))
-                    meta[:bbox] = bbox
-                    _apply_plain_inset_bbox!(ins_ax, bbox)
-                end
-            elseif kind == "remove_inset"
-                iid = Int(cmd["id"])
-                if haskey(screen.plain_insets, iid)
-                    ins_ax, _ = pop!(screen.plain_insets, iid)
-                    delete!(screen.id_to_axis, UInt64(objectid(ins_ax)))
-                    gc = ins_ax.layoutobservables.gridcontent[]
-                    isnothing(gc) || Makie.GridLayoutBase.remove_from_gridlayout!(gc)
-                    filter!(x -> x !== ins_ax, screen.figure.content)
-                    try Makie.delete!(ins_ax.scene) catch end
-                end
-            elseif kind == "set_layout_attr" && !isnothing(screen.figure)
-                gl = _active_gridlayout(screen.figure)
-                lk = Symbol(cmd["key"])
-                val = _eval_wgpu_expr(string(cmd["expr"]))
-                lk === :colgaps && Makie.colgap!(gl, Float32(val))
-                lk === :rowgaps && Makie.rowgap!(gl, Float32(val))
-            end
-            _sync_figure_axes!(screen, screen.figure)
-            _sync_layout_meta!(screen, screen.figure)
-            flush_updates!(screen)
+            _handle_plain_editor_cmd!(screen, kind, cmd)
+            screen.defer_flush[] = prev_defer
+            flush_updates!(screen; include_axes = true, include_layout = true)
             sync_editor_state!(screen)
             return nothing
         end
-        G = parentmodule(typeof(ep))
+
         prev_compiled = ep.compiled[]
-
-        if kind == "set_visual"
-            G.set_visual_expr!(ep, Int(cmd["layer_id"]), Symbol(cmd["key"]), string(cmd["expr"]))
-        elseif kind == "remove_visual"
-            G.remove_visual!(ep, Int(cmd["layer_id"]), Symbol(cmd["key"]))
-        elseif kind == "set_layer_visible"
-            G.set_layer_visible!(ep, Int(cmd["layer_id"]), Bool(cmd["visible"]))
-        elseif kind == "set_layer_plottype"
-            G.set_layer_plottype!(ep, Int(cmd["layer_id"]), string(cmd["plottype_expr"]))
-        elseif kind == "add_layer"
-            G.add_layer!(ep; plottype = string(cmd["plottype_expr"]))
-        elseif kind == "remove_layer"
-            G.remove_layer!(ep, Int(cmd["layer_id"]))
-        elseif kind == "move_layer"
-            G.move_layer!(ep, Int(cmd["layer_id"]), Int(cmd["delta"]))
-        elseif kind == "set_mapping"
-            lid = cmd["layer_id"] === nothing ? nothing : Int(cmd["layer_id"])
-            G.set_mapping!(
-                ep,
-                lid,
-                Symbol(cmd["role"]),
-                string(cmd["value_expr"]);
-                label = cmd["label"],
-                transform = cmd["transform_expr"],
-            )
-        elseif kind == "remove_mapping"
-            lid = cmd["layer_id"] === nothing ? nothing : Int(cmd["layer_id"])
-            G.remove_mapping!(ep, lid, Symbol(cmd["role"]))
-        elseif kind == "set_analysis"
-            G.set_analysis!(ep, Int(cmd["layer_id"]), cmd["analysis_expr"])
-        elseif kind == "set_scale"
-            G.set_scale_expr!(ep, Symbol(cmd["role"]), Symbol(cmd["key"]), string(cmd["expr"]))
-        elseif kind == "remove_scale"
-            k = cmd["key"] === nothing ? nothing : Symbol(cmd["key"])
-            G.remove_scale!(ep, Symbol(cmd["role"]), k)
-        elseif kind == "set_coord"
-            G.set_coord_expr!(ep, Symbol(cmd["key"]), string(cmd["expr"]))
-        elseif kind == "set_legend"
-            G.set_legend_expr!(ep, Symbol(cmd["key"]), string(cmd["expr"]))
-        elseif kind == "remove_legend"
-            G.remove_legend!(ep, Symbol(cmd["key"]))
-        elseif kind == "set_theme"
-            b = cmd["base"] === nothing ? nothing : Symbol(cmd["base"])
-            k = cmd["key"] === nothing ? nothing : Symbol(cmd["key"])
-            ex = cmd["expr"] === nothing ? nothing : string(cmd["expr"])
-            G.set_theme_expr!(ep; base = b, key = k, expr_text = ex)
-        elseif kind == "set_inspector"
-            fields = Symbol[Symbol(f) for f in cmd["fields"]]
-            spec = G.inspector(
-                fields...;
-                show = Bool(cmd["show"]),
-                title = cmd["title"],
-                show_coords = Bool(cmd["show_coords"]),
-                digits = Int(cmd["digits"]),
-            )
-            G.set_inspector!(ep, spec)
-        elseif kind == "add_annotation"
-            kw = Dict{Symbol, String}(Symbol(p[1]) => string(p[2]) for p in get(cmd, "kwargs", Any[]))
-            src_ex = get(cmd, "source_expr", nothing)
-            G.add_annotation!(
-                ep,
-                Symbol(cmd["kind"]);
-                text = string(get(cmd, "text", "")),
-                source_expr = isnothing(src_ex) ? nothing : string(src_ex),
-                kwargs_exprs = kw,
-            )
-        elseif kind == "set_annotation_attr"
-            G.set_annotation_expr!(ep, Int(cmd["id"]), Symbol(cmd["key"]), string(cmd["expr"]))
-        elseif kind == "move_annotation"
-            kws = [Symbol(u[1]) => Float64(u[2]) for u in cmd["updates"]]
-            G.move_annotation!(ep, Int(cmd["id"]); kws...)
-        elseif kind == "set_annotation_visible"
-            G.set_annotation_visible!(ep, Int(cmd["id"]), Bool(cmd["visible"]))
-        elseif kind == "remove_annotation"
-            G.remove_annotation!(ep, Int(cmd["id"]))
-        elseif kind == "add_inset"
-            b = cmd["bbox"]
-            bbox = (Float64(b[1]), Float64(b[2]), Float64(b[3]), Float64(b[4]))
-            xl = get(cmd, "xlimits", nothing)
-            yl = get(cmd, "ylimits", nothing)
-            G.add_inset!(
-                ep;
-                bbox = bbox,
-                xlimits = isnothing(xl) ? nothing : (Float64(xl[1]), Float64(xl[2])),
-                ylimits = isnothing(yl) ? nothing : (Float64(yl[1]), Float64(yl[2])),
-            )
-        elseif kind == "set_inset_attr"
-            G.set_inset_expr!(ep, Int(cmd["id"]), Symbol(cmd["key"]), string(cmd["expr"]))
-        elseif kind == "move_inset"
-            b = cmd["bbox"]
-            G.move_inset!(ep, Int(cmd["id"]), (Float64(b[1]), Float64(b[2]), Float64(b[3]), Float64(b[4])))
-        elseif kind == "remove_inset"
-            G.remove_inset!(ep, Int(cmd["id"]))
-        elseif kind == "set_layout_attr"
-            G.set_layout_expr!(ep, Symbol(cmd["key"]), string(cmd["expr"]))
-        elseif kind == "set_colorbar_attr"
-            G.set_colorbar_expr!(ep, Symbol(cmd["key"]), string(cmd["expr"]))
-        end
-
+        _handle_grafico_editor_cmd!(screen, ep, kind, cmd)
         structure_changed = ep.compiled[] !== prev_compiled
-        if structure_changed || !(kind in ("set_visual", "set_annotation_visible", "move_annotation"))
-            _sync_figure_axes!(screen, screen.figure)
-            if structure_changed || kind != "set_theme"
-                _sync_layout_meta!(screen, screen.figure)
-            end
-        end
-        flush_updates!(screen)
+        need_axes = structure_changed || !(kind in ("set_visual", "set_annotation_visible", "move_annotation"))
+        need_layout = need_axes && (structure_changed || kind != "set_theme")
+        screen.defer_flush[] = prev_defer
+        flush_updates!(screen; include_axes = need_axes, include_layout = need_layout)
         sync_editor_state!(screen)
     catch err
+        screen.defer_flush[] = prev_defer
         screen.last_editor_error = sprint(showerror, err)
         sync_editor_state!(screen; error = screen.last_editor_error)
     finally
+        screen.defer_flush[] = prev_defer
         screen.syncing_editor[] = false
     end
     return nothing

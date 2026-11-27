@@ -693,13 +693,18 @@ fn draw_mapping_editor(
                             &entry.value_expr,
                             &choice_refs,
                         ) {
+                            let next_label = if new_val == prev_val {
+                                entry.label.clone()
+                            } else {
+                                None
+                            };
                             model.push_command(
                                 actions,
                                 EditorCommand::SetMapping {
                                     layer_id,
                                     role: entry.role.clone(),
                                     value_expr: new_val,
-                                    label: entry.label.clone(),
+                                    label: next_label,
                                     transform_expr: entry.transform_expr.clone(),
                                 },
                                 Some(EditorCommand::SetMapping {
@@ -715,13 +720,18 @@ fn draw_mapping_editor(
                         text_or_expr_row(ui, model, &row_key, "", &entry.value_expr)
                     {
                         let prev_val = entry.value_expr.clone();
+                        let next_label = if new_val == prev_val {
+                            entry.label.clone()
+                        } else {
+                            None
+                        };
                         model.push_command(
                             actions,
                             EditorCommand::SetMapping {
                                 layer_id,
                                 role: entry.role.clone(),
                                 value_expr: new_val,
-                                label: entry.label.clone(),
+                                label: next_label,
                                 transform_expr: entry.transform_expr.clone(),
                             },
                             Some(EditorCommand::SetMapping {

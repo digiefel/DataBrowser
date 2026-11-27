@@ -1122,6 +1122,120 @@ end
             "command" => Dict("cmd" => "set_theme", "base" => nothing, "key" => "fontsize", "expr" => "40"),
         ))
         @test length(scr_q.pending_events) == 4
+
+        # Pointer move coalescing in _enqueue_viewer_event!
+        empty!(scr_q.pending_events)
+        for i in 1:20
+            WgpuMakie._enqueue_viewer_event!(scr_q, Dict(
+                "op" => "pointer_event",
+                "x" => Float64(i),
+                "y" => Float64(2i),
+                "kind" => "move",
+                "buttons" => 0x00,
+                "modifiers" => 0x00,
+            ))
+        end
+        @test length(scr_q.pending_events) == 1
+        @test scr_q.pending_events[1]["x"] == 20.0
+        WgpuMakie._enqueue_viewer_event!(scr_q, Dict(
+            "op" => "pointer_event",
+            "x" => 20.0,
+            "y" => 40.0,
+            "kind" => "down",
+            "buttons" => 0x01,
+            "modifiers" => 0x00,
+        ))
+        for i in 1:5
+            WgpuMakie._enqueue_viewer_event!(scr_q, Dict(
+                "op" => "pointer_event",
+                "x" => Float64(20 + i),
+                "y" => 40.0,
+                "kind" => "move",
+                "buttons" => 0x01,
+                "modifiers" => 0x00,
+            ))
+        end
+        @test length(scr_q.pending_events) == 3
+        @test scr_q.pending_events[3]["x"] == 25.0
         close(scr_q)
+    end
+
+    @testset "Mapping switches, scene/plot pruning, and magenta regression" begin
+        xs_m = collect(range(0.1, 10.0; length = 40))
+        rows_m = vcat(
+            [(x = x, signal = sin(x) + 1.4, series = "alpha", phase = round(mod(x, 2pi); digits = 3)) for x in xs_m],
+            [(x = x, signal = 0.7 * cos(1.5 * x) + 1.8, series = "beta", phase = round(mod(1.5 * x, 2pi); digits = 3)) for x in xs_m],
+        )
+        spec_m = @plot data(rows_m) * mapping(:x => "Time (s)", :signal => "Signal (V)"; color = :series) begin
+            visual(Scatter; markersize = 9)
+            visual(Lines; linewidth = 2)
+            scales(color = (; categories = ["alpha", "beta"]))
+            coord(x = (; scale = identity))
+            legend(position = :right)
+            inspector(:series; title = "Signal Trace", digits = 4)
+        end
+        ep_m = editable(spec_m)
+        fig_m = Grafico.figure(ep_m)
+        scr_m = WgpuMakie.Screen(; visible = false)
+        display(scr_m, fig_m.scene; figure = fig_m)
+
+        n_scenes_0 = length(scr_m.id_to_scene)
+        n_plots_0 = length(scr_m.id_to_plot)
+
+        for col in ("phase", "signal", "series", "x")
+            WgpuMakie._handle_viewer_event!(scr_m, Dict(
+                "op" => "editor_command",
+                "command" => Dict(
+                    "cmd" => "set_mapping",
+                    "layer_id" => nothing,
+                    "role" => "x",
+                    "value_expr" => ":$col",
+                    "label" => nothing,
+                    "transform_expr" => nothing,
+                ),
+            ))
+            @test isnothing(scr_m.last_editor_error)
+            ax_cur = last(filter(b -> b isa Makie.Axis, fig_m.content))
+            @test ax_cur.xlabel[] == col
+        end
+
+        buf = Makie.colorbuffer(scr_m)
+        magenta_px = count(px -> red(px) > 0.8 && green(px) < 0.2 && blue(px) > 0.8, buf)
+        @test magenta_px == 0
+        @test count_non_white(buf) > 300
+
+        n_scenes_after_cat = length(scr_m.id_to_scene)
+        n_plots_after_cat = length(scr_m.id_to_plot)
+
+        # Additional edits should not leak scenes or plots in WgpuMakie's registries
+        WgpuMakie._handle_viewer_event!(scr_m, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_legend", "key" => "position", "expr" => ":inside"),
+        ))
+        WgpuMakie._handle_viewer_event!(scr_m, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_theme", "base" => "dark", "key" => nothing, "expr" => nothing),
+        ))
+        WgpuMakie._handle_viewer_event!(scr_m, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_theme", "base" => "black", "key" => nothing, "expr" => nothing),
+        ))
+        WgpuMakie._handle_viewer_event!(scr_m, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_theme", "base" => nothing, "key" => nothing, "expr" => nothing),
+        ))
+        WgpuMakie._handle_viewer_event!(scr_m, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_layer_visible", "layer_id" => 1, "visible" => false),
+        ))
+        WgpuMakie._handle_viewer_event!(scr_m, Dict(
+            "op" => "editor_command",
+            "command" => Dict("cmd" => "set_layer_visible", "layer_id" => 1, "visible" => true),
+        ))
+        @test isnothing(scr_m.last_editor_error)
+        @test length(scr_m.id_to_scene) <= n_scenes_0 + 5
+        @test length(scr_m.id_to_scene) <= n_scenes_after_cat
+        @test length(scr_m.id_to_plot) <= n_plots_after_cat
+        close(scr_m)
     end
 end

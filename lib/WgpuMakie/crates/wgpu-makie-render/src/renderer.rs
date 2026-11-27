@@ -374,6 +374,85 @@ impl WgpuRenderer {
         }
     }
 
+    fn scene_draws_mode(
+        &self,
+        graph: &SceneGraph,
+        sid: u64,
+        fb_width: u32,
+        fb_height: u32,
+        mode: RenderMode,
+    ) -> bool {
+        let Some(scene_node) = graph.scenes.get(&sid) else {
+            return false;
+        };
+        let scene = &scene_node.state;
+        if !scene.visible {
+            return false;
+        }
+        let ppu = graph.px_per_unit.max(0.5);
+        let vx = (self.plot_offset_px[0] + scene.viewport[0] * ppu).round().max(0.0);
+        let vh = (scene.viewport[3] * ppu).round().max(1.0);
+        let makie_y = self.plot_offset_px[1] + scene.viewport[1] * ppu;
+        let vy_top = ((fb_height as f32) - (makie_y + vh)).round().max(0.0);
+        if vx >= fb_width as f32 || vy_top >= fb_height as f32 {
+            return false;
+        }
+        graph.plot_order.iter().any(|pid| {
+            let entry = &graph.plots[pid];
+            if entry.payload.scene_id != sid || !entry.payload.visible {
+                return false;
+            }
+            match mode {
+                RenderMode::Opaque if entry.payload.transparency => return false,
+                RenderMode::Oit if !entry.payload.transparency => return false,
+                RenderMode::Pick if !entry.payload.inspectable => return false,
+                _ => {}
+            }
+            let Some(rec) = self.cache.plots.get(pid) else {
+                return false;
+            };
+            match &rec.gpu {
+                CachedPlotGpu::Lines {
+                    bind_group: Some(_),
+                    uploaded_idx_count,
+                    ..
+                } => {
+                    let is_seg = matches!(
+                        &entry.payload.primitive,
+                        PrimitiveKind::Lines(l) if l.is_segments
+                    );
+                    let instances = if is_seg {
+                        *uploaded_idx_count / 2
+                    } else {
+                        uploaded_idx_count.saturating_sub(1)
+                    };
+                    instances > 0
+                }
+                CachedPlotGpu::Sprites {
+                    bind_group: Some(_),
+                    instance_count,
+                    ..
+                } => *instance_count > 0,
+                CachedPlotGpu::Mesh {
+                    index_count,
+                    bind_group: Some(_),
+                    ..
+                } => *index_count > 0,
+                CachedPlotGpu::MeshScatter {
+                    index_count,
+                    bind_group: Some(_),
+                    instance_count,
+                    ..
+                } => *index_count > 0 && *instance_count > 0,
+                CachedPlotGpu::Volume {
+                    bind_group: Some(_),
+                    ..
+                } => true,
+                _ => false,
+            }
+        })
+    }
+
     /// Encode all visible scenes and plots into `color_view`, clearing depth per top-level block
     /// group and running WBOIT when transparent plots exist inside a group.
     pub fn encode_render_pass(
@@ -391,7 +470,23 @@ impl WgpuRenderer {
         let Some((_, _, _, depth_view)) = &self.depth_tex else {
             return;
         };
-        let groups = graph.scene_render_groups();
+        let oit_ready = self.oit_accum_tex.is_some()
+            && self.oit_reveal_tex.is_some()
+            && self.oit_composite_bg.is_some();
+        let groups: Vec<(Vec<u64>, bool)> = graph
+            .scene_render_groups()
+            .into_iter()
+            .filter_map(|group| {
+                let has_opaque = group
+                    .iter()
+                    .any(|&sid| self.scene_draws_mode(graph, sid, fb_width, fb_height, RenderMode::Opaque));
+                let has_oit = oit_ready
+                    && group
+                        .iter()
+                        .any(|&sid| self.scene_draws_mode(graph, sid, fb_width, fb_height, RenderMode::Oit));
+                (has_opaque || has_oit).then_some((group, has_oit))
+            })
+            .collect();
         if groups.is_empty() {
             let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("wgpu_makie_clear_pass"),
@@ -415,23 +510,9 @@ impl WgpuRenderer {
             return;
         }
 
-        for (gi, group) in groups.iter().enumerate() {
+        for (gi, (group, can_oit)) in groups.iter().enumerate() {
             let is_last_group = gi + 1 == groups.len();
-            let has_transparent = graph.plot_order.iter().any(|pid| {
-                graph.plots.get(pid).is_some_and(|p| {
-                    p.payload.visible
-                        && p.payload.transparency
-                        && group.contains(&p.payload.scene_id)
-                        && graph
-                            .scenes
-                            .get(&p.payload.scene_id)
-                            .is_some_and(|s| s.state.visible)
-                })
-            });
-            let can_oit = has_transparent
-                && self.oit_accum_tex.is_some()
-                && self.oit_reveal_tex.is_some()
-                && self.oit_composite_bg.is_some();
+            let can_oit = *can_oit;
 
             let color_load = if gi == 0 {
                 wgpu::LoadOp::Clear(wgpu::Color {

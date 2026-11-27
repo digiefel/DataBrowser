@@ -57,6 +57,7 @@ mutable struct Screen <: Makie.MakieScreen
     dirty_axes::Set{Makie.Axis}
     dirty_plots::Set{Tuple{Scene, AbstractPlot}}
     defer_flush::Ref{Bool}
+    tree_dirty::Ref{Bool}
     flush_scheduled::Threads.Atomic{Bool}
     flush_lock::ReentrantLock
     sync_lock::ReentrantLock
@@ -112,6 +113,7 @@ function Screen(scene::Union{Nothing, Scene}, config::ScreenConfig, args...)
         Set{Scene}(),
         Set{Makie.Axis}(),
         Set{Tuple{Scene, AbstractPlot}}(),
+        Ref(false),
         Ref(false),
         Threads.Atomic{Bool}(false),
         ReentrantLock(),
@@ -261,6 +263,10 @@ function Base.insert!(screen::Screen, scene::Scene, @nospecialize(plot::Abstract
     if isnothing(screen.scene)
         screen.scene = Makie.root(scene)
     end
+    if screen.defer_flush[]
+        screen.tree_dirty[] = true
+        return nothing
+    end
     _ensure_viewer!(screen, Makie.root(scene))
     if !haskey(screen.id_to_scene, UInt64(objectid(scene)))
         parent_id = isnothing(scene.parent) ? nothing : UInt64(objectid(scene.parent))
@@ -275,12 +281,18 @@ function Base.insert!(screen::Screen, scene::Scene, @nospecialize(plot::Abstract
 end
 
 function Base.delete!(screen::Screen, scene::Scene, @nospecialize(plot::AbstractPlot))
+    if screen.defer_flush[]
+        screen.tree_dirty[] = true
+        return nothing
+    end
     for cplot in Makie.collect_atomic_plots(plot)
         cplot === plot && continue
         Base.delete!(screen, scene, cplot)
     end
     pid = UInt64(objectid(plot))
     pop!(screen.id_to_plot, pid, nothing)
+    pop!(screen.plot_zorder, pid, nothing)
+    pop!(screen.plot_effective_inspectable, pid, nothing)
     obs_pair = pop!(screen.plot_observers, pid, nothing)
     if !isnothing(obs_pair)
         try
@@ -295,6 +307,10 @@ function Base.delete!(screen::Screen, scene::Scene, @nospecialize(plot::Abstract
 end
 
 function Base.delete!(screen::Screen, scene::Scene)
+    if screen.defer_flush[]
+        screen.tree_dirty[] = true
+        return nothing
+    end
     sid = UInt64(objectid(scene))
     pop!(screen.id_to_scene, sid, nothing)
     obs_list = pop!(screen.scene_observers, sid, nothing)
@@ -376,6 +392,7 @@ function _clear_observers!(screen::Screen)
     empty!(screen.dirty_scenes)
     empty!(screen.dirty_axes)
     empty!(screen.dirty_plots)
+    screen.tree_dirty[] = false
     @lock screen.event_lock begin
         screen.pending_resize[] = nothing
         empty!(screen.pending_axis_limits)

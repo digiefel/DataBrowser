@@ -192,6 +192,18 @@ function _enqueue_viewer_event!(screen, msg::AbstractDict)
             sid = UInt64(msg["scene_id"])
             seq = UInt64(get(msg, "seq", 0))
             screen.pending_camera3d[sid] = (Dict{String, Any}(string(k) => v for (k, v) in pairs(msg)), seq)
+        elseif op == "pointer_event" && get(msg, "kind", "move") == "move"
+            ev_dict = Dict{String, Any}(string(k) => v for (k, v) in pairs(msg))
+            if !isempty(screen.pending_events)
+                last_ev = screen.pending_events[end]
+                if get(last_ev, "op", "") == "pointer_event" && get(last_ev, "kind", "move") == "move"
+                    screen.pending_events[end] = ev_dict
+                else
+                    push!(screen.pending_events, ev_dict)
+                end
+            else
+                push!(screen.pending_events, ev_dict)
+            end
         else
             if op == "editor_command"
                 ckey = _editor_command_coalesce_key(msg["command"])

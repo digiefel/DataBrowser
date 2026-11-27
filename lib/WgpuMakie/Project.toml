@@ -14,11 +14,13 @@ Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 MsgPack = "99f44e22-a591-53d1-9472-aa23ef4bd671"
 Observables = "510215fc-4207-5dde-b226-833fc4488ee2"
 PNGFiles = "f57f5aa1-a3ce-4bc8-8ab9-96f992907883"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 ShaderAbstractions = "65257c39-d410-5151-9873-9b3e5be5013e"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 
 [compat]
 Makie = "0.24"
+PrecompileTools = "1"
 julia = "1.10"
 
 [extras]

@@ -205,16 +205,45 @@ function _schedule_flush!(screen)
     return nothing
 end
 
+struct _PlotDirtyHook
+    screen::Any
+    scene::Scene
+    plot::AbstractPlot
+end
+function (h::_PlotDirtyHook)(_)
+    @lock h.screen.sync_lock push!(h.screen.dirty_plots, (h.scene, h.plot))
+    _schedule_flush!(h.screen)
+    return nothing
+end
+
+struct _SceneDirtyHook
+    screen::Any
+    scene::Scene
+    parent_id::Union{Nothing, UInt64}
+    force::Bool
+end
+function (h::_SceneDirtyHook)(_)
+    _mark_scene_dirty!(h.screen, h.scene, h.parent_id; force = h.force)
+    return nothing
+end
+
+struct _AxisDirtyHook
+    screen::Any
+    axis::Makie.Axis
+end
+function (h::_AxisDirtyHook)(_)
+    h.screen.syncing_from_viewer[] && return nothing
+    @lock h.screen.sync_lock push!(h.screen.dirty_axes, h.axis)
+    _schedule_flush!(h.screen)
+    return nothing
+end
+
 function _register_plot_observers!(screen, scene::Scene, plot::AbstractPlot)
     if plot isa Makie.ComputePlots
         pid = UInt64(objectid(plot))
         screen.id_to_plot[pid] = plot
         if !haskey(screen.plot_observers, pid)
-            obs_fn = on(plot.attributes.onchange) do _
-                @lock screen.sync_lock push!(screen.dirty_plots, (scene, plot))
-                _schedule_flush!(screen)
-                return
-            end
+            obs_fn = on(_PlotDirtyHook(screen, scene, plot), plot.attributes.onchange)
             screen.plot_observers[pid] = (plot, obs_fn)
         end
     end
@@ -252,25 +281,14 @@ function _register_scene_observers!(screen, scene::Scene, parent_id::Union{Nothi
     screen.id_to_scene[sid] = scene
     haskey(screen.scene_observers, sid) && return nothing
 
-    obs_list = Any[]
-    push!(obs_list, on(Makie.viewport(scene)) do _
-        _mark_scene_dirty!(screen, scene, parent_id; force = true)
-    end)
-    push!(obs_list, on(scene.backgroundcolor) do _
-        _mark_scene_dirty!(screen, scene, parent_id; force = true)
-    end)
-    push!(obs_list, on(scene.visible) do _
-        _mark_scene_dirty!(screen, scene, parent_id; force = true)
-    end)
-    push!(obs_list, on(scene.camera.projectionview) do _
-        _mark_scene_dirty!(screen, scene, parent_id)
-    end)
-    push!(obs_list, on(scene.camera.eyeposition) do _
-        _mark_scene_dirty!(screen, scene, parent_id)
-    end)
-    push!(obs_list, on(scene.compute.onchange) do _
-        _mark_scene_dirty!(screen, scene, parent_id)
-    end)
+    obs_list = Any[
+        on(_SceneDirtyHook(screen, scene, parent_id, true), Makie.viewport(scene)),
+        on(_SceneDirtyHook(screen, scene, parent_id, true), scene.backgroundcolor),
+        on(_SceneDirtyHook(screen, scene, parent_id, true), scene.visible),
+        on(_SceneDirtyHook(screen, scene, parent_id, false), scene.camera.projectionview),
+        on(_SceneDirtyHook(screen, scene, parent_id, false), scene.camera.eyeposition),
+        on(_SceneDirtyHook(screen, scene, parent_id, false), scene.compute.onchange),
+    ]
     screen.scene_observers[sid] = obs_list
     return nothing
 end
@@ -312,16 +330,24 @@ function _sync_subtree!(screen, scene::Scene, parent_id::Union{Nothing, UInt64},
     return nothing
 end
 
-function _collect_figure_axes_msgs!(screen, figure::Union{Nothing, Makie.Figure}, msgs::Vector{Dict{String, Any}})
+function _collect_figure_axes_msgs!(
+    screen,
+    figure::Union{Nothing, Makie.Figure},
+    msgs::Vector{Dict{String, Any}},
+    emitted_axes::Union{Nothing, Set{UInt64}} = nothing,
+)
     isnothing(figure) && return nothing
+    live_axes = Set{UInt64}()
     for blk in figure.content
         if blk isa Makie.Axis
             aid = UInt64(objectid(blk))
+            push!(live_axes, aid)
             screen.id_to_axis[aid] = blk
             push!(msgs, Dict{String, Any}(
                 "op" => "upsert_axis_meta",
                 "axis" => _extract_axis_meta(blk),
             ))
+            !isnothing(emitted_axes) && push!(emitted_axes, aid)
             if !haskey(screen.axis_observers, aid)
                 # Rust CameraController owns zoom, pan, and reset so Makie does not start competing drags behind overlays
                 for iname in (:rectanglezoom, :dragpan, :scrollzoom, :limitreset)
@@ -332,19 +358,25 @@ function _collect_figure_axes_msgs!(screen, figure::Union{Nothing, Makie.Figure}
                         end
                     end
                 end
-                fn = on(blk.finallimits) do _
-                    screen.syncing_from_viewer[] && return
-                    @lock screen.sync_lock push!(screen.dirty_axes, blk)
-                    _schedule_flush!(screen)
-                    return
-                end
-                screen.axis_observers[aid] = fn
+                screen.axis_observers[aid] = on(_AxisDirtyHook(screen, blk), blk.finallimits)
             end
         elseif blk isa Makie.Axis3
             aid = UInt64(objectid(blk))
             screen.id_to_axis3[aid] = blk
             get!(screen.axis3_initial, aid) do
                 (Float64(blk.elevation[]), Float64(blk.azimuth[]), Float64(blk.zoom_mult[]))
+            end
+        end
+    end
+    for aid in collect(keys(screen.id_to_axis))
+        if !(aid in live_axes)
+            pop!(screen.id_to_axis, aid, nothing)
+            o = pop!(screen.axis_observers, aid, nothing)
+            if !isnothing(o)
+                try
+                    Observables.off(o)
+                catch
+                end
             end
         end
     end
@@ -915,19 +947,146 @@ function _sync_layout_meta!(screen, figure::Union{Nothing, Makie.Figure})
     return nothing
 end
 
-"""
-    flush_updates!(screen; ack_seq = 0, include_layout = false)
+function _walk_live_plots!(
+    screen,
+    scene::Scene,
+    plots::Vector{Plot},
+    live_plots::Set{UInt64},
+    msgs::Vector{Dict{String, Any}},
+    emitted_plots::Set{UInt64},
+    z_counter::Ref{Int32},
+    parent_inspectable::Bool = true,
+)
+    sid = UInt64(objectid(scene))
+    for plot in plots
+        eff_inspectable = parent_inspectable && (!haskey(plot, :inspectable) || Bool(plot.inspectable[]))
+        if plot isa Makie.ComputePlots
+            pid = UInt64(objectid(plot))
+            push!(live_plots, pid)
+            z_counter[] += Int32(1)
+            z = z_counter[]
+            is_new = !haskey(screen.id_to_plot, pid)
+            screen.id_to_plot[pid] = plot
+            screen.plot_effective_inspectable[pid] = eff_inspectable
+            screen.plot_zorder[pid] = z
+            if is_new
+                msg, extras = _build_plot_payload(screen, scene, plot, pid, sid, z; inspectable_override = eff_inspectable)
+                append!(msgs, extras)
+                !isnothing(msg) && push!(msgs, msg)
+                _register_plot_observers!(screen, scene, plot)
+                push!(emitted_plots, pid)
+            end
+        end
+        if !isempty(plot.plots)
+            _walk_live_plots!(screen, scene, plot.plots, live_plots, msgs, emitted_plots, z_counter, eff_inspectable)
+        end
+    end
+    return nothing
+end
 
-Push any pending scene, axis, or plot updates to the Rust viewer in one atomic batch.
-"""
-function flush_updates!(screen; ack_seq::UInt64 = UInt64(0), include_layout::Bool = false)
-    (isnothing(screen.viewer) || !screen.open || isnothing(screen.scene)) && return nothing
+function _walk_live_scenes!(
+    screen,
+    scene::Scene,
+    parent_id::Union{Nothing, UInt64},
+    live_scenes::Set{UInt64},
+    live_plots::Set{UInt64},
+    msgs::Vector{Dict{String, Any}},
+    emitted_scenes::Set{UInt64},
+    emitted_plots::Set{UInt64},
+    z_counter::Ref{Int32},
+)
+    sid = UInt64(objectid(scene))
+    push!(live_scenes, sid)
+    is_new = !haskey(screen.id_to_scene, sid)
+    screen.id_to_scene[sid] = scene
+    if is_new
+        _register_scene_observers!(screen, scene, parent_id)
+        push!(msgs, Dict{String, Any}(
+            "op" => "upsert_scene",
+            "scene" => _extract_scene_state(scene, parent_id),
+        ))
+        push!(emitted_scenes, sid)
+    end
+    _walk_live_plots!(screen, scene, scene.plots, live_plots, msgs, emitted_plots, z_counter)
+    for child in scene.children
+        _walk_live_scenes!(screen, child, sid, live_scenes, live_plots, msgs, emitted_scenes, emitted_plots, z_counter)
+    end
+    return nothing
+end
+
+function _reconcile_live_tree!(
+    screen,
+    msgs::Vector{Dict{String, Any}},
+    emitted_plots::Set{UInt64},
+    emitted_scenes::Set{UInt64},
+)
+    isnothing(screen.scene) && return nothing
+    live_scenes = Set{UInt64}()
+    live_plots = Set{UInt64}()
+    _walk_live_scenes!(screen, screen.scene, nothing, live_scenes, live_plots, msgs, emitted_scenes, emitted_plots, Ref(Int32(0)))
+
+    for pid in collect(keys(screen.id_to_plot))
+        if !(pid in live_plots)
+            pop!(screen.id_to_plot, pid, nothing)
+            pop!(screen.plot_zorder, pid, nothing)
+            pop!(screen.plot_effective_inspectable, pid, nothing)
+            obs_pair = pop!(screen.plot_observers, pid, nothing)
+            if !isnothing(obs_pair)
+                try
+                    Observables.off(obs_pair[2])
+                catch
+                end
+            end
+            push!(msgs, Dict{String, Any}("op" => "remove_plot", "id" => pid))
+        end
+    end
+
+    for sid in collect(keys(screen.id_to_scene))
+        if !(sid in live_scenes)
+            pop!(screen.id_to_scene, sid, nothing)
+            obs_list = pop!(screen.scene_observers, sid, nothing)
+            if !isnothing(obs_list)
+                for o in obs_list
+                    try
+                        Observables.off(o)
+                    catch
+                    end
+                end
+            end
+            push!(msgs, Dict{String, Any}("op" => "remove_scene", "id" => sid))
+        end
+    end
+    return nothing
+end
+
+function _collect_flush_msgs!(
+    screen;
+    ack_seq::UInt64 = UInt64(0),
+    include_layout::Bool = false,
+    include_axes::Bool = false,
+)::Vector{Dict{String, Any}}
+    isnothing(screen.scene) && return Dict{String, Any}[]
     @lock screen.flush_lock begin
         prev_defer = screen.defer_flush[]
         screen.defer_flush[] = true
         try
+            msgs = Dict{String, Any}[]
+            emitted_plots = Set{UInt64}()
+            emitted_scenes = Set{UInt64}()
+            emitted_axes = Set{UInt64}()
+
+            if ack_seq > 0
+                push!(msgs, Dict{String, Any}("op" => "ack_interaction", "seq" => ack_seq))
+            end
+
+            if screen.tree_dirty[] || include_axes || include_layout
+                screen.tree_dirty[] = false
+                _reconcile_live_tree!(screen, msgs, emitted_plots, emitted_scenes)
+            end
+
             # Ensure lazy ComputePipeline outputs are resolved so `onchange` fires before draining
-            for (_, plot) in collect(screen.id_to_plot)
+            for (pid, plot) in collect(screen.id_to_plot)
+                (pid in emitted_plots) && continue
                 if plot isa Makie.ComputePlots
                     sc = Makie.parent_scene(plot)
                     sc === nothing && continue
@@ -952,16 +1111,10 @@ function flush_updates!(screen; ack_seq::UInt64 = UInt64(0), include_layout::Boo
                 (sc, ax, pl)
             end
 
-            msgs = Dict{String, Any}[]
-            if ack_seq > 0
-                push!(msgs, Dict{String, Any}("op" => "ack_interaction", "seq" => ack_seq))
-            end
-
-            seen_sc = Set{UInt64}()
             for sc in dirty_sc
                 sid = UInt64(objectid(sc))
-                sid in seen_sc && continue
-                push!(seen_sc, sid)
+                sid in emitted_scenes && continue
+                push!(emitted_scenes, sid)
                 haskey(screen.id_to_scene, sid) || continue
                 pid = isnothing(sc.parent) ? nothing : UInt64(objectid(sc.parent))
                 push!(msgs, Dict{String, Any}(
@@ -970,11 +1123,14 @@ function flush_updates!(screen; ack_seq::UInt64 = UInt64(0), include_layout::Boo
                 ))
             end
 
-            seen_ax = Set{UInt64}()
+            if include_axes && !isnothing(screen.figure)
+                _collect_figure_axes_msgs!(screen, screen.figure, msgs, emitted_axes)
+            end
+
             for ax in dirty_ax
                 aid = UInt64(objectid(ax))
-                aid in seen_ax && continue
-                push!(seen_ax, aid)
+                aid in emitted_axes && continue
+                push!(emitted_axes, aid)
                 screen.id_to_axis[aid] = ax
                 push!(msgs, Dict{String, Any}(
                     "op" => "upsert_axis_meta",
@@ -983,15 +1139,18 @@ function flush_updates!(screen; ack_seq::UInt64 = UInt64(0), include_layout::Boo
             end
 
             if include_layout && !isnothing(screen.figure)
+                try
+                    Makie.GridLayoutBase.update!(screen.figure.layout)
+                catch
+                end
                 _collect_layout_meta_msg!(screen, screen.figure, msgs)
             end
 
             if !isempty(dirty_pl)
-                seen = Set{UInt64}()
                 for (sc, plot) in dirty_pl
                     pid = UInt64(objectid(plot))
-                    pid in seen && continue
-                    push!(seen, pid)
+                    pid in emitted_plots && continue
+                    push!(emitted_plots, pid)
                     haskey(screen.id_to_plot, pid) || continue
                     z = get(screen.plot_zorder, pid, Int32(0))
                     insp_ov = get(screen.plot_effective_inspectable, pid, nothing)
@@ -1001,12 +1160,23 @@ function flush_updates!(screen; ack_seq::UInt64 = UInt64(0), include_layout::Boo
                 end
             end
 
-            if !isempty(msgs) && !isnothing(screen.viewer) && screen.open
-                send_msg!(screen.viewer, Dict{String, Any}("op" => "batch", "messages" => msgs))
-            end
+            return msgs
         finally
             screen.defer_flush[] = prev_defer
         end
+    end
+end
+
+"""
+    flush_updates!(screen; ack_seq = 0, include_layout = false, include_axes = false)
+
+Push any pending scene, axis, or plot updates to the Rust viewer in one atomic batch.
+"""
+function flush_updates!(screen; ack_seq::UInt64 = UInt64(0), include_layout::Bool = false, include_axes::Bool = false)
+    (isnothing(screen.viewer) || !screen.open || isnothing(screen.scene)) && return nothing
+    msgs = _collect_flush_msgs!(screen; ack_seq, include_layout, include_axes)
+    if !isempty(msgs) && !isnothing(screen.viewer) && screen.open
+        send_msg!(screen.viewer, Dict{String, Any}("op" => "batch", "messages" => msgs))
     end
     return nothing
 end
