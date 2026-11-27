@@ -1086,6 +1086,7 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                     } else {
                         self.buttons_mask &= !bit;
                         if self.editor.tool_mode != ToolMode::Navigate && btn == 0 {
+                            let had_manip_drag = self.manip.active_drag.is_some();
                             let mo = self.manip.on_pointer_up(
                                 &self.graph,
                                 self.editor.doc.as_ref(),
@@ -1100,21 +1101,25 @@ impl ApplicationHandler<AppEvent> for ViewerApp {
                                 self.editor.undo_stack.push((fwd, inv));
                                 self.editor.redo_stack.clear();
                             }
+                            let created = !mo.messages.is_empty();
                             for msg in mo.messages {
                                 self.send(msg);
                             }
-                            if matches!(
-                                self.editor.tool_mode,
-                                ToolMode::AddText
-                                    | ToolMode::AddArrow
-                                    | ToolMode::AddCallout
-                                    | ToolMode::AddVSpan
-                                    | ToolMode::AddHSpan
-                                    | ToolMode::AddRect
-                                    | ToolMode::AddHLine
-                                    | ToolMode::AddVLine
-                                    | ToolMode::AddInset
-                            ) {
+                            if had_manip_drag
+                                && created
+                                && matches!(
+                                    self.editor.tool_mode,
+                                    ToolMode::AddText
+                                        | ToolMode::AddArrow
+                                        | ToolMode::AddCallout
+                                        | ToolMode::AddVSpan
+                                        | ToolMode::AddHSpan
+                                        | ToolMode::AddRect
+                                        | ToolMode::AddHLine
+                                        | ToolMode::AddVLine
+                                        | ToolMode::AddInset
+                                )
+                            {
                                 self.editor.tool_mode = ToolMode::Edit;
                             }
                         } else {

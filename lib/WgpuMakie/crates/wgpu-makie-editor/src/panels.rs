@@ -181,6 +181,9 @@ pub fn draw_toolbar(
             plus_clicked = true;
             model.annotate_menu_open = !model.annotate_menu_open;
         }
+        if is_annotate_tool(model.tool_mode) {
+            ui.label(egui::RichText::new(model.tool_mode.label()).small());
+        }
         if icon_button(
             ui,
             IconKind::Brush,
@@ -269,7 +272,7 @@ pub fn draw_toolbar(
             });
         let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
         let any_pressed = ui.input(|i| i.pointer.any_pressed());
-        let menu_hovered = area_resp.response.hovered();
+        let menu_hovered = area_resp.response.contains_pointer();
         if esc || (!plus_clicked && !plus_hovered && !menu_hovered && any_pressed) {
             model.annotate_menu_open = false;
         }
